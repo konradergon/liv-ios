@@ -217,78 +217,166 @@ extension Notification.Name {
     static let lotusGoInbox = Notification.Name("lotus.goInbox")
 }
 
-// MARK: - title row (§1.2, §2.1)
+// MARK: - sidebar header (the Claude-style panel top)
 
-struct TitleRow: View {
+/// The two small controls over the traffic-light band: collapse the
+/// panel, and open search. Decided divergence from Liv's title row —
+/// no window-centered search field, no drag-to-collapse.
+struct SidebarHeader: View {
+    @ObservedObject var chrome: ChromeModel
+    let collapse: () -> Void
+    let search: () -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            if !chrome.isFullscreen {
+                // The traffic lights live here; the controls sit to
+                // their right, same band.
+                Color.clear.frame(width: Theme.trafficLightSpacer)
+            }
+            headerButton("sidebar.left", "Collapse sidebar (⌘⇧\\)", collapse)
+            headerButton("magnifyingglass", "Search (⌘O)", search)
+            Spacer(minLength: 0)
+            NavChevrons(chrome: chrome)
+        }
+        .frame(height: 44)
+        .background(WindowDragRegion())
+    }
+}
+
+/// Back / forward over the merged nav history — moved off the old rail
+/// into the header's trailing edge.
+struct NavChevrons: View {
     @ObservedObject var chrome: ChromeModel
 
     var body: some View {
-        ZStack {
-            // The whole row is a drag region; the search sits absolutely
-            // centered on the window, not in flex leftover space.
-            HStack {
-                if !chrome.isFullscreen {
-                    Color.clear.frame(width: Theme.trafficLightSpacer)
-                }
-                Spacer()
+        HStack(spacing: 0) {
+            Button { chrome.goBack() } label: {
+                Image(systemName: "chevron.left").font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 28)
             }
-            HeaderSearch()
+            .buttonStyle(.plain)
+            .foregroundColor(chrome.nav.canGoBack ? Theme.mutedFg : Theme.mutedFg.opacity(0.25))
+            .help("Back (⌥←)")
+            Button { chrome.goForward() } label: {
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
+                    .frame(width: 22, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundColor(
+                chrome.nav.canGoForward ? Theme.mutedFg : Theme.mutedFg.opacity(0.25))
+            .help("Forward (⌥→)")
         }
-        .frame(height: Theme.titleRowHeight)
-        .background(WindowDragRegion())
-        .background(Theme.background)
-        .overlay(Divider(), alignment: .bottom)
+        .padding(.trailing, 4)
     }
 }
 
-/// A button styled as a field (§2.1 HeaderSearch).
-struct HeaderSearch: View {
+/// The same two controls, floating top-left when the panel is collapsed
+/// — the only way back to an expanded sidebar (Claude's pattern).
+struct CollapsedControls: View {
+    @ObservedObject var chrome: ChromeModel
+    let expand: () -> Void
+    let search: () -> Void
+
     var body: some View {
-        Button {
-            CommandRegistry.shared.run("switcher:open")
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.mutedFg)
-                Text("Search")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(Theme.mutedFg)
-                Spacer(minLength: 24)
-                KbdChip(label: "⌘O")
+        HStack(spacing: 2) {
+            if !chrome.isFullscreen {
+                Color.clear.frame(width: Theme.trafficLightSpacer)
             }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .frame(maxWidth: 560)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.radiusMd)
-                    .fill(Theme.secondary.opacity(0.4))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.radiusMd)
-                    .strokeBorder(Theme.border.opacity(0.7))
-            )
+            headerButton("sidebar.left", "Expand sidebar (⌘⇧\\)", expand)
+            headerButton("magnifyingglass", "Search (⌘O)", search)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .help("Search (⌘O) — type > for commands")
-        .padding(.horizontal, 120)
+        .frame(height: 44)
+        .background(WindowDragRegion())
     }
 }
 
-// MARK: - tabs row (§1.2; the strip itself is P3)
+/// A 28×28 chrome icon button, the header idiom.
+private func headerButton(
+    _ symbol: String, _ help: String, _ action: @escaping () -> Void
+) -> some View {
+    Button(action: action) {
+        Image(systemName: symbol)
+            .font(.system(size: 13, weight: .medium))
+            .frame(width: 28, height: 28)
+            .foregroundColor(Theme.mutedFg)
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help(help)
+}
 
-struct TabsRow: View {
+// MARK: - surface nav (the labeled rail, folded into the sidebar)
+
+/// The activity rail, expanded Claude-style into labeled rows: icon +
+/// name + trailing (a badge, or a keycap once a surface earns one).
+/// Persistent — every surface reaches it, no full-bleed hiding.
+struct SurfaceNav: View {
     @ObservedObject var chrome: ChromeModel
     @ObservedObject var model: BoxModel
-    /// The navigation gate: flush the editor, run the work on success,
-    /// land on the desk. Entering a workspace from the hub flushes like
-    /// every other nav path.
-    var landed: (@escaping () -> Void) -> Void = { $0() }
+    /// Switches go through the owner's flush gate.
+    let select: (Surface) -> Void
 
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(Surface.allCases, id: \.rawValue) { surface in
+                NavRow(
+                    surface: surface,
+                    active: chrome.surface == surface,
+                    badge: surface == .inbox ? (model.snap?.unstructured.count ?? 0) : 0
+                ) { select(surface) }
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+}
+
+struct NavRow: View {
+    let surface: Surface
+    let active: Bool
+    let badge: Int
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 9) {
+                Image(systemName: surface.symbol)
+                    .font(.system(size: 13))
+                    .frame(width: 18)
+                    .foregroundColor(active ? Theme.primary : Theme.mutedFg)
+                Text(surface.label)
+                    .font(.system(size: 13, weight: active ? .semibold : .regular))
+                    .foregroundColor(active ? Theme.foreground : Theme.foreground.opacity(0.85))
+                Spacer(minLength: 4)
+                if badge > 0 {
+                    SoftBadge(count: badge)
+                }
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.radiusMd)
+                .fill(active ? Theme.primary.opacity(0.1) : .clear)
+        )
+    }
+}
+
+// MARK: - workspace footer (the bottom switcher, popup opens upward)
+
+/// Where "Konrad" sits in Claude: the active workspace, its popover
+/// rising above, plus the appearance and settings controls. Replaces
+/// Liv's HomeHub tab row — one fewer chrome row.
+struct WorkspaceFooter: View {
+    @ObservedObject var model: BoxModel
+    @ObservedObject var chrome: ChromeModel
+    let actions: WorkspaceActions
     @State private var hubOpen = false
 
-    private var hubLabel: String {
-        if chrome.surface.isGlobalTool { return "lotus" }
+    private var label: String {
         guard let id = chrome.activeWorkspace,
             let row = (model.snap?.workspaces ?? []).first(where: { $0.id == id })
         else { return "Home" }
@@ -297,265 +385,53 @@ struct TabsRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // HomeHub (§2.7.2) — the ONE consolidated workspace control,
-            // on the tab row by founder call. Name only, 12px semibold.
-            Button {
-                hubOpen.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Text(hubLabel)
-                        .font(.system(size: 12, weight: .semibold))
+            Button { hubOpen.toggle() } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.primary)
+                    Text(label)
+                        .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1)
-                        .frame(maxWidth: 140, alignment: .leading)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
+                    Spacer(minLength: 2)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9))
                         .foregroundColor(Theme.mutedFg)
                 }
+                .padding(.vertical, 6)
                 .padding(.horizontal, 8)
-                .frame(height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.radiusMd)
-                        .fill(Theme.secondary.opacity(0.4))
-                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.leading, 8)
-            .popover(isPresented: $hubOpen, arrowEdge: .bottom) {
-                HomeHubPopover(
-                    model: model, chrome: chrome,
-                    actions: WorkspaceActions(
-                        model: model, chrome: chrome,
-                        tree: WorkspaceTree(model.snap?.workspaces ?? []),
-                        landed: landed)
-                ) {
+            .background(
+                RoundedRectangle(cornerRadius: Theme.radiusMd)
+                    .fill(hubOpen ? Theme.secondary.opacity(0.5) : .clear)
+            )
+            .popover(isPresented: $hubOpen, arrowEdge: .top) {
+                HomeHubPopover(model: model, chrome: chrome, actions: actions) {
                     hubOpen = false
                 }
             }
-            Spacer()  // the tab strip lands here in P3
-        }
-        .frame(height: Theme.tabsRowHeight)
-        .background(WindowDragRegion())
-        .background(Theme.panel)
-        .overlay(Divider(), alignment: .bottom)
-    }
-}
-
-// MARK: - bookmarks row (§1.2) hosting the SlotsBar (§2.4)
-
-struct BookmarksRow: View {
-    @ObservedObject var chrome: ChromeModel
-    @ObservedObject var model: BoxModel
-    var openNote: (UInt64) -> Void = { _ in }
-    var enterWorkspace: (UInt64) -> Void = { _ in }
-
-    var body: some View {
-        SlotsBar(
-            model: model, chrome: chrome, openNote: openNote,
-            enterWorkspace: enterWorkspace
-        )
-        .frame(height: Theme.bookmarksRowHeight)
-        .background(WindowDragRegion())
-        .background(Theme.background)
-        .overlay(Divider(), alignment: .bottom)
-    }
-}
-
-// MARK: - activity bar (§1.3)
-
-struct ActivityBar: View {
-    @ObservedObject var chrome: ChromeModel
-    @ObservedObject var model: BoxModel
-    /// Surface switches go through the owner's gate: an open editor
-    /// flushes before its view unmounts. Never mutate surface directly.
-    var select: (Surface) -> Void = { _ in }
-    @Namespace private var indicator
-    @State private var pinMenuOpen = false
-
-    var body: some View {
-        VStack(spacing: 6) {
-            navChevrons
-            Divider().padding(.horizontal, 8)
-            railButton(.notes)
-            Divider().padding(.horizontal, 8)  // the altitude seam
-            railButton(.aiChat, warningBadge: 0)
-            railButton(.tasks)
-            railButton(.library)
-            railButton(
-                .inbox,
-                badge: model.snap?.unstructured.count ?? 0,
-                badgeHelp: "unsorted objects in the inbox")
-            railButton(.contacts)
-            railButton(.calendar)
-            Spacer()
-            projectPin
-            utilityButton("puzzlepiece") {}  // Browse extensions — as shipped, inert
-            utilityButton(darkMode ? "sun.max" : "moon") { toggleAppearance() }
-            utilityButton("gearshape") {
+            appearanceButton
+            headerButton("gearshape", "Settings (⌘,)") {
                 NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
             }
         }
-        .padding(.vertical, 10)
-        .frame(width: Theme.railWidth)
-        .background(WindowDragRegion())
-        .background(Theme.panel.opacity(0.9))
-        .overlay(Divider(), alignment: .trailing)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .overlay(Divider(), alignment: .top)
     }
 
-    private var navChevrons: some View {
-        HStack(spacing: 2) {
-            Button { chrome.goBack() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .frame(width: 18, height: 24)
-            .foregroundColor(
-                chrome.nav.canGoBack ? Theme.mutedFg : Theme.mutedFg.opacity(0.2))
-            .help("Back (⌥←)")
-            Button { chrome.goForward() } label: {
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .frame(width: 18, height: 24)
-            .foregroundColor(
-                chrome.nav.canGoForward ? Theme.mutedFg : Theme.mutedFg.opacity(0.2))
-            .help("Forward (⌥→)")
+    private var appearanceButton: some View {
+        headerButton(darkMode ? "sun.max" : "moon", "Toggle appearance") {
+            let next = darkMode ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
+            NSApp.appearance = next
+            UserDefaults.standard.set(darkMode ? "dark" : "light", forKey: "app.appearance")
         }
-    }
-
-    private func railButton(
-        _ surface: Surface, badge: Int = 0, badgeHelp: String = "", warningBadge: Int = -1
-    ) -> some View {
-        Button {
-            select(surface)
-        } label: {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: surface.symbol)
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 36, height: 36)
-                    .foregroundColor(
-                        chrome.surface == surface ? Theme.primary : Theme.mutedFg.opacity(0.7)
-                    )
-                    .scaleEffect(chrome.surface == surface ? 1.05 : 1)
-                if badge > 0 {
-                    SoftBadge(count: badge).offset(x: 4, y: -2).help("\(badge) \(badgeHelp)")
-                }
-                if warningBadge > 0 {
-                    WarningBadge(count: warningBadge).offset(x: 4, y: -2)
-                }
-            }
-            .background {
-                if chrome.surface == surface {
-                    // The one gliding indicator: a pill that slides
-                    // between icons instead of teleporting.
-                    RoundedRectangle(cornerRadius: Theme.radius)
-                        .fill(Theme.primary.opacity(0.1))
-                        .overlay(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(Theme.primary)
-                                .frame(width: 2, height: 16)
-                        }
-                        .matchedGeometryEffect(id: "rail", in: indicator)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .animation(Theme.glide, value: chrome.surface)
-        .help(surface.label)
-    }
-
-    private var projectPin: some View {
-        Button { pinMenuOpen.toggle() } label: {
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: "folder")
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 36, height: 36)
-                    .foregroundColor(
-                        chrome.pinnedProject != nil ? Theme.primary : Theme.mutedFg.opacity(0.7))
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.radius)
-                            .fill(
-                                chrome.pinnedProject != nil
-                                    ? Theme.primary.opacity(0.15) : .clear)
-                    )
-                if chrome.pinnedProject != nil {
-                    Circle().fill(Theme.primary).frame(width: 8, height: 8)
-                        .offset(x: -2, y: -2)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .help("Pin project")
-        .popover(isPresented: $pinMenuOpen, arrowEdge: .trailing) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("PIN PROJECT")
-                    .font(.system(size: 10, weight: .bold))
-                    .kerning(0.7)
-                    .foregroundColor(Theme.mutedFg)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
-                Button {
-                    chrome.pinnedProject = nil
-                    pinMenuOpen = false
-                } label: {
-                    Label("Show all", systemImage: "xmark")
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                ForEach(projects) { row in
-                    Button {
-                        chrome.pinnedProject = row.id
-                        pinMenuOpen = false
-                    } label: {
-                        HStack {
-                            Text(row.title).font(.system(size: 12)).lineLimit(1)
-                            Spacer()
-                            if chrome.pinnedProject == row.id {
-                                Image(systemName: "checkmark").font(.system(size: 10))
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                }
-                if projects.isEmpty {
-                    Text("No projects yet.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.mutedFg)
-                        .padding(10)
-                }
-            }
-            .padding(.bottom, 8)
-            .frame(width: 200, alignment: .leading)
-        }
-    }
-
-    private var projects: [EntityRow] {
-        (model.snap?.entities ?? []).filter { $0.kinds.contains("project") }
-    }
-
-    private func utilityButton(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .medium))
-                .frame(width: 36, height: 36)
-                .foregroundColor(Theme.mutedFg.opacity(0.7))
-        }
-        .buttonStyle(.plain)
     }
 
     private var darkMode: Bool {
         NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    }
-
-    private func toggleAppearance() {
-        let next = darkMode ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
-        NSApp.appearance = next
-        UserDefaults.standard.set(darkMode ? "dark" : "light", forKey: "app.appearance")
     }
 }
 
@@ -563,12 +439,16 @@ struct ActivityBar: View {
 
 struct PaneDivider: View {
     let pct: Binding<Double>
-    let open: Binding<Bool>
+    /// Absent for the left panel: it collapses by the header button now,
+    /// not by drag — the handle only resizes.
+    var open: Binding<Bool> = .constant(true)
     let total: CGFloat
     let minPct: Double
     let maxPct: Double
     /// Left panel grows rightward; the right panel grows leftward.
     let leadingEdge: Bool
+    /// Drag-to-collapse (right inspector); false = resize only (left).
+    var collapsible: Bool = true
     let persist: () -> Void
 
     @State private var startPct: Double?
@@ -604,7 +484,7 @@ struct PaneDivider: View {
                         startPct = base
                         let delta = Double(drag.translation.width / total) * 100
                         let raw = base + (leadingEdge ? delta : -delta)
-                        if raw < minPct / 2 {
+                        if collapsible && raw < minPct / 2 {
                             // Collapsible to 0 — persisted immediately:
                             // the collapse may unmount this very divider
                             // and cancel the gesture before onEnded.

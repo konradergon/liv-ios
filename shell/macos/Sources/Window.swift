@@ -429,50 +429,69 @@ struct WindowChrome: View {
             }
     }
 
+    /// No chrome rows: the whole window is sidebar · content · inspector.
+    /// (Decided divergence — the Claude-style chrome, interface.md 0.3.)
     private var chromeStack: some View {
-        VStack(spacing: 0) {
-            if chrome.focusMode {
-                // Focus mode: the title row shrinks to a drag strip.
-                Color.clear.frame(height: 8)
-            } else {
-                TitleRow(chrome: chrome)
-                if !chrome.surface.isGlobalTool {
-                    TabsRow(chrome: chrome, model: model) { onSuccess in
-                        closeEditor { ok in
-                            guard ok else { return }
-                            onSuccess()
-                            query = ""
-                            lens = .today
-                        }
-                    }
-                    BookmarksRow(
-                        chrome: chrome, model: model,
-                        openNote: { id in
-                            closeEditor { ok in
-                                guard ok else { return }
-                                if chrome.surface != .notes { chrome.surface = .notes }
-                                openEditor(id: id)
+        body3Pane
+            .overlay(alignment: .topLeading) {
+                // Collapsed or focused: the only way back to the sidebar
+                // floats top-left over the content, beside the lights.
+                if (!chrome.leftOpen || chrome.focusMode) {
+                    CollapsedControls(
+                        chrome: chrome,
+                        expand: {
+                            if chrome.focusMode { chrome.toggleFocus() }
+                            if !chrome.leftOpen {
+                                chrome.leftOpen = true
+                                chrome.persistPanes()
                             }
                         },
-                        enterWorkspace: { id in
-                            closeEditor { ok in
-                                guard ok else { return }
-                                chrome.activeWorkspace = id
-                                if chrome.surface != .notes { chrome.surface = .notes }
-                                chrome.recordNav(.init(surface: .notes, selection: nil))
-                            }
-                        })
+                        search: { chrome.switcherOpen = true })
                 }
             }
-            HStack(spacing: 0) {
-                if !chrome.focusMode {
-                    ActivityBar(chrome: chrome, model: model) { target in
-                        navigate(to: target)
+    }
+
+    /// The persistent left panel: header controls, the labeled surface
+    /// nav, the notes desk (Spaces tree etc.) when Notes is active, and
+    /// the workspace switcher pinned at the bottom.
+    private var leftPanel: some View {
+        VStack(spacing: 0) {
+            SidebarHeader(
+                chrome: chrome,
+                collapse: {
+                    chrome.leftOpen = false
+                    chrome.persistPanes()
+                },
+                search: { chrome.switcherOpen = true })
+            SurfaceNav(chrome: chrome, model: model) { target in
+                navigate(to: target)
+            }
+            .padding(.top, 2)
+            if chrome.surface == .notes {
+                Divider().padding(.top, 6)
+                AppSidebar(
+                    model: model, chrome: chrome, lens: $lens, query: $query,
+                    selection: $selection, searchFocused: $searchFocused,
+                    willNavigate: { onSuccess in
+                        closeEditor { ok in
+                            guard ok else { return }
+                            selection = nil
+                            onSuccess()
+                        }
+                    },
+                    openEntity: { id in
+                        closeEditor { ok in
+                            guard ok else { return }
+                            openEditor(id: id)
+                        }
                     }
-                }
-                body3Pane
+                )
+            } else {
+                Spacer(minLength: 0)
             }
+            WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
         }
+        .background(SidebarMaterial().ignoresSafeArea())
     }
 
     /// The workspace switcher (§2.7.3), above the content, below the
@@ -521,10 +540,10 @@ struct WindowChrome: View {
     private var eventHandlers: some View {
         Color.clear
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
-                closeEditor()
-                chrome.surface = .notes
-                chrome.leftOpen = true
-                searchFocused = true
+                // Search is the switcher now (the fake bar is gone); the
+                // real omnibox lands in P6.
+                if chrome.focusMode { chrome.toggleFocus() }
+                chrome.switcherOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
                 closeEditor()
@@ -597,41 +616,23 @@ struct WindowChrome: View {
             }
     }
 
-    /// The three-pane body: left sidebar (notes only) · center · right
-    /// inspector, resizable by percentage with Liv's clamps (§1.5).
+    /// sidebar · content · inspector. The sidebar is persistent across
+    /// every surface (nav lives in it); it hides only on manual collapse
+    /// or focus mode. The divider resizes width but no longer collapses
+    /// by drag — that is the header button's job now.
     private var body3Pane: some View {
         GeometryReader { geo in
             let total = geo.size.width
             HStack(spacing: 0) {
-                if chrome.surface == .notes && chrome.leftOpen && !chrome.focusMode {
-                    AppSidebar(
-                        model: model, chrome: chrome, lens: $lens, query: $query,
-                        selection: $selection, searchFocused: $searchFocused,
-                        willNavigate: { onSuccess in
-                            closeEditor { ok in
-                                guard ok else { return }
-                                selection = nil
-                                onSuccess()
-                            }
-                        },
-                        openEntity: { id in
-                            closeEditor { ok in
-                                guard ok else { return }
-                                openEditor(id: id)
-                            }
-                        }
-                    )
-                    .frame(width: max(total * chrome.leftPct / 100, 0))
-                }
-                if chrome.surface == .notes && !chrome.focusMode {
+                if chrome.leftOpen && !chrome.focusMode {
+                    leftPanel
+                        .frame(width: max(total * chrome.leftPct / 100, 0))
                     PaneDivider(
-                        pct: $chrome.leftPct, open: $chrome.leftOpen, total: total,
-                        minPct: 8, maxPct: chrome.leftLiveMax, leadingEdge: true
+                        pct: $chrome.leftPct, total: total,
+                        minPct: 12, maxPct: chrome.leftLiveMax, leadingEdge: true,
+                        collapsible: false
                     ) { chrome.persistPanes() }
                 }
-                // SurfaceHeaderSlot sits above [center | right] so the
-                // inspector flanks only the object (§1.5); it fills with
-                // the tab bars of later phases.
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 // The right divider outlives its panel: a drag-collapsed

@@ -273,6 +273,37 @@ Decided in 0.2, from the first mockup (design/window.html):
   transparent titlebar, no title text, the traffic lights floating
   over the sidebar, exactly as the mockup drew it.
 
+Decided before P3 — the Claude-style chrome (owner's call, superseding
+liv-ui-map.md §1's three-row anatomy for lotus specifically):
+
+- **No chrome rows.** Liv's title row, tabs row, and bookmarks row are
+  gone. The window is three regions only: the persistent left panel,
+  the content, and the right inspector. The traffic lights float over
+  the panel's top.
+- **The panel header** carries two small controls beside the lights —
+  collapse and search — replacing the drag-to-collapse gesture and the
+  window-centred fake search field. Back/forward sit at the header's
+  trailing edge. When the panel is collapsed (or in focus mode) those
+  controls float top-left over the content, the only way back.
+- **The rail is a labeled nav list** inside the panel: icon + name (a
+  trailing slot for a badge, or a keycap once a surface earns one),
+  the Claude sidebar idiom — not a 44pt icon strip.
+- **The sidebar is persistent.** Every surface — Notes, Tasks,
+  Calendar, the tools — renders in the content pane beside it; nav is
+  always reachable. This drops Liv's "tools go full-bleed and hide the
+  sidebar" rule deliberately.
+- **The workspace switcher is a footer** at the panel's bottom (where
+  the account row sits in Claude), its popover rising above; this
+  retires the HomeHub tab row.
+- **The bookmarks strip is dropped.** Bookmarked objects live in the
+  "Saved" view of the sidebar view-picker, and will fold into the
+  search palette (P6). No dedicated row.
+- The tab strip (P3) will land as the content pane's own top bar, not
+  a full-width chrome row.
+
+The reference stays liv-ui-map.md; where this list and §1 disagree,
+this list wins for lotus.
+
 Decided with the first editor:
 
 - **The editor is the one renderer that holds state** — exactly one
