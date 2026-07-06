@@ -149,6 +149,63 @@ fn torn_tail_is_tolerated() {
 }
 
 #[test]
+fn the_box_admits_one_writer() {
+    let path = temp_path("locked");
+    let first = Session::open(&path).unwrap();
+
+    // A second opener is refused outright: it would snapshot the same log
+    // and fork the id space. This is the agent + CLI case.
+    match Session::open(&path) {
+        Err(PersistError::Locked) => {}
+        other => panic!("expected Locked, got {other:?}"),
+    }
+
+    // The lock rides the session: dropping it frees the box.
+    drop(first);
+    assert!(Session::open(&path).is_ok());
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_tail_torn_at_the_newline_is_dropped() {
+    let path = temp_path("newline_torn");
+    let (a, b);
+    {
+        let mut s = Session::open(&path).unwrap();
+        a = s.allocate_id();
+        b = s.allocate_id();
+        s.commit(vec![Command::Create { entity: a }], "first", Author::User)
+            .unwrap();
+        s.commit(vec![Command::Create { entity: b }], "second", Author::User)
+            .unwrap();
+    }
+
+    // Simulate a crash between the record write and the newline write:
+    // the last record is complete JSON but the newline never landed.
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes.last(), Some(&b'\n'));
+    std::fs::write(&path, &bytes[..bytes.len() - 1]).unwrap();
+
+    // The commit for `b` never returned, so dropping it is the contract.
+    // Keeping it would merge it with the next append into one line.
+    let mut s = Session::open(&path).unwrap();
+    assert_eq!(s.store().history().len(), 1);
+    assert!(s.store().get(b).is_none());
+
+    // And the log heals: the next append starts on a clean boundary.
+    let c = s.allocate_id();
+    s.commit(vec![Command::Create { entity: c }], "after", Author::User)
+        .unwrap();
+    drop(s);
+    let s = Session::open(&path).unwrap();
+    assert_eq!(s.store().history().len(), 2);
+    assert!(s.store().get(c).is_some());
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn merge_and_redirect_survive_restart() {
     let path = temp_path("merge");
     let (survivor, loser, meeting);

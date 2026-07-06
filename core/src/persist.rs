@@ -8,8 +8,8 @@
 //! backend (e.g. SQLite) can replace the file with no change to the core,
 //! because the core never sees bytes, only `Transaction`s.
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write as _};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{self, Read as _, Write as _};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,9 @@ pub enum PersistError {
     /// The log is malformed before its final record — real corruption, not
     /// a torn tail from a crash mid-append.
     Corrupt(String),
+    /// Another process holds the box open. One writer at a time: a second
+    /// session would fork the id space from its own stale snapshot.
+    Locked,
     /// A prior write to disk failed. The session is fail-stopped so it can
     /// never append a later record onto a gap and corrupt the log.
     Poisoned,
@@ -49,6 +52,7 @@ impl std::fmt::Display for PersistError {
                 write!(f, "log version {v} is newer than {LOG_VERSION}")
             }
             PersistError::Corrupt(m) => write!(f, "corrupt log: {m}"),
+            PersistError::Locked => write!(f, "the box is open in another process"),
             PersistError::Poisoned => write!(f, "session poisoned by an earlier write failure"),
         }
     }
@@ -70,6 +74,7 @@ impl From<StoreError> for PersistError {
 
 /// The append-only log file, opened for appending. Owns nothing but the
 /// handle and the guarantee that every `append` is on disk before it returns.
+#[derive(Debug)]
 struct FileLog {
     file: File,
 }
@@ -92,6 +97,7 @@ impl FileLog {
 /// here so the transaction it produces is appended to disk before the call
 /// returns. This is the whole persistence seam: the core stays pure, and the
 /// wiring that makes it durable lives in exactly one place.
+#[derive(Debug)]
 pub struct Session {
     store: Store,
     log: FileLog,
@@ -105,11 +111,25 @@ impl Session {
     /// the final record is an error.
     pub fn open(path: impl AsRef<Path>) -> Result<Session, PersistError> {
         let path = path.as_ref();
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(e.into()),
-        };
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)?;
+
+        // One writer at a time, enforced before the first byte is read:
+        // everything in memory is a snapshot of the log at open, so a
+        // second session would allocate the same ids and seqs from its own
+        // stale copy and brick the log for every future launch. The lock
+        // rides the file and releases when the session drops.
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Err(PersistError::Locked),
+            Err(TryLockError::Error(e)) => return Err(e.into()),
+        }
+
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
 
         let fresh = bytes.is_empty();
         let (transactions, good_len) = if fresh {
@@ -117,12 +137,6 @@ impl Session {
         } else {
             parse(&bytes)?
         };
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(path)?;
 
         if fresh {
             let header = serde_json::to_string(&Header { lotus_log: LOG_VERSION })
@@ -255,6 +269,13 @@ fn parse(bytes: &[u8]) -> Result<(Vec<Transaction>, u64), PersistError> {
         }
         match serde_json::from_str::<Transaction>(record) {
             Ok(tx) => {
+                // A record without its newline never finished its append —
+                // the commit never returned. Torn at the boundary, dropped
+                // like any torn tail; keeping it would merge it with the
+                // next append into one unparseable line.
+                if i == lines.len() - 1 && !line.ends_with('\n') {
+                    break;
+                }
                 transactions.push(tx);
                 good_len += line.len() as u64;
             }

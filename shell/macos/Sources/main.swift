@@ -25,7 +25,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let path = home + "/Library/Application Support/lotus/lotus.log"
         session = lotus_open(path)
         guard session != nil else {
-            NSLog("lotus: could not open the box at %@", path)
+            let alert = NSAlert()
+            alert.messageText = "lotus cannot open its box"
+            alert.informativeText =
+                "Another copy of lotus may already be running, "
+                + "or the log at \(path) is unreadable."
+            alert.runModal()
             NSApp.terminate(nil)
             return
         }
@@ -98,7 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     @objc func togglePanel() {
         if panel.isVisible {
-            hidePanel()
+            if panel.isKeyWindow {
+                hidePanel()  // the draft survives; only Esc and Enter clear
+            } else {
+                showPanel()  // refocus a lingering panel instead of wiping it
+            }
         } else {
             showPanel()
         }
@@ -115,15 +124,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         panel.makeFirstResponder(field)
     }
 
+    /// Hiding never clears: a draft survives every hide and reappears on
+    /// the next summon. Discarding is explicit — Esc, or a completed commit.
     private func hidePanel() {
-        field.stringValue = ""
         panel.orderOut(nil)
+    }
+
+    private func discardAndHide() {
+        field.stringValue = ""
+        hidePanel()
     }
 
     @objc private func commit() {
         let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty {
-            hidePanel()
+            discardAndHide()
             return
         }
         let id = lotus_capture(session, text)
@@ -132,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             NSSound.beep()
             return
         }
-        hidePanel()
+        discardAndHide()
     }
 
     /// Esc closes; the draft is discarded deliberately, by the user.
@@ -140,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
     ) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            hidePanel()
+            discardAndHide()
             return true
         }
         return false

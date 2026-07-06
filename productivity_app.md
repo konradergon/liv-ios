@@ -748,6 +748,12 @@ recoverable by hand if the program ever dies. A hardened store (SQLite the
 obvious candidate) can replace the file with no change above it, the day
 durability or concurrency is *measured* to need it — not before.
 
+The box admits one writer at a time.
+A second process is refused at open —
+two snapshots of one log would fork the id space
+and brick the box for every future launch.
+Shared reading waits for a measured need.
+
 Undo appends.
 
 Reversing a transaction writes its inverse to the log;
