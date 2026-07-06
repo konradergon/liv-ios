@@ -1,0 +1,14 @@
+[package]
+name = "lotus-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "lotus"
+path = "src/main.rs"
+
+[dependencies]
+lotus-core = { path = "../core" }
+lotus-services = { path = "../services" }
+lotus-views = { path = "../views" }
+chrono = "0.4"

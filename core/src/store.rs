@@ -129,6 +129,13 @@ impl Store {
         self.entities.get(&self.resolve(id))
     }
 
+    /// Read-only iteration over every entity, in no particular order.
+    /// The query layer above filters and sorts; an index replaces this
+    /// scan only when a measured query hurts.
+    pub fn entities(&self) -> impl Iterator<Item = &Entity> {
+        self.entities.values()
+    }
+
     /// Everything pointing at this entity, through any property or span —
     /// including references that arrive via redirects.
     pub fn backlinks(&self, target: Id) -> Vec<Backlink> {
