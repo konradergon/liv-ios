@@ -68,13 +68,15 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         Some((&"accept", target)) => accept(&mut session, target),
         Some((&"reject", target)) => reject(&mut session, target),
         Some((&"name", rest)) => name(&mut session, rest),
+        Some((&"set", rest)) => set(&mut session, rest),
         Some((&"history", _)) => {
             history(&session);
             Ok(())
         }
         _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
-                  inbox | accept ID [K] | reject ID [K] | name ID TEXT... | history"
+                  inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
+                  set ID PROP VALUE... | history"
             .into()),
     }
 }
@@ -118,6 +120,7 @@ fn civil_today() -> DateTime {
 
 /// Today: the orientation surface, v0 — a dedicated list built from the
 /// one lens that exists. Board-or-list stays open until daily use decides.
+/// The sections come from services, so every shell shows the same morning.
 fn today(session: &Session) {
     let store = session.store();
     let list_config = Config {
@@ -125,60 +128,143 @@ fn today(session: &Session) {
         columns: vec![],
     };
 
-    if let Some(due) = lotus_services::property_id(store, "due") {
-        let now = Local::now();
-        let tonight = DateTime::at(now.year(), now.month(), now.day(), 23, 59);
-        let due_now = lotus_services::run(
-            store,
-            &Query {
-                constraints: vec![Constraint {
-                    property: due,
-                    op: Op::AtMost(Value::DateTime(tonight)),
-                }],
-                sort: Some(Sort {
-                    property: due,
-                    descending: false,
-                }),
-                ..Query::default()
-            },
-        );
-        if !due_now.is_empty() {
-            println!("due through today:");
-            print_table(&render(store, &due_now, &list_config));
-            println!();
-        }
-
-        let scraps = lotus_services::run(
-            store,
-            &Query {
-                constraints: vec![
-                    Constraint {
-                        property: props::CONTENT,
-                        op: Op::Exists,
-                    },
-                    Constraint {
-                        property: due,
-                        op: Op::Missing,
-                    },
-                ],
-                sort: Some(Sort {
-                    property: props::CREATED,
-                    descending: true,
-                }),
-                ..Query::default()
-            },
-        );
-        if !scraps.is_empty() {
-            println!("captured, unstructured:");
-            print_table(&render(store, &scraps, &list_config));
-            println!();
-        }
+    let sections = lotus_services::today_sections(store, civil_today());
+    if !sections.due.is_empty() {
+        println!("due through today:");
+        print_table(&render(store, &sections.due, &list_config));
+        println!();
+    }
+    if !sections.unstructured.is_empty() {
+        println!("captured, unstructured:");
+        print_table(&render(store, &sections.unstructured, &list_config));
+        println!();
     }
 
     match store.pending().len() {
         0 => {}
         1 => println!("1 proposal waiting — lotus inbox"),
         n => println!("{n} proposals waiting — lotus inbox"),
+    }
+}
+
+/// Set one property to one value: replace-the-cell semantics, one
+/// transaction, one undo step. The value is parsed by the property's own
+/// declared kind — the definition entity says what its cells hold.
+fn set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (id_arg, rest) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
+    let (prop_name, words) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
+    let id: Id = id_arg
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| format!("not an entity id: {id_arg}"))?;
+    if words.is_empty() {
+        return Err("usage: lotus set ID PROP VALUE...".into());
+    }
+    let raw = words.join(" ");
+    let store = session.store();
+    let entity = store.get(id).ok_or(format!("no entity #{id}"))?;
+    let property = property_by_name(store, prop_name)?;
+
+    let kind = match store.get(property).and_then(|p| p.get(props::VALUE_KIND)) {
+        Some(Value::Text(kind)) => kind.clone(),
+        _ => return Err(format!("{prop_name} declares no value kind")),
+    };
+    let value = parse_value(store, property, &kind, &raw)?;
+
+    let mut commands: Vec<lotus_core::Command> = entity
+        .all(property)
+        .cloned()
+        .map(|old| lotus_core::Command::RemoveCell {
+            entity: id,
+            cell: lotus_core::Cell { property, value: old },
+        })
+        .collect();
+    commands.push(lotus_core::Command::AddCell {
+        entity: id,
+        cell: lotus_core::Cell { property, value },
+    });
+    session
+        .commit(commands, format!("set {prop_name}"), Author::User)
+        .map_err(|e| e.to_string())?;
+    println!("#{id} {prop_name} = {raw}");
+    Ok(())
+}
+
+fn parse_value(
+    store: &lotus_core::Store,
+    property: Id,
+    kind: &str,
+    raw: &str,
+) -> Result<Value, String> {
+    match kind {
+        "text" => Ok(Value::text(raw)),
+        "richtext" => Ok(Value::RichText(lotus_core::RichText {
+            spans: vec![lotus_core::Span::Text(raw.to_string())],
+        })),
+        "number" => raw
+            .parse()
+            .map(Value::Number)
+            .map_err(|_| format!("not a number: {raw}")),
+        "bool" => match raw {
+            "true" | "yes" => Ok(Value::Bool(true)),
+            "false" | "no" => Ok(Value::Bool(false)),
+            _ => Err(format!("not a bool: {raw}")),
+        },
+        "datetime" => parse_civil(raw).ok_or(format!("not a date: {raw} (yyyy-mm-dd [hh:mm])")),
+        "reference" => {
+            let id: Id = raw
+                .trim_start_matches('#')
+                .parse()
+                .map_err(|_| format!("not an entity id: {raw}"))?;
+            store
+                .get(id)
+                .map(|_| Value::Reference(id))
+                .ok_or(format!("no entity #{id}"))
+        }
+        "select" => {
+            let wanted = raw.to_lowercase();
+            store
+                .get(property)
+                .into_iter()
+                .flat_map(|def| def.all(props::OPTIONS))
+                .find_map(|option| match option {
+                    Value::Reference(target) => match store.get(*target)?.get(props::NAME) {
+                        Some(Value::Text(name)) if name.to_lowercase() == wanted => {
+                            Some(Value::Select(*target))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .ok_or(format!("no option named {raw}"))
+        }
+        other => Err(format!("cannot parse a {other} value yet")),
+    }
+}
+
+fn parse_civil(raw: &str) -> Option<Value> {
+    let (date, time) = match raw.split_once(' ') {
+        Some((d, t)) => (d, Some(t)),
+        None => (raw, None),
+    };
+    let mut ymd = date.split('-');
+    let year: i32 = ymd.next()?.parse().ok()?;
+    let month: u32 = ymd.next()?.parse().ok()?;
+    let day: u32 = ymd.next()?.parse().ok()?;
+    if ymd.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    match time {
+        None => Some(Value::DateTime(DateTime::date(year, month, day))),
+        Some(t) => {
+            let (h, m) = t.split_once(':')?;
+            let hour: u32 = h.parse().ok()?;
+            let minute: u32 = m.parse().ok()?;
+            if hour > 23 || minute > 59 {
+                return None;
+            }
+            Some(Value::DateTime(DateTime::at(year, month, day, hour, minute)))
+        }
     }
 }
 

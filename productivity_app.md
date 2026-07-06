@@ -1603,13 +1603,28 @@ Decided at milestone 5, likewise recorded where they land:
 - Today v0 is a dedicated list; board-or-list stays open until daily use
   rules (How It Is Used, Build Order)
 
+Decided at milestone 6, likewise recorded where they land:
+
+- the recurrence grammar, v0: "every day", "every week", "every month",
+  "every <weekday>" — anchored to the series' own due date; monthly
+  clamps to short months; an unparseable rule recurs never (worked
+  example 2)
+- the expansion horizon: the asked window is the horizon, capped at a
+  year — an endless series never answers an unbounded question (Query,
+  worked example 2)
+- an exception is an ordinary entity: exception-of references the
+  series, its own due names the date it covers, and expansion skips
+  what an exception covers (worked example 2)
+- a series' past occurrences accumulate no debt: Today shows what recurs
+  today, never a pile of missed Tuesdays (How It Is Used)
+
 Still deliberately undecided.
 Each is decided when its feature is built, not before:
 
 - Query language syntax and expressive limits — traversal depth and aggregation.
   V0 is a plain conjunction of (property, operator, value).
-  The horizon for expanding an endless series moved to milestone 6,
-  where the calendar forces it.
+  The horizon for expanding an endless series was decided at
+  milestone 6: the asked window, capped at a year.
 - Shared select vocabularies — when one property's options diverge by use
   (task status vs invoice status): split, or union.
   The global namespace's one hard bill, paid once.
@@ -1728,7 +1743,7 @@ Queries match against the composite of series and exception.
 One series, few exceptions, no duplication.
 
 The horizon for expanding an endless series
-is decided at milestone 6, where the calendar forces it (see Build Order).
+was decided at milestone 6: the asked window, capped at a year.
 
 ## 3. A task inside a note
 

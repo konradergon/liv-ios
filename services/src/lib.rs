@@ -7,6 +7,8 @@
 //! milestone that needs them.
 
 pub mod clerk;
+mod dates;
+pub mod recurrence;
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -57,7 +59,92 @@ pub fn capture(
 /// day reuse them as its gazetteer. The first run asks nothing.
 pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_bootstrap(session)?;
-    seed_starter_library(session)
+    seed_starter_library(session)?;
+    seed_recurrence(session)
+}
+
+/// Milestone 6's vocabulary, additive like the starter library: the
+/// recurrence rule (a text cell on the series) and exception-of (the
+/// reference an exception entity carries). Old boxes gain both on open.
+fn seed_recurrence(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "recurrence").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    for (name, kind) in [("recurrence", "text"), ("exception-of", "reference")] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+    }
+    session.commit(commands, "recurrence properties", Author::System)?;
+    Ok(())
+}
+
+/// What Today shows, composed once for every shell: entities due through
+/// tonight (recurring series excluded — their past is not a debt), plus
+/// any series occurring today, plus the still-unstructured captures.
+pub struct TodaySections {
+    pub due: Vec<Id>,
+    pub unstructured: Vec<Id>,
+}
+
+pub fn today_sections(store: &Store, today: DateTime) -> TodaySections {
+    let Some(due) = property_id(store, "due") else {
+        return TodaySections { due: Vec::new(), unstructured: Vec::new() };
+    };
+    let recurrence_prop = property_id(store, "recurrence");
+
+    let ymd = today.civil / 10_000;
+    let tonight = DateTime {
+        civil: ymd * 10_000 + 2359,
+        date_only: false,
+    };
+
+    let mut constraints = vec![Constraint {
+        property: due,
+        op: Op::AtMost(Value::DateTime(tonight)),
+    }];
+    if let Some(recurrence) = recurrence_prop {
+        constraints.push(Constraint {
+            property: recurrence,
+            op: Op::Missing,
+        });
+    }
+    let mut due_now = run(
+        store,
+        &Query {
+            constraints,
+            sort: Some(Sort { property: due, descending: false }),
+            ..Query::default()
+        },
+    );
+
+    // A series that recurs today joins the due list as itself.
+    for occurrence in recurrence::occurrences(store, today, today) {
+        if !due_now.contains(&occurrence.series) {
+            due_now.push(occurrence.series);
+        }
+    }
+
+    let unstructured = run(
+        store,
+        &Query {
+            constraints: vec![
+                Constraint { property: props::CONTENT, op: Op::Exists },
+                Constraint { property: due, op: Op::Missing },
+            ],
+            sort: Some(Sort { property: props::CREATED, descending: true }),
+            ..Query::default()
+        },
+    );
+
+    TodaySections { due: due_now, unstructured }
 }
 
 fn seed_bootstrap(session: &mut Session) -> Result<(), PersistError> {

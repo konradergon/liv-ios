@@ -42,11 +42,17 @@ struct ProposalRow: Codable, Identifiable, Hashable {
     let author: String
 }
 
+struct OccurrenceRow: Codable, Hashable {
+    let series: UInt64
+    let civil: Int64
+}
+
 struct Snapshot: Codable {
     let today: [UInt64]
     let unstructured: [UInt64]
     let everything: [UInt64]
     let dated: [UInt64]
+    let occurrences: [OccurrenceRow]
     let inbox: [ProposalRow]
     let entities: [EntityRow]
 }
@@ -633,8 +639,16 @@ struct CalendarView: View {
         let range = cal.range(of: .day, in: .month, for: first)!
         let lead = cal.component(.weekday, from: first) - 1
         let monthKey = Int64(parts.year! * 100 + parts.month!)
-        let byDay = Dictionary(grouping: model.rows(model.snap?.dated ?? [])) {
+        var byDay = Dictionary(grouping: model.rows(model.snap?.dated ?? [])) {
             row -> Int64 in (row.due ?? 0) / 10_000
+        }
+        // Virtual occurrences land beside the plain dates: the series
+        // entity is drawn on every day its rule names, computed by the
+        // engine so every view agrees.
+        for occurrence in model.snap?.occurrences ?? [] {
+            if let series = model.entity(occurrence.series) {
+                byDay[occurrence.civil / 10_000, default: []].append(series)
+            }
         }
 
         return ScrollView {

@@ -82,6 +82,12 @@ struct EntityRow {
 }
 
 #[derive(Serialize)]
+struct OccurrenceRow {
+    series: Id,
+    civil: i64,
+}
+
+#[derive(Serialize)]
 struct ProposalRow {
     entity: Id,
     /// 1-based position among this entity's proposals, in sweep order —
@@ -97,6 +103,9 @@ struct Snapshot {
     unstructured: Vec<Id>,
     everything: Vec<Id>,
     dated: Vec<Id>,
+    /// Virtual: this month's expansion of every recurring series,
+    /// computed in services — never stored, same answer for every view.
+    occurrences: Vec<OccurrenceRow>,
     inbox: Vec<ProposalRow>,
     entities: Vec<EntityRow>,
 }
@@ -131,44 +140,41 @@ fn build_snapshot(store: &Store) -> Snapshot {
 
     let everything = run(store, &Query::default());
 
-    let (today, unstructured, dated) = match due_prop {
-        None => (Vec::new(), Vec::new(), Vec::new()),
+    let sections = lotus_services::today_sections(store, civil_today());
+    let (today, unstructured) = (sections.due, sections.unstructured);
+
+    // The calendar's plain dates: everything with a due that is not a
+    // recurring series — those arrive as occurrences instead.
+    let dated = match due_prop {
+        None => Vec::new(),
         Some(due) => {
-            let now = Local::now();
-            let tonight = DateTime::at(now.year(), now.month(), now.day(), 23, 59);
-            let today = run(
+            let mut constraints = vec![Constraint { property: due, op: Op::Exists }];
+            if let Some(recurrence) = property_id(store, "recurrence") {
+                constraints.push(Constraint { property: recurrence, op: Op::Missing });
+            }
+            run(
                 store,
                 &Query {
-                    constraints: vec![Constraint {
-                        property: due,
-                        op: Op::AtMost(Value::DateTime(tonight)),
-                    }],
+                    constraints,
                     sort: Some(Sort { property: due, descending: false }),
                     ..Query::default()
                 },
-            );
-            let unstructured = run(
-                store,
-                &Query {
-                    constraints: vec![
-                        Constraint { property: props::CONTENT, op: Op::Exists },
-                        Constraint { property: due, op: Op::Missing },
-                    ],
-                    sort: Some(Sort { property: props::CREATED, descending: true }),
-                    ..Query::default()
-                },
-            );
-            let dated = run(
-                store,
-                &Query {
-                    constraints: vec![Constraint { property: due, op: Op::Exists }],
-                    sort: Some(Sort { property: due, descending: false }),
-                    ..Query::default()
-                },
-            );
-            (today, unstructured, dated)
+            )
         }
     };
+
+    // This month's window is the horizon the calendar asks for.
+    let now = Local::now();
+    let month_first = DateTime::date(now.year(), now.month(), 1);
+    let month_last = DateTime::date(
+        now.year(),
+        now.month(),
+        last_day_of_month(now.year(), now.month()),
+    );
+    let occurrences = lotus_services::recurrence::occurrences(store, month_first, month_last)
+        .into_iter()
+        .map(|o| OccurrenceRow { series: o.series, civil: o.date.civil })
+        .collect();
 
     let entities = everything
         .iter()
@@ -240,7 +246,16 @@ fn build_snapshot(store: &Store) -> Snapshot {
         })
         .collect();
 
-    Snapshot { today, unstructured, everything, dated, inbox, entities }
+    Snapshot { today, unstructured, everything, dated, occurrences, inbox, entities }
+}
+
+fn last_day_of_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        _ => 28,
+    }
 }
 
 fn reference_name(store: &Store, id: Id) -> String {
