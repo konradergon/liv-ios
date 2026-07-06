@@ -426,6 +426,9 @@ struct WindowChrome: View {
                 chrome.recordNav(.init(surface: chrome.surface, selection: nil))
                 // The switcher owns the keyboard while open.
                 CommandRegistry.shared.overlayActive = { chrome.switcherOpen }
+                // A stored left+right that fit an old Notes layout must
+                // not launch a tool surface into a negative center.
+                chrome.reconcilePanes()
             }
     }
 

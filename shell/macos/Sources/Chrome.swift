@@ -142,18 +142,31 @@ final class ChromeModel: ObservableObject {
         UserDefaults.standard.set(rightOpen, forKey: "app.rightPanel.open.v1")
     }
 
+    /// True when the left panel is actually on screen. The sidebar is
+    /// persistent across every surface now (Claude-style chrome), so
+    /// this no longer keys on the surface — only on collapse / focus.
+    var leftShown: Bool { leftOpen && !focusMode }
+
     /// The right panel's live max is capped so a right-handle drag can
-    /// never cascade into and shrink the left sidebar (§1.5) — against
-    /// the LIVE left width: on a vault-wide tool the left pane is not
-    /// rendered, whatever the persisted preference says.
+    /// never cascade into and shrink the left sidebar — against the
+    /// LIVE left width, whatever surface is showing.
     var rightLiveMax: Double {
-        min(50, 100 - 30 - (surface == .notes && leftOpen ? leftPct : 0))
+        min(50, 100 - 30 - (leftShown ? leftPct : 0))
     }
 
     /// The mirror clamp for the left handle: center ≥ 30 holds from
     /// both sides.
     var leftLiveMax: Double {
-        min(60, 100 - 30 - (rightOpen ? rightPct : 0))
+        min(60, 100 - 30 - (rightOpen && !focusMode ? rightPct : 0))
+    }
+
+    /// Re-clamp persisted widths against the live maxima at launch: a
+    /// stored left+right that once fit a Notes layout (where the left
+    /// panel was hidden on tools) must not launch a tool surface into a
+    /// negative center.
+    func reconcilePanes() {
+        leftPct = min(max(leftPct, 12), leftLiveMax)
+        rightPct = min(max(rightPct, 10), rightLiveMax)
     }
 
     /// Nav mutations repaint the chevrons: the history itself is not
@@ -279,14 +292,17 @@ struct CollapsedControls: View {
     let search: () -> Void
 
     var body: some View {
+        // A compact leading cluster, NOT a full-width strip: the drag
+        // region must not float over the content's top edge and steal
+        // clicks from whatever a surface renders there.
         HStack(spacing: 2) {
             if !chrome.isFullscreen {
                 Color.clear.frame(width: Theme.trafficLightSpacer)
             }
             headerButton("sidebar.left", "Expand sidebar (⌘⇧\\)", expand)
             headerButton("magnifyingglass", "Search (⌘O)", search)
-            Spacer(minLength: 0)
         }
+        .fixedSize(horizontal: true, vertical: false)
         .frame(height: 44)
         .background(WindowDragRegion())
     }
