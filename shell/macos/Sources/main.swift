@@ -31,6 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private lazy var model = BoxModel(path: boxPath)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The rail's light/dark toggle persists an appearance override.
+        switch UserDefaults.standard.string(forKey: "app.appearance") {
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
         buildMenu()
         makeStatusItem()
         makePanel()
@@ -75,18 +81,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private func makeWindow() {
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 740),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
         w.title = "lotus"
-        // Unified chrome: the sidebar runs to the top, the traffic lights
-        // float over it — the window-chrome decision, made here.
+        // Liv's chrome: hidden title, traffic lights overlaying the
+        // app's own title row, which reserves the 72pt spacer (§1.1).
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isReleasedWhenClosed = false
+        w.isMovableByWindowBackground = true
         w.setFrameAutosaveName("lotus.main")
-        w.contentViewController = NSHostingController(rootView: MainWindow(model: model))
+        w.contentViewController = NSHostingController(rootView: WindowChrome(model: model))
         w.center()
         w.makeKeyAndOrderFront(nil)
         window = w
@@ -145,14 +152,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         NotificationCenter.default.post(name: .lotusNewNote, object: nil)
     }
 
-    /// The minimal menu: Quit, a working Edit menu for the text fields,
-    /// and Close. Not a settings surface — there is no settings surface.
+    /// The native menu, Liv's shape (§2.1): custom items carry NO
+    /// accelerators — the app's own key dispatch owns shortcuts, and a
+    /// native accelerator would double-fire.
     private func buildMenu() {
         let main = NSMenu()
 
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Hide lotus", action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(
+            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(
+            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
             withTitle: "Quit lotus", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
@@ -161,15 +180,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let fileItem = NSMenuItem()
         main.addItem(fileItem)
         let file = NSMenu(title: "File")
-        let capture = file.addItem(
-            withTitle: "Capture", action: #selector(focusCapture), keyEquivalent: "n")
-        capture.target = self
-        // Birth of a note: created typed and nameless, straight into
-        // renaming. Capture stays the scrap door.
+        file.autoenablesItems = false
         let note = file.addItem(
-            withTitle: "New Note", action: #selector(newNote), keyEquivalent: "n")
-        note.keyEquivalentModifierMask = [.command, .shift]
+            withTitle: "New Note", action: #selector(newNote), keyEquivalent: "")
         note.target = self
+        let daily = file.addItem(
+            withTitle: "Daily Note", action: nil, keyEquivalent: "")
+        daily.isEnabled = false  // arrives with P11
         fileItem.submenu = file
 
         let editItem = NSMenuItem()
@@ -183,33 +200,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             withTitle: "Undo", action: #selector(undo(_:)), keyEquivalent: "z")
         undoItem.target = self
         edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
-        // The box's undo, distinct from text-field undo: reverses the last
-        // committed transaction, whoever authored it.
-        let undoChange = edit.addItem(
-            withTitle: "Undo Last Change", action: #selector(undoLastChange),
-            keyEquivalent: "z")
-        undoChange.keyEquivalentModifierMask = [.command, .option]
-        undoChange.target = self
         edit.addItem(NSMenuItem.separator())
         edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        edit.addItem(NSMenuItem.separator())
-        let find = edit.addItem(
-            withTitle: "Find", action: #selector(focusSearch), keyEquivalent: "f")
-        find.target = self
         editItem.submenu = edit
 
-        let windowItem = NSMenuItem()
-        main.addItem(windowItem)
-        let windowMenu = NSMenu(title: "Window")
-        windowMenu.addItem(
-            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowItem.submenu = windowMenu
+        let viewItem = NSMenuItem()
+        main.addItem(viewItem)
+        let view = NSMenu(title: "View")
+        view.autoenablesItems = false
+        let home = view.addItem(withTitle: "Home", action: #selector(goHome), keyEquivalent: "")
+        home.target = self
+        let dashboard = view.addItem(withTitle: "Dashboard", action: nil, keyEquivalent: "")
+        dashboard.isEnabled = false  // Mission Control arrives with P16
+        let inbox = view.addItem(withTitle: "Inbox", action: #selector(goInbox), keyEquivalent: "")
+        inbox.target = self
+        view.addItem(NSMenuItem.separator())
+        let search = view.addItem(
+            withTitle: "Search…", action: #selector(focusSearch), keyEquivalent: "")
+        search.target = self
+        let palette = view.addItem(
+            withTitle: "Command Palette…", action: nil, keyEquivalent: "")
+        palette.isEnabled = false  // arrives with P6
+        viewItem.submenu = view
 
         NSApp.mainMenu = main
+    }
+
+    @objc private func goHome() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusGoHome, object: nil)
+    }
+
+    @objc private func goInbox() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusGoInbox, object: nil)
     }
 
     // MARK: menu bar

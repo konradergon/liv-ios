@@ -359,79 +359,289 @@ enum Lens: String, CaseIterable, Identifiable {
 
 // MARK: - the window
 
-struct MainWindow: View {
+struct WindowChrome: View {
     @ObservedObject var model: BoxModel
+    @StateObject private var chrome = ChromeModel()
+    @ObservedObject private var dialogs = Dialogs.shared
     @State private var lens: Lens = .today
     @State private var query = ""
     @State private var selection: UInt64?
     /// Editing is orthogonal state, like search: non-nil overrides the
-    /// lens in the content region. The sidebar highlight persists.
+    /// desk in the notes surface.
     @State private var editor: EditorModel?
     @State private var returnMonitor: Any?
+    @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
-            Sidebar(
-                model: model, lens: $lens, query: $query,
-                searchFocused: $searchFocused
-            ) {
-                // Lens switches land on a fresh surface: close the editor
-                // and drop the old selection so Enter cannot open
-                // something the new lens does not show.
-                closeEditor { ok in
-                    if ok { selection = nil }
+        chromeStack
+            .frame(minWidth: 980, minHeight: 620)
+            .background(Theme.background)
+            .overlay(alignment: .topTrailing) {
+                if chrome.focusMode { FocusChip(chrome: chrome) }
+            }
+            .overlay(faultNotice)
+            .overlay(DialogHost())
+            .background(eventHandlers)
+            .onAppear {
+                model.refresh()
+                installReturnMonitor()
+                registerCommands()
+            }
+    }
+
+    private var chromeStack: some View {
+        VStack(spacing: 0) {
+            if chrome.focusMode {
+                // Focus mode: the title row shrinks to a drag strip.
+                Color.clear.frame(height: 8)
+            } else {
+                TitleRow(chrome: chrome)
+                if !chrome.surface.isGlobalTool {
+                    TabsRow(chrome: chrome)
+                    BookmarksRow()
                 }
             }
-            Divider()
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            if showInspector {
-                Divider()
-                InspectorPane(model: model, selection: $selection)
+            HStack(spacing: 0) {
+                if !chrome.focusMode {
+                    ActivityBar(chrome: chrome, model: model)
+                }
+                body3Pane
             }
         }
-        .frame(minWidth: 980, minHeight: 620)
-        .background(Color(nsColor: .textBackgroundColor))
-        .overlay(faultNotice)
-        .onAppear {
-            model.refresh()
-            installReturnMonitor()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
-            closeEditor()
-            searchFocused = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
-            closeEditor()
-            query = ""
-            lens = .today
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
-            // The newborn opens only once the old draft is safe: a
-            // refused flush cancels the birth exactly as it cancels a
-            // lens switch.
-            closeEditor { ok in
-                guard ok else { return }
-                model.createNote { id in
-                    if let id = id {
-                        openEditor(id: id, bornBlank: true)
+    }
+
+    /// The notification seams, off the layout expression: a zero-size
+    /// background that only listens.
+    private var eventHandlers: some View {
+        Color.clear
+            .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
+                closeEditor()
+                chrome.surface = .notes
+                chrome.leftOpen = true
+                searchFocused = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+                closeEditor()
+                chrome.surface = .notes
+                query = ""
+                lens = .today
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
+                // The newborn opens only once the old draft is safe: a
+                // refused flush cancels the birth exactly as it cancels
+                // a lens switch.
+                chrome.surface = .notes
+                closeEditor { ok in
+                    guard ok else { return }
+                    model.createNote { id in
+                        if let id = id {
+                            openEditor(id: id, bornBlank: true)
+                        }
                     }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
+                guard let draft = note.object as? DraftFile else { return }
+                chrome.surface = .notes
+                closeEditor { ok in
+                    guard ok else { return }  // the journal file survives
+                    openEditor(id: draft.entity, adopt: draft)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusNavFocus)) { note in
+                selection = note.object as? UInt64
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusGoHome)) { _ in
+                closeEditor()
+                chrome.surface = .notes
+                query = ""
+                lens = .today
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusGoInbox)) { _ in
+                chrome.surface = .inbox
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenSettings)) { _ in
+                CommandRegistry.shared.run("app:open-settings")
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: NSWindow.willEnterFullScreenNotification)
+            ) { _ in
+                chrome.isFullscreen = true
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: NSWindow.willExitFullScreenNotification)
+            ) { _ in
+                chrome.isFullscreen = false
+            }
+            .onChange(of: query) {
+                // New results, new world: a selection from the old one
+                // must not linger where Enter could open it sight unseen.
+                selection = nil
+            }
+            .onChange(of: selection) {
+                if let id = selection {
+                    chrome.nav.record(.init(surface: chrome.surface, selection: id))
+                }
+            }
+    }
+
+    /// The three-pane body: left sidebar (notes only) · center · right
+    /// inspector, resizable by percentage with Liv's clamps (§1.5).
+    private var body3Pane: some View {
+        GeometryReader { geo in
+            let total = geo.size.width
+            HStack(spacing: 0) {
+                if chrome.surface == .notes && chrome.leftOpen && !chrome.focusMode {
+                    Sidebar(
+                        model: model, lens: $lens, query: $query,
+                        searchFocused: $searchFocused
+                    ) {
+                        closeEditor { ok in
+                            if ok { selection = nil }
+                        }
+                    }
+                    .frame(width: max(total * chrome.leftPct / 100, 0))
+                }
+                if chrome.surface == .notes && !chrome.focusMode {
+                    PaneDivider(
+                        pct: $chrome.leftPct, open: $chrome.leftOpen, total: total,
+                        minPct: 8, maxPct: 60, leadingEdge: true
+                    ) { chrome.persistPanes() }
+                }
+                // SurfaceHeaderSlot sits above [center | right] so the
+                // inspector flanks only the object (§1.5); it fills with
+                // the tab bars of later phases.
+                center
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                if chrome.rightOpen && !chrome.focusMode {
+                    PaneDivider(
+                        pct: $chrome.rightPct, open: $chrome.rightOpen, total: total,
+                        minPct: 10, maxPct: chrome.rightLiveMax, leadingEdge: false
+                    ) { chrome.persistPanes() }
+                    InspectorPane(model: model, selection: $selection)
+                        .frame(width: max(total * chrome.rightPct / 100, 0))
+                }
+            }
+            .coordinateSpace(name: "chrome.body")
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
-            guard let draft = note.object as? DraftFile else { return }
-            closeEditor { ok in
-                guard ok else { return }  // the journal file survives for later
-                openEditor(id: draft.entity, adopt: draft)
+    }
+
+    @ViewBuilder
+    private var center: some View {
+        Group {
+            switch chrome.surface {
+            case .notes:
+                notesBody
+            case .inbox:
+                InboxView(model: model)
+            case .calendar:
+                CalendarView(model: model)
+            default:
+                ExtensionStub(surface: chrome.surface)
             }
         }
-        .onChange(of: query) {
-            // New results, new world: a selection from the old one must
-            // not linger where Enter could open it sight unseen.
-            selection = nil
+        .id(chrome.surface)
+    }
+
+    @ViewBuilder
+    private var notesBody: some View {
+        if let editing = editor {
+            EditorView(model: editing).id(editing.id)
+        } else if !query.isEmpty {
+            ResultsView(model: model, query: query, selection: $selection)
+        } else {
+            switch lens {
+            case .today:
+                TodayView(model: model, selection: $selection) {
+                    chrome.surface = .inbox
+                }
+            case .everything:
+                EverythingView(model: model, selection: $selection)
+            default:
+                TodayView(model: model, selection: $selection) {
+                    chrome.surface = .inbox
+                }
+            }
         }
+    }
+
+    /// The P1 slice of the registry: what exists, bound to Liv's map
+    /// (§2.28.3). Surfaces to come register their own rows.
+    private func registerCommands() {
+        guard !commandsRegistered else { return }
+        commandsRegistered = true
+        let registry = CommandRegistry.shared
+        registry.register(
+            CommandDef(
+                id: "switcher:open", label: "Quick switcher", scope: .global,
+                category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "o")
+            ) {
+                NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+            })
+        registry.register(
+            CommandDef(
+                id: "app:toggle-left-sidebar", label: "Toggle left sidebar", scope: .global,
+                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "`")
+            ) {
+                chrome.leftOpen.toggle()
+                chrome.persistPanes()
+            })
+        registry.register(
+            CommandDef(
+                id: "app:toggle-right-sidebar", label: "Toggle right sidebar", scope: .global,
+                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "'")
+            ) {
+                chrome.rightOpen.toggle()
+                chrome.persistPanes()
+            })
+        registry.register(
+            CommandDef(
+                id: "app:toggle-focus", label: "Focus mode", scope: .global,
+                category: "View", binding: Hotkey(modifiers: [.mod], key: ".")
+            ) {
+                chrome.toggleFocus()
+            })
+        registry.register(
+            CommandDef(
+                id: "app:open-settings", label: "Settings", scope: .global,
+                category: "App", binding: Hotkey(modifiers: [.mod], key: ",")
+            ) {
+                Dialogs.shared.alert(
+                    "Settings", message: "Settings panels arrive with their surfaces.")
+            })
+        registry.register(
+            CommandDef(
+                id: "file-explorer:new-file", label: "New note", scope: .global,
+                category: "File", binding: Hotkey(modifiers: [.mod], key: "n")
+            ) {
+                NotificationCenter.default.post(name: .lotusNewNote, object: nil)
+            })
+        registry.register(
+            CommandDef(
+                id: "nav:back", label: "Back", scope: .global, category: "Navigate",
+                binding: Hotkey(modifiers: [.alt], key: "ArrowLeft")
+            ) {
+                chrome.goBack()
+            })
+        registry.register(
+            CommandDef(
+                id: "nav:forward", label: "Forward", scope: .global, category: "Navigate",
+                binding: Hotkey(modifiers: [.alt], key: "ArrowRight")
+            ) {
+                chrome.goForward()
+            })
+        registry.register(
+            CommandDef(
+                id: "app:exit-focus", label: "Exit focus mode", scope: .global,
+                category: "View", binding: Hotkey(modifiers: [], key: "Escape"),
+                enabled: { Dialogs.shared.current == nil && chrome.focusMode && editor == nil }
+            ) {
+                chrome.toggleFocus()
+            })
+        CommandRegistry.shared.install()
     }
 
     // MARK: the editor's door
@@ -443,6 +653,7 @@ struct MainWindow: View {
         returnMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == 36,
                 event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                chrome.surface == .notes,
                 editor == nil,
                 let id = selection,
                 model.entity(id) != nil
@@ -532,25 +743,6 @@ struct MainWindow: View {
         }
     }
 
-    private var showInspector: Bool {
-        query.isEmpty ? lens == .everything : selection != nil
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if let editing = editor {
-            EditorView(model: editing).id(editing.id)
-        } else if !query.isEmpty {
-            ResultsView(model: model, query: query, selection: $selection)
-        } else {
-            switch lens {
-            case .today: TodayView(model: model, lens: $lens, selection: $selection)
-            case .calendar: CalendarView(model: model)
-            case .everything: EverythingView(model: model, selection: $selection)
-            case .inbox: InboxView(model: model)
-            }
-        }
-    }
 }
 
 // MARK: - sidebar
@@ -590,17 +782,18 @@ struct Sidebar: View {
             )
 
             VStack(spacing: 1) {
-                ForEach(Lens.allCases) { item in
+                // The desk's own views. Calendar and Inbox moved to the
+                // activity rail; ⌘digits are reserved for tab jumps (P3).
+                ForEach([Lens.today, .everything]) { item in
                     SidebarRow(
                         item: item,
                         active: lens == item && query.isEmpty,
-                        badge: item == .inbox ? (model.snap?.inbox.count ?? 0) : 0
+                        badge: 0
                     ) {
                         willNavigate()
                         query = ""
                         lens = item
                     }
-                    .keyboardShortcut(item.shortcut, modifiers: .command)
                 }
             }
 
@@ -614,7 +807,7 @@ struct Sidebar: View {
             }
         }
         .padding(12)
-        .frame(width: 224)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(SidebarMaterial().ignoresSafeArea())
     }
 }
@@ -734,8 +927,9 @@ struct EntityLine: View {
 
 struct TodayView: View {
     @ObservedObject var model: BoxModel
-    @Binding var lens: Lens
     @Binding var selection: UInt64?
+    /// The inbox is a rail surface now; Today only points at it.
+    var openInbox: () -> Void = {}
     @State private var draft = ""
     @FocusState private var captureFocused: Bool
 
@@ -809,7 +1003,7 @@ struct TodayView: View {
                                  ? "1 proposal waiting —"
                                  : "\(snap.inbox.count) proposals waiting —")
                                 .foregroundColor(.secondary)
-                            Button("open the inbox") { lens = .inbox }
+                            Button("open the inbox") { openInbox() }
                                 .buttonStyle(.plain)
                                 .foregroundColor(Theme.accent)
                                 .fontWeight(.semibold)
@@ -1138,7 +1332,7 @@ struct InspectorPane: View {
         }
         .padding(20)
         .padding(.top, 24)
-        .frame(width: 260, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 }

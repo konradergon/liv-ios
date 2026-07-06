@@ -42,6 +42,8 @@ struct ContentDoc: Codable {
     let id: UInt64
     let name: String?
     let trashed: Bool
+    /// True when the box opened fine but no such entity exists.
+    let missing: Bool
     let fingerprint: UInt64
     let spans: [SpanJSON]
 }
