@@ -1,0 +1,216 @@
+
+/Users/k/src/lotus/cli/src/main.rs,383
+fn main(14,563
+fn default_log_path(24,898
+fn dispatch(31,1101
+fn name(84,3082
+fn civil_today(114,4029
+fn today(121,4297
+fn inbox(188,6452
+fn subject_of(215,7381
+fn resolve_target(227,7888
+fn accept(260,8989
+fn reject(268,9277
+fn add(277,9668
+fn list(303,10552
+fn parse_constraint(362,12408
+fn property_by_name(384,13146
+fn print_table(388,13320
+fn history(430,14558
+
+/Users/k/src/lotus/core/src/command.rs,138
+pub enum Author 11,448
+pub enum Command 22,832
+    pub fn inverse(55,1625
+pub struct Transaction 79,2562
+pub struct Proposal 94,3083
+
+/Users/k/src/lotus/core/src/entity.rs,143
+pub struct Cell 8,225
+pub struct Entity 15,417
+    pub fn new(23,588
+    pub fn get(32,777
+    pub fn all(40,1006
+    pub fn has(47,1206
+
+/Users/k/src/lotus/core/src/persist.rs,555
+struct Header 26,1042
+pub enum PersistError 31,1098
+    fn fmt(48,1772
+    fn from(65,2482
+    fn from(71,2596
+struct FileLog 79,2842
+    fn append(84,2893
+pub struct Session 104,3836
+    pub fn open(120,4493
+    pub fn store(206,7923
+    pub fn commit(210,7986
+    pub fn undo(222,8299
+    pub fn redo(229,8502
+    pub fn merge(236,8705
+    pub fn accept(249,9039
+    pub fn propose(259,9452
+    pub fn reject(265,9698
+    pub fn allocate_id(282,10437
+    fn ensure_healthy(286,10519
+    fn persist_last(297,10913
+fn parse(315,11547
+
+/Users/k/src/lotus/core/src/store.rs,766
+pub struct Backlink 10,312
+pub enum StoreError 16,418
+    fn fmt(30,756
+pub struct Store 40,1059
+    pub fn new(66,2016
+    pub fn replay(81,2654
+    pub fn allocate_id(111,3899
+    pub fn resolve(119,4137
+    pub fn get(132,4515
+    pub fn entities(139,4808
+    pub fn backlinks(145,5041
+    pub fn modified(163,5716
+    pub fn history(177,6149
+    pub fn pending(182,6294
+    pub fn declined(187,6437
+    pub fn commit(199,6904
+    pub fn undo(213,7361
+    pub fn redo(228,7845
+    pub fn propose(243,8354
+    pub fn accept(249,8579
+    pub fn reject(266,9228
+    pub fn merge(281,9899
+    fn append_inverse(330,11362
+    fn commit_with(337,11719
+    fn unapply(374,12950
+    fn apply(386,13295
+    fn entity(480,16897
+fn now(492,17241
+
+/Users/k/src/lotus/core/src/value.rs,300
+pub enum Span 11,319
+pub struct RichText 18,463
+    pub fn targets(23,530
+pub struct FileRef 33,847
+    fn eq(41,1054
+pub struct DateTime 52,1502
+    pub fn date(59,1645
+    pub fn at(66,1824
+    fn pack(73,2034
+pub enum Value 87,2636
+    pub fn text(101,2900
+    pub fn targets(106,3053
+
+/Users/k/src/lotus/core/tests/persistence.rs,372
+fn cell(7,240
+fn temp_path(12,392
+fn log_roundtrips_state(19,572
+fn header_carries_version(59,1832
+fn undo_survives_restart(72,2186
+fn torn_tail_is_tolerated(115,3511
+fn the_box_admits_one_writer(152,4673
+fn a_tail_torn_at_the_newline_is_dropped(171,5239
+fn a_torn_sidecar_heals_and_later_refusals_survive(209,6627
+fn merge_and_redirect_survive_restart(252,7994
+
+/Users/k/src/lotus/core/tests/worked_examples.rs,664
+fn cell(6,145
+fn reference(10,223
+fn capture_creates_a_scrap(17,441
+fn a_note_displays_a_task_it_does_not_own(65,2040
+fn merge_rewrites_nothing(128,4139
+fn civil_dates_sort_beside_datetimes(197,6468
+fn placement_is_backstage_plumbing(214,7052
+fn an_agent_batch_is_one_step(277,9073
+fn a_refusal_is_remembered(317,10256
+fn identifiers_are_never_reused(344,11247
+fn undo_appends_and_never_erases(358,11624
+fn a_transaction_lands_whole_or_not_at_all(378,12366
+fn value_equality_is_per_kind(399,13009
+fn multi_valued_properties_are_repeated_cells(415,13613
+fn redirects_chase_transitively(452,15018
+fn modification_time_is_derived_not_stored(475,15665
+
+/Users/k/src/lotus/ffi/src/lib.rs,36
+    fn the_seam_roundtrips(66,1965
+
+/Users/k/src/lotus/services/src/clerk.rs,403
+struct Vocabulary 19,824
+    fn find(25,895
+pub fn sweep(36,1263
+fn decline_key(86,3356
+fn gazetteer(96,3718
+fn plain_content(119,4359
+fn propose_dates(138,5001
+fn propose_mentions(166,5804
+fn parts(203,6965
+fn leap(208,7125
+fn days_in_month(212,7215
+fn add_days(227,7507
+fn weekday(244,7887
+fn first_date(259,8407
+fn iso_date(288,9487
+fn show_date(306,10135
+fn contains_word(312,10324
+
+/Users/k/src/lotus/services/src/lib.rs,369
+pub fn capture(22,776
+pub fn seed_if_fresh(58,1916
+fn seed_bootstrap(63,2057
+fn seed_starter_library(124,4493
+pub struct Query 202,7455
+pub struct Constraint 213,7857
+pub enum Op 219,7981
+pub struct Sort 239,8768
+pub fn run(248,9096
+fn satisfies(281,10320
+pub fn property_id(295,10981
+fn compare_values(316,11733
+fn plain(330,12388
+fn kind_rank(340,12626
+
+/Users/k/src/lotus/services/tests/clerk.rs,431
+fn boxed(7,147
+fn capture(16,529
+fn friday_means_this_friday(27,792
+fn tomorrow_and_iso_dates_parse(51,1723
+fn known_names_are_noticed_whole_words_only(67,2376
+fn a_decline_is_remembered_across_restarts(104,3576
+fn relative_dates_anchor_to_capture_not_to_the_sweep(130,4434
+fn a_decline_outlives_value_drift(156,5398
+fn an_old_box_gains_the_starter_library_on_open(179,6145
+fn the_sweep_never_duplicates_pending(210,7333
+
+/Users/k/src/lotus/services/tests/query.rs,320
+fn cell(10,261
+fn fixture(16,439
+fn equals_matches_and_conjunction_narrows(61,2035
+fn not_equals_is_vacuously_true_when_absent(96,2962
+fn backstage_and_trash_stay_out_by_default(113,3447
+fn sort_by_date_missing_last(131,3951
+fn multi_valued_matches_on_any_cell(160,4670
+fn a_query_is_data_it_serializes(194,5564
+
+/Users/k/src/lotus/shell/macos/lotus.h,22
+#define LOTUS_H5,146
+
+/Users/k/src/lotus/views/src/lib.rs,243
+pub enum Density 14,571
+pub struct Config 23,812
+pub struct Rendered 31,1043
+pub struct Row 37,1156
+pub fn render(43,1252
+pub fn summary(83,2540
+fn property_name(97,2985
+fn display(107,3373
+fn reference(138,4606
+fn truncate(148,4904
+
+/Users/k/src/lotus/views/tests/render.rs,216
+fn cell(9,216
+fn fixture(13,294
+fn table_draws_properties_as_columns(53,1634
+fn list_density_summarizes(75,2293
+fn broken_references_render_broken(116,3556
+fn renderer_keys_on_properties_never_on_type(135,4139
+
+/Users/k/src/lotus/core/src/lib.rs,0

@@ -103,6 +103,13 @@
   }
   .capture svg { flex: none; }
   .capture .kbd { margin-left: auto; }
+  .capture input {
+    flex: 1; min-width: 0;
+    border: 0; background: transparent; outline: none;
+    font-family: var(--font); font-size: 13px; color: var(--label);
+  }
+  .capture input::placeholder { color: var(--label-3); }
+  .capture:focus-within { border-color: var(--accent); }
 
   nav { display: flex; flex-direction: column; gap: 1px; }
   .nav {
@@ -340,10 +347,10 @@
       <aside class="sidebar">
         <div class="brand"><span class="mark">❧</span> lotus</div>
 
-        <div class="capture" tabindex="0">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg>
-          Capture a thought…
-          <span class="kbd">⌘N</span>
+        <div class="capture" id="searchwrap">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="6" cy="6" r="4.2"/><path d="M9.4 9.4L12.6 12.6"/></svg>
+          <input id="search" type="text" placeholder="Search" aria-label="Search everything" />
+          <span class="kbd">⌘F</span>
         </div>
 
         <nav aria-label="Lenses">
@@ -529,6 +536,15 @@
           </div>
         </section>
 
+        <!-- SEARCH RESULTS (search is navigation: results are the list lens) -->
+        <section class="view" data-view="results" hidden>
+          <div class="lens-head">
+            <h1>Results</h1>
+            <span class="sub" id="results-sub"></span>
+          </div>
+          <ul class="rows" id="results-rows"></ul>
+        </section>
+
       </main>
 
       <!-- ================= inspector ================= -->
@@ -550,9 +566,10 @@
 </div>
 
 <p class="caption">
-  One window — every lens swaps in place, nothing floats free. Click <b>Today · Calendar · Everything · Inbox</b> in the sidebar.
-  The inspector opens for the table (metadata is not hidden) and stays closed for the calm of Today.
-  Accent is <b>lake green</b>, a candidate — it's one token to change.
+  One window — every lens swaps in place, nothing floats free. Click <b>Today · Calendar · Everything · Inbox</b>,
+  or <b>type in Search</b>: results render as the list lens, in place — search is navigation.
+  One capture affordance in-window (Today's lead line; ⌃⌥Space works from anywhere).
+  The inspector opens for the table and stays closed for the calm of Today. Accent: <b>lake green</b> — decided.
 </p>
 
 <script>
@@ -580,11 +597,40 @@
       }
     };
 
+    var lastLens = "today";
+
     function show(view) {
+      if (view !== "results") lastLens = view;
       navs.forEach(function (n) { n.classList.toggle("active", n.dataset.view === view); });
       views.forEach(function (v) { v.hidden = v.dataset.view !== view; });
       inspector.hidden = view !== "everything";
     }
+
+    // Search is navigation: typing swaps the content to the list lens,
+    // clearing returns to wherever you were.
+    var INDEX = [
+      { title: "Prep the Project Alpha kickoff", kind: "task", when: "Jul 10" },
+      { title: "Project Alpha", kind: "project", when: "" },
+      { title: "Renew the domain before it lapses", kind: "note", when: "" },
+      { title: "Idea: the calendar lens should dim past weeks", kind: "note", when: "" },
+      { title: "Call the dentist back", kind: "note", when: "" },
+      { title: "Dentist, 3pm", kind: "event", when: "Jul 8" }
+    ];
+    var search = document.getElementById("search");
+    search.addEventListener("input", function () {
+      var q = search.value.trim().toLowerCase();
+      if (!q) { show(lastLens); return; }
+      var hits = INDEX.filter(function (e) { return e.title.toLowerCase().indexOf(q) !== -1; });
+      document.getElementById("results-sub").textContent =
+        hits.length + (hits.length === 1 ? " match" : " matches");
+      document.getElementById("results-rows").innerHTML = hits.map(function (e) {
+        return '<li class="row"><span class="grip title">' + e.title +
+          '</span><span class="when">' + (e.when || e.kind) + "</span></li>";
+      }).join("") || '<li class="row"><span class="grip title" style="color:var(--label-3)">nothing matches</span></li>';
+      navs.forEach(function (n) { n.classList.remove("active"); });
+      views.forEach(function (v) { v.hidden = v.dataset.view !== "results"; });
+      inspector.hidden = true;
+    });
 
     navs.forEach(function (n) {
       n.addEventListener("click", function () { show(n.dataset.view); });

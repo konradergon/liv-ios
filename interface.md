@@ -1,6 +1,6 @@
 # Interface
 
-> **Status:** 0.1 — a draft for markup.
+> **Status:** 0.2 — the first mockup survived contact with its owner.
 >
 > This document is the interface companion to `productivity_app.md`.
 > Where they disagree, the constitution wins.
@@ -217,17 +217,26 @@ How this document grows:
 
 ## Decided
 
-- (nothing yet — 0.1 is a draft for markup)
+Decided in 0.2, from the first mockup (design/window.html):
+
+- The base layout is adopted: sidebar / one lens / inspector,
+  every lens swapping in place. All of lotus in one window;
+  nothing floats free.
+- The accent is **lake green** (#2f7d6b in the mockup; the SwiftUI
+  token is the truth once it exists). The mark is **❧**.
+- **Search lives at the top of the sidebar** (⌘F) — search is
+  navigation, so it sits with navigation, and results render as
+  the list lens in place. No palette, no overlay.
+- **One capture affordance in-window**: Today's lead line (⌘N from
+  any lens). The global panel remains the outside-the-app door;
+  inside the window there is exactly one.
+- Inspector defaults as mocked: open in Table, closed in Today —
+  held loosely, daily use may overrule.
 
 ## Open decisions
 
-- **The accent color.** One, forever-ish. Candidates welcome;
-  a muted lotus tone (dusty pink or lake green) would be on-theme,
-  system blue would be invisible in the best way.
 - **Open-on-click vs. open-on-Enter** for list rows
   (Things opens inline; Finder selects then opens).
   Decided when the first list ships.
-- **Inspector defaults** per surface — the guesses above
-  (closed in Today, open in Table) await daily use.
 - **Window chrome tone** — standard titlebar vs. unified
   toolbar-in-titlebar. Decided with the first SwiftUI window.
