@@ -314,6 +314,33 @@ fn an_agent_batch_is_one_step() {
 // ---- invariants ----
 
 #[test]
+fn a_refusal_is_remembered() {
+    let mut store = Store::new();
+    let scrap = store.allocate_id();
+    store
+        .commit(vec![Command::Create { entity: scrap }], "capture", Author::User)
+        .unwrap();
+    store.propose(Proposal {
+        commands: vec![Command::AddCell {
+            entity: scrap,
+            cell: cell(4200, Value::DateTime(DateTime::date(2026, 7, 10))),
+        }],
+        label: "add due date".into(),
+        author: Author::Proposer("dates".into()),
+        reason: "contains Friday -> due date Friday?".into(),
+    });
+
+    store.reject(0).unwrap();
+    // The queue is clear, but the refusal is data, not mood: proposers
+    // dedup against declined, so nothing asks again.
+    assert!(store.pending().is_empty());
+    assert_eq!(store.declined().len(), 1);
+    assert_eq!(store.declined()[0].author, Author::Proposer("dates".into()));
+    // Nothing was committed: declining is not a transaction.
+    assert_eq!(store.history().len(), 1);
+}
+
+#[test]
 fn identifiers_are_never_reused() {
     let mut store = Store::new();
     let a = store.allocate_id();

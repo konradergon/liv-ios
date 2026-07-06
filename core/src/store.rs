@@ -53,6 +53,10 @@ pub struct Store {
     /// An agent's drafts, quarantined beside history. Private so nothing
     /// lands except through `accept`. Read it through `pending()`.
     pending: Vec<Proposal>,
+    /// Refusals, remembered beside the queue: proposers drop duplicates of
+    /// anything pending or declined, so nothing asks again. In memory until
+    /// milestone 7 persists the queue.
+    declined: Vec<Proposal>,
 
     undo_stack: Vec<u64>,
     redo_stack: Vec<u64>,
@@ -179,6 +183,11 @@ impl Store {
         &self.pending
     }
 
+    /// Every refusal, read-only. Fed to proposers with the gazetteer.
+    pub fn declined(&self) -> &[Proposal] {
+        &self.declined
+    }
+
     /// One user action, one undo step, one author.
     pub fn commit(
         &mut self,
@@ -245,11 +254,15 @@ impl Store {
         }
     }
 
-    pub fn reject(&mut self, index: usize) -> Result<Proposal, StoreError> {
+    /// Declining is not forgetting: the refusal moves beside the queue so
+    /// proposers can drop duplicates of it. Nothing asks again.
+    pub fn reject(&mut self, index: usize) -> Result<&Proposal, StoreError> {
         if index >= self.pending.len() {
             return Err(StoreError::NoSuchProposal(index));
         }
-        Ok(self.pending.remove(index))
+        let refused = self.pending.remove(index);
+        self.declined.push(refused);
+        Ok(self.declined.last().expect("just pushed"))
     }
 
     /// Merge is a first-class action, not a primitive: one transaction of

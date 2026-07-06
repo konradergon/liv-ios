@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** 1.2
+> **Status:** 1.3
 >
 > This document is the constitution of the project.
 > It defines architectural principles rather than implementation details.
@@ -24,6 +24,11 @@
 > names the three surfaces of the first release —
 > notes, agenda, calendar —
 > and keeps the integration fence closed.
+>
+> 1.3 answers where metadata comes from:
+> the clerk files the schema too — learned per user, add-only,
+> refusals remembered — the starter library gets a floor and a fence,
+> and triage is bound to scale sublinearly.
 >
 > The foundation is ready. Implementation may begin.
 
@@ -261,6 +266,11 @@ so it is promoted like any relationship carrying data:
 an Expectation entity referencing the type and the property,
 holding the value (worked example 9).
 
+The expected list itself is one multi-valued cell on the type.
+The Expectation entity decorates a member with its default;
+it never asserts membership alone.
+One fact, one place.
+
 A type never gates behavior.
 
 Renderers key on properties (see Principles).
@@ -395,7 +405,7 @@ The abstraction has limits.
 The following are never entities:
 
 - command history — it lives in the persistence layer, so undo never pollutes queries
-- pending proposals — they live beside history, so an agent's drafts never pollute queries or search
+- pending and declined proposals — they live beside history, so an agent's drafts never pollute queries or search, and a refusal is remembered without becoming a thing
 - transient UI state — selection, scroll position, window layout
 - caches and indexes — including extracted text and thumbnails of foreign files; all rebuildable
 
@@ -930,6 +940,29 @@ Four kinds of touch, four budgets:
 Fifteen minutes a day inside the system.
 Every hour of the day touched by it.
 
+## Triage Scales Sublinearly
+
+Alike proposals group: twelve dates found this week is one card.
+Alike means one proposer, one pattern —
+the merged transaction still records its author truthfully,
+and every folded reason rides into history.
+
+A group opens, and any member severs,
+accepted or declined alone.
+Accept commits the remaining members as one ordinary transaction:
+one user action, one undo step, no third door.
+The severed stay in the queue, unjudged.
+
+Consent to a summary is never consent to a member unseen.
+
+The inbox that shows all this is the shell's one surface
+that is not a view:
+proposals are not entities, no query returns them,
+and the inbox draws the quarantine directly (see Shell).
+
+A queue that must be cleared one key at a time
+is the obligation machine wearing a helpful face.
+
 ## Absence Creates No Debt
 
 Ignore the system for a week and nothing rots.
@@ -1058,6 +1091,55 @@ Richer context makes better proposals.
 The system gets smarter about this user's life
 with zero training.
 
+## The Clerk Files the Schema Too
+
+"What metadata belongs to a meeting?" is toil too,
+and the user answers it at most once —
+per pattern, never per entity.
+
+Types, expectations and property definitions are entities,
+and commands are generic,
+so a proposal may target them like anything else.
+
+Set a location on enough meetings,
+and the clerk proposes it once:
+
+> "Most meetings have a location → should meetings expect one?"
+
+The clerk counts through the query service —
+the same door as every view.
+The proposal is ordinary commands:
+one Add Cell — expected → location — on the meeting type;
+a default would add one Expectation entity holding the value.
+
+Accept, and every future meeting offers the field —
+an affordance on the entity, never a question at capture.
+Blank costs nothing.
+
+Decline, and the declined shape is kept beside history,
+where pending proposals already live.
+Proposers see it with the gazetteer:
+a duplicate of anything pending or declined
+is dropped before it reaches the queue.
+Nothing asks again, because the refusal is data, not mood.
+
+Schema proposals only add.
+The clerk never proposes removing structure the user accepted;
+pruning is the user's act,
+and deleting an expectation changes no existing entity —
+nothing ever cascaded.
+They are rare by construction — one per learned pattern —
+and they queue, group and triage like any other.
+
+The flywheel turns twice:
+proposals structure the entities,
+and the structure of the entities reshapes the schema.
+The system learns what metadata belongs to each kind of thing —
+for this user, with zero training, through the same two doors.
+
+Expectations stay expectations.
+A learned schema offers harder; it never gates.
+
 ## Three Refusals
 
 **No silent mutation.**
@@ -1152,6 +1234,11 @@ Users of construction kits build systems instead of working.
 
 Defense: opinionated built-in types with excellent defaults.
 The generic machinery is the substrate, not the pitch.
+
+The starter library is data in the box, never code,
+and the clerk tunes it to its owner through the same two doors,
+one accepted proposal at a time, never by drift
+(see The Clerk Files the Schema Too).
 
 ---
 
@@ -1352,6 +1439,20 @@ Decided in 1.2, likewise recorded where they land:
 - calendar entries are native entities only; foreign calendars stay behind the fence (The External World)
 - the recurrence-expansion horizon is decided at milestone 6, with the calendar (Build Order)
 
+Decided in 1.3, likewise recorded where they land:
+
+- the clerk proposes schema, not just structure: expectations learned per user,
+  add-only, through the same two doors (Automation and Agents)
+- the expected cell is the one fact of expectation; an Expectation entity
+  only decorates it with a default (Type, worked example 9)
+- declined proposals are kept beside history; proposers drop duplicates of
+  anything pending or declined (Automation and Agents, Not Everything Is an Entity)
+- triage scales sublinearly: one-proposer groups, severable before accept,
+  committed as one ordinary transaction (How It Is Used)
+- the proposal inbox is a shell surface, not a view (How It Is Used, Shell)
+- the starter library's floor and seeding are fixed; its contents wait
+  for milestone 5 (Open Decisions, Known Failure Modes)
+
 Still deliberately undecided.
 Each is decided when its feature is built, not before:
 
@@ -1368,6 +1469,17 @@ Each is decided when its feature is built, not before:
   The implementation language was decided at milestone 1: Rust (Reference Data Model, Build Order).
 - Sync and multi-device — eventual scope, or permanent non-goal.
   Entangled with: timezone storage, content-edit granularity, identifier allocation.
+- The starter library — the built-in types and their expectations.
+  Its floor is fixed by the first workflow: note, task, event —
+  Today and the calendar cannot render a life without them.
+  The rest (person, project, meeting, ...) is decided at milestone 5,
+  where the clerk first needs a gazetteer worth feeding.
+  Starter types are seeded by ordinary transactions in a fresh box,
+  author "system", with no reserved identifiers —
+  discoverable only the way user-made types are,
+  so no code can ever key on them.
+  Being ordinary entities they can be edited or trashed:
+  the box's opinions are offers, never fixtures.
 - Automation policy — auto-accept, and the external agent socket.
 - Email and calendar integration — only after files have proven the pattern.
 
@@ -1582,6 +1694,10 @@ data on an expectation, so it is promoted:
 an Expectation entity referencing the task type and the status definition,
 holding the default.
 
+The expectation itself is one cell on the type — expected → status.
+The Expectation entity decorates that cell with the value;
+it never asserts expectation alone.
+
 Creating a task through the type's template reads expectations.
 
 Deleting the expectation changes no existing task.
@@ -1791,6 +1907,8 @@ typedef struct
     int history_count;
     Proposal *pending;  // an agent's drafts never pollute queries
     int pending_count;
+    Proposal *declined; // refusals remembered; proposers drop duplicates of both
+    int declined_count;
 } Store;
 
 // ---- the only code in a lens ----
