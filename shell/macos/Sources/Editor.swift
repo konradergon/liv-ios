@@ -12,18 +12,105 @@ import SwiftUI
 
 // MARK: - spans (mirror core's serde encoding, verbatim)
 
+/// Inline marks — the same 4-bit set as Rust's Marks (D19).
+struct Marks: OptionSet, Equatable {
+    let rawValue: UInt8
+    static let bold = Marks(rawValue: 1 << 0)
+    static let italic = Marks(rawValue: 1 << 1)
+    static let code = Marks(rawValue: 1 << 2)
+    static let strike = Marks(rawValue: 1 << 3)
+}
+
+/// One paragraph's block kind — mirrors Rust's Block enum, externally
+/// tagged like serde.
+enum BlockJSON: Codable, Equatable {
+    case body
+    case heading(UInt8)
+    case quote
+    case bullet(depth: UInt8)
+    case ordered(depth: UInt8)
+    case task(depth: UInt8, done: Bool)
+    case code(lang: String?)
+    case callout(kind: String)
+    case rule
+
+    private enum Key: String, CodingKey {
+        case Body, Heading, Quote, Bullet, Ordered, Task, Code, Callout, Rule
+    }
+    private struct Depth: Codable { let depth: UInt8 }
+    private struct TaskBody: Codable { let depth: UInt8; let done: Bool }
+    private struct CodeBody: Codable { let lang: String? }
+    private struct CalloutBody: Codable { let kind: String }
+
+    init(from decoder: Decoder) throws {
+        // Unit variants encode as the bare string "Body"/"Quote"/"Rule".
+        if let s = try? decoder.singleValueContainer().decode(String.self) {
+            switch s {
+            case "Body": self = .body; return
+            case "Quote": self = .quote; return
+            case "Rule": self = .rule; return
+            default: break
+            }
+        }
+        let c = try decoder.container(keyedBy: Key.self)
+        if let n = try c.decodeIfPresent(UInt8.self, forKey: .Heading) { self = .heading(n) }
+        else if let d = try c.decodeIfPresent(Depth.self, forKey: .Bullet) { self = .bullet(depth: d.depth) }
+        else if let d = try c.decodeIfPresent(Depth.self, forKey: .Ordered) { self = .ordered(depth: d.depth) }
+        else if let t = try c.decodeIfPresent(TaskBody.self, forKey: .Task) { self = .task(depth: t.depth, done: t.done) }
+        else if c.contains(.Code) { self = .code(lang: (try c.decode(CodeBody.self, forKey: .Code)).lang) }
+        else if let cal = try c.decodeIfPresent(CalloutBody.self, forKey: .Callout) { self = .callout(kind: cal.kind) }
+        else { self = .body }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .body, .quote, .rule:
+            var s = encoder.singleValueContainer()
+            try s.encode(self == .body ? "Body" : (self == .quote ? "Quote" : "Rule"))
+        case .heading(let n):
+            var c = encoder.container(keyedBy: Key.self)
+            try c.encode(n, forKey: .Heading)
+        case .bullet(let d):
+            var c = encoder.container(keyedBy: Key.self)
+            try c.encode(Depth(depth: d), forKey: .Bullet)
+        case .ordered(let d):
+            var c = encoder.container(keyedBy: Key.self)
+            try c.encode(Depth(depth: d), forKey: .Ordered)
+        case .task(let d, let done):
+            var c = encoder.container(keyedBy: Key.self)
+            try c.encode(TaskBody(depth: d, done: done), forKey: .Task)
+        case .code(let lang):
+            var c = encoder.container(keyedBy: Key.self)
+            try c.encode(CodeBody(lang: lang), forKey: .Code)
+        case .callout(let kind):
+            var c = encoder.container(keyedBy: Key.self)
+            try c.encode(CalloutBody(kind: kind), forKey: .Callout)
+        }
+    }
+}
+
 enum SpanJSON: Codable, Equatable {
-    case text(String)
+    case text(String, Marks)
+    case brk(BlockJSON)
     case ref(UInt64)
 
     private enum CodingKeys: String, CodingKey {
-        case Text, Ref
+        case Text, Break, Ref
     }
+    private struct MarkedText: Codable { let text: String; let marks: UInt8 }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let t = try c.decodeIfPresent(String.self, forKey: .Text) {
-            self = .text(t)
+        if c.contains(.Text) {
+            // Bare string (unmarked) or an object {text, marks}.
+            if let bare = try? c.decode(String.self, forKey: .Text) {
+                self = .text(bare, [])
+            } else {
+                let m = try c.decode(MarkedText.self, forKey: .Text)
+                self = .text(m.text, Marks(rawValue: m.marks))
+            }
+        } else if c.contains(.Break) {
+            self = .brk(try c.decode(BlockJSON.self, forKey: .Break))
         } else {
             self = .ref(try c.decode(UInt64.self, forKey: .Ref))
         }
@@ -32,8 +119,17 @@ enum SpanJSON: Codable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .text(let t): try c.encode(t, forKey: .Text)
-        case .ref(let id): try c.encode(id, forKey: .Ref)
+        case .text(let t, let marks):
+            // Unmarked = the bare string it always was (legacy-identical).
+            if marks.isEmpty {
+                try c.encode(t, forKey: .Text)
+            } else {
+                try c.encode(MarkedText(text: t, marks: marks.rawValue), forKey: .Text)
+            }
+        case .brk(let block):
+            try c.encode(block, forKey: .Break)
+        case .ref(let id):
+            try c.encode(id, forKey: .Ref)
         }
     }
 }
@@ -59,65 +155,283 @@ final class PillContext {
     var onSelect: (UInt64) -> Void = { _ in }
 }
 
+/// Carries a paragraph's block kind, and a text run's marks, as
+/// attributes — the source of truth for the lossless inverse. Visuals
+/// are derived from these; the marker glyphs (bullet, checkbox) are
+/// attachments derived from the block and never stored.
+extension NSAttributedString.Key {
+    static let lotusBlock = NSAttributedString.Key("lotusBlock")
+    static let lotusMarks = NSAttributedString.Key("lotusMarks")
+}
+
+final class BlockBox: NSObject {
+    let block: BlockJSON
+    init(_ block: BlockJSON) { self.block = block }
+}
+
 enum SpanCodec {
     static var baseAttributes: [NSAttributedString.Key: Any] {
-        [
-            .font: NSFont.preferredFont(forTextStyle: .body),
-            .foregroundColor: NSColor.labelColor,
-        ]
+        [.font: NSFont.preferredFont(forTextStyle: .body), .foregroundColor: NSColor.labelColor]
     }
+
+    // MARK: spans → attributed
 
     static func attributed(_ spans: [SpanJSON], context: PillContext) -> NSAttributedString {
         let result = NSMutableAttributedString()
+        var block: BlockJSON = .body
+        var atStart = true  // no leading text yet in this paragraph
+
+        func openParagraph(_ b: BlockJSON) {
+            if !result.string.isEmpty {
+                // End the previous paragraph — the newline carries its block.
+                result.append(styled("\n", block: block, marks: []))
+            }
+            block = b
+            atStart = true
+        }
+        func ensureMarker() {
+            guard atStart else { return }
+            atStart = false
+            if let marker = marker(for: block, context: context) {
+                result.append(marker)
+            }
+        }
+
         for span in spans {
             switch span {
-            case .text(let t):
-                result.append(NSAttributedString(string: t, attributes: baseAttributes))
+            case .brk(let b):
+                openParagraph(b)
+            case .text(let t, let marks):
+                ensureMarker()
+                result.append(styled(t, block: block, marks: marks))
             case .ref(let id):
-                result.append(pill(id, context: context))
+                ensureMarker()
+                result.append(pill(id, block: block, context: context))
             }
         }
         return result
     }
 
-    static func pill(_ id: UInt64, context: PillContext) -> NSAttributedString {
+    /// A text run with its block's paragraph style and its marks' visuals,
+    /// plus the two source-of-truth attributes.
+    static func styled(_ text: String, block: BlockJSON, marks: Marks) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: attributes(block: block, marks: marks))
+    }
+
+    /// The attribute dict for a (block, marks) pair — the source-of-truth
+    /// `.lotusBlock`/`.lotusMarks` plus their derived visuals. Shared by
+    /// initial render and by the mark toggles (which set attributes only).
+    static func attributes(block: BlockJSON, marks: Marks) -> [NSAttributedString.Key: Any] {
+        var attrs = baseAttributes
+        attrs[.lotusBlock] = BlockBox(block)
+        attrs[.lotusMarks] = marks.rawValue
+        attrs[.paragraphStyle] = paragraphStyle(block)
+
+        var font = font(for: block)
+        if marks.contains(.bold) { font = trait(font, .boldFontMask) }
+        if marks.contains(.italic) { font = trait(font, .italicFontMask) }
+        if marks.contains(.code) {
+            font = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+            attrs[.backgroundColor] = NSColor.labelColor.withAlphaComponent(0.06)
+        }
+        attrs[.font] = font
+        if marks.contains(.strike) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if case .quote = block { attrs[.foregroundColor] = NSColor.secondaryLabelColor }
+        if case .task(_, true) = block {
+            attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            attrs[.foregroundColor] = NSColor.secondaryLabelColor
+        }
+        return attrs
+    }
+
+    static func pill(_ id: UInt64, block: BlockJSON = .body, context: PillContext) -> NSAttributedString {
         let attachment = NSTextAttachment()
         attachment.attachmentCell = RefAttachmentCell(entityId: id, context: context)
         let pill = NSMutableAttributedString(attachment: attachment)
-        // The attachment character carries the body attributes too, so
-        // the caret right after a pill types body text — not the bare
-        // 12pt default an attribute-less run would seed.
-        pill.addAttributes(baseAttributes, range: NSRange(location: 0, length: pill.length))
+        var attrs = baseAttributes
+        attrs[.lotusBlock] = BlockBox(block)
+        attrs[.paragraphStyle] = paragraphStyle(block)
+        pill.addAttributes(attrs, range: NSRange(location: 0, length: pill.length))
         return pill
     }
 
-    /// The inverse walk. Our cells become Ref spans; every other run is
-    /// text with foreign attachment characters stripped; adjacent texts
-    /// coalesce; empties drop. Round-trip equality is span equality.
+    /// The leading glyph for a list/task paragraph — a bullet, number, or
+    /// checkbox attachment. Derived from the block, never stored; the
+    /// inverse skips it.
+    static func marker(for block: BlockJSON, context: PillContext) -> NSAttributedString? {
+        let cell: NSTextAttachmentCell
+        switch block {
+        case .bullet: cell = BlockMarkerCell(kind: .bullet)
+        case .ordered: cell = BlockMarkerCell(kind: .ordered)
+        case .task(_, let done): cell = BlockMarkerCell(kind: .task(done: done))
+        default: return nil
+        }
+        let attachment = NSTextAttachment()
+        attachment.attachmentCell = cell
+        let m = NSMutableAttributedString(attachment: attachment)
+        m.addAttributes(
+            [.lotusBlock: BlockBox(block), .paragraphStyle: paragraphStyle(block)],
+            range: NSRange(location: 0, length: m.length))
+        return m
+    }
+
+    static func font(for block: BlockJSON) -> NSFont {
+        switch block {
+        case .heading(let n):
+            let sizes: [CGFloat] = [26, 22, 19, 17, 15, 14]
+            let size = sizes[min(max(Int(n), 1), 6) - 1]
+            return NSFont.systemFont(ofSize: size, weight: .bold)
+        case .code:
+            return NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular)
+        default:
+            return NSFont.preferredFont(forTextStyle: .body)
+        }
+    }
+
+    static func paragraphStyle(_ block: BlockJSON) -> NSParagraphStyle {
+        let s = NSMutableParagraphStyle()
+        s.lineHeightMultiple = 1.15
+        s.paragraphSpacing = 6
+        switch block {
+        case .heading:
+            s.paragraphSpacingBefore = 10
+        case .quote:
+            s.firstLineHeadIndent = 18
+            s.headIndent = 18
+        case .bullet(let d), .ordered(let d), .task(let d, _):
+            let base: CGFloat = 22 + CGFloat(d) * 18
+            s.firstLineHeadIndent = base - 22
+            s.headIndent = base
+        case .code:
+            s.firstLineHeadIndent = 12
+            s.headIndent = 12
+        case .callout:
+            s.firstLineHeadIndent = 14
+            s.headIndent = 14
+        default:
+            break
+        }
+        return s
+    }
+
+    private static func trait(_ font: NSFont, _ mask: NSFontTraitMask) -> NSFont {
+        NSFontManager.shared.convert(font, toHaveTrait: mask)
+    }
+
+    // MARK: attributed → spans (the lossless inverse)
+
     static func spans(from attributed: NSAttributedString) -> [SpanJSON] {
         var out: [SpanJSON] = []
-        let ns = attributed.string as NSString
-        attributed.enumerateAttribute(
-            .attachment, in: NSRange(location: 0, length: attributed.length)
-        ) { value, range, _ in
-            if let cell = (value as? NSTextAttachment)?.attachmentCell as? RefAttachmentCell {
-                out.append(.ref(cell.entityId))
+        let full = attributed.string as NSString
+        // Split into paragraphs on newline; each paragraph reads its own
+        // block from .lotusBlock, its runs by .lotusMarks.
+        var paraStart = 0
+        var index = 0
+        var paragraph = 0
+        func flush(_ range: NSRange) {
+            let block = blockOf(attributed, at: range.location) ?? .body
+            if paragraph == 0 {
+                if block != .body { out.append(.brk(block)) }
+            } else {
+                out.append(.brk(block))
+            }
+            emitRuns(attributed, in: range, into: &out)
+            paragraph += 1
+        }
+        while index < full.length {
+            if full.character(at: index) == 0x0A {  // "\n"
+                flush(NSRange(location: paraStart, length: index - paraStart))
+                paraStart = index + 1
+            }
+            index += 1
+        }
+        flush(NSRange(location: paraStart, length: full.length - paraStart))
+        return out
+    }
+
+    private static func blockOf(_ s: NSAttributedString, at loc: Int) -> BlockJSON? {
+        guard loc < s.length else { return nil }
+        return (s.attribute(.lotusBlock, at: loc, effectiveRange: nil) as? BlockBox)?.block
+    }
+
+    private static func emitRuns(
+        _ s: NSAttributedString, in range: NSRange, into out: inout [SpanJSON]
+    ) {
+        guard range.length > 0 else { return }
+        let ns = s.string as NSString
+        s.enumerateAttributes(in: range) { attrs, r, _ in
+            if let cell = (attrs[.attachment] as? NSTextAttachment)?.attachmentCell {
+                if let refCell = cell as? RefAttachmentCell {
+                    out.append(.ref(refCell.entityId))
+                }
+                // BlockMarkerCell and foreign attachments are derived or
+                // dropped — never content.
                 return
             }
-            let text = ns.substring(with: range).replacingOccurrences(of: "\u{FFFC}", with: "")
+            let text = ns.substring(with: r).replacingOccurrences(of: "\u{FFFC}", with: "")
             if text.isEmpty { return }
-            if case .text(let prev) = out.last {
-                out[out.count - 1] = .text(prev + text)
+            let marks = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+            if case .text(let prev, let prevMarks) = out.last, prevMarks == marks {
+                out[out.count - 1] = .text(prev + text, marks)
             } else {
-                out.append(.text(text))
+                out.append(.text(text, marks))
             }
         }
-        return out
     }
 
     static func json(_ spans: [SpanJSON]) -> String {
         guard let data = try? JSONEncoder().encode(spans) else { return "[]" }
         return String(data: data, encoding: .utf8) ?? "[]"
+    }
+}
+
+// MARK: - block markers (bullet / ordered / checkbox), derived from the block
+
+final class BlockMarkerCell: NSTextAttachmentCell {
+    enum Kind: Equatable {
+        case bullet, ordered, task(done: Bool)
+    }
+    let kind: Kind
+
+    init(kind: Kind) {
+        self.kind = kind
+        super.init(textCell: "")
+    }
+    required init(coder: NSCoder) { fatalError("markers are never archived") }
+
+    private var markerFont: NSFont { NSFont.preferredFont(forTextStyle: .body) }
+
+    override func cellSize() -> NSSize {
+        NSSize(width: 18, height: markerFont.boundingRectForFont.height)
+    }
+    override func cellBaselineOffset() -> NSPoint {
+        NSPoint(x: 0, y: markerFont.descender)
+    }
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        switch kind {
+        case .bullet:
+            let dot = NSRect(x: cellFrame.minX + 4, y: cellFrame.midY - 2, width: 4, height: 4)
+            NSColor.secondaryLabelColor.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+        case .ordered:
+            let s = "•"  // ordered numbering waits for 4c; a dot holds the shape
+            s.draw(at: NSPoint(x: cellFrame.minX + 2, y: cellFrame.minY),
+                withAttributes: [.font: markerFont, .foregroundColor: NSColor.secondaryLabelColor])
+        case .task(let done):
+            let name = done ? "checkmark.square.fill" : "square"
+            let color: NSColor = done ? .labelColor : .secondaryLabelColor
+            if let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+            {
+                let box = NSRect(x: cellFrame.minX + 1, y: cellFrame.midY - 7, width: 14, height: 14)
+                let tinted = NSImage(size: box.size, flipped: false) { rect in
+                    img.draw(in: rect); color.set(); rect.fill(using: .sourceAtop); return true
+                }
+                tinted.draw(in: box, from: .zero, operation: .sourceOver,
+                    fraction: 1, respectFlipped: true, hints: nil)
+            }
+        }
     }
 }
 
@@ -261,6 +575,63 @@ final class LotusTextView: NSTextView {
 
     override func cancelOperation(_ sender: Any?) {
         onEscape()
+    }
+
+    // MARK: inline marks (⌘B / ⌘I / ⌘E code / ⌘⇧K strike)
+
+    override func keyDown(with event: NSEvent) {
+        let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if mods == [.command], let k = event.charactersIgnoringModifiers {
+            switch k {
+            case "b": toggleMark(.bold); return
+            case "i": toggleMark(.italic); return
+            case "e": toggleMark(.code); return
+            default: break
+            }
+        }
+        if mods == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "k" {
+            toggleMark(.strike)
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    /// Toggle a mark over the selection, or arm it for the next typed run
+    /// when the selection is empty. Marks are attributes only — no text
+    /// changes — so the round-trip and the fingerprint see exactly the
+    /// mark bits, nothing else.
+    func toggleMark(_ mark: Marks) {
+        guard let storage = textStorage else { return }
+        let sel = selectedRange()
+        if sel.length == 0 {
+            var m = Marks(rawValue: (typingAttributes[.lotusMarks] as? UInt8) ?? 0)
+            m.formSymmetricDifference(mark)
+            let block = (typingAttributes[.lotusBlock] as? BlockBox)?.block ?? .body
+            typingAttributes = SpanCodec.attributes(block: block, marks: m)
+            return
+        }
+        // Add unless every text run already carries the mark.
+        var allHave = true
+        storage.enumerateAttributes(in: sel) { attrs, _, _ in
+            guard attrs[.attachment] == nil else { return }
+            let m = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+            if !m.contains(mark) { allHave = false }
+        }
+        // Collect first, mutate after — never edit storage mid-enumeration.
+        var edits: [(NSRange, [NSAttributedString.Key: Any])] = []
+        storage.enumerateAttributes(in: sel) { attrs, r, _ in
+            guard attrs[.attachment] == nil else { return }
+            let block = (attrs[.lotusBlock] as? BlockBox)?.block ?? .body
+            var m = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+            if allHave { m.remove(mark) } else { m.insert(mark) }
+            edits.append((r, SpanCodec.attributes(block: block, marks: m)))
+        }
+        guard shouldChangeText(in: sel, replacementString: nil) else { return }
+        storage.beginEditing()
+        for (r, attrs) in edits { storage.setAttributes(attrs, range: r) }
+        storage.endEditing()
+        didChangeText()
+        setSelectedRange(sel)
     }
 
     /// Formatting cannot enter: paste arrives plain, drops arrive plain
