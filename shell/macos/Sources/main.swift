@@ -86,14 +86,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             backing: .buffered,
             defer: false)
         w.title = "lotus"
-        // Liv's chrome: hidden title, traffic lights overlaying the
-        // app's own title row, which reserves the 72pt spacer (§1.1).
+        // Hidden title, traffic lights overlaying the app's own top band.
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isReleasedWhenClosed = false
         w.isMovableByWindowBackground = true
         w.setFrameAutosaveName("lotus.main")
-        w.contentViewController = NSHostingController(rootView: WindowChrome(model: model))
+        let hosting = NSHostingController(rootView: WindowChrome(model: model))
+        // Let the content run under the titlebar so the header controls
+        // and the tab strip sit in the traffic-light band at the very
+        // top (Claude-style), not a row below it.
+        if #available(macOS 13.3, *) {
+            hosting.safeAreaRegions = []
+        }
+        w.contentViewController = hosting
         w.center()
         w.makeKeyAndOrderFront(nil)
         window = w

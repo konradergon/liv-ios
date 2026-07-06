@@ -209,9 +209,9 @@ struct TabStrip: View {
     @State private var widths: [UUID: CGFloat] = [:]
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
+                HStack(spacing: 4) {
                     ForEach(tabs.tabs) { tab in
                         TabPill(
                             tab: tab,
@@ -241,6 +241,7 @@ struct TabStrip: View {
                                 dropTarget: $dropTarget, dropAfter: $dropAfter))
                     }
                 }
+                .padding(.vertical, 5)
             }
             // Trailing cluster: + opens a blank tab (founder-locked — the
             // landing, never an instant note). The ⌄ container picker,
@@ -249,16 +250,18 @@ struct TabStrip: View {
             Button(action: openNew) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
-                    .frame(width: 34, height: 34)
+                    .frame(width: 26, height: 26)
                     .foregroundColor(Theme.mutedFg)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("New tab")
         }
-        .frame(height: 36)
+        .padding(.horizontal, 8)
+        .frame(height: Theme.headerBandHeight)
         .background(WindowDragRegion())
-        .background(Theme.panel.opacity(0.35))
+        .background(Theme.background)
+        .overlay(Divider(), alignment: .bottom)
     }
 
     private func title(_ tab: WorkspaceTab) -> String {
@@ -305,48 +308,55 @@ struct TabPill: View {
     @State private var hovering = false
 
     var body: some View {
-        // TAB_BASE (§2.3.2): flat square tab, active = page bg + a 2px
-        // primary bar along the top edge (the melt into the content),
-        // inactive = quiet secondary tint; icon + name + hover close.
-        HStack(spacing: 7) {
+        // A clean, native macOS tab (Safari/Arc idiom): a rounded pill,
+        // the active one raised into the content colour, inactive quiet
+        // with a hover tint. No accent bar, no square edges — the theme
+        // is lotus's, the look is the platform's.
+        HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(active ? Theme.primary : Theme.mutedFg)
-                .opacity(active ? 1 : 0.8)
+                .font(.system(size: 11.5))
+                .foregroundColor(active ? Theme.foreground : Theme.mutedFg)
             Text(title)
                 .font(.system(size: 12, weight: active ? .medium : .regular))
-                .foregroundColor(active ? Theme.foreground : Theme.foreground.opacity(0.7))
+                .foregroundColor(active ? Theme.foreground : Theme.foreground.opacity(0.72))
                 .lineLimit(1)
             Spacer(minLength: 2)
-            if hovering {
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Theme.mutedFg)
-                        .frame(width: 16, height: 16)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Close tab")
+            // The close slot holds its width so the title doesn't jump
+            // on hover.
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(width: 15, height: 15)
+                    .background(
+                        Circle().fill(Theme.secondary.opacity(hovering ? 0.6 : 0)))
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .opacity(hovering ? 1 : 0)
+            .help("Close tab")
         }
-        .padding(.horizontal, 10)
-        .frame(minWidth: 110, maxWidth: 200)
-        .frame(height: 36)
-        .background(active ? Theme.background : Theme.secondary.opacity(hovering ? 0.5 : 0.25))
-        .overlay(alignment: .top) {
-            if active {
-                Rectangle().fill(Theme.primary).frame(height: 2)
-            }
-        }
-        .overlay(alignment: .trailing) {
-            Divider().opacity(0.4)
-        }
+        .padding(.leading, 10)
+        .padding(.trailing, 5)
+        .frame(minWidth: 100, maxWidth: 190)
+        .frame(height: 28)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(active ? Theme.secondary.opacity(0.9) : (hovering ? Theme.secondary.opacity(0.4) : .clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Theme.border.opacity(active ? 0.5 : 0), lineWidth: 0.5)
+        )
         .overlay(alignment: .leading) {
-            if insertionBefore { Rectangle().fill(Theme.primary).frame(width: 2) }
+            if insertionBefore {
+                Capsule().fill(Theme.primary).frame(width: 2, height: 18).offset(x: -3)
+            }
         }
         .overlay(alignment: .trailing) {
-            if insertionAfter { Rectangle().fill(Theme.primary).frame(width: 2) }
+            if insertionAfter {
+                Capsule().fill(Theme.primary).frame(width: 2, height: 18).offset(x: 3)
+            }
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }

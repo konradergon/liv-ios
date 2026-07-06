@@ -11,6 +11,31 @@
 
 ---
 
+# 0.4 — Native look, Liv's substance (owner directive, 2026-07-07)
+
+Refines the pivot: *"copy everything except theming and preserve the
+clean native look."* Port Liv's **features, structure, and workflows**
+exactly — but **render them native**, not as a pixel-copy of Liv's web
+chrome. Where Liv draws a web idiom (flat square tabs with an accent
+bar, bordered cards, chips-as-decoration), lotus draws the macOS
+equivalent (rounded segmented tabs, system materials, tonal elevation).
+The theme is lotus's (lake green); the *look and feel* is the
+platform's. Two consequences already applied:
+
+- **Chrome sits in the traffic-light band.** The content runs under the
+  titlebar (`NSHostingController.safeAreaRegions = []`), so the sidebar
+  header controls and the tab strip are at the very top, right of the
+  traffic lights — one band, Claude-style, not a row below.
+- **Tabs are native.** Rounded pills, the active one a raised tonal
+  segment (no green accent bar, no square edges) — Safari/Arc idiom, not
+  Liv's `TAB_BASE`.
+
+When liv-ui-map.md specifies exact web-chrome pixels (§3 tokens, tab
+melt, borders), treat them as the *structure* to honour and render the
+native equivalent. Substance from Liv; surface from macOS.
+
+---
+
 # 0.3 — The Liv Pivot (supersedes most of what follows)
 
 Decided by the owner, 2026-07-06, in his own words: *"we shall port

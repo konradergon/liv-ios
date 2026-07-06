@@ -688,7 +688,6 @@ struct WindowChrome: View {
                 openNew: { openBlankTab() },
                 rename: { id in renameEntity(id) }
             )
-            Divider()
             activeTabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
