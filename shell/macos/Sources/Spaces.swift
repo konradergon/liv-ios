@@ -154,6 +154,7 @@ struct AppSidebar: View {
     /// only if the flush succeeded. A refused flush cancels the switch.
     var willNavigate: (@escaping () -> Void) -> Void = { $0() }
     var openEntity: (UInt64) -> Void = { _ in }
+    var showDesk: (Lens) -> Void = { _ in }
 
     @AppStorage("app.leftView.v1") private var viewRaw = SidebarView.tree.rawValue
     @State private var filter = ""
@@ -175,7 +176,7 @@ struct AppSidebar: View {
                 SpacesTree(
                     model: model, chrome: chrome, lens: $lens, query: $query,
                     selection: $selection, filter: $filter,
-                    willNavigate: willNavigate)
+                    willNavigate: willNavigate, showDesk: showDesk)
             case .properties:
                 PropertiesBrowser(model: model, selection: $selection, openEntity: openEntity)
             case .bookmarks:
@@ -246,6 +247,8 @@ struct SpacesTree: View {
     @Binding var selection: UInt64?
     @Binding var filter: String
     var willNavigate: (@escaping () -> Void) -> Void
+    /// The desk lens buttons land on the desk tab (and set the lens).
+    var showDesk: (Lens) -> Void = { _ in }
 
     @State private var expanded: Set<UInt64> = []
     @State private var archiveOpen = false
@@ -373,10 +376,9 @@ struct SpacesTree: View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach([Lens.today, .everything]) { item in
                 Button {
-                    willNavigate {
-                        query = ""
-                        lens = item
-                    }
+                    // Land on the desk tab, then set the lens — a lens
+                    // switch while a note tab is active must show the desk.
+                    showDesk(item)
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: item.symbol)

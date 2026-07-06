@@ -399,9 +399,10 @@ struct WindowChrome: View {
     @State private var lens: Lens = .today
     @State private var query = ""
     @State private var selection: UInt64?
-    /// Editing is orthogonal state, like search: non-nil overrides the
-    /// desk in the notes surface.
+    /// The editor of the active note tab, when one is active.
     @State private var editor: EditorModel?
+    /// The working set of the active workspace, as the Notes top bar.
+    @StateObject private var tabs = TabsModel()
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -429,6 +430,8 @@ struct WindowChrome: View {
                 // A stored left+right that fit an old Notes layout must
                 // not launch a tool surface into a negative center.
                 chrome.reconcilePanes()
+                tabs.load(workspace: chrome.activeWorkspace ?? 0)
+                syncEditorToActiveTab()
             }
     }
 
@@ -482,12 +485,8 @@ struct WindowChrome: View {
                             onSuccess()
                         }
                     },
-                    openEntity: { id in
-                        closeEditor { ok in
-                            guard ok else { return }
-                            openEditor(id: id)
-                        }
-                    }
+                    openEntity: { id in openNoteTab(id) },
+                    showDesk: { lensValue in showDesk(lensValue) }
                 )
             } else {
                 Spacer(minLength: 0)
@@ -555,25 +554,17 @@ struct WindowChrome: View {
                 lens = .today
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
-                // The newborn opens only once the old draft is safe: a
-                // refused flush cancels the birth exactly as it cancels
-                // a lens switch.
-                chrome.surface = .notes
-                closeEditor { ok in
-                    guard ok else { return }
-                    model.createNote { id in
-                        if let id = id {
-                            openEditor(id: id, bornBlank: true)
-                        }
-                    }
-                }
+                newNoteInTab()
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
                 guard let draft = note.object as? DraftFile else { return }
                 chrome.surface = .notes
                 closeEditor { ok in
                     guard ok else { return }  // the journal file survives
+                    let tab = tabs.openNote(draft.entity)
+                    tabs.setActive(tab.id)
                     openEditor(id: draft.entity, adopt: draft)
+                    selection = draft.entity
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusNavFocus)) { note in
@@ -616,6 +607,18 @@ struct WindowChrome: View {
                 // A workspace can vanish under the active scope (trashed
                 // here or by the CLI): keep the scope resolvable.
                 chrome.reconcileActive(snap?.workspaces ?? [])
+                // A note tab whose entity vanished must not strand — drop
+                // it, and follow the reactivated tab if it was active.
+                let live = Set((snap?.entities ?? []).map(\.id))
+                if tabs.reconcile(liveIds: live) != nil {
+                    syncEditorToActiveTab()
+                }
+            }
+            .onChange(of: chrome.activeWorkspace) {
+                // Each workspace keeps its own working set. The editor was
+                // already flushed by the workspace-enter gate.
+                tabs.load(workspace: chrome.activeWorkspace ?? 0)
+                syncEditorToActiveTab()
             }
     }
 
@@ -672,25 +675,178 @@ struct WindowChrome: View {
         .id(chrome.surface)
     }
 
-    @ViewBuilder
+    /// The Notes surface: the tab strip over the active tab's content.
     private var notesBody: some View {
-        if let editing = editor {
-            EditorView(model: editing).id(editing.id)
-        } else if !query.isEmpty {
+        VStack(spacing: 0) {
+            TabStrip(
+                tabs: tabs, model: model, chrome: chrome,
+                activate: { tab in activateTab(tab) },
+                close: { tab in closeTab(tab) },
+                openNew: { openBlankTab() },
+                rename: { id in renameEntity(id) }
+            )
+            Divider()
+            activeTabContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @ViewBuilder
+    private var activeTabContent: some View {
+        switch tabs.active?.kind {
+        case .note:
+            if let editing = editor {
+                EditorView(model: editing).id(editing.id)
+            } else {
+                // Between flush and the fresh EditorModel: nothing to lose.
+                Color.clear
+            }
+        case .blank:
+            BlankTabLanding(
+                createNote: { NotificationCenter.default.post(name: .lotusNewNote, object: nil) },
+                search: { chrome.switcherOpen = true })
+        default:  // .desk (or an unset tab, treated as the desk)
+            deskContent
+        }
+    }
+
+    @ViewBuilder
+    private var deskContent: some View {
+        if !query.isEmpty {
             ResultsView(model: model, query: query, selection: $selection)
         } else {
             switch lens {
-            case .today:
-                TodayView(model: model, selection: $selection) {
-                    chrome.surface = .inbox
-                }
             case .everything:
                 EverythingView(model: model, selection: $selection)
             default:
                 TodayView(model: model, selection: $selection) {
-                    chrome.surface = .inbox
+                    navigate(to: .inbox)
                 }
             }
+        }
+    }
+
+    // MARK: tab orchestration (flush-gated, like every nav)
+
+    /// Switch tabs: flush the current editor first; a refused flush
+    /// cancels the switch. On success, activate and sync the editor to
+    /// the new active tab.
+    private func activateTab(_ tab: WorkspaceTab) {
+        guard tabs.activeId != tab.id else { return }
+        closeEditor { ok in
+            guard ok else { return }
+            tabs.setActive(tab.id)
+            syncEditorToActiveTab()
+        }
+    }
+
+    /// The editor follows the active tab: a note tab gets a fresh
+    /// EditorModel (the flush-on-leave guarantees the old draft is safe),
+    /// anything else clears it. Robust to a stale editor left by a
+    /// pruned tab: it is torn down before the new one opens.
+    private func syncEditorToActiveTab() {
+        if case .note(let id) = tabs.active?.kind {
+            if editor?.id != id {
+                if editor != nil { editor?.closed(); editor = nil }
+                openEditor(id: id)
+            }
+            selection = id
+        } else if editor != nil {
+            editor?.closed()
+            editor = nil
+        }
+    }
+
+    /// Open (or focus) a note in a tab — the dedup door for Enter, the
+    /// sidebar, and deep links.
+    private func openNoteTab(_ id: UInt64, bornBlank: Bool = false) {
+        closeEditor { ok in
+            guard ok else { return }
+            if chrome.surface != .notes { chrome.surface = .notes }
+            let tab = tabs.openNote(id)
+            tabs.setActive(tab.id)
+            if editor?.id != id {
+                openEditor(id: id, bornBlank: bornBlank)
+            }
+            selection = id
+        }
+    }
+
+    /// New note: flush the current draft, mint the note, and land it in
+    /// the active blank tab if there is one, else a fresh tab. A refused
+    /// flush cancels the birth.
+    private func newNoteInTab() {
+        if chrome.surface != .notes { chrome.surface = .notes }
+        let blankTarget: UUID? = (tabs.active?.kind == .blank) ? tabs.active?.id : nil
+        closeEditor { ok in
+            guard ok else { return }
+            model.createNote { newId in
+                guard let newId = newId else { return }
+                let tabId: UUID
+                if let blankTarget = blankTarget {
+                    tabs.convert(blankTarget, to: .note(newId))
+                    tabId = blankTarget
+                } else {
+                    tabId = tabs.openNote(newId).id
+                }
+                tabs.setActive(tabId)
+                if editor?.id != newId { openEditor(id: newId, bornBlank: true) }
+                selection = newId
+            }
+        }
+    }
+
+    /// The desk lens buttons: flush, land on the desk tab (minting one
+    /// if the user closed it), set the lens.
+    private func showDesk(_ lensValue: Lens) {
+        closeEditor { ok in
+            guard ok else { return }
+            if chrome.surface != .notes { chrome.surface = .notes }
+            let desk = tabs.openDesk()
+            tabs.setActive(desk.id)
+            if editor != nil { editor?.closed(); editor = nil }
+            query = ""
+            lens = lensValue
+            selection = nil
+        }
+    }
+
+    private func openBlankTab() {
+        closeEditor { ok in
+            guard ok else { return }
+            if chrome.surface != .notes { chrome.surface = .notes }
+            let tab = tabs.openBlank()
+            tabs.setActive(tab.id)
+            if editor != nil { editor?.closed(); editor = nil }
+        }
+    }
+
+    /// Close a tab (its editor flushed first if it is the active note),
+    /// then follow the tab that close() activated in its place.
+    private func closeTab(_ tab: WorkspaceTab) {
+        let finish = {
+            tabs.close(tab.id)
+            syncEditorToActiveTab()
+        }
+        if tab.id == tabs.activeId, case .note = tab.kind {
+            closeEditor { ok in
+                guard ok else { return }
+                finish()
+            }
+        } else {
+            finish()
+        }
+    }
+
+    private func renameEntity(_ id: UInt64) {
+        let current = model.entity(id)?.title ?? ""
+        Dialogs.shared.prompt(
+            "Rename note", initial: current, confirmLabel: "Rename"
+        ) { name in
+            guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+                return
+            }
+            model.set(id, property: "name", value: name)
         }
     }
 
@@ -747,6 +903,22 @@ struct WindowChrome: View {
                     $0.property == "bookmarked" && $0.value == "yes"
                 }
                 model.set(id, property: "bookmarked", value: starred ? "false" : "true")
+            })
+        registry.register(
+            CommandDef(
+                id: "workspace:new-tab", label: "New tab", scope: .global,
+                category: "Tabs", binding: Hotkey(modifiers: [.mod], key: "t"),
+                enabled: { chrome.surface == .notes }
+            ) {
+                openBlankTab()
+            })
+        registry.register(
+            CommandDef(
+                id: "workspace:close", label: "Close tab", scope: .global,
+                category: "Tabs", binding: Hotkey(modifiers: [.mod], key: "w"),
+                enabled: { chrome.surface == .notes }
+            ) {
+                if let active = tabs.active { closeTab(active) }
             })
         registry.register(
             CommandDef(
@@ -829,7 +1001,7 @@ struct WindowChrome: View {
             {
                 return event
             }
-            openEditor(id: id)
+            openNoteTab(id)
             return nil
         }
     }

@@ -7,7 +7,7 @@ cargo build --release -p lotus-ffi --manifest-path ../../Cargo.toml
 
 mkdir -p build
 swiftc -O \
-    Sources/main.swift Sources/Window.swift Sources/Editor.swift Sources/Tokens.swift Sources/Commands.swift Sources/Dialogs.swift Sources/Chrome.swift Sources/Spaces.swift \
+    Sources/main.swift Sources/Window.swift Sources/Editor.swift Sources/Tokens.swift Sources/Commands.swift Sources/Dialogs.swift Sources/Chrome.swift Sources/Spaces.swift Sources/Tabs.swift \
     -import-objc-header lotus.h \
     -L ../../target/release -llotus_ffi \
     -framework AppKit -framework Carbon -framework SwiftUI \
