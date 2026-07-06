@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** 1.4
+> **Status:** 1.5
 >
 > This document is the constitution of the project.
 > It defines architectural principles rather than implementation details.
@@ -1580,6 +1580,26 @@ Decided in 1.4, likewise recorded where they land:
   and the backstage door are its defenses (Known Failure Modes)
 - authoring surfaces are fenced, but saving the query on screen is a
   bookmark, not a builder (Build Order)
+
+Decided in 1.5 — the Liv pivot (owner's directive, 2026-07-06):
+
+- the product target is Liv's interface and feature set, ported
+  exactly: "Liv with a better core and native UI." The interface
+  spec of record becomes liv-ui-map.md; interface.md 0.3 records
+  what survives (materials, the lotus accent) and what is annulled
+  (the one-lens stance and every taste-based UI refusal)
+- the renderer roster is no longer capped at four: the port admits
+  every surface Liv has, each still a renderer in this document's
+  sense — position entities by one property, draw an entity as a
+  few properties, hold no state, translate gestures into commands
+  or nothing
+- everything below the shell is untouched by the pivot: one log,
+  one truth, commands-only mutation, two doors for AI, no timers,
+  no silent writes. Where Liv's UI assumed a second truth (the .md
+  mirror, sync) or an embedded web engine, the surface is ported
+  and the mechanism underneath is lotus's — import/export instead
+  of mirrors, native rendering instead of webviews, proposals
+  instead of silent mutation
 
 Decided at milestone 4, likewise recorded where it lands:
 

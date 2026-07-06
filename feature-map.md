@@ -282,6 +282,16 @@ deterministic offline suggesters first, model brains second, always falling back
 
 ## T4 — Explicitly refused
 
+> **Annulled by the Liv pivot (constitution 1.5, interface.md 0.3,
+> 2026-07-06)** for every UI-taste entry in this table: tabs,
+> workspaces, themes-surface, palette, settings window, dashboards,
+> badges, panels, favorites, focus mode and the rest of the chrome
+> are now IN scope — the owner directed an exact port of Liv's
+> interface. Only the architectural refusals stand: files-as-truth
+> mirrors/watchers/write-through, two-way sync, embedded webviews
+> and web runtimes, auto-accept/unattended automation. The table is
+> kept as mined, for the record and for its law citations.
+
 One line each: what refuses it, and the lotus-clean equivalent if any.
 
 | Liv feature | Refused by | Lotus-clean equivalent |

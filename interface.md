@@ -1,6 +1,6 @@
 # Interface
 
-> **Status:** 0.2 — the first mockup survived contact with its owner.
+> **Status:** 0.3 — the Liv pivot.
 >
 > This document is the interface companion to `productivity_app.md`.
 > Where they disagree, the constitution wins.
@@ -11,7 +11,43 @@
 
 ---
 
-# The Stance
+# 0.3 — The Liv Pivot (supersedes most of what follows)
+
+Decided by the owner, 2026-07-06, in his own words: *"we shall port
+the interface and feature set Liv has (exactly, not just vaguely) …
+replicate the entire Liv UI as closely as possible in SwiftUI
+(preserve our colors only), and all of the features … precisely.
+The thing I want this to end up as is Liv with a better core and
+native UI."*
+
+The new law:
+
+- **The interface is Liv's, ported natively.** `liv-ui-map.md`
+  (mined from the Liv source) is the interface spec of record;
+  this document remains only for what survives below.
+- **What survives:** the materials (SF Pro, SF Symbols, system
+  controls and vibrancy, system light/dark), the lotus accent —
+  lake green #2f7d6b replacing Liv's palette wherever Liv used an
+  accent — the ❧ mark, create-then-rename, the 11pt floor, and
+  the loop (decisions made once, in writing).
+- **What is annulled:** the one-window/one-lens stance, the tabs
+  ban, the palette ban, the settings-surface ban, the badge budget,
+  the density budgets — every refusal that was taste, not
+  architecture. Liv's shell is the taste now.
+- **What still cannot enter,** because it is Liv's disease and the
+  reason lotus exists: a second source of truth (no .md mirror, no
+  file watcher, no write-through — import/export instead), silent
+  mutation (every AI write stays a proposal), and embedded web
+  engines (the port is native; web-rendered surfaces get native
+  equivalents). Where Liv's UI assumes one of these, the UI stays
+  and the truth underneath changes.
+
+The calibration point is no longer Things 3. It is Liv itself,
+with lotus's core and macOS-native craft.
+
+---
+
+# The Stance (0.2 — superseded by the pivot above)
 
 One window. Native. Finished on arrival.
 
@@ -173,9 +209,10 @@ No chord does different things on different surfaces.
 
 ---
 
-# What Is Banned
+# What Is Banned (0.2 — mostly annulled by the pivot; see 0.3)
 
-The negative space, stated so no tool can improvise into it:
+Of this list, only the architectural items survive (stated in 0.3).
+Kept for the record:
 
 - themes, font pickers, density or spacing settings
 - tabs, split panes, detachable panels
