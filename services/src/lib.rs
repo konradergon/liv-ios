@@ -9,7 +9,99 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
-use lotus_core::{props, Entity, Id, Store, Value};
+use lotus_core::{
+    props, Author, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session, Span,
+    Store, Value,
+};
+
+/// Capture: an untyped entity with content and a creation date. Nothing
+/// else. Every shell — the CLI today, the popup now, whatever comes —
+/// builds the same scrap through this one function.
+pub fn capture(
+    session: &mut Session,
+    text: &str,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let scrap = session.allocate_id();
+    session.commit(
+        vec![
+            Command::Create { entity: scrap },
+            Command::AddCell {
+                entity: scrap,
+                cell: Cell {
+                    property: props::CONTENT,
+                    value: Value::RichText(RichText {
+                        spans: vec![Span::Text(text.to_string())],
+                    }),
+                },
+            },
+            Command::AddCell {
+                entity: scrap,
+                cell: Cell {
+                    property: props::CREATED,
+                    value: Value::DateTime(created),
+                },
+            },
+        ],
+        "capture",
+        Author::User,
+    )?;
+    Ok(scrap)
+}
+
+/// A fresh box seeds the bootstrap property definitions — entities like
+/// any other, authored by the system. Property names live in the box, not
+/// in application code, so views can look them up and the clerk will one
+/// day reuse them as its gazetteer. The first run asks nothing.
+pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
+    if !session.store().history().is_empty() {
+        return Ok(());
+    }
+    let definitions: [(Id, &str, &str); 14] = [
+        (props::NAME, "name", "text"),
+        (props::TYPE, "type", "reference"),
+        (props::CREATED, "created", "datetime"),
+        (props::CONTENT, "content", "richtext"),
+        (props::VALUE_KIND, "value-kind", "text"),
+        (props::OPTIONS, "options", "reference"),
+        (props::EXPECTED, "expected", "reference"),
+        (props::DEFAULT_VIEW, "default-view", "reference"),
+        (props::QUERY, "query", "text"),
+        (props::RENDERER, "renderer", "text"),
+        (props::CONFIG, "config", "text"),
+        (props::EXTERNAL_ID, "external-id", "text"),
+        (props::WORKING, "working", "bool"),
+        (props::PRIVATE, "private", "bool"),
+    ];
+    let mut commands = Vec::new();
+    for (id, name, kind) in definitions {
+        commands.push(Command::Create { entity: id });
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell {
+                property: props::NAME,
+                value: Value::text(name),
+            },
+        });
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell {
+                property: props::VALUE_KIND,
+                value: Value::text(kind),
+            },
+        });
+        // Property definitions are plumbing on the shelf, not thoughts.
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell {
+                property: props::WORKING,
+                value: Value::Bool(true),
+            },
+        });
+    }
+    session.commit(commands, "bootstrap properties", Author::System)?;
+    Ok(())
+}
 
 /// A description of a set of entities. Plain data; `run` interprets it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

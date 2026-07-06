@@ -1,0 +1,13 @@
+[package]
+name = "lotus-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lotus_ffi"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+lotus-core = { path = "../core" }
+lotus-services = { path = "../services" }
+chrono = "0.4"

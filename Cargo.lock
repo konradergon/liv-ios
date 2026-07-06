@@ -160,6 +160,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lotus-ffi"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lotus-core",
+ "lotus-services",
+]
+
+[[package]]
 name = "lotus-services"
 version = "0.1.0"
 dependencies = [

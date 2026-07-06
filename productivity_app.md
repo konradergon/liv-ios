@@ -835,6 +835,10 @@ The shell orchestrates.
 
 It does not own data.
 
+The first shell is macOS-native:
+Swift, a menu-bar agent, one C seam to the core.
+Everything below the shell is platform-free and compiles without it.
+
 ---
 
 # Renderers
@@ -1571,6 +1575,14 @@ Decided in 1.4, likewise recorded where they land:
 - authoring surfaces are fenced, but saving the query on screen is a
   bookmark, not a builder (Build Order)
 
+Decided at milestone 4, likewise recorded where it lands:
+
+- platform: a macOS-native shell — Swift, a menu-bar agent, one C seam
+  to the Rust core; everything below the shell stays platform-free
+  (Layers — Shell, Build Order)
+- the capture hotkey defaults to ⌃⌥Space; the binding is one of the
+  budgeted settings (The System Arrives Designed)
+
 Still deliberately undecided.
 Each is decided when its feature is built, not before:
 
@@ -1582,9 +1594,6 @@ Each is decided when its feature is built, not before:
   (task status vs invoice status): split, or union.
   The global namespace's one hard bill, paid once.
 - The Today surface — board or dedicated list, chosen inside milestone 5.
-- Platform and UI toolkit — the first question of implementation.
-  The capture hotkey and its background process are where the operating system bites first.
-  The implementation language was decided at milestone 1: Rust (Reference Data Model, Build Order).
 - Sync and multi-device — eventual scope, or permanent non-goal.
   Entangled with: timezone storage, content-edit granularity, identifier allocation.
 - The starter library — the built-in types and their expectations.
@@ -2074,6 +2083,7 @@ Each milestone forces the minimum version of exactly one fenced decision.
 4. **Capture** — the global hotkey, the popup, the scrap.
    The feature the pitch stands on precedes everything clever.
    Platform reality bites here first.
+   It bit: macOS-native, Swift over the Rust core (see Shell).
 5. **Clerk v0** — regex-grade proposers (dates in text, known names)
    and the proposal inbox.
    Today is chosen here, by the workflow,
