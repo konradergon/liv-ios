@@ -556,6 +556,13 @@ final class EditorModel: ObservableObject {
             done(.invalid)
             return
         }
+        // A deallocated view has no spans: saving would write EMPTY
+        // content over the note. Refuse — the draft's words died with
+        // the view, and a no-op is the only honest outcome left.
+        guard textView != nil else {
+            done(.invalid)
+            return
+        }
         if saving {
             // Coalesce: the follow-up flush runs once, with then-current
             // spans and base, and answers every queued caller.

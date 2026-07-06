@@ -41,6 +41,16 @@ struct Hotkey {
         case "ArrowDown": return event.keyCode == 125
         case "ArrowUp": return event.keyCode == 126
         case "Escape": return event.keyCode == 53
+        // Punctuation matches by key code: charactersIgnoringModifiers
+        // applies Shift, so ⌘⇧` would read "~" and never match a
+        // character comparison. (Same philosophy as Liv matching digits
+        // by e.code.)
+        case "`": return event.keyCode == 50
+        case "'": return event.keyCode == 39
+        case ",": return event.keyCode == 43
+        case ".": return event.keyCode == 47
+        case "[": return event.keyCode == 33
+        case "]": return event.keyCode == 30
         default:
             // With ⌥ held, charactersIgnoringModifiers still yields the
             // glyph the chord names on macOS.
@@ -141,6 +151,20 @@ final class CommandRegistry {
             let unmodified = event.modifierFlags
                 .intersection([.command, .option, .control])
                 .isEmpty
+            // A dialog above everything owns the keyboard: Escape
+            // cancels, Return confirms (the prompt's own field keeps its
+            // Return), and no command underneath may fire.
+            if Dialogs.shared.current != nil {
+                if event.keyCode == 53 {
+                    Dialogs.shared.cancelCurrent()
+                    return nil
+                }
+                if event.keyCode == 36 && !textFocused {
+                    Dialogs.shared.confirmCurrent()
+                    return nil
+                }
+                return event
+            }
             for id in self.order {
                 guard let command = self.commands[id],
                     command.scope != .editor,

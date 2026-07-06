@@ -387,6 +387,9 @@ struct WindowChrome: View {
                 model.refresh()
                 installReturnMonitor()
                 registerCommands()
+                // Seed the history with the launch location, or the
+                // first Back has nothing to return to.
+                chrome.recordNav(.init(surface: chrome.surface, selection: nil))
             }
     }
 
@@ -404,10 +407,25 @@ struct WindowChrome: View {
             }
             HStack(spacing: 0) {
                 if !chrome.focusMode {
-                    ActivityBar(chrome: chrome, model: model)
+                    ActivityBar(chrome: chrome, model: model) { target in
+                        navigate(to: target)
+                    }
                 }
                 body3Pane
             }
+        }
+    }
+
+    /// The one door for surface switches: an open editor flushes before
+    /// its view unmounts — a refused flush cancels the switch, exactly
+    /// like a lens change. Re-selecting the active surface is a no-op,
+    /// not a history entry.
+    private func navigate(to target: Surface) {
+        guard target != chrome.surface else { return }
+        closeEditor { ok in
+            guard ok else { return }
+            chrome.surface = target
+            chrome.recordNav(.init(surface: target, selection: nil))
         }
     }
 
@@ -453,13 +471,12 @@ struct WindowChrome: View {
                 selection = note.object as? UInt64
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoHome)) { _ in
-                closeEditor()
-                chrome.surface = .notes
+                navigate(to: .notes)
                 query = ""
                 lens = .today
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoInbox)) { _ in
-                chrome.surface = .inbox
+                navigate(to: .inbox)
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenSettings)) { _ in
                 CommandRegistry.shared.run("app:open-settings")
@@ -483,7 +500,7 @@ struct WindowChrome: View {
             }
             .onChange(of: selection) {
                 if let id = selection {
-                    chrome.nav.record(.init(surface: chrome.surface, selection: id))
+                    chrome.recordNav(.init(surface: chrome.surface, selection: id))
                 }
             }
     }
@@ -508,7 +525,7 @@ struct WindowChrome: View {
                 if chrome.surface == .notes && !chrome.focusMode {
                     PaneDivider(
                         pct: $chrome.leftPct, open: $chrome.leftOpen, total: total,
-                        minPct: 8, maxPct: 60, leadingEdge: true
+                        minPct: 8, maxPct: chrome.leftLiveMax, leadingEdge: true
                     ) { chrome.persistPanes() }
                 }
                 // SurfaceHeaderSlot sits above [center | right] so the
@@ -516,11 +533,15 @@ struct WindowChrome: View {
                 // the tab bars of later phases.
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                if chrome.rightOpen && !chrome.focusMode {
+                // The right divider outlives its panel: a drag-collapsed
+                // inspector must stay reopenable by mouse (§1.5).
+                if !chrome.focusMode {
                     PaneDivider(
                         pct: $chrome.rightPct, open: $chrome.rightOpen, total: total,
                         minPct: 10, maxPct: chrome.rightLiveMax, leadingEdge: false
                     ) { chrome.persistPanes() }
+                }
+                if chrome.rightOpen && !chrome.focusMode {
                     InspectorPane(model: model, selection: $selection)
                         .frame(width: max(total * chrome.rightPct / 100, 0))
                 }
@@ -579,12 +600,16 @@ struct WindowChrome: View {
                 id: "switcher:open", label: "Quick switcher", scope: .global,
                 category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "o")
             ) {
+                // The interim search field lives in the sidebar, which
+                // focus mode hides: search exits focus first.
+                if chrome.focusMode { chrome.toggleFocus() }
                 NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
             })
         registry.register(
             CommandDef(
                 id: "app:toggle-left-sidebar", label: "Toggle left sidebar", scope: .global,
-                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "`")
+                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "`"),
+                enabled: { !chrome.focusMode }  // or the stash restores a lie
             ) {
                 chrome.leftOpen.toggle()
                 chrome.persistPanes()
@@ -592,10 +617,24 @@ struct WindowChrome: View {
         registry.register(
             CommandDef(
                 id: "app:toggle-right-sidebar", label: "Toggle right sidebar", scope: .global,
-                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "'")
+                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "'"),
+                enabled: { !chrome.focusMode }
             ) {
                 chrome.rightOpen.toggle()
                 chrome.persistPanes()
+            })
+        registry.register(
+            CommandDef(
+                id: "lotus:undo-last-change", label: "Undo last change", scope: .global,
+                category: "Edit", binding: Hotkey(modifiers: [.mod, .alt], key: "z")
+            ) {
+                // The box's undo, reachable whatever has focus — the
+                // modified chord passes the text-focus suppression.
+                if let active = EditorRegistry.shared.active {
+                    active.flushThenBoxUndo()
+                } else {
+                    model.undo()
+                }
             })
         registry.register(
             CommandDef(
@@ -653,6 +692,7 @@ struct WindowChrome: View {
         returnMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == 36,
                 event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                Dialogs.shared.current == nil,  // a dialog owns Return
                 chrome.surface == .notes,
                 editor == nil,
                 let id = selection,

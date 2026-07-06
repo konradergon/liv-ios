@@ -133,9 +133,24 @@ final class ChromeModel: ObservableObject {
     }
 
     /// The right panel's live max is capped so a right-handle drag can
-    /// never cascade into and shrink the left sidebar (§1.5).
+    /// never cascade into and shrink the left sidebar (§1.5) — against
+    /// the LIVE left width: on a vault-wide tool the left pane is not
+    /// rendered, whatever the persisted preference says.
     var rightLiveMax: Double {
-        min(50, 100 - 30 - (leftOpen ? leftPct : 0))
+        min(50, 100 - 30 - (surface == .notes && leftOpen ? leftPct : 0))
+    }
+
+    /// The mirror clamp for the left handle: center ≥ 30 holds from
+    /// both sides.
+    var leftLiveMax: Double {
+        min(60, 100 - 30 - (rightOpen ? rightPct : 0))
+    }
+
+    /// Nav mutations repaint the chevrons: the history itself is not
+    /// observable, so the model announces on its behalf.
+    func recordNav(_ entry: NavHistory.Entry) {
+        objectWillChange.send()
+        nav.record(entry)
     }
 
     func toggleFocus() {
@@ -153,6 +168,7 @@ final class ChromeModel: ObservableObject {
     }
 
     func goBack() {
+        objectWillChange.send()
         guard let entry = nav.back() else {
             NSSound.beep()
             return
@@ -163,6 +179,7 @@ final class ChromeModel: ObservableObject {
     }
 
     func goForward() {
+        objectWillChange.send()
         guard let entry = nav.forward() else {
             NSSound.beep()
             return
@@ -198,6 +215,7 @@ struct TitleRow: View {
             HeaderSearch()
         }
         .frame(height: Theme.titleRowHeight)
+        .background(WindowDragRegion())
         .background(Theme.background)
         .overlay(Divider(), alignment: .bottom)
     }
@@ -270,6 +288,7 @@ struct TabsRow: View {
             Spacer()  // the tab strip lands here in P3
         }
         .frame(height: Theme.tabsRowHeight)
+        .background(WindowDragRegion())
         .background(Theme.panel)
         .overlay(Divider(), alignment: .bottom)
     }
@@ -283,6 +302,7 @@ struct BookmarksRow: View {
             Spacer()
         }
         .frame(height: Theme.bookmarksRowHeight)
+        .background(WindowDragRegion())
         .background(Theme.background)
         .overlay(Divider(), alignment: .bottom)
     }
@@ -293,6 +313,9 @@ struct BookmarksRow: View {
 struct ActivityBar: View {
     @ObservedObject var chrome: ChromeModel
     @ObservedObject var model: BoxModel
+    /// Surface switches go through the owner's gate: an open editor
+    /// flushes before its view unmounts. Never mutate surface directly.
+    var select: (Surface) -> Void = { _ in }
     @Namespace private var indicator
     @State private var pinMenuOpen = false
 
@@ -321,6 +344,7 @@ struct ActivityBar: View {
         }
         .padding(.vertical, 10)
         .frame(width: Theme.railWidth)
+        .background(WindowDragRegion())
         .background(Theme.panel.opacity(0.9))
         .overlay(Divider(), alignment: .trailing)
     }
@@ -350,8 +374,7 @@ struct ActivityBar: View {
         _ surface: Surface, badge: Int = 0, badgeHelp: String = "", warningBadge: Int = -1
     ) -> some View {
         Button {
-            chrome.surface = surface
-            chrome.nav.record(.init(surface: surface, selection: nil))
+            select(surface)
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: surface.symbol)
@@ -495,6 +518,7 @@ struct PaneDivider: View {
     let persist: () -> Void
 
     @State private var startPct: Double?
+    @State private var cursorPushed = false
 
     var body: some View {
         Rectangle()
@@ -503,10 +527,20 @@ struct PaneDivider: View {
             .contentShape(Rectangle())
             .overlay(Divider().opacity(open.wrappedValue ? 0 : 1), alignment: .center)
             .onHover { inside in
-                if inside {
+                // Balanced by hand: a divider can vanish mid-hover (its
+                // panel collapsing) and must not strand a resize cursor.
+                if inside && !cursorPushed {
                     NSCursor.resizeLeftRight.push()
-                } else {
+                    cursorPushed = true
+                } else if !inside && cursorPushed {
                     NSCursor.pop()
+                    cursorPushed = false
+                }
+            }
+            .onDisappear {
+                if cursorPushed {
+                    NSCursor.pop()
+                    cursorPushed = false
                 }
             }
             .gesture(
@@ -517,7 +551,13 @@ struct PaneDivider: View {
                         let delta = Double(drag.translation.width / total) * 100
                         let raw = base + (leadingEdge ? delta : -delta)
                         if raw < minPct / 2 {
-                            open.wrappedValue = false  // collapsible to 0
+                            // Collapsible to 0 — persisted immediately:
+                            // the collapse may unmount this very divider
+                            // and cancel the gesture before onEnded.
+                            if open.wrappedValue {
+                                open.wrappedValue = false
+                                persist()
+                            }
                         } else {
                             open.wrappedValue = true
                             pct.wrappedValue = min(max(raw, minPct), maxPct)
@@ -529,6 +569,24 @@ struct PaneDivider: View {
                     }
             )
     }
+}
+
+// MARK: - window drag regions (§1.2)
+
+/// Liv's rows are OS drag regions; the content is not. Empty pixels in
+/// the chrome start a window drag — interactive views above still win.
+struct WindowDragRegion: NSViewRepresentable {
+    final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        DragView()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 // MARK: - focus chip (§1.6)

@@ -24,21 +24,36 @@ struct DialogRequest: Identifiable {
 final class Dialogs: ObservableObject {
     static let shared = Dialogs()
     @Published var current: DialogRequest?
+    /// The prompt's live text, owned here so the key monitor's Return
+    /// can confirm with what was typed.
+    @Published var promptText = ""
+
+    private func present(_ request: DialogRequest) {
+        // Modal means modal: whatever was first responder (the editor,
+        // a field) loses the keyboard before the dialog takes it.
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        if case .prompt(_, let initial) = request.kind {
+            promptText = initial
+        }
+        current = request
+    }
 
     func alert(_ title: String, message: String = "", done: @escaping () -> Void = {}) {
-        current = DialogRequest(
-            kind: .alert, title: title, message: message, confirmLabel: "OK"
-        ) { _ in done() }
+        present(
+            DialogRequest(
+                kind: .alert, title: title, message: message, confirmLabel: "OK"
+            ) { _ in done() })
     }
 
     func confirm(
         _ title: String, message: String = "", danger: Bool = false,
         confirmLabel: String? = nil, done: @escaping (Bool) -> Void
     ) {
-        current = DialogRequest(
-            kind: .confirm(danger: danger), title: title, message: message,
-            confirmLabel: confirmLabel ?? (danger ? "Delete" : "OK")
-        ) { done($0 != nil) }
+        present(
+            DialogRequest(
+                kind: .confirm(danger: danger), title: title, message: message,
+                confirmLabel: confirmLabel ?? (danger ? "Delete" : "OK")
+            ) { done($0 != nil) })
     }
 
     func prompt(
@@ -46,9 +61,26 @@ final class Dialogs: ObservableObject {
         initial: String = "", confirmLabel: String = "OK",
         done: @escaping (String?) -> Void
     ) {
-        current = DialogRequest(
-            kind: .prompt(placeholder: placeholder, initial: initial),
-            title: title, message: message, confirmLabel: confirmLabel, done: done)
+        present(
+            DialogRequest(
+                kind: .prompt(placeholder: placeholder, initial: initial),
+                title: title, message: message, confirmLabel: confirmLabel, done: done))
+    }
+
+    func cancelCurrent() {
+        guard let request = current else { return }
+        current = nil
+        request.done(nil)
+    }
+
+    func confirmCurrent() {
+        guard let request = current else { return }
+        current = nil
+        if case .prompt = request.kind {
+            request.done(promptText)
+        } else {
+            request.done("")
+        }
     }
 }
 
@@ -56,7 +88,6 @@ final class Dialogs: ObservableObject {
 /// title 14 semibold, message 12, footer bar right-aligned.
 struct DialogHost: View {
     @ObservedObject var dialogs = Dialogs.shared
-    @State private var text = ""
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -66,19 +97,17 @@ struct DialogHost: View {
                     Theme.background.opacity(0.7)
                         .background(.ultraThinMaterial)
                         .ignoresSafeArea()
-                        .onTapGesture { finish(request, nil) }
+                        .onTapGesture { dialogs.cancelCurrent() }
                     card(request)
                         .frame(maxWidth: 384)
                         .padding(.top, geo.size.height * 0.18)
                 }
             }
             .onAppear {
-                if case .prompt(_, let initial) = request.kind {
-                    text = initial
+                if case .prompt = request.kind {
                     fieldFocused = true
                 }
             }
-            .onExitCommand { finish(request, nil) }
         }
     }
 
@@ -92,11 +121,11 @@ struct DialogHost: View {
                         .foregroundColor(Theme.mutedFg)
                 }
                 if case .prompt(let placeholder, _) = request.kind {
-                    TextField(placeholder, text: $text)
+                    TextField(placeholder, text: $dialogs.promptText)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12.5))
                         .focused($fieldFocused)
-                        .onSubmit { finish(request, text) }
+                        .onSubmit { dialogs.confirmCurrent() }
                         .padding(.top, 6)
                 }
             }
@@ -105,23 +134,15 @@ struct DialogHost: View {
             HStack(spacing: 8) {
                 Spacer()
                 if !isAlert(request) {
-                    Button("Cancel") { finish(request, nil) }
+                    Button("Cancel") { dialogs.cancelCurrent() }
                         .buttonStyle(.plain)
                         .font(.system(size: 12.5))
                         .foregroundColor(Theme.mutedFg)
-                        .keyboardShortcut(.cancelAction)
                 }
-                Button(request.confirmLabel) {
-                    if case .prompt = request.kind {
-                        finish(request, text)
-                    } else {
-                        finish(request, "")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .tint(isDanger(request) ? Theme.destructive : Theme.primary)
-                .keyboardShortcut(.defaultAction)
+                Button(request.confirmLabel) { dialogs.confirmCurrent() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(isDanger(request) ? Theme.destructive : Theme.primary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -146,11 +167,5 @@ struct DialogHost: View {
     private func isDanger(_ request: DialogRequest) -> Bool {
         if case .confirm(danger: true) = request.kind { return true }
         return false
-    }
-
-    private func finish(_ request: DialogRequest, _ result: String?) {
-        dialogs.current = nil
-        text = ""
-        request.done(result)
     }
 }
