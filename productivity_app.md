@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** 1.3
+> **Status:** 1.4
 >
 > This document is the constitution of the project.
 > It defines architectural principles rather than implementation details.
@@ -29,6 +29,12 @@
 > the clerk files the schema too — learned per user, add-only,
 > refusals remembered — the starter library gets a floor and a fence,
 > and triage is bound to scale sublinearly.
+>
+> 1.4 makes the opinionation explicit:
+> the system arrives designed — workflow chosen, views built,
+> settings budgeted by rule, the first run asking nothing —
+> the straitjacket is named beside the toolkit trap,
+> and upgrades propose, never overwrite.
 >
 > The foundation is ready. Implementation may begin.
 
@@ -88,6 +94,7 @@ This project values:
 - Long-term coherence over short-term convenience
 - Structural enforcement over promised discipline
 - Reversibility over friction
+- Opinions over options
 
 Every architectural decision should move the system toward a smaller set of more powerful concepts.
 
@@ -519,6 +526,73 @@ The user works. The clerk files.
 
 The clerk is only the first agent.
 Automation and agents have a chapter of their own.
+
+---
+
+## The System Arrives Designed
+
+Org-mode and Obsidian made the user the systems architect:
+months of assembly before the first productive day,
+and the assembly never ends.
+Their power users are their builders. This system has no builders.
+
+The trade is explicit:
+efficiency and ease of use,
+paid for with rigidity and missing knobs.
+
+The workflow is chosen:
+capture from anywhere, the clerk proposes,
+Today orients, work launches outward (see How It Is Used).
+The views are built. The types arrive opinionated and learn quietly.
+There is no view builder, no plugin gallery,
+no formula field, no themes.
+
+Settings are governed by a rule, not a count:
+a setting exists only where observation cannot reach
+and the operating system does not already answer —
+the capture hotkey, the store's location,
+the automation switch (a consent boundary the user must own).
+Locale answers the calendar's week; behavior answers the rest.
+Every setting beyond that budget
+is a decision the product refused to make.
+
+The first run asks nothing.
+The box arrives seeded — types, views, defaults,
+all ordinary transactions, author system.
+(What the operating system demands for a global hotkey
+is its question, not ours.)
+
+Personalization is the clerk's job, not the user's.
+The system adapts by noticing, and asks only in triage —
+one optional keystroke of consent,
+never a setup wizard, never a question at capture
+(see The Clerk Files the Schema Too).
+
+The generality underneath — views as data, types as entities,
+one query language — is the substrate's power, deliberately unexposed.
+The system's own surfaces are made of it:
+Today, the calendar, the navigation itself are saved views
+the system authored — seeded like the starter library,
+ordinary, discoverable, offers never fixtures.
+Only the inbox is shell, not view:
+quarantine is drawn, never queried.
+
+The curious can look, and even edit —
+the same uniform cell editing that reaches every entity,
+the query a raw text value, unassisted.
+No lock, no support.
+The kit is reachable; it is never the pitch.
+
+When a newer version holds a better opinion, it proposes it —
+through the proposal queue, like any agent.
+Nothing re-seeds and nothing overwrites:
+provenance knows whose hand last touched a view,
+and a silent upgrade of an edited surface
+would be the silent assistant wearing the product's own face.
+
+A construction kit cannot be retrofitted into a product.
+A product can, someday, open its kit.
+The order is forced, and this document chooses it.
 
 ---
 
@@ -1210,6 +1284,7 @@ This project is NOT:
 - a sync engine
 - an editor for foreign formats
 - a chatbot with a database attached
+- a toolkit for building your own system
 
 It is a unified information system.
 
@@ -1239,6 +1314,31 @@ The starter library is data in the box, never code,
 and the clerk tunes it to its owner through the same two doors,
 one accepted proposal at a time, never by drift
 (see The Clerk Files the Schema Too).
+
+---
+
+## The straitjacket
+
+The opposite ditch.
+Opinions so rigid that real work cannot flow around them.
+
+*(Every "simple" todo app, abandoned the week life stopped fitting it.)*
+
+Defense: structure is always optional —
+a scrap that fits no type still captures, searches and links
+like everything else, and appears in every view its properties reach.
+
+The substrate stays general beneath the opinions,
+so a wrong opinion is a changed default, never a rearchitecture.
+A life the floor does not fit teaches the clerk new types —
+the same two doors, one proposal at a time.
+
+And the wall has a door (see The System Arrives Designed).
+The doorknob is plain text; that is the price of having no builder.
+But the door cannot maim:
+commands are the only mutation,
+so a wrong turn backstage is one transaction —
+one undo step home.
 
 ---
 
@@ -1409,6 +1509,9 @@ Before implementing anything, ask:
 
 11. Does this create obligation — does absence now accumulate debt?
 
+12. Could this be a default instead of a setting?
+    Could the clerk learn it instead of the user configuring it?
+
 Only introduce new abstractions when existing ones genuinely fail.
 
 ---
@@ -1452,6 +1555,21 @@ Decided in 1.3, likewise recorded where they land:
 - the proposal inbox is a shell surface, not a view (How It Is Used, Shell)
 - the starter library's floor and seeding are fixed; its contents wait
   for milestone 5 (Open Decisions, Known Failure Modes)
+
+Decided in 1.4, likewise recorded where they land:
+
+- opinions over options: the system arrives designed — no view builder,
+  no plugin gallery, no formula fields; the kit stays unexposed (Principles)
+- settings are budgeted by rule: only where observation cannot reach and
+  the operating system does not answer (The System Arrives Designed)
+- the first run asks nothing; the box arrives seeded, author system
+  (The System Arrives Designed)
+- system surfaces are ordinary system-authored view entities; upgrades
+  propose changes, never re-seed or overwrite (The System Arrives Designed)
+- the straitjacket is named beside the toolkit trap; clerk-taught types
+  and the backstage door are its defenses (Known Failure Modes)
+- authoring surfaces are fenced, but saving the query on screen is a
+  bookmark, not a builder (Build Order)
 
 Still deliberately undecided.
 Each is decided when its feature is built, not before:
@@ -1970,7 +2088,16 @@ Each milestone forces the minimum version of exactly one fenced decision.
 10. **Agents** — goals become batches; one confirmation, one undo step.
 
 Fenced beyond the horizon:
-auto-accept policy, the external agent socket, email and calendar.
+auto-accept policy, the external agent socket, email and calendar —
+and every dedicated authoring surface:
+view builders, type editors,
+and the settings their existence would imply.
+The entities beneath stay editable the uniform way, as they always were.
+
+The fence stops at the verb save.
+Naming the query on the screen — this filter, this lens, keep it —
+is a bookmark, not a builder,
+and a filter re-typed every morning is the obligation machine.
 
 From milestone 5 onward, the daily workflow —
 not this document — chooses what is built next.
