@@ -50,11 +50,11 @@ extension Theme {
 
     // MARK: §1.2 chrome geometry
 
-    static let titleRowHeight: CGFloat = 36  // h-9
-    static let tabsRowHeight: CGFloat = 36  // h-9
-    static let bookmarksRowHeight: CGFloat = 32  // h-8
     static let railWidth: CGFloat = 44  // w-11
     static let trafficLightSpacer: CGFloat = 72
+    /// The sidebar header band; buttons top-align in it so their centres
+    /// (~14pt) line up with the macOS traffic lights.
+    static let headerBandHeight: CGFloat = 40
 }
 
 extension NSColor {

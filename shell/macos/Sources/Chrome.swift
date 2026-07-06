@@ -244,7 +244,7 @@ struct SidebarHeader: View {
         HStack(spacing: 2) {
             if !chrome.isFullscreen {
                 // The traffic lights live here; the controls sit to
-                // their right, same band.
+                // their right, level with them.
                 Color.clear.frame(width: Theme.trafficLightSpacer)
             }
             headerButton("sidebar.left", "Collapse sidebar (⌘⇧\\)", collapse)
@@ -252,7 +252,9 @@ struct SidebarHeader: View {
             Spacer(minLength: 0)
             NavChevrons(chrome: chrome)
         }
-        .frame(height: 44)
+        // Top-aligned so the buttons line up with the traffic lights
+        // (their centres sit ~14pt down), not centred in the band.
+        .frame(height: Theme.headerBandHeight, alignment: .top)
         .background(WindowDragRegion())
     }
 }
@@ -303,7 +305,7 @@ struct CollapsedControls: View {
             headerButton("magnifyingglass", "Search (⌘O)", search)
         }
         .fixedSize(horizontal: true, vertical: false)
-        .frame(height: 44)
+        .frame(height: Theme.headerBandHeight, alignment: .top)
         .background(WindowDragRegion())
     }
 }
