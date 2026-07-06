@@ -35,9 +35,11 @@ struct EntityRow: Codable, Identifiable, Hashable {
 }
 
 struct ProposalRow: Codable, Identifiable, Hashable {
-    var id: String { "\(entity).\(ordinal)" }
+    var id: String { "\(entity).\(fingerprint)" }
     let entity: UInt64
     let ordinal: UInt32
+    /// Carried back on accept/decline: the seam refuses a stale click.
+    let fingerprint: UInt64
     let reason: String
     let author: String
 }
@@ -59,10 +61,24 @@ struct Snapshot: Codable {
 
 // MARK: - the model: refresh-after-every-act, never hold the box
 
+struct BoxFault: Codable {
+    let code: String
+    let message: String
+}
+
 final class BoxModel: ObservableObject {
     let path: String
     @Published var snap: Snapshot?
     @Published var boxBusy = false
+    /// A box that cannot open for a reason retrying will not fix —
+    /// corrupt, wrong version, io. Rendered as a blocking notice.
+    @Published var fault: BoxFault?
+
+    /// One serial lane to the box: the app must never race its own lock.
+    /// The CLI can still hold the box; that is what retry is for.
+    private let boxQueue = DispatchQueue(label: "lotus.box", qos: .userInitiated)
+    private var retryScheduled = false
+    private var retryDelay = 0.2
 
     init(path: String) {
         self.path = path
@@ -79,9 +95,9 @@ final class BoxModel: ObservableObject {
 
     func refresh() {
         let path = self.path
-        DispatchQueue.global(qos: .userInitiated).async {
+        boxQueue.async {
             guard let raw = lotus_snapshot(path) else {
-                DispatchQueue.main.async { self.boxBusy = true }
+                self.probeAndRetry()
                 return
             }
             let json = String(cString: raw)
@@ -91,28 +107,62 @@ final class BoxModel: ObservableObject {
             let snap = try? decoder.decode(Snapshot.self, from: Data(json.utf8))
             DispatchQueue.main.async {
                 self.boxBusy = false
+                self.fault = nil
+                self.retryDelay = 0.2
                 if let snap = snap { self.snap = snap }
             }
         }
     }
 
-    func capture(_ text: String) {
-        act { lotus_capture_at(self.path, text) != 0 }
+    /// The snapshot said no. Locked means retry (and mean it); anything
+    /// else is a fault the user must see, not a spinner.
+    private func probeAndRetry() {
+        var fault: BoxFault?
+        if let raw = lotus_probe(path) {
+            let json = String(cString: raw)
+            lotus_string_free(raw)
+            fault = try? JSONDecoder().decode(BoxFault.self, from: Data(json.utf8))
+        }
+        DispatchQueue.main.async {
+            if let fault = fault, fault.code != "locked" {
+                self.fault = fault
+                self.boxBusy = false
+                return
+            }
+            self.boxBusy = true
+            guard !self.retryScheduled else { return }
+            self.retryScheduled = true
+            let delay = self.retryDelay
+            self.retryDelay = min(delay * 2, 2.0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                self.retryScheduled = false
+                self.refresh()
+            }
+        }
+    }
+
+    func capture(_ text: String, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_capture_at(self.path, text) != 0 }
     }
 
     func accept(_ proposal: ProposalRow) {
-        act { lotus_accept_at(self.path, proposal.entity, proposal.ordinal) == 1 }
+        act { lotus_accept_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
     }
 
     func reject(_ proposal: ProposalRow) {
-        act { lotus_reject_at(self.path, proposal.entity, proposal.ordinal) == 1 }
+        act { lotus_reject_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
     }
 
-    private func act(_ work: @escaping () -> Bool) {
-        DispatchQueue.global(qos: .userInitiated).async {
+    func undo() {
+        act { lotus_undo_at(self.path) == 1 }
+    }
+
+    private func act(_ done: @escaping (Bool) -> Void = { _ in }, _ work: @escaping () -> Bool) {
+        boxQueue.async {
             let ok = work()
             DispatchQueue.main.async {
                 if !ok { NSSound.beep() }
+                done(ok)
                 self.refresh()
             }
         }
@@ -122,6 +172,10 @@ final class BoxModel: ObservableObject {
 // MARK: - civil date display (one formatter for the whole shell)
 
 enum Civil {
+    /// The core's civil dates are Gregorian by construction; the user's
+    /// system calendar (Buddhist, Hebrew, Japanese…) is display-only.
+    static let gregorian = Calendar(identifier: .gregorian)
+
     static func text(_ civil: Int64, dateOnly: Bool) -> String {
         let ymd = civil / 10_000
         let hm = civil % 10_000
@@ -129,8 +183,9 @@ enum Civil {
         parts.year = Int(ymd / 10_000)
         parts.month = Int((ymd / 100) % 100)
         parts.day = Int(ymd % 100)
-        guard let date = Calendar.current.date(from: parts) else { return "\(civil)" }
+        guard let date = gregorian.date(from: parts) else { return "\(civil)" }
         let formatter = DateFormatter()
+        formatter.calendar = gregorian
         formatter.dateFormat = "EEE, MMM d"
         var out = formatter.string(from: date)
         if !dateOnly {
@@ -140,9 +195,14 @@ enum Civil {
     }
 
     static var todayYMD: Int64 {
-        let now = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        return Int64(now.year! * 10_000 + now.month! * 100 + now.day!)
+        let now = gregorian.dateComponents([.year, .month, .day], from: Date())
+        return Int64((now.year ?? 1970) * 10_000 + (now.month ?? 1) * 100 + (now.day ?? 1))
     }
+}
+
+extension Notification.Name {
+    static let lotusFocusSearch = Notification.Name("lotus.focusSearch")
+    static let lotusFocusCapture = Notification.Name("lotus.focusCapture")
 }
 
 // MARK: - lenses
@@ -197,20 +257,48 @@ struct MainWindow: View {
         }
         .frame(minWidth: 980, minHeight: 620)
         .background(Color(nsColor: .textBackgroundColor))
+        .overlay(faultNotice)
         .onAppear { model.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
+            searchFocused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+            query = ""
+            lens = .today
+        }
+    }
+
+    /// Corrupt / wrong-version / io: a truth the user must see, blocking,
+    /// with the Rust diagnostic verbatim. Locked never lands here.
+    @ViewBuilder
+    private var faultNotice: some View {
+        if let fault = model.fault {
+            VStack(spacing: 10) {
+                Text("The box cannot open")
+                    .font(.system(size: 16, weight: .semibold))
+                Text(fault.message)
+                    .font(.system(size: 13).monospaced())
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+            }
+            .padding(28)
+            .background(RoundedRectangle(cornerRadius: 12).fill(.thickMaterial))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.25))
+        }
     }
 
     private var showInspector: Bool {
-        lens == .everything && query.isEmpty
+        query.isEmpty ? lens == .everything : selection != nil
     }
 
     @ViewBuilder
     private var content: some View {
         if !query.isEmpty {
-            ResultsView(model: model, query: query)
+            ResultsView(model: model, query: query, selection: $selection)
         } else {
             switch lens {
-            case .today: TodayView(model: model, lens: $lens)
+            case .today: TodayView(model: model, lens: $lens, selection: $selection)
             case .calendar: CalendarView(model: model)
             case .everything: EverythingView(model: model, selection: $selection)
             case .inbox: InboxView(model: model)
@@ -362,25 +450,33 @@ struct SectionLabel: View {
 struct EntityLine: View {
     let row: EntityRow
     var showWhen = true
+    var selected = false
+    var select: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 12) {
-            if row.kinds.contains("task") || row.status != nil {
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.5)
-                    .frame(width: 16, height: 16)
+        Button(action: select) {
+            HStack(spacing: 12) {
+                if row.kinds.contains("task") || row.status != nil {
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.5)
+                        .frame(width: 16, height: 16)
+                }
+                Text(row.title)
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                Spacer()
+                if showWhen, let due = row.due {
+                    Text(Civil.text(due, dateOnly: row.dueDateOnly))
+                        .font(.system(size: 12.5).monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
             }
-            Text(row.title)
-                .font(.system(size: 14))
-                .lineLimit(1)
-            Spacer()
-            if showWhen, let due = row.due {
-                Text(Civil.text(due, dateOnly: row.dueDateOnly))
-                    .font(.system(size: 12.5).monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.accentTint : .clear))
         .overlay(Divider(), alignment: .bottom)
     }
 }
@@ -390,7 +486,9 @@ struct EntityLine: View {
 struct TodayView: View {
     @ObservedObject var model: BoxModel
     @Binding var lens: Lens
+    @Binding var selection: UInt64?
     @State private var draft = ""
+    @FocusState private var captureFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -404,11 +502,15 @@ struct TodayView: View {
                     TextField("Capture a thought…", text: $draft)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14))
+                        .focused($captureFocused)
                         .onSubmit {
                             let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !text.isEmpty else { return }
-                            model.capture(text)
-                            draft = ""
+                            // The draft clears only when the log said yes:
+                            // never lose a thought. A beep means retry.
+                            model.capture(text) { ok in
+                                if ok { draft = "" }
+                            }
                         }
                 }
                 .padding(.vertical, 10)
@@ -417,19 +519,33 @@ struct TodayView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(Color.secondary.opacity(0.25))
                 )
+                .onReceive(
+                    NotificationCenter.default.publisher(for: .lotusFocusCapture)
+                ) { _ in
+                    captureFocused = true
+                }
 
                 if let snap = model.snap {
                     if !snap.today.isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
                             SectionLabel(text: "Due")
-                            ForEach(model.rows(snap.today)) { EntityLine(row: $0) }
+                            ForEach(model.rows(snap.today)) { row in
+                                EntityLine(
+                                    row: row,
+                                    selected: selection == row.id
+                                ) { selection = row.id }
+                            }
                         }
                     }
                     if !snap.unstructured.isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
                             SectionLabel(text: "Captured · unstructured")
-                            ForEach(model.rows(snap.unstructured)) {
-                                EntityLine(row: $0, showWhen: false)
+                            ForEach(model.rows(snap.unstructured)) { row in
+                                EntityLine(
+                                    row: row,
+                                    showWhen: false,
+                                    selected: selection == row.id
+                                ) { selection = row.id }
                             }
                         }
                     }
@@ -477,7 +593,7 @@ struct InboxView: View {
             VStack(alignment: .leading, spacing: 0) {
                 LensHeader(
                     title: "Inbox",
-                    subtitle: "\(model.snap?.inbox.count ?? 0) waiting"
+                    subtitle: model.snap.map { "\($0.inbox.count) waiting" } ?? "…"
                 )
                 if let inbox = model.snap?.inbox, !inbox.isEmpty {
                     ForEach(inbox) { proposal in
@@ -544,7 +660,7 @@ struct EverythingView: View {
         VStack(alignment: .leading, spacing: 0) {
             LensHeader(
                 title: "Everything",
-                subtitle: "\(model.snap?.everything.count ?? 0) items"
+                subtitle: model.snap.map { "\($0.everything.count) items" } ?? "…"
             )
             .padding(.horizontal, 32)
             .padding(.top, 40)
@@ -597,6 +713,7 @@ struct EverythingView: View {
 struct ResultsView: View {
     @ObservedObject var model: BoxModel
     let query: String
+    @Binding var selection: UInt64?
 
     var body: some View {
         let hits = (model.snap?.entities ?? []).filter {
@@ -609,7 +726,11 @@ struct ResultsView: View {
                     title: "Results",
                     subtitle: hits.count == 1 ? "1 match" : "\(hits.count) matches"
                 )
-                ForEach(hits) { EntityLine(row: $0) }
+                ForEach(hits) { row in
+                    EntityLine(row: row, selected: selection == row.id) {
+                        selection = row.id
+                    }
+                }
                 if hits.isEmpty {
                     Text("Nothing matches.")
                         .font(.system(size: 14))
@@ -633,10 +754,10 @@ struct CalendarView: View {
 
     var body: some View {
         let now = Date()
-        let cal = Calendar.current
+        let cal = Civil.gregorian
         let parts = cal.dateComponents([.year, .month], from: now)
-        let first = cal.date(from: parts)!
-        let range = cal.range(of: .day, in: .month, for: first)!
+        let first = cal.date(from: parts) ?? now
+        let range = cal.range(of: .day, in: .month, for: first) ?? 1..<29
         let lead = cal.component(.weekday, from: first) - 1
         let monthKey = Int64(parts.year! * 100 + parts.month!)
         var byDay = Dictionary(grouping: model.rows(model.snap?.dated ?? [])) {
@@ -684,6 +805,7 @@ struct CalendarView: View {
 
     private func monthTitle(_ date: Date) -> String {
         let formatter = DateFormatter()
+        formatter.calendar = Civil.gregorian
         formatter.dateFormat = "MMMM yyyy"
         return formatter.string(from: date)
     }
@@ -706,15 +828,19 @@ struct DayCell: View {
                 Text("\(day)")
                     .font(.system(size: 12.5).monospacedDigit())
             }
+            // Plain text, primary color: hierarchy from typography, never
+            // from boxes — and the accent keeps its three jobs (the today
+            // circle is the calendar's only green).
             ForEach(events.prefix(3)) { row in
                 Text(row.title)
                     .font(.system(size: 11.5))
                     .lineLimit(1)
-                    .foregroundColor(Theme.accentDeep)
-                    .padding(.vertical, 3)
-                    .padding(.horizontal, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Theme.accentTint))
+                    .foregroundColor(.primary)
+            }
+            if events.count > 3 {
+                Text("+\(events.count - 3) more")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
             }
             Spacer(minLength: 0)
         }

@@ -67,6 +67,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         w.center()
         w.makeKeyAndOrderFront(nil)
         window = w
+
+        // Coming back to the window re-reads the box: a CLI capture made
+        // while we were behind shows the moment we are front again.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: w, queue: .main
+        ) { [weak self] _ in
+            self?.model.refresh()
+        }
+    }
+
+    @objc private func focusSearch() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+    }
+
+    @objc private func focusCapture() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusFocusCapture, object: nil)
+    }
+
+    @objc private func undoLastChange() {
+        model.undo()
     }
 
     /// The minimal menu: Quit, a working Edit menu for the text fields,
@@ -82,17 +104,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             keyEquivalent: "q")
         appItem.submenu = appMenu
 
+        let fileItem = NSMenuItem()
+        main.addItem(fileItem)
+        let file = NSMenu(title: "File")
+        let capture = file.addItem(
+            withTitle: "Capture", action: #selector(focusCapture), keyEquivalent: "n")
+        capture.target = self
+        fileItem.submenu = file
+
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        // The box's undo, distinct from text-field undo: reverses the last
+        // committed transaction, whoever authored it.
+        let undoChange = edit.addItem(
+            withTitle: "Undo Last Change", action: #selector(undoLastChange),
+            keyEquivalent: "z")
+        undoChange.keyEquivalentModifierMask = [.command, .option]
+        undoChange.target = self
         edit.addItem(NSMenuItem.separator())
         edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(NSMenuItem.separator())
+        let find = edit.addItem(
+            withTitle: "Find", action: #selector(focusSearch), keyEquivalent: "f")
+        find.target = self
         editItem.submenu = edit
 
         let windowItem = NSMenuItem()
@@ -202,15 +243,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             discardAndHide()
             return
         }
-        let id = lotus_capture_at(boxPath, text)
-        if id == 0 {
-            // The log said no — maybe the CLI holds the box this instant.
-            // Keep the text on screen: never lose a thought. Enter retries.
-            NSSound.beep()
-            return
+        // Through the model's serial lane, so the panel never races the
+        // window for the box. The draft clears only when the log said yes:
+        // never lose a thought. A beep means Enter retries.
+        model.capture(text) { [weak self] ok in
+            if ok {
+                self?.discardAndHide()
+            }
         }
-        discardAndHide()
-        model.refresh() // the window shows the new scrap at once
     }
 
     /// Esc closes; the draft is discarded deliberately, by the user.

@@ -34,7 +34,11 @@ impl Vocabulary {
 /// Read every candidate entity, propose, and drop duplicates of anything
 /// pending or declined. `today` is the caller's civil date — the clerk
 /// itself has no clock.
-pub fn sweep(store: &Store, today: DateTime) -> Vec<Proposal> {
+pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
+    // `_today` is deliberately unused since the anchor fix: every date the
+    // clerk proposes derives from the store alone, so the sweep is a pure
+    // function of the box and identical in every process. The clock stays
+    // in the signature for future proposers that legitimately need one.
     let Some(vocabulary) = Vocabulary::find(store) else {
         return Vec::new();
     };
@@ -58,13 +62,16 @@ pub fn sweep(store: &Store, today: DateTime) -> Vec<Proposal> {
         // "Tomorrow" means the day after the thought, not the day after
         // the sweep: relative words resolve against the scrap's own
         // creation date. This also makes proposals identical across
-        // sweeps, so what the inbox shows is what accept commits.
+        // sweeps, so what the inbox shows is what accept commits. An
+        // entity with no creation date gets no relative-date guesses at
+        // all — a proposal that drifts with the clock is a lie waiting
+        // for midnight. (Absolute dates need no anchor.)
         let anchor = match entity.get(props::CREATED) {
             Some(Value::DateTime(created)) => {
                 let (y, m, d) = parts(*created);
-                DateTime::date(y, m, d)
+                Some(DateTime::date(y, m, d))
             }
-            _ => today,
+            _ => None,
         };
         propose_dates(&vocabulary, entity, &text, anchor, &mut proposals);
         propose_mentions(&vocabulary, entity, &text, &gazetteer, &mut proposals);
@@ -140,7 +147,7 @@ fn propose_dates(
     vocabulary: &Vocabulary,
     entity: &Entity,
     text: &str,
-    anchor: DateTime,
+    anchor: Option<DateTime>,
     proposals: &mut Vec<Proposal>,
 ) {
     if entity.all(vocabulary.due).next().is_some() {
@@ -198,8 +205,9 @@ fn propose_mentions(
 }
 
 /// Scan the words; the first one that names a date wins. Relative words
-/// resolve against `anchor` — the day the text was written.
-fn first_date(text: &str, anchor: DateTime) -> Option<(String, DateTime)> {
+/// resolve against `anchor` — the day the text was written — and are
+/// skipped entirely when there is no anchor to resolve against.
+fn first_date(text: &str, anchor: Option<DateTime>) -> Option<(String, DateTime)> {
     for raw in text.split_whitespace() {
         let word: String = raw
             .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
@@ -208,15 +216,24 @@ fn first_date(text: &str, anchor: DateTime) -> Option<(String, DateTime)> {
             continue;
         }
         if word == "today" {
-            let (y, m, d) = parts(anchor);
-            return Some((word, DateTime::date(y, m, d)));
+            if let Some(anchor) = anchor {
+                let (y, m, d) = parts(anchor);
+                return Some((word, DateTime::date(y, m, d)));
+            }
+            continue;
         }
         if word == "tomorrow" {
-            return Some((word, add_days(anchor, 1)));
+            if let Some(anchor) = anchor {
+                return Some((word, add_days(anchor, 1)));
+            }
+            continue;
         }
         if let Some(target) = WEEKDAYS.iter().position(|w| *w == word) {
-            let delta = (target as u32 + 7 - weekday(anchor)) % 7;
-            return Some((word, add_days(anchor, delta)));
+            if let Some(anchor) = anchor {
+                let delta = (target as u32 + 7 - weekday(anchor)) % 7;
+                return Some((word, add_days(anchor, delta)));
+            }
+            continue;
         }
         if let Some(date) = iso_date(&word) {
             return Some((word, date));

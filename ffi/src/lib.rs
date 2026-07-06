@@ -93,8 +93,24 @@ struct ProposalRow {
     /// 1-based position among this entity's proposals, in sweep order —
     /// the same addressing the CLI uses, stable across processes.
     ordinal: u32,
+    /// Deterministic hash of the proposal's commands. Triage must present
+    /// it back and it must still match: a consent is to a proposal, never
+    /// to a position that may have shifted since the snapshot.
+    fingerprint: u64,
     reason: String,
     author: String,
+}
+
+/// FNV-1a over the serialized commands — deterministic across processes,
+/// because the sweep is deterministic.
+fn fingerprint(proposal: &lotus_core::Proposal) -> u64 {
+    let bytes = serde_json::to_vec(&proposal.commands).unwrap_or_default();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[derive(Serialize)]
@@ -238,6 +254,7 @@ fn build_snapshot(store: &Store) -> Snapshot {
             Some(ProposalRow {
                 entity,
                 ordinal,
+                fingerprint: fingerprint(p),
                 reason: p.reason.clone(),
                 author: match &p.author {
                     Author::Proposer(name) => name.clone(),
@@ -299,6 +316,7 @@ unsafe fn triage(
     path: *const c_char,
     entity: Id,
     ordinal: u32,
+    expected: u64,
     accept: bool,
 ) -> i32 {
     let Some(mut session) = open_swept(path) else {
@@ -315,13 +333,16 @@ unsafe fn triage(
         })
         .map(|(i, _)| i)
         .collect();
-    let index = match (matching.len(), ordinal) {
-        (0, _) => return 0,
-        (1, 0) | (1, 1) => matching[0],
-        (_, 0) => return 0, // ambiguous without an ordinal
-        (n, k) if (k as usize) <= n => matching[k as usize - 1],
+    let index = match (matching.len(), ordinal as usize) {
+        (n, k) if k >= 1 && k <= n => matching[k - 1],
         _ => return 0,
     };
+    // A consent is to a proposal, not a position: if the queue shifted
+    // since the snapshot, refuse — the shell refreshes and the user sees
+    // the truth before clicking again.
+    if fingerprint(&session.store().pending()[index]) != expected {
+        return 0;
+    }
     let outcome = if accept {
         session.accept(index).is_ok()
     } else {
@@ -330,25 +351,81 @@ unsafe fn triage(
     outcome as i32
 }
 
-/// Accept the proposal addressed by (entity, ordinal). Ordinal is the
-/// 1-based position among that entity's proposals as reported by the
-/// snapshot; 0 means "the only one". Returns 1 on success.
+/// Accept the proposal addressed by (entity, ordinal) — verified against
+/// the fingerprint the snapshot reported. Returns 1 on success, 0 when
+/// the box is busy or the queue no longer matches what was displayed.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_accept_at(path: *const c_char, entity: u64, ordinal: u32) -> i32 {
-    triage(path, entity, ordinal, true)
+pub unsafe extern "C" fn lotus_accept_at(
+    path: *const c_char,
+    entity: u64,
+    ordinal: u32,
+    fingerprint: u64,
+) -> i32 {
+    triage(path, entity, ordinal, fingerprint, true)
 }
 
-/// Decline the proposal addressed by (entity, ordinal); the refusal is
-/// remembered forever. Returns 1 on success.
+/// Decline the proposal addressed by (entity, ordinal) — verified like
+/// accept; the refusal is remembered forever, so a stale click must
+/// never land here. Returns 1 on success.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_reject_at(path: *const c_char, entity: u64, ordinal: u32) -> i32 {
-    triage(path, entity, ordinal, false)
+pub unsafe extern "C" fn lotus_reject_at(
+    path: *const c_char,
+    entity: u64,
+    ordinal: u32,
+    fingerprint: u64,
+) -> i32 {
+    triage(path, entity, ordinal, fingerprint, false)
+}
+
+/// Undo the last committed transaction — capture, accept, set, anything
+/// that landed in the log. (A decline is not a transaction; restoring a
+/// refusal is a separate, deliberate act.) Returns 1 on success.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_undo_at(path: *const c_char) -> i32 {
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    session.undo(Author::User).is_ok() as i32
+}
+
+/// Why the box would not open, as one JSON object: {"code","message"}.
+/// Null when the box opens fine. Codes: "locked", "corrupt", "version",
+/// "io" — the shell retries "locked" and surfaces the rest.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_probe(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(path) = CStr::from_ptr(path).to_str() else {
+        return std::ptr::null_mut();
+    };
+    let error = match Session::open(path) {
+        Ok(_) => return std::ptr::null_mut(),
+        Err(e) => e,
+    };
+    let code = match &error {
+        lotus_core::PersistError::Locked => "locked",
+        lotus_core::PersistError::Corrupt(_) => "corrupt",
+        lotus_core::PersistError::UnsupportedVersion(_) => "version",
+        _ => "io",
+    };
+    let json = serde_json::json!({ "code": code, "message": error.to_string() });
+    match CString::new(json.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]
@@ -404,9 +481,14 @@ mod tests {
         assert_eq!(snap["unstructured"][0], id);
         assert_eq!(snap["inbox"][0]["entity"], id);
         assert_eq!(snap["inbox"][0]["author"], "dates");
+        let print = snap["inbox"][0]["fingerprint"].as_u64().unwrap();
+
+        // A stale or wrong fingerprint is refused: consent is to a
+        // proposal, never to a position.
+        assert_eq!(unsafe { lotus_accept_at(c_path.as_ptr(), id, 1, print ^ 1) }, 0);
 
         // Accepting through the seam lands the due cell...
-        assert_eq!(unsafe { lotus_accept_at(c_path.as_ptr(), id, 0) }, 1);
+        assert_eq!(unsafe { lotus_accept_at(c_path.as_ptr(), id, 1, print) }, 1);
         let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
         let json = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
         unsafe { lotus_string_free(raw) };
