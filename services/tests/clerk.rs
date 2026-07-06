@@ -1,0 +1,144 @@
+//! Clerk v0: dates in text, mentions of known names, and the promise that
+//! nothing asks again.
+
+use lotus_core::*;
+use lotus_services::clerk;
+
+fn boxed(name: &str) -> (Session, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!("lotus_clerk_{name}.log"));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("log.declined"));
+    let mut session = Session::open(&path).unwrap();
+    lotus_services::seed_if_fresh(&mut session).unwrap();
+    (session, path)
+}
+
+fn capture(session: &mut Session, text: &str) -> Id {
+    lotus_services::capture(session, text, DateTime::at(2026, 7, 6, 9, 0)).unwrap()
+}
+
+/// 2026-07-06 is a Monday.
+const MONDAY: DateTime = DateTime {
+    civil: 202607060000,
+    date_only: true,
+};
+
+#[test]
+fn friday_means_this_friday() {
+    let (mut session, path) = boxed("friday");
+    let scrap = capture(&mut session, "Call Anna about the kickoff Friday");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    assert_eq!(proposals.len(), 1);
+    let p = &proposals[0];
+    assert_eq!(p.author, Author::Proposer("dates".into()));
+    assert!(p.reason.contains("2026-07-10"), "{}", p.reason);
+
+    // Accepting lands the due cell on the scrap, authored by the clerk.
+    session.propose(p.clone());
+    session.accept(0).unwrap();
+    let due = lotus_services::property_id(session.store(), "due").unwrap();
+    assert!(session.store().get(scrap).unwrap().get(due).is_some());
+
+    // Once due exists, the dates proposer stays quiet.
+    assert!(clerk::sweep(session.store(), MONDAY).is_empty());
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("log.declined"));
+}
+
+#[test]
+fn tomorrow_and_iso_dates_parse() {
+    let (mut session, path) = boxed("dates");
+    capture(&mut session, "renew the domain tomorrow");
+    capture(&mut session, "dentist on 2026-08-03");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    let reasons: Vec<&str> = proposals.iter().map(|p| p.reason.as_str()).collect();
+    assert_eq!(proposals.len(), 2);
+    assert!(reasons.iter().any(|r| r.contains("2026-07-07")), "{reasons:?}");
+    assert!(reasons.iter().any(|r| r.contains("2026-08-03")), "{reasons:?}");
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("log.declined"));
+}
+
+#[test]
+fn known_names_are_noticed_whole_words_only() {
+    let (mut session, path) = boxed("mentions");
+    let anna = session.allocate_id();
+    session
+        .commit(
+            vec![
+                Command::Create { entity: anna },
+                Command::AddCell {
+                    entity: anna,
+                    cell: Cell {
+                        property: props::NAME,
+                        value: Value::text("Anna"),
+                    },
+                },
+            ],
+            "a person",
+            Author::User,
+        )
+        .unwrap();
+
+    let scrap = capture(&mut session, "lunch with anna");
+    capture(&mut session, "susanna's book"); // not a mention of Anna
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    assert_eq!(proposals.len(), 1, "{proposals:?}");
+    assert_eq!(proposals[0].author, Author::Proposer("mentions".into()));
+    assert!(matches!(
+        proposals[0].commands.as_slice(),
+        [Command::AddCell { entity, cell }]
+            if *entity == scrap && cell.value == Value::Reference(anna)
+    ));
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("log.declined"));
+}
+
+#[test]
+fn a_decline_is_remembered_across_restarts() {
+    let (mut session, path) = boxed("decline");
+    capture(&mut session, "maybe friday");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    assert_eq!(proposals.len(), 1);
+    session.propose(proposals[0].clone());
+    session.reject(0).unwrap();
+
+    // Same process: the sweep drops the duplicate of the refusal.
+    assert!(clerk::sweep(session.store(), MONDAY).is_empty());
+
+    // New process: the refusal was persisted beside the log.
+    drop(session);
+    let session = Session::open(&path).unwrap();
+    assert_eq!(session.store().declined().len(), 1);
+    assert!(
+        clerk::sweep(session.store(), MONDAY).is_empty(),
+        "nothing asks again"
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("log.declined"));
+}
+
+#[test]
+fn the_sweep_never_duplicates_pending() {
+    let (mut session, path) = boxed("dedup");
+    capture(&mut session, "ship it friday");
+
+    for proposal in clerk::sweep(session.store(), MONDAY) {
+        session.propose(proposal);
+    }
+    assert_eq!(session.store().pending().len(), 1);
+
+    // A second sweep — the startup sweep of the next open — adds nothing.
+    assert!(clerk::sweep(session.store(), MONDAY).is_empty());
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("log.declined"));
+}

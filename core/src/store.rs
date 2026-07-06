@@ -188,6 +188,13 @@ impl Store {
         &self.declined
     }
 
+    /// Reload remembered refusals at open — persistence's door, not a
+    /// user action. Refusals are user intent: unlike pending proposals
+    /// they cannot be re-derived, so they ride a sidecar, not the sweep.
+    pub(crate) fn restore_declined(&mut self, proposals: Vec<Proposal>) {
+        self.declined.extend(proposals);
+    }
+
     /// One user action, one undo step, one author.
     pub fn commit(
         &mut self,

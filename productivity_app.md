@@ -1589,6 +1589,20 @@ Decided at milestone 4, likewise recorded where it lands:
 - the capture hotkey defaults to ⌃⌥Space; the binding is one of the
   budgeted settings (The System Arrives Designed)
 
+Decided at milestone 5, likewise recorded where they land:
+
+- the starter library's first contents: types note, task, event, person,
+  project; properties due, status (todo / doing / done), related — all
+  ordinary system-authored entities, backstage like the property
+  definitions (Open Decisions)
+- pending proposals are re-derived by the clerk's sweep at every open;
+  refusals persist in a sidecar beside the log, so nothing asks again
+  survives a restart (Automation and Agents, Persistence)
+- the shell holds no session: capture opens, writes, closes, so the box
+  stays free for every other surface (Layers — Shell)
+- Today v0 is a dedicated list; board-or-list stays open until daily use
+  rules (How It Is Used, Build Order)
+
 Still deliberately undecided.
 Each is decided when its feature is built, not before:
 

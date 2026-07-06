@@ -48,17 +48,157 @@ fn dispatch(args: &[String]) -> Result<(), String> {
     let mut session = Session::open(&log_path).map_err(|e| e.to_string())?;
     lotus_services::seed_if_fresh(&mut session).map_err(|e| e.to_string())?;
 
+    // The clerk sweeps at every open; duplicates of anything pending or
+    // declined never reach the queue.
+    for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
+        session.propose(proposal);
+    }
+
     match rest.split_first() {
+        None | Some((&"today", _)) => {
+            today(&session);
+            Ok(())
+        }
         Some((&"add", text)) if !text.is_empty() => add(&mut session, &text.join(" ")),
         Some((&"list", flags)) => list(&session, flags),
+        Some((&"inbox", _)) => {
+            inbox(&session);
+            Ok(())
+        }
+        Some((&"accept", index)) => accept(&mut session, index),
+        Some((&"reject", index)) => reject(&mut session, index),
         Some((&"history", _)) => {
             history(&session);
             Ok(())
         }
-        _ => Err("usage: lotus [--log FILE] add TEXT... | list [--where P=V|P!=V|P?] \
-                  [--sort P] [--desc] [--columns A,B,C] [--all] | history"
+        _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
+                  list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
+                  inbox | accept N | reject N | history"
             .into()),
     }
+}
+
+fn civil_today() -> DateTime {
+    let now = Local::now();
+    DateTime::date(now.year(), now.month(), now.day())
+}
+
+/// Today: the orientation surface, v0 — a dedicated list built from the
+/// one lens that exists. Board-or-list stays open until daily use decides.
+fn today(session: &Session) {
+    let store = session.store();
+    let list_config = Config {
+        density: Density::List,
+        columns: vec![],
+    };
+
+    if let Some(due) = lotus_services::property_id(store, "due") {
+        let now = Local::now();
+        let tonight = DateTime::at(now.year(), now.month(), now.day(), 23, 59);
+        let due_now = lotus_services::run(
+            store,
+            &Query {
+                constraints: vec![Constraint {
+                    property: due,
+                    op: Op::AtMost(Value::DateTime(tonight)),
+                }],
+                sort: Some(Sort {
+                    property: due,
+                    descending: false,
+                }),
+                ..Query::default()
+            },
+        );
+        if !due_now.is_empty() {
+            println!("due through today:");
+            print_table(&render(store, &due_now, &list_config));
+            println!();
+        }
+
+        let scraps = lotus_services::run(
+            store,
+            &Query {
+                constraints: vec![
+                    Constraint {
+                        property: props::CONTENT,
+                        op: Op::Exists,
+                    },
+                    Constraint {
+                        property: due,
+                        op: Op::Missing,
+                    },
+                ],
+                sort: Some(Sort {
+                    property: props::CREATED,
+                    descending: true,
+                }),
+                ..Query::default()
+            },
+        );
+        if !scraps.is_empty() {
+            println!("captured, unstructured:");
+            print_table(&render(store, &scraps, &list_config));
+            println!();
+        }
+    }
+
+    match store.pending().len() {
+        0 => {}
+        1 => println!("1 proposal waiting — lotus inbox"),
+        n => println!("{n} proposals waiting — lotus inbox"),
+    }
+}
+
+/// The inbox: the shell's one surface that is not a view.
+fn inbox(session: &Session) {
+    let pending = session.store().pending();
+    if pending.is_empty() {
+        println!("(nothing waiting)");
+        return;
+    }
+    for (i, proposal) in pending.iter().enumerate() {
+        let author = match &proposal.author {
+            Author::Proposer(name) => name.clone(),
+            Author::User => "user".into(),
+            Author::System => "system".into(),
+        };
+        let subject = proposal
+            .commands
+            .first()
+            .map(|c| match c {
+                lotus_core::Command::AddCell { entity, .. } => format!("#{entity}"),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+        println!("[{i}] {subject}  {}  ({author})", proposal.reason);
+    }
+    println!("\nlotus accept N | lotus reject N");
+}
+
+fn accept(session: &mut Session, args: &[&str]) -> Result<(), String> {
+    let index: usize = parse_index(args)?;
+    let label = session
+        .store()
+        .pending()
+        .get(index)
+        .map(|p| p.label.clone())
+        .ok_or("no such proposal — lotus inbox")?;
+    session.accept(index).map_err(|e| e.to_string())?;
+    println!("accepted: {label}");
+    Ok(())
+}
+
+fn reject(session: &mut Session, args: &[&str]) -> Result<(), String> {
+    let index: usize = parse_index(args)?;
+    session.reject(index).map_err(|e| e.to_string())?;
+    println!("declined — the clerk won't ask again");
+    Ok(())
+}
+
+fn parse_index(args: &[&str]) -> Result<usize, String> {
+    args.first()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| "which one? lotus inbox shows the numbers".to_string())
 }
 
 /// Capture, CLI-grade: same scrap, same door as the menu-bar shell.
@@ -73,6 +213,15 @@ fn add(session: &mut Session, text: &str) -> Result<(), String> {
     );
     let scrap = lotus_services::capture(session, text, created).map_err(|e| e.to_string())?;
     println!("#{scrap}");
+
+    // The clerk runs behind the write; whatever it noticed shows at once.
+    let already = session.store().pending().len();
+    for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
+        session.propose(proposal);
+    }
+    for (i, proposal) in session.store().pending().iter().enumerate().skip(already) {
+        println!("clerk: {}  (lotus accept {i})", proposal.reason);
+    }
     Ok(())
 }
 
@@ -157,27 +306,8 @@ fn parse_constraint(store: &lotus_core::Store, raw: &str) -> Result<Constraint, 
     Err(format!("cannot parse constraint {raw}"))
 }
 
-/// Property definitions are entities, so name lookup is itself a query:
-/// the entity carrying a value-kind whose name matches.
 fn property_by_name(store: &lotus_core::Store, name: &str) -> Result<Id, String> {
-    let query = Query {
-        constraints: vec![
-            Constraint {
-                property: props::NAME,
-                op: Op::Equals(Value::text(name)),
-            },
-            Constraint {
-                property: props::VALUE_KIND,
-                op: Op::Exists,
-            },
-        ],
-        include_working: true, // definitions are plumbing, but we asked
-        ..Query::default()
-    };
-    lotus_services::run(store, &query)
-        .first()
-        .copied()
-        .ok_or(format!("no property named {name}"))
+    lotus_services::property_id(store, name).ok_or(format!("no property named {name}"))
 }
 
 fn print_table(rendered: &Rendered) {

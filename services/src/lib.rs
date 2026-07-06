@@ -6,6 +6,8 @@
 //! (property, operator, value). Traversal and aggregation wait for the
 //! milestone that needs them.
 
+pub mod clerk;
+
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
@@ -100,6 +102,94 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
         });
     }
     session.commit(commands, "bootstrap properties", Author::System)?;
+    seed_starter_library(session)?;
+    Ok(())
+}
+
+/// The starter library, milestone 5: the floor the first workflow fixed —
+/// note, task, event — plus person and project, the two kinds of name the
+/// clerk's gazetteer feeds on, and the properties they expect.
+///
+/// All ordinary entities: allocated ids (never reserved constants, so no
+/// code can key on them), author system, working: true — plumbing on the
+/// shelf, like the property definitions. Offers, never fixtures.
+///
+/// Additive by design: an older box that predates the library gains it on
+/// open. Nothing is re-seeded once "due" exists, and nothing existing is
+/// ever touched — a better future opinion arrives as a proposal instead.
+fn seed_starter_library(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "due").is_some() {
+        return Ok(());
+    }
+
+    let mut commands = Vec::new();
+    let new_property = |commands: &mut Vec<Command>,
+                            session: &mut Session,
+                            name: &str,
+                            kind: &str| {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        id
+    };
+
+    let due = new_property(&mut commands, session, "due", "datetime");
+    let status = new_property(&mut commands, session, "status", "select");
+    let _related = new_property(&mut commands, session, "related", "reference");
+
+    // Status options are entities; the definition references them.
+    for option in ["todo", "doing", "done"] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(option) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        commands.push(Command::AddCell {
+            entity: status,
+            cell: Cell { property: props::OPTIONS, value: Value::Reference(id) },
+        });
+    }
+
+    // The types, with their expected cells. The expected cell is the one
+    // fact of expectation; defaults wait for a surface that creates
+    // through templates.
+    let expectations: [(&str, &[Id]); 5] = [
+        ("note", &[props::CONTENT]),
+        ("task", &[status, due]),
+        ("event", &[due]),
+        ("person", &[]),
+        ("project", &[]),
+    ];
+    for (name, expected) in expectations {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        for property in expected {
+            commands.push(Command::AddCell {
+                entity: id,
+                cell: Cell {
+                    property: props::EXPECTED,
+                    value: Value::Reference(*property),
+                },
+            });
+        }
+    }
+
+    session.commit(commands, "starter library", Author::System)?;
     Ok(())
 }
 
@@ -132,6 +222,13 @@ pub enum Op {
     NotEquals(Value),
     /// At least one cell of the property is present.
     Exists,
+    /// No cell of the property at all — stronger than NotEquals.
+    /// "Still unstructured" is a Missing, not a NotEquals.
+    Missing,
+    /// At least one cell orders at or before the value, by the same
+    /// per-kind ordering sort uses. Grew out of Today:
+    /// "everything due by tonight".
+    AtMost(Value),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -182,7 +279,31 @@ fn satisfies(entity: &Entity, constraint: &Constraint) -> bool {
         Op::Equals(value) => entity.has(constraint.property, value),
         Op::NotEquals(value) => !entity.has(constraint.property, value),
         Op::Exists => entity.all(constraint.property).next().is_some(),
+        Op::Missing => entity.all(constraint.property).next().is_none(),
+        Op::AtMost(value) => entity
+            .all(constraint.property)
+            .any(|v| compare_values(v, value) != Ordering::Greater),
     }
+}
+
+/// Property definitions are entities, so name lookup is itself a query:
+/// the entity carrying a value-kind whose name matches.
+pub fn property_id(store: &Store, name: &str) -> Option<Id> {
+    let query = Query {
+        constraints: vec![
+            Constraint {
+                property: props::NAME,
+                op: Op::Equals(Value::text(name)),
+            },
+            Constraint {
+                property: props::VALUE_KIND,
+                op: Op::Exists,
+            },
+        ],
+        include_working: true, // definitions are plumbing, but we asked
+        ..Query::default()
+    };
+    run(store, &query).first().copied()
 }
 
 /// Ordering for sorting only — value *equality* stays per-kind in the core.

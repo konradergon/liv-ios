@@ -17,31 +17,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var statusItem: NSStatusItem!
     private var panel: CapturePanel!
     private var field: NSTextField!
-    private var session: OpaquePointer?
     private var hotKeyRef: EventHotKeyRef?
 
+    /// The box admits one writer, so the agent never holds it: each capture
+    /// opens, writes, closes. The CLI stays usable while we sit up here.
+    private let boxPath =
+        FileManager.default.homeDirectoryForCurrentUser.path
+        + "/Library/Application Support/lotus/lotus.log"
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let path = home + "/Library/Application Support/lotus/lotus.log"
-        session = lotus_open(path)
-        guard session != nil else {
-            let alert = NSAlert()
-            alert.messageText = "lotus cannot open its box"
-            alert.informativeText =
-                "Another copy of lotus may already be running, "
-                + "or the log at \(path) is unreadable."
-            alert.runModal()
-            NSApp.terminate(nil)
-            return
-        }
         makeStatusItem()
         makePanel()
         registerHotKey()
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        lotus_close(session)
-        session = nil
     }
 
     // MARK: menu bar
@@ -141,9 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             discardAndHide()
             return
         }
-        let id = lotus_capture(session, text)
+        let id = lotus_capture_at(boxPath, text)
         if id == 0 {
-            // The log said no. Keep the text on screen — never lose a thought.
+            // The log said no — maybe the CLI holds the box this instant.
+            // Keep the text on screen: never lose a thought. Enter retries.
             NSSound.beep()
             return
         }

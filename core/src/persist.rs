@@ -14,8 +14,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::command::{Author, Command, Transaction};
+use crate::command::{Author, Command, Proposal, Transaction};
 use crate::store::{Store, StoreError};
+use crate::value::Id;
 
 /// The log format version. It goes in the header on day one; one integer
 /// buys every future migration.
@@ -102,6 +103,11 @@ pub struct Session {
     store: Store,
     log: FileLog,
     healthy: bool,
+    /// Refusals live beside the log: `<log>.declined`, one JSON line per
+    /// refusal. Pending proposals are re-derived by the clerk's sweep and
+    /// need no file; a refusal is user intent and must survive a restart —
+    /// nothing asks again.
+    declined_path: std::path::PathBuf,
 }
 
 impl Session {
@@ -150,11 +156,31 @@ impl Session {
             file.set_len(good_len)?;
         }
 
-        let store = Store::replay(transactions)?;
+        let mut store = Store::replay(transactions)?;
+
+        let declined_path = path.with_extension("log.declined");
+        match std::fs::read_to_string(&declined_path) {
+            Ok(text) => {
+                let mut declined = Vec::new();
+                for line in text.lines().filter(|l| !l.is_empty()) {
+                    match serde_json::from_str::<Proposal>(line) {
+                        Ok(p) => declined.push(p),
+                        // A torn refusal is dropped, like a torn tail; the
+                        // worst outcome is one repeated question.
+                        Err(_) => break,
+                    }
+                }
+                store.restore_declined(declined);
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+
         Ok(Session {
             store,
             log: FileLog { file },
             healthy: true,
+            declined_path,
         })
     }
 
@@ -191,8 +217,8 @@ impl Session {
 
     pub fn merge(
         &mut self,
-        survivor: crate::value::Id,
-        loser: crate::value::Id,
+        survivor: Id,
+        loser: Id,
         resolutions: Vec<Command>,
         author: Author,
     ) -> Result<u64, PersistError> {
@@ -209,10 +235,33 @@ impl Session {
         Ok(seq)
     }
 
+    /// Quarantine, in memory: pending proposals are re-derived by the
+    /// clerk's sweep at every open, so they need no file until an agent
+    /// drafts something a sweep cannot re-derive (milestone 7).
+    pub fn propose(&mut self, proposal: Proposal) {
+        self.store.propose(proposal);
+    }
+
+    /// Decline and remember: the refusal is appended to the sidecar before
+    /// the call returns, so nothing asks again — across restarts too.
+    pub fn reject(&mut self, index: usize) -> Result<(), PersistError> {
+        let refused = self.store.reject(index)?;
+        let line = serde_json::to_string(refused)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.declined_path)?;
+        file.write_all(line.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        Ok(())
+    }
+
     /// Id allocation is the one mutation that is not a command (an id must be
     /// minted before the Create that uses it). It writes nothing to the log —
     /// a burned id is not user data, and gaps are fine since ids never reuse.
-    pub fn allocate_id(&mut self) -> crate::value::Id {
+    pub fn allocate_id(&mut self) -> Id {
         self.store.allocate_id()
     }
 
