@@ -8,6 +8,7 @@ fn boxed(name: &str) -> (Session, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!("lotus_clerk_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
     lotus_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
@@ -35,7 +36,7 @@ fn friday_means_this_friday() {
     assert!(p.reason.contains("2026-07-10"), "{}", p.reason);
 
     // Accepting lands the due cell on the scrap, authored by the clerk.
-    session.propose(p.clone());
+    session.propose(p.clone()).unwrap();
     session.accept(0).unwrap();
     let due = lotus_services::property_id(session.store(), "due").unwrap();
     assert!(session.store().get(scrap).unwrap().get(due).is_some());
@@ -45,6 +46,7 @@ fn friday_means_this_friday() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -61,6 +63,7 @@ fn tomorrow_and_iso_dates_parse() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -98,6 +101,7 @@ fn known_names_are_noticed_whole_words_only() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -107,7 +111,7 @@ fn a_decline_is_remembered_across_restarts() {
 
     let proposals = clerk::sweep(session.store(), MONDAY);
     assert_eq!(proposals.len(), 1);
-    session.propose(proposals[0].clone());
+    session.propose(proposals[0].clone()).unwrap();
     session.reject(0).unwrap();
 
     // Same process: the sweep drops the duplicate of the refusal.
@@ -124,6 +128,7 @@ fn a_decline_is_remembered_across_restarts() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -150,6 +155,7 @@ fn relative_dates_anchor_to_capture_not_to_the_sweep() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -159,7 +165,7 @@ fn a_decline_outlives_value_drift() {
 
     let proposals = clerk::sweep(session.store(), MONDAY);
     assert_eq!(proposals.len(), 1);
-    session.propose(proposals[0].clone());
+    session.propose(proposals[0].clone()).unwrap();
     session.reject(0).unwrap();
 
     // Even if a future proposer resolves to a different value, the
@@ -173,6 +179,7 @@ fn a_decline_outlives_value_drift() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -180,6 +187,7 @@ fn an_old_box_gains_the_starter_library_on_open() {
     let path = std::env::temp_dir().join("lotus_clerk_upgrade.log");
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 
     // A box from before the starter library: history exists, "due" does not.
     {
@@ -204,6 +212,7 @@ fn an_old_box_gains_the_starter_library_on_open() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 #[test]
@@ -212,7 +221,7 @@ fn the_sweep_never_duplicates_pending() {
     capture(&mut session, "ship it friday");
 
     for proposal in clerk::sweep(session.store(), MONDAY) {
-        session.propose(proposal);
+        session.propose(proposal).unwrap();
     }
     assert_eq!(session.store().pending().len(), 1);
 
@@ -221,4 +230,5 @@ fn the_sweep_never_duplicates_pending() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }

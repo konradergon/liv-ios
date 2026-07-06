@@ -51,7 +51,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
     // The clerk sweeps at every open; duplicates of anything pending or
     // declined never reach the queue.
     for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
-        session.propose(proposal);
+        session.propose(proposal).map_err(|e| e.to_string())?;
     }
 
     match rest.split_first() {
@@ -375,7 +375,7 @@ fn add(session: &mut Session, text: &str) -> Result<(), String> {
     // The clerk runs behind the write; whatever it noticed shows at once.
     let already = session.store().pending().len();
     for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
-        session.propose(proposal);
+        session.propose(proposal).map_err(|e| e.to_string())?;
     }
     for proposal in session.store().pending().iter().skip(already) {
         let subject = subject_of(proposal)

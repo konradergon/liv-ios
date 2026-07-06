@@ -11,6 +11,8 @@ fn cell(property: Id, value: Value) -> Cell {
 /// A fresh log path per test; removed up front so each run starts empty.
 fn temp_path(name: &str) -> std::path::PathBuf {
     let p = std::env::temp_dir().join(format!("lotus_persist_{name}.log"));
+    let _ = std::fs::remove_file(format!("{}.declined", p.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", p.display()));
     let _ = std::fs::remove_file(&p);
     p
 }
@@ -206,6 +208,38 @@ fn a_tail_torn_at_the_newline_is_dropped() {
 }
 
 #[test]
+fn the_queue_survives_a_restart() {
+    let path = temp_path("pending");
+
+    // An agent's draft: no sweep can re-derive this.
+    let draft = Proposal {
+        commands: vec![Command::Create { entity: 9100 }],
+        label: "plan the offsite".into(),
+        author: Author::Proposer("offsite-agent".into()),
+        reason: "goal: plan the offsite".into(),
+    };
+
+    {
+        let mut s = Session::open(&path).unwrap();
+        s.propose(draft.clone()).unwrap();
+    }
+
+    // Reopen: the draft is still in quarantine.
+    {
+        let mut s = Session::open(&path).unwrap();
+        assert_eq!(s.store().pending(), std::slice::from_ref(&draft));
+        // Accepting empties the queue file too.
+        s.accept(0).unwrap();
+    }
+    let s = Session::open(&path).unwrap();
+    assert!(s.store().pending().is_empty());
+    assert!(s.store().get(9100).is_some());
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+}
+
+#[test]
 fn a_torn_sidecar_heals_and_later_refusals_survive() {
     use std::io::Write;
     let path = temp_path("sidecar_torn");
@@ -221,7 +255,7 @@ fn a_torn_sidecar_heals_and_later_refusals_survive() {
 
     {
         let mut s = Session::open(&path).unwrap();
-        s.propose(proposal("first"));
+        s.propose(proposal("first")).unwrap();
         s.reject(0).unwrap();
     }
 
@@ -236,7 +270,7 @@ fn a_torn_sidecar_heals_and_later_refusals_survive() {
     {
         let mut s = Session::open(&path).unwrap();
         assert_eq!(s.store().declined().len(), 1);
-        s.propose(proposal("second"));
+        s.propose(proposal("second")).unwrap();
         s.reject(0).unwrap();
     }
 

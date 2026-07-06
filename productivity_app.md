@@ -1618,6 +1618,13 @@ Decided at milestone 6, likewise recorded where they land:
 - a series' past occurrences accumulate no debt: Today shows what recurs
   today, never a pile of missed Tuesdays (How It Is Used)
 
+Decided at milestone 7, likewise recorded where it lands:
+
+- the queue persists beside the log (`<log>.pending`, rewritten whole
+  and atomically on every change): the sweep still re-derives what regex
+  can re-derive, but what it cannot — an agent's draft — now survives a
+  restart (Automation and Agents, Persistence)
+
 Still deliberately undecided.
 Each is decided when its feature is built, not before:
 

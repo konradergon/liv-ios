@@ -106,10 +106,14 @@ pub struct Session {
     log: FileLog,
     healthy: bool,
     /// Refusals live beside the log: `<log>.declined`, one JSON line per
-    /// refusal. Pending proposals are re-derived by the clerk's sweep and
-    /// need no file; a refusal is user intent and must survive a restart —
+    /// refusal. A refusal is user intent and must survive a restart —
     /// nothing asks again.
     declined_path: std::path::PathBuf,
+    /// The queue itself lives beside the log too (milestone 7): the sweep
+    /// still re-derives what regex can re-derive, but an agent's draft
+    /// cannot be re-derived, so the whole queue is rewritten — atomically,
+    /// temp-then-rename — on every change.
+    pending_path: std::path::PathBuf,
 }
 
 impl Session {
@@ -194,12 +198,62 @@ impl Session {
             Err(e) => return Err(e.into()),
         }
 
+        let pending_path = {
+            let mut name = path.as_os_str().to_owned();
+            name.push(".pending");
+            std::path::PathBuf::from(name)
+        };
+        match std::fs::read(&pending_path) {
+            Ok(bytes) => {
+                // Tolerant like the declined loader: refusing to open over
+                // one bad line would hold the whole box hostage.
+                for line in bytes.split(|b| *b == b'\n') {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(text) = std::str::from_utf8(line) {
+                        if let Ok(p) = serde_json::from_str::<Proposal>(text) {
+                            store.propose(p);
+                        }
+                    }
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+
         Ok(Session {
             store,
             log: FileLog { file },
             healthy: true,
             declined_path,
+            pending_path,
         })
+    }
+
+    /// Rewrite the queue file to match memory, atomically: a crash
+    /// mid-write leaves the old file, never a torn one.
+    fn persist_pending(&self) -> Result<(), PersistError> {
+        let mut buffer = String::new();
+        for proposal in self.store.pending() {
+            buffer.push_str(
+                &serde_json::to_string(proposal)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            );
+            buffer.push('\n');
+        }
+        let temp = {
+            let mut name = self.pending_path.as_os_str().to_owned();
+            name.push(".tmp");
+            std::path::PathBuf::from(name)
+        };
+        {
+            let mut file = File::create(&temp)?;
+            file.write_all(buffer.as_bytes())?;
+            file.sync_all()?;
+        }
+        std::fs::rename(&temp, &self.pending_path)?;
+        Ok(())
     }
 
     /// Read access to the materialized store.
@@ -250,14 +304,17 @@ impl Session {
         self.ensure_healthy()?;
         let seq = self.store.accept(index)?;
         self.persist_last()?;
+        self.persist_pending()?;
         Ok(seq)
     }
 
-    /// Quarantine, in memory: pending proposals are re-derived by the
-    /// clerk's sweep at every open, so they need no file until an agent
-    /// drafts something a sweep cannot re-derive (milestone 7).
-    pub fn propose(&mut self, proposal: Proposal) {
+    /// Quarantine, durable: the proposal lands in memory and the queue
+    /// file is rewritten before the call returns. What a sweep can
+    /// re-derive costs a few redundant bytes; what it cannot — an agent's
+    /// draft — survives a restart.
+    pub fn propose(&mut self, proposal: Proposal) -> Result<(), PersistError> {
         self.store.propose(proposal);
+        self.persist_pending()
     }
 
     /// Decline and remember: the refusal is appended to the sidecar before
@@ -273,6 +330,7 @@ impl Session {
             .open(&self.declined_path)?;
         file.write_all(line.as_bytes())?;
         file.sync_all()?;
+        self.persist_pending()?;
         Ok(())
     }
 

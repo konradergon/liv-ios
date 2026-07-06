@@ -124,7 +124,9 @@ unsafe fn open_swept(path: *const c_char) -> Option<Session> {
     lotus_services::seed_if_fresh(&mut session).ok()?;
     let today = civil_today();
     for proposal in clerk::sweep(session.store(), today) {
-        session.propose(proposal);
+        if session.propose(proposal).is_err() {
+            return None;
+        }
     }
     Some(session)
 }
@@ -359,6 +361,7 @@ mod tests {
         let path = std::env::temp_dir().join("lotus_ffi_roundtrip.log");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
         let c_path = CString::new(path.to_str().unwrap()).unwrap();
 
         let text = CString::new("Call Anna Friday").unwrap();
@@ -377,6 +380,7 @@ mod tests {
         assert!(entity.get(lotus_core::props::CREATED).is_some());
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     }
 
     #[test]
@@ -384,6 +388,7 @@ mod tests {
         let path = std::env::temp_dir().join("lotus_ffi_snapshot.log");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
         let c_path = CString::new(path.to_str().unwrap()).unwrap();
 
         let text = CString::new("kickoff friday").unwrap();
@@ -412,5 +417,6 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     }
 }

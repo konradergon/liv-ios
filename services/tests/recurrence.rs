@@ -9,6 +9,7 @@ fn boxed(name: &str) -> (Session, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!("lotus_recur_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
     lotus_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
@@ -17,6 +18,7 @@ fn boxed(name: &str) -> (Session, std::path::PathBuf) {
 fn clean(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
 
 /// A series: one entity with a name, a due anchor, and a rule.
