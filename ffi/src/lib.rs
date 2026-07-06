@@ -78,6 +78,9 @@ struct EntityRow {
     due_date_only: bool,
     status: Option<String>,
     created: Option<i64>,
+    /// Fingerprint of the stored content value, 0 when none — the editor
+    /// learns from every snapshot whether its base moved, for free.
+    content_print: u64,
     cells: Vec<CellRow>,
 }
 
@@ -104,13 +107,7 @@ struct ProposalRow {
 /// FNV-1a over the serialized commands — deterministic across processes,
 /// because the sweep is deterministic.
 fn fingerprint(proposal: &lotus_core::Proposal) -> u64 {
-    let bytes = serde_json::to_vec(&proposal.commands).unwrap_or_default();
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+    lotus_services::content::fnv(&serde_json::to_vec(&proposal.commands).unwrap_or_default())
 }
 
 #[derive(Serialize)]
@@ -223,6 +220,9 @@ fn build_snapshot(store: &Store) -> Snapshot {
                     Some(Value::DateTime(d)) => Some(d.civil),
                     _ => None,
                 },
+                content_print: lotus_services::content::content_fingerprint(
+                    entity.get(props::CONTENT),
+                ),
                 cells: entity
                     .cells
                     .iter()
@@ -428,6 +428,138 @@ pub unsafe extern "C" fn lotus_probe(path: *const c_char) -> *mut c_char {
     }
 }
 
+// ---- the editor's seam: content in, content out, guarded ----
+
+#[derive(Serialize)]
+struct ContentDoc {
+    id: Id,
+    name: Option<String>,
+    trashed: bool,
+    /// Identity of the stored content value; a save must present it back.
+    fingerprint: u64,
+    /// The log's own serde encoding of Span, verbatim.
+    spans: Vec<lotus_core::Span>,
+}
+
+/// One entity's content, fresh from the box. Legacy plain-text content
+/// reads as one Text span (the fingerprint still covers the stored
+/// value). Redirects resolve before reading. Null when the box is
+/// unavailable or the entity does not exist. Free with `lotus_string_free`.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut c_char {
+    let Some(session) = open_swept(path) else {
+        return std::ptr::null_mut();
+    };
+    let store = session.store();
+    let id = store.resolve(id);
+    let Some(entity) = store.get(id) else {
+        return std::ptr::null_mut();
+    };
+    let doc = ContentDoc {
+        id,
+        name: match entity.get(props::NAME) {
+            Some(Value::Text(name)) => Some(name.clone()),
+            _ => None,
+        },
+        trashed: entity.trashed,
+        fingerprint: lotus_services::content::content_fingerprint(entity.get(props::CONTENT)),
+        spans: lotus_services::content::content_spans(entity),
+    };
+    drop(session);
+    match serde_json::to_string(&doc).ok().and_then(|s| CString::new(s).ok()) {
+        Some(s) => s.into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Replace the entity's whole content in one transaction — the editor's
+/// save. `base_fingerprint` must still match the stored content: a save
+/// is to a value, never a moment. There is no force flag; overwrite is
+/// re-read then save. On success `*fresh_fingerprint` receives the new
+/// content's fingerprint. Returns 1 saved, -1 stale, 0 busy or invalid.
+///
+/// # Safety
+/// `path` and `spans_json` must be valid NUL-terminated UTF-8 strings;
+/// `fresh_fingerprint` must be null or valid for one u64 write.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_set_content_at(
+    path: *const c_char,
+    id: u64,
+    spans_json: *const c_char,
+    base_fingerprint: u64,
+    fresh_fingerprint: *mut u64,
+) -> i32 {
+    if spans_json.is_null() {
+        return 0;
+    }
+    let Ok(json) = CStr::from_ptr(spans_json).to_str() else {
+        return 0;
+    };
+    let Ok(spans) = serde_json::from_str::<Vec<lotus_core::Span>>(json) else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    match lotus_services::content::set_content(&mut session, id, spans, base_fingerprint) {
+        Ok(fresh) => {
+            if !fresh_fingerprint.is_null() {
+                *fresh_fingerprint = fresh;
+            }
+            1
+        }
+        Err(lotus_services::content::ContentError::Stale) => -1,
+        Err(_) => 0,
+    }
+}
+
+/// Set one property by name: the CLI's `set` through the seam — value
+/// parsed by the property's declared kind, replace-the-cell, one
+/// transaction. Serves the checkbox ("status","done"), rename ("name",…)
+/// and the inspector to come. Returns 1, or 0 on busy/parse/no-entity.
+///
+/// # Safety
+/// `path`, `property` and `value` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_set_at(
+    path: *const c_char,
+    id: u64,
+    property: *const c_char,
+    value: *const c_char,
+) -> i32 {
+    if property.is_null() || value.is_null() {
+        return 0;
+    }
+    let (Ok(property), Ok(value)) = (
+        CStr::from_ptr(property).to_str(),
+        CStr::from_ptr(value).to_str(),
+    ) else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    lotus_services::content::set_property(&mut session, id, property, value).is_ok() as i32
+}
+
+/// Birth of a note: Create + type + created, one transaction. Returns
+/// the id, 0 on failure. The caller drops straight into renaming.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    let now = Local::now();
+    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+    lotus_services::content::create_note(&mut session, created).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +632,215 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
         let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+    }
+
+    /// A fresh box path with sidecars cleared; returns (PathBuf, CString).
+    fn fresh_box(name: &str) -> (std::path::PathBuf, CString) {
+        let path = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+        let c_path = CString::new(path.to_str().unwrap()).unwrap();
+        (path, c_path)
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+    }
+
+    unsafe fn read_json(raw: *mut c_char) -> serde_json::Value {
+        assert!(!raw.is_null());
+        let json = CStr::from_ptr(raw).to_str().unwrap().to_string();
+        lotus_string_free(raw);
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn content_seam_roundtrips() {
+        let (path, c_path) = fresh_box("lotus_ffi_content.log");
+
+        let text = CString::new("plain thought").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        assert_ne!(id, 0);
+
+        // The read: capture's RichText comes back verbatim, name null.
+        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(doc["id"], id);
+        assert_eq!(doc["name"], serde_json::Value::Null);
+        assert_eq!(doc["trashed"], false);
+        assert_eq!(doc["spans"], serde_json::json!([{"Text": "plain thought"}]));
+        let base = doc["fingerprint"].as_u64().unwrap();
+        assert_ne!(base, 0);
+
+        // The snapshot's content_print is the same identity, for free.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        assert_eq!(row["content_print"].as_u64().unwrap(), base);
+
+        // A save against the right base lands and reports the fresh print.
+        let spans = CString::new(r#"[{"Text":"rewritten"}]"#).unwrap();
+        let mut fresh: u64 = 0;
+        let saved = unsafe {
+            lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
+        };
+        assert_eq!(saved, 1);
+        assert_ne!(fresh, base);
+
+        // The stale base now refuses — and the log did not move.
+        let session = Session::open(&path).unwrap();
+        let history_len = session.store().history().len();
+        drop(session);
+        let stale = unsafe {
+            lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
+        };
+        assert_eq!(stale, -1);
+        // Unchanged spans against the fresh base: success, no transaction.
+        let unchanged = unsafe {
+            lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), fresh, std::ptr::null_mut())
+        };
+        assert_eq!(unchanged, 1);
+        let session = Session::open(&path).unwrap();
+        assert_eq!(session.store().history().len(), history_len);
+        // The save was one transaction: RemoveCell + AddCell.
+        let edit = session
+            .store()
+            .history()
+            .iter()
+            .find(|tx| tx.label == "edit")
+            .unwrap();
+        assert_eq!(edit.commands.len(), 2);
+        drop(session);
+
+        // A reference to nothing is not content.
+        let bad = CString::new(r#"[{"Ref":999999}]"#).unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, bad.as_ptr(), fresh, std::ptr::null_mut())
+            },
+            0
+        );
+
+        // Empty spans remove content; fingerprint returns to 0.
+        let empty = CString::new("[]").unwrap();
+        let mut cleared: u64 = 1;
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, empty.as_ptr(), fresh, &mut cleared)
+            },
+            1
+        );
+        assert_eq!(cleared, 0);
+
+        // Undo restores the prior content in one step.
+        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
+        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(doc["spans"], serde_json::json!([{"Text": "rewritten"}]));
+
+        // No such entity: null.
+        assert!(unsafe { lotus_content_at(c_path.as_ptr(), 999_999) }.is_null());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn legacy_text_content_reads_as_one_span() {
+        let (path, c_path) = fresh_box("lotus_ffi_legacy.log");
+
+        let mut session = Session::open(&path).unwrap();
+        let id = session.allocate_id();
+        session
+            .commit(
+                vec![
+                    lotus_core::Command::Create { entity: id },
+                    lotus_core::Command::AddCell {
+                        entity: id,
+                        cell: lotus_core::Cell {
+                            property: lotus_core::props::CONTENT,
+                            value: Value::text("old plain text"),
+                        },
+                    },
+                ],
+                "legacy",
+                Author::User,
+            )
+            .unwrap();
+        drop(session);
+
+        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(doc["spans"], serde_json::json!([{"Text": "old plain text"}]));
+        let base = doc["fingerprint"].as_u64().unwrap();
+        assert_ne!(base, 0);
+
+        // Saving over legacy content replaces it honestly, guarded by the
+        // fingerprint of the stored Text value.
+        let spans = CString::new(r#"[{"Text":"upgraded"}]"#).unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, std::ptr::null_mut())
+            },
+            1
+        );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn set_at_and_create_note() {
+        let (path, c_path) = fresh_box("lotus_ffi_set.log");
+
+        // Birth: one transaction, typed note, created — then rename.
+        let note = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        assert_ne!(note, 0);
+        let prop = CString::new("name").unwrap();
+        let value = CString::new("meeting notes").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), note, prop.as_ptr(), value.as_ptr()) },
+            1
+        );
+        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), note)) };
+        assert_eq!(doc["name"], "meeting notes");
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == note)
+            .unwrap();
+        assert_eq!(row["kinds"], serde_json::json!(["note"]));
+
+        // The checkbox's door: set status by option name.
+        let status = CString::new("status").unwrap();
+        let done = CString::new("done").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), note, status.as_ptr(), done.as_ptr()) },
+            1
+        );
+        // A date, parsed by the declared kind.
+        let due = CString::new("due").unwrap();
+        let day = CString::new("2026-07-08").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), note, due.as_ptr(), day.as_ptr()) },
+            1
+        );
+        // Unknown property, unknown entity: refused.
+        let nope = CString::new("frobnicate").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), note, nope.as_ptr(), done.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), 999_999, status.as_ptr(), done.as_ptr()) },
+            0
+        );
+
+        cleanup(&path);
     }
 }

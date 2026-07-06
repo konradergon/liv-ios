@@ -236,8 +236,29 @@ Decided in 0.2, from the first mockup (design/window.html):
   transparent titlebar, no title text, the traffic lights floating
   over the sidebar, exactly as the mockup drew it.
 
+Decided with the first editor:
+
+- **The editor is the one renderer that holds state** — exactly one
+  draft of one entity. The loss budget is the current typing burst:
+  two seconds of idle commits it, a thirty-second checkpoint bounds
+  it under unbroken typing, and every close, lens switch, and quit
+  flushes. A journal file exists only on the failure path (a quit
+  the box refused) and is replayed through the same guarded save.
+  This is the stated exception to "a renderer holds no state,"
+  amended here rather than argued around.
+- **Click selects, Enter opens, Escape closes** — the editor obeys
+  the grammar: Enter on a selected row opens it as the editor lens,
+  Esc flushes and returns. This also settles the open decision
+  below: lists select on click and open on Enter.
+- **Pills are monochrome.** Embedded references draw in label
+  colors on a faint label-tinted fill. The accent keeps its
+  exactly-three jobs; the editor uses none of them.
+- **A save is to a value, never a moment**: every content save
+  presents the fingerprint of the content it started from, and the
+  seam refuses a stale write. Overwrite is re-read-then-save; there
+  is no force flag.
+
 ## Open decisions
 
-- **Open-on-click vs. open-on-Enter** for list rows
-  (Things opens inline; Finder selects then opens).
-  Decided when the first list ships.
+- ~~**Open-on-click vs. open-on-Enter** for list rows~~ — decided
+  with the first editor (above): select on click, open on Enter.

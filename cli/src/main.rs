@@ -147,9 +147,8 @@ fn today(session: &Session) {
     }
 }
 
-/// Set one property to one value: replace-the-cell semantics, one
-/// transaction, one undo step. The value is parsed by the property's own
-/// declared kind — the definition entity says what its cells hold.
+/// Set one property to one value — the shared parser and replace-the-cell
+/// semantics live in services; the window's inspector uses the same door.
 fn set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
     let (id_arg, rest) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
     let (prop_name, words) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
@@ -161,111 +160,9 @@ fn set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
         return Err("usage: lotus set ID PROP VALUE...".into());
     }
     let raw = words.join(" ");
-    let store = session.store();
-    let entity = store.get(id).ok_or(format!("no entity #{id}"))?;
-    let property = property_by_name(store, prop_name)?;
-
-    let kind = match store.get(property).and_then(|p| p.get(props::VALUE_KIND)) {
-        Some(Value::Text(kind)) => kind.clone(),
-        _ => return Err(format!("{prop_name} declares no value kind")),
-    };
-    let value = parse_value(store, property, &kind, &raw)?;
-
-    let mut commands: Vec<lotus_core::Command> = entity
-        .all(property)
-        .cloned()
-        .map(|old| lotus_core::Command::RemoveCell {
-            entity: id,
-            cell: lotus_core::Cell { property, value: old },
-        })
-        .collect();
-    commands.push(lotus_core::Command::AddCell {
-        entity: id,
-        cell: lotus_core::Cell { property, value },
-    });
-    session
-        .commit(commands, format!("set {prop_name}"), Author::User)
-        .map_err(|e| e.to_string())?;
+    lotus_services::content::set_property(session, id, prop_name, &raw)?;
     println!("#{id} {prop_name} = {raw}");
     Ok(())
-}
-
-fn parse_value(
-    store: &lotus_core::Store,
-    property: Id,
-    kind: &str,
-    raw: &str,
-) -> Result<Value, String> {
-    match kind {
-        "text" => Ok(Value::text(raw)),
-        "richtext" => Ok(Value::RichText(lotus_core::RichText {
-            spans: vec![lotus_core::Span::Text(raw.to_string())],
-        })),
-        "number" => raw
-            .parse()
-            .map(Value::Number)
-            .map_err(|_| format!("not a number: {raw}")),
-        "bool" => match raw {
-            "true" | "yes" => Ok(Value::Bool(true)),
-            "false" | "no" => Ok(Value::Bool(false)),
-            _ => Err(format!("not a bool: {raw}")),
-        },
-        "datetime" => parse_civil(raw).ok_or(format!("not a date: {raw} (yyyy-mm-dd [hh:mm])")),
-        "reference" => {
-            let id: Id = raw
-                .trim_start_matches('#')
-                .parse()
-                .map_err(|_| format!("not an entity id: {raw}"))?;
-            store
-                .get(id)
-                .map(|_| Value::Reference(id))
-                .ok_or(format!("no entity #{id}"))
-        }
-        "select" => {
-            let wanted = raw.to_lowercase();
-            store
-                .get(property)
-                .into_iter()
-                .flat_map(|def| def.all(props::OPTIONS))
-                .find_map(|option| match option {
-                    Value::Reference(target) => match store.get(*target)?.get(props::NAME) {
-                        Some(Value::Text(name)) if name.to_lowercase() == wanted => {
-                            Some(Value::Select(*target))
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                })
-                .ok_or(format!("no option named {raw}"))
-        }
-        other => Err(format!("cannot parse a {other} value yet")),
-    }
-}
-
-fn parse_civil(raw: &str) -> Option<Value> {
-    let (date, time) = match raw.split_once(' ') {
-        Some((d, t)) => (d, Some(t)),
-        None => (raw, None),
-    };
-    let mut ymd = date.split('-');
-    let year: i32 = ymd.next()?.parse().ok()?;
-    let month: u32 = ymd.next()?.parse().ok()?;
-    let day: u32 = ymd.next()?.parse().ok()?;
-    if ymd.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    match time {
-        None => Some(Value::DateTime(DateTime::date(year, month, day))),
-        Some(t) => {
-            let (h, m) = t.split_once(':')?;
-            let hour: u32 = h.parse().ok()?;
-            let minute: u32 = m.parse().ok()?;
-            if hour > 23 || minute > 59 {
-                return None;
-            }
-            Some(Value::DateTime(DateTime::at(year, month, day, hour, minute)))
-        }
-    }
 }
 
 /// The inbox: the shell's one surface that is not a view. Proposals are

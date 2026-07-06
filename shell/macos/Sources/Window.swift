@@ -31,6 +31,9 @@ struct EntityRow: Codable, Identifiable, Hashable {
     let dueDateOnly: Bool
     let status: String?
     let created: Int64?
+    /// Fingerprint of the stored content, 0 when none — the editor reads
+    /// "did my base move?" off every snapshot for free.
+    let contentPrint: UInt64
     let cells: [CellRow]
 }
 
@@ -157,6 +160,108 @@ final class BoxModel: ObservableObject {
         act { lotus_undo_at(self.path) == 1 }
     }
 
+    func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_set_at(self.path, id, property, value) == 1 }
+    }
+
+    func createNote(_ done: @escaping (UInt64?) -> Void) {
+        boxQueue.async {
+            let id = lotus_create_note_at(self.path)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
+    // MARK: the editor's reads and writes
+
+    /// One entity's content, fresh from the box. A locked box retries on
+    /// the caller's behalf — nil means the entity is genuinely not there
+    /// (or the box stayed locked for ten seconds, which the fault and
+    /// busy surfaces already report).
+    func content(_ id: UInt64, retries: Int = 20, done: @escaping (ContentDoc?) -> Void) {
+        boxQueue.async {
+            if let raw = lotus_content_at(self.path, id) {
+                let json = String(cString: raw)
+                lotus_string_free(raw)
+                let doc = try? JSONDecoder().decode(ContentDoc.self, from: Data(json.utf8))
+                DispatchQueue.main.async { done(doc) }
+                return
+            }
+            // Null is "no entity" or "box unavailable"; only the probe
+            // can tell them apart, and only locked is worth retrying.
+            var locked = false
+            if let raw = lotus_probe(self.path) {
+                let json = String(cString: raw)
+                lotus_string_free(raw)
+                let fault = try? JSONDecoder().decode(BoxFault.self, from: Data(json.utf8))
+                locked = fault?.code == "locked"
+            }
+            DispatchQueue.main.async {
+                if locked && retries > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.content(id, retries: retries - 1, done: done)
+                    }
+                } else {
+                    done(nil)
+                }
+            }
+        }
+    }
+
+    enum SaveResult {
+        case saved(UInt64)
+        case stale
+        case busy
+    }
+
+    /// The editor's save: whole content, one transaction, guarded by the
+    /// base fingerprint. No beep here — autosave failure is a dot and a
+    /// retry, not a noise.
+    func saveContent(
+        id: UInt64, spansJSON: String, base: UInt64, done: @escaping (SaveResult) -> Void
+    ) {
+        boxQueue.async {
+            var fresh: UInt64 = 0
+            let result = lotus_set_content_at(self.path, id, spansJSON, base, &fresh)
+            DispatchQueue.main.async {
+                switch result {
+                case 1: done(.saved(fresh))
+                case -1: done(.stale)
+                default: done(.busy)
+                }
+                self.refresh()
+            }
+        }
+    }
+
+    /// Complete any quit flush that failed: replay each journaled draft
+    /// through the same fingerprinted door as every save. Success deletes
+    /// the journal; stale surfaces in an open editor; busy waits for the
+    /// next launch.
+    func replayDrafts(onStale: @escaping (DraftFile) -> Void) {
+        for draft in DraftJournal.all(box: path) {
+            boxQueue.async {
+                var fresh: UInt64 = 0
+                let result = lotus_set_content_at(
+                    self.path, draft.entity, SpanCodec.json(draft.spans), draft.base, &fresh)
+                DispatchQueue.main.async {
+                    switch result {
+                    case 1:
+                        DraftJournal.delete(box: self.path, id: draft.entity)
+                        self.refresh()
+                    case -1:
+                        onStale(draft)
+                    default:
+                        break
+                    }
+                }
+            }
+        }
+    }
+
     private func act(_ done: @escaping (Bool) -> Void = { _ in }, _ work: @escaping () -> Bool) {
         boxQueue.async {
             let ok = work()
@@ -203,6 +308,8 @@ enum Civil {
 extension Notification.Name {
     static let lotusFocusSearch = Notification.Name("lotus.focusSearch")
     static let lotusFocusCapture = Notification.Name("lotus.focusCapture")
+    static let lotusNewNote = Notification.Name("lotus.newNote")
+    static let lotusOpenStaleDraft = Notification.Name("lotus.openStaleDraft")
 }
 
 // MARK: - lenses
@@ -239,6 +346,10 @@ struct MainWindow: View {
     @State private var lens: Lens = .today
     @State private var query = ""
     @State private var selection: UInt64?
+    /// Editing is orthogonal state, like search: non-nil overrides the
+    /// lens in the content region. The sidebar highlight persists.
+    @State private var editor: EditorModel?
+    @State private var returnMonitor: Any?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -246,7 +357,9 @@ struct MainWindow: View {
             Sidebar(
                 model: model, lens: $lens, query: $query,
                 searchFocused: $searchFocused
-            )
+            ) {
+                closeEditor()
+            }
             Divider()
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -258,13 +371,89 @@ struct MainWindow: View {
         .frame(minWidth: 980, minHeight: 620)
         .background(Color(nsColor: .textBackgroundColor))
         .overlay(faultNotice)
-        .onAppear { model.refresh() }
+        .onAppear {
+            model.refresh()
+            installReturnMonitor()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
+            closeEditor()
             searchFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+            closeEditor()
             query = ""
             lens = .today
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
+            closeEditor()
+            model.createNote { id in
+                if let id = id {
+                    openEditor(id: id, bornBlank: true)
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
+            if let draft = note.object as? DraftFile {
+                openEditor(id: draft.entity, adopt: draft)
+            }
+        }
+    }
+
+    // MARK: the editor's door
+
+    /// Enter opens the selected row — but never steals Return from a
+    /// focused text field or the editor itself.
+    private func installReturnMonitor() {
+        guard returnMonitor == nil else { return }
+        returnMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 36,
+                event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                editor == nil,
+                let id = selection,
+                model.entity(id) != nil
+            else { return event }
+            if let responder = NSApp.keyWindow?.firstResponder,
+                responder is NSTextView || responder is NSText
+            {
+                return event
+            }
+            openEditor(id: id)
+            return nil
+        }
+    }
+
+    private func openEditor(id: UInt64, bornBlank: Bool = false, adopt: DraftFile? = nil) {
+        let opened = EditorModel(box: model, id: id, bornBlank: bornBlank)
+        if let draft = adopt {
+            opened.adopt(draft)
+        }
+        opened.onSelect = { target in selection = target }
+        opened.onCloseRequest = { closeEditor() }
+        editor = opened
+        selection = id
+    }
+
+    /// Closing flushes first; no path drops a dirty draft. A refused
+    /// flush leaves the editor open with its banner or busy dot — the
+    /// pending lens switch lands the moment the draft is safe.
+    private func closeEditor() {
+        guard let closing = editor else { return }
+        if closing.missing {
+            closing.closed()
+            editor = nil
+            return
+        }
+        closing.flush { outcome in
+            switch outcome {
+            case .clean, .saved:
+                closing.closed()
+                if editor === closing {
+                    editor = nil
+                    selection = closing.id
+                }
+            case .stale, .busy, .invalid:
+                NSSound.beep()
+            }
         }
     }
 
@@ -294,7 +483,9 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var content: some View {
-        if !query.isEmpty {
+        if let editing = editor {
+            EditorView(model: editing).id(editing.id)
+        } else if !query.isEmpty {
             ResultsView(model: model, query: query, selection: $selection)
         } else {
             switch lens {
@@ -314,6 +505,8 @@ struct Sidebar: View {
     @Binding var lens: Lens
     @Binding var query: String
     var searchFocused: FocusState<Bool>.Binding
+    /// Navigation away from an open editor flushes it first.
+    var willNavigate: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -348,6 +541,7 @@ struct Sidebar: View {
                         active: lens == item && query.isEmpty,
                         badge: item == .inbox ? (model.snap?.inbox.count ?? 0) : 0
                     ) {
+                        willNavigate()
                         query = ""
                         lens = item
                     }

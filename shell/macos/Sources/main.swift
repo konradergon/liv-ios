@@ -37,6 +37,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         registerHotKey()
         makeWindow()
         NSApp.activate(ignoringOtherApps: true)
+        // Complete any quit flush that failed last time — through the
+        // same fingerprinted door as every save. Stale drafts open their
+        // editor so the user's own words resolve visibly.
+        model.replayDrafts { draft in
+            NotificationCenter.default.post(name: .lotusOpenStaleDraft, object: draft)
+        }
+    }
+
+    /// Quit waits for the draft: a few tries, then the journal. Nothing
+    /// typed ever dies with the process.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let active = EditorRegistry.shared.active, active.dirty else {
+            return .terminateNow
+        }
+        active.flushForQuit {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldHandleReopen(
@@ -75,6 +93,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         ) { [weak self] _ in
             self?.model.refresh()
         }
+        // Leaving the window flushes the draft: the box catches up the
+        // moment attention moves elsewhere.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: w, queue: .main
+        ) { _ in
+            EditorRegistry.shared.active?.flush()
+        }
     }
 
     @objc private func focusSearch() {
@@ -87,8 +112,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         NotificationCenter.default.post(name: .lotusFocusCapture, object: nil)
     }
 
+    /// ⌘⌥Z is always the box. Under a dirty draft it flushes first —
+    /// box undo over unsaved words is unreachable by construction.
     @objc private func undoLastChange() {
-        model.undo()
+        if let active = EditorRegistry.shared.active {
+            active.flushThenBoxUndo()
+        } else {
+            model.undo()
+        }
+    }
+
+    /// The chain's end for ⌘Z: a focused text field consumes it first;
+    /// with no text focus, plain undo means the box's last transaction.
+    @objc func undo(_ sender: Any?) {
+        undoLastChange()
+    }
+
+    @objc private func newNote() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusNewNote, object: nil)
     }
 
     /// The minimal menu: Quit, a working Edit menu for the text fields,
@@ -110,6 +152,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let capture = file.addItem(
             withTitle: "Capture", action: #selector(focusCapture), keyEquivalent: "n")
         capture.target = self
+        // Birth of a note: created typed and nameless, straight into
+        // renaming. Capture stays the scrap door.
+        let note = file.addItem(
+            withTitle: "New Note", action: #selector(newNote), keyEquivalent: "n")
+        note.keyEquivalentModifierMask = [.command, .shift]
+        note.target = self
         fileItem.submenu = file
 
         let editItem = NSMenuItem()
