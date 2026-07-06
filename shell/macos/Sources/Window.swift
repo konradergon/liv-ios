@@ -177,35 +177,39 @@ final class BoxModel: ObservableObject {
 
     // MARK: the editor's reads and writes
 
+    enum ContentRead {
+        case doc(ContentDoc)
+        /// The box opened fine; the entity is genuinely not there.
+        case missing
+        /// The box would not open (still locked after retries, or a
+        /// fault) — says nothing about the entity.
+        case unavailable
+    }
+
     /// One entity's content, fresh from the box. A locked box retries on
-    /// the caller's behalf — nil means the entity is genuinely not there
-    /// (or the box stayed locked for ten seconds, which the fault and
-    /// busy surfaces already report).
-    func content(_ id: UInt64, retries: Int = 20, done: @escaping (ContentDoc?) -> Void) {
+    /// the caller's behalf; "missing" comes from the seam itself, read
+    /// under the flock, never inferred from a failure to open.
+    func content(_ id: UInt64, retries: Int = 20, done: @escaping (ContentRead) -> Void) {
         boxQueue.async {
             if let raw = lotus_content_at(self.path, id) {
                 let json = String(cString: raw)
                 lotus_string_free(raw)
-                let doc = try? JSONDecoder().decode(ContentDoc.self, from: Data(json.utf8))
-                DispatchQueue.main.async { done(doc) }
+                guard
+                    let doc = try? JSONDecoder().decode(ContentDoc.self, from: Data(json.utf8))
+                else {
+                    DispatchQueue.main.async { done(.unavailable) }
+                    return
+                }
+                DispatchQueue.main.async { done(doc.missing ? .missing : .doc(doc)) }
                 return
             }
-            // Null is "no entity" or "box unavailable"; only the probe
-            // can tell them apart, and only locked is worth retrying.
-            var locked = false
-            if let raw = lotus_probe(self.path) {
-                let json = String(cString: raw)
-                lotus_string_free(raw)
-                let fault = try? JSONDecoder().decode(BoxFault.self, from: Data(json.utf8))
-                locked = fault?.code == "locked"
-            }
             DispatchQueue.main.async {
-                if locked && retries > 0 {
+                if retries > 0 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         self.content(id, retries: retries - 1, done: done)
                     }
                 } else {
-                    done(nil)
+                    done(.unavailable)
                 }
             }
         }
@@ -239,24 +243,38 @@ final class BoxModel: ObservableObject {
 
     /// Complete any quit flush that failed: replay each journaled draft
     /// through the same fingerprinted door as every save. Success deletes
-    /// the journal; stale surfaces in an open editor; busy waits for the
-    /// next launch.
-    func replayDrafts(onStale: @escaping (DraftFile) -> Void) {
+    /// the journal; stale or invalid surfaces in an open editor — a
+    /// journaled draft is never silently orphaned; a genuinely busy box
+    /// waits for the next launch.
+    func replayDrafts(onUnresolved: @escaping (DraftFile) -> Void) {
         for draft in DraftJournal.all(box: path) {
             boxQueue.async {
                 var fresh: UInt64 = 0
                 let result = lotus_set_content_at(
                     self.path, draft.entity, SpanCodec.json(draft.spans), draft.base, &fresh)
-                DispatchQueue.main.async {
-                    switch result {
-                    case 1:
+                if result == 1 {
+                    DispatchQueue.main.async {
                         DraftJournal.delete(box: self.path, id: draft.entity)
                         self.refresh()
-                    case -1:
-                        onStale(draft)
-                    default:
-                        break
                     }
+                    return
+                }
+                if result == -1 {
+                    DispatchQueue.main.async { onUnresolved(draft) }
+                    return
+                }
+                // 0 is busy or invalid; only the probe can tell. Busy
+                // keeps the journal for the next launch; anything else
+                // (entity gone, box reset) must surface, not rot.
+                var locked = false
+                if let raw = lotus_probe(self.path) {
+                    let json = String(cString: raw)
+                    lotus_string_free(raw)
+                    let fault = try? JSONDecoder().decode(BoxFault.self, from: Data(json.utf8))
+                    locked = fault?.code == "locked"
+                }
+                DispatchQueue.main.async {
+                    if !locked { onUnresolved(draft) }
                 }
             }
         }
@@ -358,7 +376,12 @@ struct MainWindow: View {
                 model: model, lens: $lens, query: $query,
                 searchFocused: $searchFocused
             ) {
-                closeEditor()
+                // Lens switches land on a fresh surface: close the editor
+                // and drop the old selection so Enter cannot open
+                // something the new lens does not show.
+                closeEditor { ok in
+                    if ok { selection = nil }
+                }
             }
             Divider()
             content
@@ -385,17 +408,29 @@ struct MainWindow: View {
             lens = .today
         }
         .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
-            closeEditor()
-            model.createNote { id in
-                if let id = id {
-                    openEditor(id: id, bornBlank: true)
+            // The newborn opens only once the old draft is safe: a
+            // refused flush cancels the birth exactly as it cancels a
+            // lens switch.
+            closeEditor { ok in
+                guard ok else { return }
+                model.createNote { id in
+                    if let id = id {
+                        openEditor(id: id, bornBlank: true)
+                    }
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
-            if let draft = note.object as? DraftFile {
+            guard let draft = note.object as? DraftFile else { return }
+            closeEditor { ok in
+                guard ok else { return }  // the journal file survives for later
                 openEditor(id: draft.entity, adopt: draft)
             }
+        }
+        .onChange(of: query) {
+            // New results, new world: a selection from the old one must
+            // not linger where Enter could open it sight unseen.
+            selection = nil
         }
     }
 
@@ -422,7 +457,13 @@ struct MainWindow: View {
         }
     }
 
+    /// Never over a live editor: every opener goes through closeEditor's
+    /// gate first, so a dirty draft can never be replaced unsaved.
     private func openEditor(id: UInt64, bornBlank: Bool = false, adopt: DraftFile? = nil) {
+        guard editor == nil else {
+            NSSound.beep()
+            return
+        }
         let opened = EditorModel(box: model, id: id, bornBlank: bornBlank)
         if let draft = adopt {
             opened.adopt(draft)
@@ -435,14 +476,26 @@ struct MainWindow: View {
 
     /// Closing flushes first; no path drops a dirty draft. A refused
     /// flush leaves the editor open with its banner or busy dot — the
-    /// pending lens switch lands the moment the draft is safe.
-    private func closeEditor() {
-        guard let closing = editor else { return }
-        if closing.missing {
-            closing.closed()
-            editor = nil
+    /// pending navigation lands the moment the draft is safe. The
+    /// continuation runs with `true` only once the editor is gone.
+    private func closeEditor(then: @escaping (Bool) -> Void = { _ in }) {
+        guard let closing = editor else {
+            then(true)
             return
         }
+        if closing.missing {
+            // The banner said so: closing a gone note resolves its
+            // draft — journaled while it still holds unseen words,
+            // discarded once they have been shown.
+            closing.resolveMissingClose()
+            closing.closed()
+            editor = nil
+            then(true)
+            return
+        }
+        // The typed title goes with the words: the view is torn down
+        // before any focus-change callback could commit it.
+        closing.renameIfNeeded()
         closing.flush { outcome in
             switch outcome {
             case .clean, .saved:
@@ -451,8 +504,10 @@ struct MainWindow: View {
                     editor = nil
                     selection = closing.id
                 }
+                then(true)
             case .stale, .busy, .invalid:
                 NSSound.beep()
+                then(false)
             }
         }
     }

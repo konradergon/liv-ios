@@ -72,22 +72,27 @@ pub fn set_content(
         return Err(ContentError::Invalid);
     };
     let current = entity.get(props::CONTENT);
+    let new = (!spans.is_empty()).then_some(Value::RichText(RichText { spans }));
+    // The no-op wins before the guard: writing what is already there is
+    // never stale, whatever base the writer believed — its intent is the
+    // log's state already.
+    if current == new.as_ref() {
+        return Ok(content_fingerprint(current));
+    }
     if content_fingerprint(current) != base {
         return Err(ContentError::Stale);
     }
     // A reference to nothing is not content.
-    for span in &spans {
-        if let Span::Ref(target) = span {
-            if store.get(*target).is_none() {
-                return Err(ContentError::Invalid);
+    if let Some(Value::RichText(rich)) = &new {
+        for span in &rich.spans {
+            if let Span::Ref(target) = span {
+                if store.get(*target).is_none() {
+                    return Err(ContentError::Invalid);
+                }
             }
         }
     }
 
-    let new = (!spans.is_empty()).then_some(Value::RichText(RichText { spans }));
-    if current == new.as_ref() {
-        return Ok(base);
-    }
     let mut commands: Vec<Command> = entity
         .all(props::CONTENT)
         .cloned()
@@ -106,6 +111,29 @@ pub fn set_content(
     session
         .commit(commands, "edit", Author::User)
         .map_err(ContentError::Persist)?;
+
+    // A pending proposal derived from the old words is stale the moment
+    // they change: retract it — no refusal recorded — and let the next
+    // sweep re-derive from the words that are actually there. Exactly
+    // the shapes the clerk emits: a proposer's single AddCell on this
+    // entity.
+    let stale: Vec<usize> = session
+        .store()
+        .pending()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            matches!(&p.author, Author::Proposer(_))
+                && matches!(
+                    p.commands.as_slice(),
+                    [Command::AddCell { entity, .. }] if *entity == id
+                )
+        })
+        .map(|(i, _)| i)
+        .collect();
+    for index in stale.into_iter().rev() {
+        session.retract(index).map_err(ContentError::Persist)?;
+    }
     Ok(fresh)
 }
 

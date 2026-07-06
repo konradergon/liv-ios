@@ -38,21 +38,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         makeWindow()
         NSApp.activate(ignoringOtherApps: true)
         // Complete any quit flush that failed last time — through the
-        // same fingerprinted door as every save. Stale drafts open their
-        // editor so the user's own words resolve visibly.
+        // same fingerprinted door as every save. A draft the box refuses
+        // (stale, or its note gone) opens its editor so the user's own
+        // words resolve visibly; a journal is never silently orphaned.
         model.replayDrafts { draft in
             NotificationCenter.default.post(name: .lotusOpenStaleDraft, object: draft)
         }
     }
 
-    /// Quit waits for the draft: a few tries, then the journal. Nothing
-    /// typed ever dies with the process.
+    /// Quit waits for the draft — words or a typed name: a few tries,
+    /// then the journal. Nothing typed ever dies with the process.
+    /// The reply must come after this method returns .terminateLater,
+    /// so it is always deferred to the next runloop turn.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let active = EditorRegistry.shared.active, active.dirty else {
+        guard let active = EditorRegistry.shared.active, active.needsQuitFlush else {
             return .terminateNow
         }
         active.flushForQuit {
-            NSApp.reply(toApplicationShouldTerminate: true)
+            DispatchQueue.main.async {
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
         }
         return .terminateLater
     }
@@ -93,12 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         ) { [weak self] _ in
             self?.model.refresh()
         }
-        // Leaving the window flushes the draft: the box catches up the
-        // moment attention moves elsewhere.
+        // Leaving the window flushes the draft — the typed name too: the
+        // box catches up the moment attention moves elsewhere.
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: w, queue: .main
         ) { _ in
-            EditorRegistry.shared.active?.flush()
+            guard let active = EditorRegistry.shared.active else { return }
+            active.renameIfNeeded()
+            active.flush()
         }
     }
 
@@ -122,9 +129,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
 
-    /// The chain's end for ⌘Z: a focused text field consumes it first;
-    /// with no text focus, plain undo means the box's last transaction.
+    /// ⌘Z, routed: the focused text's own undo wins — the field editor,
+    /// the editor's per-view manager, any text. With no text focus,
+    /// plain undo means the box's last transaction.
     @objc func undo(_ sender: Any?) {
+        if let text = NSApp.keyWindow?.firstResponder as? NSTextView {
+            text.undoManager?.undo()
+            return
+        }
         undoLastChange()
     }
 
@@ -163,7 +175,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: "Edit")
-        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        // Explicit target: a nil-targeted undo: never falls past the key
+        // window — NSWindow answers it with its own empty manager and ⌘Z
+        // goes dead. We route it ourselves: focused text first, then
+        // the box.
+        let undoItem = edit.addItem(
+            withTitle: "Undo", action: #selector(undo(_:)), keyEquivalent: "z")
+        undoItem.target = self
         edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
         // The box's undo, distinct from text-field undo: reverses the last
         // committed transaction, whoever authored it.

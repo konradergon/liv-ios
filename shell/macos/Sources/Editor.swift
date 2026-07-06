@@ -81,7 +81,12 @@ enum SpanCodec {
     static func pill(_ id: UInt64, context: PillContext) -> NSAttributedString {
         let attachment = NSTextAttachment()
         attachment.attachmentCell = RefAttachmentCell(entityId: id, context: context)
-        return NSAttributedString(attachment: attachment)
+        let pill = NSMutableAttributedString(attachment: attachment)
+        // The attachment character carries the body attributes too, so
+        // the caret right after a pill types body text — not the bare
+        // 12pt default an attribute-less run would seed.
+        pill.addAttributes(baseAttributes, range: NSRange(location: 0, length: pill.length))
+        return pill
     }
 
     /// The inverse walk. Our cells become Ref spans; every other run is
@@ -231,6 +236,15 @@ final class LotusTextView: NSTextView {
     var pillContext: PillContext?
     /// title → id, rebuilt whenever the completion list is asked for.
     var completionIds: [String: UInt64] = [:]
+    /// Armed when the completion list is built for an "@" mention. The
+    /// buffer cannot be trusted at accept time — the popup's previews
+    /// rewrite it, "@" included — so the session's nature is recorded
+    /// here, while it is still visible.
+    var mentionSession = false
+    /// A cancelled session restores the "@" through the normal change
+    /// machinery; eat exactly that one textDidChange, or Esc reopens
+    /// the popup it just closed.
+    var suppressAutoComplete = false
 
     /// The writing measure: ~65 characters of body text.
     static let measure: CGFloat = 620
@@ -247,9 +261,14 @@ final class LotusTextView: NSTextView {
         onEscape()
     }
 
-    /// Formatting cannot enter: paste arrives plain, the font panel is
-    /// dead, and our attachments are the only non-text content possible —
-    /// the round trip cannot lose anything.
+    /// Formatting cannot enter: paste arrives plain, drops arrive plain
+    /// (readable types are the gate for both), the font panel is dead,
+    /// and our attachments are the only non-text content possible — the
+    /// round trip cannot lose anything.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        [.string]
+    }
+
     override func paste(_ sender: Any?) {
         pasteAsPlainText(sender)
     }
@@ -289,25 +308,31 @@ final class LotusTextView: NSTextView {
         return super.rangeForUserCompletion
     }
 
-    /// Accepting a completion swaps "@partial" for a pill — one undo
+    /// Accepting a completion swaps the mention for a pill — one undo
     /// step, through the same shouldChange/didChange gate as typing.
+    /// The @-ness comes from the recorded session, never from the live
+    /// buffer: the popup's previews already rewrote it.
     override func insertCompletion(
         _ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool
     ) {
-        guard flag, NSTextMovement(rawValue: movement) != .cancel,
-            let id = completionIds[word], let context = pillContext,
-            (string as NSString).substring(with: charRange).hasPrefix("@")
-        else {
-            super.insertCompletion(
-                word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
-            return
+        if flag {
+            let mention = mentionSession
+            mentionSession = false
+            if NSTextMovement(rawValue: movement) == .cancel {
+                suppressAutoComplete = true
+            } else if mention, let id = completionIds[word], let context = pillContext {
+                let pill = SpanCodec.pill(id, context: context)
+                if shouldChangeText(in: charRange, replacementString: pill.string) {
+                    textStorage?.replaceCharacters(in: charRange, with: pill)
+                    didChangeText()
+                    setSelectedRange(NSRange(location: charRange.location + 1, length: 0))
+                    typingAttributes = SpanCodec.baseAttributes
+                }
+                return
+            }
         }
-        let pill = SpanCodec.pill(id, context: context)
-        if shouldChangeText(in: charRange, replacementString: pill.string) {
-            textStorage?.replaceCharacters(in: charRange, with: pill)
-            didChangeText()
-            setSelectedRange(NSRange(location: charRange.location + 1, length: 0))
-        }
+        super.insertCompletion(
+            word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
     }
 }
 
@@ -387,6 +412,11 @@ final class EditorModel: ObservableObject {
     private var checkpointTimer: Timer?
     /// Bumped on every keystroke; a save only marks clean if untyped-over.
     private var generation = 0
+    /// One save in flight at a time: overlapping flush requests queue and
+    /// are served by a single follow-up running with then-current state —
+    /// a save must never race its own predecessor's base.
+    private var saving = false
+    private var queuedFlush: [(FlushOutcome) -> Void] = []
     /// A sidecar draft waiting to be adopted instead of the stored value.
     private var journaled: DraftFile?
 
@@ -417,44 +447,75 @@ final class EditorModel: ObservableObject {
     }
 
     func load() {
-        box.content(id) { [weak self] doc in
+        box.content(id) { [weak self] read in
             guard let self = self else { return }
-            guard let doc = doc else {
+            switch read {
+            case .unavailable:
+                // The box would not open — that says nothing about the
+                // note. Stay unloaded (the view stays read-only, so no
+                // words can land in limbo) and try again shortly; the
+                // sidebar's busy line is already telling the truth.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self = self, !self.loaded else { return }
+                    self.load()
+                }
+            case .missing:
                 self.missing = true
                 self.loaded = true
-                return
-            }
-            self.trashed = doc.trashed
-            self.title = doc.name ?? ""
-            self.lastLoadedName = self.title
-            self.loaded = true
-            if let draft = self.journaled, draft.base != doc.fingerprint {
-                // The world moved past the journal: show the draft dirty,
-                // over the banner, exactly like any other stale flush.
+                // A journaled draft over a gone note: show the words,
+                // read-only, so they can be taken somewhere.
+                if let draft = self.journaled {
+                    self.showOnly(spans: draft.spans)
+                }
+            case .doc(let doc):
+                self.trashed = doc.trashed
+                self.title = doc.name ?? ""
+                self.lastLoadedName = self.title
+                self.loaded = true
+                if let draft = self.journaled, draft.base != doc.fingerprint {
+                    // The world moved past the journal: show the draft
+                    // dirty, over the banner, exactly like any other
+                    // stale flush. (The journal file survives until a
+                    // save or a deliberate discard resolves it.)
+                    self.journaled = nil
+                    self.base = doc.fingerprint
+                    self.reload(spans: draft.spans)
+                    self.dirty = true
+                    self.conflicted = true
+                    return
+                }
                 self.base = doc.fingerprint
-                self.reload(spans: draft.spans)
-                self.dirty = true
-                self.conflicted = true
-                return
+                let adopted = self.journaled
+                self.journaled = nil
+                self.reload(spans: adopted?.spans ?? doc.spans)
+                if adopted != nil {
+                    self.dirty = true
+                    self.flush()
+                }
             }
-            self.base = doc.fingerprint
-            self.reload(spans: self.journaled?.spans ?? doc.spans)
-            if self.journaled != nil {
-                self.dirty = true
-                self.flush()
-            }
-            self.journaled = nil
         }
     }
 
-    /// Any draft reload clears the text undo stack: a post-rebase ⌘Z must
-    /// never resurrect pre-rebase content into a silent revert.
+    /// Any draft reload clears the text undo stack — a post-rebase ⌘Z
+    /// must never resurrect pre-rebase content into a silent revert —
+    /// and breaks typing coalescing first, so no cached undo holds
+    /// ranges into a storage that no longer exists.
     private func reload(spans: [SpanJSON]) {
         guard let view = textView, let storage = view.textStorage else { return }
+        view.breakUndoCoalescing()
         storage.setAttributedString(SpanCodec.attributed(spans, context: pills))
         view.typingAttributes = SpanCodec.baseAttributes
         view.undoManager?.removeAllActions()
+        view.isEditable = true
         dirty = false
+    }
+
+    /// The read-only face: a draft whose note no longer exists is shown,
+    /// never edited — there is nothing left to save into.
+    private func showOnly(spans: [SpanJSON]) {
+        guard let view = textView, let storage = view.textStorage else { return }
+        storage.setAttributedString(SpanCodec.attributed(spans, context: pills))
+        view.isEditable = false
     }
 
     // MARK: typing → transactions
@@ -483,25 +544,53 @@ final class EditorModel: ObservableObject {
     }
 
     func flush(_ done: @escaping (FlushOutcome) -> Void = { _ in }) {
-        guard loaded, !missing else {
-            done(.invalid)
-            return
-        }
+        // A clean draft has nothing to lose, whatever the load state —
+        // Esc out of a still-loading editor must not beep-lock it.
         guard dirty else {
             done(.clean)
             return
         }
+        guard loaded, !missing else {
+            done(.invalid)
+            return
+        }
+        if saving {
+            // Coalesce: the follow-up flush runs once, with then-current
+            // spans and base, and answers every queued caller.
+            queuedFlush.append(done)
+            return
+        }
+        saving = true
         let spans = currentSpans()
         let asOf = generation
-        attemptSave(spans: spans, asOf: asOf, retries: 3, done: done)
+        attemptSave(spans: spans, asOf: asOf, base: base, retries: 3) { [weak self] outcome in
+            guard let self = self else {
+                done(outcome)
+                return
+            }
+            self.saving = false
+            done(outcome)
+            let waiting = self.queuedFlush
+            self.queuedFlush = []
+            if !waiting.isEmpty {
+                self.flush { followUp in waiting.forEach { $0(followUp) } }
+            }
+        }
     }
 
+    /// The base rides with the payload, captured together in flush():
+    /// a retry may never re-read a base that moved under it — that is
+    /// how an old draft would clobber a newer save through the guard.
     private func attemptSave(
-        spans: [SpanJSON], asOf: Int, retries: Int, done: @escaping (FlushOutcome) -> Void
+        spans: [SpanJSON], asOf: Int, base: UInt64, retries: Int,
+        done: @escaping (FlushOutcome) -> Void
     ) {
         box.saveContent(id: id, spansJSON: SpanCodec.json(spans), base: base) {
             [weak self] result in
-            guard let self = self else { return }
+            guard let self = self else {
+                done(.busy)
+                return
+            }
             switch result {
             case .saved(let fresh):
                 self.base = fresh
@@ -512,6 +601,9 @@ final class EditorModel: ObservableObject {
                     self.checkpointTimer = nil
                 }
                 self.conflicted = false
+                // The burst is committed; undo groups segment with it,
+                // so no text undo straddles a save boundary.
+                self.textView?.breakUndoCoalescing()
                 DraftJournal.delete(box: self.box.path, id: self.id)
                 done(.saved)
             case .stale:
@@ -519,9 +611,14 @@ final class EditorModel: ObservableObject {
                 done(.stale)
             case .busy:
                 if retries > 0 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                        guard let self = self else {
+                            done(.busy)
+                            return
+                        }
                         self.attemptSave(
-                            spans: spans, asOf: asOf, retries: retries - 1, done: done)
+                            spans: spans, asOf: asOf, base: base, retries: retries - 1,
+                            done: done)
                     }
                 } else {
                     done(.busy)  // stays dirty; the dot shows; clocks re-arm on the next keystroke
@@ -534,29 +631,33 @@ final class EditorModel: ObservableObject {
 
     /// Every snapshot answers "did my base move?" for free via
     /// content_print. Clean → silent rebase; dirty → the banner. Pills
-    /// redraw from the new snapshot either way.
-    func snapshotArrived() {
-        guard loaded, !missing, let snap = box.snap else { return }
+    /// redraw from the new snapshot either way. Takes the snapshot the
+    /// publisher emitted: @Published fires on willSet, so reading
+    /// box.snap here would compare against the world one snapshot ago —
+    /// and call every autosave a conflict.
+    func snapshotArrived(_ snap: Snapshot?) {
+        guard loaded, !missing, let snap = snap else { return }
         defer { redrawPills() }
         guard let row = snap.entities.first(where: { $0.id == id }) else {
-            // Filtered out: trashed, merged away, or gone. Ask the box which.
-            box.content(id) { [weak self] doc in
+            // Filtered out: trashed, merged away, or gone. Ask the box
+            // which — never infer "gone" from a box that would not open.
+            box.content(id) { [weak self] read in
                 guard let self = self else { return }
-                if let doc = doc {
-                    self.trashed = doc.trashed
-                } else {
-                    self.missing = true
+                switch read {
+                case .doc(let doc): self.trashed = doc.trashed
+                case .missing: self.missing = true
+                case .unavailable: break
                 }
             }
             return
         }
         trashed = false
         if row.contentPrint != base {
-            if dirty {
+            if dirty || saving {
                 conflicted = true
             } else {
-                box.content(id) { [weak self] doc in
-                    guard let self = self, let doc = doc, !self.dirty else { return }
+                box.content(id) { [weak self] read in
+                    guard let self = self, case .doc(let doc) = read, !self.dirty else { return }
                     self.base = doc.fingerprint
                     self.title = doc.name ?? ""
                     self.lastLoadedName = self.title
@@ -570,13 +671,18 @@ final class EditorModel: ObservableObject {
         guard let view = textView, let storage = view.textStorage,
             let layout = view.layoutManager
         else { return }
-        layout.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: storage.length))
+        let range = NSRange(location: 0, length: storage.length)
+        // Layout too, not just display: a renamed target changes the
+        // pill's cellSize, and TextKit caches attachment sizes at
+        // layout time.
+        layout.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        layout.invalidateDisplay(forCharacterRange: range)
     }
 
     /// Keep mine: re-read then save — the seam has no force flag.
     func keepMine() {
-        box.content(id) { [weak self] doc in
-            guard let self = self, let doc = doc else { return }
+        box.content(id) { [weak self] read in
+            guard let self = self, case .doc(let doc) = read else { return }
             self.base = doc.fingerprint
             self.dirty = true
             self.flush { [weak self] outcome in
@@ -585,11 +691,14 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    /// Take theirs: the draft is discarded deliberately, by the user.
+    /// Take theirs: the draft is discarded deliberately, by the user —
+    /// which resolves its journal too, or the discarded words would
+    /// resurrect at every launch.
     func takeTheirs() {
         conflicted = false
         dirty = false
         journaled = nil
+        DraftJournal.delete(box: box.path, id: id)
         load()
     }
 
@@ -606,25 +715,48 @@ final class EditorModel: ObservableObject {
             self.box.set(task, property: "status", value: next) { ok in
                 guard ok else { return }
                 self.redrawPills()
-                self.textView?.undoManager?.registerUndo(withTarget: self) { model in
-                    model.box.set(task, property: "status", value: current ?? "todo") { _ in
-                        model.redrawPills()
-                    }
-                }
-                self.textView?.undoManager?.setActionName("Toggle Task")
+                self.registerToggleUndo(task: task, undoTo: current ?? "todo", redoTo: next)
             }
         }
     }
 
-    func renameIfNeeded() {
+    /// Undo and redo alternate by re-registration: each run sets the
+    /// status back and registers its own inverse, so ⇧⌘Z after ⌘Z
+    /// re-toggles instead of doing nothing.
+    private func registerToggleUndo(task: UInt64, undoTo: String, redoTo: String) {
+        textView?.undoManager?.registerUndo(withTarget: self) { model in
+            model.box.set(task, property: "status", value: undoTo) { _ in
+                model.redrawPills()
+            }
+            model.registerToggleUndo(task: task, undoTo: redoTo, redoTo: undoTo)
+        }
+        textView?.undoManager?.setActionName("Toggle Task")
+    }
+
+    /// A typed title that differs from the stored name — flushed by the
+    /// same gestures that flush content, checked by the quit gate.
+    var titlePending: Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != lastLoadedName
+    }
+
+    /// Anything the quit gate must not lose: words or a name.
+    var needsQuitFlush: Bool { dirty || titlePending }
+
+    func renameIfNeeded(_ done: @escaping () -> Void = {}) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             title = lastLoadedName  // empty costs nothing; it just isn't a rename
+            done()
             return
         }
-        guard trimmed != lastLoadedName else { return }
+        guard trimmed != lastLoadedName else {
+            done()
+            return
+        }
         box.set(id, property: "name", value: trimmed) { [weak self] ok in
             if ok { self?.lastLoadedName = trimmed }
+            done()
         }
     }
 
@@ -641,24 +773,46 @@ final class EditorModel: ObservableObject {
         }
     }
 
-    /// The quit path: a handful of tries, then the journal — the one
-    /// moment the draft may outlive the process outside the log.
+    /// The quit path: the pending rename first (quit must not outrun the
+    /// boxQueue), then the flush, then — only on refusal — the journal:
+    /// the one moment the draft may outlive the process outside the log.
     func flushForQuit(_ completion: @escaping () -> Void) {
-        flush { [weak self] outcome in
+        renameIfNeeded { [weak self] in
             guard let self = self else {
                 completion()
                 return
             }
-            switch outcome {
-            case .clean, .saved:
-                completion()
-            default:
-                DraftJournal.write(
-                    box: self.box.path,
-                    draft: DraftFile(entity: self.id, base: self.base, spans: self.currentSpans())
-                )
-                completion()
+            self.flush { [weak self] outcome in
+                guard let self = self else {
+                    completion()
+                    return
+                }
+                switch outcome {
+                case .clean, .saved:
+                    completion()
+                default:
+                    DraftJournal.write(
+                        box: self.box.path,
+                        draft: DraftFile(
+                            entity: self.id, base: self.base, spans: self.currentSpans())
+                    )
+                    completion()
+                }
             }
+        }
+    }
+
+    /// Closing a gone note resolves its draft deliberately: unseen words
+    /// (still dirty) go to the journal and return next launch; words
+    /// already shown read-only are discarded by the click the banner
+    /// warned about.
+    func resolveMissingClose() {
+        if dirty {
+            DraftJournal.write(
+                box: box.path,
+                draft: DraftFile(entity: id, base: base, spans: currentSpans()))
+        } else {
+            DraftJournal.delete(box: box.path, id: id)
         }
     }
 
@@ -702,9 +856,19 @@ struct NoteTextView: NSViewRepresentable {
         view.textColor = .labelColor
         view.typingAttributes = SpanCodec.baseAttributes
         view.drawsBackground = false
+        // The rest of the canonical hand-built recipe: without an
+        // unbounded maxSize the document view pins to the first viewport
+        // and a long note becomes unscrollable.
         view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.minSize = NSSize(width: 0, height: 0)
+        view.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.autoresizingMask = [.width]
         view.textContainerInset = NSSize(width: 28, height: 48)
+        // Read-only until the box answers: a keystroke must never land
+        // in a view the load is about to overwrite.
+        view.isEditable = false
         view.delegate = context.coordinator
 
         let scroll = NSScrollView()
@@ -737,6 +901,12 @@ struct NoteTextView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             model.edited()
             guard let view = notification.object as? LotusTextView else { return }
+            // A cancelled completion restores the "@" through this very
+            // notification; eat that one, or Esc reopens the popup.
+            if view.suppressAutoComplete {
+                view.suppressAutoComplete = false
+                return
+            }
             // Typing "@" summons the reference picker — the native
             // completion control, no popup of our own.
             let caret = view.selectedRange().location
@@ -753,6 +923,9 @@ struct NoteTextView: NSViewRepresentable {
             guard let view = textView as? LotusTextView else { return words }
             let mention = (view.string as NSString).substring(with: charRange)
             guard mention.hasPrefix("@") else { return words }
+            // Recorded here, while the "@" is still in the buffer: the
+            // accept path keys off this, not off what the previews left.
+            view.mentionSession = true
             let partial = mention.dropFirst().lowercased()
             view.completionIds.removeAll()
             var titles: [String] = []
@@ -808,8 +981,10 @@ struct EditorView: View {
         .onChange(of: titleFocused) {
             if !titleFocused { model.renameIfNeeded() }
         }
-        .onReceive(model.box.$snap) { _ in
-            model.snapshotArrived()
+        .onReceive(model.box.$snap) { snap in
+            // Pass the emitted value: @Published fires on willSet, so
+            // box.snap still holds the previous snapshot here.
+            model.snapshotArrived(snap)
         }
     }
 
@@ -818,7 +993,11 @@ struct EditorView: View {
     @ViewBuilder
     private var banner: some View {
         if model.missing {
-            noticeBar("This note is gone from the box.") {
+            noticeBar(
+                model.dirty
+                    ? "This note is gone from the box. Close keeps the draft for next launch."
+                    : "This note is gone from the box. Close discards this draft."
+            ) {
                 Button("Close") { model.onCloseRequest() }
             }
         } else if model.conflicted {

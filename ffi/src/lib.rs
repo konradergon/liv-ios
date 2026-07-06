@@ -435,6 +435,9 @@ struct ContentDoc {
     id: Id,
     name: Option<String>,
     trashed: bool,
+    /// True when the box opened fine but no such entity exists — never
+    /// conflated with a locked box, which is a null return instead.
+    missing: bool,
     /// Identity of the stored content value; a save must present it back.
     fingerprint: u64,
     /// The log's own serde encoding of Span, verbatim.
@@ -443,8 +446,10 @@ struct ContentDoc {
 
 /// One entity's content, fresh from the box. Legacy plain-text content
 /// reads as one Text span (the fingerprint still covers the stored
-/// value). Redirects resolve before reading. Null when the box is
-/// unavailable or the entity does not exist. Free with `lotus_string_free`.
+/// value). Redirects resolve before reading. A box that opened fine but
+/// holds no such entity answers `{"missing":true,…}`; null means only
+/// that the box itself is unavailable (probe to learn why).
+/// Free with `lotus_string_free`.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
@@ -454,19 +459,29 @@ pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut 
         return std::ptr::null_mut();
     };
     let store = session.store();
-    let id = store.resolve(id);
-    let Some(entity) = store.get(id) else {
-        return std::ptr::null_mut();
-    };
-    let doc = ContentDoc {
-        id,
-        name: match entity.get(props::NAME) {
-            Some(Value::Text(name)) => Some(name.clone()),
-            _ => None,
+    let resolved = store.resolve(id);
+    let doc = match store.get(resolved) {
+        Some(entity) => ContentDoc {
+            id: resolved,
+            name: match entity.get(props::NAME) {
+                Some(Value::Text(name)) => Some(name.clone()),
+                _ => None,
+            },
+            trashed: entity.trashed,
+            missing: false,
+            fingerprint: lotus_services::content::content_fingerprint(
+                entity.get(props::CONTENT),
+            ),
+            spans: lotus_services::content::content_spans(entity),
         },
-        trashed: entity.trashed,
-        fingerprint: lotus_services::content::content_fingerprint(entity.get(props::CONTENT)),
-        spans: lotus_services::content::content_spans(entity),
+        None => ContentDoc {
+            id: resolved,
+            name: None,
+            trashed: false,
+            missing: true,
+            fingerprint: 0,
+            spans: Vec::new(),
+        },
     };
     drop(session);
     match serde_json::to_string(&doc).ok().and_then(|s| CString::new(s).ok()) {
@@ -693,12 +708,16 @@ mod tests {
         assert_eq!(saved, 1);
         assert_ne!(fresh, base);
 
-        // The stale base now refuses — and the log did not move.
+        // A *different* rewrite against the stale base refuses — and the
+        // log does not move. (The same spans against a stale base are a
+        // no-op, not a conflict: writing what is already there is never
+        // stale.)
         let session = Session::open(&path).unwrap();
         let history_len = session.store().history().len();
         drop(session);
+        let drifted = CString::new(r#"[{"Text":"drifted"}]"#).unwrap();
         let stale = unsafe {
-            lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
+            lotus_set_content_at(c_path.as_ptr(), id, drifted.as_ptr(), base, &mut fresh)
         };
         assert_eq!(stale, -1);
         // Unchanged spans against the fresh base: success, no transaction.
@@ -743,8 +762,54 @@ mod tests {
         let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
         assert_eq!(doc["spans"], serde_json::json!([{"Text": "rewritten"}]));
 
-        // No such entity: null.
-        assert!(unsafe { lotus_content_at(c_path.as_ptr(), 999_999) }.is_null());
+        // No such entity: the box answers "missing", never null — null is
+        // reserved for a box that would not open at all.
+        let gone = unsafe { read_json(lotus_content_at(c_path.as_ptr(), 999_999)) };
+        assert_eq!(gone["missing"], true);
+        assert_eq!(gone["fingerprint"], 0);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn editing_content_retracts_stale_proposals() {
+        let (path, c_path) = fresh_box("lotus_ffi_retract.log");
+
+        // The clerk proposes due=friday from the captured words.
+        let text = CString::new("kickoff friday").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let inbox = snap["inbox"].as_array().unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert!(inbox[0]["reason"].as_str().unwrap().contains("friday"));
+        let base = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap()["content_print"]
+            .as_u64()
+            .unwrap();
+
+        // Rewriting the words retracts the stale proposal; the next sweep
+        // derives from what is actually there. One proposal, the new one —
+        // never friday and thursday side by side.
+        let spans = CString::new(r#"[{"Text":"kickoff thursday"}]"#).unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, std::ptr::null_mut())
+            },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let inbox = snap["inbox"].as_array().unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert!(inbox[0]["reason"].as_str().unwrap().contains("thursday"));
+
+        // Retraction is not refusal: nothing landed in the declined
+        // sidecar, so the clerk was free to re-derive.
+        let session = Session::open(&path).unwrap();
+        assert!(session.store().declined().is_empty());
 
         cleanup(&path);
     }

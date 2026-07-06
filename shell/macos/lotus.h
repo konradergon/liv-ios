@@ -33,13 +33,14 @@ int lotus_undo_at(const char *path);
 char *lotus_probe(const char *path);
 
 /* One entity's content, fresh from the box:
-   {"id":7,"name":"…"|null,"trashed":false,"fingerprint":1234,
-    "spans":[{"Text":"…"},{"Ref":9},…]}
+   {"id":7,"name":"…"|null,"trashed":false,"missing":false,
+    "fingerprint":1234,"spans":[{"Text":"…"},{"Ref":9},…]}
    Spans are the log's own serde encoding of Span, verbatim. Legacy
    plain-text content reads as one Text span (fingerprint still over the
    stored value); fingerprint is 0 when no content cell exists. Redirects
-   resolve before reading. NULL: box unavailable or no such entity.
-   Free with lotus_string_free. */
+   resolve before reading. A box that opened fine but holds no such
+   entity answers missing:true; NULL means only that the box itself is
+   unavailable (probe to learn why). Free with lotus_string_free. */
 char *lotus_content_at(const char *path, uint64_t id);
 
 /* Replace the entity's whole content in one transaction (the editor's

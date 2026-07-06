@@ -272,6 +272,16 @@ impl Store {
         Ok(self.declined.last().expect("just pushed"))
     }
 
+    /// Retracting is the system noticing its own proposal went stale —
+    /// not the user declining it. The proposal vanishes without a refusal
+    /// record, so a proposer is free to re-derive a fresh one.
+    pub fn retract(&mut self, index: usize) -> Result<Proposal, StoreError> {
+        if index >= self.pending.len() {
+            return Err(StoreError::NoSuchProposal(index));
+        }
+        Ok(self.pending.remove(index))
+    }
+
     /// Merge is a first-class action, not a primitive: one transaction of
     /// ordinary commands. Never rewrites another entity — inbound references
     /// resolve through the redirect at read time.

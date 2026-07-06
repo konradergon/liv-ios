@@ -334,6 +334,12 @@ impl Session {
         Ok(())
     }
 
+    /// Retract a stale proposal — no refusal recorded, queue file rewritten.
+    pub fn retract(&mut self, index: usize) -> Result<(), PersistError> {
+        self.store.retract(index)?;
+        self.persist_pending()
+    }
+
     /// Id allocation is the one mutation that is not a command (an id must be
     /// minted before the Create that uses it). It writes nothing to the log —
     /// a burned id is not user data, and gaps are fine since ids never reuse.
