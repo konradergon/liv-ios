@@ -204,6 +204,9 @@ struct TabStrip: View {
 
     @State private var dropTarget: UUID?
     @State private var dropAfter = false
+    /// Measured pill widths, so the drag insertion side is the pill's
+    /// real half — not a fixed guess (pills range 110–200pt).
+    @State private var widths: [UUID: CGFloat] = [:]
 
     var body: some View {
         HStack(spacing: 0) {
@@ -223,11 +226,18 @@ struct TabStrip: View {
                                 if case .note(let id) = tab.kind { rename(id) }
                             }
                         )
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .onAppear { widths[tab.id] = proxy.size.width }
+                                    .onChange(of: proxy.size.width) { widths[tab.id] = proxy.size.width }
+                            }
+                        )
                         .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
                         .onDrop(
                             of: [.plainText],
                             delegate: TabDrop(
-                                target: tab, tabs: tabs,
+                                target: tab, tabs: tabs, width: widths[tab.id] ?? 200,
                                 dropTarget: $dropTarget, dropAfter: $dropAfter))
                     }
                 }
@@ -350,12 +360,13 @@ struct TabPill: View {
 struct TabDrop: DropDelegate {
     let target: WorkspaceTab
     let tabs: TabsModel
+    let width: CGFloat
     @Binding var dropTarget: UUID?
     @Binding var dropAfter: Bool
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         dropTarget = target.id
-        dropAfter = info.location.x > 100  // past the pill's mid — floor width
+        dropAfter = info.location.x > width / 2  // past this pill's real mid
         return DropProposal(operation: .move)
     }
 

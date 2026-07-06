@@ -615,8 +615,11 @@ struct WindowChrome: View {
                 }
             }
             .onChange(of: chrome.activeWorkspace) {
-                // Each workspace keeps its own working set. The editor was
-                // already flushed by the workspace-enter gate.
+                // Each workspace keeps its own working set. The gated
+                // enter path already flushed; the ungated paths (archive/
+                // trash of the active workspace, CLI reconcile) had not —
+                // syncEditorToActiveTab retires the editor safely either
+                // way, so the draft is never dropped.
                 tabs.load(workspace: chrome.activeWorkspace ?? 0)
                 syncEditorToActiveTab()
             }
@@ -740,20 +743,38 @@ struct WindowChrome: View {
         }
     }
 
-    /// The editor follows the active tab: a note tab gets a fresh
-    /// EditorModel (the flush-on-leave guarantees the old draft is safe),
-    /// anything else clears it. Robust to a stale editor left by a
-    /// pruned tab: it is torn down before the new one opens.
+    /// Tear the editor down without losing words: flush its draft, or
+    /// journal it if the flush is refused (the box gone, stale, or the
+    /// note trashed under it). The ungated paths — a note trashed by
+    /// the CLI, an externally-changed active workspace — go through here
+    /// so no teardown ever drops a dirty draft.
+    private func retireEditor(_ done: @escaping () -> Void) {
+        guard let leaving = editor else {
+            done()
+            return
+        }
+        leaving.flushForQuit {
+            leaving.closed()
+            if editor === leaving { editor = nil }
+            done()
+        }
+    }
+
+    /// The editor follows the active tab. Callers pre-flush (closeEditor
+    /// or retireEditor) so the editor is already nil or clean here; the
+    /// note branch opens the active note, anything else stays empty.
     private func syncEditorToActiveTab() {
         if case .note(let id) = tabs.active?.kind {
             if editor?.id != id {
-                if editor != nil { editor?.closed(); editor = nil }
-                openEditor(id: id)
+                retireEditor {
+                    openEditor(id: id)
+                    selection = id
+                }
+            } else {
+                selection = id
             }
-            selection = id
-        } else if editor != nil {
-            editor?.closed()
-            editor = nil
+        } else {
+            retireEditor {}
         }
     }
 
@@ -790,8 +811,15 @@ struct WindowChrome: View {
                     tabId = tabs.openNote(newId).id
                 }
                 tabs.setActive(tabId)
-                if editor?.id != newId { openEditor(id: newId, bornBlank: true) }
-                selection = newId
+                // createNote round-tripped the box; the user may have
+                // opened another note tab meanwhile. Retire whatever
+                // editor is live before opening the newborn, or its
+                // openEditor(guard editor==nil) would silently no-op and
+                // leave a note tab with no editor.
+                retireEditor {
+                    openEditor(id: newId, bornBlank: true)
+                    selection = newId
+                }
             }
         }
     }
