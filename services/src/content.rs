@@ -141,7 +141,7 @@ pub fn set_content(
 /// drops straight into renaming — the entity is born nameless, like a
 /// scrap, but typed, so expectations apply from the first moment.
 pub fn create_note(session: &mut Session, created: DateTime) -> Result<Id, PersistError> {
-    let note_type = type_id(session.store(), "note");
+    let note_type = find_type(session.store(), "note");
     let id = session.allocate_id();
     let mut commands = vec![Command::Create { entity: id }];
     if let Some(t) = note_type {
@@ -158,9 +158,128 @@ pub fn create_note(session: &mut Session, created: DateTime) -> Result<Id, Persi
     Ok(id)
 }
 
+/// Birth of a workspace: Create + type + name + created (+ parent and
+/// a trailing order among its new siblings), one transaction. Working:
+/// navigation chrome, not a thought.
+pub fn create_workspace(
+    session: &mut Session,
+    name: &str,
+    parent: Option<Id>,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let workspace_type = find_type(store, "workspace");
+    let parent_prop = property_id(store, "parent");
+    let order_prop = property_id(store, "order");
+
+    // Land after the last sibling: max order among same-parent
+    // workspaces, plus ten.
+    let next_order = order_prop
+        .map(|order| {
+            store
+                .entities()
+                .filter(|e| !e.trashed)
+                .filter(|e| match (parent, parent_prop) {
+                    (Some(p), Some(pp)) => e.has(pp, &Value::Reference(p)),
+                    (None, Some(pp)) => e.get(pp).is_none(),
+                    _ => true,
+                })
+                .filter_map(|e| match e.get(order) {
+                    Some(Value::Number(n)) => Some(*n),
+                    _ => None,
+                })
+                .fold(0.0_f64, f64::max)
+                + 10.0
+        })
+        .unwrap_or(10.0);
+
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::NAME, Value::text(name));
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(created));
+    if let Some(t) = workspace_type {
+        add(props::TYPE, Value::Reference(t));
+    }
+    if let (Some(p), Some(pp)) = (parent, parent_prop) {
+        add(pp, Value::Reference(p));
+    }
+    if let Some(op) = order_prop {
+        add(op, Value::Number(next_order));
+    }
+    session.commit(commands, "new workspace", Author::User)?;
+    Ok(id)
+}
+
+/// Trash an entity and every descendant reachable through `parent`
+/// references — one gesture, one transaction, one undo step. Liv's
+/// delete-workspace warns "N child workspaces will also be deleted";
+/// here it is a trash, so even that is reversible.
+pub fn trash_tree(session: &mut Session, root: Id) -> Result<usize, ContentError> {
+    let store = session.store();
+    let root = store.resolve(root);
+    if store.get(root).is_none() {
+        return Err(ContentError::Invalid);
+    }
+    let Some(parent_prop) = property_id(store, "parent") else {
+        return Err(ContentError::Invalid);
+    };
+    // Walk the tree breadth-first; cycles cannot recur into the list
+    // because each entity enters at most once.
+    let mut doomed = vec![root];
+    let mut i = 0;
+    while i < doomed.len() {
+        let node = doomed[i];
+        for entity in store.entities() {
+            if !entity.trashed
+                && entity.has(parent_prop, &Value::Reference(node))
+                && !doomed.contains(&entity.id)
+            {
+                doomed.push(entity.id);
+            }
+        }
+        i += 1;
+    }
+    let commands: Vec<Command> = doomed.iter().map(|id| Command::Trash { entity: *id }).collect();
+    let count = commands.len();
+    session
+        .commit(commands, "trash workspace tree", Author::User)
+        .map_err(ContentError::Persist)?;
+    Ok(count)
+}
+
+/// Remove every cell of one property — the inverse of set_property's
+/// replace, for "make top-level" and its kin. A property the entity
+/// does not carry is a no-op, not an error.
+pub fn unset_property(session: &mut Session, id: Id, prop_name: &str) -> Result<(), String> {
+    let store = session.store();
+    let id = store.resolve(id);
+    let entity = store.get(id).ok_or(format!("no entity #{id}"))?;
+    let property =
+        property_id(store, prop_name).ok_or(format!("no property named {prop_name}"))?;
+    let commands: Vec<Command> = entity
+        .all(property)
+        .cloned()
+        .map(|old| Command::RemoveCell {
+            entity: id,
+            cell: Cell { property, value: old },
+        })
+        .collect();
+    if commands.is_empty() {
+        return Ok(());
+    }
+    session
+        .commit(commands, format!("unset {prop_name}"), Author::User)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// A type is front-of-house and carries expectations; that pair is what
 /// distinguishes "note" the type from anything else that borrows the word.
-fn type_id(store: &Store, name: &str) -> Option<Id> {
+pub fn find_type(store: &Store, name: &str) -> Option<Id> {
     let query = Query {
         constraints: vec![
             Constraint { property: props::NAME, op: Op::Equals(Value::text(name)) },

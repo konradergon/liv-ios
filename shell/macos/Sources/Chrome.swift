@@ -107,6 +107,14 @@ final class ChromeModel: ObservableObject {
     @Published var focusMode = false
     @Published var isFullscreen = false
     @Published var pinnedProject: UInt64?
+    /// The active workspace — nil means the built-in Home (§2.7.1).
+    /// A shell preference: losing it loses no data.
+    @Published var activeWorkspace: UInt64? {
+        didSet {
+            UserDefaults.standard.set(activeWorkspace ?? 0, forKey: "app.activeWorkspace.v1")
+        }
+    }
+    @Published var switcherOpen = false
 
     let nav = NavHistory()
     /// Focus mode stashes the panel states and restores them exactly.
@@ -122,6 +130,8 @@ final class ChromeModel: ObservableObject {
         rightPct = min(max(panes?["right"] as? Double ?? 30, 8), 48)
         leftOpen = defaults.object(forKey: "app.leftPanel.open.v1") as? Bool ?? true
         rightOpen = defaults.object(forKey: "app.rightPanel.open.v1") as? Bool ?? true
+        let workspace = UInt64(defaults.integer(forKey: "app.activeWorkspace.v1"))
+        activeWorkspace = workspace == 0 ? nil : workspace
     }
 
     func persistPanes() {
@@ -259,15 +269,29 @@ struct HeaderSearch: View {
 
 struct TabsRow: View {
     @ObservedObject var chrome: ChromeModel
+    @ObservedObject var model: BoxModel
+    /// Runs after entering a workspace: land on the desk.
+    var landed: () -> Void = {}
+
+    @State private var hubOpen = false
+
+    private var hubLabel: String {
+        if chrome.surface.isGlobalTool { return "lotus" }
+        guard let id = chrome.activeWorkspace,
+            let row = (model.snap?.workspaces ?? []).first(where: { $0.id == id })
+        else { return "Home" }
+        return row.name
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            // HomeHub (§2.7.2) — the workspace control; the popover
-            // arrives with workspaces (P2). Reads the app name on a
-            // vault-wide tool.
-            Button {} label: {
+            // HomeHub (§2.7.2) — the ONE consolidated workspace control,
+            // on the tab row by founder call. Name only, 12px semibold.
+            Button {
+                hubOpen.toggle()
+            } label: {
                 HStack(spacing: 4) {
-                    Text(chrome.surface.isGlobalTool ? "lotus" : "Home")
+                    Text(hubLabel)
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
                         .frame(maxWidth: 140, alignment: .leading)
@@ -282,9 +306,21 @@ struct TabsRow: View {
                     RoundedRectangle(cornerRadius: Theme.radiusMd)
                         .fill(Theme.secondary.opacity(0.4))
                 )
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.leading, 8)
+            .popover(isPresented: $hubOpen, arrowEdge: .bottom) {
+                HomeHubPopover(
+                    model: model, chrome: chrome,
+                    actions: WorkspaceActions(
+                        model: model, chrome: chrome,
+                        tree: WorkspaceTree(model.snap?.workspaces ?? []),
+                        landed: landed)
+                ) {
+                    hubOpen = false
+                }
+            }
             Spacer()  // the tab strip lands here in P3
         }
         .frame(height: Theme.tabsRowHeight)
@@ -294,13 +330,19 @@ struct TabsRow: View {
     }
 }
 
-// MARK: - bookmarks row (§1.2; SlotsBar chips are P2)
+// MARK: - bookmarks row (§1.2) hosting the SlotsBar (§2.4)
 
 struct BookmarksRow: View {
+    @ObservedObject var chrome: ChromeModel
+    @ObservedObject var model: BoxModel
+    var openNote: (UInt64) -> Void = { _ in }
+    var enterWorkspace: (UInt64) -> Void = { _ in }
+
     var body: some View {
-        HStack {
-            Spacer()
-        }
+        SlotsBar(
+            model: model, chrome: chrome, openNote: openNote,
+            enterWorkspace: enterWorkspace
+        )
         .frame(height: Theme.bookmarksRowHeight)
         .background(WindowDragRegion())
         .background(Theme.background)

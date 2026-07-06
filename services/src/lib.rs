@@ -61,12 +61,80 @@ pub fn capture(
 pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_bootstrap(session)?;
     seed_starter_library(session)?;
-    seed_recurrence(session)
+    seed_recurrence(session)?;
+    seed_workspaces(session)
 }
 
 /// Milestone 6's vocabulary, additive like the starter library: the
 /// recurrence rule (a text cell on the series) and exception-of (the
 /// reference an exception entity carries). Old boxes gain both on open.
+/// Workspaces, the Liv port's P2: one entity kind carries what Liv
+/// split across Workspace records and a TreeNode store — a workspace
+/// may reference a parent workspace, and the tree is that. Working
+/// entities: navigation chrome, not thoughts, so default queries and
+/// the gazetteer never see them.
+fn seed_workspaces(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "emoji").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    let mut new_property = |session: &mut Session, name: &str, kind: &str| {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        id
+    };
+    let emoji = new_property(session, "emoji", "text");
+    let favorite = new_property(session, "favorite", "bool");
+    new_property(session, "archived", "bool");
+    let parent = new_property(session, "parent", "reference");
+    new_property(session, "order", "number");
+    let builtin = new_property(session, "builtin", "text");
+    new_property(session, "bookmarked", "bool");
+
+    // The workspace type. Its expectations make it findable the same
+    // way "note" is, and offer the fields its inspector shows.
+    let workspace_type = session.allocate_id();
+    commands.push(Command::Create { entity: workspace_type });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("workspace") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: props::EXPECTED, value: Value::Reference(emoji) },
+    ] {
+        commands.push(Command::AddCell { entity: workspace_type, cell });
+    }
+    commands.push(Command::AddCell {
+        entity: workspace_type,
+        cell: Cell { property: props::EXPECTED, value: Value::Reference(favorite) },
+    });
+    commands.push(Command::AddCell {
+        entity: workspace_type,
+        cell: Cell { property: props::EXPECTED, value: Value::Reference(parent) },
+    });
+
+    // The built-in Home workspace: favourite by default, protected in
+    // the shell from archive and delete.
+    let home = session.allocate_id();
+    commands.push(Command::Create { entity: home });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("Home") },
+        Cell { property: props::TYPE, value: Value::Reference(workspace_type) },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: builtin, value: Value::text("home") },
+    ] {
+        commands.push(Command::AddCell { entity: home, cell });
+    }
+
+    session.commit(commands, "workspaces", Author::System)?;
+    Ok(())
+}
+
 fn seed_recurrence(session: &mut Session) -> Result<(), PersistError> {
     if property_id(session.store(), "recurrence").is_some() {
         return Ok(());

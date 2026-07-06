@@ -52,6 +52,19 @@ struct OccurrenceRow: Codable, Hashable {
     let civil: Int64
 }
 
+struct WorkspaceRow: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let name: String
+    let emoji: String?
+    let favorite: Bool
+    let archived: Bool
+    /// "home" for the protected built-in; empty otherwise.
+    let builtin: String
+    /// 0 = top level; the tree is parent references, nothing else.
+    let parent: UInt64
+    let order: Double
+}
+
 struct Snapshot: Codable {
     let today: [UInt64]
     let unstructured: [UInt64]
@@ -59,6 +72,7 @@ struct Snapshot: Codable {
     let dated: [UInt64]
     let occurrences: [OccurrenceRow]
     let inbox: [ProposalRow]
+    let workspaces: [WorkspaceRow]
     let entities: [EntityRow]
 }
 
@@ -173,6 +187,25 @@ final class BoxModel: ObservableObject {
                 self.refresh()
             }
         }
+    }
+
+    func createWorkspace(name: String, parent: UInt64, done: @escaping (UInt64?) -> Void) {
+        boxQueue.async {
+            let id = lotus_create_workspace_at(self.path, name, parent)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
+    func trashTree(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_trash_tree_at(self.path, id) > 0 }
+    }
+
+    func unset(_ id: UInt64, property: String, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_unset_at(self.path, id, property) == 1 }
     }
 
     // MARK: the editor's reads and writes
@@ -380,6 +413,7 @@ struct WindowChrome: View {
             .overlay(alignment: .topTrailing) {
                 if chrome.focusMode { FocusChip(chrome: chrome) }
             }
+            .overlay(switcherOverlay)
             .overlay(faultNotice)
             .overlay(DialogHost())
             .background(eventHandlers)
@@ -401,8 +435,23 @@ struct WindowChrome: View {
             } else {
                 TitleRow(chrome: chrome)
                 if !chrome.surface.isGlobalTool {
-                    TabsRow(chrome: chrome)
-                    BookmarksRow()
+                    TabsRow(chrome: chrome, model: model) {
+                        query = ""
+                        lens = .today
+                    }
+                    BookmarksRow(
+                        chrome: chrome, model: model,
+                        openNote: { id in
+                            closeEditor { ok in
+                                guard ok else { return }
+                                if chrome.surface != .notes { chrome.surface = .notes }
+                                openEditor(id: id)
+                            }
+                        },
+                        enterWorkspace: { id in
+                            chrome.activeWorkspace = id
+                            navigate(to: .notes)
+                        })
                 }
             }
             HStack(spacing: 0) {
@@ -412,6 +461,33 @@ struct WindowChrome: View {
                     }
                 }
                 body3Pane
+            }
+        }
+    }
+
+    /// The workspace switcher (§2.7.3), above the content, below the
+    /// dialogs.
+    @ViewBuilder
+    private var switcherOverlay: some View {
+        if chrome.switcherOpen {
+            WorkspaceSwitcher(
+                model: model, chrome: chrome, actions: workspaceActions
+            ) {
+                chrome.switcherOpen = false
+            }
+        }
+    }
+
+    private var workspaceActions: WorkspaceActions {
+        WorkspaceActions(
+            model: model, chrome: chrome,
+            tree: WorkspaceTree(model.snap?.workspaces ?? [])
+        ) {
+            closeEditor { ok in
+                guard ok else { return }
+                if chrome.surface != .notes { chrome.surface = .notes }
+                query = ""
+                lens = .today
             }
         }
     }
@@ -512,14 +588,21 @@ struct WindowChrome: View {
             let total = geo.size.width
             HStack(spacing: 0) {
                 if chrome.surface == .notes && chrome.leftOpen && !chrome.focusMode {
-                    Sidebar(
-                        model: model, lens: $lens, query: $query,
-                        searchFocused: $searchFocused
-                    ) {
-                        closeEditor { ok in
-                            if ok { selection = nil }
+                    AppSidebar(
+                        model: model, chrome: chrome, lens: $lens, query: $query,
+                        selection: $selection, searchFocused: $searchFocused,
+                        willNavigate: {
+                            closeEditor { ok in
+                                if ok { selection = nil }
+                            }
+                        },
+                        openEntity: { id in
+                            closeEditor { ok in
+                                guard ok else { return }
+                                openEditor(id: id)
+                            }
                         }
-                    }
+                    )
                     .frame(width: max(total * chrome.leftPct / 100, 0))
                 }
                 if chrome.surface == .notes && !chrome.focusMode {
@@ -622,6 +705,26 @@ struct WindowChrome: View {
             ) {
                 chrome.rightOpen.toggle()
                 chrome.persistPanes()
+            })
+        registry.register(
+            CommandDef(
+                id: "workspace:switch", label: "Workspace switcher", scope: .global,
+                category: "Navigate", binding: Hotkey(modifiers: [.mod, .shift], key: "o")
+            ) {
+                if chrome.focusMode { chrome.toggleFocus() }
+                chrome.switcherOpen = true
+            })
+        registry.register(
+            CommandDef(
+                id: "object:toggle-bookmark", label: "Bookmark", scope: .global,
+                category: "Object", binding: Hotkey(modifiers: [.mod, .shift], key: "b"),
+                enabled: { selection != nil }
+            ) {
+                guard let id = selection, let row = model.entity(id) else { return }
+                let starred = row.cells.contains {
+                    $0.property == "bookmarked" && $0.value == "yes"
+                }
+                model.set(id, property: "bookmarked", value: starred ? "false" : "true")
             })
         registry.register(
             CommandDef(
@@ -785,109 +888,7 @@ struct WindowChrome: View {
 
 }
 
-// MARK: - sidebar
-
-struct Sidebar: View {
-    @ObservedObject var model: BoxModel
-    @Binding var lens: Lens
-    @Binding var query: String
-    var searchFocused: FocusState<Bool>.Binding
-    /// Navigation away from an open editor flushes it first.
-    var willNavigate: () -> Void = {}
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 7) {
-                Text("❧").foregroundColor(Theme.accent)
-                Text("lotus").fontWeight(.semibold)
-            }
-            .font(.system(size: 15))
-            .padding(.horizontal, 8)
-            .padding(.top, 34) // room for the traffic lights
-
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                TextField("Search", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused(searchFocused)
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.7))
-            )
-
-            VStack(spacing: 1) {
-                // The desk's own views. Calendar and Inbox moved to the
-                // activity rail; ⌘digits are reserved for tab jumps (P3).
-                ForEach([Lens.today, .everything]) { item in
-                    SidebarRow(
-                        item: item,
-                        active: lens == item && query.isEmpty,
-                        badge: 0
-                    ) {
-                        willNavigate()
-                        query = ""
-                        lens = item
-                    }
-                }
-            }
-
-            Spacer()
-
-            if model.boxBusy {
-                Label("box is busy — retrying", systemImage: "hourglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(SidebarMaterial().ignoresSafeArea())
-    }
-}
-
-struct SidebarRow: View {
-    let item: Lens
-    let active: Bool
-    let badge: Int
-    let select: () -> Void
-
-    var body: some View {
-        Button(action: select) {
-            HStack(spacing: 9) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: 12.5))
-                    .frame(width: 16)
-                    .foregroundColor(active ? Theme.accent : .secondary)
-                Text(item.rawValue)
-                    .font(.system(size: 13, weight: active ? .semibold : .medium))
-                    .foregroundColor(active ? Theme.accentDeep : .primary)
-                Spacer()
-                if badge > 0 {
-                    Text("\(badge)")
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .frame(minWidth: 18, minHeight: 18)
-                        .background(Capsule().fill(active ? Theme.accentDeep : Theme.accent))
-                }
-            }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 6).fill(active ? Theme.accentTint : .clear)
-        )
-    }
-}
+// MARK: - sidebar material
 
 /// The native sidebar material, since SwiftUI alone won't hand it to us
 /// inside a plain NSWindow.

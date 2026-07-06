@@ -65,4 +65,20 @@ int32_t lotus_set_at(const char *path, uint64_t id,
    Returns the id, 0 on failure. Caller drops straight into renaming. */
 uint64_t lotus_create_note_at(const char *path);
 
+/* Birth of a workspace: Create + type + name (+ parent reference and a
+   trailing order), one transaction. parent 0 = top level. Returns the
+   id, 0 on failure. */
+uint64_t lotus_create_workspace_at(const char *path, const char *name,
+                                   uint64_t parent);
+
+/* Trash an entity and every descendant reachable through `parent`
+   references — one gesture, one transaction, one undo step. Returns
+   the count trashed, 0 on failure. */
+int32_t lotus_trash_tree_at(const char *path, uint64_t id);
+
+/* Remove every cell of one property — the inverse of lotus_set_at's
+   replace. Missing property on the entity is success. 1 ok, 0 on
+   busy/no entity/no property definition. */
+int32_t lotus_unset_at(const char *path, uint64_t id, const char *property);
+
 #endif

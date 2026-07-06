@@ -111,6 +111,20 @@ fn fingerprint(proposal: &lotus_core::Proposal) -> u64 {
 }
 
 #[derive(Serialize)]
+struct WorkspaceRow {
+    id: Id,
+    name: String,
+    emoji: Option<String>,
+    favorite: bool,
+    archived: bool,
+    /// "home" for the protected built-in; empty otherwise.
+    builtin: String,
+    /// 0 = top level; the tree is parent references, nothing else.
+    parent: Id,
+    order: f64,
+}
+
+#[derive(Serialize)]
 struct Snapshot {
     today: Vec<Id>,
     unstructured: Vec<Id>,
@@ -120,6 +134,9 @@ struct Snapshot {
     /// computed in services — never stored, same answer for every view.
     occurrences: Vec<OccurrenceRow>,
     inbox: Vec<ProposalRow>,
+    /// Navigation chrome: working entities of type workspace, whole
+    /// tree, archived included (the shell draws the Archive group).
+    workspaces: Vec<WorkspaceRow>,
     entities: Vec<EntityRow>,
 }
 
@@ -235,6 +252,57 @@ fn build_snapshot(store: &Store) -> Snapshot {
         })
         .collect();
 
+    // The workspace tree: type by name, then every untrashed carrier.
+    let workspaces = match lotus_services::content::find_type(store, "workspace") {
+        None => Vec::new(),
+        Some(workspace_type) => {
+            let text = |entity: &lotus_core::Entity, prop: Option<Id>| -> Option<String> {
+                match prop.and_then(|p| entity.get(p)) {
+                    Some(Value::Text(t)) => Some(t.clone()),
+                    _ => None,
+                }
+            };
+            let flag = |entity: &lotus_core::Entity, prop: Option<Id>| -> bool {
+                matches!(prop.and_then(|p| entity.get(p)), Some(Value::Bool(true)))
+            };
+            let emoji_prop = property_id(store, "emoji");
+            let favorite_prop = property_id(store, "favorite");
+            let archived_prop = property_id(store, "archived");
+            let builtin_prop = property_id(store, "builtin");
+            let parent_prop = property_id(store, "parent");
+            let order_prop = property_id(store, "order");
+            let mut rows: Vec<WorkspaceRow> = store
+                .entities()
+                .filter(|e| {
+                    !e.trashed && e.has(props::TYPE, &Value::Reference(workspace_type))
+                })
+                .map(|e| WorkspaceRow {
+                    id: e.id,
+                    name: match e.get(props::NAME) {
+                        Some(Value::Text(name)) => name.clone(),
+                        _ => format!("#{}", e.id),
+                    },
+                    emoji: text(e, emoji_prop),
+                    favorite: flag(e, favorite_prop),
+                    archived: flag(e, archived_prop),
+                    builtin: text(e, builtin_prop).unwrap_or_default(),
+                    parent: match parent_prop.and_then(|p| e.get(p)) {
+                        Some(Value::Reference(target)) => *target,
+                        _ => 0,
+                    },
+                    order: match order_prop.and_then(|p| e.get(p)) {
+                        Some(Value::Number(n)) => *n,
+                        _ => 0.0,
+                    },
+                })
+                .collect();
+            rows.sort_by(|a, b| {
+                a.order.partial_cmp(&b.order).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            rows
+        }
+    };
+
     let mut seen: Vec<Id> = Vec::new();
     let inbox = store
         .pending()
@@ -265,7 +333,7 @@ fn build_snapshot(store: &Store) -> Snapshot {
         })
         .collect();
 
-    Snapshot { today, unstructured, everything, dated, occurrences, inbox, entities }
+    Snapshot { today, unstructured, everything, dated, occurrences, inbox, workspaces, entities }
 }
 
 fn last_day_of_month(year: i32, month: u32) -> u32 {
@@ -575,6 +643,78 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
     lotus_services::content::create_note(&mut session, created).unwrap_or(0)
 }
 
+/// Birth of a workspace: Create + type + name (+ parent, trailing
+/// order), one transaction. parent 0 = top level. Returns the id, 0 on
+/// failure.
+///
+/// # Safety
+/// `path` and `name` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_workspace_at(
+    path: *const c_char,
+    name: *const c_char,
+    parent: u64,
+) -> u64 {
+    if name.is_null() {
+        return 0;
+    }
+    let Ok(name) = CStr::from_ptr(name).to_str() else {
+        return 0;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return 0;
+    }
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    let now = Local::now();
+    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+    let parent = (parent != 0).then_some(parent);
+    lotus_services::content::create_workspace(&mut session, name, parent, created).unwrap_or(0)
+}
+
+/// Trash an entity and every descendant reachable through `parent`
+/// references — one gesture, one transaction, one undo step. Returns
+/// the number of entities trashed, 0 on failure.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_trash_tree_at(path: *const c_char, id: u64) -> i32 {
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    match lotus_services::content::trash_tree(&mut session, id) {
+        Ok(count) => count as i32,
+        Err(_) => 0,
+    }
+}
+
+/// Remove every cell of one property — the inverse of lotus_set_at's
+/// replace. A property the entity does not carry is success, not an
+/// error. Returns 1 on success, 0 on busy/no entity/no property.
+///
+/// # Safety
+/// `path` and `property` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_unset_at(
+    path: *const c_char,
+    id: u64,
+    property: *const c_char,
+) -> i32 {
+    if property.is_null() {
+        return 0;
+    }
+    let Ok(property) = CStr::from_ptr(property).to_str() else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    lotus_services::content::unset_property(&mut session, id, property).is_ok() as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,6 +992,78 @@ mod tests {
             },
             1
         );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn workspace_tree_roundtrips() {
+        let (path, c_path) = fresh_box("lotus_ffi_workspace.log");
+
+        // The seed ships Home; a snapshot shows it, favourite by shell
+        // convention (builtin), top-level.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let spaces = snap["workspaces"].as_array().unwrap();
+        assert_eq!(spaces.len(), 1);
+        assert_eq!(spaces[0]["name"], "Home");
+        assert_eq!(spaces[0]["builtin"], "home");
+        assert_eq!(spaces[0]["parent"], 0);
+
+        // A new area, then a child project under it.
+        let name = CString::new("Work").unwrap();
+        let area = unsafe { lotus_create_workspace_at(c_path.as_ptr(), name.as_ptr(), 0) };
+        assert_ne!(area, 0);
+        let child_name = CString::new("Lotus port").unwrap();
+        let child =
+            unsafe { lotus_create_workspace_at(c_path.as_ptr(), child_name.as_ptr(), area) };
+        assert_ne!(child, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let spaces = snap["workspaces"].as_array().unwrap();
+        assert_eq!(spaces.len(), 3);
+        let child_row = spaces.iter().find(|w| w["id"] == child).unwrap();
+        assert_eq!(child_row["parent"], area);
+
+        // Workspaces are navigation chrome: never in Everything.
+        assert!(
+            !snap["everything"].as_array().unwrap().iter().any(|id| *id == area || *id == child)
+        );
+
+        // favorite/archived ride the ordinary set door; unset removes.
+        let favorite = CString::new("favorite").unwrap();
+        let yes = CString::new("true").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), area, favorite.as_ptr(), yes.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["id"] == area)
+            .unwrap()
+            .clone();
+        assert_eq!(row["favorite"], true);
+        let parent_prop = CString::new("parent").unwrap();
+        assert_eq!(
+            unsafe { lotus_unset_at(c_path.as_ptr(), child, parent_prop.as_ptr()) },
+            1
+        );
+
+        // One gesture trashes a subtree; one undo restores it whole.
+        let up = CString::new("parent").unwrap();
+        let area_arg = CString::new(format!("{area}")).unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), child, up.as_ptr(), area_arg.as_ptr()) },
+            1
+        );
+        assert_eq!(unsafe { lotus_trash_tree_at(c_path.as_ptr(), area) }, 2);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(snap["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(snap["workspaces"].as_array().unwrap().len(), 3);
 
         cleanup(&path);
     }
