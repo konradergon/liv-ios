@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** 1.5
+> **Status:** 1.6
 >
 > This document is the constitution of the project.
 > It defines architectural principles rather than implementation details.
@@ -1600,6 +1600,32 @@ Decided in 1.5 — the Liv pivot (owner's directive, 2026-07-06):
   and the mechanism underneath is lotus's — import/export instead
   of mirrors, native rendering instead of webviews, proposals
   instead of silent mutation
+
+Decided in 1.6 — D19, rich text carries formatting (P4, owner panel, 2026-07-07):
+
+- a Text span carries, besides its string, a closed set of inline
+  *marks* (bold, italic, code, strike — a 4-bit set); the span stream
+  carries `Break` markers whose payload is a closed *block* kind (body,
+  heading 1–6, quote, bullet, ordered, task, code, callout, rule) that
+  types the following paragraph. Marks and block kinds are the entire
+  formatting vocabulary
+- markdown markers, `[[…]]`, and per-block syntax remain **input
+  conventions only and are never stored** — D18 ("markdown is at most
+  an input convention") now reads as *an input convention over
+  marks-and-blocks*, not reversed into a storage format
+- references remain the **sole** relationship mechanism: a wiki-link
+  inserts a `Ref` span and unifies with @-mentions, so backlinks stay
+  automatic and **no content is ever parsed to find them**. Liv's
+  .md-mirror reconciliation is deleted, not reproduced
+- tables and math are `Code`-kind paragraphs holding raw text, rendered
+  by a native widget — not new value kinds; promoting them to
+  structured values waits for a measured need and a further amendment
+- content stays **one whole value in the log, replaced and fingerprinted
+  whole**; the closed set of Value *kinds* is unchanged — `RichText` is
+  refined in its interior (Text gains marks, a Break span is added), not
+  multiplied. New marks or block kinds are added rarely and stated, and
+  the compiler enforces the closure at every match on `Span`
+- the model and slice plan live in design/p4-editor-model.md
 
 Decided at milestone 4, likewise recorded where it lands:
 

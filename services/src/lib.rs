@@ -36,7 +36,7 @@ pub fn capture(
                 cell: Cell {
                     property: props::CONTENT,
                     value: Value::RichText(RichText {
-                        spans: vec![Span::Text(text.to_string())],
+                        spans: vec![Span::text(text)],
                     }),
                 },
             },
@@ -487,8 +487,8 @@ fn plain(rich: &lotus_core::RichText) -> String {
     rich.spans
         .iter()
         .map(|s| match s {
-            lotus_core::Span::Text(t) => t.as_str(),
-            lotus_core::Span::Ref(_) => "",
+            lotus_core::Span::Text(t) => t.text.as_str(),
+            lotus_core::Span::Break(_) | lotus_core::Span::Ref(_) => "",
         })
         .collect()
 }

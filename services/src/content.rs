@@ -41,7 +41,7 @@ pub fn content_fingerprint(value: Option<&Value>) -> u64 {
 pub fn content_spans(entity: &Entity) -> Vec<Span> {
     match entity.get(props::CONTENT) {
         Some(Value::RichText(rich)) => rich.spans.clone(),
-        Some(Value::Text(text)) => vec![Span::Text(text.clone())],
+        Some(Value::Text(text)) => vec![Span::text(text.clone())],
         _ => Vec::new(),
     }
 }
@@ -315,7 +315,7 @@ fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result<Val
     match kind {
         "text" => Ok(Value::text(raw)),
         "richtext" => Ok(Value::RichText(RichText {
-            spans: vec![Span::Text(raw.to_string())],
+            spans: vec![Span::text(raw)],
         })),
         "number" => raw
             .parse()

@@ -14,4 +14,4 @@ pub use command::{Author, Command, Proposal, Transaction};
 pub use entity::{props, Cell, Entity};
 pub use persist::{PersistError, Session, LOG_VERSION};
 pub use store::{Backlink, Store, StoreError};
-pub use value::{DateTime, FileRef, Id, RichText, Span, Value, NONE};
+pub use value::{Block, DateTime, FileRef, Id, Marks, RichText, Span, TextSpan, Value, NONE};

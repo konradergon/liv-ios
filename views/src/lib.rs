@@ -112,7 +112,10 @@ pub fn display(store: &Store, value: &Value) -> String {
             .spans
             .iter()
             .map(|span| match span {
-                Span::Text(t) => t.clone(),
+                Span::Text(t) => t.text.clone(),
+                // A paragraph break reads as a space in a one-line
+                // summary; the block kind is structure, not prose.
+                Span::Break(_) => " ".to_string(),
                 Span::Ref(id) => reference(store, *id),
             })
             .collect(),

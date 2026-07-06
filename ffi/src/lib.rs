@@ -1122,4 +1122,57 @@ mod tests {
 
         cleanup(&path);
     }
+
+    #[test]
+    fn marks_and_blocks_round_trip_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_p4.log");
+
+        let text = CString::new("start").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let base = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) }["fingerprint"]
+            .as_u64()
+            .unwrap();
+
+        // A formatted doc: a heading, body with a bold+code run, a task
+        // block, and a reference (a wiki-link is a Ref, so it backlinks).
+        let doc = r#"[
+            {"Break":{"Heading":1}},
+            {"Text":"Title"},
+            {"Break":"Body"},
+            {"Text":"see "},
+            {"Text":{"text":"this","marks":5}},
+            {"Break":{"Task":{"depth":0,"done":false}}},
+            {"Text":"ship 4a"}
+        ]"#;
+        let spans = CString::new(doc).unwrap();
+        let mut fresh: u64 = 0;
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
+            },
+            1
+        );
+        assert_ne!(fresh, base);
+
+        // The read comes back with the marks and blocks intact.
+        let got = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(got["spans"][0], serde_json::json!({"Break": {"Heading": 1}}));
+        assert_eq!(got["spans"][4], serde_json::json!({"Text": {"text": "this", "marks": 5}}));
+        assert_eq!(got["spans"][5], serde_json::json!({"Break": {"Task": {"depth": 0, "done": false}}}));
+        assert_eq!(got["fingerprint"].as_u64().unwrap(), fresh);
+
+        // Saving the identical doc against the fresh base is a no-op, not
+        // a conflict — the marks-and-blocks encoding is canonical.
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), fresh, std::ptr::null_mut())
+            },
+            1
+        );
+        let session = Session::open(&path).unwrap();
+        assert_eq!(session.store().history().iter().filter(|t| t.label == "edit").count(), 1);
+        drop(session);
+
+        cleanup(&path);
+    }
 }

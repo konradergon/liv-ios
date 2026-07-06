@@ -130,8 +130,8 @@ fn plain_content(entity: &Entity) -> Option<String> {
             spans
                 .iter()
                 .filter_map(|s| match s {
-                    Span::Text(t) => Some(t.as_str()),
-                    Span::Ref(_) => None,
+                    Span::Text(t) => Some(t.text.as_str()),
+                    Span::Break(_) | Span::Ref(_) => None,
                 })
                 .collect::<Vec<_>>()
                 .join(" "),
