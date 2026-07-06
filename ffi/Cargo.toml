@@ -10,4 +10,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 lotus-core = { path = "../core" }
 lotus-services = { path = "../services" }
+lotus-views = { path = "../views" }
 chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

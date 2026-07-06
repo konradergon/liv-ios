@@ -103,8 +103,9 @@ fn property_name(store: &Store, property: Id) -> String {
 
 /// Draw one value as text. References draw as the target's name — the
 /// renderer peeks, read-only, exactly like the editor peeking at an
-/// embedded task's status.
-fn display(store: &Store, value: &Value) -> String {
+/// embedded task's status. Public: every shell draws values through
+/// this one function, so a date never renders two ways.
+pub fn display(store: &Store, value: &Value) -> String {
     match value {
         Value::Text(t) => t.clone(),
         Value::RichText(rich) => rich

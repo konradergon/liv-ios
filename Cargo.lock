@@ -166,6 +166,9 @@ dependencies = [
  "chrono",
  "lotus-core",
  "lotus-services",
+ "lotus-views",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

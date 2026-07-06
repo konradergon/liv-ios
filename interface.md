@@ -232,11 +232,12 @@ Decided in 0.2, from the first mockup (design/window.html):
   inside the window there is exactly one.
 - Inspector defaults as mocked: open in Table, closed in Today —
   held loosely, daily use may overrule.
+- Window chrome (decided with the first SwiftUI window): unified —
+  transparent titlebar, no title text, the traffic lights floating
+  over the sidebar, exactly as the mockup drew it.
 
 ## Open decisions
 
 - **Open-on-click vs. open-on-Enter** for list rows
   (Things opens inline; Finder selects then opens).
   Decided when the first list ships.
-- **Window chrome tone** — standard titlebar vs. unified
-  toolbar-in-titlebar. Decided with the first SwiftUI window.

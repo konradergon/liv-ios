@@ -7,6 +7,7 @@
 
 import AppKit
 import Carbon.HIToolbox
+import SwiftUI
 
 /// A borderless panel that can take the keyboard without activating us.
 final class CapturePanel: NSPanel {
@@ -18,17 +19,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var panel: CapturePanel!
     private var field: NSTextField!
     private var hotKeyRef: EventHotKeyRef?
+    private var window: NSWindow?
 
-    /// The box admits one writer, so the agent never holds it: each capture
-    /// opens, writes, closes. The CLI stays usable while we sit up here.
+    /// The box admits one writer, so the shell never holds it: every
+    /// capture, snapshot, and triage opens, acts, closes. The CLI stays
+    /// usable while the app runs.
     private let boxPath =
         FileManager.default.homeDirectoryForCurrentUser.path
         + "/Library/Application Support/lotus/lotus.log"
 
+    private lazy var model = BoxModel(path: boxPath)
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        buildMenu()
         makeStatusItem()
         makePanel()
         registerHotKey()
+        makeWindow()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication, hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if !flag {
+            window?.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
+
+    // MARK: the main window
+
+    private func makeWindow() {
+        let w = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1060, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false)
+        w.title = "lotus"
+        // Unified chrome: the sidebar runs to the top, the traffic lights
+        // float over it — the window-chrome decision, made here.
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.isReleasedWhenClosed = false
+        w.setFrameAutosaveName("lotus.main")
+        w.contentViewController = NSHostingController(rootView: MainWindow(model: model))
+        w.center()
+        w.makeKeyAndOrderFront(nil)
+        window = w
+    }
+
+    /// The minimal menu: Quit, a working Edit menu for the text fields,
+    /// and Close. Not a settings surface — there is no settings surface.
+    private func buildMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Quit lotus", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        appItem.submenu = appMenu
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(NSMenuItem.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+
+        let windowItem = NSMenuItem()
+        main.addItem(windowItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = windowMenu
+
+        NSApp.mainMenu = main
     }
 
     // MARK: menu bar
@@ -136,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             return
         }
         discardAndHide()
+        model.refresh() // the window shows the new scrap at once
     }
 
     /// Esc closes; the draft is discarded deliberately, by the user.
@@ -184,5 +259,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.accessory)
+app.setActivationPolicy(.regular)
 app.run()

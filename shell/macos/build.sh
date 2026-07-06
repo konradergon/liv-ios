@@ -7,11 +7,11 @@ cargo build --release -p lotus-ffi --manifest-path ../../Cargo.toml
 
 mkdir -p build
 swiftc -O \
-    Sources/main.swift \
+    Sources/main.swift Sources/Window.swift \
     -import-objc-header lotus.h \
     -L ../../target/release -llotus_ffi \
-    -framework AppKit -framework Carbon \
-    -o build/lotus-capture
+    -framework AppKit -framework Carbon -framework SwiftUI \
+    -o build/lotus
 
-echo "built: shell/macos/build/lotus-capture"
-echo "run it, then press ctrl-option-space anywhere"
+echo "built: shell/macos/build/lotus"
+echo "run it: the window opens, and ctrl-option-space captures from anywhere"
