@@ -1,0 +1,614 @@
+<title>lotus — main window</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ground: #ffffff;
+    --sidebar: #f1f3f2;
+    --inspector: #fafbfa;
+
+    --label: #1d1d1f;
+    --label-2: #7c7f7d;
+    --label-3: #adb0ad;
+
+    --sep: #e6e8e6;
+    --sep-strong: #d9dcd9;
+
+    --accent: #2f7d6b;
+    --accent-deep: #276456;
+    --accent-tint: #e9f1ee;
+    --accent-tint-2: #dcebe6;
+
+    --red: #cf4b42;
+
+    --dot-todo: #b3b6b3;
+    --dot-doing: #cf9a3f;
+    --dot-done: #4a9e86;
+
+    --desktop-a: #dde6e2;
+    --desktop-b: #c8d3cf;
+
+    --u1: 4px; --u2: 8px; --u3: 12px; --u4: 16px;
+    --u5: 20px; --u6: 24px; --u8: 32px;
+
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+            "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --radius: 10px;
+  }
+
+  body {
+    font-family: var(--font);
+    color: var(--label);
+    background:
+      radial-gradient(120% 120% at 20% 0%, var(--desktop-a), var(--desktop-b));
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--u4);
+    padding: var(--u8) var(--u4);
+  }
+
+  .stage { width: 100%; overflow-x: auto; display: flex; justify-content: center; }
+
+  /* ---- the window ---- */
+  .window {
+    position: relative;
+    width: 1000px;
+    min-width: 1000px;
+    background: var(--ground);
+    border: 1px solid rgba(0,0,0,.10);
+    border-radius: var(--radius);
+    box-shadow: 0 24px 70px rgba(20,40,35,.30), 0 2px 8px rgba(0,0,0,.10);
+    overflow: hidden;
+  }
+
+  .lights { position: absolute; top: 14px; left: 15px; display: flex; gap: 8px; z-index: 6; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .lights .r { background: #ec6a5f; }
+  .lights .y { background: #f4bf4f; }
+  .lights .g { background: #61c554; }
+
+  .body { display: flex; height: 664px; }
+
+  /* ---- sidebar ---- */
+  .sidebar {
+    width: 226px;
+    flex: none;
+    background: var(--sidebar);
+    border-right: 1px solid var(--sep);
+    padding: 46px var(--u3) var(--u3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--u4);
+  }
+  .brand {
+    display: flex; align-items: center; gap: var(--u2);
+    font-size: 15px; font-weight: 600; letter-spacing: .01em;
+    padding: 0 var(--u2);
+    color: var(--label);
+  }
+  .brand .mark { color: var(--accent); font-size: 16px; }
+
+  .capture {
+    display: flex; align-items: center; gap: var(--u2);
+    background: var(--ground);
+    border: 1px solid var(--sep-strong);
+    border-radius: 7px;
+    padding: 7px var(--u2);
+    color: var(--label-3);
+    font-size: 13px;
+    cursor: text;
+  }
+  .capture svg { flex: none; }
+  .capture .kbd { margin-left: auto; }
+
+  nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%;
+    border: 0; background: transparent;
+    font-family: var(--font);
+    font-size: 13px; font-weight: 500; color: var(--label);
+    text-align: left;
+    padding: 6px var(--u2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+  .nav svg { flex: none; color: var(--label-2); }
+  .nav:hover { background: rgba(0,0,0,.045); }
+  .nav.active { background: var(--accent-tint); color: var(--accent-deep); font-weight: 600; }
+  .nav.active svg { color: var(--accent); }
+  .nav .count {
+    margin-left: auto;
+    font-size: 11px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #fff; background: var(--accent);
+    min-width: 18px; height: 18px;
+    border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 5px;
+  }
+  .nav.active .count { background: var(--accent-deep); }
+
+  .side-label {
+    font-size: 11px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--label-3);
+    padding: 0 var(--u2); margin-bottom: var(--u1);
+  }
+  .side-group { margin-top: auto; }
+
+  /* ---- content ---- */
+  .content {
+    flex: 1; min-width: 0;
+    background: var(--ground);
+    padding: 44px var(--u8) var(--u6);
+    overflow-y: auto;
+  }
+  .lens-head {
+    display: flex; align-items: baseline; gap: var(--u3);
+    margin-bottom: var(--u5);
+  }
+  .lens-head h1 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+  .lens-head .sub { font-size: 13px; color: var(--label-2); margin-left: auto; }
+
+  .view[hidden] { display: none; }
+
+  /* Today */
+  .capture-lead {
+    display: flex; align-items: center; gap: 9px;
+    border: 1px solid var(--sep-strong);
+    border-radius: 8px;
+    padding: 10px var(--u3);
+    color: var(--label-3);
+    font-size: 14px;
+    margin-bottom: var(--u6);
+    cursor: text;
+  }
+  .capture-lead .kbd { margin-left: auto; }
+
+  .section { margin-bottom: var(--u6); }
+  .section-label {
+    font-size: 11px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--label-2);
+    margin-bottom: var(--u2);
+  }
+  .rows { list-style: none; display: flex; flex-direction: column; }
+  .row {
+    display: flex; align-items: center; gap: var(--u3);
+    padding: 9px var(--u1);
+    border-bottom: 1px solid var(--sep);
+    font-size: 14px;
+    cursor: default;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row .check {
+    width: 17px; height: 17px; flex: none;
+    border: 1.5px solid var(--label-3); border-radius: 5px;
+  }
+  .row .check.doing { border-color: var(--dot-doing); }
+  .row .grip { flex: 1; min-width: 0; }
+  .row .title { color: var(--label); }
+  .row .when { color: var(--label-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .row.scrap .title { color: var(--label); }
+
+  .waiting {
+    margin-top: var(--u2);
+    font-size: 13px; color: var(--label-2);
+  }
+  .waiting a { color: var(--accent); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .waiting a:hover { text-decoration: underline; }
+
+  .today-empty { color: var(--label-2); font-size: 14px; }
+
+  /* Inbox */
+  .proposals { list-style: none; display: flex; flex-direction: column; }
+  .proposal {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--u1) var(--u4);
+    align-items: center;
+    padding: var(--u4) var(--u1);
+    border-bottom: 1px solid var(--sep);
+  }
+  .proposal .reason { font-size: 14px; grid-column: 1; }
+  .proposal .reason b { font-weight: 600; color: var(--accent-deep); }
+  .proposal .pmeta {
+    font-size: 12px; color: var(--label-2); grid-column: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .proposal .pmeta .who { color: var(--accent); }
+  .proposal .actions { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: var(--u2); }
+  .btn {
+    font-family: var(--font); font-size: 13px; font-weight: 600;
+    border: 0; border-radius: 7px; padding: 7px var(--u3);
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn .kbd { font-size: 10px; opacity: .7; }
+  .btn.accept { background: var(--accent); color: #fff; }
+  .btn.accept:hover { background: var(--accent-deep); }
+  .btn.decline { background: rgba(0,0,0,.05); color: var(--label); }
+  .btn.decline:hover { background: rgba(0,0,0,.09); }
+  .inbox-hint { margin-top: var(--u5); font-size: 12px; color: var(--label-3); }
+
+  /* Everything table */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  thead th {
+    text-align: left; font-weight: 600; color: var(--label-2);
+    font-size: 12px; padding: 0 var(--u3) var(--u2);
+    border-bottom: 1px solid var(--sep-strong);
+  }
+  tbody td { padding: 10px var(--u3); border-bottom: 1px solid var(--sep); vertical-align: middle; }
+  tbody tr { cursor: default; }
+  tbody tr:hover { background: rgba(0,0,0,.028); }
+  tbody tr.sel { background: var(--accent-tint); }
+  td.t-title { font-weight: 500; }
+  td .kind { color: var(--label-2); }
+  td .num { font-variant-numeric: tabular-nums; color: var(--label); }
+  .dash { color: var(--label-3); }
+  .stat { display: inline-flex; align-items: center; gap: 7px; }
+  .stat .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.todo { background: var(--dot-todo); }
+  .dot.doing { background: var(--dot-doing); }
+  .dot.done { background: var(--dot-done); }
+
+  /* Calendar */
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+  .cal-grid .dow {
+    font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--label-3); padding: 0 0 var(--u2); text-align: left;
+  }
+  .cal-cell {
+    min-height: 92px;
+    border-right: 1px solid var(--sep);
+    border-bottom: 1px solid var(--sep);
+    padding: 7px 8px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .cal-cell:nth-child(7n) { border-right: 0; }
+  .cal-num {
+    font-size: 12.5px; color: var(--label); font-variant-numeric: tabular-nums;
+    align-self: flex-start;
+  }
+  .cal-cell.dim .cal-num { color: var(--label-3); }
+  .cal-cell.today .cal-num {
+    background: var(--accent); color: #fff; font-weight: 600;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .event {
+    font-size: 11.5px; line-height: 1.25;
+    color: var(--accent-deep);
+    background: var(--accent-tint);
+    border-radius: 5px; padding: 3px 6px;
+  }
+
+  /* ---- inspector ---- */
+  .inspector {
+    width: 266px; flex: none;
+    background: var(--inspector);
+    border-left: 1px solid var(--sep);
+    padding: 46px var(--u5) var(--u5);
+    overflow-y: auto;
+  }
+  .inspector[hidden] { display: none; }
+  .insp-eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--label-3); margin-bottom: var(--u2);
+  }
+  .insp-title { font-size: 16px; font-weight: 600; margin-bottom: var(--u5); line-height: 1.3; }
+  .cells { display: flex; flex-direction: column; gap: 1px; }
+  .cell {
+    display: grid; grid-template-columns: 76px 1fr; gap: var(--u3);
+    align-items: baseline;
+    padding: 8px var(--u1);
+    border-bottom: 1px solid var(--sep);
+    font-size: 13px;
+  }
+  .cell .k { color: var(--label-2); }
+  .cell .v { color: var(--label); font-variant-numeric: tabular-nums; }
+  .cell .v.ref { color: var(--accent); }
+  .insp-add { margin-top: var(--u4); font-size: 12.5px; color: var(--label-3); }
+
+  .kbd {
+    font-family: var(--font); font-size: 11px;
+    color: var(--label-3);
+    border: 1px solid var(--sep-strong); border-radius: 4px;
+    padding: 1px 5px; background: var(--ground);
+    line-height: 1.5;
+  }
+
+  .caption {
+    max-width: 1000px; font-size: 12.5px; color: #3d4a46; line-height: 1.5;
+    text-align: center;
+  }
+  .caption b { color: #223029; font-weight: 600; }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="stage">
+  <div class="window" role="group" aria-label="lotus main window mockup">
+    <div class="lights" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+    <div class="body">
+
+      <!-- ================= sidebar ================= -->
+      <aside class="sidebar">
+        <div class="brand"><span class="mark">❧</span> lotus</div>
+
+        <div class="capture" tabindex="0">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg>
+          Capture a thought…
+          <span class="kbd">⌘N</span>
+        </div>
+
+        <nav aria-label="Lenses">
+          <button class="nav active" data-view="today">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5l1.7 3.9 4.3.4-3.2 2.9.9 4.3L8 10.8 4.3 13l.9-4.3L2 5.8l4.3-.4z" stroke-linejoin="round"/></svg>
+            Today
+          </button>
+          <button class="nav" data-view="calendar">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="11" rx="1.6"/><path d="M2 6h12M5 1.6v2.4M11 1.6v2.4" stroke-linecap="round"/></svg>
+            Calendar
+          </button>
+          <button class="nav" data-view="everything">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
+            Everything
+          </button>
+          <button class="nav" data-view="inbox">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 9l1.6-5.4A1 1 0 014.5 3h7a1 1 0 01.96.7L14 9v3.5a1 1 0 01-1 1H3a1 1 0 01-1-1z"/><path d="M2 9h3.2l.9 1.6h3.8l.9-1.6H14"/></svg>
+            Inbox
+            <span class="count">2</span>
+          </button>
+        </nav>
+
+        <div class="side-group">
+          <div class="side-label">Views</div>
+          <nav aria-label="Saved views">
+            <button class="nav" data-view="everything">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 3h11l-4.3 5v4l-2.4 1.2V8z"/></svg>
+              Due this week
+            </button>
+            <button class="nav" data-view="today">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 2.5h8v11l-4-2.4-4 2.4z"/></svg>
+              Unstructured
+            </button>
+          </nav>
+        </div>
+      </aside>
+
+      <!-- ================= content ================= -->
+      <main class="content">
+
+        <!-- TODAY -->
+        <section class="view" data-view="today">
+          <div class="lens-head">
+            <h1>Today</h1>
+            <span class="sub">Monday, July 6</span>
+          </div>
+
+          <div class="capture-lead" tabindex="0">
+            <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M7 2v10M2 7h10"/></svg>
+            Capture a thought…
+            <span class="kbd">⌘N</span>
+          </div>
+
+          <div class="section">
+            <div class="section-label">Due</div>
+            <ul class="rows">
+              <li class="row">
+                <span class="check doing"></span>
+                <span class="grip title">Prep the Project Alpha kickoff</span>
+                <span class="when">today</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="section">
+            <div class="section-label">Captured · unstructured</div>
+            <ul class="rows">
+              <li class="row scrap"><span class="grip title">Renew the domain before it lapses</span></li>
+              <li class="row scrap"><span class="grip title">Idea: the calendar lens should dim past weeks</span></li>
+              <li class="row scrap"><span class="grip title">Call the dentist back</span></li>
+            </ul>
+          </div>
+
+          <div class="waiting">2 proposals waiting — <a data-jump="inbox">open the inbox</a></div>
+        </section>
+
+        <!-- INBOX -->
+        <section class="view" data-view="inbox" hidden>
+          <div class="lens-head">
+            <h1>Inbox</h1>
+            <span class="sub">2 waiting</span>
+          </div>
+          <ul class="proposals">
+            <li class="proposal">
+              <div class="reason">Prep the Project Alpha kickoff — <b>due Friday, Jul 10?</b></div>
+              <div class="pmeta">#4108 · found “friday” · <span class="who">clerk · dates</span></div>
+              <div class="actions">
+                <button class="btn accept">Accept <span class="kbd">A</span></button>
+                <button class="btn decline">Decline <span class="kbd">R</span></button>
+              </div>
+            </li>
+            <li class="proposal">
+              <div class="reason">Prep the Project Alpha kickoff — <b>relate to Project Alpha?</b></div>
+              <div class="pmeta">#4108 · mentions “Project Alpha” · <span class="who">clerk · mentions</span></div>
+              <div class="actions">
+                <button class="btn accept">Accept <span class="kbd">A</span></button>
+                <button class="btn decline">Decline <span class="kbd">R</span></button>
+              </div>
+            </li>
+          </ul>
+          <div class="inbox-hint">a accept · r decline · ↓ next — the keyboard never leaves home row. Decline once and the clerk never asks again.</div>
+        </section>
+
+        <!-- EVERYTHING -->
+        <section class="view" data-view="everything" hidden>
+          <div class="lens-head">
+            <h1>Everything</h1>
+            <span class="sub">4 items</span>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Title</th><th>Type</th><th>Due</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr data-row="task" class="sel">
+                <td class="t-title">Prep the Project Alpha kickoff</td>
+                <td class="kind">task</td>
+                <td class="num">Jul 10</td>
+                <td><span class="stat"><span class="dot doing"></span>doing</span></td>
+              </tr>
+              <tr data-row="project">
+                <td class="t-title">Project Alpha</td>
+                <td class="kind">project</td>
+                <td class="dash">—</td>
+                <td class="dash">—</td>
+              </tr>
+              <tr data-row="domain">
+                <td class="t-title">Renew the domain before it lapses</td>
+                <td class="kind">note</td>
+                <td class="dash">—</td>
+                <td class="dash">—</td>
+              </tr>
+              <tr data-row="idea">
+                <td class="t-title">Idea: the calendar lens should dim past weeks</td>
+                <td class="kind">note</td>
+                <td class="dash">—</td>
+                <td class="dash">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- CALENDAR -->
+        <section class="view" data-view="calendar" hidden>
+          <div class="lens-head">
+            <h1>July 2026</h1>
+            <span class="sub">week · month</span>
+          </div>
+          <div class="cal-grid" role="grid" aria-label="July 2026">
+            <div class="dow">Sun</div><div class="dow">Mon</div><div class="dow">Tue</div><div class="dow">Wed</div><div class="dow">Thu</div><div class="dow">Fri</div><div class="dow">Sat</div>
+
+            <div class="cal-cell dim"><span class="cal-num">28</span></div>
+            <div class="cal-cell dim"><span class="cal-num">29</span></div>
+            <div class="cal-cell dim"><span class="cal-num">30</span></div>
+            <div class="cal-cell"><span class="cal-num">1</span></div>
+            <div class="cal-cell"><span class="cal-num">2</span></div>
+            <div class="cal-cell"><span class="cal-num">3</span></div>
+            <div class="cal-cell"><span class="cal-num">4</span></div>
+
+            <div class="cal-cell"><span class="cal-num">5</span></div>
+            <div class="cal-cell today"><span class="cal-num">6</span></div>
+            <div class="cal-cell"><span class="cal-num">7</span></div>
+            <div class="cal-cell"><span class="cal-num">8</span><span class="event">Dentist, 3pm</span></div>
+            <div class="cal-cell"><span class="cal-num">9</span></div>
+            <div class="cal-cell"><span class="cal-num">10</span><span class="event">Project Alpha kickoff</span></div>
+            <div class="cal-cell"><span class="cal-num">11</span></div>
+
+            <div class="cal-cell"><span class="cal-num">12</span></div>
+            <div class="cal-cell"><span class="cal-num">13</span></div>
+            <div class="cal-cell"><span class="cal-num">14</span></div>
+            <div class="cal-cell"><span class="cal-num">15</span></div>
+            <div class="cal-cell"><span class="cal-num">16</span></div>
+            <div class="cal-cell"><span class="cal-num">17</span></div>
+            <div class="cal-cell"><span class="cal-num">18</span></div>
+
+            <div class="cal-cell"><span class="cal-num">19</span></div>
+            <div class="cal-cell"><span class="cal-num">20</span></div>
+            <div class="cal-cell"><span class="cal-num">21</span></div>
+            <div class="cal-cell"><span class="cal-num">22</span></div>
+            <div class="cal-cell"><span class="cal-num">23</span></div>
+            <div class="cal-cell"><span class="cal-num">24</span></div>
+            <div class="cal-cell"><span class="cal-num">25</span></div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- ================= inspector ================= -->
+      <aside class="inspector" hidden aria-label="Inspector">
+        <div class="insp-eyebrow">Selected</div>
+        <div class="insp-title" id="insp-title">Prep the Project Alpha kickoff</div>
+        <div class="cells" id="insp-cells">
+          <div class="cell"><span class="k">type</span><span class="v">task</span></div>
+          <div class="cell"><span class="k">due</span><span class="v">Fri, Jul 10</span></div>
+          <div class="cell"><span class="k">status</span><span class="v">doing</span></div>
+          <div class="cell"><span class="k">related</span><span class="v ref">Project Alpha</span></div>
+          <div class="cell"><span class="k">created</span><span class="v">Mon, Jul 6</span></div>
+        </div>
+        <div class="insp-add">＋ add a property</div>
+      </aside>
+
+    </div>
+  </div>
+</div>
+
+<p class="caption">
+  One window — every lens swaps in place, nothing floats free. Click <b>Today · Calendar · Everything · Inbox</b> in the sidebar.
+  The inspector opens for the table (metadata is not hidden) and stays closed for the calm of Today.
+  Accent is <b>lake green</b>, a candidate — it's one token to change.
+</p>
+
+<script>
+  (function () {
+    var navs = document.querySelectorAll(".nav");
+    var views = document.querySelectorAll(".view");
+    var inspector = document.querySelector(".inspector");
+
+    var DATA = {
+      task: {
+        title: "Prep the Project Alpha kickoff",
+        cells: [["type","task",0],["due","Fri, Jul 10",0],["status","doing",0],["related","Project Alpha",1],["created","Mon, Jul 6",0]]
+      },
+      project: {
+        title: "Project Alpha",
+        cells: [["type","project",0],["status","active",0],["created","Mon, Jul 6",0]]
+      },
+      domain: {
+        title: "Renew the domain before it lapses",
+        cells: [["type","note",0],["created","Mon, Jul 6",0]]
+      },
+      idea: {
+        title: "Idea: the calendar lens should dim past weeks",
+        cells: [["type","note",0],["created","Mon, Jul 6",0]]
+      }
+    };
+
+    function show(view) {
+      navs.forEach(function (n) { n.classList.toggle("active", n.dataset.view === view); });
+      views.forEach(function (v) { v.hidden = v.dataset.view !== view; });
+      inspector.hidden = view !== "everything";
+    }
+
+    navs.forEach(function (n) {
+      n.addEventListener("click", function () { show(n.dataset.view); });
+    });
+
+    document.querySelectorAll("[data-jump]").forEach(function (a) {
+      a.addEventListener("click", function () { show(a.dataset.jump); });
+    });
+
+    function selectRow(key) {
+      var d = DATA[key]; if (!d) return;
+      document.getElementById("insp-title").textContent = d.title;
+      document.getElementById("insp-cells").innerHTML = d.cells.map(function (c) {
+        return '<div class="cell"><span class="k">' + c[0] + '</span><span class="v' +
+          (c[2] ? " ref" : "") + '">' + c[1] + '</span></div>';
+      }).join("");
+    }
+
+    document.querySelectorAll("tbody tr").forEach(function (tr) {
+      tr.addEventListener("click", function () {
+        document.querySelectorAll("tbody tr").forEach(function (r) { r.classList.remove("sel"); });
+        tr.classList.add("sel");
+        selectRow(tr.dataset.row);
+      });
+    });
+  })();
+</script>
