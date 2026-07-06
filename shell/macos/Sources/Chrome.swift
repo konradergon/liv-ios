@@ -163,6 +163,16 @@ final class ChromeModel: ObservableObject {
         nav.record(entry)
     }
 
+    /// The active scope must always resolve to a live workspace. If it
+    /// no longer does — trashed here, or by the CLI, or archived — fall
+    /// back to Home. Runs on every snapshot, so no path can strand it.
+    func reconcileActive(_ workspaces: [WorkspaceRow]) {
+        guard let active = activeWorkspace else { return }
+        if !workspaces.contains(where: { $0.id == active && !$0.archived }) {
+            activeWorkspace = nil
+        }
+    }
+
     func toggleFocus() {
         if focusMode {
             focusMode = false
@@ -270,8 +280,10 @@ struct HeaderSearch: View {
 struct TabsRow: View {
     @ObservedObject var chrome: ChromeModel
     @ObservedObject var model: BoxModel
-    /// Runs after entering a workspace: land on the desk.
-    var landed: () -> Void = {}
+    /// The navigation gate: flush the editor, run the work on success,
+    /// land on the desk. Entering a workspace from the hub flushes like
+    /// every other nav path.
+    var landed: (@escaping () -> Void) -> Void = { $0() }
 
     @State private var hubOpen = false
 

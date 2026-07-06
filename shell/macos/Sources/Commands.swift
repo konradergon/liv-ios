@@ -109,6 +109,11 @@ final class CommandRegistry {
     /// dispatch (§2.28.2 keyboard scopes).
     private var captureScopes: [Set<String>] = []
 
+    /// True when a keyboard-owning overlay is up (the workspace
+    /// switcher, a launcher). Like a dialog, it swallows the command
+    /// map so nothing fires behind the scrim.
+    var overlayActive: () -> Bool = { false }
+
     func register(_ command: CommandDef) {
         if commands[command.id] == nil {
             order.append(command.id)
@@ -163,6 +168,12 @@ final class CommandRegistry {
                     Dialogs.shared.confirmCurrent()
                     return nil
                 }
+                return event
+            }
+            // A modal overlay (the workspace switcher) owns the keyboard:
+            // its own field and monitor handle typing / arrows / Enter /
+            // Escape; no global command may fire behind it.
+            if self.overlayActive() {
                 return event
             }
             for id in self.order {

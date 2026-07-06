@@ -674,21 +674,18 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
     lotus_services::content::create_workspace(&mut session, name, parent, created).unwrap_or(0)
 }
 
-/// Trash an entity and every descendant reachable through `parent`
-/// references — one gesture, one transaction, one undo step. Returns
-/// the number of entities trashed, 0 on failure.
+/// Trash one workspace — and only that one. Deletion never cascades:
+/// its children keep their dangling `parent` and the shell re-roots
+/// them. Returns 1 on success, 0 on failure.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_trash_tree_at(path: *const c_char, id: u64) -> i32 {
+pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) -> i32 {
     let Some(mut session) = open_swept(path) else {
         return 0;
     };
-    match lotus_services::content::trash_tree(&mut session, id) {
-        Ok(count) => count as i32,
-        Err(_) => 0,
-    }
+    lotus_services::content::trash_workspace(&mut session, id).is_ok() as i32
 }
 
 /// Remove every cell of one property — the inverse of lotus_set_at's
@@ -1051,16 +1048,21 @@ mod tests {
             1
         );
 
-        // One gesture trashes a subtree; one undo restores it whole.
+        // Deletion never cascades: trashing the parent trashes only the
+        // parent. The child survives with a now-dangling parent — the
+        // shell re-roots it. One undo restores the parent.
         let up = CString::new("parent").unwrap();
         let area_arg = CString::new(format!("{area}")).unwrap();
         assert_eq!(
             unsafe { lotus_set_at(c_path.as_ptr(), child, up.as_ptr(), area_arg.as_ptr()) },
             1
         );
-        assert_eq!(unsafe { lotus_trash_tree_at(c_path.as_ptr(), area) }, 2);
+        assert_eq!(unsafe { lotus_trash_workspace_at(c_path.as_ptr(), area) }, 1);
         let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
-        assert_eq!(snap["workspaces"].as_array().unwrap().len(), 1);
+        let after = snap["workspaces"].as_array().unwrap();
+        assert_eq!(after.len(), 2); // Home + the surviving child
+        assert!(after.iter().any(|w| w["id"] == child));
+        assert!(!after.iter().any(|w| w["id"] == area));
         assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
         let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
         assert_eq!(snap["workspaces"].as_array().unwrap().len(), 3);

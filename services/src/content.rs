@@ -214,41 +214,22 @@ pub fn create_workspace(
     Ok(id)
 }
 
-/// Trash an entity and every descendant reachable through `parent`
-/// references — one gesture, one transaction, one undo step. Liv's
-/// delete-workspace warns "N child workspaces will also be deleted";
-/// here it is a trash, so even that is reversible.
-pub fn trash_tree(session: &mut Session, root: Id) -> Result<usize, ContentError> {
+/// Trash one workspace — and only that one. Deletion never cascades
+/// (the core law: productivity_app.md, "Deletion never cascades");
+/// a workspace's children keep their now-dangling `parent` reference
+/// and the tree builder re-roots them to the top level. Liv's
+/// cascade-delete becomes a single reversible trash whose orphans
+/// survive, promoted, rather than a subtree wipe.
+pub fn trash_workspace(session: &mut Session, id: Id) -> Result<(), ContentError> {
     let store = session.store();
-    let root = store.resolve(root);
-    if store.get(root).is_none() {
+    let id = store.resolve(id);
+    if store.get(id).is_none() {
         return Err(ContentError::Invalid);
     }
-    let Some(parent_prop) = property_id(store, "parent") else {
-        return Err(ContentError::Invalid);
-    };
-    // Walk the tree breadth-first; cycles cannot recur into the list
-    // because each entity enters at most once.
-    let mut doomed = vec![root];
-    let mut i = 0;
-    while i < doomed.len() {
-        let node = doomed[i];
-        for entity in store.entities() {
-            if !entity.trashed
-                && entity.has(parent_prop, &Value::Reference(node))
-                && !doomed.contains(&entity.id)
-            {
-                doomed.push(entity.id);
-            }
-        }
-        i += 1;
-    }
-    let commands: Vec<Command> = doomed.iter().map(|id| Command::Trash { entity: *id }).collect();
-    let count = commands.len();
     session
-        .commit(commands, "trash workspace tree", Author::User)
+        .commit(vec![Command::Trash { entity: id }], "trash workspace", Author::User)
         .map_err(ContentError::Persist)?;
-    Ok(count)
+    Ok(())
 }
 
 /// Remove every cell of one property — the inverse of set_property's

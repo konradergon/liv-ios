@@ -11,15 +11,30 @@ import SwiftUI
 
 struct WorkspaceTree {
     let rows: [WorkspaceRow]
+    /// Live rows only, keyed by *effective* parent: a live child whose
+    /// parent is trashed (absent) or archived re-roots to the top level,
+    /// never vanishing. This is the "dangling parent → root" rule the
+    /// non-cascading trash depends on (deletion never cascades).
     private let children: [UInt64: [WorkspaceRow]]
+    private let liveIds: Set<UInt64>
 
     init(_ rows: [WorkspaceRow]) {
         self.rows = rows
-        children = Dictionary(grouping: rows.filter { $0.parent != 0 }) { $0.parent }
+        let live = rows.filter { !$0.archived }
+        liveIds = Set(live.map(\.id))
+        let liveSet = liveIds
+        children = Dictionary(grouping: live.filter { liveSet.contains($0.parent) }) {
+            $0.parent
+        }
     }
 
     func row(_ id: UInt64) -> WorkspaceRow? {
         rows.first { $0.id == id }
+    }
+
+    /// A live row's parent, or 0 when that parent is absent or archived.
+    private func effectiveParent(_ row: WorkspaceRow) -> UInt64 {
+        liveIds.contains(row.parent) ? row.parent : 0
     }
 
     func kids(of id: UInt64) -> [WorkspaceRow] {
@@ -27,10 +42,10 @@ struct WorkspaceTree {
     }
 
     var topLevel: [WorkspaceRow] {
-        rows.filter { $0.parent == 0 }.sorted { $0.order < $1.order }
+        rows.filter { !$0.archived && effectiveParent($0) == 0 }
+            .sorted { $0.order < $1.order }
     }
 
-    /// Live = not archived, not under an archived ancestor.
     func isLive(_ row: WorkspaceRow) -> Bool {
         !row.archived
     }
@@ -41,14 +56,16 @@ struct WorkspaceTree {
             .sorted { $0.order < $1.order }
     }
 
-    /// Spaces: top-level nodes with a live workspace anywhere below.
+    /// Spaces: top-level nodes with a live workspace anywhere below
+    /// (§2.2.2). Membership is the live-descendant test, not merely
+    /// "has children" — an area whose every child is archived is a Board.
     var spaces: [WorkspaceRow] {
-        topLevel.filter { !$0.archived && !kids(of: $0.id).isEmpty && $0.builtin.isEmpty }
+        topLevel.filter { !kids(of: $0.id).isEmpty && $0.builtin.isEmpty }
     }
 
-    /// Boards: standalone top-level workspaces (no children, non-Home).
+    /// Boards: standalone top-level workspaces with no live sub-space.
     var boards: [WorkspaceRow] {
-        topLevel.filter { !$0.archived && kids(of: $0.id).isEmpty && $0.builtin.isEmpty }
+        topLevel.filter { kids(of: $0.id).isEmpty && $0.builtin.isEmpty }
     }
 
     var archived: [WorkspaceRow] {
@@ -133,8 +150,9 @@ struct AppSidebar: View {
     @Binding var query: String
     @Binding var selection: UInt64?
     var searchFocused: FocusState<Bool>.Binding
-    /// Navigation away flushes any open editor first.
-    var willNavigate: () -> Void = {}
+    /// The navigation gate: flush any open editor, then run the work
+    /// only if the flush succeeded. A refused flush cancels the switch.
+    var willNavigate: (@escaping () -> Void) -> Void = { $0() }
     var openEntity: (UInt64) -> Void = { _ in }
 
     @AppStorage("app.leftView.v1") private var viewRaw = SidebarView.tree.rawValue
@@ -243,12 +261,14 @@ struct SpacesTree: View {
     @Binding var query: String
     @Binding var selection: UInt64?
     @Binding var filter: String
-    var willNavigate: () -> Void
+    var willNavigate: (@escaping () -> Void) -> Void
 
     @State private var expanded: Set<UInt64> = []
     @State private var archiveOpen = false
     @State private var creating = false
     @State private var newName = ""
+    @State private var spacesDropActive = false
+    @State private var boardsDropActive = false
     @FocusState private var newNameFocused: Bool
 
     private var tree: WorkspaceTree {
@@ -283,12 +303,20 @@ struct SpacesTree: View {
                         }
                     }
                     groupHeader("Spaces")
+                        .background(headerDropHighlight(spacesDropActive))
+                        .onDrop(
+                            of: [.plainText], delegate:
+                                HeaderReroot(active: $spacesDropActive, actions: actions))
                     ForEach(tree.spaces, id: \.id) { row in
                         treeRows(row, depth: 0)
                     }
                     if !tree.boards.isEmpty {
                         Divider().padding(.vertical, 4)
                         groupHeader("Boards")
+                            .background(headerDropHighlight(boardsDropActive))
+                            .onDrop(
+                                of: [.plainText], delegate:
+                                    HeaderReroot(active: $boardsDropActive, actions: actions))
                         ForEach(tree.boards, id: \.id) { row in
                             if matches(row) {
                                 WorkspaceLeaf(row: row, tree: tree, actions: actions)
@@ -347,10 +375,12 @@ struct SpacesTree: View {
     }
 
     private var actions: WorkspaceActions {
-        WorkspaceActions(model: model, chrome: chrome, tree: tree) {
-            willNavigate()
-            query = ""
-            lens = .today
+        WorkspaceActions(model: model, chrome: chrome, tree: tree) { onSuccess in
+            willNavigate {
+                onSuccess()
+                query = ""
+                lens = .today
+            }
         }
     }
 
@@ -359,9 +389,10 @@ struct SpacesTree: View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach([Lens.today, .everything]) { item in
                 Button {
-                    willNavigate()
-                    query = ""
-                    lens = item
+                    willNavigate {
+                        query = ""
+                        lens = item
+                    }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: item.symbol)
@@ -394,6 +425,14 @@ struct SpacesTree: View {
             .padding(.horizontal, 6)
             .padding(.top, 8)
             .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func headerDropHighlight(_ active: Bool) -> some View {
+        RoundedRectangle(cornerRadius: Theme.radiusSm)
+            .fill(active ? Theme.primary.opacity(0.1) : .clear)
     }
 
     private var archiveGroup: some View {
@@ -474,13 +513,20 @@ struct WorkspaceActions {
     let model: BoxModel
     let chrome: ChromeModel
     let tree: WorkspaceTree
-    /// Runs after entering a workspace: land on the desk.
-    let landed: () -> Void
+    /// The navigation gate: flush an open editor, then — only if the
+    /// flush succeeds — run the passed work and land on the desk. A
+    /// refused flush cancels the whole switch. Never mutate the active
+    /// workspace outside this gate.
+    let landed: (@escaping () -> Void) -> Void
 
+    /// Entering scopes the notes surface. The active-workspace switch
+    /// and the nav entry ride inside the flush gate, so a refused flush
+    /// leaves both untouched.
     func enter(_ id: UInt64) {
-        chrome.activeWorkspace = id
-        chrome.recordNav(.init(surface: .notes, selection: nil))
-        landed()
+        landed {
+            chrome.activeWorkspace = id
+            chrome.recordNav(.init(surface: .notes, selection: nil))
+        }
     }
 
     func addChild(of id: UInt64, name: String) {
@@ -519,6 +565,9 @@ struct WorkspaceActions {
 
     func archive(_ id: UInt64) {
         model.set(id, property: "archived", value: "true")
+        // An archived workspace is no longer a live scope; its live
+        // children re-root and stay reachable, so only the archived id
+        // itself can strand the active scope.
         if chrome.activeWorkspace == id {
             chrome.activeWorkspace = nil
         }
@@ -532,16 +581,20 @@ struct WorkspaceActions {
         model.unset(id, property: "parent")
     }
 
+    /// Delete never cascades (the core law): only this workspace is
+    /// trashed; its children keep their now-dangling parent and re-root
+    /// to the top level. The confirm says so. (A dangling active scope
+    /// left by any path is reconciled to Home on the next snapshot.)
     func trash(_ id: UInt64) {
         let children = tree.descendantCount(of: id)
-        let warning = children > 0
-            ? "\(children) child workspace\(children == 1 ? "" : "s") will be trashed too."
+        let message = children > 0
+            ? "Its \(children) child workspace\(children == 1 ? "" : "s") will move to the top level. Undo with ⌘⌥Z."
             : "This can be undone with ⌘⌥Z."
         Dialogs.shared.confirm(
-            "Delete workspace?", message: warning, danger: true, confirmLabel: "Delete"
+            "Delete workspace?", message: message, danger: true, confirmLabel: "Delete"
         ) { yes in
             guard yes else { return }
-            model.trashTree(id)
+            model.trashWorkspace(id)
             if chrome.activeWorkspace == id {
                 chrome.activeWorkspace = nil
             }
@@ -759,16 +812,64 @@ struct TreeDrop: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         let landed = zone ?? .into
         zone = nil
-        guard let provider = info.itemProviders(for: [.plainText]).first else { return false }
-        provider.loadObject(ofClass: NSString.self) { object, _ in
-            guard let text = object as? String, text.hasPrefix("workspace:"),
-                let id = UInt64(text.dropFirst("workspace:".count))
-            else { return }
-            DispatchQueue.main.async {
-                actions.drop(id, onto: target, zone: landed)
-            }
+        return loadWorkspaceDrop(info) { id in
+            actions.drop(id, onto: target, zone: landed)
         }
-        return true
+    }
+}
+
+/// Load a "workspace:<id>" drag payload and run `handle` on the main
+/// queue. Returns whether a provider was present.
+func loadWorkspaceDrop(_ info: DropInfo, _ handle: @escaping (UInt64) -> Void) -> Bool {
+    guard let provider = info.itemProviders(for: [.plainText]).first else { return false }
+    provider.loadObject(ofClass: NSString.self) { object, _ in
+        guard let text = object as? String, text.hasPrefix("workspace:"),
+            let id = UInt64(text.dropFirst("workspace:".count))
+        else { return }
+        DispatchQueue.main.async { handle(id) }
+    }
+    return true
+}
+
+/// The Spaces / Boards group headers are drop targets that re-root the
+/// dropped node to the top level (§2.2.2): dropping onto Spaces promotes
+/// a flat workspace to a standalone space; dropping onto Boards pulls a
+/// tree node back to top level. In lotus the Spaces/Boards split is
+/// derived from live children, so both are one gesture: unset parent.
+struct HeaderReroot: DropDelegate {
+    @Binding var active: Bool
+    let actions: WorkspaceActions
+
+    func dropEntered(info: DropInfo) { active = true }
+    func dropExited(info: DropInfo) { active = false }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        active = false
+        return loadWorkspaceDrop(info) { id in actions.makeTopLevel(id) }
+    }
+}
+
+/// Flat rows (Favourites / Boards) drag-reorder among themselves
+/// (§2.2.3): two zones, before/after by the row's vertical halves.
+struct LeafReorder: DropDelegate {
+    let target: UInt64
+    @Binding var zone: DropZone?
+    let actions: WorkspaceActions
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        zone = info.location.y < 13 ? .before : .after
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) { zone = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let landed = zone ?? .after
+        zone = nil
+        return loadWorkspaceDrop(info) { id in
+            actions.drop(id, onto: target, zone: landed)
+        }
     }
 }
 
@@ -805,6 +906,7 @@ struct WorkspaceLeaf: View {
     let actions: WorkspaceActions
 
     @State private var hovering = false
+    @State private var dropZone: DropZone?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -838,6 +940,11 @@ struct WorkspaceLeaf: View {
                     actions.chrome.activeWorkspace == row.id
                         ? Theme.primary.opacity(0.13) : .clear)
         )
+        .overlay(alignment: dropZone == .before ? .top : .bottom) {
+            if dropZone != nil {
+                Rectangle().fill(Theme.primary).frame(height: 2)
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu {
@@ -846,6 +953,7 @@ struct WorkspaceLeaf: View {
                 Button(row.favorite ? "Remove from favorites" : "Add to favorites") {
                     actions.favorite(row.id, !row.favorite)
                 }
+                Button("Make top-level space") { actions.makeTopLevel(row.id) }
                 Divider()
                 Button("Archive workspace") { actions.archive(row.id) }
                 Button("Delete workspace", role: .destructive) { actions.trash(row.id) }
@@ -854,6 +962,9 @@ struct WorkspaceLeaf: View {
         .onDrag {
             NSItemProvider(object: "workspace:\(row.id)" as NSString)
         }
+        .onDrop(
+            of: [.plainText],
+            delegate: LeafReorder(target: row.id, zone: $dropZone, actions: actions))
     }
 }
 
@@ -1409,6 +1520,11 @@ struct WorkspaceSwitcher: View {
 struct SlotChip: Codable, Identifiable, Equatable {
     enum Kind: String, Codable {
         case link, workspace, memo
+        // Deferred with the surfaces they invoke: `daily` (chip "Today",
+        // daily:open-today) lands with daily notes in P11; `filter` (a
+        // pinned scope replayed into activeFilter) lands with the filter
+        // store in P6/P7. The adder's "Daily note (today)", "Pin current
+        // scope", and "Important (bookmarked)" fixed rows arrive then.
     }
 
     var id = UUID()

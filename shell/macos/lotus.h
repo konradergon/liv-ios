@@ -71,10 +71,10 @@ uint64_t lotus_create_note_at(const char *path);
 uint64_t lotus_create_workspace_at(const char *path, const char *name,
                                    uint64_t parent);
 
-/* Trash an entity and every descendant reachable through `parent`
-   references — one gesture, one transaction, one undo step. Returns
-   the count trashed, 0 on failure. */
-int32_t lotus_trash_tree_at(const char *path, uint64_t id);
+/* Trash one workspace — and only that one. Deletion never cascades:
+   the children keep their dangling `parent` and the shell re-roots
+   them. 1 on success, 0 on failure. */
+int32_t lotus_trash_workspace_at(const char *path, uint64_t id);
 
 /* Remove every cell of one property — the inverse of lotus_set_at's
    replace. Missing property on the entity is success. 1 ok, 0 on

@@ -200,8 +200,8 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    func trashTree(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_trash_tree_at(self.path, id) > 0 }
+    func trashWorkspace(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_trash_workspace_at(self.path, id) == 1 }
     }
 
     func unset(_ id: UInt64, property: String, done: @escaping (Bool) -> Void = { _ in }) {
@@ -424,6 +424,8 @@ struct WindowChrome: View {
                 // Seed the history with the launch location, or the
                 // first Back has nothing to return to.
                 chrome.recordNav(.init(surface: chrome.surface, selection: nil))
+                // The switcher owns the keyboard while open.
+                CommandRegistry.shared.overlayActive = { chrome.switcherOpen }
             }
     }
 
@@ -435,9 +437,13 @@ struct WindowChrome: View {
             } else {
                 TitleRow(chrome: chrome)
                 if !chrome.surface.isGlobalTool {
-                    TabsRow(chrome: chrome, model: model) {
-                        query = ""
-                        lens = .today
+                    TabsRow(chrome: chrome, model: model) { onSuccess in
+                        closeEditor { ok in
+                            guard ok else { return }
+                            onSuccess()
+                            query = ""
+                            lens = .today
+                        }
                     }
                     BookmarksRow(
                         chrome: chrome, model: model,
@@ -449,8 +455,12 @@ struct WindowChrome: View {
                             }
                         },
                         enterWorkspace: { id in
-                            chrome.activeWorkspace = id
-                            navigate(to: .notes)
+                            closeEditor { ok in
+                                guard ok else { return }
+                                chrome.activeWorkspace = id
+                                if chrome.surface != .notes { chrome.surface = .notes }
+                                chrome.recordNav(.init(surface: .notes, selection: nil))
+                            }
                         })
                 }
             }
@@ -482,9 +492,10 @@ struct WindowChrome: View {
         WorkspaceActions(
             model: model, chrome: chrome,
             tree: WorkspaceTree(model.snap?.workspaces ?? [])
-        ) {
+        ) { onSuccess in
             closeEditor { ok in
                 guard ok else { return }
+                onSuccess()
                 if chrome.surface != .notes { chrome.surface = .notes }
                 query = ""
                 lens = .today
@@ -579,6 +590,11 @@ struct WindowChrome: View {
                     chrome.recordNav(.init(surface: chrome.surface, selection: id))
                 }
             }
+            .onReceive(model.$snap) { snap in
+                // A workspace can vanish under the active scope (trashed
+                // here or by the CLI): keep the scope resolvable.
+                chrome.reconcileActive(snap?.workspaces ?? [])
+            }
     }
 
     /// The three-pane body: left sidebar (notes only) · center · right
@@ -591,9 +607,11 @@ struct WindowChrome: View {
                     AppSidebar(
                         model: model, chrome: chrome, lens: $lens, query: $query,
                         selection: $selection, searchFocused: $searchFocused,
-                        willNavigate: {
+                        willNavigate: { onSuccess in
                             closeEditor { ok in
-                                if ok { selection = nil }
+                                guard ok else { return }
+                                selection = nil
+                                onSuccess()
                             }
                         },
                         openEntity: { id in
@@ -796,6 +814,7 @@ struct WindowChrome: View {
             guard event.keyCode == 36,
                 event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                 Dialogs.shared.current == nil,  // a dialog owns Return
+                !chrome.switcherOpen,  // so does the switcher
                 chrome.surface == .notes,
                 editor == nil,
                 let id = selection,
