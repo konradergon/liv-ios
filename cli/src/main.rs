@@ -65,17 +65,50 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             inbox(&session);
             Ok(())
         }
-        Some((&"accept", index)) => accept(&mut session, index),
-        Some((&"reject", index)) => reject(&mut session, index),
+        Some((&"accept", target)) => accept(&mut session, target),
+        Some((&"reject", target)) => reject(&mut session, target),
+        Some((&"name", rest)) => name(&mut session, rest),
         Some((&"history", _)) => {
             history(&session);
             Ok(())
         }
         _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
-                  inbox | accept N | reject N | history"
+                  inbox | accept ID [K] | reject ID [K] | name ID TEXT... | history"
             .into()),
     }
+}
+
+/// Name an entity: one cell, front of house. Names feed the gazetteer,
+/// so the mentions proposer has something to notice.
+fn name(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (id_arg, words) = rest.split_first().ok_or("usage: lotus name ID TEXT...")?;
+    let id: Id = id_arg
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| format!("not an entity id: {id_arg}"))?;
+    if session.store().get(id).is_none() {
+        return Err(format!("no entity #{id}"));
+    }
+    if words.is_empty() {
+        return Err("usage: lotus name ID TEXT...".into());
+    }
+    let text = words.join(" ");
+    session
+        .commit(
+            vec![lotus_core::Command::AddCell {
+                entity: id,
+                cell: lotus_core::Cell {
+                    property: props::NAME,
+                    value: Value::text(&text),
+                },
+            }],
+            format!("name {text}"),
+            Author::User,
+        )
+        .map_err(|e| e.to_string())?;
+    println!("#{id} is now \"{text}\"");
+    Ok(())
 }
 
 fn civil_today() -> DateTime {
@@ -149,7 +182,9 @@ fn today(session: &Session) {
     }
 }
 
-/// The inbox: the shell's one surface that is not a view.
+/// The inbox: the shell's one surface that is not a view. Proposals are
+/// addressed by their subject's entity id — stable across invocations —
+/// never by queue position, which shifts as the queue is triaged.
 fn inbox(session: &Session) {
     let pending = session.store().pending();
     if pending.is_empty() {
@@ -162,43 +197,80 @@ fn inbox(session: &Session) {
             Author::User => "user".into(),
             Author::System => "system".into(),
         };
-        let subject = proposal
-            .commands
-            .first()
-            .map(|c| match c {
-                lotus_core::Command::AddCell { entity, .. } => format!("#{entity}"),
-                _ => String::new(),
-            })
-            .unwrap_or_default();
-        println!("[{i}] {subject}  {}  ({author})", proposal.reason);
+        let subject = subject_of(proposal);
+        let nth = pending[..i]
+            .iter()
+            .filter(|p| subject_of(p) == subject)
+            .count();
+        let key = match subject {
+            Some(id) if nth > 0 => format!("#{id} {}", nth + 1),
+            Some(id) => format!("#{id}"),
+            None => String::new(),
+        };
+        println!("{key:<10} {}  ({author})", proposal.reason);
     }
-    println!("\nlotus accept N | lotus reject N");
+    println!("\nlotus accept ID | lotus reject ID   (add K when an id lists twice)");
+}
+
+fn subject_of(proposal: &lotus_core::Proposal) -> Option<Id> {
+    proposal.commands.first().map(|c| match c {
+        lotus_core::Command::Create { entity }
+        | lotus_core::Command::Trash { entity }
+        | lotus_core::Command::Restore { entity }
+        | lotus_core::Command::AddCell { entity, .. }
+        | lotus_core::Command::RemoveCell { entity, .. }
+        | lotus_core::Command::Redirect { entity, .. } => *entity,
+    })
+}
+
+/// Resolve "ID [K]" against the queue as it exists right now.
+fn resolve_target(session: &Session, args: &[&str]) -> Result<usize, String> {
+    let id_arg = args
+        .first()
+        .ok_or("which one? lotus inbox shows the ids")?;
+    let id: Id = id_arg
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| format!("not an entity id: {id_arg}"))?;
+    let matching: Vec<usize> = session
+        .store()
+        .pending()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| subject_of(p) == Some(id))
+        .map(|(i, _)| i)
+        .collect();
+    match (matching.len(), args.get(1)) {
+        (0, _) => Err(format!("no proposal for #{id} — lotus inbox")),
+        (1, _) => Ok(matching[0]),
+        (n, Some(k)) => {
+            let k: usize = k.parse().map_err(|_| format!("not a number: {k}"))?;
+            if k >= 1 && k <= n {
+                Ok(matching[k - 1])
+            } else {
+                Err(format!("#{id} has {n} proposals — K is 1..={n}"))
+            }
+        }
+        (n, None) => Err(format!(
+            "#{id} has {n} proposals — lotus inbox, then accept/reject {id} K"
+        )),
+    }
 }
 
 fn accept(session: &mut Session, args: &[&str]) -> Result<(), String> {
-    let index: usize = parse_index(args)?;
-    let label = session
-        .store()
-        .pending()
-        .get(index)
-        .map(|p| p.label.clone())
-        .ok_or("no such proposal — lotus inbox")?;
+    let index = resolve_target(session, args)?;
+    let label = session.store().pending()[index].label.clone();
     session.accept(index).map_err(|e| e.to_string())?;
     println!("accepted: {label}");
     Ok(())
 }
 
 fn reject(session: &mut Session, args: &[&str]) -> Result<(), String> {
-    let index: usize = parse_index(args)?;
+    let index = resolve_target(session, args)?;
+    let reason = session.store().pending()[index].reason.clone();
     session.reject(index).map_err(|e| e.to_string())?;
-    println!("declined — the clerk won't ask again");
+    println!("declined: {reason}  — the clerk won't ask again");
     Ok(())
-}
-
-fn parse_index(args: &[&str]) -> Result<usize, String> {
-    args.first()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| "which one? lotus inbox shows the numbers".to_string())
 }
 
 /// Capture, CLI-grade: same scrap, same door as the menu-bar shell.
@@ -219,8 +291,11 @@ fn add(session: &mut Session, text: &str) -> Result<(), String> {
     for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
         session.propose(proposal);
     }
-    for (i, proposal) in session.store().pending().iter().enumerate().skip(already) {
-        println!("clerk: {}  (lotus accept {i})", proposal.reason);
+    for proposal in session.store().pending().iter().skip(already) {
+        let subject = subject_of(proposal)
+            .map(|id| format!("{id}"))
+            .unwrap_or_default();
+        println!("clerk: {}  (lotus accept {subject})", proposal.reason);
     }
     Ok(())
 }

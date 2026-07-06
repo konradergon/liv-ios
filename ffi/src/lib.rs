@@ -66,7 +66,7 @@ mod tests {
     fn the_seam_roundtrips() {
         let path = std::env::temp_dir().join("lotus_ffi_roundtrip.log");
         let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("log.declined"));
+        let _ = std::fs::remove_file(format!("{}.declined", path.display()));
         let c_path = CString::new(path.to_str().unwrap()).unwrap();
 
         let text = CString::new("Call Anna Friday").unwrap();
@@ -84,6 +84,6 @@ mod tests {
         assert!(entity.get(lotus_core::props::CONTENT).is_some());
         assert!(entity.get(lotus_core::props::CREATED).is_some());
         let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("log.declined"));
+        let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     }
 }

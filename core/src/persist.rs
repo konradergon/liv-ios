@@ -82,10 +82,12 @@ struct FileLog {
 
 impl FileLog {
     fn append(&mut self, tx: &Transaction) -> io::Result<()> {
-        let line = serde_json::to_string(tx)
+        // One buffer, one write: the torn-tail window between record and
+        // newline should be as narrow as the syscall allows.
+        let mut line = serde_json::to_string(tx)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        line.push('\n');
         self.file.write_all(line.as_bytes())?;
-        self.file.write_all(b"\n")?;
         self.file.flush()?;
         // The log is the user's data forever; pay the fsync so a returned Ok
         // means it is truly on disk. Relax only if this is measured to hurt.
@@ -158,17 +160,33 @@ impl Session {
 
         let mut store = Store::replay(transactions)?;
 
-        let declined_path = path.with_extension("log.declined");
-        match std::fs::read_to_string(&declined_path) {
-            Ok(text) => {
+        // Appended, never substituted: "box.db" pairs with "box.db.declined",
+        // so two boxes sharing a stem can never share refusals.
+        let declined_path = {
+            let mut name = path.as_os_str().to_owned();
+            name.push(".declined");
+            std::path::PathBuf::from(name)
+        };
+        match std::fs::read(&declined_path) {
+            Ok(bytes) => {
+                // Refusals are independent records: a torn final fragment
+                // is truncated away (like the log's torn tail), and a
+                // complete line that will not parse is skipped, never
+                // fatal — the worst outcome is one repeated question.
                 let mut declined = Vec::new();
-                for line in text.lines().filter(|l| !l.is_empty()) {
-                    match serde_json::from_str::<Proposal>(line) {
-                        Ok(p) => declined.push(p),
-                        // A torn refusal is dropped, like a torn tail; the
-                        // worst outcome is one repeated question.
-                        Err(_) => break,
+                let mut good_len = 0usize;
+                while let Some(nl) = bytes[good_len..].iter().position(|b| *b == b'\n') {
+                    let record = &bytes[good_len..good_len + nl];
+                    if let Ok(text) = std::str::from_utf8(record) {
+                        if let Ok(p) = serde_json::from_str::<Proposal>(text) {
+                            declined.push(p);
+                        }
                     }
+                    good_len += nl + 1;
+                }
+                if good_len < bytes.len() {
+                    let repair = OpenOptions::new().write(true).open(&declined_path)?;
+                    repair.set_len(good_len as u64)?;
                 }
                 store.restore_declined(declined);
             }
@@ -246,14 +264,14 @@ impl Session {
     /// the call returns, so nothing asks again — across restarts too.
     pub fn reject(&mut self, index: usize) -> Result<(), PersistError> {
         let refused = self.store.reject(index)?;
-        let line = serde_json::to_string(refused)
+        let mut line = serde_json::to_string(refused)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        line.push('\n');
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.declined_path)?;
         file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
         file.sync_all()?;
         Ok(())
     }

@@ -56,6 +56,11 @@ pub fn capture(
 /// in application code, so views can look them up and the clerk will one
 /// day reuse them as its gazetteer. The first run asks nothing.
 pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
+    seed_bootstrap(session)?;
+    seed_starter_library(session)
+}
+
+fn seed_bootstrap(session: &mut Session) -> Result<(), PersistError> {
     if !session.store().history().is_empty() {
         return Ok(());
     }
@@ -102,7 +107,6 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
         });
     }
     session.commit(commands, "bootstrap properties", Author::System)?;
-    seed_starter_library(session)?;
     Ok(())
 }
 

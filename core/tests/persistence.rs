@@ -206,6 +206,49 @@ fn a_tail_torn_at_the_newline_is_dropped() {
 }
 
 #[test]
+fn a_torn_sidecar_heals_and_later_refusals_survive() {
+    use std::io::Write;
+    let path = temp_path("sidecar_torn");
+    let sidecar = format!("{}.declined", path.display());
+    let _ = std::fs::remove_file(&sidecar);
+
+    let proposal = |label: &str| Proposal {
+        commands: vec![Command::Create { entity: 9000 }],
+        label: label.into(),
+        author: Author::Proposer("dates".into()),
+        reason: label.into(),
+    };
+
+    {
+        let mut s = Session::open(&path).unwrap();
+        s.propose(proposal("first"));
+        s.reject(0).unwrap();
+    }
+
+    // Crash mid-reject: a fragment with no newline lands after the record.
+    {
+        let mut f = std::fs::OpenOptions::new().append(true).open(&sidecar).unwrap();
+        f.write_all(br#"{"commands":[{"Cre"#).unwrap();
+    }
+
+    // Reopen: the fragment is truncated away, the good refusal loads,
+    // and the next reject appends onto a clean boundary.
+    {
+        let mut s = Session::open(&path).unwrap();
+        assert_eq!(s.store().declined().len(), 1);
+        s.propose(proposal("second"));
+        s.reject(0).unwrap();
+    }
+
+    // Nothing was buried behind a scar: both refusals load.
+    let s = Session::open(&path).unwrap();
+    assert_eq!(s.store().declined().len(), 2);
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&sidecar);
+}
+
+#[test]
 fn merge_and_redirect_survive_restart() {
     let path = temp_path("merge");
     let (survivor, loser, meeting);

@@ -54,15 +54,42 @@ pub fn sweep(store: &Store, today: DateTime) -> Vec<Proposal> {
         let Some(text) = plain_content(entity) else {
             continue;
         };
-        propose_dates(&vocabulary, entity, &text, today, &mut proposals);
+        // "Tomorrow" means the day after the thought, not the day after
+        // the sweep: relative words resolve against the scrap's own
+        // creation date. This also makes proposals identical across
+        // sweeps, so what the inbox shows is what accept commits.
+        let anchor = match entity.get(props::CREATED) {
+            Some(Value::DateTime(created)) => {
+                let (y, m, d) = parts(*created);
+                DateTime::date(y, m, d)
+            }
+            _ => today,
+        };
+        propose_dates(&vocabulary, entity, &text, anchor, &mut proposals);
         propose_mentions(&vocabulary, entity, &text, &gazetteer, &mut proposals);
     }
 
+    // Pending dedups by exact commands. Declined dedups by what the user
+    // actually refused — this proposer, this entity, this property — so a
+    // refusal outlives any drift in the proposed value.
     proposals.retain(|p| {
         !store.pending().iter().any(|q| q.commands == p.commands)
-            && !store.declined().iter().any(|q| q.commands == p.commands)
+            && !store.declined().iter().any(|q| {
+                q.commands == p.commands
+                    || (decline_key(q).is_some() && decline_key(q) == decline_key(p))
+            })
     });
     proposals
+}
+
+/// The durable meaning of a refusal: (proposer, entity, property).
+fn decline_key(proposal: &Proposal) -> Option<(&str, Id, Id)> {
+    match (&proposal.author, proposal.commands.as_slice()) {
+        (Author::Proposer(name), [Command::AddCell { entity, cell }]) => {
+            Some((name.as_str(), *entity, cell.property))
+        }
+        _ => None,
+    }
 }
 
 /// Everything named and front-of-house is a name worth noticing.
@@ -112,13 +139,13 @@ fn propose_dates(
     vocabulary: &Vocabulary,
     entity: &Entity,
     text: &str,
-    today: DateTime,
+    anchor: DateTime,
     proposals: &mut Vec<Proposal>,
 ) {
     if entity.all(vocabulary.due).next().is_some() {
         return;
     }
-    let Some((word, date)) = first_date(text, today) else {
+    let Some((word, date)) = first_date(text, anchor) else {
         return;
     };
     proposals.push(Proposal {
@@ -227,8 +254,9 @@ const WEEKDAYS: [&str; 7] = [
     "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 ];
 
-/// Scan the words; the first one that names a date wins.
-fn first_date(text: &str, today: DateTime) -> Option<(String, DateTime)> {
+/// Scan the words; the first one that names a date wins. Relative words
+/// resolve against `anchor` — the day the text was written.
+fn first_date(text: &str, anchor: DateTime) -> Option<(String, DateTime)> {
     for raw in text.split_whitespace() {
         let word: String = raw
             .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
@@ -237,14 +265,15 @@ fn first_date(text: &str, today: DateTime) -> Option<(String, DateTime)> {
             continue;
         }
         if word == "today" {
-            return Some((word, DateTime::date(parts(today).0, parts(today).1, parts(today).2)));
+            let (y, m, d) = parts(anchor);
+            return Some((word, DateTime::date(y, m, d)));
         }
         if word == "tomorrow" {
-            return Some((word, add_days(today, 1)));
+            return Some((word, add_days(anchor, 1)));
         }
         if let Some(target) = WEEKDAYS.iter().position(|w| *w == word) {
-            let delta = (target as u32 + 7 - weekday(today)) % 7;
-            return Some((word, add_days(today, delta)));
+            let delta = (target as u32 + 7 - weekday(anchor)) % 7;
+            return Some((word, add_days(anchor, delta)));
         }
         if let Some(date) = iso_date(&word) {
             return Some((word, date));
@@ -253,10 +282,16 @@ fn first_date(text: &str, today: DateTime) -> Option<(String, DateTime)> {
     None
 }
 
-/// yyyy-mm-dd, validated just enough to not be a lie.
+/// yyyy-mm-dd, validated just enough to not be a lie. Digits only in the
+/// digit positions: parse() alone would accept "-234-01-01", and a
+/// negative year packs into a civil value that cannot round-trip.
 fn iso_date(word: &str) -> Option<DateTime> {
     let bytes = word.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
+    if !digits(0..4) || !digits(5..7) || !digits(8..10) {
         return None;
     }
     let year: i32 = word[0..4].parse().ok()?;
