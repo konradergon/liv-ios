@@ -1468,6 +1468,8 @@ struct EntityLine: View {
     /// task (Tasks surface). nil keeps the old static glyph, so Today and
     /// Library are unchanged.
     var toggle: (() -> Void)? = nil
+    /// Opt-in trailing accessory (the Tasks priority flag), left of the due.
+    var accessory: AnyView? = nil
     var select: () -> Void = {}
 
     private var isTask: Bool { row.kinds.contains("task") || row.status != nil }
@@ -1492,6 +1494,7 @@ struct EntityLine: View {
                     .foregroundColor(showDone ? .secondary : .primary)
                     .strikethrough(showDone, color: .secondary)
                 Spacer()
+                if let accessory { accessory }
                 if showWhen, let due = row.due {
                     Text(Civil.text(due, dateOnly: row.dueDateOnly))
                         .font(.system(size: 12.5).monospacedDigit())
@@ -1753,6 +1756,17 @@ func statusColor(_ status: String) -> Color {
     case "done": return Color(red: 74 / 255, green: 158 / 255, blue: 134 / 255)
     case "doing": return Color(red: 207 / 255, green: 154 / 255, blue: 63 / 255)
     default: return Color.secondary.opacity(0.6)
+    }
+}
+
+/// The priority flag colour — amber for high/medium, muted for low, faint
+/// for unset. Names come from the seeded `priority` options, never hardcoded.
+func priorityColor(_ priority: String) -> Color {
+    switch priority {
+    case "high": return Color(red: 186 / 255, green: 117 / 255, blue: 23 / 255)
+    case "medium": return Color(red: 239 / 255, green: 159 / 255, blue: 39 / 255)
+    case "low": return Color(red: 136 / 255, green: 135 / 255, blue: 128 / 255)
+    default: return Color.secondary.opacity(0.3)
     }
 }
 
@@ -2342,8 +2356,8 @@ struct TasksView: View {
         .background(Theme.background)
     }
 
-    /// A task row whose checkbox toggles status (done ⇄ todo) through the
-    /// existing set seam — no new mutation.
+    /// A task row whose checkbox toggles status (done ⇄ todo) and whose flag
+    /// sets priority — both through the existing set seam, no new mutation.
     private func taskRow(_ row: EntityRow) -> some View {
         EntityLine(
             row: row, selected: selection == row.id,
@@ -2351,9 +2365,37 @@ struct TasksView: View {
                 model.set(
                     row.id, property: "status",
                     value: row.status == "done" ? "todo" : "done")
-            }
+            },
+            accessory: AnyView(priorityFlag(row))
         ) {
             open(row.id)
+        }
+    }
+
+    /// The priority flag — a menu over the seeded `priority` options (never
+    /// hardcoded), faint when unset. Only shown if the property exists.
+    @ViewBuilder
+    private func priorityFlag(_ row: EntityRow) -> some View {
+        if let prop = model.property(named: "priority") {
+            let current = row.cells.first { $0.property == "priority" }?.value ?? ""
+            Menu {
+                ForEach(prop.options) { option in
+                    Button(option.name.capitalized) {
+                        model.set(row.id, property: "priority", value: option.name)
+                    }
+                }
+                if !current.isEmpty {
+                    Divider()
+                    Button("None") { model.unset(row.id, property: "priority") }
+                }
+            } label: {
+                Image(systemName: current.isEmpty ? "flag" : "flag.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(priorityColor(current))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(current.isEmpty ? "Set priority" : "Priority: \(current)")
         }
     }
 
