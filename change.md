@@ -1,0 +1,3 @@
+- left info manu (graph, vault, etc.): only keep two essential and move them out to a better place. menu should be removed.
+- make markdown editor more like codemirror where you see the '#' and where you can fold headings. text shouldn't be indented and clearer separation between text and title
+- more to come

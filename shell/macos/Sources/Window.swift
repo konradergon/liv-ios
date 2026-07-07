@@ -722,10 +722,29 @@ struct WindowChrome: View {
             ) { _ in
                 chrome.isFullscreen = false
             }
+            .background(stateHandlers)
+    }
+
+    /// State-driven seams, split off the notification seams so neither
+    /// modifier chain outgrows the SwiftUI type-checker.
+    private var stateHandlers: some View {
+        Color.clear
             .onChange(of: query) {
                 // New results, new world: a selection from the old one
                 // must not linger where Enter could open it sight unseen.
                 selection = nil
+                // A cleared field resets the search, so re-typing never
+                // flashes the prior query's hits under the new one.
+                if query.isEmpty {
+                    model.searchResult = .empty
+                    model.searchedFor = ""
+                }
+            }
+            .onChange(of: searchFocused) {
+                // The field is reachable from every surface; focusing it (a
+                // direct click, not just ⌘F) drops to the desk so results
+                // render in place — otherwise typing here is a dead-end.
+                if searchFocused { revealSearchDesk() }
             }
             .onChange(of: selection) {
                 if let id = selection {
@@ -741,6 +760,11 @@ struct WindowChrome: View {
                 let live = Set((snap?.entities ?? []).map(\.id))
                 if tabs.reconcile(liveIds: live) != nil {
                     syncEditorToActiveTab()
+                }
+                // A live search must reflect the fresh box: re-run it so the
+                // hits, counts, and facets don't stall after a mutation.
+                if !query.isEmpty {
+                    model.search(query)
                 }
             }
             .onChange(of: chrome.activeWorkspace) {
@@ -967,16 +991,25 @@ struct WindowChrome: View {
         }
     }
 
-    /// ⌘F and every "search" affordance land here: reveal the panel, drop to
-    /// the desk so hits render as the list lens in place, and focus the field
-    /// — keeping any query already typed.
-    private func focusSearch() {
+    /// Land the surface where search results render: reveal the panel and
+    /// drop to the desk (keeping any typed query). Idempotent once you are
+    /// there — so it can run on every field focus without churning tabs.
+    private func revealSearchDesk() {
         if chrome.focusMode { chrome.toggleFocus() }
         if !chrome.leftOpen {
             chrome.leftOpen = true
             chrome.persistPanes()
         }
-        showDesk(lens, clearQuery: false)
+        if chrome.surface != .notes || tabs.active?.kind != .desk {
+            showDesk(lens, clearQuery: false)
+        }
+    }
+
+    /// ⌘F and every "search" affordance land here: reveal the desk, then
+    /// focus the field. A direct field click reaches the same desk via the
+    /// searchFocused onChange, so search is never a dead-end.
+    private func focusSearch() {
+        revealSearchDesk()
         searchFocused = true
     }
 
@@ -1683,19 +1716,22 @@ struct ResultsView: View {
     @Binding var selection: UInt64?
 
     var body: some View {
-        // While a fresh search is in flight, keep showing the last hits IF
-        // this query extends or trims the one they answered — a smooth
-        // incremental feel. A cleared-then-unrelated query shows nothing
-        // until its own results land, never another query's hits.
-        let answered = model.searchedFor
-        let related = !answered.isEmpty && (query.hasPrefix(answered) || answered.hasPrefix(query))
-        let fresh = answered == query
-        let hits = related ? model.searchResult.hits : []
-        let facets = related ? model.searchResult.facets : []
+        // Show whatever the box last returned while the fresh search
+        // debounces — a smooth search-as-you-type feel, and facet pivots
+        // (type:task → type:note) never blank the lens. The query going
+        // empty resets the result (WindowChrome.onChange), so a
+        // cleared-then-new query never flashes the prior query's hits.
+        let hits = model.searchResult.hits
+        let facets = model.searchResult.facets
+        let fresh = model.searchedFor == query
         let rows = model.rows(hits.map(\.id))
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LensHeader(title: "Results", subtitle: subtitle(hits.count))
+                // Count what is actually shown, not the raw seam hits — some
+                // (is:trashed/is:working) resolve in the seam but aren't in
+                // the snapshot, so they can't render here; the number must
+                // never contradict the rows or the empty state.
+                LensHeader(title: "Results", subtitle: subtitle(rows.count, capped: hits.count >= 200))
                 FacetBar(facets: facets, query: $query)
                 ForEach(rows) { row in
                     EntityLine(row: row, selected: selection == row.id) {
@@ -1721,10 +1757,11 @@ struct ResultsView: View {
         }
     }
 
-    /// Honest about the seam's 200-hit cap.
-    private func subtitle(_ n: Int) -> String {
-        if n >= 200 { return "200+ matches" }
-        return n == 1 ? "1 match" : "\(n) matches"
+    /// The count reflects the rows shown; "200+" is honest about the seam's
+    /// cap when it bites.
+    private func subtitle(_ shown: Int, capped: Bool) -> String {
+        if capped { return "200+ matches" }
+        return shown == 1 ? "1 match" : "\(shown) matches"
     }
 }
 
