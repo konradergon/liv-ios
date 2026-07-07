@@ -727,7 +727,11 @@ final class LotusTextView: NSTextView {
     }
 
     /// Re-type a paragraph's runs to a new block, preserving each text
-    /// run's marks; markers/pills keep the block's paragraph style.
+    /// run's marks; markers/pills keep the block's paragraph style. Also
+    /// stamps the paragraph's leading newline (para.location - 1) — the
+    /// codec's "the newline carries the block it opens" — so an EMPTY
+    /// markerless paragraph (a bare heading/quote line) still has a
+    /// carrier the inverse can read.
     private func applyBlockAttributes(
         _ block: BlockJSON, to range: NSRange, storage: NSTextStorage
     ) {
@@ -744,17 +748,33 @@ final class LotusTextView: NSTextView {
             }
         }
         for (r, a) in edits { storage.setAttributes(a, range: r) }
+        if range.location > 0 {
+            storage.addAttribute(
+                .lotusBlock, value: BlockBox(block),
+                range: NSRange(location: range.location - 1, length: 1))
+        }
+    }
+
+    /// The first content offset of a paragraph — after a leading marker
+    /// attachment (bullet/checkbox), if one is present.
+    private func contentStart(of para: NSRange) -> Int {
+        guard let storage = textStorage, para.length > 0,
+            (storage.attribute(.attachment, at: para.location, effectiveRange: nil)
+                as? NSTextAttachment)?.attachmentCell is BlockMarkerCell
+        else { return para.location }
+        return para.location + 1
     }
 
     /// Backspace at the start of a formatted paragraph demotes it rather
     /// than merging with the line above — the muscle memory of deleting a
     /// "- " prefix, with no literal prefix to delete (task→bullet→body,
-    /// everything else→body).
+    /// everything else→body). The trigger is the caret at the paragraph's
+    /// content start, which is AFTER the derived marker for a list/task.
     override func deleteBackward(_ sender: Any?) {
         let sel = selectedRange()
         let para = currentParagraphRange()
-        if sel.length == 0, sel.location == para.location, let storage = textStorage {
-            let block = paragraphBlock(at: para.location)
+        if sel.length == 0, sel.location == contentStart(of: para), let storage = textStorage {
+            let block = paragraphBlock(at: contentStart(of: para))
             let demoted: BlockJSON?
             switch block {
             case .task: demoted = .bullet(depth: 0)
@@ -763,7 +783,8 @@ final class LotusTextView: NSTextView {
             }
             if let demoted = demoted, shouldChangeText(in: para, replacementString: nil) {
                 storage.beginEditing()
-                // Drop a leading marker attachment, if any.
+                // Swap the leading marker: strip the old one, add the new
+                // block's marker (bullet after a task; none for body).
                 if para.length > 0,
                     (storage.attribute(.attachment, at: para.location, effectiveRange: nil)
                         as? NSTextAttachment)?.attachmentCell is BlockMarkerCell
@@ -771,12 +792,19 @@ final class LotusTextView: NSTextView {
                     storage.replaceCharacters(
                         in: NSRange(location: para.location, length: 1), with: "")
                 }
+                var start = para.location
+                if let context = pillContext,
+                    let marker = SpanCodec.marker(for: demoted, context: context)
+                {
+                    storage.insert(marker, at: para.location)
+                    start += marker.length
+                }
                 let p = (storage.string as NSString).paragraphRange(
-                    for: NSRange(location: para.location, length: 0))
+                    for: NSRange(location: start, length: 0))
                 applyBlockAttributes(demoted, to: p, storage: storage)
                 storage.endEditing()
                 didChangeText()
-                setSelectedRange(NSRange(location: para.location, length: 0))
+                setSelectedRange(NSRange(location: start, length: 0))
                 typingAttributes = SpanCodec.attributes(block: demoted, marks: [])
                 return
             }
@@ -862,7 +890,6 @@ final class LotusTextView: NSTextView {
             } else if mention, word == forwardLinkLabel, let name = forwardLinkName {
                 // Forward link: create the note, then insert its Ref — no
                 // dangling [[query]] ever, backlinks stay automatic.
-                let block = paragraphBlock(at: charRange.location)
                 let loc = charRange.location
                 if shouldChangeText(in: charRange, replacementString: "") {
                     textStorage?.replaceCharacters(in: charRange, with: "")
@@ -871,10 +898,12 @@ final class LotusTextView: NSTextView {
                 }
                 createForwardLink(name) { [weak self] newId in
                     guard let self = self, let context = self.pillContext else { return }
+                    // The block is recomputed at the LIVE caret — the user
+                    // may have moved during the async create, so the pill
+                    // must match the paragraph it actually lands in.
                     let at = self.selectedRange().location
                     self.insertRefPill(
-                        newId, replacing: NSRange(location: at, length: 0),
-                        block: block, context: context)
+                        newId, replacing: NSRange(location: at, length: 0), context: context)
                 }
                 return
             }
