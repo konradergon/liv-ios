@@ -128,6 +128,38 @@ enum SidebarView: String, CaseIterable {
     }
 }
 
+/// The tree/vault toggle, living in the content top bar (not the panel) —
+/// two quiet icons writing the shared sidebar-view preference the panel
+/// reads. Only shown in the Notes surface, where the panel view it drives
+/// lives.
+struct SidebarViewToggle: View {
+    @AppStorage("app.leftView.v1") private var viewRaw = SidebarView.tree.rawValue
+
+    private var current: SidebarView { SidebarView(rawValue: viewRaw) ?? .tree }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(SidebarView.allCases, id: \.rawValue) { item in
+                Button {
+                    viewRaw = item.rawValue
+                } label: {
+                    Image(systemName: item.symbol)
+                        .font(.system(size: 12))
+                        .frame(width: 24, height: 24)
+                        .foregroundColor(current == item ? Theme.primary : Theme.mutedFg)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(current == item ? Theme.primary.opacity(0.12) : .clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(item.tooltip)
+            }
+        }
+    }
+}
+
 // MARK: - the sidebar
 
 struct AppSidebar: View {
@@ -155,9 +187,9 @@ struct AppSidebar: View {
         // it (header, surface nav, workspace footer) supplies the search
         // and the material background now.
         VStack(spacing: 0) {
-            pickerStrip
-            Divider()
-
+            // The tree/vault toggle moved out of the panel to the content
+            // top bar (SidebarViewToggle in the tab strip); the panel just
+            // shows whichever view is chosen.
             switch view {
             case .tree:
                 SpacesTree(
@@ -171,34 +203,6 @@ struct AppSidebar: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    /// A discreet two-icon toggle — the workspace tree vs the files vault.
-    /// Icon-only and left-aligned, so it reads as a quiet control, not a
-    /// full segmented strip.
-    private var pickerStrip: some View {
-        HStack(spacing: 4) {
-            ForEach(SidebarView.allCases, id: \.rawValue) { item in
-                Button {
-                    viewRaw = item.rawValue
-                } label: {
-                    Image(systemName: item.symbol)
-                        .font(.system(size: 12))
-                        .frame(width: 26, height: 22)
-                        .foregroundColor(view == item ? Theme.primary : Theme.mutedFg)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(view == item ? Theme.primary.opacity(0.12) : .clear)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(item.tooltip)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
     }
 
     private func sidebarStub(_ symbol: String, _ message: String) -> some View {

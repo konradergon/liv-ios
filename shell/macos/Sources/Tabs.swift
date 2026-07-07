@@ -250,10 +250,10 @@ struct TabStrip: View {
                 }
                 .padding(.vertical, 5)
             }
-            // Trailing cluster: + opens a blank tab (founder-locked — the
-            // landing, never an instant note). The ⌄ container picker,
-            // Group N, and saved-groups Layers menu attach here in the
-            // groups/composers slice.
+            // Trailing cluster: the tree/vault view toggle (moved out of the
+            // panel), then + opens a blank tab (founder-locked — the landing,
+            // never an instant note).
+            SidebarViewToggle()
             Button(action: openNew) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))

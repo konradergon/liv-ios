@@ -1913,9 +1913,11 @@ struct InspectorPane: View {
 
     /// Cells the header or the editor owns — not editable rows here.
     /// bookmarked/archived are the header's own actions, so they are not
-    /// repeated as toggle rows (nor offered again in Add property).
+    /// repeated as toggle rows. order/builtin are structural plumbing a
+    /// user never hand-edits, so they stay out of the property sheet.
     static let reserved: Set<String> = [
         "name", "content", "created", "type", "bookmarked", "archived",
+        "order", "builtin",
     ]
 
     var body: some View {
@@ -1923,11 +1925,9 @@ struct InspectorPane: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let entity = model.entity(selection) {
                     InspectorHeader(model: model, entity: entity, selection: $selection)
-                    let rows = entity.cells.filter { !Self.reserved.contains($0.property) }
-                    ForEach(rows, id: \.self) { cell in
+                    ForEach(rows(for: entity), id: \.propertyId) { cell in
                         FieldRow(model: model, entity: entity.id, cell: cell)
                     }
-                    AddPropertyRow(model: model, entity: entity)
                     if let created = entity.created {
                         Text("Created \(Civil.text(created, dateOnly: false))")
                             .font(.system(size: 11))
@@ -1950,6 +1950,26 @@ struct InspectorPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    /// A row for every user-facing property, present or not — so all of
+    /// them are visible and editable in place, no Add-property menu. An
+    /// absent property renders an empty control that writes a cell on
+    /// first edit. Reference/file kinds still need the entity picker (a
+    /// follow-up), so they show only when already set (read-only).
+    private func rows(for entity: EntityRow) -> [CellRow] {
+        let present = Dictionary(
+            entity.cells.map { ($0.propertyId, $0) }, uniquingKeysWith: { first, _ in first })
+        return model.properties()
+            .filter { !Self.reserved.contains($0.name) }
+            .compactMap { prop -> CellRow? in
+                if let cell = present[prop.id] { return cell }
+                if prop.kind == "reference" || prop.kind == "file" { return nil }
+                return CellRow(
+                    propertyId: prop.id, property: prop.name, kind: prop.kind,
+                    value: "", refTarget: nil)
+            }
+            .sorted { $0.property < $1.property }
     }
 }
 
@@ -2045,7 +2065,8 @@ struct FieldRow: View {
                 .foregroundColor(.secondary)
                 .frame(width: 76, alignment: .leading)
             control
-            if hovering {
+            // Only a set property can be cleared; an empty one has no cell.
+            if hovering && !cell.value.isEmpty {
                 Button {
                     model.unset(entity, property: cell.property)
                 } label: {
@@ -2149,68 +2170,6 @@ struct SelectField: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         Spacer(minLength: 0)
-    }
-}
-
-// MARK: - add a property
-
-struct AddPropertyRow: View {
-    @ObservedObject var model: BoxModel
-    let entity: EntityRow
-
-    var body: some View {
-        let present = Set(entity.cells.map(\.property))
-        let addable = model.properties().filter {
-            !present.contains($0.name)
-                && !InspectorPane.reserved.contains($0.name)
-                // A reference needs the entity picker (a follow-up); until
-                // then it has no value to seed, so it isn't offered here.
-                && $0.kind != "reference" && $0.kind != "file"
-        }
-        if !addable.isEmpty {
-            Menu {
-                ForEach(addable) { property in
-                    Button(property.name) { add(property) }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .medium))
-                    Text("Add property")
-                        .font(.system(size: 12))
-                }
-                .foregroundColor(Theme.mutedFg)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .padding(.top, 10)
-        }
-    }
-
-    /// Seed a sensible default so the new row appears ready to edit.
-    private func add(_ property: PropertyRow) {
-        let value: String
-        switch property.kind {
-        case "bool": value = "false"
-        case "number": value = "0"
-        case "select":
-            // A select with no options has nothing to hold; skip it.
-            guard let first = property.options.first?.name else { return }
-            value = first
-        case "datetime": value = Self.today()
-        // text / richtext — an empty cell is legitimate and editable; the
-        // seam accepts an empty value, so no placeholder is invented.
-        default: value = ""
-        }
-        model.set(entity.id, property: property.name, value: value)
-    }
-
-    /// Today as an ASCII Gregorian yyyy-MM-dd string — built from the
-    /// Gregorian-pinned Civil.todayYMD, never a locale-formatted date, so
-    /// a Buddhist/Japanese system calendar can't seed a wrong-era year.
-    private static func today() -> String {
-        let ymd = Civil.todayYMD
-        return String(format: "%04d-%02d-%02d", ymd / 10_000, (ymd / 100) % 100, ymd % 100)
     }
 }
 
