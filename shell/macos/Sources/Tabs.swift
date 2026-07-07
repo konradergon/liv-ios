@@ -265,10 +265,9 @@ struct TabStrip: View {
                 }
                 .padding(.vertical, 5)
             }
-            // Trailing cluster: the tree/vault view toggle (moved out of the
-            // panel), then + opens a blank tab (founder-locked — the landing,
-            // never an instant note).
-            SidebarViewToggle()
+            // The tabs take the width, so the trailing controls sit at the
+            // FAR RIGHT of the top bar, not bunched against the tabs.
+            .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: openNew) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
@@ -278,6 +277,9 @@ struct TabStrip: View {
             }
             .buttonStyle(.plain)
             .help("New tab")
+            // The tree/vault view toggle, pinned to the far right (out of
+            // the panel, out of the way).
+            SidebarViewToggle()
         }
         .padding(.horizontal, 8)
         .frame(height: Theme.headerBandHeight)
