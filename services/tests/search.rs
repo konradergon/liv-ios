@@ -138,6 +138,10 @@ fn fixture() -> Fx {
     // Qualifier fodder.
     live(&mut cmds, laundry, "do laundry");
     add(&mut cmds, laundry, props::TYPE, Value::Reference(task_type));
+    // A user note whose title collides with the type name "task" (a later,
+    // higher id) — type:task must still resolve to the low-id type.
+    let task_dupe = store.allocate_id();
+    live(&mut cmds, task_dupe, "task");
     live(&mut cmds, grocery, "buy milk");
     add(&mut cmds, grocery, props::TYPE, Value::Reference(note_type));
     live(&mut cmds, finish, "wrap up");
@@ -220,6 +224,21 @@ fn type_qualifier_resolves_a_reference_by_name() {
     let order = ids(&fx, "type:task");
     assert!(order.contains(&fx.laundry));
     assert!(!order.contains(&fx.grocery));
+}
+
+#[test]
+fn reference_resolution_is_deterministic_on_a_name_collision() {
+    // "task" names both the low-id type and a later user note. Resolution
+    // must always pick the type (lowest id) — never flip with HashMap order.
+    let fx = fixture();
+    for _ in 0..8 {
+        let sq = search::parse(&fx.store, "type:task");
+        assert!(
+            sq.query.constraints.iter().any(|con| con.property == props::TYPE
+                && con.op == Op::Equals(Value::Reference(fx.task_type))),
+            "type:task must resolve to the low-id type, not the same-named note",
+        );
+    }
 }
 
 #[test]

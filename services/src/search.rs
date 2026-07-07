@@ -365,16 +365,21 @@ fn property_kind(store: &Store, property: Id) -> Option<String> {
     }
 }
 
-/// Resolve a reference qualifier's value by entity name (case-insensitive,
-/// first live match): `type:task` → the id of the type named "task".
+/// Resolve a reference qualifier's value by entity name (case-insensitive):
+/// `type:task` → the id of the type named "task". `entities()` is a HashMap
+/// in no particular order, so on a name collision we take the LOWEST id —
+/// deterministic (the same box always resolves the same), and it biases
+/// toward the low-id seeded types over a later same-named note, which is
+/// what `type:` wants. Mirrors `run`'s sort-by-id tiebreak.
 fn resolve_reference(store: &Store, raw: &str) -> Option<Value> {
     let wanted = raw.to_lowercase();
     store
         .entities()
         .filter(|e| !e.trashed)
-        .find(|e| {
+        .filter(|e| {
             matches!(e.get(props::NAME), Some(Value::Text(name)) if name.to_lowercase() == wanted)
         })
+        .min_by_key(|e| e.id)
         .map(|e| Value::Reference(e.id))
 }
 
