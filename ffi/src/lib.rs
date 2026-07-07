@@ -12,8 +12,10 @@ use std::ffi::{c_char, CStr, CString};
 use chrono::{Datelike, Local, Timelike};
 use serde::Serialize;
 
-use lotus_core::{props, Author, DateTime, Id, Session, Store, Value};
-use lotus_services::{clerk, property_id, run, search, Constraint, Op, Query, Sort};
+use std::path::Path;
+
+use lotus_core::{props, Author, DateTime, Entity, Id, Session, Store, Value};
+use lotus_services::{clerk, files, property_id, run, search, Constraint, Op, Query, Sort};
 
 /// Capture one scrap into the box at `path`, creating and seeding the box
 /// if it is fresh. Returns the new entity's id, or 0 on failure — 0 is
@@ -489,9 +491,26 @@ struct SearchResult {
     facets: Vec<search::Facet>,
 }
 
-fn build_search(store: &Store, raw: &str) -> SearchResult {
+fn build_search(store: &Store, raw: &str, cache_dir: &Path) -> SearchResult {
     let sq = search::parse(store, raw);
-    let hits = search::search(store, &sq, 200);
+    // A file entity's cached extracted text extends the corpus — read the
+    // sidecar cache (off the log) and hand it to the ranker. A non-file
+    // entity contributes nothing.
+    let file_prop = property_id(store, "file");
+    let format_prop = property_id(store, "format");
+    let extracted = |entity: &Entity| -> String {
+        let Some(fp) = file_prop else { return String::new() };
+        let Some(Value::File(file)) = entity.get(fp) else { return String::new() };
+        let format = format_prop
+            .and_then(|p| entity.get(p))
+            .and_then(|v| match v {
+                Value::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .unwrap_or("");
+        files::extracted_text(cache_dir, file, format)
+    };
+    let hits = search::search(store, &sq, 200, extracted);
     let facets = search::facet_properties(store, &sq)
         .into_iter()
         .map(|property| search::facet(store, &sq, property))
@@ -514,18 +533,89 @@ pub unsafe extern "C" fn lotus_search_at(
     if path.is_null() || raw_query.is_null() {
         return std::ptr::null_mut();
     }
-    let Ok(raw) = CStr::from_ptr(raw_query).to_str() else {
+    let (Ok(raw), Ok(path_str)) = (CStr::from_ptr(raw_query).to_str(), CStr::from_ptr(path).to_str())
+    else {
         return std::ptr::null_mut();
     };
+    let cache = files::cache_dir(path_str);
     let Some(session) = open_swept(path) else {
         return std::ptr::null_mut();
     };
-    let result = build_search(session.store(), raw);
+    let result = build_search(session.store(), raw, &cache);
     drop(session);
     match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
         Some(s) => s.into_raw(),
         None => std::ptr::null_mut(),
     }
+}
+
+/// Re-hash a file entity's referenced path; if the bytes changed, replace
+/// the File cell (one transaction — the hash change IS the integration).
+/// Returns 1 if changed & rewritten, 0 if unchanged, -1 if the path no
+/// longer resolves (a broken reference). Called when a file is opened, never
+/// on a timer.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_resync_file_at(path: *const c_char, id: u64) -> i32 {
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    match files::resync_file(&mut session, id) {
+        Ok(files::Resync::Changed(_)) => 1,
+        Ok(files::Resync::Unchanged) => 0,
+        Ok(files::Resync::Broken) => -1,
+        Err(_) => 0,
+    }
+}
+
+/// A file entity's extracted plain text (rung 2), from the hash-keyed cache
+/// (extracting on a miss). Empty when the file has no extractable text, is a
+/// broken reference, or is not a file entity. A malloc'd string — free with
+/// `lotus_string_free`; NULL only when the box is unavailable.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_extracted_text_at(path: *const c_char, id: u64) -> *mut c_char {
+    let Ok(path_str) = CStr::from_ptr(path).to_str() else {
+        return std::ptr::null_mut();
+    };
+    let cache = files::cache_dir(path_str);
+    let Some(session) = open_swept(path) else {
+        return std::ptr::null_mut();
+    };
+    let store = session.store();
+    let text = file_text(store, &cache, id);
+    drop(session);
+    match CString::new(text) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// The extracted text for one file entity, or empty when it carries no file
+/// cell — the shared body of the read seam and (later) any reader.
+fn file_text(store: &Store, cache_dir: &Path, id: u64) -> String {
+    let id = store.resolve(id);
+    let Some(file_prop) = property_id(store, "file") else {
+        return String::new();
+    };
+    let Some(entity) = store.get(id) else {
+        return String::new();
+    };
+    let Some(Value::File(file)) = entity.get(file_prop) else {
+        return String::new();
+    };
+    let format = property_id(store, "format")
+        .and_then(|p| entity.get(p))
+        .and_then(|v| match v {
+            Value::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    files::extracted_text(cache_dir, file, format)
 }
 
 /// # Safety

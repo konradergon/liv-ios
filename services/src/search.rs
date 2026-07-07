@@ -144,11 +144,22 @@ pub fn parse(store: &Store, raw: &str) -> SearchQuery {
 /// best-field weights. Ranked score-desc, then newest-created, then id (a
 /// total, stable order). Empty terms yield the structured result in `run`'s
 /// own order — a pure-qualifier query is still a search.
-pub fn search(store: &Store, sq: &SearchQuery, limit: usize) -> Vec<Hit> {
+///
+/// `extracted` supplies a file entity's cached foreign text (a PDF's words),
+/// folded into the CONTENT tier — the search corpus extended over files
+/// WITHOUT any cell being written to the log. The caller (which knows the
+/// box path) reads the cache and passes it in; `search.rs` never touches the
+/// filesystem. A non-file entity yields `""`.
+pub fn search<F: Fn(&Entity) -> String>(
+    store: &Store,
+    sq: &SearchQuery,
+    limit: usize,
+    extracted: F,
+) -> Vec<Hit> {
     let mut hits: Vec<Hit> = Vec::new();
     for id in run(store, &sq.query) {
         let Some(entity) = store.get(id) else { continue };
-        let text = searchable(store, entity);
+        let text = searchable(store, entity, &extracted(entity));
 
         let mut score = 0.0f32;
         let mut best_weight = -1.0f32;
@@ -282,10 +293,19 @@ struct Searchable {
     content: String,
 }
 
-fn searchable(store: &Store, entity: &Entity) -> Searchable {
+fn searchable(store: &Store, entity: &Entity, extracted: &str) -> Searchable {
     let flatten = |v: &Value| display(store, v).to_lowercase();
     let name = entity.get(props::NAME).map(flatten).unwrap_or_default();
-    let content = entity.get(props::CONTENT).map(flatten).unwrap_or_default();
+    let mut content = entity.get(props::CONTENT).map(flatten).unwrap_or_default();
+
+    // A file's cached extracted text joins the CONTENT tier — a PDF is
+    // findable by its words, scored like body text, never a stored cell.
+    if !extracted.is_empty() {
+        if !content.is_empty() {
+            content.push(' ');
+        }
+        content.push_str(&extracted.to_lowercase());
+    }
 
     let mut cells = String::new();
     for cell in &entity.cells {

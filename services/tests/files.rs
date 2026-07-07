@@ -2,7 +2,7 @@
 //! never moved or copied; its bytes stay exactly where they are.
 
 use lotus_core::*;
-use lotus_services::{content, files, property_id, seed_if_fresh};
+use lotus_services::{content, files, property_id, search, seed_if_fresh};
 
 fn fresh_session(name: &str) -> (std::path::PathBuf, Session) {
     let path = std::env::temp_dir().join(name);
@@ -82,6 +82,107 @@ fn a_file_cell_is_never_hand_typed() {
     // set through the string seam is refused — a file is added by reference.
     let r = content::set_property(&mut session, note, "file", "/Users/k/report.pdf");
     assert!(r.is_err());
+    cleanup(&boxpath);
+}
+
+#[test]
+fn extraction_is_a_rebuildable_cache_off_the_log() {
+    let (boxpath, mut session) = fresh_session("lotus_files_extract.log");
+    let doc = std::env::temp_dir().join("lotus_files_extract.md");
+    std::fs::write(&doc, b"the quarterly telescope budget").unwrap();
+    let id = files::add_file(&mut session, doc.to_str().unwrap(), DateTime::date(2026, 7, 7)).unwrap();
+
+    let cache = files::cache_dir(boxpath.to_str().unwrap());
+    let file_prop = property_id(session.store(), "file").unwrap();
+    let file = match session.store().get(id).unwrap().get(file_prop) {
+        Some(Value::File(f)) => f.clone(),
+        _ => panic!("no file cell"),
+    };
+
+    // Miss → extracts the plain text and writes cache/<hex>/text.
+    let text = files::extracted_text(&cache, &file, "md");
+    assert_eq!(text, "the quarterly telescope budget");
+    // Nothing was written to the log — no CONTENT cell appeared.
+    assert!(session.store().get(id).unwrap().get(props::CONTENT).is_none());
+
+    // Rebuildable: delete the whole cache dir; re-extraction is identical.
+    std::fs::remove_dir_all(&cache).unwrap();
+    assert_eq!(files::extracted_text(&cache, &file, "md"), "the quarterly telescope budget");
+
+    // A deferred format (pdf) extracts to empty for now (the 7d stub) — a
+    // distinct file so it's a cache miss, not the md hit above.
+    let doc2 = std::env::temp_dir().join("lotus_files_extract2.bin");
+    std::fs::write(&doc2, b"%PDF-1.4 not really parsed yet").unwrap();
+    let file2 = FileRef {
+        path: doc2.to_str().unwrap().to_string(),
+        hash: files::hash_file(doc2.to_str().unwrap()).unwrap(),
+    };
+    assert_eq!(files::extracted_text(&cache, &file2, "pdf"), "");
+
+    let _ = std::fs::remove_file(&doc);
+    let _ = std::fs::remove_file(&doc2);
+    let _ = std::fs::remove_dir_all(&cache);
+    cleanup(&boxpath);
+}
+
+#[test]
+fn a_file_is_found_by_a_word_only_in_its_extracted_text() {
+    let (boxpath, mut session) = fresh_session("lotus_files_findtext.log");
+    let doc = std::env::temp_dir().join("lotus_files_findtext.md");
+    std::fs::write(&doc, b"minutes about the telescope procurement").unwrap();
+    let id = files::add_file(&mut session, doc.to_str().unwrap(), DateTime::date(2026, 7, 7)).unwrap();
+
+    let cache = files::cache_dir(boxpath.to_str().unwrap());
+    let file_prop = property_id(session.store(), "file").unwrap();
+    let format_prop = property_id(session.store(), "format").unwrap();
+
+    // "telescope" is nowhere in the name — only in the file's body.
+    let sq = search::parse(session.store(), "telescope");
+    let hits = search::search(session.store(), &sq, 50, |e: &Entity| match e.get(file_prop) {
+        Some(Value::File(f)) => {
+            let fmt = match e.get(format_prop) {
+                Some(Value::Text(t)) => t.as_str(),
+                _ => "",
+            };
+            files::extracted_text(&cache, f, fmt)
+        }
+        _ => String::new(),
+    });
+    assert!(hits.iter().any(|h| h.id == id), "found by a word in the extracted text");
+    // And no cell was ever added — the log carries only the file reference.
+    assert!(session.store().get(id).unwrap().get(props::CONTENT).is_none());
+
+    let _ = std::fs::remove_file(&doc);
+    let _ = std::fs::remove_dir_all(&cache);
+    cleanup(&boxpath);
+}
+
+#[test]
+fn resync_reports_unchanged_changed_and_broken() {
+    let (boxpath, mut session) = fresh_session("lotus_files_resync.log");
+    let doc = std::env::temp_dir().join("lotus_files_resync.txt");
+    std::fs::write(&doc, b"version one").unwrap();
+    let path = doc.to_str().unwrap().to_string();
+    let id = files::add_file(&mut session, &path, DateTime::date(2026, 7, 7)).unwrap();
+
+    // Untouched → Unchanged.
+    assert_eq!(files::resync_file(&mut session, id).unwrap(), files::Resync::Unchanged);
+
+    // Edited bytes → Changed, and the file cell now carries the new hash.
+    std::fs::write(&doc, b"version two is different").unwrap();
+    let fresh = files::hash_file(&path).unwrap();
+    assert_eq!(files::resync_file(&mut session, id).unwrap(), files::Resync::Changed(fresh));
+    let file_prop = property_id(session.store(), "file").unwrap();
+    match session.store().get(id).unwrap().get(file_prop) {
+        Some(Value::File(f)) => assert_eq!(f.hash, fresh),
+        _ => panic!("no file cell"),
+    }
+
+    // Vanished path → Broken (distinct from a change), no re-extract.
+    std::fs::remove_file(&doc).unwrap();
+    assert_eq!(files::resync_file(&mut session, id).unwrap(), files::Resync::Broken);
+
+    let _ = std::fs::remove_dir_all(files::cache_dir(boxpath.to_str().unwrap()));
     cleanup(&boxpath);
 }
 

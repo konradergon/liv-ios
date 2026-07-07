@@ -87,6 +87,19 @@ uint64_t lotus_create_note_at(const char *path);
    id, 0 on failure (unreadable path, busy box). */
 uint64_t lotus_add_file_at(const char *path, const char *file_path);
 
+/* Re-hash a file entity's referenced path; if the bytes changed, replace
+   the file cell (one transaction — a changed hash is the integration).
+   1 changed & rewritten, 0 unchanged, -1 the path no longer resolves
+   (broken reference). Called when a file is opened, never on a timer. */
+int32_t lotus_resync_file_at(const char *path, uint64_t id);
+
+/* A file entity's extracted plain text (the read-only preview), from the
+   hash-keyed cache (extracting on a miss; the cache is rebuildable, never
+   part of the log). Empty when there's no extractable text or the file is
+   broken. Free with lotus_string_free; NULL only when the box is
+   unavailable. */
+char *lotus_extracted_text_at(const char *path, uint64_t id);
+
 /* Birth of a workspace: Create + type + name (+ parent reference and a
    trailing order), one transaction. parent 0 = top level. Returns the
    id, 0 on failure. */

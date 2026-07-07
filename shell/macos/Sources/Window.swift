@@ -287,6 +287,33 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Re-hash a file's referenced path (on open, never a timer). A changed
+    /// hash is rewritten and the snapshot refreshed; `done(true)` on a change.
+    func resyncFile(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
+        boxQueue.async {
+            let changed = lotus_resync_file_at(self.path, id) == 1
+            DispatchQueue.main.async {
+                if changed { self.refresh() }
+                done(changed)
+            }
+        }
+    }
+
+    /// A file entity's extracted plain text (rung 2), from the hash-keyed
+    /// cache (extracting on a miss). Empty when there's no extractable text.
+    func extractedText(_ id: UInt64, done: @escaping (String) -> Void) {
+        boxQueue.async {
+            let text: String
+            if let ptr = lotus_extracted_text_at(self.path, id) {
+                text = String(cString: ptr)
+                lotus_string_free(ptr)
+            } else {
+                text = ""
+            }
+            DispatchQueue.main.async { done(text) }
+        }
+    }
+
     func createWorkspace(name: String, parent: UInt64, done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
             let id = lotus_create_workspace_at(self.path, name, parent)
@@ -1980,6 +2007,9 @@ struct BaseFileView: View {
     @ObservedObject var model: BoxModel
     let id: UInt64
 
+    @State private var preview: String = ""
+    @State private var previewLoaded = false
+
     private var entity: EntityRow? { model.entity(id) }
     private var filePath: String? {
         entity?.cells.first(where: { $0.kind == "file" })?.value
@@ -2037,6 +2067,24 @@ struct BaseFileView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
+
+                    // Rung 2 — the extracted-text preview (from the cache).
+                    Divider().padding(.top, 4)
+                    if !previewLoaded {
+                        Text("Reading…")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    } else if preview.isEmpty {
+                        Text("No text preview available.")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text(preview)
+                            .font(.system(size: 12.5))
+                            .foregroundColor(.primary.opacity(0.9))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .padding(28)
                 .padding(.top, 8)
@@ -2051,6 +2099,16 @@ struct BaseFileView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background)
+        // On open: re-hash (a changed file re-extracts), then load the
+        // preview. No timer — freshness is per-open.
+        .onAppear {
+            model.resyncFile(id) { _ in
+                model.extractedText(id) { text in
+                    preview = text
+                    previewLoaded = true
+                }
+            }
+        }
     }
 }
 

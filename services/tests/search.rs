@@ -162,14 +162,14 @@ fn fixture() -> Fx {
 
 fn ids(fx: &Fx, raw: &str) -> Vec<Id> {
     let sq = search::parse(&fx.store, raw);
-    search::search(&fx.store, &sq, 50).into_iter().map(|h| h.id).collect()
+    search::search(&fx.store, &sq, 50, |_| String::new()).into_iter().map(|h| h.id).collect()
 }
 
 #[test]
 fn ranking_name_beats_cell_beats_content() {
     let fx = fixture();
     let sq = search::parse(&fx.store, "report");
-    let hits = search::search(&fx.store, &sq, 50);
+    let hits = search::search(&fx.store, &sq, 50, |_| String::new());
     let order: Vec<Id> = hits.iter().map(|h| h.id).collect();
 
     // whole name > leading prefix > word-boundary > another cell > body.
