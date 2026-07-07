@@ -682,8 +682,21 @@ final class LotusTextView: NSTextView {
         if let m = line.range(of: #"^\d+[.)] "#, options: .regularExpression) {
             return (.ordered(depth: 0), line.distance(from: line.startIndex, to: m.upperBound), true)
         }
+        // Callout before the plain quote: "> [!warning] " → a callout.
+        if let m = line.range(of: #"^> \[!([A-Za-z]+)\] ?"#, options: .regularExpression) {
+            let kind = line[m].dropFirst(4).prefix(while: { $0 != "]" })
+            return (.callout(kind: String(kind)), line.distance(from: line.startIndex, to: m.upperBound), false)
+        }
         if line.hasPrefix("> ") {
             return (.quote, 2, false)
+        }
+        // Fence / rule fire on the third char, no trailing space: the
+        // whole head is the trigger.
+        if line == "```" {
+            return (.code(lang: nil), 3, false)
+        }
+        if line == "---" || line == "***" || line == "___" {
+            return (.rule, 3, false)
         }
         return nil
     }
@@ -825,6 +838,122 @@ final class LotusTextView: NSTextView {
     }
 
     override func changeFont(_ sender: Any?) {}
+
+    // MARK: block backgrounds (code / callout / rule), drawn native
+
+    /// Native block decoration: a full-column tinted background for code
+    /// and callout paragraphs (square edges, so consecutive lines read as
+    /// one block), a colored left border for callouts, and a hairline for
+    /// a rule. Drawn behind the text — no inline widget, no edit-inside
+    /// flip, so the caret never traverses a hidden glyph.
+    override func draw(_ dirtyRect: NSRect) {
+        drawBlockBackgrounds()
+        super.draw(dirtyRect)
+    }
+
+    private func drawBlockBackgrounds() {
+        guard let lm = layoutManager, let tc = textContainer, let storage = textStorage,
+            storage.length > 0
+        else { return }
+        let origin = textContainerOrigin
+        let ns = storage.string as NSString
+        let left = textContainerInset.width
+        let width = Self.measure
+        var loc = 0
+        while loc < storage.length {
+            let para = ns.paragraphRange(for: NSRange(location: loc, length: 0))
+            loc = max(NSMaxRange(para), loc + 1)
+            let probe = min(para.location, storage.length - 1)
+            guard
+                let block = (storage.attribute(.lotusBlock, at: probe, effectiveRange: nil)
+                    as? BlockBox)?.block
+            else { continue }
+            let glyphs = lm.glyphRange(forCharacterRange: para, actualCharacterRange: nil)
+            var r = lm.boundingRect(forGlyphRange: glyphs, in: tc)
+            r.origin.x = left - 8
+            r.origin.y += origin.y
+            r.size.width = width + 16
+            switch block {
+            case .code:
+                NSColor.labelColor.withAlphaComponent(0.045).setFill()
+                r.fill()
+                NSColor.secondaryLabelColor.withAlphaComponent(0.35).setFill()
+                NSRect(x: left - 8, y: r.minY, width: 2, height: r.height).fill()
+            case .callout(let kind):
+                let color = calloutColor(kind)
+                color.withAlphaComponent(0.09).setFill()
+                r.fill()
+                color.setFill()
+                NSRect(x: left - 8, y: r.minY, width: 3, height: r.height).fill()
+            case .rule:
+                NSColor.separatorColor.setFill()
+                NSRect(x: left, y: r.midY - 0.5, width: width, height: 1).fill()
+            default:
+                break
+            }
+        }
+    }
+
+    private func calloutColor(_ kind: String) -> NSColor {
+        switch kind.lowercased() {
+        case "warning", "caution", "attention": return NSColor(hex: "#e37400")
+        case "danger", "error", "fail": return NSColor(hex: "#d93025")
+        case "success", "check", "done", "tip": return NSColor(hex: "#1f9d57")
+        default: return NSColor(hex: "#2f7d6b")  // the lake-green accent
+        }
+    }
+
+    // MARK: Enter — block continuation and exit
+
+    /// Enter's block behavior: headings and quotes drop to body; a list
+    /// or task continues (an empty item exits to body instead of adding a
+    /// blank one); code continues code.
+    override func insertNewline(_ sender: Any?) {
+        let para = currentParagraphRange()
+        let start = contentStart(of: para)
+        let block = paragraphBlock(at: start)
+        let contentLen = para.length - (start - para.location)
+
+        let isListLike: Bool
+        switch block {
+        case .bullet, .ordered, .task: isListLike = true
+        default: isListLike = false
+        }
+        if isListLike && contentLen == 0 {
+            // Empty list/task item: exit to body on this line, no newline.
+            deleteBackward(sender)
+            return
+        }
+        super.insertNewline(sender)
+        let next: BlockJSON
+        switch block {
+        case .heading, .quote: next = .body
+        case .bullet: next = .bullet(depth: 0)
+        case .ordered: next = .ordered(depth: 0)
+        case .task: next = .task(depth: 0, done: false)
+        case .code: next = .code(lang: nil)
+        default: next = .body
+        }
+        startFreshParagraph(next)
+    }
+
+    /// Set up the empty paragraph the caret now sits in as `block`: a
+    /// derived marker for a list/task, the paragraph attributes, and
+    /// typing attributes for what comes next.
+    private func startFreshParagraph(_ block: BlockJSON) {
+        guard let storage = textStorage else { return }
+        let caret = selectedRange().location
+        var start = caret
+        if let context = pillContext, let marker = SpanCodec.marker(for: block, context: context) {
+            storage.insert(marker, at: caret)
+            start = caret + marker.length
+        }
+        let para = (storage.string as NSString).paragraphRange(
+            for: NSRange(location: start, length: 0))
+        applyBlockAttributes(block, to: para, storage: storage)
+        setSelectedRange(NSRange(location: start, length: 0))
+        typingAttributes = SpanCodec.attributes(block: block, marks: [])
+    }
 
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
