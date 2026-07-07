@@ -109,10 +109,29 @@ struct SearchHit: Codable, Identifiable {
     let field: String
 }
 
-/// The lotus_search_at payload. facets are decoded in 6d; extra keys are
-/// ignored, so this decodes today and grows later.
+/// One facet value: how many results it *would* yield under the current
+/// filter (Liv's one great idea), its rendered label, and whether the query
+/// already constrains this facet to it. The raw serde Value is not decoded —
+/// the shell pivots by name, not by id.
+struct SearchFacetValue: Codable, Identifiable {
+    let label: String
+    let count: Int
+    let active: Bool
+    var id: String { label }
+}
+
+/// One facetable property and its candidate values, count-descending.
+struct SearchFacet: Codable, Identifiable {
+    let property: UInt64
+    let label: String
+    let values: [SearchFacetValue]
+    var id: UInt64 { property }
+}
+
+/// The lotus_search_at payload — ranked hits + facet counts.
 struct SearchResult: Codable {
     var hits: [SearchHit] = []
+    var facets: [SearchFacet] = []
 
     static let empty = SearchResult()
 }
@@ -825,7 +844,7 @@ struct WindowChrome: View {
     @ViewBuilder
     private var deskContent: some View {
         if !query.isEmpty {
-            ResultsView(model: model, query: query, selection: $selection)
+            ResultsView(model: model, query: $query, selection: $selection)
         } else {
             switch lens {
             case .everything:
@@ -1539,6 +1558,80 @@ struct EverythingView: View {
 
 // MARK: - Results (search is navigation)
 
+/// The facet chips above the results: each value shows its hypothetical
+/// count under the current filter, and clicking it pivots the search by
+/// splicing its `key:value` token into the query string — the field and the
+/// chips are one source of truth (parse-first, ported from Liv). Native
+/// pills, lake-green when active — not Liv's rainbow chrome.
+struct FacetBar: View {
+    let facets: [SearchFacet]
+    @Binding var query: String
+
+    var body: some View {
+        if !facets.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(facets) { facet in
+                        HStack(spacing: 5) {
+                            Text(facet.label.capitalized)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.secondary)
+                            ForEach(facet.values) { value in
+                                FacetChip(value: value) { toggle(facet.label, value) }
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .padding(.bottom, 8)
+        }
+    }
+
+    /// Single-select pivot: drop any existing qualifier for this facet, then
+    /// add the clicked value unless it was already the active one (toggle
+    /// off). Re-running the same string the field shows keeps them in sync.
+    private func toggle(_ key: String, _ value: SearchFacetValue) {
+        let key = key.lowercased()
+        var tokens = query.split(separator: " ").map(String.init)
+        tokens.removeAll { $0.lowercased().hasPrefix("\(key):") }
+        if !value.active {
+            tokens.append("\(key):\(value.label.lowercased())")
+        }
+        query = tokens.joined(separator: " ")
+    }
+}
+
+/// One facet value pill: label + hypothetical count, lake-green when active.
+struct FacetChip: View {
+    let value: SearchFacetValue
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(value.label)
+                    .font(.system(size: 11.5))
+                Text("\(value.count)")
+                    .font(.system(size: 10))
+                    .foregroundColor(value.active ? Theme.accent : .secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .foregroundColor(value.active ? Theme.accent : .primary)
+            .background(
+                Capsule().fill(value.active ? Theme.accent.opacity(0.14) : Color.primary.opacity(0.05))
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    value.active ? Theme.accent.opacity(0.6) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(value.active ? "Remove filter" : "Filter to \(value.label)")
+    }
+}
+
 /// The one search field: top of the sidebar, ⌘F focuses it, its text is the
 /// query the results lens renders in place. Native rounded field, lake-green
 /// focus ring — search is navigation, not an overlay.
@@ -1586,7 +1679,7 @@ struct SearchField: View {
 
 struct ResultsView: View {
     @ObservedObject var model: BoxModel
-    let query: String
+    @Binding var query: String
     @Binding var selection: UInt64?
 
     var body: some View {
@@ -1598,10 +1691,12 @@ struct ResultsView: View {
         let related = !answered.isEmpty && (query.hasPrefix(answered) || answered.hasPrefix(query))
         let fresh = answered == query
         let hits = related ? model.searchResult.hits : []
+        let facets = related ? model.searchResult.facets : []
         let rows = model.rows(hits.map(\.id))
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 LensHeader(title: "Results", subtitle: subtitle(hits.count))
+                FacetBar(facets: facets, query: $query)
                 ForEach(rows) { row in
                     EntityLine(row: row, selected: selection == row.id) {
                         selection = row.id
