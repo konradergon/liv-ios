@@ -1630,7 +1630,11 @@ struct InspectorPane: View {
     @Binding var selection: UInt64?
 
     /// Cells the header or the editor owns — not editable rows here.
-    static let reserved: Set<String> = ["name", "content", "created", "type"]
+    /// bookmarked/archived are the header's own actions, so they are not
+    /// repeated as toggle rows (nor offered again in Add property).
+    static let reserved: Set<String> = [
+        "name", "content", "created", "type", "bookmarked", "archived",
+    ]
 
     var body: some View {
         ScrollView {
@@ -1818,7 +1822,9 @@ struct EditableText: View {
             .onAppear { draft = cell.value }
             // An external refresh must not clobber a value being typed.
             .onChange(of: cell.value) { if !focused { draft = cell.value } }
-            .onSubmit { commit() }
+            // Return blurs; the single commit rides the focus change, so
+            // Enter and click-away never both fire a set for one edit.
+            .onSubmit { focused = false }
             .onChange(of: focused) { if !focused { commit() } }
     }
 
@@ -1828,7 +1834,13 @@ struct EditableText: View {
         if trimmed.isEmpty {
             model.unset(entity, property: cell.property)
         } else {
-            model.set(entity, property: cell.property, value: trimmed)
+            // A value the seam can't parse (a bad date, a non-number)
+            // beeps and changes nothing — revert the draft to what is
+            // stored so the field never lingers showing an uncommitted,
+            // invalid string.
+            model.set(entity, property: cell.property, value: trimmed) { ok in
+                if !ok { draft = cell.value }
+            }
         }
     }
 }
@@ -1867,7 +1879,11 @@ struct AddPropertyRow: View {
     var body: some View {
         let present = Set(entity.cells.map(\.property))
         let addable = model.properties().filter {
-            !present.contains($0.name) && !InspectorPane.reserved.contains($0.name)
+            !present.contains($0.name)
+                && !InspectorPane.reserved.contains($0.name)
+                // A reference needs the entity picker (a follow-up); until
+                // then it has no value to seed, so it isn't offered here.
+                && $0.kind != "reference" && $0.kind != "file"
         }
         if !addable.isEmpty {
             Menu {
@@ -1895,19 +1911,24 @@ struct AddPropertyRow: View {
         switch property.kind {
         case "bool": value = "false"
         case "number": value = "0"
-        case "select": value = property.options.first?.name ?? ""
+        case "select":
+            // A select with no options has nothing to hold; skip it.
+            guard let first = property.options.first?.name else { return }
+            value = first
         case "datetime": value = Self.today()
+        // text / richtext — an empty cell is legitimate and editable; the
+        // seam accepts an empty value, so no placeholder is invented.
         default: value = ""
         }
-        guard !(property.kind == "select" && value.isEmpty) else { return }
-        // An empty text cell is legitimate and immediately editable.
-        model.set(entity.id, property: property.name, value: value.isEmpty ? " " : value)
+        model.set(entity.id, property: property.name, value: value)
     }
 
+    /// Today as an ASCII Gregorian yyyy-MM-dd string — built from the
+    /// Gregorian-pinned Civil.todayYMD, never a locale-formatted date, so
+    /// a Buddhist/Japanese system calendar can't seed a wrong-era year.
     private static func today() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
+        let ymd = Civil.todayYMD
+        return String(format: "%04d-%02d-%02d", ymd / 10_000, (ymd / 100) % 100, ymd % 100)
     }
 }
 

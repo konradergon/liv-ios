@@ -212,12 +212,17 @@ fn cell_target(value: &Value) -> Option<Id> {
     }
 }
 
-/// Every property definition, with each select's options — the catalog
-/// the inspector renders controls from.
+/// The user-facing property definitions, with each select's options —
+/// the catalog the inspector renders controls from. The core's own
+/// schema vocabulary (name, type, working, private, value-kind, options,
+/// expected, …) lives at the reserved ids below FIRST_USER_ID and is
+/// plumbing, never something a hand sets on a note, so it is excluded:
+/// offering `working` would let an edit silently hide the entity from
+/// every view.
 fn build_properties(store: &Store) -> Vec<PropertyRow> {
     let mut rows: Vec<PropertyRow> = store
         .entities()
-        .filter(|e| !e.trashed)
+        .filter(|e| !e.trashed && e.id >= props::FIRST_USER_ID)
         .filter_map(|e| {
             let kind = property_kind(store, e.id)?;
             let name = match e.get(props::NAME) {
@@ -1406,6 +1411,41 @@ mod tests {
         let session = Session::open(&path).unwrap();
         assert_eq!(session.store().history().iter().filter(|t| t.label == "edit").count(), 1);
         drop(session);
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn the_catalog_offers_user_properties_not_schema_plumbing() {
+        let (path, c_path) = fresh_box("lotus_ffi_catalog.log");
+        let text = CString::new("a note").unwrap();
+        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let names: Vec<String> = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap().to_string())
+            .collect();
+
+        // The library properties a hand legitimately sets are offered.
+        assert!(names.contains(&"due".to_string()));
+        assert!(names.contains(&"status".to_string()));
+
+        // The core's own schema vocabulary (ids below FIRST_USER_ID) is
+        // plumbing, never addable: setting `working` would hide the note
+        // from every view. None of it reaches the catalog.
+        for plumbing in [
+            "working", "private", "value-kind", "options", "expected",
+            "default-view", "query", "renderer", "config", "external-id",
+            "name", "type",
+        ] {
+            assert!(
+                !names.contains(&plumbing.to_string()),
+                "schema property {plumbing} leaked into the inspector catalog"
+            );
+        }
 
         cleanup(&path);
     }
