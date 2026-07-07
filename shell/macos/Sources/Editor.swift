@@ -276,6 +276,10 @@ enum SpanCodec {
         case .bullet: cell = BlockMarkerCell(kind: .bullet)
         case .ordered: cell = BlockMarkerCell(kind: .ordered)
         case .task(_, let done): cell = BlockMarkerCell(kind: .task(done: done))
+        // A rule is an empty paragraph drawn as a hairline; the marker
+        // char both carries its block (so it round-trips at any position,
+        // including the first line) and draws the line.
+        case .rule: cell = BlockMarkerCell(kind: .rule)
         default: return nil
         }
         let attachment = NSTextAttachment()
@@ -407,7 +411,7 @@ enum SpanCodec {
 
 final class BlockMarkerCell: NSTextAttachmentCell {
     enum Kind: Equatable {
-        case bullet, ordered, task(done: Bool)
+        case bullet, ordered, task(done: Bool), rule
     }
     let kind: Kind
 
@@ -420,7 +424,11 @@ final class BlockMarkerCell: NSTextAttachmentCell {
     private var markerFont: NSFont { NSFont.preferredFont(forTextStyle: .body) }
 
     override func cellSize() -> NSSize {
-        NSSize(width: 18, height: markerFont.boundingRectForFont.height)
+        // A rule spans the writing column; a list marker is a small gutter.
+        if case .rule = kind {
+            return NSSize(width: LotusTextView.measure, height: markerFont.boundingRectForFont.height)
+        }
+        return NSSize(width: 18, height: markerFont.boundingRectForFont.height)
     }
     override func cellBaselineOffset() -> NSPoint {
         NSPoint(x: 0, y: markerFont.descender)
@@ -428,6 +436,9 @@ final class BlockMarkerCell: NSTextAttachmentCell {
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
         switch kind {
+        case .rule:
+            NSColor.separatorColor.setFill()
+            NSRect(x: cellFrame.minX, y: cellFrame.midY - 0.5, width: cellFrame.width, height: 1).fill()
         case .bullet:
             let dot = NSRect(x: cellFrame.minX + 4, y: cellFrame.midY - 2, width: 4, height: 4)
             NSColor.secondaryLabelColor.setFill()
@@ -696,7 +707,7 @@ final class LotusTextView: NSTextView {
             return (.code(lang: nil), 3, false)
         }
         if line == "---" || line == "***" || line == "___" {
-            return (.rule, 3, false)
+            return (.rule, 3, true)  // the hairline is a derived marker
         }
         return nil
     }
@@ -786,39 +797,16 @@ final class LotusTextView: NSTextView {
     override func deleteBackward(_ sender: Any?) {
         let sel = selectedRange()
         let para = currentParagraphRange()
-        if sel.length == 0, sel.location == contentStart(of: para), let storage = textStorage {
+        if sel.length == 0, sel.location == contentStart(of: para) {
             let block = paragraphBlock(at: contentStart(of: para))
             let demoted: BlockJSON?
             switch block {
-            case .task: demoted = .bullet(depth: 0)
+            case .task: demoted = .bullet(depth: 0)  // one rung at a time
             case .body: demoted = nil
             default: demoted = .body
             }
-            if let demoted = demoted, shouldChangeText(in: para, replacementString: nil) {
-                storage.beginEditing()
-                // Swap the leading marker: strip the old one, add the new
-                // block's marker (bullet after a task; none for body).
-                if para.length > 0,
-                    (storage.attribute(.attachment, at: para.location, effectiveRange: nil)
-                        as? NSTextAttachment)?.attachmentCell is BlockMarkerCell
-                {
-                    storage.replaceCharacters(
-                        in: NSRange(location: para.location, length: 1), with: "")
-                }
-                var start = para.location
-                if let context = pillContext,
-                    let marker = SpanCodec.marker(for: demoted, context: context)
-                {
-                    storage.insert(marker, at: para.location)
-                    start += marker.length
-                }
-                let p = (storage.string as NSString).paragraphRange(
-                    for: NSRange(location: start, length: 0))
-                applyBlockAttributes(demoted, to: p, storage: storage)
-                storage.endEditing()
-                didChangeText()
-                setSelectedRange(NSRange(location: start, length: 0))
-                typingAttributes = SpanCodec.attributes(block: demoted, marks: [])
+            if let demoted = demoted {
+                demoteParagraph(to: demoted)
                 return
             }
         }
@@ -847,11 +835,16 @@ final class LotusTextView: NSTextView {
     /// a rule. Drawn behind the text — no inline widget, no edit-inside
     /// flip, so the caret never traverses a hidden glyph.
     override func draw(_ dirtyRect: NSRect) {
-        drawBlockBackgrounds()
+        drawBlockBackgrounds(dirtyRect)
         super.draw(dirtyRect)
     }
 
-    private func drawBlockBackgrounds() {
+    /// Code and callout paragraphs get a full-column tinted background
+    /// (square edges, so a multi-line block reads as one) with a left
+    /// accent/border. Rules draw themselves (a marker cell). Only the
+    /// paragraphs intersecting dirtyRect are visited, so a repaint stays
+    /// O(visible), not O(document).
+    private func drawBlockBackgrounds(_ dirtyRect: NSRect) {
         guard let lm = layoutManager, let tc = textContainer, let storage = textStorage,
             storage.length > 0
         else { return }
@@ -859,12 +852,24 @@ final class LotusTextView: NSTextView {
         let ns = storage.string as NSString
         let left = textContainerInset.width
         let width = Self.measure
-        var loc = 0
-        while loc < storage.length {
-            let para = ns.paragraphRange(for: NSRange(location: loc, length: 0))
-            loc = max(NSMaxRange(para), loc + 1)
-            let probe = min(para.location, storage.length - 1)
-            guard
+        // The character range the dirty band touches (offset into container
+        // coords), padded a paragraph each way.
+        let band = dirtyRect.offsetBy(dx: -origin.x, dy: -origin.y)
+        let dirtyGlyphs = lm.glyphRange(forBoundingRect: band, in: tc)
+        var range = lm.characterRange(forGlyphRange: dirtyGlyphs, actualGlyphRange: nil)
+        range = ns.paragraphRange(for: range)
+        var loc = range.location
+        let end = min(NSMaxRange(range), storage.length)
+        while loc <= end {
+            let para = ns.paragraphRange(for: NSRange(location: min(loc, storage.length), length: 0))
+            let next = max(NSMaxRange(para), loc + 1)
+            defer { loc = next }
+            if loc >= storage.length && para.length == 0 { break }
+            // An empty paragraph carries its block on the leading newline.
+            let probe =
+                para.length > 0
+                ? para.location : (para.location > 0 ? para.location - 1 : para.location)
+            guard probe < storage.length,
                 let block = (storage.attribute(.lotusBlock, at: probe, effectiveRange: nil)
                     as? BlockBox)?.block
             else { continue }
@@ -885,9 +890,6 @@ final class LotusTextView: NSTextView {
                 r.fill()
                 color.setFill()
                 NSRect(x: left - 8, y: r.minY, width: 3, height: r.height).fill()
-            case .rule:
-                NSColor.separatorColor.setFill()
-                NSRect(x: left, y: r.midY - 0.5, width: width, height: 1).fill()
             default:
                 break
             }
@@ -907,12 +909,24 @@ final class LotusTextView: NSTextView {
 
     /// Enter's block behavior: headings and quotes drop to body; a list
     /// or task continues (an empty item exits to body instead of adding a
-    /// blank one); code continues code.
+    /// blank one); code continues code. The whole newline — separator,
+    /// the new paragraph's marker, its attributes — is ONE edit, so ⌘Z
+    /// undoes it whole and no marker is ever orphaned.
     override func insertNewline(_ sender: Any?) {
+        guard let storage = textStorage else {
+            super.insertNewline(sender)
+            return
+        }
+        let sel = selectedRange()
         let para = currentParagraphRange()
         let start = contentStart(of: para)
         let block = paragraphBlock(at: start)
-        let contentLen = para.length - (start - para.location)
+        let ns = storage.string as NSString
+        // Content excludes the leading marker AND the trailing newline, so
+        // an empty item is empty on ANY line, not only the last.
+        let terminator =
+            (para.length > 0 && ns.character(at: NSMaxRange(para) - 1) == 0x0A) ? 1 : 0
+        let contentLen = para.length - (start - para.location) - terminator
 
         let isListLike: Bool
         switch block {
@@ -920,11 +934,12 @@ final class LotusTextView: NSTextView {
         default: isListLike = false
         }
         if isListLike && contentLen == 0 {
-            // Empty list/task item: exit to body on this line, no newline.
-            deleteBackward(sender)
+            // Exit the list: this line becomes body in one step (a task
+            // exits to body, not a bullet — one Enter clears it).
+            demoteParagraph(to: .body)
             return
         }
-        super.insertNewline(sender)
+
         let next: BlockJSON
         switch block {
         case .heading, .quote: next = .body
@@ -934,23 +949,54 @@ final class LotusTextView: NSTextView {
         case .code: next = .code(lang: nil)
         default: next = .body
         }
-        startFreshParagraph(next)
+
+        // The separator newline carries the block it OPENS (the codec's
+        // own convention). A marker leads the new paragraph.
+        let insertion = NSMutableAttributedString(
+            string: "\n", attributes: SpanCodec.attributes(block: next, marks: []))
+        var caretOffset = 1
+        if let context = pillContext, let marker = SpanCodec.marker(for: next, context: context) {
+            insertion.append(marker)
+            caretOffset += marker.length
+        }
+        guard shouldChangeText(in: sel, replacementString: insertion.string) else { return }
+        storage.beginEditing()
+        storage.replaceCharacters(in: sel, with: insertion)
+        // Restyle the new paragraph (its moved text, if Enter split a line)
+        // to `next` — mid-heading Enter makes the tail body, not heading.
+        let newPara = (storage.string as NSString).paragraphRange(
+            for: NSRange(location: sel.location + caretOffset, length: 0))
+        applyBlockAttributes(next, to: newPara, storage: storage)
+        storage.endEditing()
+        didChangeText()
+        setSelectedRange(NSRange(location: sel.location + caretOffset, length: 0))
+        typingAttributes = SpanCodec.attributes(block: next, marks: [])
     }
 
-    /// Set up the empty paragraph the caret now sits in as `block`: a
-    /// derived marker for a list/task, the paragraph attributes, and
-    /// typing attributes for what comes next.
-    private func startFreshParagraph(_ block: BlockJSON) {
+    /// Re-type the caret paragraph to `block` in one edit — strip its
+    /// leading marker, add the new block's marker, restyle. Shared by
+    /// backspace-demotion and Enter-exit.
+    private func demoteParagraph(to block: BlockJSON) {
         guard let storage = textStorage else { return }
-        let caret = selectedRange().location
-        var start = caret
-        if let context = pillContext, let marker = SpanCodec.marker(for: block, context: context) {
-            storage.insert(marker, at: caret)
-            start = caret + marker.length
+        let para = currentParagraphRange()
+        guard shouldChangeText(in: para, replacementString: nil) else { return }
+        storage.beginEditing()
+        if para.length > 0,
+            (storage.attribute(.attachment, at: para.location, effectiveRange: nil)
+                as? NSTextAttachment)?.attachmentCell is BlockMarkerCell
+        {
+            storage.replaceCharacters(in: NSRange(location: para.location, length: 1), with: "")
         }
-        let para = (storage.string as NSString).paragraphRange(
+        var start = para.location
+        if let context = pillContext, let marker = SpanCodec.marker(for: block, context: context) {
+            storage.insert(marker, at: para.location)
+            start += marker.length
+        }
+        let p = (storage.string as NSString).paragraphRange(
             for: NSRange(location: start, length: 0))
-        applyBlockAttributes(block, to: para, storage: storage)
+        applyBlockAttributes(block, to: p, storage: storage)
+        storage.endEditing()
+        didChangeText()
         setSelectedRange(NSRange(location: start, length: 0))
         typingAttributes = SpanCodec.attributes(block: block, marks: [])
     }
