@@ -99,6 +99,24 @@ struct Snapshot: Codable {
     let entities: [EntityRow]
 }
 
+// MARK: - search (its own seam, its own rank order)
+
+/// One ranked hit: a bare id (the shell already holds the entity from the
+/// snapshot), a score, and where it matched.
+struct SearchHit: Codable, Identifiable {
+    let id: UInt64
+    let score: Double
+    let field: String
+}
+
+/// The lotus_search_at payload. facets are decoded in 6d; extra keys are
+/// ignored, so this decodes today and grows later.
+struct SearchResult: Codable {
+    var hits: [SearchHit] = []
+
+    static let empty = SearchResult()
+}
+
 // MARK: - the model: refresh-after-every-act, never hold the box
 
 struct BoxFault: Codable {
@@ -113,6 +131,12 @@ final class BoxModel: ObservableObject {
     /// A box that cannot open for a reason retrying will not fix —
     /// corrupt, wrong version, io. Rendered as a blocking notice.
     @Published var fault: BoxFault?
+    /// The latest search hits, in rank order. Its own seam, off the
+    /// snapshot: search is query-driven and carries a rank the snapshot's
+    /// section arrays cannot. `searchedFor` is the query these answered, so
+    /// the results view never renders one query's hits under another.
+    @Published var searchResult = SearchResult.empty
+    @Published var searchedFor = ""
 
     /// One serial lane to the box: the app must never race its own lock.
     /// The CLI can still hold the box; that is what retry is for.
@@ -150,6 +174,25 @@ final class BoxModel: ObservableObject {
                 self.fault = nil
                 self.retryDelay = 0.2
                 if let snap = snap { self.snap = snap }
+            }
+        }
+    }
+
+    /// Search the box through its own seam (debounced by the caller). The
+    /// raw DSL string is parsed in Rust — the shell never re-parses it.
+    /// Publishes the ranked hits and the query they answered.
+    func search(_ raw: String) {
+        let path = self.path
+        boxQueue.async {
+            guard let ptr = lotus_search_at(path, raw) else { return }
+            let json = String(cString: ptr)
+            lotus_string_free(ptr)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let result = (try? decoder.decode(SearchResult.self, from: Data(json.utf8))) ?? .empty
+            DispatchQueue.main.async {
+                self.searchResult = result
+                self.searchedFor = raw
             }
         }
     }
@@ -519,7 +562,7 @@ struct WindowChrome: View {
                                 chrome.persistPanes()
                             }
                         },
-                        search: { chrome.switcherOpen = true })
+                        search: { focusSearch() })
                 }
             }
     }
@@ -535,7 +578,8 @@ struct WindowChrome: View {
                     chrome.leftOpen = false
                     chrome.persistPanes()
                 },
-                search: { chrome.switcherOpen = true })
+                search: { focusSearch() })
+            SearchField(query: $query, focused: $searchFocused)
             SurfaceNav(chrome: chrome, model: model) { target in
                 navigate(to: target)
             }
@@ -609,10 +653,9 @@ struct WindowChrome: View {
     private var eventHandlers: some View {
         Color.clear
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
-                // Search is the switcher now (the fake bar is gone); the
-                // real omnibox lands in P6.
-                if chrome.focusMode { chrome.toggleFocus() }
-                chrome.switcherOpen = true
+                // ⌘F: focus the sidebar field; results render as the list
+                // lens in place (P6 — no overlay).
+                focusSearch()
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
                 closeEditor()
@@ -773,7 +816,7 @@ struct WindowChrome: View {
         case .blank:
             BlankTabLanding(
                 createNote: { NotificationCenter.default.post(name: .lotusNewNote, object: nil) },
-                search: { chrome.switcherOpen = true })
+                search: { focusSearch() })
         default:  // .desk (or an unset tab, treated as the desk)
             deskContent
         }
@@ -892,17 +935,30 @@ struct WindowChrome: View {
 
     /// The desk lens buttons: flush, land on the desk tab (minting one
     /// if the user closed it), set the lens.
-    private func showDesk(_ lensValue: Lens) {
+    private func showDesk(_ lensValue: Lens, clearQuery: Bool = true) {
         closeEditor { ok in
             guard ok else { return }
             if chrome.surface != .notes { chrome.surface = .notes }
             let desk = tabs.openDesk()
             tabs.setActive(desk.id)
             if editor != nil { editor?.closed(); editor = nil }
-            query = ""
+            if clearQuery { query = "" }
             lens = lensValue
             selection = nil
         }
+    }
+
+    /// ⌘F and every "search" affordance land here: reveal the panel, drop to
+    /// the desk so hits render as the list lens in place, and focus the field
+    /// — keeping any query already typed.
+    private func focusSearch() {
+        if chrome.focusMode { chrome.toggleFocus() }
+        if !chrome.leftOpen {
+            chrome.leftOpen = true
+            chrome.persistPanes()
+        }
+        showDesk(lens, clearQuery: false)
+        searchFocused = true
     }
 
     private func openBlankTab() {
@@ -1483,28 +1539,75 @@ struct EverythingView: View {
 
 // MARK: - Results (search is navigation)
 
+/// The one search field: top of the sidebar, ⌘F focuses it, its text is the
+/// query the results lens renders in place. Native rounded field, lake-green
+/// focus ring — search is navigation, not an overlay.
+struct SearchField: View {
+    @Binding var query: String
+    var focused: FocusState<Bool>.Binding
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            TextField("Search", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused(focused)
+                .onSubmit { focused.wrappedValue = false }
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear search")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7).strokeBorder(
+                        focused.wrappedValue ? Theme.accent.opacity(0.7) : Color.primary.opacity(0.08),
+                        lineWidth: 1
+                    )
+                )
+        )
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
+    }
+}
+
 struct ResultsView: View {
     @ObservedObject var model: BoxModel
     let query: String
     @Binding var selection: UInt64?
 
     var body: some View {
-        let hits = (model.snap?.entities ?? []).filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.cells.contains { c in c.value.localizedCaseInsensitiveContains(query) }
-        }
+        // While a fresh search is in flight, keep showing the last hits IF
+        // this query extends or trims the one they answered — a smooth
+        // incremental feel. A cleared-then-unrelated query shows nothing
+        // until its own results land, never another query's hits.
+        let answered = model.searchedFor
+        let related = !answered.isEmpty && (query.hasPrefix(answered) || answered.hasPrefix(query))
+        let fresh = answered == query
+        let hits = related ? model.searchResult.hits : []
+        let rows = model.rows(hits.map(\.id))
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LensHeader(
-                    title: "Results",
-                    subtitle: hits.count == 1 ? "1 match" : "\(hits.count) matches"
-                )
-                ForEach(hits) { row in
+                LensHeader(title: "Results", subtitle: subtitle(hits.count))
+                ForEach(rows) { row in
                     EntityLine(row: row, selected: selection == row.id) {
                         selection = row.id
                     }
                 }
-                if hits.isEmpty {
+                if rows.isEmpty && fresh {
                     Text("Nothing matches.")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
@@ -1514,6 +1617,19 @@ struct ResultsView: View {
             .padding(.top, 40)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Debounce keystrokes before hitting the box lock; the task is
+        // cancelled and restarted on every query change.
+        .task(id: query) {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            model.search(query)
+        }
+    }
+
+    /// Honest about the seam's 200-hit cap.
+    private func subtitle(_ n: Int) -> String {
+        if n >= 200 { return "200+ matches" }
+        return n == 1 ? "1 match" : "\(n) matches"
     }
 }
 
