@@ -41,6 +41,7 @@ enum BlockJSON: Codable, Equatable {
     private struct TaskBody: Codable { let depth: UInt8; let done: Bool }
     private struct CodeBody: Codable { let lang: String? }
     private struct CalloutBody: Codable { let kind: String }
+    private enum CodeKey: String, CodingKey { case lang }
 
     init(from decoder: Decoder) throws {
         // Unit variants encode as the bare string "Body"/"Quote"/"Rule".
@@ -80,8 +81,16 @@ enum BlockJSON: Codable, Equatable {
             var c = encoder.container(keyedBy: Key.self)
             try c.encode(TaskBody(depth: d, done: done), forKey: .Task)
         case .code(let lang):
+            // Rust serializes Option<String>::None as an explicit null;
+            // Swift's synthesized Codable would OMIT a nil optional, so
+            // encode the key by hand to keep {"Code":{"lang":null}}.
             var c = encoder.container(keyedBy: Key.self)
-            try c.encode(CodeBody(lang: lang), forKey: .Code)
+            var code = c.nestedContainer(keyedBy: CodeKey.self, forKey: .Code)
+            if let lang = lang {
+                try code.encode(lang, forKey: .lang)
+            } else {
+                try code.encodeNil(forKey: .lang)
+            }
         case .callout(let kind):
             var c = encoder.container(keyedBy: Key.self)
             try c.encode(CalloutBody(kind: kind), forKey: .Callout)
@@ -182,11 +191,14 @@ enum SpanCodec {
         var atStart = true  // no leading text yet in this paragraph
 
         func openParagraph(_ b: BlockJSON) {
-            if !result.string.isEmpty {
-                // End the previous paragraph — the newline carries its block.
-                result.append(styled("\n", block: block, marks: []))
-            }
             block = b
+            if !result.string.isEmpty {
+                // The newline that separates paragraphs carries the block
+                // it OPENS. So an EMPTY paragraph (a trailing break with
+                // no text — a rule, a blank heading) still has a carrier:
+                // its own leading newline. The inverse reads it there.
+                result.append(styled("\n", block: b, marks: []))
+            }
             atStart = true
         }
         func ensureMarker() {
@@ -329,7 +341,13 @@ enum SpanCodec {
         var index = 0
         var paragraph = 0
         func flush(_ range: NSRange) {
-            let block = blockOf(attributed, at: range.location) ?? .body
+            // A non-empty paragraph carries its block on its first char;
+            // an EMPTY paragraph (trailing/blank line) carries it on the
+            // leading newline the opener stamped, at paraStart-1.
+            let block: BlockJSON =
+                (range.length > 0 ? blockOf(attributed, at: range.location) : nil)
+                ?? (range.location > 0 ? blockOf(attributed, at: range.location - 1) : nil)
+                ?? .body
             if paragraph == 0 {
                 if block != .body { out.append(.brk(block)) }
             } else {
@@ -685,6 +703,15 @@ final class LotusTextView: NSTextView {
     /// step, through the same shouldChange/didChange gate as typing.
     /// The @-ness comes from the recorded session, never from the live
     /// buffer: the popup's previews already rewrote it.
+    /// The block kind at a buffer location — the paragraph a pill or a
+    /// typed run belongs to. Defaults Body off the ends.
+    func paragraphBlock(at loc: Int) -> BlockJSON {
+        guard let storage = textStorage, storage.length > 0 else { return .body }
+        let probe = min(max(loc, 0), storage.length - 1)
+        return (storage.attribute(.lotusBlock, at: probe, effectiveRange: nil) as? BlockBox)?.block
+            ?? .body
+    }
+
     override func insertCompletion(
         _ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool
     ) {
@@ -694,12 +721,16 @@ final class LotusTextView: NSTextView {
             if NSTextMovement(rawValue: movement) == .cancel {
                 suppressAutoComplete = true
             } else if mention, let id = completionIds[word], let context = pillContext {
-                let pill = SpanCodec.pill(id, context: context)
+                // The pill must carry the paragraph's block, or a Ref
+                // inside a heading/list would read back as a Body run and
+                // split the paragraph's block on the inverse.
+                let block = paragraphBlock(at: charRange.location)
+                let pill = SpanCodec.pill(id, block: block, context: context)
                 if shouldChangeText(in: charRange, replacementString: pill.string) {
                     textStorage?.replaceCharacters(in: charRange, with: pill)
                     didChangeText()
                     setSelectedRange(NSRange(location: charRange.location + 1, length: 0))
-                    typingAttributes = SpanCodec.baseAttributes
+                    typingAttributes = SpanCodec.attributes(block: block, marks: [])
                 }
                 return
             }

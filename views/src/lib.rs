@@ -108,17 +108,24 @@ fn property_name(store: &Store, property: Id) -> String {
 pub fn display(store: &Store, value: &Value) -> String {
     match value {
         Value::Text(t) => t.clone(),
-        Value::RichText(rich) => rich
-            .spans
-            .iter()
-            .map(|span| match span {
-                Span::Text(t) => t.text.clone(),
-                // A paragraph break reads as a space in a one-line
-                // summary; the block kind is structure, not prose.
-                Span::Break(_) => " ".to_string(),
-                Span::Ref(id) => reference(store, *id),
-            })
-            .collect(),
+        Value::RichText(rich) => {
+            // A paragraph break reads as a single space between content —
+            // but never leading, and never doubled, so a doc that starts
+            // with a heading (a leading Break) has no stray first space.
+            let mut out = String::new();
+            for span in &rich.spans {
+                match span {
+                    Span::Text(t) => out.push_str(&t.text),
+                    Span::Ref(id) => out.push_str(&reference(store, *id)),
+                    Span::Break(_) => {
+                        if !out.is_empty() && !out.ends_with(' ') {
+                            out.push(' ');
+                        }
+                    }
+                }
+            }
+            out
+        }
         Value::Number(n) => format!("{n}"),
         Value::Bool(b) => if *b { "yes" } else { "no" }.to_string(),
         Value::DateTime(dt) => {
