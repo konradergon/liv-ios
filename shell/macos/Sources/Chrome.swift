@@ -254,29 +254,11 @@ struct SidebarHeader: View {
             headerButton("magnifyingglass", "Search (⌘O)", search)
             Spacer(minLength: 0)
             NavChevrons(chrome: chrome)
-            // App utilities live at the top-right of the panel now, not
-            // crammed into the footer with the workspace picker.
-            appearanceButton
-            headerButton("gearshape", "Settings (⌘,)") {
-                NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
-            }
         }
         // Top-aligned so the buttons line up with the traffic lights
         // (their centres sit ~14pt down), not centred in the band.
         .frame(height: Theme.headerBandHeight, alignment: .top)
         .background(WindowDragRegion())
-    }
-
-    private var appearanceButton: some View {
-        headerButton(darkMode ? "sun.max" : "moon", "Toggle appearance") {
-            let next = darkMode ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
-            NSApp.appearance = next
-            UserDefaults.standard.set(darkMode ? "dark" : "light", forKey: "app.appearance")
-        }
-    }
-
-    private var darkMode: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 }
 
@@ -452,14 +434,26 @@ struct WorkspaceFooter: View {
                     hubOpen = false
                 }
             }
-            // The workspace picker owns the whole footer now — no name
-            // truncation, no crammed icons (appearance/settings moved to
-            // the header).
-            Spacer(minLength: 0)
+            appearanceButton
+            headerButton("gearshape", "Settings (⌘,)") {
+                NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .overlay(Divider(), alignment: .top)
+    }
+
+    private var appearanceButton: some View {
+        headerButton(darkMode ? "sun.max" : "moon", "Toggle appearance") {
+            let next = darkMode ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
+            NSApp.appearance = next
+            UserDefaults.standard.set(darkMode ? "dark" : "light", forKey: "app.appearance")
+        }
+    }
+
+    private var darkMode: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 }
 
