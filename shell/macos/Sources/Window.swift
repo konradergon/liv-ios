@@ -1648,7 +1648,10 @@ struct HistorySection: View {
 
     @State private var open = false
     @State private var versions: [HistoryVersion] = []
-    @State private var loadedFor: UInt64?
+    /// The live content spans, so "current" is the version that matches
+    /// the actual value — not merely the newest logged edit (a cleared
+    /// note has an empty current that no logged version equals).
+    @State private var currentSpans: [SpanJSON] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1681,9 +1684,9 @@ struct HistorySection: View {
                         .foregroundColor(.secondary)
                         .padding(.vertical, 8)
                 } else {
-                    ForEach(Array(versions.enumerated()), id: \.element.id) { index, version in
+                    ForEach(versions) { version in
                         HistoryRow(
-                            version: version, isCurrent: index == 0,
+                            version: version, isCurrent: version.spans == currentSpans,
                             restore: {
                                 model.restoreContent(id, spans: version.spans) { _ in load() }
                             })
@@ -1694,14 +1697,14 @@ struct HistorySection: View {
         .onChange(of: id) {
             open = false
             versions = []
-            loadedFor = nil
+            currentSpans = []
         }
     }
 
     private func load() {
-        model.contentHistory(id) { fetched in
-            versions = fetched
-            loadedFor = id
+        model.contentHistory(id) { fetched in versions = fetched }
+        model.content(id) { read in
+            if case .doc(let doc) = read { currentSpans = doc.spans } else { currentSpans = [] }
         }
     }
 }

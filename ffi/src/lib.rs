@@ -1215,6 +1215,34 @@ mod tests {
     }
 
     #[test]
+    fn undo_does_not_mint_a_phantom_history_version() {
+        let (path, c_path) = fresh_box("lotus_ffi_hist_undo.log");
+
+        let text = CString::new("first").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let base = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) }["fingerprint"]
+            .as_u64()
+            .unwrap();
+        let v2 = CString::new(r#"[{"Text":"second"}]"#).unwrap();
+        let mut fresh: u64 = 0;
+        assert_eq!(
+            unsafe { lotus_set_content_at(c_path.as_ptr(), id, v2.as_ptr(), base, &mut fresh) },
+            1
+        );
+
+        // Undo the edit — the content reverts to "first" via an appended
+        // inverse transaction. History must still show only the two
+        // forward edits, not a third phantom "first".
+        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
+        let back = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(back["spans"], serde_json::json!([{"Text": "first"}]));
+        let hist = unsafe { read_json(lotus_content_history_at(c_path.as_ptr(), id)) };
+        assert_eq!(hist.as_array().unwrap().len(), 2);
+
+        cleanup(&path);
+    }
+
+    #[test]
     fn marks_and_blocks_round_trip_through_the_seam() {
         let (path, c_path) = fresh_box("lotus_ffi_p4.log");
 

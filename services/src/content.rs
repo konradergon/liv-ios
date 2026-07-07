@@ -156,6 +156,15 @@ pub fn content_history(store: &Store, id: Id) -> Vec<ContentVersion> {
     let id = store.resolve(id);
     let mut out = Vec::new();
     for tx in store.history() {
+        // An undo/redo appends the inverse of a transaction, which for a
+        // content edit is a fresh AddCell of the OLD value — a phantom
+        // "version" identical to one already listed. Skip reversal
+        // transactions; the forward edits are the honest history, and
+        // the current-content marker (client-side) reflects where undo
+        // left the value.
+        if tx.reverses.is_some() {
+            continue;
+        }
         for command in &tx.commands {
             let Command::AddCell { entity, cell } = command else {
                 continue;
