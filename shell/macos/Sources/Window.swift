@@ -274,6 +274,19 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Add a file by reference — the librarian hashes it and creates the
+    /// entity; the bytes are never moved. Returns the new id, nil on failure.
+    func addFile(_ filePath: String, done: @escaping (UInt64?) -> Void = { _ in }) {
+        boxQueue.async {
+            let id = lotus_add_file_at(self.path, filePath)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
     func createWorkspace(name: String, parent: UInt64, done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
             let id = lotus_create_workspace_at(self.path, name, parent)
@@ -616,7 +629,7 @@ struct WindowChrome: View {
                             onSuccess()
                         }
                     },
-                    openEntity: { id in openNoteTab(id) },
+                    openEntity: { id in openEntityTab(id) },
                     showDesk: { lensValue in showDesk(lensValue) }
                 )
             } else {
@@ -647,7 +660,7 @@ struct WindowChrome: View {
         if chrome.searchOpen {
             SearchPopup(
                 model: model,
-                open: { id in openNoteTab(id) },
+                open: { id in openEntityTab(id) },
                 dismiss: { chrome.searchOpen = false }
             )
         }
@@ -853,6 +866,8 @@ struct WindowChrome: View {
                 // Between flush and the fresh EditorModel: nothing to lose.
                 Color.clear
             }
+        case .file(let id):
+            BaseFileView(model: model, id: id)
         case .blank:
             BlankTabLanding(
                 createNote: { NotificationCenter.default.post(name: .lotusNewNote, object: nil) },
@@ -937,6 +952,46 @@ struct WindowChrome: View {
                 openEditor(id: id, bornBlank: bornBlank)
             }
             selection = id
+        }
+    }
+
+    /// Open (or focus) a FILE entity in a read-only file tab — never the
+    /// editor (read-only-by-decision). Flush-gated like every tab switch.
+    private func openFileTab(_ id: UInt64) {
+        closeEditor { ok in
+            guard ok else { return }
+            if chrome.surface != .notes { chrome.surface = .notes }
+            let tab = tabs.openFile(id)
+            tabs.setActive(tab.id)
+            if editor != nil { editor?.closed(); editor = nil }
+            selection = id
+        }
+    }
+
+    /// The one open door: a file entity (one carrying a `file` cell) opens
+    /// read-only in a file tab; everything else opens in the editor.
+    private func openEntityTab(_ id: UInt64) {
+        if model.entity(id)?.cells.contains(where: { $0.kind == "file" }) == true {
+            openFileTab(id)
+        } else {
+            openNoteTab(id)
+        }
+    }
+
+    /// Add a file by reference: pick it, the librarian hashes it (never
+    /// copies), then open it read-only. The one place a file enters lotus.
+    private func addFileFlow() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        panel.message = "Add a file by reference — lotus links it, never copies or moves it."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            model.addFile(url.path) { id in
+                if let id { openFileTab(id) }
+            }
         }
     }
 
@@ -1070,6 +1125,13 @@ struct WindowChrome: View {
             })
         registry.register(
             CommandDef(
+                id: "file:add", label: "Add file…", scope: .global,
+                category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "i")
+            ) {
+                addFileFlow()
+            })
+        registry.register(
+            CommandDef(
                 id: "object:toggle-bookmark", label: "Bookmark", scope: .global,
                 category: "Object", binding: Hotkey(modifiers: [.mod, .shift], key: "b"),
                 enabled: { selection != nil }
@@ -1177,7 +1239,7 @@ struct WindowChrome: View {
             {
                 return event
             }
-            openNoteTab(id)
+            openEntityTab(id)
             return nil
         }
     }
@@ -1906,6 +1968,91 @@ struct DayCell: View {
 }
 
 // MARK: - Inspector
+
+// MARK: - the file ladder (P7)
+
+/// A file entity's read-only ladder: the Finder icon, the filename and
+/// format, the path (struck-through if it no longer resolves), and Open
+/// externally. A file NEVER opens the editor — read-only-by-decision is
+/// law. Its editable properties live in the right-rail inspector; the
+/// extracted-text preview (rung 2) and thumbnail (rung 3) arrive in 7b/7d.
+struct BaseFileView: View {
+    @ObservedObject var model: BoxModel
+    let id: UInt64
+
+    private var entity: EntityRow? { model.entity(id) }
+    private var filePath: String? {
+        entity?.cells.first(where: { $0.kind == "file" })?.value
+    }
+    private var format: String? {
+        entity?.cells.first(where: { $0.property == "format" })?.value
+    }
+
+    var body: some View {
+        ScrollView {
+            if let entity, let path = filePath {
+                let exists = FileManager.default.fileExists(atPath: path)
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 14) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+                            .resizable()
+                            .frame(width: 52, height: 52)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entity.title.isEmpty ? "Untitled file" : entity.title)
+                                .font(.system(size: 18, weight: .semibold))
+                                .lineLimit(2)
+                            if let format, !format.isEmpty {
+                                Text(format.uppercased())
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    Text(path)
+                        .font(.system(size: 12))
+                        .foregroundColor(exists ? .secondary : Color.red.opacity(0.85))
+                        .strikethrough(!exists)
+                        .textSelection(.enabled)
+                    if !exists {
+                        Text("This file has moved or been deleted — the reference is broken.")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(.secondary)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                        } label: {
+                            Label("Open", systemImage: "arrow.up.forward.app")
+                        }
+                        .disabled(!exists)
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                        } label: {
+                            Label("Show in Finder", systemImage: "folder")
+                        }
+                        .disabled(!exists)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                }
+                .padding(28)
+                .padding(.top, 8)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else {
+                Text("This file is no longer available.")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                    .padding(28)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+    }
+}
 
 struct InspectorPane: View {
     @ObservedObject var model: BoxModel

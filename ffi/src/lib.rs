@@ -845,6 +845,32 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
     lotus_services::content::create_note(&mut session, created).unwrap_or(0)
 }
 
+/// Add a file by reference: hash its bytes, create the entity with a `file`
+/// cell (path + hash) + `format` + `name`, one transaction. NEVER copies,
+/// moves, or renames the file — only reads it to hash. Returns the new id,
+/// or 0 (unreadable path, busy box, or failure).
+///
+/// # Safety
+/// `path` and `file_path` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_add_file_at(
+    path: *const c_char,
+    file_path: *const c_char,
+) -> u64 {
+    if file_path.is_null() {
+        return 0;
+    }
+    let Ok(file_path) = CStr::from_ptr(file_path).to_str() else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    let now = Local::now();
+    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+    lotus_services::files::add_file(&mut session, file_path, created).unwrap_or(0)
+}
+
 /// Birth of a workspace: Create + type + name (+ parent, trailing
 /// order), one transaction. parent 0 = top level. Returns the id, 0 on
 /// failure.
@@ -1532,6 +1558,34 @@ mod tests {
             .map(|h| h["id"].as_u64().unwrap()).collect();
         assert!(all_ids.contains(&a) && all_ids.contains(&b));
 
+        cleanup(&path);
+    }
+
+    #[test]
+    fn add_file_by_reference_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_addfile.log");
+        let doc = std::env::temp_dir().join("lotus_ffi_sample.txt");
+        std::fs::write(&doc, b"hello from a referenced file").unwrap();
+        let doc_c = CString::new(doc.to_str().unwrap()).unwrap();
+
+        let id = unsafe { lotus_add_file_at(c_path.as_ptr(), doc_c.as_ptr()) };
+        assert_ne!(id, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let entity = snap["entities"].as_array().unwrap().iter()
+            .find(|e| e["id"].as_u64() == Some(id)).unwrap();
+        // name = filename, a file-kind cell rendering the path, format = txt
+        assert_eq!(entity["title"], "lotus_ffi_sample.txt");
+        let cells = entity["cells"].as_array().unwrap();
+        let file_cell = cells.iter().find(|c| c["kind"] == "file").unwrap();
+        assert_eq!(file_cell["value"], doc.to_str().unwrap());
+        assert!(cells.iter().any(|c| c["property"] == "format" && c["value"] == "txt"));
+
+        // A bad path adds nothing and returns 0.
+        let bad = CString::new("/no/such/file.pdf").unwrap();
+        assert_eq!(unsafe { lotus_add_file_at(c_path.as_ptr(), bad.as_ptr()) }, 0);
+
+        let _ = std::fs::remove_file(&doc);
         cleanup(&path);
     }
 }

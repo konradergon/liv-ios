@@ -23,6 +23,9 @@ enum TabKind: Codable, Equatable {
     case blank
     /// An open entity, shown in the editor.
     case note(UInt64)
+    /// A file entity, shown read-only in BaseFileView — never the editor
+    /// (read-only-by-decision is law).
+    case file(UInt64)
 }
 
 struct WorkspaceTab: Codable, Identifiable, Equatable {
@@ -92,6 +95,17 @@ final class TabsModel: ObservableObject {
             return existing
         }
         let tab = WorkspaceTab(kind: .note(entity))
+        tabs.append(tab)
+        persist()
+        return tab
+    }
+
+    /// A file entity opens once, read-only, in its own file tab.
+    func openFile(_ entity: UInt64) -> WorkspaceTab {
+        if let existing = tabs.first(where: { $0.kind == .file(entity) }) {
+            return existing
+        }
+        let tab = WorkspaceTab(kind: .file(entity))
         tabs.append(tab)
         persist()
         return tab
@@ -176,6 +190,7 @@ final class TabsModel: ObservableObject {
     func reconcile(liveIds: Set<UInt64>) -> UUID? {
         let stale = tabs.filter {
             if case .note(let id) = $0.kind { return !liveIds.contains(id) }
+            if case .file(let id) = $0.kind { return !liveIds.contains(id) }
             return false
         }
         guard !stale.isEmpty else { return nil }
@@ -284,6 +299,8 @@ struct TabStrip: View {
             return "New tab"
         case .note(let id):
             return model.entity(id)?.title ?? "#\(id)"
+        case .file(let id):
+            return model.entity(id)?.title ?? "#\(id)"
         }
     }
 
@@ -297,6 +314,7 @@ struct TabStrip: View {
                 return "checkmark.square"
             }
             return "doc.text"
+        case .file: return "doc"
         }
     }
 }

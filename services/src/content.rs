@@ -410,6 +410,10 @@ pub fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result
                 })
                 .ok_or(format!("no option named {raw}"))
         }
+        // A file carries a bytes-derived hash a raw string can't express, so
+        // a hand-typed `set` is refused: file entities are born through
+        // files::add_file (which hashes), and the cell stays read-only.
+        "file" => Err("a file is added by reference, not typed".into()),
         other => Err(format!("cannot parse a {other} value yet")),
     }
 }

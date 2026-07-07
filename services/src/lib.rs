@@ -9,6 +9,7 @@
 pub mod clerk;
 pub mod content;
 mod dates;
+pub mod files;
 pub mod recurrence;
 pub mod search;
 
@@ -63,7 +64,34 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_bootstrap(session)?;
     seed_starter_library(session)?;
     seed_recurrence(session)?;
+    seed_files(session)?;
     seed_workspaces(session)
+}
+
+/// The file librarian's two properties, additive on open (an older box
+/// gains them next launch): a `file` property (kind `file`, holding a
+/// FileRef) and a `format` text property (the extension, so `format:pdf`
+/// filters through the existing search DSL). No `file` *type* — a file
+/// entity is one that carries a `file` cell (`has:file`); a same-named
+/// type would collide with this property under reference-by-name.
+fn seed_files(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "file").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    for (name, kind) in [("file", "file"), ("format", "text")] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+    }
+    session.commit(commands, "file properties", Author::System)?;
+    Ok(())
 }
 
 /// Milestone 6's vocabulary, additive like the starter library: the

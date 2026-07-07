@@ -81,6 +81,12 @@ char *lotus_content_history_at(const char *path, uint64_t id);
    Returns the id, 0 on failure. Caller drops straight into renaming. */
 uint64_t lotus_create_note_at(const char *path);
 
+/* Add a file by reference — the librarian: hash the file's bytes, create
+   an entity with a file cell (path + hash), format, and name, one
+   transaction. NEVER moves, copies, or renames the file. Returns the new
+   id, 0 on failure (unreadable path, busy box). */
+uint64_t lotus_add_file_at(const char *path, const char *file_path);
+
 /* Birth of a workspace: Create + type + name (+ parent reference and a
    trailing order), one transaction. parent 0 = top level. Returns the
    id, 0 on failure. */
