@@ -158,7 +158,7 @@ The everyday note / task / calendar / editor workflows.
 
 **27. Search** (M)
 *Liv:* omnibox + palette, query syntax, facet chips with counts, result modes, "search is the trust that beats tab-hoarding."
-*Lotus:* ⌘F at the top of the sidebar; results render as the list lens in place — **no palette, no overlay** (decided 0.2). Full-text index exists in the store shape; extend it over extracted foreign text. Facets are constraints; keep Liv's one genuinely great idea — facet counts as *hypothetical result sizes under the current filter*, a service helper. New: search service polish + shell field.
+*Lotus:* ⌘F opens a **centered search palette** (the magnifier is the one affordance) — *reversed from 0.2's "no palette, no overlay" in interface.md 0.5, the owner's call after seeing P6 live.* The core is unchanged: a search service over the store (no FTS index yet — a linear scan until measured), the query DSL, and Liv's one genuinely great idea kept — facet counts as *hypothetical result sizes under the current filter*, a service helper. Extend the corpus over extracted foreign text later.
 
 **28. Saved searches** (S)
 *Liv:* Save from the palette → live view, pinnable.

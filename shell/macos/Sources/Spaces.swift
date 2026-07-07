@@ -107,26 +107,16 @@ struct WorkspaceTree {
 
 // MARK: - sidebar views (§2.2.1)
 
+/// The two essential sidebar views — the workspace tree and the files
+/// vault. Properties, Saved, and Graph were dropped from the picker (the
+/// owner's call); their panels stay in the code for a later home.
 enum SidebarView: String, CaseIterable {
-    case tree, vault, properties, bookmarks, graph
-
-    var label: String {
-        switch self {
-        case .tree: return "Spaces"
-        case .vault: return "Vault"
-        case .properties: return "Props"
-        case .bookmarks: return "Saved"
-        case .graph: return "Graph"
-        }
-    }
+    case tree, vault
 
     var tooltip: String {
         switch self {
         case .tree: return "Workspaces"
-        case .vault: return "Vault"
-        case .properties: return "Properties"
-        case .bookmarks: return "Bookmarks"
-        case .graph: return "Vault graph"
+        case .vault: return "Files"
         }
     }
 
@@ -134,9 +124,6 @@ enum SidebarView: String, CaseIterable {
         switch self {
         case .tree: return "square.grid.2x2"
         case .vault: return "folder"
-        case .properties: return "slider.horizontal.3"
-        case .bookmarks: return "bookmark"
-        case .graph: return "point.3.connected.trianglepath.dotted"
         }
     }
 }
@@ -177,49 +164,41 @@ struct AppSidebar: View {
                     model: model, chrome: chrome, lens: $lens, query: $query,
                     selection: $selection, filter: $filter,
                     willNavigate: willNavigate, showDesk: showDesk)
-            case .properties:
-                PropertiesBrowser(model: model, selection: $selection, openEntity: openEntity)
-            case .bookmarks:
-                BookmarksPanel(model: model, selection: $selection, openEntity: openEntity)
             case .vault:
                 sidebarStub(
                     "folder",
                     "The Vault view becomes the import staging browser — it arrives with P12.")
-            case .graph:
-                sidebarStub("point.3.connected.trianglepath.dotted", "Coming soon.")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The pinned h-10 view picker: five segmented boxes, icon above an
-    /// 11px label (§2.2.1).
+    /// A discreet two-icon toggle — the workspace tree vs the files vault.
+    /// Icon-only and left-aligned, so it reads as a quiet control, not a
+    /// full segmented strip.
     private var pickerStrip: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             ForEach(SidebarView.allCases, id: \.rawValue) { item in
                 Button {
                     viewRaw = item.rawValue
                 } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: item.symbol).font(.system(size: 12.5))
-                        Text(item.label).font(.system(size: 11))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                    .foregroundColor(view == item ? Theme.primary : Theme.mutedFg)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.radiusMd)
-                            .fill(view == item ? Theme.primary.opacity(0.1) : .clear)
-                    )
-                    .contentShape(Rectangle())
+                    Image(systemName: item.symbol)
+                        .font(.system(size: 12))
+                        .frame(width: 26, height: 22)
+                        .foregroundColor(view == item ? Theme.primary : Theme.mutedFg)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(view == item ? Theme.primary.opacity(0.12) : .clear)
+                        )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(item.tooltip)
             }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .padding(.bottom, 6)
-        .frame(height: 40)
+        .padding(.vertical, 4)
     }
 
     private func sidebarStub(_ symbol: String, _ message: String) -> some View {

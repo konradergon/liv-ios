@@ -1,6 +1,6 @@
 # Interface
 
-> **Status:** 0.3 — the Liv pivot.
+> **Status:** 0.5 — search is a centered palette.
 >
 > This document is the interface companion to `productivity_app.md`.
 > Where they disagree, the constitution wins.
@@ -8,6 +8,24 @@
 > It exists so that design decisions are made once, in writing,
 > and so that no mockup, tool, or model ever gets to improvise
 > against silence.
+
+---
+
+# 0.5 — Search is a centered palette (owner directive, 2026-07-07)
+
+**Reverses 0.2's "no palette, no overlay" for search specifically.** After
+seeing P6's in-place results live, the owner's call: the magnifier (and
+⌘F) opens a **centered popup like Claude** — a scrim, a search field, the
+ranked hits and facet chips inside it; ↑↓ to move, Enter to open, Esc to
+close. The panel's own search field is **removed** — the magnifier is the
+one search affordance. Everything below the shell (the core search
+service, the DSL, ranking, facet counts, the `lotus_search_at` seam) is
+unchanged; only the presentation moved from the desk lens to the palette.
+
+Also decided here: the notes-sidebar view picker keeps **only two**
+essentials — the **workspace tree** and the **files vault** — as a quiet
+two-icon toggle. Props, Saved, and Graph left the picker (their panels
+remain in the code for a later home).
 
 ---
 
@@ -289,6 +307,8 @@ Decided in 0.2, from the first mockup (design/window.html):
 - **Search lives at the top of the sidebar** (⌘F) — search is
   navigation, so it sits with navigation, and results render as
   the list lens in place. No palette, no overlay.
+  *(Superseded by 0.5: search is now a centered palette; the
+  magnifier opens it and the panel field is gone.)*
 - **One capture affordance in-window**: Today's lead line (⌘N from
   any lens). The global panel remains the outside-the-app door;
   inside the window there is exactly one.

@@ -544,6 +544,7 @@ struct WindowChrome: View {
                 if chrome.focusMode { FocusChip(chrome: chrome) }
             }
             .overlay(switcherOverlay)
+            .overlay(searchOverlay)
             .overlay(faultNotice)
             .overlay(DialogHost())
             .background(eventHandlers)
@@ -554,8 +555,9 @@ struct WindowChrome: View {
                 // Seed the history with the launch location, or the
                 // first Back has nothing to return to.
                 chrome.recordNav(.init(surface: chrome.surface, selection: nil))
-                // The switcher owns the keyboard while open.
-                CommandRegistry.shared.overlayActive = { chrome.switcherOpen }
+                // An open palette (workspace switcher or search) owns the
+                // keyboard, so global hotkeys don't fire behind it.
+                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen }
                 // A stored left+right that fit an old Notes layout must
                 // not launch a tool surface into a negative center.
                 chrome.reconcilePanes()
@@ -581,7 +583,7 @@ struct WindowChrome: View {
                                 chrome.persistPanes()
                             }
                         },
-                        search: { focusSearch() })
+                        search: { chrome.searchOpen = true })
                 }
             }
     }
@@ -597,8 +599,7 @@ struct WindowChrome: View {
                     chrome.leftOpen = false
                     chrome.persistPanes()
                 },
-                search: { focusSearch() })
-            SearchField(query: $query, focused: $searchFocused)
+                search: { chrome.searchOpen = true })
             SurfaceNav(chrome: chrome, model: model) { target in
                 navigate(to: target)
             }
@@ -639,6 +640,19 @@ struct WindowChrome: View {
         }
     }
 
+    /// The search palette: a centered popup (⌘F / the magnifier), reusing
+    /// the core search seam. Selecting a hit opens it and closes the palette.
+    @ViewBuilder
+    private var searchOverlay: some View {
+        if chrome.searchOpen {
+            SearchPopup(
+                model: model,
+                open: { id in openNoteTab(id) },
+                dismiss: { chrome.searchOpen = false }
+            )
+        }
+    }
+
     private var workspaceActions: WorkspaceActions {
         WorkspaceActions(
             model: model, chrome: chrome,
@@ -672,9 +686,9 @@ struct WindowChrome: View {
     private var eventHandlers: some View {
         Color.clear
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
-                // ⌘F: focus the sidebar field; results render as the list
-                // lens in place (P6 — no overlay).
-                focusSearch()
+                // ⌘F: open the centered search palette.
+                if chrome.focusMode { chrome.toggleFocus() }
+                chrome.searchOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
                 closeEditor()
@@ -733,18 +747,6 @@ struct WindowChrome: View {
                 // New results, new world: a selection from the old one
                 // must not linger where Enter could open it sight unseen.
                 selection = nil
-                // A cleared field resets the search, so re-typing never
-                // flashes the prior query's hits under the new one.
-                if query.isEmpty {
-                    model.searchResult = .empty
-                    model.searchedFor = ""
-                }
-            }
-            .onChange(of: searchFocused) {
-                // The field is reachable from every surface; focusing it (a
-                // direct click, not just ⌘F) drops to the desk so results
-                // render in place — otherwise typing here is a dead-end.
-                if searchFocused { revealSearchDesk() }
             }
             .onChange(of: selection) {
                 if let id = selection {
@@ -760,11 +762,6 @@ struct WindowChrome: View {
                 let live = Set((snap?.entities ?? []).map(\.id))
                 if tabs.reconcile(liveIds: live) != nil {
                     syncEditorToActiveTab()
-                }
-                // A live search must reflect the fresh box: re-run it so the
-                // hits, counts, and facets don't stall after a mutation.
-                if !query.isEmpty {
-                    model.search(query)
                 }
             }
             .onChange(of: chrome.activeWorkspace) {
@@ -859,7 +856,7 @@ struct WindowChrome: View {
         case .blank:
             BlankTabLanding(
                 createNote: { NotificationCenter.default.post(name: .lotusNewNote, object: nil) },
-                search: { focusSearch() })
+                search: { chrome.searchOpen = true })
         default:  // .desk (or an unset tab, treated as the desk)
             deskContent
         }
@@ -867,16 +864,14 @@ struct WindowChrome: View {
 
     @ViewBuilder
     private var deskContent: some View {
-        if !query.isEmpty {
-            ResultsView(model: model, query: $query, selection: $selection)
-        } else {
-            switch lens {
-            case .everything:
-                EverythingView(model: model, selection: $selection)
-            default:
-                TodayView(model: model, selection: $selection) {
-                    navigate(to: .inbox)
-                }
+        // Search is a centered palette now, not the desk lens — the desk
+        // shows Today / Everything.
+        switch lens {
+        case .everything:
+            EverythingView(model: model, selection: $selection)
+        default:
+            TodayView(model: model, selection: $selection) {
+                navigate(to: .inbox)
             }
         }
     }
@@ -991,27 +986,6 @@ struct WindowChrome: View {
         }
     }
 
-    /// Land the surface where search results render: reveal the panel and
-    /// drop to the desk (keeping any typed query). Idempotent once you are
-    /// there — so it can run on every field focus without churning tabs.
-    private func revealSearchDesk() {
-        if chrome.focusMode { chrome.toggleFocus() }
-        if !chrome.leftOpen {
-            chrome.leftOpen = true
-            chrome.persistPanes()
-        }
-        if chrome.surface != .notes || tabs.active?.kind != .desk {
-            showDesk(lens, clearQuery: false)
-        }
-    }
-
-    /// ⌘F and every "search" affordance land here: reveal the desk, then
-    /// focus the field. A direct field click reaches the same desk via the
-    /// searchFocused onChange, so search is never a dead-end.
-    private func focusSearch() {
-        revealSearchDesk()
-        searchFocused = true
-    }
 
     private func openBlankTab() {
         closeEditor { ok in
@@ -1668,100 +1642,160 @@ struct FacetChip: View {
 /// The one search field: top of the sidebar, ⌘F focuses it, its text is the
 /// query the results lens renders in place. Native rounded field, lake-green
 /// focus ring — search is navigation, not an overlay.
-struct SearchField: View {
-    @Binding var query: String
-    var focused: FocusState<Bool>.Binding
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-            TextField("Search", text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused(focused)
-                .onSubmit { focused.wrappedValue = false }
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Clear search")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7).strokeBorder(
-                        focused.wrappedValue ? Theme.accent.opacity(0.7) : Color.primary.opacity(0.08),
-                        lineWidth: 1
-                    )
-                )
-        )
-        .padding(.horizontal, 8)
-        .padding(.top, 4)
-        .padding(.bottom, 2)
-    }
-}
-
-struct ResultsView: View {
+/// The search palette: a centered popup (⌘F / the magnifier) over a scrim,
+/// reusing the core search seam. Type to rank hits; ↑↓ move, Enter opens,
+/// Esc closes. Facet chips pivot the query in place. An empty query lists
+/// the most recent (the seam ranks empty terms by recency).
+struct SearchPopup: View {
     @ObservedObject var model: BoxModel
-    @Binding var query: String
-    @Binding var selection: UInt64?
+    let open: (UInt64) -> Void
+    let dismiss: () -> Void
+
+    @State private var query = ""
+    @State private var highlighted = 0
+    @State private var keyMonitor: Any?
+    @FocusState private var fieldFocused: Bool
+
+    /// The hits resolved against the snapshot, always fresh (computed) so
+    /// keyboard nav and Enter never read a stale count.
+    private var rows: [EntityRow] {
+        model.rows(model.searchResult.hits.map(\.id))
+    }
 
     var body: some View {
-        // Show whatever the box last returned while the fresh search
-        // debounces — a smooth search-as-you-type feel, and facet pivots
-        // (type:task → type:note) never blank the lens. The query going
-        // empty resets the result (WindowChrome.onChange), so a
-        // cleared-then-new query never flashes the prior query's hits.
-        let hits = model.searchResult.hits
-        let facets = model.searchResult.facets
+        let rows = self.rows
         let fresh = model.searchedFor == query
-        let rows = model.rows(hits.map(\.id))
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // Count what is actually shown, not the raw seam hits — some
-                // (is:trashed/is:working) resolve in the seam but aren't in
-                // the snapshot, so they can't render here; the number must
-                // never contradict the rows or the empty state.
-                LensHeader(title: "Results", subtitle: subtitle(rows.count, capped: hits.count >= 200))
-                FacetBar(facets: facets, query: $query)
-                ForEach(rows) { row in
-                    EntityLine(row: row, selected: selection == row.id) {
-                        selection = row.id
-                    }
-                }
-                if rows.isEmpty && fresh {
-                    Text("Nothing matches.")
+        return ZStack(alignment: .top) {
+            Theme.background.opacity(0.6)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea()
+                .onTapGesture { dismiss() }
+
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
+                    TextField("Search…  try type:task  status:done  #idea", text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 15))
+                        .focused($fieldFocused)
+                        .onSubmit {
+                            if rows.indices.contains(highlighted) {
+                                open(rows[highlighted].id)
+                                dismiss()
+                            }
+                        }
+                        .onExitCommand { dismiss() }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+
+                if !model.searchResult.facets.isEmpty {
+                    Divider()
+                    FacetBar(facets: model.searchResult.facets, query: $query)
+                        .padding(.horizontal, 6)
+                        .padding(.top, 6)
+                }
+
+                Divider()
+
+                if rows.isEmpty {
+                    Text(fresh && !query.isEmpty ? "Nothing matches." : "Type to search.")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Theme.mutedFg)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 1) {
+                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                                Button {
+                                    open(row.id)
+                                    dismiss()
+                                } label: {
+                                    resultRow(row)
+                                }
+                                .buttonStyle(.plain)
+                                .background(
+                                    RoundedRectangle(cornerRadius: Theme.radiusMd)
+                                        .fill(index == highlighted ? Theme.primary.opacity(0.12) : .clear)
+                                )
+                                .onHover { if $0 { highlighted = index } }
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .frame(maxHeight: 380)
                 }
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 40)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: 620)
+            .background(RoundedRectangle(cornerRadius: Theme.radiusXl).fill(Theme.popover))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radiusXl).strokeBorder(Theme.border))
+            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
+            .padding(.top, 96)
         }
-        // Debounce keystrokes before hitting the box lock; the task is
-        // cancelled and restarted on every query change.
+        // Debounce keystrokes before hitting the box lock.
         .task(id: query) {
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             model.search(query)
         }
+        .onAppear {
+            fieldFocused = true
+            model.search(query) // seed recent immediately, don't wait 150ms
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let count = self.rows.count
+                switch event.keyCode {
+                case 125:
+                    highlighted = min(max(count - 1, 0), highlighted + 1)
+                    return nil
+                case 126:
+                    highlighted = max(0, highlighted - 1)
+                    return nil
+                default:
+                    return event
+                }
+            }
+        }
+        .onDisappear {
+            if let monitor = keyMonitor {
+                NSEvent.removeMonitor(monitor)
+                keyMonitor = nil
+            }
+        }
+        .onChange(of: query) { highlighted = 0 }
     }
 
-    /// The count reflects the rows shown; "200+" is honest about the seam's
-    /// cap when it bites.
-    private func subtitle(_ shown: Int, capped: Bool) -> String {
-        if capped { return "200+ matches" }
-        return shown == 1 ? "1 match" : "\(shown) matches"
+    @ViewBuilder
+    private func resultRow(_ row: EntityRow) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: kindIcon(row))
+                .font(.system(size: 13))
+                .foregroundColor(Theme.accent)
+                .frame(width: 18)
+            Text(row.title.isEmpty ? "Untitled" : row.title)
+                .font(.system(size: 13))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if !row.kinds.isEmpty {
+                Text(row.kinds.joined(separator: " · "))
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.mutedFg)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .contentShape(Rectangle())
+    }
+
+    private func kindIcon(_ row: EntityRow) -> String {
+        if row.kinds.contains("task") || row.status != nil { return "checkmark.square" }
+        if row.kinds.contains("event") { return "calendar" }
+        if row.kinds.contains("person") { return "person" }
+        if row.kinds.contains("project") { return "folder" }
+        return "doc.text"
     }
 }
 

@@ -115,6 +115,9 @@ final class ChromeModel: ObservableObject {
         }
     }
     @Published var switcherOpen = false
+    /// The centered search palette (⌘F / the magnifier). Search is a popup,
+    /// not the list lens in place — the owner's call after seeing it live.
+    @Published var searchOpen = false
 
     let nav = NavHistory()
     /// Focus mode stashes the panel states and restores them exactly.

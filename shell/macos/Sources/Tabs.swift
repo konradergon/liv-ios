@@ -210,6 +210,13 @@ struct TabStrip: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            // Collapsed / focus mode: the expand + search controls float
+            // top-left over the content, level with the traffic lights.
+            // Inset the pills so they clear those instead of hiding under
+            // them (and the lights).
+            if !chrome.leftOpen || chrome.focusMode {
+                Color.clear.frame(width: Theme.trafficLightSpacer + 56)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
                     ForEach(tabs.tabs) { tab in
