@@ -264,7 +264,13 @@ fn iso_date(word: &str) -> Option<DateTime> {
 }
 
 /// Whole-word containment: "anna" in "call anna friday", not in "susanna".
-fn contains_word(haystack: &str, needle: &str) -> bool {
+/// The codebase's one word-boundary matcher — the clerk's gazetteer and
+/// search both call it, so the boundary rule never forks. Callers lowercase
+/// both sides first (the clerk convention).
+pub fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
     let mut start = 0;
     while let Some(at) = haystack[start..].find(needle) {
         let begin = start + at;
@@ -277,6 +283,27 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
             return true;
         }
         start = end;
+    }
+    false
+}
+
+/// A word-boundary prefix: "chr" begins the word "christie" in "annabel
+/// christie", "anna" begins "annabel". Boundary before, any continuation
+/// after — the incremental-typing feel search wants, scored below a whole
+/// word. Superset of `contains_word` (which also demands a boundary after).
+pub fn starts_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut start = 0;
+    while let Some(at) = haystack[start..].find(needle) {
+        let begin = start + at;
+        let boundary_before = begin == 0
+            || !haystack[..begin].chars().next_back().unwrap().is_alphanumeric();
+        if boundary_before {
+            return true;
+        }
+        start = begin + needle.len();
     }
     false
 }

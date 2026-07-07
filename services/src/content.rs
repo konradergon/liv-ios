@@ -363,7 +363,11 @@ pub fn set_property(
     Ok(())
 }
 
-fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result<Value, String> {
+/// Parse a raw string into a typed Value by a property's declared kind —
+/// the one kind-aware parser the inspector's `set` and the search DSL's
+/// qualifiers both go through, so `status:done` and a hand-set status
+/// resolve the same option identically.
+pub fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result<Value, String> {
     match kind {
         "text" => Ok(Value::text(raw)),
         "richtext" => Ok(Value::RichText(RichText {

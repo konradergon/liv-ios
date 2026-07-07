@@ -8,5 +8,6 @@ name = "lotus_services"
 
 [dependencies]
 lotus-core = { path = "../core" }
+lotus-views = { path = "../views" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

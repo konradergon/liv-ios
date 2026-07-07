@@ -176,6 +176,7 @@ name = "lotus-services"
 version = "0.1.0"
 dependencies = [
  "lotus-core",
+ "lotus-views",
  "serde",
  "serde_json",
 ]

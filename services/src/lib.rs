@@ -10,6 +10,7 @@ pub mod clerk;
 pub mod content;
 mod dates;
 pub mod recurrence;
+pub mod search;
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;

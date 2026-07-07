@@ -1,0 +1,278 @@
+//! Search as navigation (P6). A thin scored pass layered on `run`: the
+//! query DSL splits a raw string into structured *qualifiers* (Constraints
+//! that `run` interprets) and free-text *terms* (a ranking pass over the
+//! survivors). `run` and `Op` stay pure and exact; tokenization and ranking
+//! live here. Searchable text is `views::display`-flattened, so search sees
+//! exactly what the shell renders — a wiki-linked `[[Anna]]` (a Ref span)
+//! is findable by "anna" because display resolves the reference to a name.
+
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+
+use lotus_core::{props, Entity, Id, Store, Value};
+use lotus_views::display;
+
+use crate::clerk::{contains_word, starts_word};
+use crate::content::parse_value;
+use crate::{property_id, run, Constraint, Op, Query};
+
+/// One ranked result. `score` orders hits (higher first); `field` records
+/// where the best match landed so the shell can hint why it matched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hit {
+    pub id: Id,
+    pub score: f32,
+    pub field: MatchField,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MatchField {
+    Name,
+    Cell,
+    Content,
+    /// A pure-qualifier hit — no free-text term matched a field.
+    Structured,
+}
+
+/// A parsed query: the free-text remainder plus the structured `Query` that
+/// `run` interprets. `parse` is the single source of truth — the shell ships
+/// the raw string; the DSL is never re-parsed anywhere else.
+#[derive(Debug, Clone, Default)]
+pub struct SearchQuery {
+    /// Lowercased free-text words, ANDed.
+    pub terms: Vec<String>,
+    /// Qualifier-derived constraints + the gate flags.
+    pub query: Query,
+}
+
+/// Parse a raw DSL string into free-text terms + a structured Query.
+///
+/// Qualifiers: `key:value` (Equals), `key<value` (AtMost, dates), `is:flag`
+/// (archived/trashed/working gates), `has:key` (Exists), `no:key` (Missing).
+/// Keys resolve through `property_id`; a `reference` key's value resolves by
+/// entity name (so `type:task` finds the type named "task"), everything else
+/// through the shared `parse_value`. An unrecognized or unparseable qualifier
+/// demotes to a free-text word — a search never errors on a typo. Archived is
+/// excluded by default (a `NotEquals(true)` the base query carries) unless
+/// `is:archived` asks for it.
+pub fn parse(store: &Store, raw: &str) -> SearchQuery {
+    let mut terms = Vec::new();
+    let mut constraints = Vec::new();
+    let mut include_working = false;
+    let mut include_trashed = false;
+    let mut include_archived = false;
+
+    for token in raw.split_whitespace() {
+        let lower = token.to_lowercase();
+        if let Some((key, val)) = split_qualifier(token, ':') {
+            match key {
+                "is" => match val {
+                    "archived" => include_archived = true,
+                    "trashed" => include_trashed = true,
+                    "working" => include_working = true,
+                    _ => terms.push(lower),
+                },
+                "has" => match property_id(store, val) {
+                    Some(p) => constraints.push(Constraint { property: p, op: Op::Exists }),
+                    None => terms.push(lower),
+                },
+                "no" => match property_id(store, val) {
+                    Some(p) => constraints.push(Constraint { property: p, op: Op::Missing }),
+                    None => terms.push(lower),
+                },
+                _ => match equals_constraint(store, key, val) {
+                    Some(c) => constraints.push(c),
+                    None => terms.push(lower),
+                },
+            }
+        } else if let Some((key, val)) = split_qualifier(token, '<') {
+            match at_most_constraint(store, key, val) {
+                Some(c) => constraints.push(c),
+                None => terms.push(lower),
+            }
+        } else {
+            terms.push(lower);
+        }
+    }
+
+    // Archived is backstage by default: only entities explicitly archived
+    // are hidden (NotEquals is vacuously true where the cell is absent).
+    if !include_archived {
+        if let Some(archived) = property_id(store, "archived") {
+            constraints.push(Constraint {
+                property: archived,
+                op: Op::NotEquals(Value::Bool(true)),
+            });
+        }
+    }
+
+    SearchQuery {
+        terms,
+        query: Query {
+            constraints,
+            sort: None,
+            include_working,
+            include_trashed,
+        },
+    }
+}
+
+/// The search: `run` the structured query, then score each survivor's
+/// searchable text against the free-text terms. A candidate is kept only if
+/// *every* term matches some field (AND); its score is the sum of per-term
+/// best-field weights. Ranked score-desc, then newest-created, then id (a
+/// total, stable order). Empty terms yield the structured result in `run`'s
+/// own order — a pure-qualifier query is still a search.
+pub fn search(store: &Store, sq: &SearchQuery, limit: usize) -> Vec<Hit> {
+    let mut hits: Vec<Hit> = Vec::new();
+    for id in run(store, &sq.query) {
+        let Some(entity) = store.get(id) else { continue };
+        let text = searchable(store, entity);
+
+        let mut score = 0.0f32;
+        let mut best_weight = -1.0f32;
+        let mut field = MatchField::Structured;
+        let mut all = true;
+        for term in &sq.terms {
+            let (weight, matched) = score_term(&text, term);
+            if weight <= 0.0 {
+                all = false;
+                break;
+            }
+            score += weight;
+            if weight > best_weight {
+                best_weight = weight;
+                field = matched;
+            }
+        }
+        if all {
+            hits.push(Hit { id, score, field });
+        }
+    }
+
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| created_key(store, b.id).cmp(&created_key(store, a.id)))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    hits.truncate(limit);
+    hits
+}
+
+/// The searchable text of an entity, per field, `display`-flattened and
+/// lowercased. `cells` is every *other* Text/RichText cell — structured
+/// kinds (Number/DateTime/Bool/Select/Reference) are reached through
+/// qualifiers, never as incidental text.
+struct Searchable {
+    name: String,
+    cells: String,
+    content: String,
+}
+
+fn searchable(store: &Store, entity: &Entity) -> Searchable {
+    let flatten = |v: &Value| display(store, v).to_lowercase();
+    let name = entity.get(props::NAME).map(flatten).unwrap_or_default();
+    let content = entity.get(props::CONTENT).map(flatten).unwrap_or_default();
+
+    let mut cells = String::new();
+    for cell in &entity.cells {
+        if cell.property == props::NAME || cell.property == props::CONTENT {
+            continue;
+        }
+        if matches!(cell.value, Value::Text(_) | Value::RichText(_)) {
+            if !cells.is_empty() {
+                cells.push(' ');
+            }
+            cells.push_str(&flatten(&cell.value));
+        }
+    }
+    Searchable { name, cells, content }
+}
+
+/// One term's best field-match: whole-name equality > leading name prefix >
+/// a word-boundary prefix inside the name > a whole word in another cell >
+/// a whole word in the content body. Weight 0 = no match anywhere.
+fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
+    if text.name == term {
+        (100.0, MatchField::Name)
+    } else if text.name.starts_with(term) {
+        (60.0, MatchField::Name)
+    } else if starts_word(&text.name, term) {
+        (40.0, MatchField::Name)
+    } else if contains_word(&text.cells, term) {
+        (20.0, MatchField::Cell)
+    } else if contains_word(&text.content, term) {
+        (10.0, MatchField::Content)
+    } else {
+        (0.0, MatchField::Structured)
+    }
+}
+
+/// Split a token at the first `sep` into a non-empty (key, value). Returns
+/// None when either side is empty, so a bare "http://x" or "key:" degrades
+/// to free text rather than a half-qualifier.
+fn split_qualifier(token: &str, sep: char) -> Option<(&str, &str)> {
+    let (key, val) = token.split_once(sep)?;
+    if key.is_empty() || val.is_empty() {
+        None
+    } else {
+        Some((key, val))
+    }
+}
+
+/// `key:value` → an Equals constraint. A `reference` key resolves its value
+/// by entity name (`type:task`); every other kind through `parse_value`.
+fn equals_constraint(store: &Store, key: &str, val: &str) -> Option<Constraint> {
+    let property = property_id(store, key)?;
+    let value = qualifier_value(store, property, val)?;
+    Some(Constraint { property, op: Op::Equals(value) })
+}
+
+/// `key<value` → an AtMost constraint (dates: "due at or before"). Only the
+/// `≤` direction exists in `Op`; `>` / `after:` is deferred.
+fn at_most_constraint(store: &Store, key: &str, val: &str) -> Option<Constraint> {
+    let property = property_id(store, key)?;
+    let value = qualifier_value(store, property, val)?;
+    Some(Constraint { property, op: Op::AtMost(value) })
+}
+
+fn qualifier_value(store: &Store, property: Id, raw: &str) -> Option<Value> {
+    match property_kind(store, property)?.as_str() {
+        "reference" => resolve_reference(store, raw),
+        kind => parse_value(store, property, kind, raw).ok(),
+    }
+}
+
+/// A property's declared value-kind, read from its definition — the same
+/// VALUE_KIND cell `set_property` keys on.
+fn property_kind(store: &Store, property: Id) -> Option<String> {
+    match store.get(property)?.get(props::VALUE_KIND) {
+        Some(Value::Text(kind)) => Some(kind.clone()),
+        _ => None,
+    }
+}
+
+/// Resolve a reference qualifier's value by entity name (case-insensitive,
+/// first live match): `type:task` → the id of the type named "task".
+fn resolve_reference(store: &Store, raw: &str) -> Option<Value> {
+    let wanted = raw.to_lowercase();
+    store
+        .entities()
+        .filter(|e| !e.trashed)
+        .find(|e| {
+            matches!(e.get(props::NAME), Some(Value::Text(name)) if name.to_lowercase() == wanted)
+        })
+        .map(|e| Value::Reference(e.id))
+}
+
+/// A sortable recency key: the CREATED civil timestamp, else 0 (undated
+/// entities sort oldest).
+fn created_key(store: &Store, id: Id) -> i64 {
+    match store.get(id).and_then(|e| e.get(props::CREATED)) {
+        Some(Value::DateTime(dt)) => dt.civil,
+        _ => 0,
+    }
+}
