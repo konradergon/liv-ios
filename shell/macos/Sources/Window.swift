@@ -2367,14 +2367,16 @@ struct TasksView: View {
 
     /// Create the task (born nameless + todo), then set its title — two
     /// transactions for one quick-add, matching create_note's nameless birth.
+    /// The draft is cleared only once the box confirms, so a busy box beeps
+    /// and keeps the typed title for a retry — never lose a task.
     private func addTask() {
         let title = draft.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty else { return }
         model.createTask { id in
             guard let id else { return }
             model.set(id, property: "name", value: title)
+            draft = ""
         }
-        draft = ""
     }
 
     /// Due ascending, nil-due last.
