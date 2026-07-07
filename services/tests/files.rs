@@ -4,18 +4,23 @@
 use lotus_core::*;
 use lotus_services::{content, files, property_id, search, seed_if_fresh};
 
+/// Each test gets its OWN directory so its cache (a sibling of the box) is
+/// isolated — parallel tests must not share `temp/cache`.
 fn fresh_session(name: &str) -> (std::path::PathBuf, Session) {
-    let path = std::env::temp_dir().join(name);
-    cleanup(&path);
+    let dir = std::env::temp_dir().join(format!("lotus_t_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("box.log");
     let mut session = Session::open(&path).unwrap();
     seed_if_fresh(&mut session).unwrap();
     (path, session)
 }
 
 fn cleanup(path: &std::path::Path) {
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
-    let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    // Remove the whole per-test dir — box, sidecars, and cache.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[test]
@@ -121,6 +126,39 @@ fn extraction_is_a_rebuildable_cache_off_the_log() {
 
     let _ = std::fs::remove_file(&doc);
     let _ = std::fs::remove_file(&doc2);
+    let _ = std::fs::remove_dir_all(&cache);
+    cleanup(&boxpath);
+}
+
+#[test]
+fn same_bytes_different_format_do_not_share_a_cache_entry() {
+    let (boxpath, _session) = fresh_session("lotus_files_collide.log");
+    let cache = files::cache_dir(boxpath.to_str().unwrap());
+
+    // Two byte-identical files with different extensions → the same hash.
+    let md = std::env::temp_dir().join("lotus_files_x.md");
+    let dat = std::env::temp_dir().join("lotus_files_x.dat");
+    std::fs::write(&md, b"budget notes").unwrap();
+    std::fs::write(&dat, b"budget notes").unwrap();
+    let file_md = FileRef {
+        path: md.to_str().unwrap().to_string(),
+        hash: files::hash_file(md.to_str().unwrap()).unwrap(),
+    };
+    let file_dat = FileRef {
+        path: dat.to_str().unwrap().to_string(),
+        hash: files::hash_file(dat.to_str().unwrap()).unwrap(),
+    };
+    assert_eq!(file_md.hash, file_dat.hash, "identical bytes hash the same");
+
+    // The .md extracts its text; the .dat (a stub format) is empty — the
+    // md text must NOT leak into the dat entry (or vice-versa), even after
+    // the md populates the cache first.
+    assert_eq!(files::extracted_text(&cache, &file_md, "md"), "budget notes");
+    assert_eq!(files::extracted_text(&cache, &file_dat, "dat"), "");
+    assert_eq!(files::extracted_text(&cache, &file_md, "md"), "budget notes");
+
+    let _ = std::fs::remove_file(&md);
+    let _ = std::fs::remove_file(&dat);
     let _ = std::fs::remove_dir_all(&cache);
     cleanup(&boxpath);
 }

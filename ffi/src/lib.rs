@@ -587,7 +587,11 @@ pub unsafe extern "C" fn lotus_extracted_text_at(path: *const c_char, id: u64) -
         return std::ptr::null_mut();
     };
     let store = session.store();
-    let text = file_text(store, &cache, id);
+    // A NUL byte is valid UTF-8 (a null-padded log, a UTF-16 export) and
+    // survives from_utf8_lossy, but it would make CString::new fail and
+    // blank the preview of a file search still matched. Scrub it at the C
+    // boundary so the preview degrades to visible-but-cleaned text.
+    let text = file_text(store, &cache, id).replace('\0', "\u{FFFD}");
     drop(session);
     match CString::new(text) {
         Ok(s) => s.into_raw(),
@@ -1119,18 +1123,22 @@ mod tests {
 
     /// A fresh box path with sidecars cleared; returns (PathBuf, CString).
     fn fresh_box(name: &str) -> (std::path::PathBuf, CString) {
-        let path = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(format!("{}.declined", path.display()));
-        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+        // A per-box directory so the extraction cache (a sibling of the box)
+        // is isolated per test — parallel tests must not share one cache.
+        let dir = std::env::temp_dir().join(format!("lotus_box_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("box.log");
         let c_path = CString::new(path.to_str().unwrap()).unwrap();
         (path, c_path)
     }
 
     fn cleanup(path: &std::path::Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(format!("{}.declined", path.display()));
-        let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+        // The box lives in its own dir now — remove the lot (box, sidecars,
+        // cache).
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     unsafe fn read_json(raw: *mut c_char) -> serde_json::Value {
@@ -1676,6 +1684,29 @@ mod tests {
         assert_eq!(unsafe { lotus_add_file_at(c_path.as_ptr(), bad.as_ptr()) }, 0);
 
         let _ = std::fs::remove_file(&doc);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_nul_byte_in_extracted_text_survives_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_nul.log");
+        // A text-format file with an embedded NUL (a null-padded log).
+        let doc = std::env::temp_dir().join("lotus_ffi_nul.log");
+        std::fs::write(&doc, b"before\0after the null").unwrap();
+        let doc_c = CString::new(doc.to_str().unwrap()).unwrap();
+        let id = unsafe { lotus_add_file_at(c_path.as_ptr(), doc_c.as_ptr()) };
+        assert_ne!(id, 0);
+
+        // The preview must not silently vanish — the NUL is scrubbed at the
+        // seam, so a non-null string comes back with the words intact.
+        let raw = unsafe { lotus_extracted_text_at(c_path.as_ptr(), id) };
+        assert!(!raw.is_null(), "the NUL must not blank the preview");
+        let text = unsafe { CStr::from_ptr(raw).to_str().unwrap().to_string() };
+        unsafe { lotus_string_free(raw) };
+        assert!(text.contains("before") && text.contains("after the null"));
+
+        let _ = std::fs::remove_file(&doc);
+        let _ = std::fs::remove_dir_all(files::cache_dir(path.to_str().unwrap()));
         cleanup(&path);
     }
 }

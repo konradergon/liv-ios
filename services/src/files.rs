@@ -163,7 +163,11 @@ pub fn cache_dir(box_path: &str) -> PathBuf {
 /// and it writes ONLY under `cache/`.
 pub fn extracted_text(cache_dir: &Path, file: &FileRef, format: &str) -> String {
     let entry = cache_dir.join(hex(&file.hash));
-    let text_path = entry.join("text");
+    // Keyed by hash AND format: extraction is format-dependent, so two
+    // byte-identical files of different formats (a.md and a copy named
+    // a.pdf) must not share one text entry — else one's text (or a stub's
+    // empty) leaks into the other's preview and search corpus.
+    let text_path = entry.join(format!("text-{format}"));
     if let Ok(cached) = std::fs::read_to_string(&text_path) {
         return cached;
     }
