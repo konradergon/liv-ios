@@ -861,6 +861,11 @@ struct WindowChrome: View {
                 InboxView(model: model)
             case .calendar:
                 CalendarView(model: model)
+            case .library:
+                LibraryView(
+                    model: model, selection: $selection,
+                    addFile: { addFileFlow() },
+                    open: { id in openEntityTab(id) })
             default:
                 ExtensionStub(surface: chrome.surface)
             }
@@ -2109,6 +2114,68 @@ struct BaseFileView: View {
                 }
             }
         }
+    }
+}
+
+/// The Library surface (P7/7c): a saved view of file entities — every
+/// entity carrying a `file` cell. A list lens, not Liv's multi-mode file
+/// shell; format facets / an image grid are follow-ups. Clicking a file
+/// opens it read-only in a file tab; "+ Add file" is the NSOpenPanel flow.
+struct LibraryView: View {
+    @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    let addFile: () -> Void
+    let open: (UInt64) -> Void
+
+    var body: some View {
+        let files = model.rows(model.snap?.everything ?? []).filter {
+            $0.cells.contains { $0.kind == "file" }
+        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    LensHeader(
+                        title: "Library",
+                        subtitle: files.count == 1 ? "1 file" : "\(files.count) files")
+                    Spacer()
+                    Button(action: addFile) {
+                        Label("Add file", systemImage: "plus").font(.system(size: 12))
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .padding(.horizontal, 32)
+                .padding(.top, 40)
+
+                if files.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 34))
+                            .foregroundColor(Theme.foreground.opacity(0.12))
+                        Text("No files yet.")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                        Text("Add a file by reference — lotus links it, never copies it.")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(Theme.mutedFg)
+                        Button("Add file…", action: addFile).padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 80)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(files) { row in
+                            EntityLine(row: row, selected: selection == row.id) {
+                                open(row.id)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 32)
+                    .padding(.top, 12)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
     }
 }
 
