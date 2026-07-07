@@ -542,6 +542,7 @@ extension Notification.Name {
     static let lotusFocusSearch = Notification.Name("lotus.focusSearch")
     static let lotusFocusCapture = Notification.Name("lotus.focusCapture")
     static let lotusNewNote = Notification.Name("lotus.newNote")
+    static let lotusNewTab = Notification.Name("lotus.newTab")
     static let lotusOpenStaleDraft = Notification.Name("lotus.openStaleDraft")
 }
 
@@ -799,6 +800,9 @@ struct WindowChrome: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
                 newNoteInTab()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusNewTab)) { _ in
+                openBlankTab()
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
                 guard let draft = note.object as? DraftFile else { return }
@@ -1226,6 +1230,13 @@ struct WindowChrome: View {
                 category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "i")
             ) {
                 addFileFlow()
+            })
+        registry.register(
+            CommandDef(
+                id: "tab:new", label: "New tab", scope: .global,
+                category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "t")
+            ) {
+                NotificationCenter.default.post(name: .lotusNewTab, object: nil)
             })
         registry.register(
             CommandDef(

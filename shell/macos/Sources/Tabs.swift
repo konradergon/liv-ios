@@ -217,57 +217,35 @@ struct TabStrip: View {
     let openNew: () -> Void
     let rename: (UInt64) -> Void
 
-    @State private var dropTarget: UUID?
-    @State private var dropAfter = false
-    /// Measured pill widths, so the drag insertion side is the pill's
-    /// real half — not a fixed guess (pills range 110–200pt).
-    @State private var widths: [UUID: CGFloat] = [:]
-
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             // Collapsed / focus mode: the expand + search controls float
             // top-left over the content, level with the traffic lights.
-            // Inset the pills so they clear those instead of hiding under
-            // them (and the lights).
             if !chrome.leftOpen || chrome.focusMode {
                 Color.clear.frame(width: Theme.trafficLightSpacer + 56)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(tabs.tabs) { tab in
-                        TabPill(
-                            tab: tab,
-                            title: title(tab),
-                            icon: icon(tab),
-                            active: tabs.activeId == tab.id,
-                            insertionBefore: dropTarget == tab.id && !dropAfter,
-                            insertionAfter: dropTarget == tab.id && dropAfter,
-                            activate: { activate(tab) },
-                            close: { close(tab) },
-                            rename: {
-                                if case .note(let id) = tab.kind { rename(id) }
-                            }
-                        )
-                        .background(
-                            GeometryReader { proxy in
-                                Color.clear
-                                    .onAppear { widths[tab.id] = proxy.size.width }
-                                    .onChange(of: proxy.size.width) { widths[tab.id] = proxy.size.width }
-                            }
-                        )
-                        .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
-                        .onDrop(
-                            of: [.plainText],
-                            delegate: TabDrop(
-                                target: tab, tabs: tabs, width: widths[tab.id] ?? 200,
-                                dropTarget: $dropTarget, dropAfter: $dropAfter))
-                    }
+            // The tab strip shows only when there are 2+ tabs (Terminal-
+            // style): a single tab needs no chrome. When shown, tabs are
+            // EQUAL WIDTH, dividing the row — no per-tab width measurement,
+            // so no render loop.
+            if tabs.tabs.count >= 2 {
+                ForEach(tabs.tabs) { tab in
+                    TabPill(
+                        tab: tab,
+                        title: title(tab),
+                        icon: icon(tab),
+                        active: tabs.activeId == tab.id,
+                        activate: { activate(tab) },
+                        close: { close(tab) },
+                        rename: {
+                            if case .note(let id) = tab.kind { rename(id) }
+                        }
+                    )
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.vertical, 5)
+            } else {
+                Spacer(minLength: 0)
             }
-            // The tabs take the width, so the trailing controls sit at the
-            // FAR RIGHT of the top bar, not bunched against the tabs.
-            .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: openNew) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
@@ -276,7 +254,7 @@ struct TabStrip: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("New tab")
+            .help("New tab (⌘T)")
             // With the inspector closed, the window's Spaces picker floats
             // over the content's top-right — reserve room so + never sits
             // under it. (Inspector open: the picker is over the inspector.)
@@ -329,8 +307,6 @@ struct TabPill: View {
     let title: String
     let icon: String
     let active: Bool
-    let insertionBefore: Bool
-    let insertionAfter: Bool
     let activate: () -> Void
     let close: () -> Void
     let rename: () -> Void
@@ -368,7 +344,6 @@ struct TabPill: View {
         }
         .padding(.leading, 10)
         .padding(.trailing, 5)
-        .frame(minWidth: 100, maxWidth: 190)
         .frame(height: 28)
         .background(
             RoundedRectangle(cornerRadius: 7)
@@ -378,16 +353,6 @@ struct TabPill: View {
             RoundedRectangle(cornerRadius: 7)
                 .strokeBorder(Theme.border.opacity(active ? 0.5 : 0), lineWidth: 0.5)
         )
-        .overlay(alignment: .leading) {
-            if insertionBefore {
-                Capsule().fill(Theme.primary).frame(width: 2, height: 18).offset(x: -3)
-            }
-        }
-        .overlay(alignment: .trailing) {
-            if insertionAfter {
-                Capsule().fill(Theme.primary).frame(width: 2, height: 18).offset(x: 3)
-            }
-        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(count: 2, perform: rename)
