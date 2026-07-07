@@ -61,6 +61,13 @@ int32_t lotus_set_content_at(const char *path, uint64_t id,
 int32_t lotus_set_at(const char *path, uint64_t id,
                      const char *property, const char *value);
 
+/* Every past version of an entity's content, NEWEST first:
+   [{"seq":N,"time":..,"author":"..","label":"..","spans":[..]}]
+   The log is the history — each entry is a whole content value.
+   Restore one with lotus_set_content_at of its spans. NULL when the box
+   is unavailable. Free with lotus_string_free. */
+char *lotus_content_history_at(const char *path, uint64_t id);
+
 /* Birth of a note: Create + type:note + created, one transaction.
    Returns the id, 0 on failure. Caller drops straight into renaming. */
 uint64_t lotus_create_note_at(const char *path);

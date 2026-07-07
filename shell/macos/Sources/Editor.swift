@@ -153,6 +153,31 @@ struct ContentDoc: Codable {
     let spans: [SpanJSON]
 }
 
+/// One past version of a note's content, from the log (P4/4d).
+struct HistoryVersion: Codable, Identifiable {
+    let seq: UInt64
+    let time: Int64
+    let author: String
+    let label: String
+    let spans: [SpanJSON]
+
+    var id: UInt64 { seq }
+
+    /// A one-line preview: the plain text of the version, breaks as spaces.
+    var preview: String {
+        var out = ""
+        for span in spans {
+            switch span {
+            case .text(let t, _): out += t
+            case .brk: if !out.isEmpty && !out.hasSuffix(" ") { out += " " }
+            case .ref: out += "🔗"
+            }
+        }
+        let trimmed = out.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? "(empty)" : trimmed
+    }
+}
+
 // MARK: - the codec: spans ⇄ attributed string, lossless by construction
 
 /// What a pill needs at draw time and nothing more: a window into the

@@ -137,6 +137,49 @@ pub fn set_content(
     Ok(fresh)
 }
 
+/// One past version of an entity's content — the value carried by a
+/// content-setting transaction, verbatim. No replay: whole-value replace
+/// means every AddCell of CONTENT already holds the full content of that
+/// moment, so history is a walk of the log, not a reconstruction.
+pub struct ContentVersion {
+    pub seq: u64,
+    pub time: i64,
+    pub author: Author,
+    pub label: String,
+    pub spans: Vec<Span>,
+}
+
+/// Every version of an entity's content, oldest first — the log IS the
+/// history (feature-map T1 #10). Each entry is a whole content value;
+/// restoring one is an ordinary set_content of its spans.
+pub fn content_history(store: &Store, id: Id) -> Vec<ContentVersion> {
+    let id = store.resolve(id);
+    let mut out = Vec::new();
+    for tx in store.history() {
+        for command in &tx.commands {
+            let Command::AddCell { entity, cell } = command else {
+                continue;
+            };
+            if store.resolve(*entity) != id || cell.property != props::CONTENT {
+                continue;
+            }
+            let spans = match &cell.value {
+                Value::RichText(rich) => rich.spans.clone(),
+                Value::Text(text) => vec![Span::text(text.clone())],
+                _ => continue,
+            };
+            out.push(ContentVersion {
+                seq: tx.seq,
+                time: tx.time,
+                author: tx.author.clone(),
+                label: tx.label.clone(),
+                spans,
+            });
+        }
+    }
+    out
+}
+
 /// Birth of a note: Create + type + created, one transaction. The caller
 /// drops straight into renaming — the entity is born nameless, like a
 /// scrap, but typed, so expectations apply from the first moment.

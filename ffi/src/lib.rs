@@ -628,6 +628,51 @@ pub unsafe extern "C" fn lotus_set_at(
     lotus_services::content::set_property(&mut session, id, property, value).is_ok() as i32
 }
 
+#[derive(Serialize)]
+struct ContentVersionRow {
+    seq: u64,
+    time: i64,
+    author: String,
+    label: String,
+    spans: Vec<lotus_core::Span>,
+}
+
+/// Every past version of an entity's content, NEWEST first, as one JSON
+/// array: [{"seq","time","author","label","spans"}]. The log is the
+/// history — no reconstruction; each entry is a whole content value, and
+/// restoring one is an ordinary `lotus_set_content_at` of its spans.
+/// Null when the box is unavailable. Free with `lotus_string_free`.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_content_history_at(path: *const c_char, id: u64) -> *mut c_char {
+    let Some(session) = open_swept(path) else {
+        return std::ptr::null_mut();
+    };
+    let mut versions: Vec<ContentVersionRow> =
+        lotus_services::content::content_history(session.store(), id)
+            .into_iter()
+            .map(|v| ContentVersionRow {
+                seq: v.seq,
+                time: v.time,
+                author: match v.author {
+                    Author::Proposer(name) => name,
+                    Author::User => "user".into(),
+                    Author::System => "system".into(),
+                },
+                label: v.label,
+                spans: v.spans,
+            })
+            .collect();
+    versions.reverse(); // newest first for the pane
+    drop(session);
+    match serde_json::to_string(&versions).ok().and_then(|s| CString::new(s).ok()) {
+        Some(s) => s.into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
 /// Birth of a note: Create + type + created, one transaction. Returns
 /// the id, 0 on failure. The caller drops straight into renaming.
 ///
@@ -1119,6 +1164,52 @@ mod tests {
             unsafe { lotus_set_at(c_path.as_ptr(), 999_999, status.as_ptr(), done.as_ptr()) },
             0
         );
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn content_history_is_the_log() {
+        let (path, c_path) = fresh_box("lotus_ffi_history.log");
+
+        let text = CString::new("first").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let base = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) }["fingerprint"]
+            .as_u64()
+            .unwrap();
+
+        // A second version.
+        let v2 = CString::new(r#"[{"Text":"second"}]"#).unwrap();
+        let mut fresh: u64 = 0;
+        assert_eq!(
+            unsafe { lotus_set_content_at(c_path.as_ptr(), id, v2.as_ptr(), base, &mut fresh) },
+            1
+        );
+
+        // History has both, newest first, each a whole content value.
+        let hist = unsafe { read_json(lotus_content_history_at(c_path.as_ptr(), id)) };
+        let versions = hist.as_array().unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0]["spans"], serde_json::json!([{"Text": "second"}]));
+        assert_eq!(versions[1]["spans"], serde_json::json!([{"Text": "first"}]));
+        assert_eq!(versions[1]["author"], "user");
+
+        // Restore = an ordinary set_content of the old spans (re-read the
+        // fresh base first, the way the shell does).
+        let re = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        let now = re["fingerprint"].as_u64().unwrap();
+        let restore = CString::new(r#"[{"Text":"first"}]"#).unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_set_content_at(c_path.as_ptr(), id, restore.as_ptr(), now, std::ptr::null_mut())
+            },
+            1
+        );
+        let back = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(back["spans"], serde_json::json!([{"Text": "first"}]));
+        // The restore is a NEW version, appended — the log is never rewritten.
+        let hist = unsafe { read_json(lotus_content_history_at(c_path.as_ptr(), id)) };
+        assert_eq!(hist.as_array().unwrap().len(), 3);
 
         cleanup(&path);
     }

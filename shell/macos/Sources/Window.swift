@@ -274,6 +274,39 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Every past version of a note's content, newest first (P4/4d).
+    func contentHistory(_ id: UInt64, done: @escaping ([HistoryVersion]) -> Void) {
+        boxQueue.async {
+            var versions: [HistoryVersion] = []
+            if let raw = lotus_content_history_at(self.path, id) {
+                let json = String(cString: raw)
+                lotus_string_free(raw)
+                versions =
+                    (try? JSONDecoder().decode([HistoryVersion].self, from: Data(json.utf8))) ?? []
+            }
+            DispatchQueue.main.async { done(versions) }
+        }
+    }
+
+    /// Restore a past version: re-read the current fingerprint, then save
+    /// the old spans as a NEW version through the guarded door — the log
+    /// is never rewritten, and a stale race is refused like any save.
+    func restoreContent(_ id: UInt64, spans: [SpanJSON], done: @escaping (Bool) -> Void = { _ in }) {
+        content(id) { read in
+            guard case .doc(let doc) = read else {
+                done(false)
+                return
+            }
+            self.saveContent(id: id, spansJSON: SpanCodec.json(spans), base: doc.fingerprint) {
+                result in
+                if case .saved = result { done(true) } else {
+                    NSSound.beep()
+                    done(false)
+                }
+            }
+        }
+    }
+
     /// Complete any quit flush that failed: replay each journaled draft
     /// through the same fingerprinted door as every save. Success deletes
     /// the journal; stale or invalid surfaces in an open editor — a
@@ -1563,39 +1596,162 @@ struct InspectorPane: View {
     @Binding var selection: UInt64?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let entity = model.entity(selection) {
-                Text("SELECTED")
-                    .font(.system(size: 11, weight: .semibold))
-                    .kerning(0.5)
-                    .foregroundColor(Color.secondary.opacity(0.7))
-                    .padding(.bottom, 8)
-                Text(entity.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .padding(.bottom, 20)
-                ForEach(entity.cells, id: \.self) { cell in
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(cell.property)
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .frame(width: 72, alignment: .leading)
-                        Text(cell.value)
-                            .font(.system(size: 13))
-                            .lineLimit(3)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if let entity = model.entity(selection) {
+                    Text("SELECTED")
+                        .font(.system(size: 11, weight: .semibold))
+                        .kerning(0.5)
+                        .foregroundColor(Color.secondary.opacity(0.7))
+                        .padding(.bottom, 8)
+                    Text(entity.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .padding(.bottom, 20)
+                    ForEach(entity.cells, id: \.self) { cell in
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(cell.property)
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .frame(width: 72, alignment: .leading)
+                            Text(cell.value)
+                                .font(.system(size: 13))
+                                .lineLimit(3)
+                        }
+                        .padding(.vertical, 7)
+                        .overlay(Divider(), alignment: .bottom)
                     }
-                    .padding(.vertical, 7)
-                    .overlay(Divider(), alignment: .bottom)
+                    if entity.cells.contains(where: { $0.property == "content" }) {
+                        HistorySection(model: model, id: entity.id)
+                            .padding(.top, 20)
+                    }
+                } else {
+                    Text("Select a row to see its cells.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
                 }
-            } else {
-                Text("Select a row to see its cells.")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
             }
-            Spacer()
+            .padding(20)
+            .padding(.top, 24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(20)
-        .padding(.top, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .underPageBackgroundColor))
+    }
+}
+
+/// The note's content history (P4/4d): every past version from the log,
+/// newest first, each restorable. Restore appends a new version — the
+/// log is never rewritten.
+struct HistorySection: View {
+    @ObservedObject var model: BoxModel
+    let id: UInt64
+
+    @State private var open = false
+    @State private var versions: [HistoryVersion] = []
+    @State private var loadedFor: UInt64?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                open.toggle()
+                if open { load() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: open ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("HISTORY")
+                        .font(.system(size: 11, weight: .semibold))
+                        .kerning(0.5)
+                    if !versions.isEmpty {
+                        Text("\(versions.count)")
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .foregroundColor(Color.secondary.opacity(0.85))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if open {
+                if versions.isEmpty {
+                    Text("No history yet.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(Array(versions.enumerated()), id: \.element.id) { index, version in
+                        HistoryRow(
+                            version: version, isCurrent: index == 0,
+                            restore: {
+                                model.restoreContent(id, spans: version.spans) { _ in load() }
+                            })
+                    }
+                }
+            }
+        }
+        .onChange(of: id) {
+            open = false
+            versions = []
+            loadedFor = nil
+        }
+    }
+
+    private func load() {
+        model.contentHistory(id) { fetched in
+            versions = fetched
+            loadedFor = id
+        }
+    }
+}
+
+struct HistoryRow: View {
+    let version: HistoryVersion
+    let isCurrent: Bool
+    let restore: () -> Void
+
+    @State private var hovering = false
+
+    /// The transaction time is a Unix timestamp (store.rs `now()`), not a
+    /// civil value — format the wall clock in the system calendar.
+    static func when(_ epoch: Int64) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(epoch)))
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: isCurrent ? "circle.fill" : "circle")
+                .font(.system(size: 6))
+                .foregroundColor(isCurrent ? Theme.accent : .secondary)
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(version.preview)
+                    .font(.system(size: 12.5))
+                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(Self.when(version.time))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundColor(.secondary)
+                    if version.author != "user" {
+                        Text(version.author)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(Theme.accent)
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+            if hovering && !isCurrent {
+                Button("Restore", action: restore)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.accent)
+            }
+        }
+        .padding(.vertical, 7)
+        .overlay(Divider(), alignment: .bottom)
+        .onHover { hovering = $0 }
     }
 }
