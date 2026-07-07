@@ -1478,34 +1478,34 @@ struct EntityLine: View {
         // Done-state visuals only when interactive (the Tasks surface); the
         // static glyph in Today / Library is left exactly as it was.
         let showDone = toggle != nil && row.status == "done"
-        return Button(action: select) {
-            HStack(spacing: 12) {
-                if let toggle {
-                    // A nested plain button, so tapping the box toggles the
-                    // task without also triggering the row's select.
-                    Button(action: toggle) { checkbox(filled: showDone) }
-                        .buttonStyle(.plain)
-                } else if isTask {
-                    checkbox(filled: false)
-                }
-                Text(row.title)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .foregroundColor(showDone ? .secondary : .primary)
-                    .strikethrough(showDone, color: .secondary)
-                Spacer()
-                if let accessory { accessory }
-                if showWhen, let due = row.due {
-                    Text(Civil.text(due, dateOnly: row.dueDateOnly))
-                        .font(.system(size: 12.5).monospacedDigit())
-                        .foregroundColor(.secondary)
-                }
+        // The row is NOT an outer Button — a Button/Menu nested in a Button
+        // never gets the tap on macOS (the outer one swallows it). Row-select
+        // is a tap gesture on the background, so the checkbox button and the
+        // priority menu each capture their own taps.
+        return HStack(spacing: 12) {
+            if let toggle {
+                Button(action: toggle) { checkbox(filled: showDone) }
+                    .buttonStyle(.plain)
+            } else if isTask {
+                checkbox(filled: false)
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
+            Text(row.title)
+                .font(.system(size: 14))
+                .lineLimit(1)
+                .foregroundColor(showDone ? .secondary : .primary)
+                .strikethrough(showDone, color: .secondary)
+            Spacer()
+            if let accessory { accessory }
+            if showWhen, let due = row.due {
+                Text(Civil.text(due, dateOnly: row.dueDateOnly))
+                    .font(.system(size: 12.5).monospacedDigit())
+                    .foregroundColor(.secondary)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { select() }
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.accentTint : .clear))
         .overlay(Divider(), alignment: .bottom)
     }
