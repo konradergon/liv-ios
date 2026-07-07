@@ -83,6 +83,10 @@ uint64_t lotus_create_workspace_at(const char *path, const char *name,
    them. 1 on success, 0 on failure. */
 int32_t lotus_trash_workspace_at(const char *path, uint64_t id);
 
+/* Trash one entity — the inspector's Trash action. Soft, reversible,
+   never cascades. 1 on success, 0 on failure. */
+int32_t lotus_trash_at(const char *path, uint64_t id);
+
 /* Remove every cell of one property — the inverse of lotus_set_at's
    replace. Missing property on the entity is success. 1 ok, 0 on
    busy/no entity/no property definition. */

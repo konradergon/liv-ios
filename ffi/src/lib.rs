@@ -65,8 +65,33 @@ pub unsafe extern "C" fn lotus_capture_at(path: *const c_char, text: *const c_ch
 
 #[derive(Serialize)]
 struct CellRow {
+    /// The property definition's id — the inspector keys the catalog off
+    /// it to render the right control and pick options.
+    property_id: Id,
     property: String,
+    /// The value-kind of the property: text/number/bool/datetime/select/
+    /// reference/richtext/file — empty when the property has no kind.
+    kind: String,
     value: String,
+    /// For select/reference cells, the referenced entity's id — so the
+    /// picker pre-selects and edits by id.
+    ref_target: Option<Id>,
+}
+
+#[derive(Serialize)]
+struct OptionRow {
+    id: Id,
+    name: String,
+}
+
+/// One property definition — the inspector's catalog: its kind, and for
+/// a select, its option entities.
+#[derive(Serialize)]
+struct PropertyRow {
+    id: Id,
+    name: String,
+    kind: String,
+    options: Vec<OptionRow>,
 }
 
 #[derive(Serialize)]
@@ -78,6 +103,9 @@ struct EntityRow {
     due_date_only: bool,
     status: Option<String>,
     created: Option<i64>,
+    trashed: bool,
+    bookmarked: bool,
+    archived: bool,
     /// Fingerprint of the stored content value, 0 when none — the editor
     /// learns from every snapshot whether its base moved, for free.
     content_print: u64,
@@ -137,6 +165,8 @@ struct Snapshot {
     /// Navigation chrome: working entities of type workspace, whole
     /// tree, archived included (the shell draws the Archive group).
     workspaces: Vec<WorkspaceRow>,
+    /// Every property definition — the inspector's catalog.
+    properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
 }
 
@@ -166,9 +196,59 @@ fn civil_today() -> DateTime {
     DateTime::date(now.year(), now.month(), now.day())
 }
 
+/// The value-kind a property declares, if any.
+fn property_kind(store: &Store, property: Id) -> Option<String> {
+    match store.get(property).and_then(|p| p.get(props::VALUE_KIND)) {
+        Some(Value::Text(kind)) => Some(kind.clone()),
+        _ => None,
+    }
+}
+
+/// The id a select/reference cell points at, for the picker.
+fn cell_target(value: &Value) -> Option<Id> {
+    match value {
+        Value::Select(id) | Value::Reference(id) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Every property definition, with each select's options — the catalog
+/// the inspector renders controls from.
+fn build_properties(store: &Store) -> Vec<PropertyRow> {
+    let mut rows: Vec<PropertyRow> = store
+        .entities()
+        .filter(|e| !e.trashed)
+        .filter_map(|e| {
+            let kind = property_kind(store, e.id)?;
+            let name = match e.get(props::NAME) {
+                Some(Value::Text(n)) => n.clone(),
+                _ => return None,
+            };
+            let options = if kind == "select" {
+                e.all(props::OPTIONS)
+                    .filter_map(|v| match v {
+                        Value::Reference(id) => Some(OptionRow {
+                            id: *id,
+                            name: reference_name(store, *id),
+                        }),
+                        _ => None,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Some(PropertyRow { id: e.id, name, kind, options })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    rows
+}
+
 fn build_snapshot(store: &Store) -> Snapshot {
     let due_prop = property_id(store, "due");
     let status_prop = property_id(store, "status");
+    let bookmarked_prop = property_id(store, "bookmarked");
+    let archived_prop = property_id(store, "archived");
 
     let everything = run(store, &Query::default());
 
@@ -237,6 +317,13 @@ fn build_snapshot(store: &Store) -> Snapshot {
                     Some(Value::DateTime(d)) => Some(d.civil),
                     _ => None,
                 },
+                trashed: entity.trashed,
+                bookmarked: bookmarked_prop
+                    .map(|p| entity.has(p, &Value::Bool(true)))
+                    .unwrap_or(false),
+                archived: archived_prop
+                    .map(|p| entity.has(p, &Value::Bool(true)))
+                    .unwrap_or(false),
                 content_print: lotus_services::content::content_fingerprint(
                     entity.get(props::CONTENT),
                 ),
@@ -244,8 +331,11 @@ fn build_snapshot(store: &Store) -> Snapshot {
                     .cells
                     .iter()
                     .map(|cell| CellRow {
+                        property_id: cell.property,
                         property: reference_name(store, cell.property),
+                        kind: property_kind(store, cell.property).unwrap_or_default(),
                         value: lotus_views::display(store, &cell.value),
+                        ref_target: cell_target(&cell.value),
                     })
                     .collect(),
             }
@@ -333,7 +423,19 @@ fn build_snapshot(store: &Store) -> Snapshot {
         })
         .collect();
 
-    Snapshot { today, unstructured, everything, dated, occurrences, inbox, workspaces, entities }
+    let properties = build_properties(store);
+
+    Snapshot {
+        today,
+        unstructured,
+        everything,
+        dated,
+        occurrences,
+        inbox,
+        workspaces,
+        properties,
+        entities,
+    }
 }
 
 fn last_day_of_month(year: i32, month: u32) -> u32 {
@@ -727,6 +829,19 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) -> i32 {
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    lotus_services::content::trash_workspace(&mut session, id).is_ok() as i32
+}
+
+/// Trash one entity — the inspector's Trash action. Soft, reversible
+/// (⌘⌥Z), never cascades. 1 on success, 0 on failure.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_trash_at(path: *const c_char, id: u64) -> i32 {
     let Some(mut session) = open_swept(path) else {
         return 0;
     };

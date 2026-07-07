@@ -19,8 +19,27 @@ enum Theme {
 // MARK: - snapshot rows (mirror ffi/src/lib.rs, decoded from snake_case)
 
 struct CellRow: Codable, Hashable {
+    let propertyId: UInt64
     let property: String
+    /// text/number/bool/datetime/select/reference/richtext/file — the
+    /// inspector renders a control by this.
+    let kind: String
     let value: String
+    /// For select/reference cells, the referenced entity's id.
+    let refTarget: UInt64?
+}
+
+struct OptionRow: Codable, Hashable, Identifiable {
+    let id: UInt64
+    let name: String
+}
+
+/// A property definition — the inspector's catalog entry.
+struct PropertyRow: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let name: String
+    let kind: String
+    let options: [OptionRow]
 }
 
 struct EntityRow: Codable, Identifiable, Hashable {
@@ -31,6 +50,9 @@ struct EntityRow: Codable, Identifiable, Hashable {
     let dueDateOnly: Bool
     let status: String?
     let created: Int64?
+    let trashed: Bool
+    let bookmarked: Bool
+    let archived: Bool
     /// Fingerprint of the stored content, 0 when none — the editor reads
     /// "did my base move?" off every snapshot for free.
     let contentPrint: UInt64
@@ -73,6 +95,7 @@ struct Snapshot: Codable {
     let occurrences: [OccurrenceRow]
     let inbox: [ProposalRow]
     let workspaces: [WorkspaceRow]
+    let properties: [PropertyRow]
     let entities: [EntityRow]
 }
 
@@ -206,6 +229,17 @@ final class BoxModel: ObservableObject {
 
     func unset(_ id: UInt64, property: String, done: @escaping (Bool) -> Void = { _ in }) {
         act(done) { lotus_unset_at(self.path, id, property) == 1 }
+    }
+
+    func trash(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_trash_at(self.path, id) == 1 }
+    }
+
+    /// The property catalog for the inspector — by name, with each
+    /// select's options.
+    func properties() -> [PropertyRow] { snap?.properties ?? [] }
+    func property(named name: String) -> PropertyRow? {
+        snap?.properties.first { $0.name == name }
     }
 
     // MARK: the editor's reads and writes
@@ -1595,34 +1629,28 @@ struct InspectorPane: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
 
+    /// Cells the header or the editor owns — not editable rows here.
+    static let reserved: Set<String> = ["name", "content", "created", "type"]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if let entity = model.entity(selection) {
-                    Text("SELECTED")
-                        .font(.system(size: 11, weight: .semibold))
-                        .kerning(0.5)
-                        .foregroundColor(Color.secondary.opacity(0.7))
-                        .padding(.bottom, 8)
-                    Text(entity.title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .padding(.bottom, 20)
-                    ForEach(entity.cells, id: \.self) { cell in
-                        HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            Text(cell.property)
-                                .font(.system(size: 13))
-                                .foregroundColor(.secondary)
-                                .frame(width: 72, alignment: .leading)
-                            Text(cell.value)
-                                .font(.system(size: 13))
-                                .lineLimit(3)
-                        }
-                        .padding(.vertical, 7)
-                        .overlay(Divider(), alignment: .bottom)
+                    InspectorHeader(model: model, entity: entity, selection: $selection)
+                    let rows = entity.cells.filter { !Self.reserved.contains($0.property) }
+                    ForEach(rows, id: \.self) { cell in
+                        FieldRow(model: model, entity: entity.id, cell: cell)
+                    }
+                    AddPropertyRow(model: model, entity: entity)
+                    if let created = entity.created {
+                        Text("Created \(Civil.text(created, dateOnly: false))")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color.secondary.opacity(0.7))
+                            .padding(.top, 16)
                     }
                     if entity.cells.contains(where: { $0.property == "content" }) {
                         HistorySection(model: model, id: entity.id)
-                            .padding(.top, 20)
+                            .padding(.top, 16)
                     }
                 } else {
                     Text("Select a row to see its cells.")
@@ -1636,6 +1664,250 @@ struct InspectorPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .underPageBackgroundColor))
+    }
+}
+
+// MARK: - inspector header (title, kind, actions)
+
+struct InspectorHeader: View {
+    @ObservedObject var model: BoxModel
+    let entity: EntityRow
+    @Binding var selection: UInt64?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: kindSymbol)
+                    .font(.system(size: 15))
+                    .foregroundColor(Theme.accent)
+                Text(entity.title.isEmpty ? "Untitled" : entity.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(entity.title.isEmpty ? .secondary : .primary)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+            }
+            if !entity.kinds.isEmpty {
+                Text(entity.kinds.joined(separator: " · "))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            HStack(spacing: 14) {
+                actionButton(
+                    entity.bookmarked ? "bookmark.fill" : "bookmark",
+                    entity.bookmarked ? "Remove bookmark" : "Bookmark",
+                    active: entity.bookmarked
+                ) {
+                    model.set(entity.id, property: "bookmarked", value: entity.bookmarked ? "false" : "true")
+                }
+                actionButton(
+                    entity.archived ? "archivebox.fill" : "archivebox",
+                    entity.archived ? "Unarchive" : "Archive",
+                    active: entity.archived
+                ) {
+                    model.set(entity.id, property: "archived", value: entity.archived ? "false" : "true")
+                }
+                actionButton("trash", "Move to Trash", active: false) {
+                    Dialogs.shared.confirm(
+                        "Move to Trash?", message: "Reversible with ⌘⌥Z.",
+                        danger: true, confirmLabel: "Trash"
+                    ) { yes in
+                        guard yes else { return }
+                        model.trash(entity.id) { ok in if ok { selection = nil } }
+                    }
+                }
+                Spacer()
+            }
+        }
+        .padding(.bottom, 16)
+        .overlay(Divider(), alignment: .bottom)
+        .padding(.bottom, 12)
+    }
+
+    private var kindSymbol: String {
+        if entity.kinds.contains("task") || entity.status != nil { return "checkmark.square" }
+        if entity.kinds.contains("event") { return "calendar" }
+        if entity.kinds.contains("person") { return "person" }
+        if entity.kinds.contains("project") { return "folder" }
+        return "doc.text"
+    }
+
+    private func actionButton(
+        _ symbol: String, _ help: String, active: Bool, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundColor(active ? Theme.accent : Theme.mutedFg)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+// MARK: - one editable field, dispatched by value-kind
+
+struct FieldRow: View {
+    @ObservedObject var model: BoxModel
+    let entity: UInt64
+    let cell: CellRow
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(cell.property)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: 76, alignment: .leading)
+            control
+            if hovering {
+                Button {
+                    model.unset(entity, property: cell.property)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9))
+                        .foregroundColor(Theme.mutedFg)
+                }
+                .buttonStyle(.plain)
+                .help("Remove this property")
+            }
+        }
+        .padding(.vertical, 6)
+        .overlay(Divider(), alignment: .bottom)
+        .onHover { hovering = $0 }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        switch cell.kind {
+        case "bool":
+            Toggle("", isOn: Binding(
+                get: { cell.value == "yes" || cell.value == "true" },
+                set: { model.set(entity, property: cell.property, value: $0 ? "true" : "false") }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            Spacer(minLength: 0)
+        case "select":
+            SelectField(model: model, entity: entity, cell: cell)
+        case "reference":
+            Text(cell.value)
+                .font(.system(size: 12.5))
+                .foregroundColor(Theme.accent)
+            Spacer(minLength: 0)
+        default:
+            EditableText(model: model, entity: entity, cell: cell)
+        }
+    }
+}
+
+/// A commit-on-blur/Enter text field over a cell — text, number, and
+/// datetime all edit as their string form (parsed by the seam's kind).
+struct EditableText: View {
+    @ObservedObject var model: BoxModel
+    let entity: UInt64
+    let cell: CellRow
+    @State private var draft: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $draft)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12.5))
+            .focused($focused)
+            .onAppear { draft = cell.value }
+            // An external refresh must not clobber a value being typed.
+            .onChange(of: cell.value) { if !focused { draft = cell.value } }
+            .onSubmit { commit() }
+            .onChange(of: focused) { if !focused { commit() } }
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+        guard trimmed != cell.value else { return }
+        if trimmed.isEmpty {
+            model.unset(entity, property: cell.property)
+        } else {
+            model.set(entity, property: cell.property, value: trimmed)
+        }
+    }
+}
+
+/// A select cell edited via a menu of the property's options.
+struct SelectField: View {
+    @ObservedObject var model: BoxModel
+    let entity: UInt64
+    let cell: CellRow
+
+    var body: some View {
+        let options = model.property(named: cell.property)?.options ?? []
+        Menu {
+            ForEach(options) { option in
+                Button(option.name) {
+                    model.set(entity, property: cell.property, value: option.name)
+                }
+            }
+        } label: {
+            Text(cell.value.isEmpty ? "—" : cell.value)
+                .font(.system(size: 12.5))
+                .foregroundColor(.primary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        Spacer(minLength: 0)
+    }
+}
+
+// MARK: - add a property
+
+struct AddPropertyRow: View {
+    @ObservedObject var model: BoxModel
+    let entity: EntityRow
+
+    var body: some View {
+        let present = Set(entity.cells.map(\.property))
+        let addable = model.properties().filter {
+            !present.contains($0.name) && !InspectorPane.reserved.contains($0.name)
+        }
+        if !addable.isEmpty {
+            Menu {
+                ForEach(addable) { property in
+                    Button(property.name) { add(property) }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Add property")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(Theme.mutedFg)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .padding(.top, 10)
+        }
+    }
+
+    /// Seed a sensible default so the new row appears ready to edit.
+    private func add(_ property: PropertyRow) {
+        let value: String
+        switch property.kind {
+        case "bool": value = "false"
+        case "number": value = "0"
+        case "select": value = property.options.first?.name ?? ""
+        case "datetime": value = Self.today()
+        default: value = ""
+        }
+        guard !(property.kind == "select" && value.isEmpty) else { return }
+        // An empty text cell is legitimate and immediately editable.
+        model.set(entity.id, property: property.name, value: value.isEmpty ? " " : value)
+    }
+
+    private static func today() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
     }
 }
 
