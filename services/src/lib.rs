@@ -65,7 +65,46 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_starter_library(session)?;
     seed_recurrence(session)?;
     seed_files(session)?;
+    seed_priority(session)?;
     seed_workspaces(session)
+}
+
+/// The task surface's `priority` select — one more option list the Tasks
+/// list offers. It needs its OWN guard, not the starter-library's (which
+/// short-circuits on `due` and so never runs on a shipped box): guarded on
+/// `priority` itself, it lands additively on an older box's next open.
+/// Offered, never expected — a task is valid without a priority, so the
+/// `task` type's expectations are left untouched.
+fn seed_priority(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "priority").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    let priority = session.allocate_id();
+    commands.push(Command::Create { entity: priority });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("priority") },
+        Cell { property: props::VALUE_KIND, value: Value::text("select") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: priority, cell });
+    }
+    for option in ["low", "medium", "high"] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(option) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        commands.push(Command::AddCell {
+            entity: priority,
+            cell: Cell { property: props::OPTIONS, value: Value::Reference(id) },
+        });
+    }
+    session.commit(commands, "priority property", Author::System)?;
+    Ok(())
 }
 
 /// The file librarian's two properties, additive on open (an older box

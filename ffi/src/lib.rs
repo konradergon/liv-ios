@@ -939,6 +939,22 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
     lotus_services::content::create_note(&mut session, created).unwrap_or(0)
 }
 
+/// Create a task by hand (the Tasks quick-add): one transaction — type=task
+/// + status=todo + created. Returns the new id, 0 on failure. Distinct from
+/// capture, which makes an untyped scrap the clerk quarantines.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    let now = Local::now();
+    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+    lotus_services::content::create_task(&mut session, created).unwrap_or(0)
+}
+
 /// Add a file by reference: hash its bytes, create the entity with a `file`
 /// cell (path + hash) + `format` + `name`, one transaction. NEVER copies,
 /// moves, or renames the file — only reads it to hash. Returns the new id,
@@ -1684,6 +1700,24 @@ mod tests {
         assert_eq!(unsafe { lotus_add_file_at(c_path.as_ptr(), bad.as_ptr()) }, 0);
 
         let _ = std::fs::remove_file(&doc);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn create_task_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_task.log");
+        let id = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        assert_ne!(id, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let e = snap["entities"].as_array().unwrap().iter()
+            .find(|e| e["id"].as_u64() == Some(id)).unwrap();
+        // A typed, todo task: kinds carries "task", status renders "todo".
+        let kinds: Vec<&str> =
+            e["kinds"].as_array().unwrap().iter().filter_map(|k| k.as_str()).collect();
+        assert!(kinds.contains(&"task"), "a created task is typed task");
+        assert_eq!(e["status"], "todo");
+
         cleanup(&path);
     }
 

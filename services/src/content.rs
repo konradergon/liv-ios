@@ -210,6 +210,59 @@ pub fn create_note(session: &mut Session, created: DateTime) -> Result<Id, Persi
     Ok(id)
 }
 
+/// The id of a select property's option entity by name (case-insensitive) —
+/// the same OPTIONS walk `parse_value`'s select branch does, factored so
+/// birth (`create_task`) resolves an option identically to a `set`.
+pub fn find_option(store: &Store, property: Id, name: &str) -> Option<Id> {
+    let wanted = name.to_lowercase();
+    store
+        .get(property)?
+        .all(props::OPTIONS)
+        .find_map(|value| match value {
+            Value::Reference(target) => match store.get(*target)?.get(props::NAME) {
+                Some(Value::Text(option)) if option.to_lowercase() == wanted => Some(*target),
+                _ => None,
+            },
+            _ => None,
+        })
+}
+
+/// Birth of a task: Create + type=task + status=todo + created, one
+/// transaction. Born nameless (like `create_note`) so the caller drops into
+/// renaming, but typed and already `todo`, so the list's checkbox has a
+/// concrete state from the first frame. Priority and due are set later,
+/// never at birth. Distinct from capture, which makes an untyped scrap the
+/// clerk quarantines.
+pub fn create_task(session: &mut Session, created: DateTime) -> Result<Id, PersistError> {
+    let store = session.store();
+    let task_type = find_type(store, "task");
+    let status_prop = property_id(store, "status");
+    let todo = status_prop.and_then(|status| find_option(store, status, "todo"));
+
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    if let Some(task_type) = task_type {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::TYPE, value: Value::Reference(task_type) },
+        });
+    }
+    // A select cell holds a Select value (not Reference) so `status:todo`
+    // search and the inspector's select control agree with a hand-set status.
+    if let (Some(status), Some(todo)) = (status_prop, todo) {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: status, value: Value::Select(todo) },
+        });
+    }
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::CREATED, value: Value::DateTime(created) },
+    });
+    session.commit(commands, "new task", Author::User)?;
+    Ok(id)
+}
+
 /// Birth of a workspace: Create + type + name + created (+ parent and
 /// a trailing order among its new siblings), one transaction. Working:
 /// navigation chrome, not a thought.

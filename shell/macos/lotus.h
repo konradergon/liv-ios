@@ -81,6 +81,11 @@ char *lotus_content_history_at(const char *path, uint64_t id);
    Returns the id, 0 on failure. Caller drops straight into renaming. */
 uint64_t lotus_create_note_at(const char *path);
 
+/* Create a task by hand (Tasks quick-add): Create + type:task +
+   status:todo + created, one transaction. Returns the id, 0 on failure.
+   Distinct from capture, which quarantines an untyped scrap. */
+uint64_t lotus_create_task_at(const char *path);
+
 /* Add a file by reference — the librarian: hash the file's bytes, create
    an entity with a file cell (path + hash), format, and name, one
    transaction. NEVER moves, copies, or renames the file. Returns the new

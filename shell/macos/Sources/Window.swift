@@ -274,6 +274,19 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Create a task by hand (the Tasks quick-add) — typed and born `todo`,
+    /// distinct from a capture. Returns the new id, nil on failure.
+    func createTask(_ done: @escaping (UInt64?) -> Void = { _ in }) {
+        boxQueue.async {
+            let id = lotus_create_task_at(self.path)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
     /// Add a file by reference — the librarian hashes it and creates the
     /// entity; the bytes are never moved. Returns the new id, nil on failure.
     func addFile(_ filePath: String, done: @escaping (UInt64?) -> Void = { _ in }) {
@@ -857,6 +870,10 @@ struct WindowChrome: View {
             switch chrome.surface {
             case .notes:
                 notesBody
+            case .tasks:
+                TasksView(
+                    model: model, selection: $selection,
+                    open: { id in openEntityTab(id) })
             case .inbox:
                 InboxView(model: model)
             case .calendar:
@@ -1648,12 +1665,15 @@ struct EverythingView: View {
         }
     }
 
-    private func statusColor(_ status: String) -> Color {
-        switch status {
-        case "done": return Color(red: 74 / 255, green: 158 / 255, blue: 134 / 255)
-        case "doing": return Color(red: 207 / 255, green: 154 / 255, blue: 63 / 255)
-        default: return Color.secondary.opacity(0.6)
-        }
+}
+
+/// The status dot colour, shared across the lens surfaces (Everything,
+/// Tasks). Lake-green for done, amber for doing, muted otherwise.
+func statusColor(_ status: String) -> Color {
+    switch status {
+    case "done": return Color(red: 74 / 255, green: 158 / 255, blue: 134 / 255)
+    case "doing": return Color(red: 207 / 255, green: 154 / 255, blue: 63 / 255)
+    default: return Color.secondary.opacity(0.6)
     }
 }
 
@@ -2176,6 +2196,121 @@ struct LibraryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background)
+    }
+}
+
+/// The Tasks surface (P8): a cross-workspace list of every task (type=task),
+/// grouped by status (todo / doing / done) in seeded order, due-ascending
+/// within a group. Quick-add creates a task (typed, born todo). The working
+/// checkbox and filters arrive in 8b; the board is a deferred candidate.
+struct TasksView: View {
+    @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    let open: (UInt64) -> Void
+
+    @State private var draft = ""
+    @FocusState private var addFocused: Bool
+
+    private let order = ["todo", "doing", "done"]
+
+    var body: some View {
+        let tasks = model.rows(model.snap?.everything ?? []).filter {
+            $0.kinds.contains("task")
+        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                LensHeader(
+                    title: "Tasks",
+                    subtitle: tasks.count == 1 ? "1 task" : "\(tasks.count) tasks")
+                quickAdd
+
+                if tasks.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(order, id: \.self) { status in
+                        let group = tasks
+                            .filter { ($0.status ?? "todo") == status }
+                            .sorted { dueKey($0) < dueKey($1) }
+                        if !group.isEmpty {
+                            SectionLabel(text: status).padding(.top, 14)
+                            ForEach(group) { row in
+                                EntityLine(row: row, selected: selection == row.id) {
+                                    open(row.id)
+                                }
+                            }
+                        }
+                    }
+                    // Any task carrying a status outside the seeded three.
+                    let other = tasks.filter { !order.contains($0.status ?? "todo") }
+                    if !other.isEmpty {
+                        SectionLabel(text: "other").padding(.top, 14)
+                        ForEach(other) { row in
+                            EntityLine(row: row, selected: selection == row.id) {
+                                open(row.id)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.top, 40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+    }
+
+    private var quickAdd: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Theme.mutedFg)
+            TextField("Add a task…", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($addFocused)
+                .onSubmit { addTask() }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .padding(.top, 8)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "checkmark.square")
+                .font(.system(size: 30))
+                .foregroundColor(Theme.foreground.opacity(0.12))
+            Text("No tasks yet.")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+            Text("Add one above — it lands in Todo.")
+                .font(.system(size: 11.5))
+                .foregroundColor(Theme.mutedFg)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+    }
+
+    /// Create the task (born nameless + todo), then set its title — two
+    /// transactions for one quick-add, matching create_note's nameless birth.
+    private func addTask() {
+        let title = draft.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else { return }
+        model.createTask { id in
+            guard let id else { return }
+            model.set(id, property: "name", value: title)
+        }
+        draft = ""
+    }
+
+    /// Due ascending, nil-due last.
+    private func dueKey(_ row: EntityRow) -> Int64 {
+        row.due ?? Int64.max
     }
 }
 
