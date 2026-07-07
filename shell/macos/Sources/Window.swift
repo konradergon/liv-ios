@@ -2254,7 +2254,7 @@ struct InspectorHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Image(systemName: kindSymbol)
                     .font(.system(size: 15))
                     .foregroundColor(Theme.accent)
@@ -2262,14 +2262,9 @@ struct InspectorHeader: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(entity.title.isEmpty ? .secondary : .primary)
                     .lineLimit(2)
-                Spacer(minLength: 4)
-            }
-            if !entity.kinds.isEmpty {
-                Text(entity.kinds.joined(separator: " · "))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            HStack(spacing: 14) {
+                Spacer(minLength: 8)
+                // The bookmark / archive / trash actions sit at the far
+                // right of the header, on the title's line.
                 actionButton(
                     entity.bookmarked ? "bookmark.fill" : "bookmark",
                     entity.bookmarked ? "Remove bookmark" : "Bookmark",
@@ -2293,7 +2288,11 @@ struct InspectorHeader: View {
                         model.trash(entity.id) { ok in if ok { selection = nil } }
                     }
                 }
-                Spacer()
+            }
+            if !entity.kinds.isEmpty {
+                Text(entity.kinds.joined(separator: " · "))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
             }
         }
         .padding(.bottom, 16)
