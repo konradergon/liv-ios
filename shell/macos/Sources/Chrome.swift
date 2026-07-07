@@ -340,7 +340,7 @@ struct SurfaceNav: View {
     let select: (Surface) -> Void
 
     var body: some View {
-        VStack(spacing: 1) {
+        VStack(spacing: 2) {
             ForEach(Surface.allCases, id: \.rawValue) { surface in
                 NavRow(
                     surface: surface,
@@ -350,6 +350,7 @@ struct SurfaceNav: View {
             }
         }
         .padding(.horizontal, 8)
+        .padding(.top, 6)
     }
 }
 
@@ -374,8 +375,8 @@ struct NavRow: View {
                     SoftBadge(count: badge)
                 }
             }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 9)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
