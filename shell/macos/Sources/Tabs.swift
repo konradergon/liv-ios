@@ -277,9 +277,12 @@ struct TabStrip: View {
             }
             .buttonStyle(.plain)
             .help("New tab")
-            // The tree/vault view toggle, pinned to the far right (out of
-            // the panel, out of the way).
-            SidebarViewToggle()
+            // With the inspector closed, the window's Spaces picker floats
+            // over the content's top-right — reserve room so + never sits
+            // under it. (Inspector open: the picker is over the inspector.)
+            if !chrome.rightOpen {
+                Color.clear.frame(width: 66)
+            }
         }
         .padding(.horizontal, 8)
         .frame(height: Theme.headerBandHeight)
