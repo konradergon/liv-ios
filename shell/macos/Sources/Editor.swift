@@ -579,6 +579,12 @@ final class LotusTextView: NSTextView {
     /// machinery; eat exactly that one textDidChange, or Esc reopens
     /// the popup it just closed.
     var suppressAutoComplete = false
+    /// The forward-link (create-then-ref) entry, when the query matched
+    /// no existing note. Accepting it mints the note and inserts its Ref.
+    var forwardLinkName: String?
+    var forwardLinkLabel: String?
+    /// Create a note named X and hand back its id — wired by the model.
+    var createForwardLink: (String, @escaping (UInt64) -> Void) -> Void = { _, _ in }
 
     /// The writing measure: ~65 characters of body text.
     static let measure: CGFloat = 620
@@ -652,6 +658,132 @@ final class LotusTextView: NSTextView {
         setSelectedRange(sel)
     }
 
+    // MARK: block input rules & demotion (markdown as an input convention)
+
+    func currentParagraphRange() -> NSRange {
+        (string as NSString).paragraphRange(for: selectedRange())
+    }
+
+    /// A markdown block prefix the user just completed: the block it makes,
+    /// the prefix length to strip, and whether it wants a leading marker.
+    private func blockRule(for line: String) -> (BlockJSON, Int, Bool)? {
+        // Task before bullet (both start with "- ").
+        if let m = line.range(of: #"^([-*+]) \[([ xX])\] "#, options: .regularExpression) {
+            let done = line.contains("[x]") || line.contains("[X]")
+            return (.task(depth: 0, done: done), line.distance(from: line.startIndex, to: m.upperBound), true)
+        }
+        if let m = line.range(of: #"^(#{1,6}) "#, options: .regularExpression) {
+            let n = UInt8(line.prefix(while: { $0 == "#" }).count)
+            return (.heading(n), line.distance(from: line.startIndex, to: m.upperBound), false)
+        }
+        if line.range(of: #"^[-*+] "#, options: .regularExpression) != nil {
+            return (.bullet(depth: 0), 2, true)
+        }
+        if let m = line.range(of: #"^\d+[.)] "#, options: .regularExpression) {
+            return (.ordered(depth: 0), line.distance(from: line.startIndex, to: m.upperBound), true)
+        }
+        if line.hasPrefix("> ") {
+            return (.quote, 2, false)
+        }
+        return nil
+    }
+
+    /// After a keystroke, convert a completed block prefix on the caret
+    /// line into its block — deleting the markers (they are input, never
+    /// stored) and typing the paragraph. Returns whether it fired.
+    @discardableResult
+    func applyBlockRuleIfAny() -> Bool {
+        guard let storage = textStorage else { return false }
+        let para = currentParagraphRange()
+        let ns = storage.string as NSString
+        // Only the text up to the caret, so a rule fires on the trigger
+        // space and not on later matching text.
+        let caret = selectedRange().location
+        guard caret > para.location else { return false }
+        let head = ns.substring(with: NSRange(location: para.location, length: caret - para.location))
+        guard let (block, prefixLen, wantsMarker) = blockRule(for: head),
+            caret == para.location + prefixLen,
+            shouldChangeText(in: para, replacementString: nil)
+        else { return false }
+
+        storage.beginEditing()
+        storage.replaceCharacters(
+            in: NSRange(location: para.location, length: prefixLen), with: "")
+        var start = para.location
+        if wantsMarker, let context = pillContext,
+            let marker = SpanCodec.marker(for: block, context: context)
+        {
+            storage.insert(marker, at: para.location)
+            start += marker.length
+        }
+        let newPara = (storage.string as NSString).paragraphRange(
+            for: NSRange(location: start, length: 0))
+        applyBlockAttributes(block, to: newPara, storage: storage)
+        storage.endEditing()
+        didChangeText()
+        setSelectedRange(NSRange(location: start, length: 0))
+        typingAttributes = SpanCodec.attributes(block: block, marks: [])
+        return true
+    }
+
+    /// Re-type a paragraph's runs to a new block, preserving each text
+    /// run's marks; markers/pills keep the block's paragraph style.
+    private func applyBlockAttributes(
+        _ block: BlockJSON, to range: NSRange, storage: NSTextStorage
+    ) {
+        var edits: [(NSRange, [NSAttributedString.Key: Any])] = []
+        storage.enumerateAttributes(in: range) { attrs, r, _ in
+            if attrs[.attachment] != nil {
+                var a = attrs
+                a[.lotusBlock] = BlockBox(block)
+                a[.paragraphStyle] = SpanCodec.paragraphStyle(block)
+                edits.append((r, a))
+            } else {
+                let marks = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+                edits.append((r, SpanCodec.attributes(block: block, marks: marks)))
+            }
+        }
+        for (r, a) in edits { storage.setAttributes(a, range: r) }
+    }
+
+    /// Backspace at the start of a formatted paragraph demotes it rather
+    /// than merging with the line above — the muscle memory of deleting a
+    /// "- " prefix, with no literal prefix to delete (task→bullet→body,
+    /// everything else→body).
+    override func deleteBackward(_ sender: Any?) {
+        let sel = selectedRange()
+        let para = currentParagraphRange()
+        if sel.length == 0, sel.location == para.location, let storage = textStorage {
+            let block = paragraphBlock(at: para.location)
+            let demoted: BlockJSON?
+            switch block {
+            case .task: demoted = .bullet(depth: 0)
+            case .body: demoted = nil
+            default: demoted = .body
+            }
+            if let demoted = demoted, shouldChangeText(in: para, replacementString: nil) {
+                storage.beginEditing()
+                // Drop a leading marker attachment, if any.
+                if para.length > 0,
+                    (storage.attribute(.attachment, at: para.location, effectiveRange: nil)
+                        as? NSTextAttachment)?.attachmentCell is BlockMarkerCell
+                {
+                    storage.replaceCharacters(
+                        in: NSRange(location: para.location, length: 1), with: "")
+                }
+                let p = (storage.string as NSString).paragraphRange(
+                    for: NSRange(location: para.location, length: 0))
+                applyBlockAttributes(demoted, to: p, storage: storage)
+                storage.endEditing()
+                didChangeText()
+                setSelectedRange(NSRange(location: para.location, length: 0))
+                typingAttributes = SpanCodec.attributes(block: demoted, marks: [])
+                return
+            }
+        }
+        super.deleteBackward(sender)
+    }
+
     /// Formatting cannot enter: paste arrives plain, drops arrive plain
     /// (readable types are the gate for both), the font panel is dead,
     /// and our attachments are the only non-text content possible — the
@@ -680,8 +812,9 @@ final class LotusTextView: NSTextView {
         }
     }
 
-    /// "@" reaches back so the completion popup can replace the whole
-    /// mention, @ included.
+    /// "@" or "[[" reaches back so the picker can replace the whole
+    /// mention — the trigger included. Wiki-links and mentions share the
+    /// one reference picker.
     override var rangeForUserCompletion: NSRange {
         let caret = selectedRange().location
         let text = string as NSString
@@ -691,8 +824,11 @@ final class LotusTextView: NSTextView {
             if ch == 0x40 {  // "@"
                 return NSRange(location: i - 1, length: caret - (i - 1))
             }
+            if ch == 0x5B, i >= 2, text.character(at: i - 2) == 0x5B {  // "[["
+                return NSRange(location: i - 2, length: caret - (i - 2))
+            }
             guard let scalar = Unicode.Scalar(ch),
-                !CharacterSet.whitespacesAndNewlines.contains(scalar)
+                !CharacterSet.whitespacesAndNewlines.contains(scalar), ch != 0x5B
             else { break }
             i -= 1
         }
@@ -721,22 +857,44 @@ final class LotusTextView: NSTextView {
             if NSTextMovement(rawValue: movement) == .cancel {
                 suppressAutoComplete = true
             } else if mention, let id = completionIds[word], let context = pillContext {
-                // The pill must carry the paragraph's block, or a Ref
-                // inside a heading/list would read back as a Body run and
-                // split the paragraph's block on the inverse.
+                insertRefPill(id, replacing: charRange, context: context)
+                return
+            } else if mention, word == forwardLinkLabel, let name = forwardLinkName {
+                // Forward link: create the note, then insert its Ref — no
+                // dangling [[query]] ever, backlinks stay automatic.
                 let block = paragraphBlock(at: charRange.location)
-                let pill = SpanCodec.pill(id, block: block, context: context)
-                if shouldChangeText(in: charRange, replacementString: pill.string) {
-                    textStorage?.replaceCharacters(in: charRange, with: pill)
+                let loc = charRange.location
+                if shouldChangeText(in: charRange, replacementString: "") {
+                    textStorage?.replaceCharacters(in: charRange, with: "")
                     didChangeText()
-                    setSelectedRange(NSRange(location: charRange.location + 1, length: 0))
-                    typingAttributes = SpanCodec.attributes(block: block, marks: [])
+                    setSelectedRange(NSRange(location: loc, length: 0))
+                }
+                createForwardLink(name) { [weak self] newId in
+                    guard let self = self, let context = self.pillContext else { return }
+                    let at = self.selectedRange().location
+                    self.insertRefPill(
+                        newId, replacing: NSRange(location: at, length: 0),
+                        block: block, context: context)
                 }
                 return
             }
         }
         super.insertCompletion(
             word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+    }
+
+    /// Replace a range with a Ref pill carrying the caret paragraph's
+    /// block — the one insertion path for @, [[, and forward links.
+    private func insertRefPill(
+        _ id: UInt64, replacing range: NSRange, block: BlockJSON? = nil, context: PillContext
+    ) {
+        let block = block ?? paragraphBlock(at: range.location)
+        let pill = SpanCodec.pill(id, block: block, context: context)
+        guard shouldChangeText(in: range, replacementString: pill.string) else { return }
+        textStorage?.replaceCharacters(in: range, with: pill)
+        didChangeText()
+        setSelectedRange(NSRange(location: range.location + 1, length: 0))
+        typingAttributes = SpanCodec.attributes(block: block, marks: [])
     }
 }
 
@@ -842,6 +1000,13 @@ final class EditorModel: ObservableObject {
         textView = view
         view.pillContext = pills
         view.onEscape = { [weak self] in self?.onCloseRequest() }
+        // Forward links mint a note and hand its id back for the pill.
+        view.createForwardLink = { [weak self] name, then in
+            self?.box.createNote { id in
+                guard let id = id else { return }
+                self?.box.set(id, property: "name", value: name) { _ in then(id) }
+            }
+        }
     }
 
     /// Adopt a journaled draft: it loads dirty and conflicted when stale,
@@ -1312,18 +1477,23 @@ struct NoteTextView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             model.edited()
             guard let view = notification.object as? LotusTextView else { return }
-            // A cancelled completion restores the "@" through this very
-            // notification; eat that one, or Esc reopens the popup.
+            // A cancelled completion restores the trigger through this
+            // very notification; eat that one, or Esc reopens the popup.
             if view.suppressAutoComplete {
                 view.suppressAutoComplete = false
                 return
             }
-            // Typing "@" summons the reference picker — the native
-            // completion control, no popup of our own.
+            // Markdown block prefixes convert as you type; if one fired
+            // there is nothing more to do this change.
+            if view.applyBlockRuleIfAny() { return }
+            // Typing "@" or the second "[" of "[[" summons the reference
+            // picker — the native completion control, no popup of our own.
+            let ns = view.string as NSString
             let caret = view.selectedRange().location
-            if caret > 0, (view.string as NSString).character(at: caret - 1) == 0x40 {
-                view.complete(nil)
-            }
+            let at = caret > 0 && ns.character(at: caret - 1) == 0x40
+            let wiki = caret >= 2 && ns.character(at: caret - 1) == 0x5B
+                && ns.character(at: caret - 2) == 0x5B
+            if at || wiki { view.complete(nil) }
         }
 
         func textView(
@@ -1332,20 +1502,34 @@ struct NoteTextView: NSViewRepresentable {
             indexOfSelectedItem index: UnsafeMutablePointer<Int>?
         ) -> [String] {
             guard let view = textView as? LotusTextView else { return words }
-            let mention = (view.string as NSString).substring(with: charRange)
-            guard mention.hasPrefix("@") else { return words }
-            // Recorded here, while the "@" is still in the buffer: the
+            let raw = (view.string as NSString).substring(with: charRange)
+            let query: String
+            if raw.hasPrefix("@") { query = String(raw.dropFirst()) }
+            else if raw.hasPrefix("[[") { query = String(raw.dropFirst(2)) }
+            else { return words }
+            // Recorded here, while the trigger is still in the buffer: the
             // accept path keys off this, not off what the previews left.
             view.mentionSession = true
-            let partial = mention.dropFirst().lowercased()
+            let partial = query.lowercased()
             view.completionIds.removeAll()
+            view.forwardLinkName = nil
             var titles: [String] = []
+            var exact = false
             for row in model.box.snap?.entities ?? [] where row.id != model.id {
+                if row.title.lowercased() == partial { exact = true }
                 guard partial.isEmpty || row.title.lowercased().hasPrefix(partial),
                     view.completionIds[row.title] == nil
                 else { continue }
                 view.completionIds[row.title] = row.id
                 titles.append(row.title)
+            }
+            // Forward link: a query with no exact match offers a new note.
+            let trimmed = query.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty && !exact {
+                let label = "＋ Create note “\(trimmed)”"
+                view.forwardLinkName = trimmed
+                view.forwardLinkLabel = label
+                titles.append(label)
             }
             return titles
         }
