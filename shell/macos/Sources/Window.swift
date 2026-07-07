@@ -1416,19 +1416,33 @@ struct EntityLine: View {
     let row: EntityRow
     var showWhen = true
     var selected = false
+    /// Opt-in: when set, the checkbox is a live button that toggles the
+    /// task (Tasks surface). nil keeps the old static glyph, so Today and
+    /// Library are unchanged.
+    var toggle: (() -> Void)? = nil
     var select: () -> Void = {}
 
+    private var isTask: Bool { row.kinds.contains("task") || row.status != nil }
+
     var body: some View {
-        Button(action: select) {
+        // Done-state visuals only when interactive (the Tasks surface); the
+        // static glyph in Today / Library is left exactly as it was.
+        let showDone = toggle != nil && row.status == "done"
+        return Button(action: select) {
             HStack(spacing: 12) {
-                if row.kinds.contains("task") || row.status != nil {
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.5)
-                        .frame(width: 16, height: 16)
+                if let toggle {
+                    // A nested plain button, so tapping the box toggles the
+                    // task without also triggering the row's select.
+                    Button(action: toggle) { checkbox(filled: showDone) }
+                        .buttonStyle(.plain)
+                } else if isTask {
+                    checkbox(filled: false)
                 }
                 Text(row.title)
                     .font(.system(size: 14))
                     .lineLimit(1)
+                    .foregroundColor(showDone ? .secondary : .primary)
+                    .strikethrough(showDone, color: .secondary)
                 Spacer()
                 if showWhen, let due = row.due {
                     Text(Civil.text(due, dateOnly: row.dueDateOnly))
@@ -1443,6 +1457,23 @@ struct EntityLine: View {
         .buttonStyle(.plain)
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.accentTint : .clear))
         .overlay(Divider(), alignment: .bottom)
+    }
+
+    private func checkbox(filled: Bool) -> some View {
+        Group {
+            if filled {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Theme.accent)
+                    .overlay(
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white))
+            } else {
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1.5)
+            }
+        }
+        .frame(width: 16, height: 16)
     }
 }
 
@@ -2209,19 +2240,30 @@ struct TasksView: View {
     let open: (UInt64) -> Void
 
     @State private var draft = ""
+    @State private var filter: TaskFilter = .open
     @FocusState private var addFocused: Bool
 
     private let order = ["todo", "doing", "done"]
 
+    enum TaskFilter: String, CaseIterable { case all = "All", open = "Open", done = "Done" }
+
     var body: some View {
-        let tasks = model.rows(model.snap?.everything ?? []).filter {
-            $0.kinds.contains("task")
+        let all = model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
+        let tasks: [EntityRow]
+        switch filter {
+        case .all: tasks = all
+        case .open: tasks = all.filter { $0.status != "done" }
+        case .done: tasks = all.filter { $0.status == "done" }
         }
-        ScrollView {
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LensHeader(
-                    title: "Tasks",
-                    subtitle: tasks.count == 1 ? "1 task" : "\(tasks.count) tasks")
+                HStack(alignment: .firstTextBaseline) {
+                    LensHeader(
+                        title: "Tasks",
+                        subtitle: tasks.count == 1 ? "1 task" : "\(tasks.count) tasks")
+                    Spacer()
+                    filterSegments
+                }
                 quickAdd
 
                 if tasks.isEmpty {
@@ -2233,22 +2275,14 @@ struct TasksView: View {
                             .sorted { dueKey($0) < dueKey($1) }
                         if !group.isEmpty {
                             SectionLabel(text: status).padding(.top, 14)
-                            ForEach(group) { row in
-                                EntityLine(row: row, selected: selection == row.id) {
-                                    open(row.id)
-                                }
-                            }
+                            ForEach(group) { taskRow($0) }
                         }
                     }
                     // Any task carrying a status outside the seeded three.
                     let other = tasks.filter { !order.contains($0.status ?? "todo") }
                     if !other.isEmpty {
                         SectionLabel(text: "other").padding(.top, 14)
-                        ForEach(other) { row in
-                            EntityLine(row: row, selected: selection == row.id) {
-                                open(row.id)
-                            }
-                        }
+                        ForEach(other) { taskRow($0) }
                     }
                 }
             }
@@ -2258,6 +2292,41 @@ struct TasksView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background)
+    }
+
+    /// A task row whose checkbox toggles status (done ⇄ todo) through the
+    /// existing set seam — no new mutation.
+    private func taskRow(_ row: EntityRow) -> some View {
+        EntityLine(
+            row: row, selected: selection == row.id,
+            toggle: {
+                model.set(
+                    row.id, property: "status",
+                    value: row.status == "done" ? "todo" : "done")
+            }
+        ) {
+            open(row.id)
+        }
+    }
+
+    private var filterSegments: some View {
+        HStack(spacing: 0) {
+            ForEach(TaskFilter.allCases, id: \.self) { option in
+                Button { filter = option } label: {
+                    Text(option.rawValue)
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .foregroundColor(filter == option ? Theme.accent : .secondary)
+                        .background(filter == option ? Theme.accent.opacity(0.12) : .clear)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.1), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
     private var quickAdd: some View {
