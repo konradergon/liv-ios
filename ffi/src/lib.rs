@@ -13,7 +13,7 @@ use chrono::{Datelike, Local, Timelike};
 use serde::Serialize;
 
 use lotus_core::{props, Author, DateTime, Id, Session, Store, Value};
-use lotus_services::{clerk, property_id, run, Constraint, Op, Query, Sort};
+use lotus_services::{clerk, property_id, run, search, Constraint, Op, Query, Sort};
 
 /// Capture one scrap into the box at `path`, creating and seeding the box
 /// if it is fresh. Returns the new entity's id, or 0 on failure — 0 is
@@ -473,6 +473,56 @@ pub unsafe extern "C" fn lotus_snapshot(path: *const c_char) -> *mut c_char {
     let snapshot = build_snapshot(session.store());
     drop(session); // release the box before handing the JSON over
     match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
+        Some(s) => s.into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Ranked hits + facet counts for one raw DSL query. Its own seam, not part
+/// of the cached snapshot: search is query-driven and debounced, and carries
+/// a rank order the snapshot's section arrays cannot. `hits` are bare ids
+/// (score + why-matched); the shell already holds each entity's title and
+/// cells from the snapshot, so results render as the list lens in place.
+#[derive(Serialize)]
+struct SearchResult {
+    hits: Vec<search::Hit>,
+    facets: Vec<search::Facet>,
+}
+
+fn build_search(store: &Store, raw: &str) -> SearchResult {
+    let sq = search::parse(store, raw);
+    let hits = search::search(store, &sq, 200);
+    let facets = search::facet_properties(store, &sq)
+        .into_iter()
+        .map(|property| search::facet(store, &sq, property))
+        .filter(|facet| !facet.values.is_empty())
+        .collect();
+    SearchResult { hits, facets }
+}
+
+/// Search the box: parse the raw DSL, rank the hits, count the facets.
+/// Returns a malloc'd JSON string — free it with `lotus_string_free`.
+/// Null on failure (including the box being open elsewhere).
+///
+/// # Safety
+/// `path` and `raw_query` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_search_at(
+    path: *const c_char,
+    raw_query: *const c_char,
+) -> *mut c_char {
+    if path.is_null() || raw_query.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(raw) = CStr::from_ptr(raw_query).to_str() else {
+        return std::ptr::null_mut();
+    };
+    let Some(session) = open_swept(path) else {
+        return std::ptr::null_mut();
+    };
+    let result = build_search(session.store(), raw);
+    drop(session);
+    match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
         Some(s) => s.into_raw(),
         None => std::ptr::null_mut(),
     }
@@ -1446,6 +1496,41 @@ mod tests {
                 "schema property {plumbing} leaked into the inspector catalog"
             );
         }
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn search_ranks_hits_and_facets_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_search.log");
+        let a = unsafe {
+            lotus_capture_at(c_path.as_ptr(), CString::new("call anna about the report").unwrap().as_ptr())
+        };
+        let b = unsafe {
+            lotus_capture_at(c_path.as_ptr(), CString::new("buy groceries").unwrap().as_ptr())
+        };
+        assert_ne!(a, 0);
+        assert_ne!(b, 0);
+
+        let raw = CString::new("report").unwrap();
+        let json = unsafe { read_json(lotus_search_at(c_path.as_ptr(), raw.as_ptr())) };
+
+        let hits = json["hits"].as_array().unwrap();
+        let ids: Vec<u64> = hits.iter().map(|h| h["id"].as_u64().unwrap()).collect();
+        assert!(ids.contains(&a), "the scrap mentioning the report is a hit");
+        assert!(!ids.contains(&b), "an unrelated scrap is not");
+        // Each hit carries a positive score and a why-matched field.
+        assert!(hits[0]["score"].as_f64().unwrap() > 0.0);
+        assert_eq!(hits[0]["field"], "content");
+        // Facets is always an array (empty for bare captures with no type).
+        assert!(json["facets"].is_array());
+
+        // A blank query with no free text is a valid search (recent order).
+        let blank = CString::new("").unwrap();
+        let all = unsafe { read_json(lotus_search_at(c_path.as_ptr(), blank.as_ptr())) };
+        let all_ids: Vec<u64> = all["hits"].as_array().unwrap().iter()
+            .map(|h| h["id"].as_u64().unwrap()).collect();
+        assert!(all_ids.contains(&a) && all_ids.contains(&b));
 
         cleanup(&path);
     }

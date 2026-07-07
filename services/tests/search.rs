@@ -4,7 +4,7 @@
 
 use lotus_core::*;
 use lotus_services::search::{self, MatchField};
-use lotus_services::Op;
+use lotus_services::{run, Constraint, Op};
 
 fn c(property: Id, value: Value) -> Cell {
     Cell { property, value }
@@ -255,4 +255,53 @@ fn a_typo_qualifier_demotes_to_free_text() {
     // constraint on a property that does not exist.
     assert_eq!(sq.query.constraints.len(), 1);
     assert_eq!(sq.query.constraints[0].property, fx.archived);
+}
+
+#[test]
+fn a_facet_count_is_the_hypothetical_result_size() {
+    let fx = fixture();
+    let sq = search::parse(&fx.store, "");
+    let f = search::facet(&fx.store, &sq, props::TYPE);
+    let base_size = run(&fx.store, &sq.query).len();
+
+    assert!(!f.values.is_empty());
+    for fv in &f.values {
+        // The count is literally run(base + Equals(value)).len().
+        let mut probe = sq.query.clone();
+        probe.constraints.retain(|c| c.property != props::TYPE);
+        probe.constraints.push(Constraint {
+            property: props::TYPE,
+            op: Op::Equals(fv.value.clone()),
+        });
+        assert_eq!(fv.count, run(&fx.store, &probe).len());
+        assert!(fv.count > 0, "zero-count values are dropped");
+        // Adding a constraint never grows the result.
+        assert!(fv.count <= base_size);
+    }
+    // Sorted count-descending.
+    assert!(f.values.windows(2).all(|w| w[0].count >= w[1].count));
+}
+
+#[test]
+fn a_facet_shows_siblings_and_marks_the_active_value() {
+    let fx = fixture();
+    // With type:task active, the type facet still lists note (counts
+    // exclude self) and marks task active — so the chip can pivot.
+    let sq = search::parse(&fx.store, "type:task");
+    let f = search::facet(&fx.store, &sq, props::TYPE);
+    let task = f.values.iter().find(|v| v.label == "task").expect("task value");
+    let note = f.values.iter().find(|v| v.label == "note").expect("note sibling");
+    assert!(task.active);
+    assert!(!note.active);
+}
+
+#[test]
+fn facet_properties_finds_type_and_select_props() {
+    let fx = fixture();
+    let sq = search::parse(&fx.store, "");
+    let facetable = search::facet_properties(&fx.store, &sq);
+    assert!(facetable.contains(&props::TYPE), "TYPE is faceted");
+    assert!(facetable.contains(&fx.status), "a present select prop is faceted");
+    // due is a datetime, never a facet.
+    assert!(!facetable.contains(&fx.due));
 }

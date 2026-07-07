@@ -46,6 +46,26 @@ pub struct SearchQuery {
     pub query: Query,
 }
 
+/// One candidate facet value and how many results it *would* yield under the
+/// current filter — Liv's one great idea, as a number. `active` marks a value
+/// the current query already constrains this property to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FacetValue {
+    pub value: Value,
+    pub label: String,
+    pub count: usize,
+    pub active: bool,
+}
+
+/// All candidate values for one facetable property, ready to render as a chip
+/// row — count-descending, zero-count values dropped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Facet {
+    pub property: Id,
+    pub label: String,
+    pub values: Vec<FacetValue>,
+}
+
 /// Parse a raw DSL string into free-text terms + a structured Query.
 ///
 /// Qualifiers: `key:value` (Equals), `key<value` (AtMost, dates), `is:flag`
@@ -160,6 +180,96 @@ pub fn search(store: &Store, sq: &SearchQuery, limit: usize) -> Vec<Hit> {
     });
     hits.truncate(limit);
     hits
+}
+
+/// Facet counts for one property under the current filter: for each
+/// candidate value, the hypothetical result size if that value were also
+/// required. Counts *exclude self* — the base drops this property's own
+/// constraints — so an already-picked facet still shows its siblings and
+/// you can pivot. Zero-count values are dropped; the rest sort count-desc.
+pub fn facet(store: &Store, sq: &SearchQuery, property: Id) -> Facet {
+    // The base minus this property's constraints, so sibling values stay
+    // visible and countable.
+    let mut base = sq.query.clone();
+    base.constraints.retain(|c| c.property != property);
+
+    let active: Vec<&Value> = sq
+        .query
+        .constraints
+        .iter()
+        .filter(|c| c.property == property)
+        .filter_map(|c| match &c.op {
+            Op::Equals(v) => Some(v),
+            _ => None,
+        })
+        .collect();
+
+    let mut values = Vec::new();
+    for value in candidate_values(store, &base, property) {
+        let mut probe = base.clone();
+        probe.constraints.push(Constraint { property, op: Op::Equals(value.clone()) });
+        let count = run(store, &probe).len();
+        if count == 0 {
+            continue;
+        }
+        values.push(FacetValue {
+            active: active.contains(&&value),
+            label: display(store, &value),
+            value,
+            count,
+        });
+    }
+    values.sort_by(|a, b| b.count.cmp(&a.count));
+    Facet { property, label: property_name(store, property), values }
+}
+
+/// Which properties are worth faceting for the current result: the reserved
+/// TYPE reference plus every select-kind property, kept only when it actually
+/// appears on the base result. Bounds the O(values × entities) cost and drops
+/// facets that would show nothing.
+pub fn facet_properties(store: &Store, sq: &SearchQuery) -> Vec<Id> {
+    let base = run(store, &sq.query);
+    let present = |property: Id| {
+        base.iter()
+            .any(|id| store.get(*id).is_some_and(|e| e.all(property).next().is_some()))
+    };
+
+    let mut out = Vec::new();
+    if present(props::TYPE) {
+        out.push(props::TYPE);
+    }
+    for e in store.entities() {
+        if e.id == props::TYPE || out.contains(&e.id) {
+            continue;
+        }
+        let is_select = matches!(e.get(props::VALUE_KIND), Some(Value::Text(k)) if k == "select");
+        if is_select && present(e.id) {
+            out.push(e.id);
+        }
+    }
+    out
+}
+
+/// The distinct values of a property across a query's result — the candidate
+/// universe for a facet, so values absent from the current result never show.
+fn candidate_values(store: &Store, base: &Query, property: Id) -> Vec<Value> {
+    let mut seen: Vec<Value> = Vec::new();
+    for id in run(store, base) {
+        let Some(entity) = store.get(id) else { continue };
+        for value in entity.all(property) {
+            if !seen.contains(value) {
+                seen.push(value.clone());
+            }
+        }
+    }
+    seen
+}
+
+fn property_name(store: &Store, property: Id) -> String {
+    match store.get(property).and_then(|e| e.get(props::NAME)) {
+        Some(Value::Text(name)) => name.clone(),
+        _ => format!("#{property}"),
+    }
 }
 
 /// The searchable text of an entity, per field, `display`-flattened and

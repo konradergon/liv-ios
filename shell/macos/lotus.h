@@ -61,6 +61,15 @@ int32_t lotus_set_content_at(const char *path, uint64_t id,
 int32_t lotus_set_at(const char *path, uint64_t id,
                      const char *property, const char *value);
 
+/* Ranked hits + facet counts for one raw DSL query, as JSON:
+   {"hits":[{"id":7,"score":100.0,"field":"name"},…],
+    "facets":[{"property":2,"label":"Type","values":[
+       {"value":{"Reference":41},"label":"Task","count":12,"active":false},…]}]}
+   Search is navigation: its own seam, not the cached snapshot. hits are
+   bare ids (the shell already holds each title/cells) in rank order.
+   Free with lotus_string_free. NULL when the box is unavailable. */
+char *lotus_search_at(const char *path, const char *raw_query);
+
 /* Every past version of an entity's content, NEWEST first:
    [{"seq":N,"time":..,"author":"..","label":"..","spans":[..]}]
    The log is the history — each entry is a whole content value.
