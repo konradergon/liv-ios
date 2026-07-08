@@ -123,7 +123,7 @@ impl Session {
     /// the final record is an error.
     pub fn open(path: impl AsRef<Path>) -> Result<Session, PersistError> {
         let path = path.as_ref();
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .read(true)
             .append(true)
@@ -140,6 +140,15 @@ impl Session {
             Err(TryLockError::Error(e)) => return Err(e.into()),
         }
 
+        Session::open_on(file, path)
+    }
+
+    /// Replay an already-opened, already-`try_lock`ed log handle into a
+    /// session. `open` does the open + lock, then calls this; the FFI store
+    /// cache also calls it on a miss, having locked the handle itself — so it
+    /// can lock once, decide hit-vs-miss, and hand the same handle here with no
+    /// second open and no lock-release TOCTOU window.
+    pub fn open_on(mut file: File, path: &Path) -> Result<Session, PersistError> {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
 
@@ -259,6 +268,38 @@ impl Session {
     /// Read access to the materialized store.
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Build a session around an already-cached store and an already-opened,
+    /// already-locked log handle — the FFI cache's fast path, when the log
+    /// length proves nothing was appended since the store was cached. No read,
+    /// no replay: the store IS the log's consequence, and it is already in hand.
+    pub fn from_cached(store: Store, file: File, path: &Path) -> Session {
+        let mut declined = path.as_os_str().to_owned();
+        declined.push(".declined");
+        let mut pending = path.as_os_str().to_owned();
+        pending.push(".pending");
+        Session {
+            store,
+            log: FileLog { file },
+            healthy: true,
+            declined_path: std::path::PathBuf::from(declined),
+            pending_path: std::path::PathBuf::from(pending),
+        }
+    }
+
+    /// Consume the session, returning its materialized store for the cache to
+    /// hold until the next open. The `FileLog` (and its file lock) drops here.
+    pub fn into_store(self) -> Store {
+        self.store
+    }
+
+    /// The log file's metadata, read from the HELD handle (not a fresh path
+    /// stat), so the FFI cache reads length + inode from the very file whose
+    /// store it is about to cache — an external replace of the path can never
+    /// be mistaken for it.
+    pub fn log_file_meta(&self) -> io::Result<std::fs::Metadata> {
+        self.log.file.metadata()
     }
 
     pub fn commit(

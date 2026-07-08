@@ -17,6 +17,18 @@ change, no core model change, no new command variant.** One new module in the
 FFI crate, one wrapper the 20 call sites route through, and a handful of
 correctness guards the append-only log makes cheap.
 
+> **Two corrections found while building (slice B), both now in the code:**
+> 1. §1.4 was wrong that sweep can be skipped whenever the log is unchanged.
+>    Check-in caches the *post-op* length, so the op *after* a write is a cache
+>    HIT that skips the sweep — but a content edit needs the next sweep to
+>    re-derive proposals (the `editing_content_retracts_stale_proposals` test).
+>    Fix: a write re-sweeps in `checkin` before caching (the `Committed` signal
+>    became `Read` / `Wrote` / `Failed`); reads still never sweep.
+> 2. Guard 2's *combined* sidecar length (§4) misses a decline: `reject` moves a
+>    proposal's exact bytes from `.pending` to `.declined`, so the sum is
+>    unchanged. Fix: track the two lengths *separately* (the deferred split in
+>    §7 was not optional — an external CLI decline is the normal case).
+
 ## 1 · The load-bearing decisions
 
 1. **The cache lives in the FFI crate, not the core.** The core stays pure —

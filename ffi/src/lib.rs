@@ -12,7 +12,10 @@ use std::ffi::{c_char, CStr, CString};
 use chrono::{Datelike, Local, Timelike};
 use serde::Serialize;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use lotus_core::{props, Author, DateTime, Entity, Id, Session, Store, Value};
 use lotus_services::{clerk, files, property_id, run, search, Constraint, Op, Query, Sort};
@@ -174,15 +177,113 @@ struct Snapshot {
 
 /// Open the box, seed if fresh, and fill the queue with the clerk's sweep —
 /// the same ritual every shell performs.
-unsafe fn open_swept(path: *const c_char) -> Option<Session> {
-    if path.is_null() {
+// ---- the per-box store cache: skip re-reading an unchanged append-only log ----
+//
+// design/perf-incremental-open.md. Every FFI call used to `Session::open` —
+// read_to_end + parse + replay the WHOLE log — on every tab switch, snapshot,
+// and save: O(history) per interaction, the tab-lag root cause. The log is
+// append-only, so an unchanged byte length is proof no committed record
+// changed; on that fast path we serve the cached `Store` and never touch the
+// bytes. We still open + `try_lock` every call, so single-writer coexistence
+// is untouched — only the redundant re-read is gone.
+
+struct Cached {
+    store: Store,
+    /// The log's byte length when we cached — append-only ⇒ equal length on the
+    /// next open proves nothing was appended (the whole fast-path validator).
+    log_len: u64,
+    /// The two sidecars' lengths, tracked SEPARATELY (not summed). A decline
+    /// moves a proposal from .pending to .declined — the same bytes — so the
+    /// combined length is unchanged and would miss it; the individual lengths
+    /// both move. Sidecars are rewritten off the main log, so its length alone
+    /// can't witness a sidecar change (Guard 2).
+    declined_len: u64,
+    pending_len: u64,
+    /// The log's inode — a same-length file REPLACEMENT at the same path is
+    /// caught here (Guard 3).
+    inode: u64,
+}
+
+static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
+
+fn cache() -> &'static Mutex<HashMap<PathBuf, Cached>> {
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Forget every cached store — a test seam to force the next open down the full
+/// replay path, so a cache hit can be checked against a from-scratch replay.
+#[cfg(test)]
+fn clear_cache_for_tests() {
+    if let Some(map) = CACHE.get() {
+        map.lock().unwrap().clear();
+    }
+}
+
+/// Byte lengths of the two sidecars (.declined, .pending), counting an absent
+/// one as 0. Returned separately so a decline — which moves the same bytes from
+/// .pending to .declined — is witnessed (the combined length would not move).
+fn sidecar_lens(key: &Path) -> (u64, u64) {
+    let of = |suffix: &str| {
+        let mut name = key.as_os_str().to_owned();
+        name.push(suffix);
+        std::fs::metadata(PathBuf::from(name)).map(|m| m.len()).unwrap_or(0)
+    };
+    (of(".declined"), of(".pending"))
+}
+
+/// Open the box, serving the cached store when the append-only log (its length,
+/// its sidecars, and its inode) is unchanged. Returns the session and its
+/// canonical cache key, or None when the box can't be opened or is held
+/// elsewhere. On a MISS it seeds + sweeps exactly as the old `open_swept` did;
+/// on a HIT it does neither — both are pure functions of the store and already
+/// reflected in the cached one (perf design §1.4).
+///
+/// Guard 5: the file is `try_lock`ed on EVERY path before the cache is
+/// consulted, so a CLI holding the box yields busy, never a stale hit.
+unsafe fn open_box(raw_path: *const c_char) -> Option<(Session, PathBuf)> {
+    if raw_path.is_null() {
         return None;
     }
-    let path = CStr::from_ptr(path).to_str().ok()?;
-    if let Some(dir) = std::path::Path::new(path).parent() {
+    let path_str = CStr::from_ptr(raw_path).to_str().ok()?;
+    let path = Path::new(path_str);
+    if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).ok()?;
     }
-    let mut session = Session::open(path).ok()?;
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)
+        .ok()?;
+    if file.try_lock().is_err() {
+        return None; // Locked (or io) -> the caller's busy value, never a hit
+    }
+
+    let meta = file.metadata().ok()?;
+    let cur_len = meta.len();
+    let cur_inode = meta.ino();
+    let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let (cur_decl, cur_pend) = sidecar_lens(&key);
+
+    // Fast path: the cached store is still the log's whole consequence.
+    {
+        let mut map = cache().lock().unwrap();
+        let fresh = map.get(&key).is_some_and(|c| {
+            c.log_len == cur_len
+                && c.declined_len == cur_decl
+                && c.pending_len == cur_pend
+                && c.inode == cur_inode
+        });
+        if fresh {
+            let hit = map.remove(&key).unwrap();
+            return Some((Session::from_cached(hit.store, file, path), key));
+        }
+    }
+
+    // Slow path: replay the log on the handle we already locked, then the
+    // idempotent seed and the deterministic sweep (only ever here, §1.4).
+    let mut session = Session::open_on(file, path).ok()?;
     lotus_services::seed_if_fresh(&mut session).ok()?;
     let today = civil_today();
     for proposal in clerk::sweep(session.store(), today) {
@@ -190,38 +291,87 @@ unsafe fn open_swept(path: *const c_char) -> Option<Session> {
             return None;
         }
     }
-    Some(session)
+    Some((session, key))
 }
 
-/// The success/failure signal a `with_box` closure hands back so check-in knows
-/// whether to keep the cached store or evict it (Guards 4/6 of the perf design):
-/// a read — or a mutation the guard refused without touching the store — is
-/// `Ok` (the store is safe to cache); a mutation that failed to persist is
-/// `Failed` (evict, so a phantom write is never served). See
-/// design/perf-incremental-open.md.
+/// Reconcile the cache on the way out: cache the store on a read, re-sweep then
+/// cache on a write, or evict on a failed / poisoned write so a phantom write is
+/// never served (Guards 4/6). Length + inode are read from the still-locked
+/// handle before the session drops, so no external append can race in.
+fn checkin(key: PathBuf, mut session: Session, committed: Committed) {
+    match committed {
+        // Unchanged and already swept — cache verbatim.
+        Committed::Read => cache_store(key, session),
+        // A write changed the store's content, and the next open is a cache HIT
+        // that will NOT sweep — so re-derive proposals now (any retraction of a
+        // now-stale proposal already happened inside the mutation) and cache the
+        // swept store. A propose failure poisons: evict instead of caching.
+        Committed::Wrote => {
+            let today = civil_today();
+            let proposals = clerk::sweep(session.store(), today);
+            for proposal in proposals {
+                if session.propose(proposal).is_err() {
+                    cache().lock().unwrap().remove(&key);
+                    return;
+                }
+            }
+            cache_store(key, session);
+        }
+        Committed::Failed => {
+            cache().lock().unwrap().remove(&key);
+        }
+    }
+}
+
+/// Snapshot the session's store into the cache with the log's post-op length +
+/// inode, read from the still-locked handle before the session (its lock)
+/// drops — so no external append can race between the stat and the write.
+fn cache_store(key: PathBuf, session: Session) {
+    let Ok(meta) = session.log_file_meta() else {
+        cache().lock().unwrap().remove(&key);
+        return;
+    };
+    let (declined_len, pending_len) = sidecar_lens(&key);
+    let entry = Cached {
+        log_len: meta.len(),
+        inode: meta.ino(),
+        declined_len,
+        pending_len,
+        store: session.into_store(), // consumes the session -> drops the lock
+    };
+    cache().lock().unwrap().insert(key, entry);
+}
+
+/// What a `with_box` closure did, so check-in knows how to reconcile the cache.
+/// The subtlety the perf design missed: after a write the NEXT open is a cache
+/// HIT that skips the sweep, so a write must re-derive proposals itself.
 enum Committed {
-    Ok,
+    /// A read, or a mutation the guard refused without touching the store: the
+    /// store is unchanged and already swept — cache it verbatim.
+    Read,
+    /// A mutation that changed the store: re-sweep before caching (proposals are
+    /// a function of content, and the next open won't sweep).
+    Wrote,
+    /// A mutation that failed to persist, or a create whose id was burned before
+    /// a failed commit: evict, so a phantom / poisoned write is never served,
+    /// and the next open replays only what reached disk (Guards 4/6).
     Failed,
 }
 
 /// The ONE choke point every box-opening FFI entry routes through. Opens the
-/// box (sweeping/seeding as `open_swept` does), runs `f` against the live
-/// session, and returns f's value — or `busy` when the box can't be opened or
-/// is held elsewhere. Routing every entry through here gives the store cache a
-/// single place to serve a hit and a single place to write back / evict on the
-/// way out; Slice A wires the choke point with the cache still a no-op.
+/// box (cache-fast when the log is unchanged), runs `f` against the live
+/// session, checks the result back into the cache, and returns f's value — or
+/// `busy` when the box can't be opened or is held elsewhere.
 unsafe fn with_box<T>(
     path: *const c_char,
     busy: T,
     f: impl FnOnce(&mut Session) -> (T, Committed),
 ) -> T {
-    let Some(mut session) = open_swept(path) else {
+    let Some((mut session, key)) = open_box(path) else {
         return busy;
     };
-    let (value, _committed) = f(&mut session);
-    // Slice A: the cache is a no-op — the session drops here, releasing the
-    // lock, exactly as before. Slice B adds the write-back / eviction keyed on
-    // `_committed`.
+    let (value, committed) = f(&mut session);
+    checkin(key, session, committed);
     value
 }
 
@@ -507,7 +657,7 @@ pub unsafe extern "C" fn lotus_snapshot(path: *const c_char) -> *mut c_char {
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),
         };
-        (out, Committed::Ok)
+        (out, Committed::Read)
     })
 }
 
@@ -575,7 +725,7 @@ pub unsafe extern "C" fn lotus_search_at(
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),
         };
-        (out, Committed::Ok)
+        (out, Committed::Read)
     })
 }
 
@@ -590,9 +740,9 @@ pub unsafe extern "C" fn lotus_search_at(
 #[no_mangle]
 pub unsafe extern "C" fn lotus_resync_file_at(path: *const c_char, id: u64) -> i32 {
     with_box(path, 0, |session| match files::resync_file(session, id) {
-        Ok(files::Resync::Changed(_)) => (1, Committed::Ok),
-        Ok(files::Resync::Unchanged) => (0, Committed::Ok),
-        Ok(files::Resync::Broken) => (-1, Committed::Ok),
+        Ok(files::Resync::Changed(_)) => (1, Committed::Wrote),
+        Ok(files::Resync::Unchanged) => (0, Committed::Read),
+        Ok(files::Resync::Broken) => (-1, Committed::Read),
         Err(_) => (0, Committed::Failed),
     })
 }
@@ -620,7 +770,7 @@ pub unsafe extern "C" fn lotus_extracted_text_at(path: *const c_char, id: u64) -
             Ok(s) => s.into_raw(),
             Err(_) => std::ptr::null_mut(),
         };
-        (out, Committed::Ok)
+        (out, Committed::Read)
     })
 }
 
@@ -678,20 +828,20 @@ unsafe fn triage(
         let index = match (matching.len(), ordinal as usize) {
             (n, k) if k >= 1 && k <= n => matching[k - 1],
             // No such proposal: nothing touched, the store is safe to cache.
-            _ => return (0, Committed::Ok),
+            _ => return (0, Committed::Read),
         };
         // A consent is to a proposal, not a position: if the queue shifted
         // since the snapshot, refuse — the shell refreshes and the user sees
         // the truth before clicking again. (No mutation, so cache stays valid.)
         if fingerprint(&session.store().pending()[index]) != expected {
-            return (0, Committed::Ok);
+            return (0, Committed::Read);
         }
         let outcome = if accept {
             session.accept(index).is_ok()
         } else {
             session.reject(index).is_ok()
         };
-        (outcome as i32, if outcome { Committed::Ok } else { Committed::Failed })
+        (outcome as i32, if outcome { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -737,7 +887,7 @@ pub unsafe extern "C" fn lotus_reject_at(
 pub unsafe extern "C" fn lotus_undo_at(path: *const c_char) -> i32 {
     with_box(path, 0, |session| {
         let ok = session.undo(Author::User).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -829,7 +979,7 @@ pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut 
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),
         };
-        (out, Committed::Ok)
+        (out, Committed::Read)
     })
 }
 
@@ -865,10 +1015,10 @@ pub unsafe extern "C" fn lotus_set_content_at(
                 if !fresh_fingerprint.is_null() {
                     unsafe { *fresh_fingerprint = fresh };
                 }
-                (1, Committed::Ok)
+                (1, Committed::Wrote)
             }
             // A stale save refused before it touched the store — cache stays valid.
-            Err(lotus_services::content::ContentError::Stale) => (-1, Committed::Ok),
+            Err(lotus_services::content::ContentError::Stale) => (-1, Committed::Read),
             Err(_) => (0, Committed::Failed),
         }
     })
@@ -899,7 +1049,7 @@ pub unsafe extern "C" fn lotus_set_at(
     };
     with_box(path, 0, |session| {
         let ok = lotus_services::content::set_property(session, id, property, value).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -929,7 +1079,7 @@ pub unsafe extern "C" fn lotus_add_cell_at(
     };
     with_box(path, 0, |session| {
         let ok = lotus_services::content::add_cell(session, id, property, value).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -956,7 +1106,7 @@ pub unsafe extern "C" fn lotus_remove_cell_at(
     };
     with_box(path, 0, |session| {
         let ok = lotus_services::content::remove_cell(session, id, property, value).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1000,7 +1150,7 @@ pub unsafe extern "C" fn lotus_content_history_at(path: *const c_char, id: u64) 
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),
         };
-        (out, Committed::Ok)
+        (out, Committed::Read)
     })
 }
 
@@ -1015,7 +1165,7 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let id = lotus_services::content::create_note(session, created).unwrap_or(0);
-        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1031,7 +1181,7 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let id = lotus_services::content::create_task(session, created).unwrap_or(0);
-        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1055,7 +1205,7 @@ pub unsafe extern "C" fn lotus_create_list_at(
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let id = lotus_services::content::create_list(session, name, created).unwrap_or(0);
-        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1081,7 +1231,7 @@ pub unsafe extern "C" fn lotus_add_file_at(
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let id = lotus_services::files::add_file(session, file_path, created).unwrap_or(0);
-        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1112,7 +1262,7 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let parent = (parent != 0).then_some(parent);
         let id = lotus_services::content::create_workspace(session, name, parent, created).unwrap_or(0);
-        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1126,7 +1276,7 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
 pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) -> i32 {
     with_box(path, 0, |session| {
         let ok = lotus_services::content::trash_workspace(session, id).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1139,7 +1289,7 @@ pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) 
 pub unsafe extern "C" fn lotus_trash_at(path: *const c_char, id: u64) -> i32 {
     with_box(path, 0, |session| {
         let ok = lotus_services::content::trash_workspace(session, id).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1163,7 +1313,7 @@ pub unsafe extern "C" fn lotus_unset_at(
     };
     with_box(path, 0, |session| {
         let ok = lotus_services::content::unset_property(session, id, property).is_ok();
-        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -1266,6 +1416,127 @@ mod tests {
         let json = CStr::from_ptr(raw).to_str().unwrap().to_string();
         lotus_string_free(raw);
         serde_json::from_str(&json).unwrap()
+    }
+
+    // ---- the store cache (design/perf-incremental-open.md, slice B) ----
+
+    #[test]
+    fn a_cache_hit_matches_a_full_open() {
+        let (path, c_path) = fresh_box("lotus_ffi_cache_equiv.log");
+        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("kickoff friday").unwrap().as_ptr()) };
+
+        // First snapshot: a full open (miss) that populates the cache.
+        let first = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        // Second snapshot: served from the cache (a hit) — the SAME answer.
+        let hit = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(first, hit, "a cache hit must not change the answer");
+        // Clear the cache: a forced full replay agrees too — the cache never
+        // diverges from the log's own consequence.
+        clear_cache_for_tests();
+        let full = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(first, full, "the cache never diverges from a full replay");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn an_external_append_is_picked_up() {
+        let (path, c_path) = fresh_box("lotus_ffi_external.log");
+        // Seed + cache via an FFI snapshot.
+        unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+
+        // A second writer (the CLI stand-in) appends a note directly, then drops
+        // — releasing the lock. The FFI cache still holds the pre-append store.
+        let external_id = {
+            let mut session = Session::open(&path).unwrap();
+            lotus_services::content::create_note(&mut session, DateTime::at(2026, 7, 8, 9, 0)).unwrap()
+        };
+        // The next FFI snapshot must SEE the external note — the grown log length
+        // forces a full re-open, not a stale cache hit.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let seen = snap["entities"].as_array().unwrap().iter().any(|e| e["id"] == external_id);
+        assert!(seen, "an external append must invalidate the cache");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn two_creates_do_not_reuse_an_id() {
+        let (path, c_path) = fresh_box("lotus_ffi_ids.log");
+        // The second create is a cache HIT (the first's commit grew the log, and
+        // check-in cached that length); next_id must ride the cached store.
+        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let b = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        assert_ne!(a, 0);
+        assert_ne!(b, 0);
+        assert_ne!(a, b, "consecutive creates through the cache must mint distinct ids");
+        // Both survive a full replay from disk (cache cleared) — the ids are real.
+        clear_cache_for_tests();
+        let session = Session::open(&path).unwrap();
+        assert!(session.store().get(a).is_some() && session.store().get(b).is_some());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_locked_box_is_not_served_from_cache() {
+        let (path, c_path) = fresh_box("lotus_ffi_locked.log");
+        // Warm the cache.
+        unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        // Hold the box open elsewhere (grabs the exclusive lock).
+        let guard = Session::open(&path).unwrap();
+        // Even with a warm cache, a snapshot must refuse (null), never serve a
+        // stale cached answer while another writer holds the box (Guard 5).
+        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        assert!(raw.is_null(), "a locked box yields null, never a cached snapshot");
+        drop(guard);
+        // Lock released: the next snapshot succeeds again.
+        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        assert!(!raw.is_null());
+        unsafe { lotus_string_free(raw) };
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_sidecar_change_without_a_log_change_invalidates() {
+        let (path, c_path) = fresh_box("lotus_ffi_sidecar.log");
+        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("kickoff friday").unwrap().as_ptr()) };
+        // Snapshot proposes friday and caches (inbox has one).
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(snap["inbox"].as_array().unwrap().len(), 1);
+
+        // Externally decline it: rewrites .declined + .pending WITHOUT touching
+        // the main log (its length is unchanged).
+        {
+            let mut session = Session::open(&path).unwrap();
+            session.reject(0).unwrap();
+        }
+        // The next FFI snapshot must reflect the decline — the sidecar length
+        // changed even though the log length did not (Guard 2).
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(
+            snap["inbox"].as_array().unwrap().len(),
+            0,
+            "a sidecar change must invalidate the cache"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_torn_tail_is_repaired_then_cached() {
+        let (path, c_path) = fresh_box("lotus_ffi_torn.log");
+        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("real note").unwrap().as_ptr()) };
+        // Append a torn (newline-less) trailing record straight to the file.
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(b"{\"seq\":999,\"garbage\":").unwrap();
+        }
+        // First FFI open repairs (drops the torn record, lowering the length) and
+        // caches the REPAIRED length; the second hits cleanly and agrees — the
+        // torn record never leaks into either answer (Guard 1).
+        let first = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let second = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(first, second);
+        assert_eq!(first["entities"].as_array().unwrap().len(), 1);
+        cleanup(&path);
     }
 
     #[test]
