@@ -15,6 +15,13 @@ uint64_t lotus_capture_at(const char *path, const char *text);
 /* Everything the window renders, as one JSON document.
    NULL on failure (probe to learn why). Free with lotus_string_free. */
 char *lotus_snapshot(const char *path);
+
+/* The same snapshot over a caller-chosen occurrence window: `dated` is
+   unchanged (the full set; the shell buckets by day), but the recurrence
+   `occurrences` are expanded over [from_civil, to_civil] (civil YYYYMMDDHHMM)
+   instead of the current month. The engine caps the window at a year.
+   NULL on failure. Free with lotus_string_free. */
+char *lotus_snapshot_window_at(const char *path, int64_t from_civil, int64_t to_civil);
 void lotus_string_free(char *s);
 
 /* Accept / decline a proposal. The fingerprint comes from the snapshot
@@ -85,6 +92,11 @@ uint64_t lotus_create_note_at(const char *path);
    status:todo + created, one transaction. Returns the id, 0 on failure.
    Distinct from capture, which quarantines an untyped scrap. */
 uint64_t lotus_create_task_at(const char *path);
+
+/* Create an event by hand (the "+ Event" button, or double-click a day/hour).
+   One transaction: type:event + due (from due_civil, all-day when date_only)
+   + created. Returns the id, 0 on failure. Distinct from capture. */
+uint64_t lotus_create_event_at(const char *path, int64_t due_civil, int32_t date_only);
 
 /* Birth of a list: Create + type:list + name + created, one transaction.
    Named at birth (unlike a note). Returns the id, 0 on failure. */

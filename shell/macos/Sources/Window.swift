@@ -194,17 +194,38 @@ final class BoxModel: ObservableObject {
                 self.probeAndRetry()
                 return
             }
-            let json = String(cString: raw)
-            lotus_string_free(raw)
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            let snap = try? decoder.decode(Snapshot.self, from: Data(json.utf8))
-            DispatchQueue.main.async {
-                self.boxBusy = false
-                self.fault = nil
-                self.retryDelay = 0.2
-                if let snap = snap { self.snap = snap }
+            self.applySnapshot(raw)
+        }
+    }
+
+    /// Refresh from a caller-chosen occurrence window — the calendar's viewed
+    /// period. Same snapshot; only the recurring `occurrences` follow
+    /// [from, to] (civil YYYYMMDDHHMM). Every other surface keeps using the
+    /// default current-month refresh().
+    func snapshotWindow(from: Int64, to: Int64) {
+        let path = self.path
+        boxQueue.async {
+            guard let raw = lotus_snapshot_window_at(path, from, to) else {
+                self.probeAndRetry()
+                return
             }
+            self.applySnapshot(raw)
+        }
+    }
+
+    /// Decode a snapshot JSON pointer into `snap`, on the main thread — shared
+    /// by the default refresh and the calendar's windowed refresh.
+    private func applySnapshot(_ raw: UnsafeMutablePointer<CChar>) {
+        let json = String(cString: raw)
+        lotus_string_free(raw)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let snap = try? decoder.decode(Snapshot.self, from: Data(json.utf8))
+        DispatchQueue.main.async {
+            self.boxBusy = false
+            self.fault = nil
+            self.retryDelay = 0.2
+            if let snap = snap { self.snap = snap }
         }
     }
 
@@ -294,6 +315,21 @@ final class BoxModel: ObservableObject {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
                 self.refresh()
+            }
+        }
+    }
+
+    /// Birth of an event for a clicked day/time — a create_task twin that writes
+    /// a `due` at birth, so it lands on the calendar by property-based
+    /// positioning. Returns the new id, nil on failure. NO default refresh: the
+    /// caller (the calendar) reloads its OWN window, so creating while viewing
+    /// another month never clobbers that month's occurrences with this month's.
+    func createEvent(dueCivil: Int64, allDay: Bool, done: @escaping (UInt64?) -> Void = { _ in }) {
+        boxQueue.async {
+            let id = lotus_create_event_at(self.path, dueCivil, allDay ? 1 : 0)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
             }
         }
     }
@@ -973,7 +1009,10 @@ struct WindowChrome: View {
             case .inbox:
                 InboxView(model: model)
             case .calendar:
-                CalendarView(model: model)
+                CalendarView(
+                    model: model, selection: $selection,
+                    open: { id in openEntityTab(id) },
+                    rename: { id in renameEntity(id) })
             case .library:
                 LibraryView(
                     model: model, selection: $selection,
@@ -2077,24 +2116,33 @@ struct SearchPopup: View {
 
 struct CalendarView: View {
     @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    var open: (UInt64) -> Void = { _ in }
+    var rename: (UInt64) -> Void = { _ in }
+
+    // The viewed month — transient view state, never a cell (interface.md 0.5).
+    @State private var viewYear = Civil.gregorian.component(.year, from: Date())
+    @State private var viewMonth = Civil.gregorian.component(.month, from: Date())
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
     private let dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
     var body: some View {
-        let now = Date()
         let cal = Civil.gregorian
-        let parts = cal.dateComponents([.year, .month], from: now)
-        let first = cal.date(from: parts) ?? now
+        var parts = DateComponents()
+        parts.year = viewYear
+        parts.month = viewMonth
+        parts.day = 1
+        let first = cal.date(from: parts) ?? Date()
         let range = cal.range(of: .day, in: .month, for: first) ?? 1..<29
         let lead = cal.component(.weekday, from: first) - 1
-        let monthKey = Int64(parts.year! * 100 + parts.month!)
+        let monthKey = Int64(viewYear * 100 + viewMonth)
         var byDay = Dictionary(grouping: model.rows(model.snap?.dated ?? [])) {
             row -> Int64 in (row.due ?? 0) / 10_000
         }
-        // Virtual occurrences land beside the plain dates: the series
-        // entity is drawn on every day its rule names, computed by the
-        // engine so every view agrees.
+        // Virtual occurrences land beside the plain dates: the series entity is
+        // drawn on every day its rule names, over the window this month asked
+        // for (§3.3), computed by the engine so every view agrees.
         for occurrence in model.snap?.occurrences ?? [] {
             if let series = model.entity(occurrence.series) {
                 byDay[occurrence.civil / 10_000, default: []].append(series)
@@ -2103,7 +2151,7 @@ struct CalendarView: View {
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LensHeader(title: monthTitle(first), subtitle: "month")
+                header(first)
                 LazyVGrid(columns: columns, spacing: 0) {
                     ForEach(dows, id: \.self) { dow in
                         Text(dow.uppercased())
@@ -2121,7 +2169,8 @@ struct CalendarView: View {
                         DayCell(
                             day: day,
                             isToday: key == Civil.todayYMD,
-                            events: byDay[key] ?? []
+                            events: byDay[key] ?? [],
+                            addEvent: { quickCreate(dayKey: key) }
                         )
                     }
                 }
@@ -2129,6 +2178,93 @@ struct CalendarView: View {
             .padding(.horizontal, 32)
             .padding(.top, 40)
             .padding(.bottom, 24)
+        }
+        .onAppear { loadWindow() }
+    }
+
+    // The month title + prev / Today / next stepping the viewed month; each
+    // step re-requests the matching occurrence window so recurrences follow.
+    private func header(_ first: Date) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(monthTitle(first))
+                .font(.system(size: 19, weight: .semibold))
+            Spacer()
+            HStack(spacing: 6) {
+                navButton("chevron.left") { step(-1) }
+                Button(action: goToday) {
+                    Text("Today")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Theme.border, lineWidth: 0.5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                navButton("chevron.right") { step(1) }
+            }
+        }
+        .padding(.bottom, 18)
+    }
+
+    private func navButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 26, height: 26)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 0.5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func step(_ delta: Int) {
+        var m = viewMonth + delta
+        var y = viewYear
+        while m > 12 { m -= 12; y += 1 }
+        while m < 1 { m += 12; y -= 1 }
+        viewMonth = m
+        viewYear = y
+        loadWindow()
+    }
+
+    private func goToday() {
+        let cal = Civil.gregorian
+        viewYear = cal.component(.year, from: Date())
+        viewMonth = cal.component(.month, from: Date())
+        loadWindow()
+    }
+
+    // The occurrence window the viewed month needs: [first, last] of the month,
+    // as date-only civils (YYYYMMDD0000).
+    private func loadWindow() {
+        let cal = Civil.gregorian
+        var parts = DateComponents()
+        parts.year = viewYear
+        parts.month = viewMonth
+        parts.day = 1
+        guard let first = cal.date(from: parts) else { return }
+        let days = cal.range(of: .day, in: .month, for: first)?.count ?? 30
+        let from = Int64(viewYear * 10000 + viewMonth * 100 + 1) * 10000
+        let to = Int64(viewYear * 10000 + viewMonth * 100 + days) * 10000
+        model.snapshotWindow(from: from, to: to)
+    }
+
+    // Hover-"+" on a day: create an event at 09:00 that day, select it (the
+    // inspector opens for editing) and drop into renaming — then reload this
+    // month's window so it appears without clobbering the viewed occurrences.
+    private func quickCreate(dayKey: Int64) {
+        let dueCivil = dayKey * 10000 + 900  // 09:00
+        model.createEvent(dueCivil: dueCivil, allDay: false) { id in
+            if let id = id {
+                selection = id
+                rename(id)
+            }
+            loadWindow()
         }
     }
 
@@ -2144,6 +2280,9 @@ struct DayCell: View {
     let day: Int
     let isToday: Bool
     let events: [EntityRow]
+    var addEvent: () -> Void = {}
+
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -2175,6 +2314,28 @@ struct DayCell: View {
         }
         .padding(7)
         .frame(minHeight: 92, alignment: .topLeading)
+        // Hover reveals a quick-create "+" in the corner (§6.2). A nested
+        // Button in a non-Button cell, so it captures its own tap.
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button(action: addEvent) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Theme.mutedFg)
+                        .frame(width: 17, height: 17)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5).fill(Theme.background))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .strokeBorder(Theme.border, lineWidth: 0.5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(5)
+                .help("New event")
+            }
+        }
+        .onHover { hovering = $0 }
         .overlay(Divider(), alignment: .bottom)
     }
 }

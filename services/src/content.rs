@@ -263,6 +263,45 @@ pub fn create_task(session: &mut Session, created: DateTime) -> Result<Id, Persi
     Ok(id)
 }
 
+/// Birth of an event: Create + type=event + a `due` cell + created, one
+/// transaction. Born with the clicked day/time as its `due` (all-day when
+/// `due.date_only`), typed `event` so it lands on the calendar by property-based
+/// positioning — it appears because it has a `due`, not because of its type.
+/// Born nameless like `create_task`, so the caller drops into renaming.
+/// Location, attendees, and notes are set after birth through the inspector,
+/// never at birth. Distinct from capture, which makes an untyped scrap the
+/// clerk quarantines.
+pub fn create_event(
+    session: &mut Session,
+    due: DateTime,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let event_type = find_type(store, "event");
+    let due_prop = property_id(store, "due");
+
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    if let Some(event_type) = event_type {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::TYPE, value: Value::Reference(event_type) },
+        });
+    }
+    if let Some(due_prop) = due_prop {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: due_prop, value: Value::DateTime(due) },
+        });
+    }
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::CREATED, value: Value::DateTime(created) },
+    });
+    session.commit(commands, "new event", Author::User)?;
+    Ok(id)
+}
+
 /// Birth of a list: Create + type=list + name + created, one transaction.
 /// Named at birth (a list is named before you add to it, unlike a note).
 /// Members are added later, one AddCell(related, Reference) each.

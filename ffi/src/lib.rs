@@ -433,7 +433,26 @@ fn build_properties(store: &Store) -> Vec<PropertyRow> {
     rows
 }
 
+/// The default snapshot: the current civil month's occurrence window. A thin
+/// wrapper so `lotus_snapshot_at` is byte-identical to before — every existing
+/// caller keeps working. The calendar asks for other windows through
+/// `build_snapshot_windowed`.
 fn build_snapshot(store: &Store) -> Snapshot {
+    let now = Local::now();
+    let from = DateTime::date(now.year(), now.month(), 1);
+    let to = DateTime::date(
+        now.year(),
+        now.month(),
+        last_day_of_month(now.year(), now.month()),
+    );
+    build_snapshot_windowed(store, from, to)
+}
+
+/// The snapshot over a caller-chosen occurrence window. `dated` is the full
+/// sorted set regardless (the shell buckets it by day); only `occurrences` —
+/// the recurrence engine's expansion — follows `[from, to]`, which the engine
+/// caps at a year. Same `Snapshot` shape, a caller-chosen horizon.
+fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snapshot {
     let due_prop = property_id(store, "due");
     let status_prop = property_id(store, "status");
     let bookmarked_prop = property_id(store, "bookmarked");
@@ -464,15 +483,8 @@ fn build_snapshot(store: &Store) -> Snapshot {
         }
     };
 
-    // This month's window is the horizon the calendar asks for.
-    let now = Local::now();
-    let month_first = DateTime::date(now.year(), now.month(), 1);
-    let month_last = DateTime::date(
-        now.year(),
-        now.month(),
-        last_day_of_month(now.year(), now.month()),
-    );
-    let occurrences = lotus_services::recurrence::occurrences(store, month_first, month_last)
+    // The caller's window is the horizon the calendar asks for.
+    let occurrences = lotus_services::recurrence::occurrences(store, from, to)
         .into_iter()
         .map(|o| OccurrenceRow { series: o.series, civil: o.date.civil })
         .collect();
@@ -653,6 +665,34 @@ fn reference_name(store: &Store, id: Id) -> String {
 pub unsafe extern "C" fn lotus_snapshot(path: *const c_char) -> *mut c_char {
     with_box(path, std::ptr::null_mut(), |session| {
         let snapshot = build_snapshot(session.store());
+        let out = match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Read)
+    })
+}
+
+/// The same snapshot over a caller-chosen occurrence window: `dated` is
+/// unchanged (the full sorted set; the shell buckets it by day), but the
+/// recurrence `occurrences` are expanded over `[from_civil, to_civil]`
+/// (civil `YYYYMMDDHHMM`) instead of the current month — so a calendar
+/// navigated to another month, or a week crossing a month edge, sees its
+/// occurrences. The engine caps the window at a year. Same JSON shape as
+/// `lotus_snapshot`. Null on failure; free with `lotus_string_free`.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_snapshot_window_at(
+    path: *const c_char,
+    from_civil: i64,
+    to_civil: i64,
+) -> *mut c_char {
+    with_box(path, std::ptr::null_mut(), |session| {
+        let from = DateTime { civil: from_civil, date_only: true };
+        let to = DateTime { civil: to_civil, date_only: true };
+        let snapshot = build_snapshot_windowed(session.store(), from, to);
         let out = match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),
@@ -1185,6 +1225,33 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
     })
 }
 
+/// Create an event by hand (the "+ Event" button, or double-click a day/hour).
+/// One transaction: type=event + due (from `due_civil`, all-day when
+/// `date_only` != 0) + created. Returns the new id, or 0 (busy box / failure).
+/// Distinct from capture, which makes an untyped scrap the clerk quarantines.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_event_at(
+    path: *const c_char,
+    due_civil: i64,
+    date_only: i32,
+) -> u64 {
+    with_box(path, 0, |session| {
+        // A date-only due carries no time; zero the HH:mm so it matches
+        // DateTime::date's packing exactly (the shell should pass 0 anyway).
+        let due = DateTime {
+            civil: if date_only != 0 { (due_civil / 10_000) * 10_000 } else { due_civil },
+            date_only: date_only != 0,
+        };
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::content::create_event(session, due, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
 /// Birth of a list: Create + type=list + name + created, one transaction.
 /// Named at birth (unlike a note). Returns the id, 0 on failure.
 ///
@@ -1320,6 +1387,7 @@ pub unsafe extern "C" fn lotus_unset_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lotus_core::{Cell, Command};
     use std::ffi::CString;
 
     #[test]
@@ -1516,6 +1584,123 @@ mod tests {
             0,
             "a sidecar change must invalidate the cache"
         );
+        cleanup(&path);
+    }
+
+    // ---- the calendar's steerable window + create_event (P10/10a) ----
+
+    /// A weekly/daily/… series set up directly, as the CLI would.
+    fn seed_series(path: &std::path::Path, due: DateTime, rule: &str) {
+        let mut session = Session::open(path).unwrap();
+        lotus_services::seed_if_fresh(&mut session).unwrap();
+        let id = session.allocate_id();
+        let due_prop = property_id(session.store(), "due").unwrap();
+        let recur = property_id(session.store(), "recurrence").unwrap();
+        session
+            .commit(
+                vec![
+                    Command::Create { entity: id },
+                    Command::AddCell {
+                        entity: id,
+                        cell: Cell { property: due_prop, value: Value::DateTime(due) },
+                    },
+                    Command::AddCell {
+                        entity: id,
+                        cell: Cell { property: recur, value: Value::text(rule) },
+                    },
+                ],
+                "series",
+                Author::User,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn the_default_snapshot_is_the_current_month_window() {
+        // The load-bearing regression guard: the windowed refactor must leave
+        // lotus_snapshot byte-identical — it is exactly the current civil
+        // month's window.
+        let (path, c_path) = fresh_box("lotus_ffi_win_default.log");
+        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("hello").unwrap().as_ptr()) };
+        let full = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let now = Local::now();
+        let from = DateTime::date(now.year(), now.month(), 1).civil;
+        let to = DateTime::date(
+            now.year(),
+            now.month(),
+            last_day_of_month(now.year(), now.month()),
+        )
+        .civil;
+        let windowed = unsafe { read_json(lotus_snapshot_window_at(c_path.as_ptr(), from, to)) };
+        assert_eq!(full, windowed, "the default snapshot IS the current-month window");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_future_window_steers_the_occurrence_engine() {
+        let (path, c_path) = fresh_box("lotus_ffi_win_future.log");
+        // A weekly series anchored 2026-07-07 (a Tuesday); the window decides
+        // which of its Tuesdays the snapshot expands.
+        seed_series(&path, DateTime::date(2026, 7, 7), "every week");
+        let snap = unsafe {
+            read_json(lotus_snapshot_window_at(
+                c_path.as_ptr(),
+                DateTime::date(2026, 8, 1).civil,
+                DateTime::date(2026, 8, 31).civil,
+            ))
+        };
+        let civils: Vec<i64> = snap["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["civil"].as_i64().unwrap() / 10_000)
+            .collect();
+        // August 2026's Tuesdays — a month the default (current) window never covers.
+        assert_eq!(civils, vec![20260804, 20260811, 20260818, 20260825]);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn the_occurrence_window_is_capped_at_a_year() {
+        let (path, c_path) = fresh_box("lotus_ffi_win_cap.log");
+        seed_series(&path, DateTime::date(2026, 1, 1), "every day");
+        // Ask for three years; the engine caps at 366 days from `from`.
+        let snap = unsafe {
+            read_json(lotus_snapshot_window_at(
+                c_path.as_ptr(),
+                DateTime::date(2026, 1, 1).civil,
+                DateTime::date(2029, 1, 1).civil,
+            ))
+        };
+        let count = snap["occurrences"].as_array().unwrap().len();
+        assert!((366..=367).contains(&count), "a 3-year ask caps at ~a year, got {count}");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn create_event_lands_typed_and_dued_on_the_asked_day() {
+        let (path, c_path) = fresh_box("lotus_ffi_event.log");
+        let due_civil = DateTime::at(2026, 7, 9, 9, 0).civil;
+        let id = unsafe { lotus_create_event_at(c_path.as_ptr(), due_civil, 0) };
+        assert_ne!(id, 0);
+        let snap = unsafe {
+            read_json(lotus_snapshot_window_at(
+                c_path.as_ptr(),
+                DateTime::date(2026, 7, 1).civil,
+                DateTime::date(2026, 7, 31).civil,
+            ))
+        };
+        let e = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .expect("the new event is in the snapshot");
+        assert!(e["kinds"].as_array().unwrap().iter().any(|k| k == "event"));
+        assert_eq!(e["due"].as_i64().unwrap(), due_civil);
+        assert_eq!(e["due_date_only"], false);
+        // A non-recurring dated entity, so it rides `dated` (bucketed by day).
+        assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
         cleanup(&path);
     }
 
