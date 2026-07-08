@@ -145,8 +145,19 @@ struct BoxFault: Codable {
 
 final class BoxModel: ObservableObject {
     let path: String
-    @Published var snap: Snapshot?
+    @Published var snap: Snapshot? { didSet { rebuildEntityIndex() } }
     @Published var boxBusy = false
+
+    /// id -> row, rebuilt once when a snapshot lands. entity()/rows() are hit
+    /// per-row on every surface render; a linear scan made them O(n²), which
+    /// is a real share of the general sluggishness. The index makes them O(1).
+    private var entityIndex: [UInt64: EntityRow] = [:]
+    private func rebuildEntityIndex() {
+        let all = snap?.entities ?? []
+        var idx = [UInt64: EntityRow](minimumCapacity: all.count)
+        for e in all { idx[e.id] = e }
+        entityIndex = idx
+    }
     /// A box that cannot open for a reason retrying will not fix —
     /// corrupt, wrong version, io. Rendered as a blocking notice.
     @Published var fault: BoxFault?
@@ -169,7 +180,7 @@ final class BoxModel: ObservableObject {
 
     func entity(_ id: UInt64?) -> EntityRow? {
         guard let id = id else { return nil }
-        return snap?.entities.first { $0.id == id }
+        return entityIndex[id]
     }
 
     func rows(_ ids: [UInt64]) -> [EntityRow] {
@@ -440,7 +451,14 @@ final class BoxModel: ObservableObject {
                 case -1: done(.stale)
                 default: done(.busy)
                 }
-                self.refresh()
+                // No full-box refresh here. Content saving fires on every
+                // autosave tick, checkpoint, and dirty tab close/switch; a
+                // whole-box lotus_snapshot decode + @Published republish on
+                // each was the tab-close/select lag and a drag while typing.
+                // The saving editor gets its fresh fingerprint via .saved, and
+                // no list/row field is derived from content (only contentPrint,
+                // which the editor consumes directly) — so nothing goes stale.
+                // A title change routes through renameIfNeeded, which refreshes.
             }
         }
     }
