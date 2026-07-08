@@ -300,6 +300,12 @@ pub fn create_list(
 /// declared kind, exactly as `set`.
 pub fn add_cell(session: &mut Session, id: Id, prop_name: &str, raw: &str) -> Result<(), String> {
     let (id, property, value) = resolve_cell(session.store(), id, prop_name, raw)?;
+    // An entity may not reference ITSELF — a list can't be its own member (the
+    // same guard the clerk's `related` proposer applies). Only add is guarded;
+    // remove stays open so any pre-existing self-reference can still be cleared.
+    if value == Value::Reference(id) {
+        return Err(format!("#{id} cannot reference itself"));
+    }
     if session.store().get(id).is_some_and(|e| e.has(property, &value)) {
         return Ok(());
     }

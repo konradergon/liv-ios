@@ -2529,7 +2529,18 @@ struct ListsSurface: View {
     }
 
     private func memberIds(_ list: EntityRow) -> [UInt64] {
-        list.cells.filter { $0.property == "related" }.compactMap { $0.refTarget }
+        list.cells
+            .filter { $0.property == "related" && $0.refTarget != list.id }
+            .compactMap { $0.refTarget }
+    }
+
+    // The resolvable (live, non-trashed) members — model.rows drops any id the
+    // snapshot can't resolve. Both the index badge and the detail count off
+    // THIS, so they never disagree; a trashed member is hidden from both and
+    // returns to both when it's restored (its `related` tag is kept, as trash
+    // is reversible).
+    private func liveMembers(_ list: EntityRow) -> [EntityRow] {
+        model.rows(memberIds(list))
     }
 
     var body: some View {
@@ -2591,7 +2602,7 @@ struct ListsSurface: View {
                 .font(.system(size: 14))
                 .lineLimit(1)
             Spacer()
-            Text("\(memberIds(row).count)")
+            Text("\(liveMembers(row).count)")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
             Image(systemName: "chevron.right")
@@ -2609,7 +2620,7 @@ struct ListsSurface: View {
     }
 
     private func detail(_ list: EntityRow) -> some View {
-        let members = model.rows(memberIds(list))
+        let members = liveMembers(list)
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Button { openList = nil } label: {
@@ -2624,7 +2635,7 @@ struct ListsSurface: View {
                     subtitle: members.count == 1 ? "1 item" : "\(members.count) items")
 
                 if members.isEmpty {
-                    Text("No items yet. Add from any row with \u{201C}Add to list\u{2026}\u{201D} (coming next).")
+                    Text("No items yet. Select anything and use \u{201C}Add to list\u{2026}\u{201D} in its inspector.")
                         .font(.system(size: 12.5))
                         .foregroundColor(Theme.mutedFg)
                         .padding(.top, 20)
@@ -2802,7 +2813,8 @@ struct InspectorHeader: View {
     // last row creates a new list and adds in one step. The icon reads accent
     // when the entity is on at least one list, mirroring bookmark's active tint.
     @ViewBuilder private var addToListMenu: some View {
-        let lists = allLists
+        // Never offer a list as its own member (the core seam also rejects it).
+        let lists = allLists.filter { $0.id != entity.id }
         let onAny = lists.contains { isMember(of: $0) }
         Menu {
             if lists.isEmpty {

@@ -117,3 +117,17 @@ fn membership_is_tagging_ordered_deduped_and_never_deletes() {
     assert!(content::add_cell(&mut session, list, "related", "#999999").is_err());
     cleanup(&path);
 }
+
+#[test]
+fn a_list_cannot_be_its_own_member() {
+    let (path, mut session) = fresh("lists_selfref");
+    let l = content::create_list(&mut session, "L", DateTime::date(2026, 7, 8)).unwrap();
+    // A self-reference is refused — a list may not be its own member (the same
+    // guard the clerk's `related` proposer applies).
+    assert!(content::add_cell(&mut session, l, "related", &format!("#{l}")).is_err());
+    assert!(members(session.store(), l).is_empty(), "nothing was tagged");
+    // remove stays open, so a pre-existing self-ref could still be cleared
+    // (a no-op here, since none was added) — and it must not error.
+    assert!(content::remove_cell(&mut session, l, "related", &format!("#{l}")).is_ok());
+    cleanup(&path);
+}
