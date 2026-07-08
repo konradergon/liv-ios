@@ -193,6 +193,38 @@ unsafe fn open_swept(path: *const c_char) -> Option<Session> {
     Some(session)
 }
 
+/// The success/failure signal a `with_box` closure hands back so check-in knows
+/// whether to keep the cached store or evict it (Guards 4/6 of the perf design):
+/// a read — or a mutation the guard refused without touching the store — is
+/// `Ok` (the store is safe to cache); a mutation that failed to persist is
+/// `Failed` (evict, so a phantom write is never served). See
+/// design/perf-incremental-open.md.
+enum Committed {
+    Ok,
+    Failed,
+}
+
+/// The ONE choke point every box-opening FFI entry routes through. Opens the
+/// box (sweeping/seeding as `open_swept` does), runs `f` against the live
+/// session, and returns f's value — or `busy` when the box can't be opened or
+/// is held elsewhere. Routing every entry through here gives the store cache a
+/// single place to serve a hit and a single place to write back / evict on the
+/// way out; Slice A wires the choke point with the cache still a no-op.
+unsafe fn with_box<T>(
+    path: *const c_char,
+    busy: T,
+    f: impl FnOnce(&mut Session) -> (T, Committed),
+) -> T {
+    let Some(mut session) = open_swept(path) else {
+        return busy;
+    };
+    let (value, _committed) = f(&mut session);
+    // Slice A: the cache is a no-op — the session drops here, releasing the
+    // lock, exactly as before. Slice B adds the write-back / eviction keyed on
+    // `_committed`.
+    value
+}
+
 fn civil_today() -> DateTime {
     let now = Local::now();
     DateTime::date(now.year(), now.month(), now.day())
@@ -469,15 +501,14 @@ fn reference_name(store: &Store, id: Id) -> String {
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_snapshot(path: *const c_char) -> *mut c_char {
-    let Some(session) = open_swept(path) else {
-        return std::ptr::null_mut();
-    };
-    let snapshot = build_snapshot(session.store());
-    drop(session); // release the box before handing the JSON over
-    match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
-        Some(s) => s.into_raw(),
-        None => std::ptr::null_mut(),
-    }
+    with_box(path, std::ptr::null_mut(), |session| {
+        let snapshot = build_snapshot(session.store());
+        let out = match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Ok)
+    })
 }
 
 /// Ranked hits + facet counts for one raw DSL query. Its own seam, not part
@@ -538,15 +569,14 @@ pub unsafe extern "C" fn lotus_search_at(
         return std::ptr::null_mut();
     };
     let cache = files::cache_dir(path_str);
-    let Some(session) = open_swept(path) else {
-        return std::ptr::null_mut();
-    };
-    let result = build_search(session.store(), raw, &cache);
-    drop(session);
-    match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
-        Some(s) => s.into_raw(),
-        None => std::ptr::null_mut(),
-    }
+    with_box(path, std::ptr::null_mut(), |session| {
+        let result = build_search(session.store(), raw, &cache);
+        let out = match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Ok)
+    })
 }
 
 /// Re-hash a file entity's referenced path; if the bytes changed, replace
@@ -559,15 +589,12 @@ pub unsafe extern "C" fn lotus_search_at(
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_resync_file_at(path: *const c_char, id: u64) -> i32 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    match files::resync_file(&mut session, id) {
-        Ok(files::Resync::Changed(_)) => 1,
-        Ok(files::Resync::Unchanged) => 0,
-        Ok(files::Resync::Broken) => -1,
-        Err(_) => 0,
-    }
+    with_box(path, 0, |session| match files::resync_file(session, id) {
+        Ok(files::Resync::Changed(_)) => (1, Committed::Ok),
+        Ok(files::Resync::Unchanged) => (0, Committed::Ok),
+        Ok(files::Resync::Broken) => (-1, Committed::Ok),
+        Err(_) => (0, Committed::Failed),
+    })
 }
 
 /// A file entity's extracted plain text (rung 2), from the hash-keyed cache
@@ -583,20 +610,18 @@ pub unsafe extern "C" fn lotus_extracted_text_at(path: *const c_char, id: u64) -
         return std::ptr::null_mut();
     };
     let cache = files::cache_dir(path_str);
-    let Some(session) = open_swept(path) else {
-        return std::ptr::null_mut();
-    };
-    let store = session.store();
-    // A NUL byte is valid UTF-8 (a null-padded log, a UTF-16 export) and
-    // survives from_utf8_lossy, but it would make CString::new fail and
-    // blank the preview of a file search still matched. Scrub it at the C
-    // boundary so the preview degrades to visible-but-cleaned text.
-    let text = file_text(store, &cache, id).replace('\0', "\u{FFFD}");
-    drop(session);
-    match CString::new(text) {
-        Ok(s) => s.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    with_box(path, std::ptr::null_mut(), |session| {
+        // A NUL byte is valid UTF-8 (a null-padded log, a UTF-16 export) and
+        // survives from_utf8_lossy, but it would make CString::new fail and
+        // blank the preview of a file search still matched. Scrub it at the C
+        // boundary so the preview degrades to visible-but-cleaned text.
+        let text = file_text(session.store(), &cache, id).replace('\0', "\u{FFFD}");
+        let out = match CString::new(text) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        };
+        (out, Committed::Ok)
+    })
 }
 
 /// The extracted text for one file entity, or empty when it carries no file
@@ -638,36 +663,36 @@ unsafe fn triage(
     expected: u64,
     accept: bool,
 ) -> i32 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    let matching: Vec<usize> = session
-        .store()
-        .pending()
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| match p.commands.first() {
-            Some(lotus_core::Command::AddCell { entity: e, .. }) => *e == entity,
-            _ => false,
-        })
-        .map(|(i, _)| i)
-        .collect();
-    let index = match (matching.len(), ordinal as usize) {
-        (n, k) if k >= 1 && k <= n => matching[k - 1],
-        _ => return 0,
-    };
-    // A consent is to a proposal, not a position: if the queue shifted
-    // since the snapshot, refuse — the shell refreshes and the user sees
-    // the truth before clicking again.
-    if fingerprint(&session.store().pending()[index]) != expected {
-        return 0;
-    }
-    let outcome = if accept {
-        session.accept(index).is_ok()
-    } else {
-        session.reject(index).is_ok()
-    };
-    outcome as i32
+    with_box(path, 0, |session| {
+        let matching: Vec<usize> = session
+            .store()
+            .pending()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| match p.commands.first() {
+                Some(lotus_core::Command::AddCell { entity: e, .. }) => *e == entity,
+                _ => false,
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let index = match (matching.len(), ordinal as usize) {
+            (n, k) if k >= 1 && k <= n => matching[k - 1],
+            // No such proposal: nothing touched, the store is safe to cache.
+            _ => return (0, Committed::Ok),
+        };
+        // A consent is to a proposal, not a position: if the queue shifted
+        // since the snapshot, refuse — the shell refreshes and the user sees
+        // the truth before clicking again. (No mutation, so cache stays valid.)
+        if fingerprint(&session.store().pending()[index]) != expected {
+            return (0, Committed::Ok);
+        }
+        let outcome = if accept {
+            session.accept(index).is_ok()
+        } else {
+            session.reject(index).is_ok()
+        };
+        (outcome as i32, if outcome { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Accept the proposal addressed by (entity, ordinal) — verified against
@@ -710,10 +735,10 @@ pub unsafe extern "C" fn lotus_reject_at(
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_undo_at(path: *const c_char) -> i32 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    session.undo(Author::User).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = session.undo(Author::User).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Why the box would not open, as one JSON object: {"code","message"}.
@@ -774,39 +799,38 @@ struct ContentDoc {
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut c_char {
-    let Some(session) = open_swept(path) else {
-        return std::ptr::null_mut();
-    };
-    let store = session.store();
-    let resolved = store.resolve(id);
-    let doc = match store.get(resolved) {
-        Some(entity) => ContentDoc {
-            id: resolved,
-            name: match entity.get(props::NAME) {
-                Some(Value::Text(name)) => Some(name.clone()),
-                _ => None,
+    with_box(path, std::ptr::null_mut(), |session| {
+        let store = session.store();
+        let resolved = store.resolve(id);
+        let doc = match store.get(resolved) {
+            Some(entity) => ContentDoc {
+                id: resolved,
+                name: match entity.get(props::NAME) {
+                    Some(Value::Text(name)) => Some(name.clone()),
+                    _ => None,
+                },
+                trashed: entity.trashed,
+                missing: false,
+                fingerprint: lotus_services::content::content_fingerprint(
+                    entity.get(props::CONTENT),
+                ),
+                spans: lotus_services::content::content_spans(entity),
             },
-            trashed: entity.trashed,
-            missing: false,
-            fingerprint: lotus_services::content::content_fingerprint(
-                entity.get(props::CONTENT),
-            ),
-            spans: lotus_services::content::content_spans(entity),
-        },
-        None => ContentDoc {
-            id: resolved,
-            name: None,
-            trashed: false,
-            missing: true,
-            fingerprint: 0,
-            spans: Vec::new(),
-        },
-    };
-    drop(session);
-    match serde_json::to_string(&doc).ok().and_then(|s| CString::new(s).ok()) {
-        Some(s) => s.into_raw(),
-        None => std::ptr::null_mut(),
-    }
+            None => ContentDoc {
+                id: resolved,
+                name: None,
+                trashed: false,
+                missing: true,
+                fingerprint: 0,
+                spans: Vec::new(),
+            },
+        };
+        let out = match serde_json::to_string(&doc).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Ok)
+    })
 }
 
 /// Replace the entity's whole content in one transaction — the editor's
@@ -835,19 +859,19 @@ pub unsafe extern "C" fn lotus_set_content_at(
     let Ok(spans) = serde_json::from_str::<Vec<lotus_core::Span>>(json) else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    match lotus_services::content::set_content(&mut session, id, spans, base_fingerprint) {
-        Ok(fresh) => {
-            if !fresh_fingerprint.is_null() {
-                *fresh_fingerprint = fresh;
+    with_box(path, 0, move |session| {
+        match lotus_services::content::set_content(session, id, spans, base_fingerprint) {
+            Ok(fresh) => {
+                if !fresh_fingerprint.is_null() {
+                    unsafe { *fresh_fingerprint = fresh };
+                }
+                (1, Committed::Ok)
             }
-            1
+            // A stale save refused before it touched the store — cache stays valid.
+            Err(lotus_services::content::ContentError::Stale) => (-1, Committed::Ok),
+            Err(_) => (0, Committed::Failed),
         }
-        Err(lotus_services::content::ContentError::Stale) => -1,
-        Err(_) => 0,
-    }
+    })
 }
 
 /// Set one property by name: the CLI's `set` through the seam — value
@@ -873,10 +897,10 @@ pub unsafe extern "C" fn lotus_set_at(
     ) else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    lotus_services::content::set_property(&mut session, id, property, value).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = lotus_services::content::set_property(session, id, property, value).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Add ONE cell to a (multi-valued) property — list membership adds a
@@ -903,10 +927,10 @@ pub unsafe extern "C" fn lotus_add_cell_at(
     else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    lotus_services::content::add_cell(&mut session, id, property, value).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = lotus_services::content::add_cell(session, id, property, value).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Remove ONE cell of a (multi-valued) property — un-tag a list member.
@@ -930,10 +954,10 @@ pub unsafe extern "C" fn lotus_remove_cell_at(
     else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    lotus_services::content::remove_cell(&mut session, id, property, value).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = lotus_services::content::remove_cell(session, id, property, value).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 #[derive(Serialize)]
@@ -955,30 +979,29 @@ struct ContentVersionRow {
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_content_history_at(path: *const c_char, id: u64) -> *mut c_char {
-    let Some(session) = open_swept(path) else {
-        return std::ptr::null_mut();
-    };
-    let mut versions: Vec<ContentVersionRow> =
-        lotus_services::content::content_history(session.store(), id)
-            .into_iter()
-            .map(|v| ContentVersionRow {
-                seq: v.seq,
-                time: v.time,
-                author: match v.author {
-                    Author::Proposer(name) => name,
-                    Author::User => "user".into(),
-                    Author::System => "system".into(),
-                },
-                label: v.label,
-                spans: v.spans,
-            })
-            .collect();
-    versions.reverse(); // newest first for the pane
-    drop(session);
-    match serde_json::to_string(&versions).ok().and_then(|s| CString::new(s).ok()) {
-        Some(s) => s.into_raw(),
-        None => std::ptr::null_mut(),
-    }
+    with_box(path, std::ptr::null_mut(), |session| {
+        let mut versions: Vec<ContentVersionRow> =
+            lotus_services::content::content_history(session.store(), id)
+                .into_iter()
+                .map(|v| ContentVersionRow {
+                    seq: v.seq,
+                    time: v.time,
+                    author: match v.author {
+                        Author::Proposer(name) => name,
+                        Author::User => "user".into(),
+                        Author::System => "system".into(),
+                    },
+                    label: v.label,
+                    spans: v.spans,
+                })
+                .collect();
+        versions.reverse(); // newest first for the pane
+        let out = match serde_json::to_string(&versions).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Ok)
+    })
 }
 
 /// Birth of a note: Create + type + created, one transaction. Returns
@@ -988,12 +1011,12 @@ pub unsafe extern "C" fn lotus_content_history_at(path: *const c_char, id: u64) 
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    let now = Local::now();
-    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-    lotus_services::content::create_note(&mut session, created).unwrap_or(0)
+    with_box(path, 0, |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::content::create_note(session, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Create a task by hand (the Tasks quick-add): one transaction — type=task
@@ -1004,12 +1027,12 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    let now = Local::now();
-    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-    lotus_services::content::create_task(&mut session, created).unwrap_or(0)
+    with_box(path, 0, |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::content::create_task(session, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Birth of a list: Create + type=list + name + created, one transaction.
@@ -1028,12 +1051,12 @@ pub unsafe extern "C" fn lotus_create_list_at(
     let Ok(name) = CStr::from_ptr(name).to_str() else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    let now = Local::now();
-    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-    lotus_services::content::create_list(&mut session, name, created).unwrap_or(0)
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::content::create_list(session, name, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Add a file by reference: hash its bytes, create the entity with a `file`
@@ -1054,12 +1077,12 @@ pub unsafe extern "C" fn lotus_add_file_at(
     let Ok(file_path) = CStr::from_ptr(file_path).to_str() else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    let now = Local::now();
-    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-    lotus_services::files::add_file(&mut session, file_path, created).unwrap_or(0)
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::files::add_file(session, file_path, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Birth of a workspace: Create + type + name (+ parent, trailing
@@ -1084,13 +1107,13 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
     if name.is_empty() {
         return 0;
     }
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    let now = Local::now();
-    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-    let parent = (parent != 0).then_some(parent);
-    lotus_services::content::create_workspace(&mut session, name, parent, created).unwrap_or(0)
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let parent = (parent != 0).then_some(parent);
+        let id = lotus_services::content::create_workspace(session, name, parent, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Trash one workspace — and only that one. Deletion never cascades:
@@ -1101,10 +1124,10 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) -> i32 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    lotus_services::content::trash_workspace(&mut session, id).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = lotus_services::content::trash_workspace(session, id).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Trash one entity — the inspector's Trash action. Soft, reversible
@@ -1114,10 +1137,10 @@ pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) 
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn lotus_trash_at(path: *const c_char, id: u64) -> i32 {
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    lotus_services::content::trash_workspace(&mut session, id).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = lotus_services::content::trash_workspace(session, id).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 /// Remove every cell of one property — the inverse of lotus_set_at's
@@ -1138,10 +1161,10 @@ pub unsafe extern "C" fn lotus_unset_at(
     let Ok(property) = CStr::from_ptr(property).to_str() else {
         return 0;
     };
-    let Some(mut session) = open_swept(path) else {
-        return 0;
-    };
-    lotus_services::content::unset_property(&mut session, id, property).is_ok() as i32
+    with_box(path, 0, |session| {
+        let ok = lotus_services::content::unset_property(session, id, property).is_ok();
+        (ok as i32, if ok { Committed::Ok } else { Committed::Failed })
+    })
 }
 
 #[cfg(test)]
