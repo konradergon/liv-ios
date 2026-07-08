@@ -993,17 +993,17 @@ struct WindowChrome: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 // The right divider outlives its panel: a drag-collapsed
                 // inspector must stay reopenable by mouse (§1.5). The Calendar
-                // wants the whole width (Apple-style): its inspector stays out
-                // of the way until an event is actually selected to edit.
-                if !chrome.focusMode && !(chrome.surface == .calendar && selection == nil) {
+                // never shows the GLOBAL inspector: it embeds one inside its
+                // own fixed-width right column, so selecting an item never
+                // reflows the grid — a reflow between the two clicks of a
+                // double-tap made the second click miss (the review's high).
+                if !chrome.focusMode && chrome.surface != .calendar {
                     PaneDivider(
                         pct: $chrome.rightPct, open: $chrome.rightOpen, total: total,
                         minPct: 10, maxPct: chrome.rightLiveMax, leadingEdge: false
                     ) { chrome.persistPanes() }
                 }
-                if chrome.rightOpen && !chrome.focusMode
-                    && !(chrome.surface == .calendar && selection == nil)
-                {
+                if chrome.rightOpen && !chrome.focusMode && chrome.surface != .calendar {
                     InspectorPane(model: model, selection: $selection)
                         .frame(width: max(total * chrome.rightPct / 100, 0))
                 }
@@ -1031,8 +1031,7 @@ struct WindowChrome: View {
             case .calendar:
                 CalendarView(
                     model: model, selection: $selection,
-                    open: { id in openEntityTab(id) },
-                    rename: { id in renameEntity(id) })
+                    open: { id in openEntityTab(id) })
             case .library:
                 LibraryView(
                     model: model, selection: $selection,

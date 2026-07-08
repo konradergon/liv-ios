@@ -53,7 +53,6 @@ struct CalendarView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
     var open: (UInt64) -> Void = { _ in }
-    var rename: (UInt64) -> Void = { _ in }
 
     // Transient view state, never a cell (interface.md 0.5). selectedDay is
     // always a real day (today at first), as in Liv — the day panel always
@@ -100,17 +99,59 @@ struct CalendarView: View {
                     agendaBody(byDay)
                 }
             }
-            // Liv's fixed right column, always present. It yields to the
-            // inspector when an entity is selected — editing goes through
-            // the inspector (v1), never a second editor panel.
-            if selection == nil {
-                Divider()
-                dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
-                    .frame(width: 320)
-            }
+            // Liv's fixed right column, always present and always the SAME
+            // width — the day panel, or (while an entity is selected) the
+            // inspector embedded in its place. Same width is load-bearing:
+            // selection must never reflow the grid, or the second click of a
+            // double-tap lands on a moved target (the review's high finding).
+            Divider()
+            rightColumn(byDay)
         }
         .onAppear { loadWindow() }
         .onDisappear { model.resetWindow() }
+    }
+
+    // The right column: the day panel, or the embedded inspector with a back
+    // button (the deselect path this surface otherwise lacks) and an Open
+    // button (the open path for day-panel rows, whose own double-tap can't
+    // survive the panel-to-inspector content swap).
+    private func rightColumn(_ byDay: [Int64: [EntityRow]]) -> some View {
+        Group {
+            if let sel = selection {
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Button { selection = nil } label: {
+                            Label(
+                                Fmt.weekdayDay.string(from: civilDate(selectedDay)),
+                                systemImage: "chevron.left"
+                            )
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.accent)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Back to the day")
+                        Spacer()
+                        Button { open(sel) } label: {
+                            Image(systemName: "arrow.up.forward.square")
+                                .font(.system(size: 12.5))
+                                .foregroundColor(Theme.mutedFg)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    Divider()
+                    InspectorPane(model: model, selection: $selection)
+                }
+            } else {
+                dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
+            }
+        }
+        .frame(width: 320)
+        .background(Theme.background)
     }
 
     // MARK: data
@@ -119,8 +160,12 @@ struct CalendarView: View {
     // counts as a note (Liv's default bucket).
     private func kindShown(_ row: EntityRow) -> Bool {
         if row.kinds.contains("event") { return showEvents }
-        if row.kinds.contains("task") { return showTasks }
-        if row.kinds.contains("file") { return showFiles }
+        // A task is task-typed OR merely status-bearing — the same test
+        // EntityLine's checkbox and taskStatusToggle apply.
+        if row.kinds.contains("task") || row.status != nil { return showTasks }
+        // A file is an entity CARRYING a file cell — files have no type (P7),
+        // so a kinds check would never match one.
+        if row.cells.contains(where: { $0.kind == "file" }) { return showFiles }
         if row.kinds.contains("person") || row.kinds.contains("contact") { return showContacts }
         if row.kinds.contains("list") { return showLists }
         return showNotes
@@ -128,7 +173,8 @@ struct CalendarView: View {
 
     // A day's contents: the dated one-offs unioned with the recurrence
     // engine's virtual occurrences (the series entity drawn on each day its
-    // rule names), filtered by the checklist.
+    // rule names), filtered by the checklist, in day order — all-day items
+    // first (Liv's rail order), then by time.
     private func buildByDay() -> [Int64: [EntityRow]] {
         var byDay: [Int64: [EntityRow]] = [:]
         for row in model.rows(model.snap?.dated ?? []) where kindShown(row) {
@@ -137,6 +183,13 @@ struct CalendarView: View {
         for occurrence in model.snap?.occurrences ?? [] {
             if let series = model.entity(occurrence.series), kindShown(series) {
                 byDay[occurrence.civil / 10_000, default: []].append(series)
+            }
+        }
+        for key in byDay.keys {
+            byDay[key]?.sort { a, b in
+                let at = a.dueDateOnly ? -1 : Int((a.due ?? 0) % 10_000)
+                let bt = b.dueDateOnly ? -1 : Int((b.due ?? 0) % 10_000)
+                return at < bt
             }
         }
         return byDay
@@ -574,8 +627,12 @@ struct CalendarView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(items) { row in
+                            // An occurrence row carries its SERIES' anchor due —
+                            // another day's date. Show the due text only when it
+                            // genuinely is this day's.
                             EntityLine(
                                 row: row,
+                                showWhen: (row.due ?? 0) / 10_000 == key,
                                 selected: selection == row.id,
                                 toggle: taskStatusToggle(model, row)
                             ) {
@@ -648,39 +705,45 @@ struct CalendarView: View {
         }
     }
 
-    // The occurrence window the current mode needs, as date-only civils.
+    // The occurrence window must cover every day the surface RENDERS, not
+    // just the mode's core span: the month grid and the mini-month both draw
+    // whole Monday-first weeks (adjacent months' greyed days included), and
+    // selectedDay can sit outside the viewed month after navigation. A window
+    // narrower than the rendered days silently drops recurring occurrences on
+    // the edges while the unwindowed one-offs still show (the review's other
+    // high finding). Civil YMD keys compare numerically, so min/max is a
+    // contiguous union; the span stays ~6 weeks, far under the engine's cap.
     private func loadWindow() {
-        switch viewMode {
-        case .month, .agenda:
-            let cal = Civil.gregorian
-            var parts = DateComponents()
-            parts.year = viewYear
-            parts.month = viewMonth
-            parts.day = 1
-            guard let first = cal.date(from: parts) else { return }
-            let days = cal.range(of: .day, in: .month, for: first)?.count ?? 30
-            model.snapshotWindow(
-                from: Int64(viewYear * 10000 + viewMonth * 100 + 1) * 10000,
-                to: Int64(viewYear * 10000 + viewMonth * 100 + days) * 10000)
-        case .week:
+        let cells = monthCells()
+        var lo = cells.first?.key ?? selectedDay
+        var hi = cells.last?.key ?? selectedDay
+        if viewMode == .week {
             let d = weekDays(selectedDay)
-            guard let f = d.first, let l = d.last else { return }
-            model.snapshotWindow(from: f * 10000, to: l * 10000)
-        case .day:
-            model.snapshotWindow(from: selectedDay * 10000, to: selectedDay * 10000)
+            if let f = d.first { lo = min(lo, f) }
+            if let l = d.last { hi = max(hi, l) }
         }
+        lo = min(lo, selectedDay)
+        hi = max(hi, selectedDay)
+        model.snapshotWindow(from: lo * 10000, to: hi * 10000)
     }
 
     // Create an event on a day (09:00, Liv's default hour). Liv births it
     // named "New event" and drops into renaming — a cancelled rename keeps a
-    // name, never a bare #id on the grid. No default refresh: the rename's
-    // own set() refreshes on the sticky occurrence window.
+    // name, never a bare #id on the grid. The prompt is asked directly with
+    // the "New event" initial: the generic rename path reads the model, and
+    // the snapshot carrying the newborn hasn't landed yet when it opens.
     private func quickCreate(dayKey: Int64, hour: Int = 9) {
         model.createEvent(dueCivil: dayKey * 10000 + Int64(hour) * 100, allDay: false) { id in
             guard let id = id else { return }
             model.set(id, property: "name", value: "New event") { _ in
                 selection = id
-                rename(id)
+                Dialogs.shared.prompt(
+                    "Name the event", initial: "New event", confirmLabel: "Name"
+                ) { name in
+                    let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty, trimmed != "New event" else { return }
+                    model.set(id, property: "name", value: trimmed)
+                }
             }
         }
     }
@@ -887,9 +950,12 @@ struct WeekTimeGrid: View {
     private var gutterColumn: some View {
         VStack(spacing: 0) {
             ForEach(0..<24, id: \.self) { h in
+                // The label's breathing room lives INSIDE the gutter width, so
+                // the scrolling columns align with the pinned header's exactly.
                 Text(h == 0 ? "" : String(format: "%02d:00", h))
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundColor(Theme.mutedFg)
+                    .padding(.trailing, 4)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .frame(height: hourHeight, alignment: .top)
                     .offset(y: -6)
@@ -897,7 +963,6 @@ struct WeekTimeGrid: View {
             }
         }
         .frame(width: gutter)
-        .padding(.trailing, 4)
     }
 
     private func dayColumn(_ key: Int64) -> some View {
