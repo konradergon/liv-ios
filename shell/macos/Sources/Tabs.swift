@@ -312,6 +312,7 @@ struct TabPill: View {
     let rename: () -> Void
 
     @State private var hovering = false
+    @State private var lastTap = Date.distantPast
 
     var body: some View {
         // A clean, native macOS tab (Safari/Arc idiom): a rounded pill,
@@ -355,8 +356,22 @@ struct TabPill: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(count: 2, perform: rename)
-        .onTapGesture(perform: activate)
+        // Select on single tap, rename on double — but detect the double
+        // MANUALLY. A sibling `.onTapGesture(count: 2)` makes SwiftUI hold every
+        // single tap for the system double-click interval to disambiguate, which
+        // is a fixed ~250ms delay on every tab select. Firing activate on each
+        // tap (idempotent when already active) keeps selection instant; a second
+        // tap inside the interval also renames.
+        .onTapGesture {
+            activate()
+            let now = Date()
+            if now.timeIntervalSince(lastTap) < NSEvent.doubleClickInterval {
+                lastTap = .distantPast
+                rename()
+            } else {
+                lastTap = now
+            }
+        }
     }
 }
 
