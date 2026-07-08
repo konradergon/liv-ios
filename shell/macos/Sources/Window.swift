@@ -992,14 +992,18 @@ struct WindowChrome: View {
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 // The right divider outlives its panel: a drag-collapsed
-                // inspector must stay reopenable by mouse (§1.5).
-                if !chrome.focusMode {
+                // inspector must stay reopenable by mouse (§1.5). The Calendar
+                // wants the whole width (Apple-style): its inspector stays out
+                // of the way until an event is actually selected to edit.
+                if !chrome.focusMode && !(chrome.surface == .calendar && selection == nil) {
                     PaneDivider(
                         pct: $chrome.rightPct, open: $chrome.rightOpen, total: total,
                         minPct: 10, maxPct: chrome.rightLiveMax, leadingEdge: false
                     ) { chrome.persistPanes() }
                 }
-                if chrome.rightOpen && !chrome.focusMode {
+                if chrome.rightOpen && !chrome.focusMode
+                    && !(chrome.surface == .calendar && selection == nil)
+                {
                     InspectorPane(model: model, selection: $selection)
                         .frame(width: max(total * chrome.rightPct / 100, 0))
                 }
@@ -2199,42 +2203,57 @@ struct CalendarView: View {
         parts.month = viewMonth
         parts.day = 1
         let first = cal.date(from: parts) ?? Date()
-        let range = cal.range(of: .day, in: .month, for: first) ?? 1..<29
-        let lead = cal.component(.weekday, from: first) - 1
+        let daysInMonth = cal.range(of: .day, in: .month, for: first)?.count ?? 30
+        let lead = cal.component(.weekday, from: first) - 1  // Sunday = 0
         let monthKey = Int64(viewYear * 100 + viewMonth)
+        let weekCount = (lead + daysInMonth + 6) / 7
         return HStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    LazyVGrid(columns: columns, spacing: 0) {
-                        ForEach(dows, id: \.self) { dow in
-                            Text(dow.uppercased())
-                                .font(.system(size: 11, weight: .semibold))
-                                .kerning(0.4)
-                                .foregroundColor(Color.secondary.opacity(0.7))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.bottom, 8)
-                        }
-                        ForEach(0..<lead, id: \.self) { _ in
-                            Color.clear.frame(height: 92)
-                        }
-                        ForEach(range, id: \.self) { day in
-                            let key = monthKey * 100 + Int64(day)
-                            DayCell(
-                                day: day,
-                                isToday: key == Civil.todayYMD,
-                                isSelected: selectedDay == key,
-                                events: byDay[key] ?? [],
-                                addEvent: { quickCreate(dayKey: key) },
-                                selectDay: { selectedDay = key }
-                            )
-                        }
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ForEach(dows, id: \.self) { dow in
+                        Text(dow.uppercased())
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .kerning(0.4)
+                            .foregroundColor(Color.secondary.opacity(0.7))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 6)
                     }
                 }
-                .padding(.horizontal, 32)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
+                .padding(.bottom, 6)
+                // Week rows dividing the WHOLE height — no dead space, no scroll
+                // (the month always fits, Apple-style).
+                ForEach(0..<weekCount, id: \.self) { w in
+                    HStack(spacing: 0) {
+                        ForEach(0..<7, id: \.self) { d in
+                            let dayNum = w * 7 + d - lead + 1
+                            if dayNum >= 1 && dayNum <= daysInMonth {
+                                let key = monthKey * 100 + Int64(dayNum)
+                                DayCell(
+                                    day: dayNum,
+                                    isToday: key == Civil.todayYMD,
+                                    isSelected: selectedDay == key,
+                                    events: byDay[key] ?? [],
+                                    addEvent: { quickCreate(dayKey: key) },
+                                    selectDay: { selectedDay = key },
+                                    selectItem: { selection = $0 }
+                                )
+                            } else {
+                                Color.clear
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .overlay(Divider(), alignment: .top)
+                                    .overlay(Divider(), alignment: .leading)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                }
             }
-            if let day = selectedDay {
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            .padding(.bottom, 14)
+            // The day panel gives way to the inspector when an event is
+            // selected — grid + one side panel, never both (no cramping).
+            if let day = selectedDay, selection == nil {
                 Divider()
                 dayPanel(day, items: byDay[day] ?? [])
                     .frame(width: 300)
@@ -2725,67 +2744,91 @@ struct DayCell: View {
     let events: [EntityRow]
     var addEvent: () -> Void = {}
     var selectDay: () -> Void = {}
+    var selectItem: (UInt64) -> Void = { _ in }
 
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            if isToday {
-                Text("\(day)")
-                    .font(.system(size: 12.5, weight: .semibold).monospacedDigit())
-                    .foregroundColor(.white)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(Theme.accent))
-            } else {
-                Text("\(day)")
-                    .font(.system(size: 12.5).monospacedDigit())
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 0) {
+                if isToday {
+                    Text("\(day)")
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundColor(.white)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(Theme.accent))
+                } else {
+                    Text("\(day)")
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundColor(.primary)
+                        .padding(.leading, 3)
+                }
+                Spacer(minLength: 0)
+                // The cell is NOT a Button (tap-to-select the day is a background
+                // .onTapGesture), so the hover "+" captures its own tap.
+                if hovering {
+                    Button(action: addEvent) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.mutedFg)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("New event")
+                }
             }
-            // Plain text, primary color: hierarchy from typography, never
-            // from boxes — and the accent keeps its three jobs (the today
-            // circle is the calendar's only green).
-            ForEach(events.prefix(3)) { row in
-                Text(row.title)
-                    .font(.system(size: 11.5))
-                    .lineLimit(1)
-                    .foregroundColor(.primary)
+            ForEach(events.prefix(4)) { row in
+                eventBar(row)
             }
-            if events.count > 3 {
-                Text("+\(events.count - 3) more")
-                    .font(.system(size: 11, weight: .medium))
+            if events.count > 4 {
+                Text("+\(events.count - 4) more")
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.secondary)
+                    .padding(.leading, 4)
             }
             Spacer(minLength: 0)
         }
-        .padding(7)
-        .frame(minHeight: 92, alignment: .topLeading)
-        // A soft neutral fill marks the selected day — never the accent, whose
-        // one job here is the today circle (color budget).
-        .background(isSelected ? Color.secondary.opacity(0.12) : Color.clear)
-        // The cell is NOT a Button (tap-to-select the day is an .onTapGesture on
-        // the background), so the hover "+" Button captures its own tap.
-        .overlay(alignment: .topTrailing) {
-            if hovering {
-                Button(action: addEvent) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Theme.mutedFg)
-                        .frame(width: 17, height: 17)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5).fill(Theme.background))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .strokeBorder(Theme.border, lineWidth: 0.5))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(5)
-                .help("New event")
-            }
-        }
+        .padding(4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(isSelected ? Color.secondary.opacity(0.10) : Color.clear)
+        .overlay(Divider(), alignment: .top)
+        .overlay(Divider(), alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { selectDay() }
         .onHover { hovering = $0 }
-        .overlay(Divider(), alignment: .bottom)
+    }
+
+    // A neutral filled bar — title + time, a muted left edge. Denser and more
+    // finished than plain text; the accent stays the today circle (color budget).
+    private func eventBar(_ row: EntityRow) -> some View {
+        HStack(spacing: 4) {
+            Text(row.title.isEmpty ? "untitled" : row.title)
+                .font(.system(size: 10.5))
+                .lineLimit(1)
+                .foregroundColor(.primary)
+            Spacer(minLength: 2)
+            if let due = row.due, !row.dueDateOnly {
+                Text(timeText(due))
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.15)))
+        .overlay(
+            Rectangle().fill(Color.secondary.opacity(0.55)).frame(width: 2), alignment: .leading
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .contentShape(Rectangle())
+        .onTapGesture { selectItem(row.id) }
+    }
+
+    private func timeText(_ due: Int64) -> String {
+        let hhmm = Int(due % 10000)
+        return String(format: "%02d:%02d", hhmm / 100, hhmm % 100)
     }
 }
 
