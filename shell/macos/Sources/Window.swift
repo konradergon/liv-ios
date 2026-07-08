@@ -187,10 +187,25 @@ final class BoxModel: ObservableObject {
         ids.compactMap { entity($0) }
     }
 
+    /// The active occurrence window — the calendar's viewed period while it is
+    /// on screen; nil means the default current month for every other surface.
+    /// Held HERE (not only in the calendar's view state) so that ANY refresh —
+    /// a rename, a set, an accept — reloads the window the calendar is showing
+    /// instead of snapping its occurrences back to the current month. Main-
+    /// thread only (set from the calendar, read at the start of refresh).
+    private var occurrenceWindow: (from: Int64, to: Int64)?
+
     func refresh() {
         let path = self.path
+        let window = self.occurrenceWindow
         boxQueue.async {
-            guard let raw = lotus_snapshot(path) else {
+            let raw: UnsafeMutablePointer<CChar>?
+            if let window = window {
+                raw = lotus_snapshot_window_at(path, window.from, window.to)
+            } else {
+                raw = lotus_snapshot(path)
+            }
+            guard let raw = raw else {
                 self.probeAndRetry()
                 return
             }
@@ -198,19 +213,20 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    /// Refresh from a caller-chosen occurrence window — the calendar's viewed
-    /// period. Same snapshot; only the recurring `occurrences` follow
-    /// [from, to] (civil YYYYMMDDHHMM). Every other surface keeps using the
-    /// default current-month refresh().
+    /// Point the shared snapshot at a caller-chosen occurrence window (the
+    /// calendar's viewed month) and reload. Same snapshot; only the recurring
+    /// `occurrences` follow [from, to] (civil YYYYMMDDHHMM). The window sticks
+    /// across later refreshes until resetWindow().
     func snapshotWindow(from: Int64, to: Int64) {
-        let path = self.path
-        boxQueue.async {
-            guard let raw = lotus_snapshot_window_at(path, from, to) else {
-                self.probeAndRetry()
-                return
-            }
-            self.applySnapshot(raw)
-        }
+        occurrenceWindow = (from, to)
+        refresh()
+    }
+
+    /// Drop back to the default current-month window — the calendar calls this
+    /// as it leaves, so no other surface is left rendering its window.
+    func resetWindow() {
+        occurrenceWindow = nil
+        refresh()
     }
 
     /// Decode a snapshot JSON pointer into `snap`, on the main thread — shared
@@ -2180,6 +2196,7 @@ struct CalendarView: View {
             .padding(.bottom, 24)
         }
         .onAppear { loadWindow() }
+        .onDisappear { model.resetWindow() }
     }
 
     // The month title + prev / Today / next stepping the viewed month; each
