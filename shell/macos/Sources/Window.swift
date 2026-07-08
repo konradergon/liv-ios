@@ -2750,8 +2750,9 @@ struct InspectorHeader: View {
                     .foregroundColor(entity.title.isEmpty ? .secondary : .primary)
                     .lineLimit(2)
                 Spacer(minLength: 8)
-                // The bookmark / archive / trash actions sit at the far
-                // right of the header, on the title's line.
+                // The add-to-list / bookmark / archive / trash actions sit at
+                // the far right of the header, on the title's line.
+                addToListMenu
                 actionButton(
                     entity.bookmarked ? "bookmark.fill" : "bookmark",
                     entity.bookmarked ? "Remove bookmark" : "Bookmark",
@@ -2785,6 +2786,69 @@ struct InspectorHeader: View {
         .padding(.bottom, 16)
         .overlay(Divider(), alignment: .bottom)
         .padding(.bottom, 12)
+    }
+
+    // Every type=list entity in the box, and whether this entity is already
+    // one of its `related` members.
+    private var allLists: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("list") }
+    }
+    private func isMember(of list: EntityRow) -> Bool {
+        list.cells.contains { $0.property == "related" && $0.refTarget == entity.id }
+    }
+
+    // The 9b gesture: add this entity to a list (or un-tag it) from anywhere
+    // the inspector is open. Checkmarks the lists it already belongs to; the
+    // last row creates a new list and adds in one step. The icon reads accent
+    // when the entity is on at least one list, mirroring bookmark's active tint.
+    @ViewBuilder private var addToListMenu: some View {
+        let lists = allLists
+        let onAny = lists.contains { isMember(of: $0) }
+        Menu {
+            if lists.isEmpty {
+                Text("No lists yet")
+            }
+            ForEach(lists) { list in
+                let member = isMember(of: list)
+                Button {
+                    if member { model.removeMember(list.id, entity.id) }
+                    else { model.addMember(list.id, entity.id) }
+                } label: {
+                    if member {
+                        Label(listTitle(list), systemImage: "checkmark")
+                    } else {
+                        Text(listTitle(list))
+                    }
+                }
+            }
+            Divider()
+            Button {
+                Dialogs.shared.prompt(
+                    "New list", message: "Create a list and add this to it.",
+                    placeholder: "List name", confirmLabel: "Create"
+                ) { name in
+                    let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    model.createList(trimmed) { newId in
+                        if let newId = newId { model.addMember(newId, entity.id) }
+                    }
+                }
+            } label: {
+                Label("New list & add…", systemImage: "plus")
+            }
+        } label: {
+            Image(systemName: "text.badge.plus")
+                .font(.system(size: 13))
+                .foregroundColor(onAny ? Theme.accent : Theme.mutedFg)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Add to list")
+    }
+
+    private func listTitle(_ list: EntityRow) -> String {
+        list.title.isEmpty ? "Untitled list" : list.title
     }
 
     private var kindSymbol: String {
