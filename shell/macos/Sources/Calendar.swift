@@ -47,6 +47,18 @@ private enum Fmt {
     static let monthYear = makeFormatter("MMMM yyyy")
 }
 
+// Explicit hairlines for the grids. SwiftUI's Divider picks its own
+// orientation from the space it is offered — in a cell TALLER than wide it
+// goes vertical, which turned the month cells' "top border" into a mid-cell
+// vertical line (the doubled-columns bug). Fixed frames leave nothing to it.
+private func hairlineV() -> some View {
+    Rectangle().fill(Theme.border).frame(width: 0.5)
+}
+
+private func hairlineH() -> some View {
+    Rectangle().fill(Theme.border).frame(height: 0.5)
+}
+
 // MARK: - the surface
 
 struct CalendarView: View {
@@ -73,39 +85,61 @@ struct CalendarView: View {
     @AppStorage("app.calendar.show.file") private var showFiles = false
     @AppStorage("app.calendar.show.contact") private var showContacts = false
     @AppStorage("app.calendar.show.list") private var showLists = false
+    // The right column is collapsible (the panel toggle in the top bar).
+    @AppStorage("app.calendar.panel.open") private var panelOpen = true
 
     var body: some View {
-        let byDay = buildByDay()
-        HStack(spacing: 0) {
-            rail(byDay)
-            Divider()
-            VStack(spacing: 0) {
-                topBar
-                Divider()
-                switch viewMode {
-                case .month:
-                    monthBody(byDay)
-                case .week:
-                    WeekTimeGrid(
-                        days: weekDays(selectedDay), byDay: byDay, today: Civil.todayYMD,
-                        itemTap: itemTapped,
-                        createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
-                case .day:
-                    WeekTimeGrid(
-                        days: [selectedDay], byDay: byDay, today: Civil.todayYMD,
-                        itemTap: itemTapped,
-                        createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
-                case .agenda:
-                    agendaBody(byDay)
+        GeometryReader { geo in
+            // A tight window sheds panels instead of crushing the grid: the
+            // rail goes first, then the right column — the grid is the point.
+            let byDay = buildByDay()
+            let showRail = geo.size.width >= 1000
+            let showRight = panelOpen && geo.size.width >= 760
+            HStack(spacing: 0) {
+                if showRail {
+                    rail(byDay)
+                    Divider()
+                }
+                VStack(spacing: 0) {
+                    topBar
+                    Divider()
+                    switch viewMode {
+                    case .month:
+                        monthBody(byDay)
+                    case .week:
+                        WeekTimeGrid(
+                            days: weekDays(selectedDay), byDay: byDay, today: Civil.todayYMD,
+                            selected: selectedDay,
+                            itemTap: itemTapped,
+                            selectDay: { key in
+                                selectedDay = key
+                                loadWindow()
+                            },
+                            createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
+                    case .day:
+                        WeekTimeGrid(
+                            days: [selectedDay], byDay: byDay, today: Civil.todayYMD,
+                            selected: selectedDay,
+                            itemTap: itemTapped,
+                            selectDay: { key in
+                                selectedDay = key
+                                loadWindow()
+                            },
+                            createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
+                    case .agenda:
+                        agendaBody(byDay)
+                    }
+                }
+                // Liv's fixed right column — the day panel, or (while an
+                // entity is selected) the inspector embedded in its place.
+                // Same width is load-bearing: selection must never reflow the
+                // grid, or the second click of a double-tap lands on a moved
+                // target (the review's high finding).
+                if showRight {
+                    Divider()
+                    rightColumn(byDay)
                 }
             }
-            // Liv's fixed right column, always present and always the SAME
-            // width — the day panel, or (while an entity is selected) the
-            // inspector embedded in its place. Same width is load-bearing:
-            // selection must never reflow the grid, or the second click of a
-            // double-tap lands on a moved target (the review's high finding).
-            Divider()
-            rightColumn(byDay)
         }
         .onAppear { loadWindow() }
         .onDisappear { model.resetWindow() }
@@ -144,7 +178,7 @@ struct CalendarView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     Divider()
-                    InspectorPane(model: model, selection: $selection)
+                    InspectorPane(model: model, selection: $selection, topPadding: 0)
                 }
             } else {
                 dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
@@ -348,11 +382,16 @@ struct CalendarView: View {
                     .font(.system(size: 15))
                     .foregroundColor(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Calendar").font(.system(size: 14.5, weight: .semibold))
-                    Text(subtitleText()).font(.system(size: 11)).foregroundColor(.secondary)
+                    Text("Calendar")
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .fixedSize()
+                    Text(subtitleText())
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
             }
-            Spacer()
+            Spacer(minLength: 4)
             HStack(spacing: 2) {
                 ForEach(CalendarMode.allCases, id: \.self) { mode in
                     Button {
@@ -363,6 +402,7 @@ struct CalendarView: View {
                         Text(mode.rawValue)
                             .font(.system(size: 12, weight: viewMode == mode ? .medium : .regular))
                             .foregroundColor(viewMode == mode ? .white : Theme.mutedFg)
+                            .fixedSize()
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                             .background(
@@ -390,7 +430,7 @@ struct CalendarView: View {
             Button { quickCreate(dayKey: selectedDay) } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus").font(.system(size: 10.5, weight: .semibold))
-                    Text("Event").font(.system(size: 12, weight: .medium))
+                    Text("Event").font(.system(size: 12, weight: .medium)).fixedSize()
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 10)
@@ -400,6 +440,14 @@ struct CalendarView: View {
             }
             .buttonStyle(.plain)
             .help("New event on the selected day")
+            Button { panelOpen.toggle() } label: {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 13))
+                    .foregroundColor(panelOpen ? Theme.accent : Theme.mutedFg)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(panelOpen ? "Hide the day panel" : "Show the day panel")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -810,8 +858,8 @@ struct DayCell: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(isSelected ? Theme.accent.opacity(0.06) : Color.clear)
         .overlay(Rectangle().stroke(Theme.accent.opacity(isSelected ? 0.55 : 0), lineWidth: 1))
-        .overlay(Divider(), alignment: .top)
-        .overlay(Divider(), alignment: .leading)
+        .overlay(alignment: .top) { hairlineH() }
+        .overlay(alignment: .leading) { hairlineV() }
         .contentShape(Rectangle())
         .onTapGesture { selectDay() }
         .onHover { hovering = $0 }
@@ -851,7 +899,9 @@ struct WeekTimeGrid: View {
     let days: [Int64]
     let byDay: [Int64: [EntityRow]]
     let today: Int64
+    var selected: Int64? = nil
     var itemTap: (UInt64) -> Void = { _ in }
+    var selectDay: (Int64) -> Void = { _ in }
     var createAt: (Int64, Int) -> Void = { _, _ in }
 
     private let hourHeight: CGFloat = 44
@@ -908,7 +958,14 @@ struct WeekTimeGrid: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 7)
-                .background(key == today ? Color.secondary.opacity(0.08) : Color.clear)
+                .background(
+                    key == today
+                        ? Color.secondary.opacity(0.08)
+                        : (key == selected ? Color.secondary.opacity(0.06) : Color.clear))
+                // Liv: click a day header to select that day (drives the
+                // day panel and the day-view anchor).
+                .contentShape(Rectangle())
+                .onTapGesture { selectDay(key) }
             }
         }
     }
@@ -941,7 +998,7 @@ struct WeekTimeGrid: View {
                 }
                 .padding(3)
                 .frame(maxWidth: .infinity)
-                .overlay(Divider(), alignment: .leading)
+                .overlay(alignment: .leading) { hairlineV() }
             }
         }
         .frame(minHeight: 24)
@@ -975,7 +1032,7 @@ struct WeekTimeGrid: View {
                         Rectangle()
                             .fill(Color.clear)
                             .frame(height: hourHeight)
-                            .overlay(Divider(), alignment: .top)
+                            .overlay(alignment: .top) { hairlineH() }
                     }
                 }
                 // A transparent double-click layer per hour, under the blocks:
@@ -1030,7 +1087,7 @@ struct WeekTimeGrid: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 24 * hourHeight)
-        .overlay(Divider(), alignment: .leading)
+        .overlay(alignment: .leading) { hairlineV() }
     }
 
     // ---- geometry ----

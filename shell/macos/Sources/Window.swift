@@ -2659,6 +2659,10 @@ struct ListsSurface: View {
 struct InspectorPane: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
+    /// The standalone right pane breathes below the titlebar band; embedded
+    /// (the calendar's column, under its own back-header) that space is a
+    /// dead band, so the embedder passes 0.
+    var topPadding: CGFloat = 24
 
     /// Cells the header or the editor owns — not editable rows here.
     /// bookmarked/archived are the header's own actions, so they are not
@@ -2694,7 +2698,7 @@ struct InspectorPane: View {
                 }
             }
             .padding(20)
-            .padding(.top, 24)
+            .padding(.top, topPadding)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
