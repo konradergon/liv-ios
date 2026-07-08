@@ -2139,6 +2139,8 @@ struct CalendarView: View {
     // The viewed month — transient view state, never a cell (interface.md 0.5).
     @State private var viewYear = Civil.gregorian.component(.year, from: Date())
     @State private var viewMonth = Civil.gregorian.component(.month, from: Date())
+    // The selected day (civil YMD), driving the right-hand day-detail panel.
+    @State private var selectedDay: Int64?
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
     private let dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -2165,38 +2167,108 @@ struct CalendarView: View {
             }
         }
 
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header(first)
-                LazyVGrid(columns: columns, spacing: 0) {
-                    ForEach(dows, id: \.self) { dow in
-                        Text(dow.uppercased())
-                            .font(.system(size: 11, weight: .semibold))
-                            .kerning(0.4)
-                            .foregroundColor(Color.secondary.opacity(0.7))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 8)
-                    }
-                    ForEach(0..<lead, id: \.self) { _ in
-                        Color.clear.frame(height: 92)
-                    }
-                    ForEach(range, id: \.self) { day in
-                        let key = monthKey * 100 + Int64(day)
-                        DayCell(
-                            day: day,
-                            isToday: key == Civil.todayYMD,
-                            events: byDay[key] ?? [],
-                            addEvent: { quickCreate(dayKey: key) }
-                        )
+        return HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header(first)
+                    LazyVGrid(columns: columns, spacing: 0) {
+                        ForEach(dows, id: \.self) { dow in
+                            Text(dow.uppercased())
+                                .font(.system(size: 11, weight: .semibold))
+                                .kerning(0.4)
+                                .foregroundColor(Color.secondary.opacity(0.7))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.bottom, 8)
+                        }
+                        ForEach(0..<lead, id: \.self) { _ in
+                            Color.clear.frame(height: 92)
+                        }
+                        ForEach(range, id: \.self) { day in
+                            let key = monthKey * 100 + Int64(day)
+                            DayCell(
+                                day: day,
+                                isToday: key == Civil.todayYMD,
+                                isSelected: selectedDay == key,
+                                events: byDay[key] ?? [],
+                                addEvent: { quickCreate(dayKey: key) },
+                                selectDay: { selectedDay = key }
+                            )
+                        }
                     }
                 }
+                .padding(.horizontal, 32)
+                .padding(.top, 40)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 40)
-            .padding(.bottom, 24)
+            if let day = selectedDay {
+                Divider()
+                dayPanel(day, items: byDay[day] ?? [])
+                    .frame(width: 300)
+            }
         }
         .onAppear { loadWindow() }
         .onDisappear { model.resetWindow() }
+    }
+
+    // The selected day's items as EntityLine rows (Today/Library's row) — tap
+    // selects an entity (→ inspector); a task's checkbox toggles inline. A
+    // "+ Event" head creates one for this day. §6.5 — no new primitive.
+    private func dayPanel(_ key: Int64, items: [EntityRow]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 7) {
+                            Text(dayTitle(key))
+                                .font(.system(size: 15, weight: .semibold))
+                            if key == Civil.todayYMD {
+                                Text("Today")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(Theme.accent)
+                            }
+                        }
+                        Text(daySubtitle(key))
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button { quickCreate(dayKey: key) } label: {
+                        Label("Event", systemImage: "plus")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.mutedFg)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Theme.border, lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.bottom, 14)
+
+                if items.isEmpty {
+                    Text("Nothing on this day.")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.top, 8)
+                } else {
+                    ForEach(items) { row in
+                        EntityLine(
+                            row: row,
+                            selected: selection == row.id,
+                            toggle: taskStatusToggle(model, row)
+                        ) {
+                            selection = row.id
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 40)
+            .padding(.bottom, 24)
+        }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
     }
 
     // The month title + prev / Today / next stepping the viewed month; each
@@ -2246,6 +2318,7 @@ struct CalendarView: View {
         while m < 1 { m += 12; y -= 1 }
         viewMonth = m
         viewYear = y
+        selectedDay = nil  // a day of the old month has no cell in the new one
         loadWindow()
     }
 
@@ -2253,7 +2326,32 @@ struct CalendarView: View {
         let cal = Civil.gregorian
         viewYear = cal.component(.year, from: Date())
         viewMonth = cal.component(.month, from: Date())
+        selectedDay = nil
         loadWindow()
+    }
+
+    // The selected day, YMD-keyed, as a weekday+day title and a month+year
+    // subtitle (e.g. "Thursday 9" / "July 2026").
+    private func dayDate(_ key: Int64) -> Date {
+        var parts = DateComponents()
+        parts.year = Int(key / 10000)
+        parts.month = Int((key / 100) % 100)
+        parts.day = Int(key % 100)
+        return Civil.gregorian.date(from: parts) ?? Date()
+    }
+
+    private func dayTitle(_ key: Int64) -> String {
+        let f = DateFormatter()
+        f.calendar = Civil.gregorian
+        f.dateFormat = "EEEE d"
+        return f.string(from: dayDate(key))
+    }
+
+    private func daySubtitle(_ key: Int64) -> String {
+        let f = DateFormatter()
+        f.calendar = Civil.gregorian
+        f.dateFormat = "MMMM yyyy"
+        return f.string(from: dayDate(key))
     }
 
     // The occurrence window the viewed month needs: [first, last] of the month,
@@ -2296,8 +2394,10 @@ struct CalendarView: View {
 struct DayCell: View {
     let day: Int
     let isToday: Bool
+    var isSelected = false
     let events: [EntityRow]
     var addEvent: () -> Void = {}
+    var selectDay: () -> Void = {}
 
     @State private var hovering = false
 
@@ -2331,8 +2431,11 @@ struct DayCell: View {
         }
         .padding(7)
         .frame(minHeight: 92, alignment: .topLeading)
-        // Hover reveals a quick-create "+" in the corner (§6.2). A nested
-        // Button in a non-Button cell, so it captures its own tap.
+        // A soft neutral fill marks the selected day — never the accent, whose
+        // one job here is the today circle (color budget).
+        .background(isSelected ? Color.secondary.opacity(0.12) : Color.clear)
+        // The cell is NOT a Button (tap-to-select the day is an .onTapGesture on
+        // the background), so the hover "+" Button captures its own tap.
         .overlay(alignment: .topTrailing) {
             if hovering {
                 Button(action: addEvent) {
@@ -2352,6 +2455,8 @@ struct DayCell: View {
                 .help("New event")
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { selectDay() }
         .onHover { hovering = $0 }
         .overlay(Divider(), alignment: .bottom)
     }

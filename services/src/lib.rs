@@ -67,7 +67,35 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_files(session)?;
     seed_priority(session)?;
     seed_lists(session)?;
+    seed_event_fields(session)?;
     seed_workspaces(session)
+}
+
+/// Event fields the calendar offers: `location` (text) and `attendees` (a
+/// reference to person entities — feature-map #26, distinct from a note's
+/// people-links). Additive and idempotent on its OWN guard (a `location`
+/// property), NOT the starter-library `due` guard which short-circuits on
+/// every existing box — so an older box that already has `due` gains these on
+/// open. Offered by the calendar, never EXPECTED: an event is valid without
+/// either, so the `event` type's expectations ([due]) are left untouched.
+fn seed_event_fields(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "location").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    for (name, kind) in [("location", "text"), ("attendees", "reference")] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+    }
+    session.commit(commands, "event fields", Author::System)?;
+    Ok(())
 }
 
 /// The `list` type — so a manual list is a distinguishable kind (`type:list`)

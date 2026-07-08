@@ -1705,6 +1705,37 @@ mod tests {
     }
 
     #[test]
+    fn setting_location_on_an_event_round_trips() {
+        // 10b: `location` is seeded (offered, not expected); set it on an event
+        // through the ordinary set seam and it shows in the snapshot's cells.
+        let (path, c_path) = fresh_box("lotus_ffi_location.log");
+        let id = unsafe {
+            lotus_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 9, 9, 0).civil, 0)
+        };
+        assert_ne!(id, 0);
+        let loc = CString::new("location").unwrap();
+        let val = CString::new("Room 4").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), id, loc.as_ptr(), val.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let e = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        let has_location = e["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["property"] == "location" && c["value"] == "Room 4");
+        assert!(has_location, "location set on an event shows in the snapshot");
+        cleanup(&path);
+    }
+
+    #[test]
     fn a_torn_tail_is_repaired_then_cached() {
         let (path, c_path) = fresh_box("lotus_ffi_torn.log");
         unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("real note").unwrap().as_ptr()) };

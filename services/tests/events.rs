@@ -75,6 +75,32 @@ fn an_all_day_event_keeps_the_date_only_bit() {
 }
 
 #[test]
+fn event_fields_seed_alongside_due_and_are_idempotent() {
+    let (path, mut session) = fresh("fields");
+    // They land even though `due` already exists — a SEPARATE additive guard,
+    // not the starter-library due-guard that short-circuits on every box.
+    assert!(property_id(session.store(), "due").is_some());
+    assert!(property_id(session.store(), "location").is_some());
+    assert!(property_id(session.store(), "attendees").is_some());
+
+    // Idempotent across reopens: exactly one property of each name.
+    seed_if_fresh(&mut session).unwrap();
+    let count = |name: &str| {
+        session
+            .store()
+            .entities()
+            .filter(|e| {
+                matches!(e.get(props::NAME), Some(Value::Text(n)) if n == name)
+                    && matches!(e.get(props::VALUE_KIND), Some(Value::Text(_)))
+            })
+            .count()
+    };
+    assert_eq!(count("location"), 1, "one location property");
+    assert_eq!(count("attendees"), 1, "one attendees property");
+    cleanup(&path);
+}
+
+#[test]
 fn the_event_type_still_expects_only_due() {
     // create_event must not touch the event type's expectations: location and
     // attendees (10b) are offered by the calendar, never expected.
