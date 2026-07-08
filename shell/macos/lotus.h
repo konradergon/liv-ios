@@ -86,6 +86,20 @@ uint64_t lotus_create_note_at(const char *path);
    Distinct from capture, which quarantines an untyped scrap. */
 uint64_t lotus_create_task_at(const char *path);
 
+/* Birth of a list: Create + type:list + name + created, one transaction.
+   Named at birth (unlike a note). Returns the id, 0 on failure. */
+uint64_t lotus_create_list_at(const char *path, const char *name);
+
+/* Add / remove ONE cell of a multi-valued property — list membership
+   (property "related", value "#<member-id>"). Unlike lotus_set_at
+   (replace-all) and lotus_unset_at (remove-all), these touch exactly one
+   cell, and never delete the referenced entity. A no-op (already/not a
+   member) still returns 1. 1 ok, 0 on busy/parse/no-entity. */
+int32_t lotus_add_cell_at(const char *path, uint64_t id,
+                          const char *property, const char *value);
+int32_t lotus_remove_cell_at(const char *path, uint64_t id,
+                             const char *property, const char *value);
+
 /* Add a file by reference — the librarian: hash the file's bytes, create
    an entity with a file cell (path + hash), format, and name, one
    transaction. NEVER moves, copies, or renames the file. Returns the new

@@ -287,6 +287,28 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Birth of a list — named at birth (you name it before adding to it).
+    func createList(_ name: String, done: @escaping (UInt64?) -> Void = { _ in }) {
+        boxQueue.async {
+            let id = lotus_create_list_at(self.path, name)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
+    /// Add / remove ONE member of a list (a `related` reference) — tagging,
+    /// never a delete of the member. Idempotent (add-present / remove-absent
+    /// are no-ops).
+    func addMember(_ list: UInt64, _ member: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_add_cell_at(self.path, list, "related", "#\(member)") == 1 }
+    }
+    func removeMember(_ list: UInt64, _ member: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_remove_cell_at(self.path, list, "related", "#\(member)") == 1 }
+    }
+
     /// Add a file by reference — the librarian hashes it and creates the
     /// entity; the bytes are never moved. Returns the new id, nil on failure.
     func addFile(_ filePath: String, done: @escaping (UInt64?) -> Void = { _ in }) {
@@ -924,6 +946,10 @@ struct WindowChrome: View {
                 notesBody
             case .tasks:
                 TasksView(
+                    model: model, selection: $selection,
+                    open: { id in openEntityTab(id) })
+            case .lists:
+                ListsSurface(
                     model: model, selection: $selection,
                     open: { id in openEntityTab(id) })
             case .inbox:
@@ -2483,6 +2509,160 @@ struct TasksView: View {
     /// Due ascending, nil-due last.
     private func dueKey(_ row: EntityRow) -> Int64 {
         row.due ?? Int64.max
+    }
+}
+
+/// The Lists surface (P9): a manual list is an entity of type=list whose
+/// ordered `related` members are shown here. An index of lists (+ New list);
+/// clicking one opens its ordered members (read-only rows, hover-× to remove
+/// — removing un-tags, never deletes). The "Add to list…" gesture is 9b.
+struct ListsSurface: View {
+    @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    let open: (UInt64) -> Void
+
+    @State private var openList: UInt64?
+    @State private var newName = ""
+
+    private var lists: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("list") }
+    }
+
+    private func memberIds(_ list: EntityRow) -> [UInt64] {
+        list.cells.filter { $0.property == "related" }.compactMap { $0.refTarget }
+    }
+
+    var body: some View {
+        if let openList, let list = model.entity(openList) {
+            detail(list)
+        } else {
+            index
+        }
+    }
+
+    private var index: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                LensHeader(
+                    title: "Lists",
+                    subtitle: lists.count == 1 ? "1 list" : "\(lists.count) lists")
+                HStack(spacing: 10) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Theme.mutedFg)
+                    TextField("New list…", text: $newName)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14))
+                        .onSubmit { addList() }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                .padding(.top, 8)
+
+                if lists.isEmpty {
+                    Text("No lists yet. Name one above.")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.top, 40)
+                } else {
+                    ForEach(lists) { row in
+                        indexRow(row)
+                    }
+                    .padding(.top, 12)
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.top, 40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+    }
+
+    private func indexRow(_ row: EntityRow) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "list.bullet")
+                .font(.system(size: 13))
+                .foregroundColor(Theme.accent)
+            Text(row.title.isEmpty ? "Untitled list" : row.title)
+                .font(.system(size: 14))
+                .lineLimit(1)
+            Spacer()
+            Text("\(memberIds(row).count)")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10))
+                .foregroundColor(Color.secondary.opacity(0.6))
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selection = row.id
+            openList = row.id
+        }
+        .overlay(Divider(), alignment: .bottom)
+    }
+
+    private func detail(_ list: EntityRow) -> some View {
+        let members = model.rows(memberIds(list))
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Button { openList = nil } label: {
+                    Label("Lists", systemImage: "chevron.left").font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Theme.accent)
+                .padding(.bottom, 10)
+
+                LensHeader(
+                    title: list.title.isEmpty ? "Untitled list" : list.title,
+                    subtitle: members.count == 1 ? "1 item" : "\(members.count) items")
+
+                if members.isEmpty {
+                    Text("No items yet. Add from any row with \u{201C}Add to list\u{2026}\u{201D} (coming next).")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.top, 20)
+                } else {
+                    ForEach(members) { row in
+                        EntityLine(
+                            row: row, selected: selection == row.id,
+                            accessory: AnyView(removeButton(list: list.id, member: row.id))
+                        ) {
+                            open(row.id)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.top, 40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+    }
+
+    private func removeButton(list: UInt64, member: UInt64) -> some View {
+        Button { model.removeMember(list, member) } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 9))
+                .foregroundColor(Theme.mutedFg)
+        }
+        .buttonStyle(.plain)
+        .help("Remove from list")
+    }
+
+    private func addList() {
+        let name = newName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        model.createList(name) { id in
+            if id != nil { newName = "" }
+        }
     }
 }
 

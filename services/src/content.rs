@@ -263,6 +263,98 @@ pub fn create_task(session: &mut Session, created: DateTime) -> Result<Id, Persi
     Ok(id)
 }
 
+/// Birth of a list: Create + type=list + name + created, one transaction.
+/// Named at birth (a list is named before you add to it, unlike a note).
+/// Members are added later, one AddCell(related, Reference) each.
+pub fn create_list(
+    session: &mut Session,
+    name: &str,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let list_type = find_type(session.store(), "list");
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    if let Some(list_type) = list_type {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::TYPE, value: Value::Reference(list_type) },
+        });
+    }
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::NAME, value: Value::text(name) },
+    });
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::CREATED, value: Value::DateTime(created) },
+    });
+    session.commit(commands, "new list", Author::User)?;
+    Ok(id)
+}
+
+/// Add ONE cell to a (possibly multi-valued) property — list membership's
+/// add-one primitive (property "related", value "#<id>"). Unlike
+/// `set_property` (replace-all) and `unset_property` (remove-all), this
+/// touches exactly one cell; adding a value already present is a silent
+/// no-op (the log stays a set). The value is parsed by the property's
+/// declared kind, exactly as `set`.
+pub fn add_cell(session: &mut Session, id: Id, prop_name: &str, raw: &str) -> Result<(), String> {
+    let (id, property, value) = resolve_cell(session.store(), id, prop_name, raw)?;
+    if session.store().get(id).is_some_and(|e| e.has(property, &value)) {
+        return Ok(());
+    }
+    session
+        .commit(
+            vec![Command::AddCell { entity: id, cell: Cell { property, value } }],
+            format!("add {prop_name}"),
+            Author::User,
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Remove ONE cell of a property — un-tag a list member (property "related",
+/// value "#<id>"). NEVER deletes the referenced entity (deletion never
+/// cascades); removing a value that isn't present is a no-op, not an error.
+pub fn remove_cell(
+    session: &mut Session,
+    id: Id,
+    prop_name: &str,
+    raw: &str,
+) -> Result<(), String> {
+    let (id, property, value) = resolve_cell(session.store(), id, prop_name, raw)?;
+    if !session.store().get(id).is_some_and(|e| e.has(property, &value)) {
+        return Ok(());
+    }
+    session
+        .commit(
+            vec![Command::RemoveCell { entity: id, cell: Cell { property, value } }],
+            format!("remove {prop_name}"),
+            Author::User,
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The (canonical id, property, parsed value) for an add/remove-cell — the
+/// same resolution `set_property` does, factored out.
+fn resolve_cell(
+    store: &Store,
+    id: Id,
+    prop_name: &str,
+    raw: &str,
+) -> Result<(Id, Id, Value), String> {
+    let id = store.resolve(id);
+    store.get(id).ok_or(format!("no entity #{id}"))?;
+    let property = property_id(store, prop_name).ok_or(format!("no property named {prop_name}"))?;
+    let kind = match store.get(property).and_then(|p| p.get(props::VALUE_KIND)) {
+        Some(Value::Text(kind)) => kind.clone(),
+        _ => return Err(format!("{prop_name} declares no value kind")),
+    };
+    let value = parse_value(store, property, &kind, raw)?;
+    Ok((id, property, value))
+}
+
 /// Birth of a workspace: Create + type + name + created (+ parent and
 /// a trailing order among its new siblings), one transaction. Working:
 /// navigation chrome, not a thought.

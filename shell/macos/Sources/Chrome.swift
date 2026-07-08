@@ -13,6 +13,7 @@ enum Surface: String, CaseIterable {
     case notes
     case aiChat = "ai-chat"
     case tasks
+    case lists
     case library
     case inbox
     case contacts
@@ -26,6 +27,7 @@ enum Surface: String, CaseIterable {
         case .notes: return "Notes"
         case .aiChat: return "Chats"
         case .tasks: return "Tasks"
+        case .lists: return "Lists"
         case .library: return "Library"
         case .inbox: return "Inbox"
         case .contacts: return "Contacts"
@@ -39,6 +41,7 @@ enum Surface: String, CaseIterable {
         case .notes: return "doc.text"
         case .aiChat: return "bubble.left.and.text.bubble.right"
         case .tasks: return "checkmark.square"
+        case .lists: return "list.bullet.rectangle"
         case .library: return "books.vertical"
         case .inbox: return "tray"
         case .contacts: return "person.2"

@@ -66,7 +66,41 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_recurrence(session)?;
     seed_files(session)?;
     seed_priority(session)?;
+    seed_lists(session)?;
     seed_workspaces(session)
+}
+
+/// The `list` type — so a manual list is a distinguishable kind (`type:list`)
+/// whose ordered `related` cells are its members. Its own guard (a type named
+/// "list"), additive on open like the P7/P8 passes, so an older box gains it.
+/// A list expects no properties (`related` is offered, added by the gesture).
+fn seed_lists(session: &mut Session) -> Result<(), PersistError> {
+    let exists = session.store().entities().any(|e| {
+        matches!(e.get(props::NAME), Some(Value::Text(n)) if n == "list")
+            && e.get(props::VALUE_KIND).is_none()
+    });
+    if exists {
+        return Ok(());
+    }
+    let related = property_id(session.store(), "related");
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("list") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: id, cell });
+    }
+    // A list expects `related` — its members. This is also what makes it a
+    // findable type (find_type keys on an EXPECTED cell).
+    if let Some(related) = related {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::EXPECTED, value: Value::Reference(related) },
+        });
+    }
+    session.commit(commands, "list type", Author::System)?;
+    Ok(())
 }
 
 /// The task surface's `priority` select — one more option list the Tasks

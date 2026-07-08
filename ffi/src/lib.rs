@@ -879,6 +879,63 @@ pub unsafe extern "C" fn lotus_set_at(
     lotus_services::content::set_property(&mut session, id, property, value).is_ok() as i32
 }
 
+/// Add ONE cell to a (multi-valued) property — list membership adds a
+/// member as ("related", "#<member-id>"). Unlike lotus_set_at (replace all
+/// cells of the property) and lotus_unset_at (remove all), this touches
+/// exactly one cell; adding a value already present is a no-op that still
+/// returns 1. Value parsed by the property's kind. 1 ok, 0 on
+/// busy/parse/no-entity.
+///
+/// # Safety
+/// `path`, `property`, `value` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_add_cell_at(
+    path: *const c_char,
+    id: u64,
+    property: *const c_char,
+    value: *const c_char,
+) -> i32 {
+    if property.is_null() || value.is_null() {
+        return 0;
+    }
+    let (Ok(property), Ok(value)) =
+        (CStr::from_ptr(property).to_str(), CStr::from_ptr(value).to_str())
+    else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    lotus_services::content::add_cell(&mut session, id, property, value).is_ok() as i32
+}
+
+/// Remove ONE cell of a (multi-valued) property — un-tag a list member.
+/// NEVER deletes the referenced entity. Removing a value that isn't present
+/// is a no-op that still returns 1. 1 ok, 0 on busy/failure.
+///
+/// # Safety
+/// `path`, `property`, `value` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_remove_cell_at(
+    path: *const c_char,
+    id: u64,
+    property: *const c_char,
+    value: *const c_char,
+) -> i32 {
+    if property.is_null() || value.is_null() {
+        return 0;
+    }
+    let (Ok(property), Ok(value)) =
+        (CStr::from_ptr(property).to_str(), CStr::from_ptr(value).to_str())
+    else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    lotus_services::content::remove_cell(&mut session, id, property, value).is_ok() as i32
+}
+
 #[derive(Serialize)]
 struct ContentVersionRow {
     seq: u64,
@@ -953,6 +1010,30 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
     let now = Local::now();
     let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
     lotus_services::content::create_task(&mut session, created).unwrap_or(0)
+}
+
+/// Birth of a list: Create + type=list + name + created, one transaction.
+/// Named at birth (unlike a note). Returns the id, 0 on failure.
+///
+/// # Safety
+/// `path` and `name` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_list_at(
+    path: *const c_char,
+    name: *const c_char,
+) -> u64 {
+    if name.is_null() {
+        return 0;
+    }
+    let Ok(name) = CStr::from_ptr(name).to_str() else {
+        return 0;
+    };
+    let Some(mut session) = open_swept(path) else {
+        return 0;
+    };
+    let now = Local::now();
+    let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+    lotus_services::content::create_list(&mut session, name, created).unwrap_or(0)
 }
 
 /// Add a file by reference: hash its bytes, create the entity with a `file`
@@ -1717,6 +1798,43 @@ mod tests {
             e["kinds"].as_array().unwrap().iter().filter_map(|k| k.as_str()).collect();
         assert!(kinds.contains(&"task"), "a created task is typed task");
         assert_eq!(e["status"], "todo");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn list_membership_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_list.log");
+        let name = CString::new("Reading queue").unwrap();
+        let list = unsafe { lotus_create_list_at(c_path.as_ptr(), name.as_ptr()) };
+        assert_ne!(list, 0);
+        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let b = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let related = CString::new("related").unwrap();
+        let a_ref = CString::new(format!("#{a}")).unwrap();
+        let b_ref = CString::new(format!("#{b}")).unwrap();
+
+        // Add a, then b; a duplicate add is a no-op that still returns 1.
+        assert_eq!(unsafe { lotus_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
+        assert_eq!(unsafe { lotus_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), b_ref.as_ptr()) }, 1);
+        assert_eq!(unsafe { lotus_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
+
+        let members = |snap: &serde_json::Value| -> Vec<u64> {
+            snap["entities"].as_array().unwrap().iter()
+                .find(|e| e["id"].as_u64() == Some(list)).unwrap()["cells"].as_array().unwrap()
+                .iter().filter(|c| c["property"] == "related")
+                .filter_map(|c| c["ref_target"].as_u64()).collect()
+        };
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(members(&snap), vec![a, b], "insertion order, not doubled");
+
+        // Remove a — b remains, and a (the note) survives.
+        assert_eq!(unsafe { lotus_remove_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
+        let snap2 = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(members(&snap2), vec![b]);
+        assert!(
+            snap2["entities"].as_array().unwrap().iter().any(|e| e["id"].as_u64() == Some(a)),
+            "un-tagging never deletes the member");
 
         cleanup(&path);
     }
