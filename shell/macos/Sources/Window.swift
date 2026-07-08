@@ -2130,22 +2130,69 @@ struct SearchPopup: View {
 
 // MARK: - Calendar
 
+enum CalendarMode { case month, week }
+
 struct CalendarView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
     var open: (UInt64) -> Void = { _ in }
     var rename: (UInt64) -> Void = { _ in }
 
-    // The viewed month — transient view state, never a cell (interface.md 0.5).
+    // Transient view state, never a cell (interface.md 0.5): the viewed month,
+    // the mode, and the selected day (which doubles as the week's anchor).
     @State private var viewYear = Civil.gregorian.component(.year, from: Date())
     @State private var viewMonth = Civil.gregorian.component(.month, from: Date())
-    // The selected day (civil YMD), driving the right-hand day-detail panel.
+    @State private var viewMode: CalendarMode = .month
     @State private var selectedDay: Int64?
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
     private let dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
     var body: some View {
+        var byDay = Dictionary(grouping: model.rows(model.snap?.dated ?? [])) {
+            row -> Int64 in (row.due ?? 0) / 10_000
+        }
+        // Virtual occurrences land beside the plain dates: the series entity is
+        // drawn on every day its rule names, over the window this view asked for
+        // (§3.3), computed by the engine so every view agrees.
+        for occurrence in model.snap?.occurrences ?? [] {
+            if let series = model.entity(occurrence.series) {
+                byDay[occurrence.civil / 10_000, default: []].append(series)
+            }
+        }
+
+        return VStack(spacing: 0) {
+            header()
+            if viewMode == .month {
+                monthBody(byDay)
+            } else {
+                WeekGrid(
+                    model: model,
+                    days: weekDays(selectedDay ?? Civil.todayYMD),
+                    byDay: byDay,
+                    selection: $selection,
+                    today: Civil.todayYMD,
+                    createAt: { key, hour in
+                        model.createEvent(dueCivil: key * 10000 + Int64(hour) * 100, allDay: false) {
+                            id in
+                            if let id = id {
+                                selection = id
+                                rename(id)
+                            }
+                            loadWindow()
+                        }
+                    }
+                )
+            }
+        }
+        .onAppear {
+            if viewMode == .week && selectedDay == nil { selectedDay = Civil.todayYMD }
+            loadWindow()
+        }
+        .onDisappear { model.resetWindow() }
+    }
+
+    private func monthBody(_ byDay: [Int64: [EntityRow]]) -> some View {
         let cal = Civil.gregorian
         var parts = DateComponents()
         parts.year = viewYear
@@ -2155,22 +2202,9 @@ struct CalendarView: View {
         let range = cal.range(of: .day, in: .month, for: first) ?? 1..<29
         let lead = cal.component(.weekday, from: first) - 1
         let monthKey = Int64(viewYear * 100 + viewMonth)
-        var byDay = Dictionary(grouping: model.rows(model.snap?.dated ?? [])) {
-            row -> Int64 in (row.due ?? 0) / 10_000
-        }
-        // Virtual occurrences land beside the plain dates: the series entity is
-        // drawn on every day its rule names, over the window this month asked
-        // for (§3.3), computed by the engine so every view agrees.
-        for occurrence in model.snap?.occurrences ?? [] {
-            if let series = model.entity(occurrence.series) {
-                byDay[occurrence.civil / 10_000, default: []].append(series)
-            }
-        }
-
         return HStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    header(first)
                     LazyVGrid(columns: columns, spacing: 0) {
                         ForEach(dows, id: \.self) { dow in
                             Text(dow.uppercased())
@@ -2197,7 +2231,7 @@ struct CalendarView: View {
                     }
                 }
                 .padding(.horizontal, 32)
-                .padding(.top, 40)
+                .padding(.top, 12)
                 .padding(.bottom, 24)
             }
             if let day = selectedDay {
@@ -2206,8 +2240,6 @@ struct CalendarView: View {
                     .frame(width: 300)
             }
         }
-        .onAppear { loadWindow() }
-        .onDisappear { model.resetWindow() }
     }
 
     // The selected day's items as EntityLine rows (Today/Library's row) — tap
@@ -2271,13 +2303,15 @@ struct CalendarView: View {
         .background(Theme.background)
     }
 
-    // The month title + prev / Today / next stepping the viewed month; each
-    // step re-requests the matching occurrence window so recurrences follow.
-    private func header(_ first: Date) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(monthTitle(first))
+    // The title + a Month/Week toggle + prev / Today / next; each step re-requests
+    // the matching occurrence window so recurrences follow. Fixed above the body
+    // so it stays put while the grid scrolls.
+    private func header() -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(titleText())
                 .font(.system(size: 19, weight: .semibold))
             Spacer()
+            modeToggle
             HStack(spacing: 6) {
                 navButton("chevron.left") { step(-1) }
                 Button(action: goToday) {
@@ -2295,7 +2329,46 @@ struct CalendarView: View {
                 navButton("chevron.right") { step(1) }
             }
         }
-        .padding(.bottom, 18)
+        .padding(.horizontal, 32)
+        .padding(.top, 32)
+        .padding(.bottom, 16)
+    }
+
+    private var modeToggle: some View {
+        HStack(spacing: 0) {
+            modeButton("Month", .month)
+            modeButton("Week", .week)
+        }
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 0.5))
+    }
+
+    private func modeButton(_ label: String, _ mode: CalendarMode) -> some View {
+        Button {
+            guard viewMode != mode else { return }
+            viewMode = mode
+            if mode == .week && selectedDay == nil { selectedDay = Civil.todayYMD }
+            loadWindow()
+        } label: {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundColor(viewMode == mode ? Theme.accent : Theme.mutedFg)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .background(viewMode == mode ? Theme.accent.opacity(0.12) : Color.clear)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func titleText() -> String {
+        if viewMode == .week {
+            return monthTitle(dayDate(selectedDay ?? Civil.todayYMD))
+        }
+        var parts = DateComponents()
+        parts.year = viewYear
+        parts.month = viewMonth
+        parts.day = 1
+        return monthTitle(Civil.gregorian.date(from: parts) ?? Date())
     }
 
     private func navButton(_ symbol: String, _ action: @escaping () -> Void) -> some View {
@@ -2312,13 +2385,25 @@ struct CalendarView: View {
     }
 
     private func step(_ delta: Int) {
-        var m = viewMonth + delta
-        var y = viewYear
-        while m > 12 { m -= 12; y += 1 }
-        while m < 1 { m += 12; y -= 1 }
-        viewMonth = m
-        viewYear = y
-        selectedDay = nil  // a day of the old month has no cell in the new one
+        if viewMode == .week {
+            // Move the week's anchor ±7 days; keep the month title in step.
+            let moved =
+                Civil.gregorian.date(
+                    byAdding: .day, value: delta * 7, to: dayDate(selectedDay ?? Civil.todayYMD))
+                ?? Date()
+            let c = Civil.gregorian.dateComponents([.year, .month, .day], from: moved)
+            selectedDay = Int64((c.year ?? viewYear) * 10000 + (c.month ?? 1) * 100 + (c.day ?? 1))
+            viewYear = c.year ?? viewYear
+            viewMonth = c.month ?? viewMonth
+        } else {
+            var m = viewMonth + delta
+            var y = viewYear
+            while m > 12 { m -= 12; y += 1 }
+            while m < 1 { m += 12; y -= 1 }
+            viewMonth = m
+            viewYear = y
+            selectedDay = nil  // a day of the old month has no cell in the new one
+        }
         loadWindow()
     }
 
@@ -2326,8 +2411,24 @@ struct CalendarView: View {
         let cal = Civil.gregorian
         viewYear = cal.component(.year, from: Date())
         viewMonth = cal.component(.month, from: Date())
-        selectedDay = nil
+        selectedDay = viewMode == .week ? Civil.todayYMD : nil
         loadWindow()
+    }
+
+    // The 7 civil-YMD keys of the week (Mon..Sun) containing `anchorKey`.
+    private func weekDays(_ anchorKey: Int64) -> [Int64] {
+        let cal = Civil.gregorian
+        let anchor = dayDate(anchorKey)
+        let weekday = cal.component(.weekday, from: anchor)  // 1=Sun .. 7=Sat
+        let fromMonday = (weekday + 5) % 7                    // Mon -> 0 .. Sun -> 6
+        guard let monday = cal.date(byAdding: .day, value: -fromMonday, to: anchor) else {
+            return []
+        }
+        return (0..<7).compactMap { off in
+            guard let d = cal.date(byAdding: .day, value: off, to: monday) else { return nil }
+            let c = cal.dateComponents([.year, .month, .day], from: d)
+            return Int64((c.year ?? 2026) * 10000 + (c.month ?? 1) * 100 + (c.day ?? 1))
+        }
     }
 
     // The selected day, YMD-keyed, as a weekday+day title and a month+year
@@ -2354,19 +2455,26 @@ struct CalendarView: View {
         return f.string(from: dayDate(key))
     }
 
-    // The occurrence window the viewed month needs: [first, last] of the month,
-    // as date-only civils (YYYYMMDD0000).
+    // The occurrence window the current view needs — the month's [first, last]
+    // (month mode) or the visible week's [Mon, Sun] (week mode), as date-only
+    // civils (YYYYMMDD0000).
     private func loadWindow() {
-        let cal = Civil.gregorian
-        var parts = DateComponents()
-        parts.year = viewYear
-        parts.month = viewMonth
-        parts.day = 1
-        guard let first = cal.date(from: parts) else { return }
-        let days = cal.range(of: .day, in: .month, for: first)?.count ?? 30
-        let from = Int64(viewYear * 10000 + viewMonth * 100 + 1) * 10000
-        let to = Int64(viewYear * 10000 + viewMonth * 100 + days) * 10000
-        model.snapshotWindow(from: from, to: to)
+        if viewMode == .week {
+            let days = weekDays(selectedDay ?? Civil.todayYMD)
+            guard let first = days.first, let last = days.last else { return }
+            model.snapshotWindow(from: first * 10000, to: last * 10000)
+        } else {
+            let cal = Civil.gregorian
+            var parts = DateComponents()
+            parts.year = viewYear
+            parts.month = viewMonth
+            parts.day = 1
+            guard let first = cal.date(from: parts) else { return }
+            let days = cal.range(of: .day, in: .month, for: first)?.count ?? 30
+            let from = Int64(viewYear * 10000 + viewMonth * 100 + 1) * 10000
+            let to = Int64(viewYear * 10000 + viewMonth * 100 + days) * 10000
+            model.snapshotWindow(from: from, to: to)
+        }
     }
 
     // Hover-"+" on a day: create an event at 09:00 that day, select it (the
@@ -2388,6 +2496,225 @@ struct CalendarView: View {
         formatter.calendar = Civil.gregorian
         formatter.dateFormat = "MMMM yyyy"
         return formatter.string(from: date)
+    }
+}
+
+// The week grid — the selected day's Mon..Sun: an all-day rail over an hourly
+// grid, timed items positioned at due % 10_000 and lane-packed for overlaps,
+// with a now-line on today. Read-only positioning (no drag, §6.3); double-click
+// an hour to create an event there. Fed by the same windowed snapshot as month.
+struct WeekGrid: View {
+    @ObservedObject var model: BoxModel
+    let days: [Int64]  // 7 civil-YMD keys, Mon..Sun
+    let byDay: [Int64: [EntityRow]]
+    @Binding var selection: UInt64?
+    let today: Int64
+    var createAt: (Int64, Int) -> Void = { _, _ in }
+
+    private let hourHeight: CGFloat = 40
+    private let gutter: CGFloat = 46
+    private let dows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            dayHeader
+            allDayRail
+            ScrollView {
+                hourlyGrid
+            }
+        }
+    }
+
+    private var dayHeader: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: gutter)
+            ForEach(Array(days.enumerated()), id: \.offset) { i, key in
+                VStack(spacing: 2) {
+                    Text(dows[i].uppercased())
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(Color.secondary.opacity(0.7))
+                    if key == today {
+                        Text("\(Int(key % 100))")
+                            .font(.system(size: 12.5, weight: .semibold).monospacedDigit())
+                            .foregroundColor(.white)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Theme.accent))
+                    } else {
+                        Text("\(Int(key % 100))")
+                            .font(.system(size: 12.5, weight: .medium).monospacedDigit())
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            }
+        }
+        .overlay(Divider(), alignment: .bottom)
+    }
+
+    private var allDayRail: some View {
+        HStack(spacing: 0) {
+            Text("all-day")
+                .font(.system(size: 9.5))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: gutter, alignment: .trailing)
+            ForEach(Array(days.enumerated()), id: \.offset) { _, key in
+                VStack(spacing: 2) {
+                    ForEach((byDay[key] ?? []).filter { $0.dueDateOnly }) { row in
+                        Text(row.title)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.12)))
+                            .contentShape(Rectangle())
+                            .onTapGesture { selection = row.id }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+                .padding(2)
+                .overlay(Divider(), alignment: .leading)
+            }
+        }
+        .frame(minHeight: 26)
+        .overlay(Divider(), alignment: .bottom)
+    }
+
+    private var hourlyGrid: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                ForEach(0..<24, id: \.self) { h in
+                    HStack {
+                        Spacer()
+                        Text(h == 0 ? "" : "\(h):00")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                    .frame(height: hourHeight, alignment: .top)
+                    .offset(y: -6)
+                }
+            }
+            .frame(width: gutter)
+            ForEach(Array(days.enumerated()), id: \.offset) { _, key in
+                dayColumn(key)
+            }
+        }
+    }
+
+    private func dayColumn(_ key: Int64) -> some View {
+        let blocks = laidOut((byDay[key] ?? []).filter { !$0.dueDateOnly && $0.due != nil })
+        return GeometryReader { geo in
+            let colW = geo.size.width
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    ForEach(0..<24, id: \.self) { _ in
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(height: hourHeight)
+                            .overlay(Divider(), alignment: .top)
+                    }
+                }
+                // A transparent double-click layer per hour, under the blocks:
+                // double-click an empty slot to create an event at that hour.
+                VStack(spacing: 0) {
+                    ForEach(0..<24, id: \.self) { h in
+                        Color.clear
+                            .frame(height: hourHeight)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { createAt(key, h) }
+                    }
+                }
+                ForEach(blocks) { b in
+                    let w = colW / CGFloat(b.lanes)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(b.row.title)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundColor(Theme.accent)
+                        Text(Civil.text(b.row.due ?? 0, dateOnly: false))
+                            .font(.system(size: 9.5).monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .frame(width: max(w - 3, 0), height: hourHeight - 2, alignment: .topLeading)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Theme.accent.opacity(0.13)))
+                    .overlay(Rectangle().fill(Theme.accent).frame(width: 2), alignment: .leading)
+                    .clipped()
+                    .contentShape(Rectangle())
+                    .onTapGesture { selection = b.row.id }
+                    .offset(x: CGFloat(b.lane) * w + 1, y: CGFloat(b.start) * hourHeight + 1)
+                }
+                if key == today {
+                    Rectangle()
+                        .fill(Color(red: 0.85, green: 0.31, blue: 0.23))
+                        .frame(height: 1.5)
+                        .offset(y: CGFloat(nowHours()) * hourHeight)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 24 * hourHeight)
+        .overlay(Divider(), alignment: .leading)
+    }
+
+    // ---- geometry ----
+
+    private func startHours(_ row: EntityRow) -> Double {
+        let hhmm = Int((row.due ?? 0) % 10000)
+        return Double(hhmm / 100) + Double(hhmm % 100) / 60.0
+    }
+
+    private func nowHours() -> Double {
+        let c = Civil.gregorian.dateComponents([.hour, .minute], from: Date())
+        return Double(c.hour ?? 0) + Double(c.minute ?? 0) / 60.0
+    }
+
+    private struct Placed: Identifiable {
+        let row: EntityRow
+        let start: Double
+        let lane: Int
+        let lanes: Int
+        var id: UInt64 { row.id }
+    }
+
+    // Interval-partition a day's timed items into lanes: overlapping events
+    // (each given a default 1h span, since events carry no end yet) form a
+    // cluster and split its width; non-overlapping ones keep the full width.
+    private func laidOut(_ items: [EntityRow]) -> [Placed] {
+        let dur = 1.0
+        let sorted = items.sorted { startHours($0) < startHours($1) }
+        var out: [Placed] = []
+        var i = 0
+        while i < sorted.count {
+            var clusterEnd = startHours(sorted[i]) + dur
+            var j = i + 1
+            while j < sorted.count && startHours(sorted[j]) < clusterEnd {
+                clusterEnd = max(clusterEnd, startHours(sorted[j]) + dur)
+                j += 1
+            }
+            var laneEnds: [Double] = []
+            var laneOf: [Int] = []
+            for k in i..<j {
+                let s = startHours(sorted[k])
+                if let l = laneEnds.firstIndex(where: { $0 <= s }) {
+                    laneEnds[l] = s + dur
+                    laneOf.append(l)
+                } else {
+                    laneOf.append(laneEnds.count)
+                    laneEnds.append(s + dur)
+                }
+            }
+            let lanes = laneEnds.count
+            for (offset, k) in (i..<j).enumerated() {
+                out.append(
+                    Placed(row: sorted[k], start: startHours(sorted[k]), lane: laneOf[offset], lanes: lanes))
+            }
+            i = j
+        }
+        return out
     }
 }
 

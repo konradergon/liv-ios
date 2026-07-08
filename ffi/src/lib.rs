@@ -1661,6 +1661,31 @@ mod tests {
     }
 
     #[test]
+    fn a_week_window_straddling_a_month_boundary_spans_both_sides() {
+        // The week grid's window is [Mon, Sun], which can cross a month edge —
+        // it must expand occurrences on BOTH sides (proving the window, not a
+        // fixed month, feeds it). A weekly Tuesday series over Jul 28 .. Aug 4.
+        let (path, c_path) = fresh_box("lotus_ffi_win_straddle.log");
+        seed_series(&path, DateTime::date(2026, 7, 7), "every week");
+        let snap = unsafe {
+            read_json(lotus_snapshot_window_at(
+                c_path.as_ptr(),
+                DateTime::date(2026, 7, 28).civil,
+                DateTime::date(2026, 8, 4).civil,
+            ))
+        };
+        let civils: Vec<i64> = snap["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["civil"].as_i64().unwrap() / 10_000)
+            .collect();
+        assert!(civils.contains(&20260728), "the July Tuesday");
+        assert!(civils.contains(&20260804), "the August Tuesday");
+        cleanup(&path);
+    }
+
+    #[test]
     fn the_occurrence_window_is_capped_at_a_year() {
         let (path, c_path) = fresh_box("lotus_ffi_win_cap.log");
         seed_series(&path, DateTime::date(2026, 1, 1), "every day");
