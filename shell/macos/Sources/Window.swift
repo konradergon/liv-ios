@@ -1635,7 +1635,8 @@ struct TodayView: View {
                             ForEach(model.rows(snap.today)) { row in
                                 EntityLine(
                                     row: row,
-                                    selected: selection == row.id
+                                    selected: selection == row.id,
+                                    toggle: taskStatusToggle(model, row)
                                 ) { selection = row.id }
                             }
                         }
@@ -1647,7 +1648,8 @@ struct TodayView: View {
                                 EntityLine(
                                     row: row,
                                     showWhen: false,
-                                    selected: selection == row.id
+                                    selected: selection == row.id,
+                                    toggle: taskStatusToggle(model, row)
                                 ) { selection = row.id }
                             }
                         }
@@ -1812,6 +1814,16 @@ func statusColor(_ status: String) -> Color {
     case "doing": return Color(red: 207 / 255, green: 154 / 255, blue: 63 / 255)
     default: return Color.secondary.opacity(0.6)
     }
+}
+
+/// The EntityLine checkbox toggle for a task row — flips status done ⇄ todo
+/// through the existing `set` seam. Returns nil for a non-task row, since a
+/// non-nil toggle is what makes EntityLine draw (and light up) the checkbox;
+/// a plain note must not sprout one. One definition so every surface that
+/// shows tasks (Today, Tasks, Lists) checks them off the same way.
+func taskStatusToggle(_ model: BoxModel, _ row: EntityRow) -> (() -> Void)? {
+    guard row.kinds.contains("task") || row.status != nil else { return nil }
+    return { model.set(row.id, property: "status", value: row.status == "done" ? "todo" : "done") }
 }
 
 /// The priority flag colour — amber for high/medium, muted for low, faint
@@ -2416,11 +2428,7 @@ struct TasksView: View {
     private func taskRow(_ row: EntityRow) -> some View {
         EntityLine(
             row: row, selected: selection == row.id,
-            toggle: {
-                model.set(
-                    row.id, property: "status",
-                    value: row.status == "done" ? "todo" : "done")
-            },
+            toggle: taskStatusToggle(model, row),
             accessory: AnyView(priorityFlag(row))
         ) {
             open(row.id)
@@ -2661,6 +2669,7 @@ struct ListsSurface: View {
                     ForEach(members) { row in
                         EntityLine(
                             row: row, selected: selection == row.id,
+                            toggle: taskStatusToggle(model, row),
                             accessory: AnyView(removeButton(list: list.id, member: row.id))
                         ) {
                             open(row.id)
