@@ -51,9 +51,13 @@ enum DigitMap {
     /// The layering law (design §3.1):
     ///   1. start from the defaults;
     ///   2. a `digit-key` CELL on a definition WINS its key — the displaced
-    ///      default's property goes blank ('·' in the kbd column);
+    ///      default's property goes blank ('·' in the kbd column), and the
+    ///      property's OWN old key is vacated (a cell moving a defaulted
+    ///      property must not leave the default binding live — the review's
+    ///      flip-flop finding: one property, one key, always);
     ///   3. two cells claiming one key → the LOWEST definition id wins, the
-    ///      loser renders blank. Deterministic; no key ever double-fires.
+    ///      loser renders blank; two cells re-keying one property → likewise
+    ///      the lowest id. Deterministic; no key ever double-fires.
     /// Reserved letters are never assignable — a cell claiming one is
     /// ignored (renders blank; P19's editor is where that gets resolved).
     static func resolve(_ catalog: [PropertyRow]) -> [String: String] {
@@ -65,14 +69,21 @@ enum DigitMap {
         let overrides = catalog
             .filter { $0.digitKey != nil }
             .sorted { $0.id < $1.id }
-        var cellClaimed: Set<String> = []
+        var cellClaimed: Set<String> = []       // key labels taken by cells
+        var propertyClaimed: Set<String> = []   // properties already re-keyed
         for row in overrides {
             guard let key = row.digitKey?.uppercased(), !key.isEmpty else { continue }
             guard !reserved.contains(key) else { continue }
             guard !cellClaimed.contains(key) else { continue }  // lowest id won
+            guard !propertyClaimed.contains(row.name) else { continue }
             cellClaimed.insert(key)
-            // Displace whatever held the key (a default, silently — its
-            // property goes blank).
+            propertyClaimed.insert(row.name)
+            // Vacate every key the property held before (its default) —
+            // a stale binding makes the name→key inversion below depend
+            // on dictionary order.
+            for (k, name) in byKey where name == row.name {
+                byKey.removeValue(forKey: k)
+            }
             byKey[key] = row.name
         }
         var out: [String: String] = [:]

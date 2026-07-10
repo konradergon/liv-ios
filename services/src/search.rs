@@ -83,7 +83,8 @@ pub fn parse(store: &Store, raw: &str) -> SearchQuery {
     let mut include_trashed = false;
     let mut include_archived = false;
 
-    for token in raw.split_whitespace() {
+    for token in tokenize(raw) {
+        let token = token.as_str();
         let lower = token.to_lowercase();
         if let Some((key, val)) = split_qualifier(token, ':') {
             match key {
@@ -424,6 +425,33 @@ fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
 /// Split a token at the first `sep` into a non-empty (key, value). Returns
 /// None when either side is empty, so a bare "http://x" or "key:" degrades
 /// to free text rather than a half-qualifier.
+/// Whitespace tokens — except that a double-quoted run keeps its spaces:
+/// `people:"Anna Karlsson"` is ONE token, `people:Anna Karlsson`, quotes
+/// stripped. The chip-click contract depends on it (the P11.5 review's
+/// live-reproduced high: without quoting, multi-word values split into a
+/// half-qualifier plus junk free-text terms). An unclosed quote runs
+/// tolerantly to the end of the input.
+fn tokenize(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    for c in raw.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
 fn split_qualifier(token: &str, sep: char) -> Option<(&str, &str)> {
     let (key, val) = token.split_once(sep)?;
     if key.is_empty() || val.is_empty() {

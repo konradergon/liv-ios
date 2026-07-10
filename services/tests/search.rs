@@ -324,3 +324,41 @@ fn facet_properties_finds_type_and_select_props() {
     // due is a datetime, never a facet.
     assert!(!facetable.contains(&fx.due));
 }
+
+// ---- P11.5 review fix: quoted qualifier values ----
+
+#[test]
+fn a_quoted_qualifier_value_keeps_its_spaces() {
+    // The chip-click contract: clicking the "Anna Karlsson" chip filters on
+    // exactly that person. Without quoting the DSL split her in half — the
+    // review's live-reproduced high.
+    let dir = std::env::temp_dir().join("lotus_search_quoted");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("box.log");
+    let mut session = Session::open(&path).unwrap();
+    lotus_services::seed_if_fresh(&mut session).unwrap();
+
+    let anna = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    lotus_services::content::set_property(&mut session, anna, "name", "Anna Karlsson").unwrap();
+    let event = lotus_services::content::create_event(
+        &mut session, DateTime::date(2026, 7, 12), DateTime::date(2026, 7, 10)).unwrap();
+    lotus_services::content::set_property(&mut session, event, "attendees", &format!("#{anna}")).unwrap();
+    let other = lotus_services::content::create_event(
+        &mut session, DateTime::date(2026, 7, 13), DateTime::date(2026, 7, 10)).unwrap();
+
+    let store = session.store();
+    let sq = search::parse(store, "attendees:\"Anna Karlsson\"");
+    let hits = search::search(store, &sq, 200, |_| String::new());
+    assert!(hits.iter().any(|h| h.id == event), "the quoted reference resolves whole");
+    assert!(!hits.iter().any(|h| h.id == other), "and it filters, not free-texts");
+
+    // A quoted TEXT value works through the same door.
+    lotus_services::content::set_property(&mut session, event, "location", "Room 4 East").unwrap();
+    let store = session.store();
+    let sq = search::parse(store, "location:\"Room 4 East\"");
+    let hits = search::search(store, &sq, 200, |_| String::new());
+    assert!(hits.iter().any(|h| h.id == event));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

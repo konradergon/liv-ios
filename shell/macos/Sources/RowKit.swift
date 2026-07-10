@@ -123,6 +123,10 @@ struct Anchor {
     let text: String
     let hue: NSColor?
     let filter: String?  // "<property>:<value>" — the chip-click search
+    /// The role-date leg — the row suppresses its trailing date (the chip
+    /// already shows it) and the chip carries no filter (a bare "due:"
+    /// qualifier is a junk query, the review's finding).
+    var isDate = false
 }
 
 func anchorChip(for row: EntityRow) -> Anchor? {
@@ -131,12 +135,13 @@ func anchorChip(for row: EntityRow) -> Anchor? {
             return Anchor(
                 text: cell.value,
                 hue: Hues.valueHex(cell.value),
-                filter: "\(name):\(cell.value)")
+                filter: searchQualifier(name, cell.value))
         }
     }
     if let due = row.due {
-        let role = row.positionedBy ?? "due"
-        return Anchor(text: Civil.text(due, dateOnly: row.dueDateOnly), hue: nil, filter: "\(role):")
+        return Anchor(
+            text: Civil.text(due, dateOnly: row.dueDateOnly),
+            hue: nil, filter: nil, isDate: true)
     }
     return nil
 }
@@ -221,8 +226,11 @@ struct ObjectRow: View {
                     .buttonStyle(.plain)
                     .help("Open")
                 }
-            } else if let created = row.due ?? row.created {
-                Text(Civil.text(created, dateOnly: row.due == nil || row.dueDateOnly))
+            } else if let stamp = (anchor?.isDate == true ? nil : row.due) ?? row.created {
+                // The date-leg anchor already shows the due date; the
+                // trailing slot then falls back to created/modified.
+                let showsDue = anchor?.isDate != true && row.due != nil
+                Text(Civil.text(stamp, dateOnly: !showsDue || row.dueDateOnly))
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundColor(Color.secondary.opacity(0.8))
                     .lineLimit(1)

@@ -2035,9 +2035,33 @@ func statusColor(_ status: String) -> Color {
 /// non-nil toggle is what makes EntityLine draw (and light up) the checkbox;
 /// a plain note must not sprout one. One definition so every surface that
 /// shows tasks (Today, Tasks, Lists) checks them off the same way.
+/// A DSL qualifier value, quoted when it needs to survive tokenizing —
+/// the chip-click contract (the P11.5 review's high: unquoted multi-word
+/// values split into a half-qualifier plus junk terms).
+func searchQualifier(_ property: String, _ value: String) -> String {
+    let needsQuotes = value.contains(where: \.isWhitespace)
+    return needsQuotes ? "\(property):\"\(value)\"" : "\(property):\(value)"
+}
+
+/// The checkbox toggle, vocabulary-aware (the review's diverged-laws
+/// finding): display derives done-ness from the option's `completes`, so
+/// the WRITE must too — toggling moves between the kind's first terminal
+/// option and its first open option, falling back to done/todo only when
+/// the vocabulary is silent.
 func taskStatusToggle(_ model: BoxModel, _ row: EntityRow) -> (() -> Void)? {
     guard row.kinds.contains("task") || row.status != nil else { return nil }
-    return { model.set(row.id, property: "status", value: row.status == "done" ? "todo" : "done") }
+    return {
+        let vocabulary = statusVocabulary(model, kind: row.kinds.first ?? "task")
+        let current = vocabulary.first { $0.name == row.status }
+        let isDone = current?.isTerminal ?? (row.status == "done")
+        let target: String
+        if isDone {
+            target = vocabulary.first { !$0.isTerminal }?.name ?? "todo"
+        } else {
+            target = vocabulary.first { $0.isTerminal }?.name ?? "done"
+        }
+        model.set(row.id, property: "status", value: target)
+    }
 }
 
 /// The priority flag colour — amber for high/medium, muted for low, faint
@@ -2074,7 +2098,11 @@ struct FacetBar: View {
                             ForEach(facet.values) { value in
                                 FacetChip(
                                     value: value,
-                                    hue: facet.label == "status"
+                                    // The frozen chip-hue law: status/tier/
+                                    // priority are never VALUE_HEX, and type
+                                    // is an icon (objects render neutral).
+                                    hue: ["status", "priority", "tier", "type"]
+                                        .contains(facet.label.lowercased())
                                         ? nil : Hues.valueHex(value.label)
                                 ) { toggle(facet.label, value) }
                             }
@@ -2092,10 +2120,20 @@ struct FacetBar: View {
     /// off). Re-running the same string the field shows keeps them in sync.
     private func toggle(_ key: String, _ value: SearchFacetValue) {
         let key = key.lowercased()
-        var tokens = query.split(separator: " ").map(String.init)
+        // Quote-aware: a quoted qualifier value is one token with spaces.
+        var tokens: [String] = []
+        var current = ""
+        var quoted = false
+        for c in query {
+            if c == "\"" { quoted.toggle(); current.append(c) }
+            else if c == " " && !quoted {
+                if !current.isEmpty { tokens.append(current); current = "" }
+            } else { current.append(c) }
+        }
+        if !current.isEmpty { tokens.append(current) }
         tokens.removeAll { $0.lowercased().hasPrefix("\(key):") }
         if !value.active {
-            tokens.append("\(key):\(value.label.lowercased())")
+            tokens.append(searchQualifier(key, value.label.lowercased()))
         }
         query = tokens.joined(separator: " ")
     }
@@ -2298,7 +2336,7 @@ struct SearchPopup: View {
                     option: statusVocabulary(model, kind: row.kinds.first ?? "")
                         .first { $0.name == status },
                     statusName: status,
-                    tap: { query = "status:\(status)" })
+                    tap: { query = searchQualifier("status", status) })
             }
         }
         .padding(.vertical, 6)
@@ -2509,11 +2547,17 @@ struct TasksView: View {
 
     var body: some View {
         let all = model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
+        // Done-ness follows the option's `completes`, exactly as the row's
+        // checkbox does (the review: string-matching "done" diverged from
+        // the vocabulary-aware display law).
+        let terminal = Set(
+            statusVocabulary(model, kind: "task").filter(\.isTerminal).map(\.name)
+        ).union(["done"])
         let tasks: [EntityRow]
         switch filter {
         case .all: tasks = all
-        case .open: tasks = all.filter { $0.status != "done" }
-        case .done: tasks = all.filter { $0.status == "done" }
+        case .open: tasks = all.filter { !terminal.contains($0.status ?? "") }
+        case .done: tasks = all.filter { terminal.contains($0.status ?? "") }
         }
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -2550,14 +2594,19 @@ struct TasksView: View {
                         }
                     }
                     // A status whose option left the vocabulary still shows —
-                    // the row's own status text is the truth.
+                    // the row's own status text is the truth. Grouped and
+                    // LABELED like every other section (the review: unlabeled
+                    // orphans read as members of whatever section came last).
                     let known = Set(vocabulary.map(\.name))
-                    let orphaned = tasks.filter { status in
-                        guard let s = status.status else { return false }
-                        return !known.contains(s)
-                    }
-                    if !orphaned.isEmpty {
-                        ForEach(orphaned) { taskRow($0, option: nil) }
+                    let orphanNames = Set(
+                        tasks.compactMap(\.status).filter { !known.contains($0) }
+                    ).sorted()
+                    ForEach(orphanNames, id: \.self) { name in
+                        let group = tasks
+                            .filter { $0.status == name }
+                            .sorted { dueKey($0) < dueKey($1) }
+                        SectionLabel(text: name).padding(.top, 14)
+                        ForEach(group) { taskRow($0, option: nil) }
                     }
                 }
             }

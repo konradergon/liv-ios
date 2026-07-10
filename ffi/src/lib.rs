@@ -432,9 +432,13 @@ fn property_kind(store: &Store, property: Id) -> Option<String> {
 }
 
 /// The id a select/reference cell points at, for the picker.
-fn cell_target(value: &Value) -> Option<Id> {
+/// The id a select/reference cell points at — resolved through redirects
+/// (the read-time-resolution law; the P11.5 review's finding): a cell may
+/// still STORE a merged-away id, but every read serves the survivor, so
+/// the shell's backlink index and pickers agree with display().
+fn cell_target(store: &Store, value: &Value) -> Option<Id> {
     match value {
-        Value::Select(id) | Value::Reference(id) => Some(*id),
+        Value::Select(id) | Value::Reference(id) => Some(store.resolve(*id)),
         _ => None,
     }
 }
@@ -669,7 +673,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                         property: reference_name(store, cell.property),
                         kind: property_kind(store, cell.property).unwrap_or_default(),
                         value: lotus_views::display(store, &cell.value),
-                        ref_target: cell_target(&cell.value),
+                        ref_target: cell_target(store, &cell.value),
                     })
                     .collect(),
             }
@@ -2074,6 +2078,60 @@ mod tests {
         assert_eq!(e["due_date_only"], false);
         // A non-recurring dated entity, so it rides `dated` (bucketed by day).
         assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_cell_ref_target_resolves_through_redirects() {
+        // The read-time-resolution law at the wire (the P11.5 review's
+        // finding): after a merge, a cell still storing the LOSER id must
+        // serialize its ref_target as the SURVIVOR — the shell's backlink
+        // index and pickers key on it.
+        let (path, c_path) = fresh_box("lotus_ffi_redirect.log");
+        let (survivor, loser, event) = {
+            let mut session = Session::open(&path).unwrap();
+            lotus_services::seed_if_fresh(&mut session).unwrap();
+            let survivor =
+                lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+                    .unwrap();
+            let loser =
+                lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+                    .unwrap();
+            let event = lotus_services::content::create_event(
+                &mut session,
+                DateTime::date(2026, 7, 12),
+                DateTime::date(2026, 7, 10),
+            )
+            .unwrap();
+            lotus_services::content::set_property(
+                &mut session,
+                event,
+                "attendees",
+                &format!("#{loser}"),
+            )
+            .unwrap();
+            session.merge(survivor, loser, Vec::new(), Author::User).unwrap();
+            (survivor, loser, event)
+        };
+        let _ = loser;
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let cell = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == event)
+            .unwrap()["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["property"] == "attendees")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            cell["ref_target"].as_u64(),
+            Some(survivor),
+            "the wire resolves the redirect"
+        );
         cleanup(&path);
     }
 

@@ -93,7 +93,11 @@ enum Hues {
         Color(nsColor: NSColor(name: nil) { appearance in
             let dark = isDark(appearance)
             return NSColor(
-                hue: CGFloat((deg.truncatingRemainder(dividingBy: 360)) / 360),
+                // Positive modulo — a negative cell value must land inside
+                // the wheel, not below it (NSColor clamps, killing the hue).
+                hue: CGFloat(
+                    (deg.truncatingRemainder(dividingBy: 360) + 360)
+                        .truncatingRemainder(dividingBy: 360) / 360),
                 saturation: dark ? 0.45 : 0.55,
                 brightness: dark ? 0.75 : 0.62,
                 alpha: 1)
