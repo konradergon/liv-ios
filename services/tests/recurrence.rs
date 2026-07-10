@@ -429,3 +429,94 @@ fn a_date_anchored_series_occurring_today_joins_today() {
     assert!(!off.due.contains(&birthday), "an off day does not");
     clean(&path);
 }
+
+#[test]
+fn an_exception_survives_the_series_anchor_flip() {
+    // The review's live repro: exceptions were keyed to the series' CURRENT
+    // anchor property, so adding a `date` cell beside `due` (an ordinary
+    // inspector set) flipped the anchor and resurrected every suppressed
+    // occurrence. An exception now covers the date it names through ANY
+    // positioning property — no flip can orphan it.
+    let (mut session, path) = boxed("flip");
+    let standup = series(&mut session, "standup", DateTime::date(2026, 7, 7), "every week");
+    let exception = session.allocate_id();
+    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
+    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    session
+        .commit(
+            vec![
+                Command::Create { entity: exception },
+                Command::AddCell {
+                    entity: exception,
+                    cell: Cell { property: exc_prop, value: Value::Reference(standup) },
+                },
+                Command::AddCell {
+                    entity: exception,
+                    cell: Cell {
+                        property: due_prop,
+                        value: Value::DateTime(DateTime::date(2026, 7, 14)),
+                    },
+                },
+            ],
+            "move one",
+            Author::User,
+        )
+        .unwrap();
+
+    // Flip the series' anchor: a `date` cell lands beside `due` (date wins).
+    lotus_services::content::set_property(&mut session, standup, "date", "2026-07-07").unwrap();
+
+    let july = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    let dates: Vec<i64> =
+        july.iter().filter(|o| o.series == standup).map(|o| o.date.civil / 10_000).collect();
+    assert_eq!(dates, vec![20260707, 20260721, 20260728], "the exception still covers the 14th");
+    clean(&path);
+}
+
+#[test]
+fn an_exception_survives_its_own_row_cycle() {
+    // The other direction: Space-cycling the EXCEPTION's own date row moves
+    // its cell to another role — coverage must ride along.
+    let (mut session, path) = boxed("excycle");
+    let standup = series(&mut session, "standup", DateTime::date(2026, 7, 7), "every week");
+    let exception = session.allocate_id();
+    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
+    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    session
+        .commit(
+            vec![
+                Command::Create { entity: exception },
+                Command::AddCell {
+                    entity: exception,
+                    cell: Cell { property: exc_prop, value: Value::Reference(standup) },
+                },
+                Command::AddCell {
+                    entity: exception,
+                    cell: Cell {
+                        property: due_prop,
+                        value: Value::DateTime(DateTime::date(2026, 7, 14)),
+                    },
+                },
+            ],
+            "move one",
+            Author::User,
+        )
+        .unwrap();
+
+    // due → date on the exception's row.
+    lotus_services::content::cycle_date_role(&mut session, exception, due_prop).unwrap();
+
+    let july = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    let dates: Vec<i64> =
+        july.iter().filter(|o| o.series == standup).map(|o| o.date.civil / 10_000).collect();
+    assert_eq!(dates, vec![20260707, 20260721, 20260728], "coverage rode the cycle");
+    clean(&path);
+}

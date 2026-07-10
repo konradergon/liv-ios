@@ -267,6 +267,23 @@ pub fn facet_properties(store: &Store, sq: &SearchQuery) -> Vec<Id> {
 /// picker still offers an unused property); working entities and the trash
 /// are excluded, the query laws. Deterministic: sorted by definition id.
 pub fn usage_counts(store: &Store) -> Vec<(Id, usize)> {
+    use std::collections::{HashMap, HashSet};
+    // One pass over live cells — O(total cells), never definitions ×
+    // entities (the review measured the nested walk at ~150× the one-pass
+    // shape, on the snapshot hot path). Each entity counts once per
+    // distinct property it carries.
+    let mut carriers: HashMap<Id, usize> = HashMap::new();
+    for e in store
+        .entities()
+        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+    {
+        let mut seen: HashSet<Id> = HashSet::new();
+        for cell in &e.cells {
+            if seen.insert(cell.property) {
+                *carriers.entry(cell.property).or_insert(0) += 1;
+            }
+        }
+    }
     let mut counts: Vec<(Id, usize)> = store
         .entities()
         .filter(|e| {
@@ -274,19 +291,9 @@ pub fn usage_counts(store: &Store) -> Vec<(Id, usize)> {
                 && !e.trashed
                 && matches!(e.get(props::VALUE_KIND), Some(Value::Text(_)))
         })
-        .map(|e| (e.id, 0))
+        .map(|e| (e.id, carriers.get(&e.id).copied().unwrap_or(0)))
         .collect();
     counts.sort_by_key(|(id, _)| *id);
-    for e in store
-        .entities()
-        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
-    {
-        for (definition, count) in counts.iter_mut() {
-            if e.all(*definition).next().is_some() {
-                *count += 1;
-            }
-        }
-    }
     counts
 }
 
@@ -296,22 +303,42 @@ pub fn usage_counts(store: &Store) -> Vec<(Id, usize)> {
 /// counts") and the status picker's per-option counts. The facet-internal
 /// candidate walk, promoted and counted — never a parallel engine.
 pub fn distinct_values(store: &Store, property: Id) -> Vec<(Value, usize)> {
-    let mut out: Vec<(Value, usize)> = Vec::new();
+    use std::collections::HashMap;
+    // Reads resolve through redirects (the merge law): a survivor and its
+    // merged-away loser are ONE value, never a split pool row.
+    let canonical = |v: &Value| -> Value {
+        match v {
+            Value::Reference(id) => Value::Reference(store.resolve(*id)),
+            Value::Select(id) => Value::Select(store.resolve(*id)),
+            other => other.clone(),
+        }
+    };
+    // Dedup by serialized identity — O(1) per cell (the review measured the
+    // per-cell linear scan at 339ms on a 10k-distinct text property, inside
+    // the box lock). A NaN that serde refuses buckets under "" — one bucket,
+    // and the seam refuses new NaNs anyway.
+    let mut counts: HashMap<String, (Value, usize)> = HashMap::new();
     for e in store
         .entities()
         .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
     {
         for value in e.all(property) {
-            match out.iter_mut().find(|(seen, _)| seen == value) {
-                Some((_, count)) => *count += 1,
-                None => out.push((value.clone(), 1)),
-            }
+            let value = canonical(value);
+            let key = serde_json::to_string(&value).unwrap_or_default();
+            counts.entry(key).and_modify(|(_, c)| *c += 1).or_insert((value, 1));
         }
     }
-    out.sort_by(|(va, ca), (vb, cb)| {
-        cb.cmp(ca).then_with(|| display(store, va).cmp(&display(store, vb)))
-    });
-    out
+    // Sort on precomputed keys — display() once per value, never per
+    // comparison.
+    let mut out: Vec<(Value, usize, String)> = counts
+        .into_values()
+        .map(|(value, count)| {
+            let shown = display(store, &value);
+            (value, count, shown)
+        })
+        .collect();
+    out.sort_by(|(_, ca, da), (_, cb, db)| cb.cmp(ca).then_with(|| da.cmp(db)));
+    out.into_iter().map(|(value, count, _)| (value, count)).collect()
 }
 
 /// The distinct values of a property across a query's result — the candidate

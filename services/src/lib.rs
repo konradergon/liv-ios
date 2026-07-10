@@ -198,14 +198,31 @@ fn seed_status_scoping(session: &mut Session) -> Result<(), PersistError> {
     // lesson), and person/project were unfindable — which would have made
     // their per-kind vocabularies unreachable through every seam that
     // resolves a kind by name. Additive cells; task/event/note untouched.
+    //
+    // The finder is CONSTRAINED and DETERMINISTIC (the review's high
+    // finding, live-reproduced: a loose name-only scan over HashMap order
+    // stamped user lists named "project" on 9/20 old boxes — permanently,
+    // since this seed is one-shot). A starter type is WORKING plumbing with
+    // no TYPE cell and no VALUE_KIND; user content always carries a TYPE
+    // (or isn't WORKING), workspaces carry TYPE→workspace, and the trash is
+    // excluded. min-by-id breaks any residual tie toward the earliest-
+    // seeded entity — never HashMap luck.
     if let Some(status) = status {
         for name in ["person", "project"] {
-            let bare_type = session.store().entities().find_map(|e| {
-                let named = matches!(e.get(props::NAME), Some(Value::Text(n)) if n == name);
-                (named && e.get(props::VALUE_KIND).is_none() && e.get(props::EXPECTED).is_none())
-                    .then_some(e.id)
-            });
-            if let Some(t) = bare_type {
+            let starter_type = session
+                .store()
+                .entities()
+                .filter(|e| {
+                    !e.trashed
+                        && matches!(e.get(props::NAME), Some(Value::Text(n)) if n == name)
+                        && e.has(props::WORKING, &Value::Bool(true))
+                        && e.get(props::TYPE).is_none()
+                        && e.get(props::VALUE_KIND).is_none()
+                        && e.get(props::EXPECTED).is_none()
+                })
+                .map(|e| e.id)
+                .min();
+            if let Some(t) = starter_type {
                 commands.push(Command::AddCell {
                     entity: t,
                     cell: Cell { property: props::EXPECTED, value: Value::Reference(status) },
@@ -900,5 +917,72 @@ fn kind_rank(v: &Value) -> u8 {
         Value::Select(_) => 5,
         Value::Reference(_) => 6,
         Value::File(_) => 7,
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::*;
+
+    /// The scoping seed's type finder must never stamp user content (the
+    /// review's live-reproduced high): a decoy entity named "project" that
+    /// is not WORKING plumbing — or is trashed — is invisible to it, and
+    /// the starter type wins deterministically.
+    #[test]
+    fn the_scoping_seed_targets_the_starter_type_never_a_decoy() {
+        let dir = std::env::temp_dir().join("lotus_seed_decoy");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("box.log");
+        let mut session = Session::open(&path).unwrap();
+
+        // Everything BEFORE the scoping pass — the pre-11d world.
+        seed_bootstrap(&mut session).unwrap();
+        seed_starter_library(&mut session).unwrap();
+        seed_recurrence(&mut session).unwrap();
+        seed_files(&mut session).unwrap();
+        seed_priority(&mut session).unwrap();
+        seed_lists(&mut session).unwrap();
+        seed_event_fields(&mut session).unwrap();
+        seed_date_roles(&mut session).unwrap();
+        seed_workspaces(&mut session).unwrap();
+
+        // A user decoy: named "project", no VALUE_KIND, no EXPECTED — the
+        // exact shape the loose finder matched. Not WORKING, like all user
+        // content.
+        let decoy = session.allocate_id();
+        session
+            .commit(
+                vec![
+                    Command::Create { entity: decoy },
+                    Command::AddCell {
+                        entity: decoy,
+                        cell: Cell { property: props::NAME, value: Value::text("project") },
+                    },
+                ],
+                "decoy",
+                Author::User,
+            )
+            .unwrap();
+
+        seed_status_scoping(&mut session).unwrap();
+
+        let store = session.store();
+        let status = property_id(store, "status").unwrap();
+        assert!(
+            store.get(decoy).unwrap().get(props::EXPECTED).is_none(),
+            "the decoy is untouched"
+        );
+        let stamped = content::find_type(store, "project").expect("the starter type is findable");
+        assert_ne!(stamped, decoy);
+        assert!(
+            store.get(stamped).unwrap().has(props::EXPECTED, &Value::Reference(status)),
+            "the starter type carries the expectation"
+        );
+        assert!(
+            store.get(stamped).unwrap().has(props::WORKING, &Value::Bool(true)),
+            "and it is the WORKING plumbing entity"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -5,7 +5,7 @@
 //! is one lossless transaction moving the value between properties.
 
 use lotus_core::*;
-use lotus_services::content::{self, CycleError};
+use lotus_services::content::{self, WriteError};
 use lotus_services::{calendar_set, property_id, search, seed_if_fresh, today_sections};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
@@ -165,7 +165,7 @@ fn cycling_refuses_when_the_target_role_is_occupied() {
     let before = store.history().len();
 
     match content::cycle_date_role(&mut session, id, due) {
-        Err(CycleError::Refused(_)) => {}
+        Err(WriteError::Refused(_)) => {}
         other => panic!("expected a refusal, got {other:?}"),
     }
     let store = session.store();
@@ -177,7 +177,7 @@ fn cycling_refuses_when_the_target_role_is_occupied() {
     let bare = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
     assert!(matches!(
         content::cycle_date_role(&mut session, bare, due),
-        Err(CycleError::Refused(_))
+        Err(WriteError::Refused(_))
     ));
     cleanup(&path);
 }
@@ -197,7 +197,7 @@ fn cycling_refuses_on_a_multi_valued_date_row() {
     let before = store.history().len();
 
     match content::cycle_date_role(&mut session, id, due) {
-        Err(CycleError::Refused(_)) => {}
+        Err(WriteError::Refused(_)) => {}
         other => panic!("expected a refusal, got {other:?}"),
     }
     let store = session.store();

@@ -116,8 +116,8 @@ pub fn occurrences_anchored(
     series.sort_by_key(|(e, _, _, _)| e.id);
 
     let mut out = Vec::new();
-    for (entity, rule, anchor, anchor_prop) in series {
-        let exceptions = exception_dates(store, entity.id, exception_prop, anchor_prop);
+    for (entity, rule, anchor, _anchor_prop) in series {
+        let exceptions = exception_dates(store, entity.id, exception_prop, anchors);
         let mut day = if from.civil >= anchor.civil { from } else { anchor };
         while day.civil <= to.civil {
             if occurs_on(rule, anchor, day) && !exceptions.contains(&day.civil) {
@@ -148,15 +148,19 @@ fn occurs_on(rule: Rule, anchor: DateTime, day: DateTime) -> bool {
 }
 
 /// The dates an exception entity already covers: it references the series
-/// and carries its own date on the SERIES' anchor property — a real entity
-/// holding one occurrence's truth, never a detached copy. Pre-P11
-/// exceptions carry `due` and their series anchor on `due`, so they keep
+/// and carries its own dated cell on ANY of the anchor properties — a real
+/// entity holding one occurrence's truth, never a detached copy. Coverage
+/// is deliberately role-agnostic (the P11 review's high finding): keying it
+/// to the series' CURRENT anchor meant an ordinary anchor flip — a `date`
+/// cell set beside `due`, or a Space-cycle of either row — silently
+/// orphaned every exception and resurrected the occurrences they hid.
+/// Pre-P11 exceptions carry `due`, which is in the set, so they keep
 /// working verbatim (bp9 OQ-B, adopted).
 fn exception_dates(
     store: &Store,
     series: Id,
     exception_prop: Option<Id>,
-    anchor_prop: Id,
+    anchors: &[Id],
 ) -> Vec<i64> {
     let Some(exception_prop) = exception_prop else {
         return Vec::new();
@@ -165,9 +169,11 @@ fn exception_dates(
         .entities()
         .filter(|e| !e.trashed)
         .filter(|e| e.has(exception_prop, &Value::Reference(series)))
-        .filter_map(|e| match e.get(anchor_prop) {
-            Some(Value::DateTime(d)) => Some(day_of(*d).civil),
-            _ => None,
+        .flat_map(|e| {
+            anchors.iter().filter_map(move |p| match e.get(*p) {
+                Some(Value::DateTime(d)) => Some(day_of(*d).civil),
+                _ => None,
+            })
         })
         .collect()
 }

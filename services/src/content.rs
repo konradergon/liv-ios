@@ -323,17 +323,18 @@ pub fn add_status_option(
     kind: Id,
     name: &str,
     hue: Option<f64>,
-) -> Result<Id, String> {
+) -> Result<Id, WriteError> {
     let store = session.store();
-    let status = property_id(store, "status").ok_or("no status property")?;
-    let for_type =
-        property_id(store, "for-type").ok_or("no for-type property — the scoping seed first")?;
+    let status = property_id(store, "status")
+        .ok_or(WriteError::Refused("no status property".into()))?;
+    let for_type = property_id(store, "for-type")
+        .ok_or(WriteError::Refused("no for-type property — the scoping seed first".into()))?;
     let order_prop = property_id(store, "order");
     let hue_prop = property_id(store, "hue");
-    store.get(kind).ok_or(format!("no kind #{kind}"))?;
+    store.get(kind).ok_or(WriteError::Refused(format!("no kind #{kind}")))?;
     let name = name.trim();
     if name.is_empty() {
-        return Err("an option needs a name".into());
+        return Err(WriteError::Refused("an option needs a name".into()));
     }
     let next_order = crate::status_options_for(store, kind)
         .iter()
@@ -370,16 +371,18 @@ pub fn add_status_option(
     });
     session
         .commit(commands, "new status option", Author::User)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
     Ok(id)
 }
 
-/// Why a role cycle did not happen. The split matters at the FFI cache:
-/// a refusal never touched the store (the cached snapshot stays valid,
+/// Why a write did not happen. The split matters at the FFI cache: a
+/// refusal never touched the store (the cached snapshot stays valid,
 /// `Committed::Read`), while a persist failure may have poisoned the
-/// session (the entry must be evicted, `Committed::Failed`).
+/// session (the entry must be evicted, `Committed::Failed`). Every seam
+/// whose refusals are cheap pre-checks returns this, so the cache is never
+/// evicted for a mere "no" (the review's over-eviction finding).
 #[derive(Debug)]
-pub enum CycleError {
+pub enum WriteError {
     /// Refused before touching the store — the box is unchanged.
     Refused(String),
     /// The commit itself failed; the session may be poisoned.
@@ -397,38 +400,38 @@ pub enum CycleError {
 /// datetime on `from`, when `from` is not a date role, or when the target
 /// role already carries a value here (one entity's several date rows are
 /// independent; cycling never merges or clobbers a sibling, bp9 #28).
-pub fn cycle_date_role(session: &mut Session, entity: Id, from: Id) -> Result<Id, CycleError> {
+pub fn cycle_date_role(session: &mut Session, entity: Id, from: Id) -> Result<Id, WriteError> {
     const RING: [&str; 5] = ["due", "date", "valid-until", "occurred", "purchased-on"];
     let store = session.store();
     let entity = store.resolve(entity);
     let e = store
         .get(entity)
-        .ok_or(CycleError::Refused(format!("no entity #{entity}")))?;
+        .ok_or(WriteError::Refused(format!("no entity #{entity}")))?;
     let from_name = match store.get(from).and_then(|p| p.get(props::NAME)) {
         Some(Value::Text(n)) => n.clone(),
-        _ => return Err(CycleError::Refused(format!("no property #{from}"))),
+        _ => return Err(WriteError::Refused(format!("no property #{from}"))),
     };
     let position = RING
         .iter()
         .position(|n| *n == from_name)
-        .ok_or(CycleError::Refused(format!("{from_name} is not a date role")))?;
+        .ok_or(WriteError::Refused(format!("{from_name} is not a date role")))?;
     // A merge can leave several cells on one date property; the seam
     // addresses a cycle by (entity, property) only, so "which one moves"
     // would be a guess — refuse, never guess (the review's finding).
     if e.all(from).count() > 1 {
-        return Err(CycleError::Refused(format!(
+        return Err(WriteError::Refused(format!(
             "#{entity} carries several {from_name} dates — the cycle is ambiguous"
         )));
     }
     let value = match e.get(from) {
         Some(Value::DateTime(d)) => Value::DateTime(*d),
-        _ => return Err(CycleError::Refused(format!("#{entity} has no {from_name} date"))),
+        _ => return Err(WriteError::Refused(format!("#{entity} has no {from_name} date"))),
     };
     let next_name = RING[(position + 1) % RING.len()];
     let next = property_id(store, next_name)
-        .ok_or(CycleError::Refused(format!("no property named {next_name}")))?;
+        .ok_or(WriteError::Refused(format!("no property named {next_name}")))?;
     if e.get(next).is_some() {
-        return Err(CycleError::Refused(format!("#{entity} already carries {next_name}")));
+        return Err(WriteError::Refused(format!("#{entity} already carries {next_name}")));
     }
     session
         .commit(
@@ -439,7 +442,7 @@ pub fn cycle_date_role(session: &mut Session, entity: Id, from: Id) -> Result<Id
             "cycle date role",
             Author::User,
         )
-        .map_err(|e| CycleError::Persist(e.to_string()))?;
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
     Ok(next)
 }
 

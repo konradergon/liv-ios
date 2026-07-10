@@ -588,6 +588,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     };
     let dated = {
         let recurrence = property_id(store, "recurrence");
+        let mut seen = std::collections::HashSet::new();
         let mut ids: Vec<Id> = Vec::new();
         for p in &positioning {
             let mut constraints = vec![Constraint { property: *p, op: Op::Exists }];
@@ -595,12 +596,14 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                 constraints.push(Constraint { property: recurrence, op: Op::Missing });
             }
             for id in run(store, &Query { constraints, ..Query::default() }) {
-                if !ids.contains(&id) {
+                if seen.insert(id) {
                     ids.push(id);
                 }
             }
         }
-        ids.sort_by_key(|id| (positioning_date(*id), *id));
+        // Cached key: the positioning walk runs once per id, never per
+        // comparison (this is the per-refresh hot path).
+        ids.sort_by_cached_key(|id| (positioning_date(*id), *id));
         ids
     };
 
@@ -1458,7 +1461,10 @@ pub unsafe extern "C" fn lotus_add_status_option_at(
         let hue = (hue >= 0.0).then_some(hue);
         match lotus_services::content::add_status_option(session, kind_id, option_name, hue) {
             Ok(id) => (id, Committed::Wrote),
-            Err(_) => (0, Committed::Failed),
+            // A refusal never touched the store — the cache stays valid;
+            // only a real persist failure evicts (the review's finding).
+            Err(lotus_services::content::WriteError::Refused(_)) => (0, Committed::Read),
+            Err(lotus_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
         }
     })
 }
@@ -1556,10 +1562,10 @@ pub unsafe extern "C" fn lotus_cycle_date_role_at(
                     Err(_) => (std::ptr::null_mut(), Committed::Wrote),
                 }
             }
-            Err(lotus_services::content::CycleError::Refused(_)) => {
+            Err(lotus_services::content::WriteError::Refused(_)) => {
                 (std::ptr::null_mut(), Committed::Read)
             }
-            Err(lotus_services::content::CycleError::Persist(_)) => {
+            Err(lotus_services::content::WriteError::Persist(_)) => {
                 (std::ptr::null_mut(), Committed::Failed)
             }
         }
@@ -2360,6 +2366,26 @@ mod tests {
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
         unsafe { lotus_string_free(raw) };
         assert_eq!(task_offer.as_array().unwrap().len(), 3);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_refused_add_option_leaves_the_cache_verbatim() {
+        // The review's over-eviction finding: an empty name is a pure
+        // refusal — the store is untouched, so the cached snapshot must
+        // survive (Read), never be evicted into a full replay (Failed).
+        let (path, c_path) = fresh_box("lotus_ffi_addopt_refused.log");
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let task = CString::new("task").unwrap();
+        let blank = CString::new("   ").unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_add_status_option_at(c_path.as_ptr(), task.as_ptr(), blank.as_ptr(), -1.0)
+            },
+            0
+        );
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(before, after);
         cleanup(&path);
     }
 
