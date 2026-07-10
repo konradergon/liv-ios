@@ -772,6 +772,9 @@ enum Civil {
 
 extension Notification.Name {
     static let lotusFocusSearch = Notification.Name("lotus.focusSearch")
+    /// Open the palette prefilled with a query (object = the query string) —
+    /// the chip-click filter (P11.5c).
+    static let lotusSearchFor = Notification.Name("lotus.searchFor")
     static let lotusFocusCapture = Notification.Name("lotus.focusCapture")
     static let lotusNewNote = Notification.Name("lotus.newNote")
     static let lotusNewTab = Notification.Name("lotus.newTab")
@@ -813,6 +816,8 @@ struct WindowChrome: View {
     @ObservedObject private var dialogs = Dialogs.shared
     @State private var lens: Lens = .today
     @State private var query = ""
+    /// The chip-click filter waiting for the palette to open (P11.5c).
+    @State private var pendingSearch: String? = nil
     @State private var selection: UInt64?
     /// The top-right Spaces popover (the workspace tree, out of the panel).
     @State private var spacesOpen = false
@@ -929,7 +934,11 @@ struct WindowChrome: View {
             SearchPopup(
                 model: model,
                 open: { id in openEntityTab(id) },
-                dismiss: { chrome.searchOpen = false }
+                dismiss: {
+                    chrome.searchOpen = false
+                    pendingSearch = nil
+                },
+                initialQuery: pendingSearch
             )
         }
     }
@@ -1022,6 +1031,13 @@ struct WindowChrome: View {
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
                 // ⌘F: open the centered search palette.
                 if chrome.focusMode { chrome.toggleFocus() }
+                pendingSearch = nil
+                chrome.searchOpen = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusSearchFor)) { note in
+                // A chip click anywhere: the palette opens on that filter.
+                if chrome.focusMode { chrome.toggleFocus() }
+                pendingSearch = note.object as? String
                 chrome.searchOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
@@ -2122,6 +2138,10 @@ struct SearchPopup: View {
     @ObservedObject var model: BoxModel
     let open: (UInt64) -> Void
     let dismiss: () -> Void
+    /// A prefilled query — the chip-click filter lands here (P11.5c:
+    /// clicking a value chip anywhere navigates to Results with
+    /// "<property>:<value>", the existing search seam).
+    var initialQuery: String? = nil
 
     @State private var query = ""
     @State private var highlighted = 0
@@ -2214,6 +2234,7 @@ struct SearchPopup: View {
             model.search(query)
         }
         .onAppear {
+            if let initialQuery { query = initialQuery }
             fieldFocused = true
             model.search(query) // seed recent immediately, don't wait 150ms
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -2464,8 +2485,6 @@ struct TasksView: View {
     @State private var filter: TaskFilter = .open
     @FocusState private var addFocused: Bool
 
-    private let order = ["todo", "doing", "done"]
-
     enum TaskFilter: String, CaseIterable { case all = "All", open = "Open", done = "Done" }
 
     var body: some View {
@@ -2490,20 +2509,35 @@ struct TasksView: View {
                 if tasks.isEmpty {
                     emptyState
                 } else {
-                    ForEach(order, id: \.self) { status in
+                    // Sections ARE the user's vocabulary in board order
+                    // (P11.5c): the catalog's task-scoped options replace the
+                    // hardcoded todo/doing/done, and the "other" bucket
+                    // disappears — options are data.
+                    let vocabulary = statusVocabulary(model, kind: "task")
+                    let unstatused = tasks.filter { $0.status == nil }
+                        .sorted { dueKey($0) < dueKey($1) }
+                    if !unstatused.isEmpty {
+                        SectionLabel(text: "no status").padding(.top, 14)
+                        ForEach(unstatused) { taskRow($0, option: nil) }
+                    }
+                    ForEach(vocabulary) { option in
                         let group = tasks
-                            .filter { ($0.status ?? "todo") == status }
+                            .filter { $0.status == option.name }
                             .sorted { dueKey($0) < dueKey($1) }
                         if !group.isEmpty {
-                            SectionLabel(text: status).padding(.top, 14)
-                            ForEach(group) { taskRow($0) }
+                            SectionLabel(text: option.name).padding(.top, 14)
+                            ForEach(group) { taskRow($0, option: option) }
                         }
                     }
-                    // Any task carrying a status outside the seeded three.
-                    let other = tasks.filter { !order.contains($0.status ?? "todo") }
-                    if !other.isEmpty {
-                        SectionLabel(text: "other").padding(.top, 14)
-                        ForEach(other) { taskRow($0) }
+                    // A status whose option left the vocabulary still shows —
+                    // the row's own status text is the truth.
+                    let known = Set(vocabulary.map(\.name))
+                    let orphaned = tasks.filter { status in
+                        guard let s = status.status else { return false }
+                        return !known.contains(s)
+                    }
+                    if !orphaned.isEmpty {
+                        ForEach(orphaned) { taskRow($0, option: nil) }
                     }
                 }
             }
@@ -2515,16 +2549,23 @@ struct TasksView: View {
         .background(Theme.background)
     }
 
-    /// A task row whose checkbox toggles status (done ⇄ todo) and whose flag
-    /// sets priority — both through the existing set seam, no new mutation.
-    private func taskRow(_ row: EntityRow) -> some View {
-        EntityLine(
-            row: row, selected: selection == row.id,
+    /// A task row in the V2 chip-forward grammar (P11.5c): checkbox (the
+    /// same status toggle), title, priority as a neutral chip menu, ONE
+    /// anchor chip (chip-click filters), status dot, modified. Single-click
+    /// selects into the inspector; double-click opens — same data, same
+    /// gestures, new skin.
+    private func taskRow(_ row: EntityRow, option: OptionRow?) -> some View {
+        ObjectRow(
+            row: row,
+            statusOption: option,
+            selected: selection == row.id,
             toggle: taskStatusToggle(model, row),
-            accessory: AnyView(priorityFlag(row))
-        ) {
-            open(row.id)
-        }
+            trailing: AnyView(priorityFlag(row)),
+            chipTap: { filter in
+                NotificationCenter.default.post(name: .lotusSearchFor, object: filter)
+            },
+            select: { selection = row.id },
+            openRow: { open(row.id) })
     }
 
     /// The priority flag — a menu over the seeded `priority` options (never
@@ -2544,11 +2585,18 @@ struct TasksView: View {
                     Button("None") { model.unset(row.id, property: "priority") }
                 }
             } label: {
-                Image(systemName: current.isEmpty ? "flag" : "flag.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(priorityColor(current))
+                // The tier/priority slot: a NEUTRAL chip by the color budget
+                // (tier is never VALUE_HEX); empty renders the faint flag only.
+                if current.isEmpty {
+                    Image(systemName: "flag")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.secondary.opacity(0.5))
+                } else {
+                    ValueChip(text: current, hue: nil, icon: "flag")
+                }
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
             .help(current.isEmpty ? "Set priority" : "Priority: \(current)")
         }
