@@ -563,10 +563,15 @@ pub fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result
         "richtext" => Ok(Value::RichText(RichText {
             spans: vec![Span::text(raw)],
         })),
+        // Finite only: Rust's f64 parser accepts "NaN"/"inf", but a knowledge
+        // log has no use for either — and NaN's non-reflexive equality once
+        // made such a cell unremovable (the poison-pill repro).
         "number" => raw
-            .parse()
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())
             .map(Value::Number)
-            .map_err(|_| format!("not a number: {raw}")),
+            .ok_or(format!("not a number: {raw}")),
         "bool" => match raw {
             "true" | "yes" => Ok(Value::Bool(true)),
             "false" | "no" => Ok(Value::Bool(false)),

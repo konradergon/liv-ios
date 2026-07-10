@@ -203,7 +203,7 @@ impl DateTime {
 /// Equality is defined per kind — text by content, rich text by spans,
 /// files by hash, references by identifier. Removing a cell and
 /// deduplicating an import both depend on it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Text(String),
     RichText(RichText),
@@ -215,6 +215,28 @@ pub enum Value {
     /// The only relationship mechanism.
     Reference(Id),
     File(FileRef),
+}
+
+/// Hand-written so equality is REFLEXIVE for every value: the derived impl
+/// made Number(NaN) != Number(NaN), which turned a NaN cell into a poison
+/// pill — addable, but never matchable by the RemoveCell that names it.
+/// The seam refuses non-finite numbers at parse; this guards any that ever
+/// entered another way, so every cell in the log stays removable. (0.0 and
+/// -0.0 stay equal, as under the derived impl.)
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Text(a), Value::Text(b)) => a == b,
+            (Value::RichText(a), Value::RichText(b)) => a == b,
+            (Value::Number(a), Value::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::DateTime(a), Value::DateTime(b)) => a == b,
+            (Value::Select(a), Value::Select(b)) => a == b,
+            (Value::Reference(a), Value::Reference(b)) => a == b,
+            (Value::File(a), Value::File(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
