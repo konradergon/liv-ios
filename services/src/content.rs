@@ -237,7 +237,17 @@ pub fn create_task(session: &mut Session, created: DateTime) -> Result<Id, Persi
     let store = session.store();
     let task_type = find_type(store, "task");
     let status_prop = property_id(store, "status");
-    let todo = status_prop.and_then(|status| find_option(store, status, "todo"));
+    // The entry column is a cell on the TYPE (`default-status`, P11/11d) —
+    // user-editable per kind; the todo fallback keeps births byte-identical
+    // on every box that predates the scoping seed.
+    let todo = task_type
+        .and_then(|t| store.get(t))
+        .zip(property_id(store, "default-status"))
+        .and_then(|(t, p)| match t.get(p) {
+            Some(Value::Reference(option)) => Some(*option),
+            _ => None,
+        })
+        .or_else(|| status_prop.and_then(|status| find_option(store, status, "todo")));
 
     let id = session.allocate_id();
     let mut commands = vec![Command::Create { entity: id }];
@@ -299,6 +309,68 @@ pub fn create_event(
         cell: Cell { property: props::CREATED, value: Value::DateTime(created) },
     });
     session.commit(commands, "new event", Author::User)?;
+    Ok(id)
+}
+
+/// A new status option for a kind (bp6 #8 column-add, bp1 e17 "Edit
+/// vocabulary…"): ONE commit — Create + NAME + WORKING + for-type→kind +
+/// board order (max existing order for the kind + 1) + optional hue — plus
+/// the OPTIONS cell on the one `status` definition that makes it real.
+/// Rename / re-hue / re-order afterwards are ordinary `set`s on the option
+/// entity: the option IS the column. Returns the option id.
+pub fn add_status_option(
+    session: &mut Session,
+    kind: Id,
+    name: &str,
+    hue: Option<f64>,
+) -> Result<Id, String> {
+    let store = session.store();
+    let status = property_id(store, "status").ok_or("no status property")?;
+    let for_type =
+        property_id(store, "for-type").ok_or("no for-type property — the scoping seed first")?;
+    let order_prop = property_id(store, "order");
+    let hue_prop = property_id(store, "hue");
+    store.get(kind).ok_or(format!("no kind #{kind}"))?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("an option needs a name".into());
+    }
+    let next_order = crate::status_options_for(store, kind)
+        .iter()
+        .map(|o| o.order)
+        .fold(0.0_f64, f64::max)
+        + 1.0;
+    // The number seam's law holds here too: a hue is finite or absent.
+    let hue = hue.filter(|h| h.is_finite());
+
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    for cell in [
+        Cell { property: props::NAME, value: Value::text(name) },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: for_type, value: Value::Reference(kind) },
+    ] {
+        commands.push(Command::AddCell { entity: id, cell });
+    }
+    if let Some(order) = order_prop {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: order, value: Value::Number(next_order) },
+        });
+    }
+    if let (Some(hue_prop), Some(hue)) = (hue_prop, hue) {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: hue_prop, value: Value::Number(hue) },
+        });
+    }
+    commands.push(Command::AddCell {
+        entity: status,
+        cell: Cell { property: props::OPTIONS, value: Value::Reference(id) },
+    });
+    session
+        .commit(commands, "new status option", Author::User)
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 

@@ -87,6 +87,15 @@ struct CellRow {
 struct OptionRow {
     id: Id,
     name: String,
+    /// Board/picker order (P11/11d) — 0 when the option predates ordering.
+    order: f64,
+    /// The option's dot hue, 0–360, absent when unset.
+    hue: Option<f64>,
+    /// The terminal state a checkbox writes and a board folds.
+    completes: bool,
+    /// The kind names this option is offered to; empty = offered everywhere
+    /// (the pre-scoping legacy shape).
+    for_types: Vec<String>,
 }
 
 /// One property definition — the inspector's catalog: its kind, and for
@@ -422,11 +431,41 @@ fn build_properties(store: &Store) -> Vec<PropertyRow> {
                 _ => return None,
             };
             let options = if kind == "select" {
+                let order_prop = property_id(store, "order");
+                let hue_prop = property_id(store, "hue");
+                let completes_prop = property_id(store, "completes");
+                let for_type_prop = property_id(store, "for-type");
+                let number = |id: Id, p: Option<Id>| match p
+                    .and_then(|p| store.get(id).and_then(|e| e.get(p)))
+                {
+                    Some(Value::Number(n)) => Some(*n),
+                    _ => None,
+                };
                 e.all(props::OPTIONS)
                     .filter_map(|v| match v {
                         Value::Reference(id) => Some(OptionRow {
                             id: *id,
                             name: reference_name(store, *id),
+                            order: number(*id, order_prop).unwrap_or(0.0),
+                            hue: number(*id, hue_prop),
+                            completes: matches!(
+                                completes_prop
+                                    .and_then(|p| store.get(*id).and_then(|e| e.get(p))),
+                                Some(Value::Bool(true))
+                            ),
+                            for_types: for_type_prop
+                                .and_then(|p| store.get(*id).map(|e| (p, e)))
+                                .map(|(p, e)| {
+                                    e.all(p)
+                                        .filter_map(|v| match v {
+                                            Value::Reference(t) => {
+                                                Some(reference_name(store, *t))
+                                            }
+                                            _ => None,
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
                         }),
                         _ => None,
                     })
@@ -1233,6 +1272,73 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
     })
 }
 
+/// The status vocabulary OFFERED to a kind (P11/11d), sorted by board
+/// order: JSON [{id,name,order,hue,completes}]. Options with no carriers
+/// are included — an empty board column keeps its header. Null on
+/// busy/unknown kind. Free with `lotus_string_free`.
+///
+/// # Safety
+/// `path` and `kind` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_status_options_at(
+    path: *const c_char,
+    kind: *const c_char,
+) -> *mut c_char {
+    if kind.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(kind_name) = CStr::from_ptr(kind).to_str() else {
+        return std::ptr::null_mut();
+    };
+    with_box(path, std::ptr::null_mut(), |session| {
+        let Some(kind_id) = lotus_services::content::find_type(session.store(), kind_name)
+        else {
+            return (std::ptr::null_mut(), Committed::Read);
+        };
+        let options = lotus_services::status_options_for(session.store(), kind_id);
+        let out = match serde_json::to_string(&options).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Read)
+    })
+}
+
+/// A new status option for a kind (column-add / "Edit vocabulary…"): one
+/// commit, ordered last for that kind. `hue` < 0 means none. Returns the
+/// option id, or 0 on busy/refusal/failure.
+///
+/// # Safety
+/// `path`, `kind`, and `name` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_add_status_option_at(
+    path: *const c_char,
+    kind: *const c_char,
+    name: *const c_char,
+    hue: f64,
+) -> u64 {
+    if kind.is_null() || name.is_null() {
+        return 0;
+    }
+    let (Ok(kind_name), Ok(option_name)) =
+        (CStr::from_ptr(kind).to_str(), CStr::from_ptr(name).to_str())
+    else {
+        return 0;
+    };
+    with_box(path, 0, |session| {
+        let Some(kind_id) = lotus_services::content::find_type(session.store(), kind_name)
+        else {
+            // No such kind: nothing touched, the cached store stays valid.
+            return (0, Committed::Read);
+        };
+        let hue = (hue >= 0.0).then_some(hue);
+        match lotus_services::content::add_status_option(session, kind_id, option_name, hue) {
+            Ok(id) => (id, Committed::Wrote),
+            Err(_) => (0, Committed::Failed),
+        }
+    })
+}
+
 /// The packed civil as the seam's date text — "yyyy-mm-dd", with " hh:mm"
 /// when timed. The FFI's span writer formats through this and re-parses via
 /// parse_value, so the drag gestures and the inspector row are provably the
@@ -1838,6 +1944,111 @@ mod tests {
         assert_eq!(e["due_date_only"], false);
         // A non-recurring dated entity, so it rides `dated` (bucketed by day).
         assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    // ---- universal status through the seam (P11/11d) ----
+
+    #[test]
+    fn the_option_offer_seam_is_a_read() {
+        let (path, c_path) = fresh_box("lotus_ffi_offer.log");
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+
+        let task = CString::new("task").unwrap();
+        let raw = unsafe { lotus_status_options_at(c_path.as_ptr(), task.as_ptr()) };
+        assert!(!raw.is_null());
+        let offer: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        let names: Vec<&str> =
+            offer.as_array().unwrap().iter().map(|o| o["name"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["todo", "doing", "done"], "board order");
+        assert_eq!(offer[2]["completes"], true, "done completes");
+
+        // A read leaves the cached snapshot verbatim.
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(before, after);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn add_status_option_is_tagged_wrote() {
+        let (path, c_path) = fresh_box("lotus_ffi_addopt.log");
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm
+        let project = CString::new("project").unwrap();
+        let name = CString::new("active").unwrap();
+        let id = unsafe {
+            lotus_add_status_option_at(c_path.as_ptr(), project.as_ptr(), name.as_ptr(), -1.0)
+        };
+        assert_ne!(id, 0);
+
+        // The Wrote contract: the very next offer (a cache hit) carries it…
+        let raw = unsafe { lotus_status_options_at(c_path.as_ptr(), project.as_ptr()) };
+        let offer: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert!(offer.as_array().unwrap().iter().any(|o| o["name"] == "active"));
+
+        // …and the task offer is untouched (per-kind scoping).
+        let task = CString::new("task").unwrap();
+        let raw = unsafe { lotus_status_options_at(c_path.as_ptr(), task.as_ptr()) };
+        let task_offer: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(task_offer.as_array().unwrap().len(), 3);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn build_properties_option_offer_stays_backward_compatible() {
+        // The flat catalog list: no drops, no duplicates, additive fields only.
+        let (path, c_path) = fresh_box("lotus_ffi_catalog.log");
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let status = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "status")
+            .expect("the status property is in the catalog");
+        let options = status["options"].as_array().unwrap();
+        let names: Vec<&str> = options.iter().map(|o| o["name"].as_str().unwrap()).collect();
+        assert_eq!(names.len(), 3, "no drops, no duplicates");
+        for name in ["todo", "doing", "done"] {
+            assert_eq!(names.iter().filter(|n| **n == name).count(), 1);
+        }
+        assert_eq!(options[0]["order"].as_f64(), Some(1.0), "additive order field");
+        assert!(
+            options[0]["for_types"].as_array().unwrap().iter().any(|t| t == "task"),
+            "additive for_types field names the kind"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_locked_box_refuses_every_new_p11_seam() {
+        // Guard 5 across the phase's seams: a held lock means busy — never a
+        // stale answer, never a write.
+        let (path, c_path) = fresh_box("lotus_ffi_p11_locked.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm the cache
+        let guard = Session::open(&path).unwrap();
+
+        let due = CString::new("due").unwrap();
+        let task = CString::new("task").unwrap();
+        let name = CString::new("x").unwrap();
+        unsafe {
+            assert!(lotus_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()).is_null());
+            assert_eq!(
+                lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), 202607110000, 202607130000, 1),
+                0
+            );
+            assert!(lotus_status_options_at(c_path.as_ptr(), task.as_ptr()).is_null());
+            assert_eq!(
+                lotus_add_status_option_at(c_path.as_ptr(), task.as_ptr(), name.as_ptr(), -1.0),
+                0
+            );
+        }
+        drop(guard);
         cleanup(&path);
     }
 

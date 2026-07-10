@@ -111,6 +111,17 @@ char *lotus_cycle_date_role_at(const char *path, uint64_t id, const char *proper
 int32_t lotus_set_span_at(const char *path, uint64_t id, const char *property,
                           int64_t start_civil, int64_t end_civil, int32_t date_only);
 
+/* The status vocabulary OFFERED to a kind, sorted by board order: JSON
+   [{id,name,order,hue,completes}]. Options with no carriers included (an
+   empty column keeps its header). NULL on busy/unknown kind. Free with
+   lotus_string_free. */
+char *lotus_status_options_at(const char *path, const char *kind);
+
+/* A new status option for a kind (column-add / "Edit vocabulary..."): one
+   commit, ordered last. hue < 0 means none. Returns the option id, or 0. */
+uint64_t lotus_add_status_option_at(const char *path, const char *kind,
+                                    const char *name, double hue);
+
 /* Birth of a list: Create + type:list + name + created, one transaction.
    Named at birth (unlike a note). Returns the id, 0 on failure. */
 uint64_t lotus_create_list_at(const char *path, const char *name);

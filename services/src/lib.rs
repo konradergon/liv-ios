@@ -69,7 +69,185 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_lists(session)?;
     seed_event_fields(session)?;
     seed_date_roles(session)?;
-    seed_workspaces(session)
+    seed_workspaces(session)?;
+    seed_status_scoping(session)
+}
+
+/// Universal status, scoped (P11/11d — R2, with R6 recorded as: ONE `status`
+/// definition, option entities scoped by `for-type`). One additive commit,
+/// guarded on its OWN property (`for-type`), that
+/// (1) seeds `for-type` (reference — the kinds an option is offered to),
+///     `hue` (number, 0–360 — the option's dot; values are placeholders
+///     pending R3), `completes` (bool — the terminal state a checkbox
+///     writes and a board folds), and `default-status` (reference — the
+///     entry column, as a cell on the TYPE);
+/// (2) scopes the three existing options — `todo`/`doing`/`done` gain
+///     for-type→task, board order 1/2/3 (the existing `order` property),
+///     placeholder hues, and `completes` on done — additive cells on
+///     System-seeded entities, nothing removed or replaced;
+/// (3) gives the task type `default-status → todo`. No other type gets
+///     one: a new contact is born with NO status — no-default is the
+///     default, and "no status" stays always-valid.
+/// Event/contact/project vocabularies are NOT seeded: those are user
+/// vocabularies arriving via add_status_option and P12's presets.
+fn seed_status_scoping(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "for-type").is_some() {
+        return Ok(());
+    }
+    let store = session.store();
+    let status = property_id(store, "status");
+    let order = property_id(store, "order");
+    let task_type = content::find_type(store, "task");
+    let todo = status.and_then(|s| content::find_option(store, s, "todo"));
+    let doing = status.and_then(|s| content::find_option(store, s, "doing"));
+    let done = status.and_then(|s| content::find_option(store, s, "done"));
+
+    let mut commands = Vec::new();
+    let mut new_property = |session: &mut Session, commands: &mut Vec<Command>, name: &str, kind: &str| {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        id
+    };
+    let for_type = new_property(session, &mut commands, "for-type", "reference");
+    let hue = new_property(session, &mut commands, "hue", "number");
+    let completes = new_property(session, &mut commands, "completes", "bool");
+    let default_status = new_property(session, &mut commands, "default-status", "reference");
+
+    if let Some(task) = task_type {
+        // Placeholder hues (R3 re-edits them as ordinary data; no test may
+        // assert a specific number).
+        let legacy = [(todo, 1.0, 210.0), (doing, 2.0, 45.0), (done, 3.0, 145.0)];
+        for (option, position, tone) in legacy {
+            let Some(option) = option else { continue };
+            commands.push(Command::AddCell {
+                entity: option,
+                cell: Cell { property: for_type, value: Value::Reference(task) },
+            });
+            if let Some(order) = order {
+                commands.push(Command::AddCell {
+                    entity: option,
+                    cell: Cell { property: order, value: Value::Number(position) },
+                });
+            }
+            commands.push(Command::AddCell {
+                entity: option,
+                cell: Cell { property: hue, value: Value::Number(tone) },
+            });
+        }
+        if let Some(done) = done {
+            commands.push(Command::AddCell {
+                entity: done,
+                cell: Cell { property: completes, value: Value::Bool(true) },
+            });
+        }
+        if let Some(todo) = todo {
+            commands.push(Command::AddCell {
+                entity: task,
+                cell: Cell { property: default_status, value: Value::Reference(todo) },
+            });
+        }
+    }
+
+    // Universal status is the spine's claim on EVERY kind — record it as an
+    // expectation on the two starter types seeded with none. This is also
+    // what makes them findable: find_type keys on an EXPECTED cell (the P9
+    // lesson), and person/project were unfindable — which would have made
+    // their per-kind vocabularies unreachable through every seam that
+    // resolves a kind by name. Additive cells; task/event/note untouched.
+    if let Some(status) = status {
+        for name in ["person", "project"] {
+            let bare_type = session.store().entities().find_map(|e| {
+                let named = matches!(e.get(props::NAME), Some(Value::Text(n)) if n == name);
+                (named && e.get(props::VALUE_KIND).is_none() && e.get(props::EXPECTED).is_none())
+                    .then_some(e.id)
+            });
+            if let Some(t) = bare_type {
+                commands.push(Command::AddCell {
+                    entity: t,
+                    cell: Cell { property: props::EXPECTED, value: Value::Reference(status) },
+                });
+            }
+        }
+    }
+    session.commit(commands, "status scoping", Author::System)?;
+    Ok(())
+}
+
+/// One status option as a kind's board/picker sees it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct StatusOption {
+    pub id: Id,
+    pub name: String,
+    pub order: f64,
+    pub hue: Option<f64>,
+    pub completes: bool,
+}
+
+/// The status vocabulary OFFERED to a kind (bp6 #8, bp1 e17): the options
+/// the one `status` definition references, kept when a `for-type` cell
+/// names this kind — or when the option carries no `for-type` at all (the
+/// pre-scoping legacy shape: offered everywhere, never stranded). Sorted by
+/// `order` (board column order = digit order), then id. An option with zero
+/// carriers still appears — an empty board column keeps its header. A kind
+/// with no matching options offers NOTHING: vocabularies are per-kind,
+/// never inherited.
+pub fn status_options_for(store: &Store, kind: Id) -> Vec<StatusOption> {
+    let Some(status) = property_id(store, "status") else {
+        return Vec::new();
+    };
+    let Some(def) = store.get(status) else {
+        return Vec::new();
+    };
+    let for_type = property_id(store, "for-type");
+    let order_prop = property_id(store, "order");
+    let hue_prop = property_id(store, "hue");
+    let completes_prop = property_id(store, "completes");
+    let number = |e: &Entity, p: Option<Id>| match p.and_then(|p| e.get(p)) {
+        Some(Value::Number(n)) => Some(*n),
+        _ => None,
+    };
+    let mut out: Vec<StatusOption> = def
+        .all(props::OPTIONS)
+        .filter_map(|v| {
+            let Value::Reference(option) = v else { return None };
+            let e = store.get(*option)?;
+            let offered = match for_type {
+                None => true,
+                Some(ft) => e.get(ft).is_none() || e.has(ft, &Value::Reference(kind)),
+            };
+            if !offered {
+                return None;
+            }
+            let name = match e.get(props::NAME) {
+                Some(Value::Text(n)) => n.clone(),
+                _ => return None,
+            };
+            Some(StatusOption {
+                id: *option,
+                name,
+                order: number(e, order_prop).unwrap_or(0.0),
+                hue: number(e, hue_prop),
+                completes: matches!(
+                    completes_prop.and_then(|p| e.get(p)),
+                    Some(Value::Bool(true))
+                ),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        a.order
+            .partial_cmp(&b.order)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.id.cmp(&b.id))
+    });
+    out
 }
 
 /// The date ROLES of the amended spine (P11/R1, bp1 e10/e23): four datetime
