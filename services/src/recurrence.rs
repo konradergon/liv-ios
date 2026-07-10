@@ -65,14 +65,31 @@ fn parse(rule: &str) -> Option<Rule> {
     }
 }
 
-/// Every occurrence of every live series inside [from, to], exceptions
-/// already subtracted, ordered by date then series id. The window is the
-/// horizon, capped at a year.
+/// The default expansion every lens reads: anchored on the positioning set
+/// (`date` before `due`, P11/11c). Pre-P11 series carry only `due`, so the
+/// due-anchored world is bit-identical through this wrapper.
 pub fn occurrences(store: &Store, from: DateTime, to: DateTime) -> Vec<Occurrence> {
+    occurrences_anchored(store, from, to, &crate::calendar_set(store))
+}
+
+/// Every occurrence of every live series inside [from, to], exceptions
+/// already subtracted, ordered by date then series id. A series is any
+/// live, non-working entity carrying a `recurrence` rule AND a dated cell
+/// on one of `anchors` — the anchor is the FIRST anchor property present
+/// (repeat is available on ANY dated object; nothing here reads a type). A
+/// rule beside only lookup-role dates is inert by default, because lookup
+/// roles are never in the positioning set — this parameterization is the
+/// sanctioned escape hatch, not a behavior flag. A span-valued anchor
+/// anchors on its start (day_of reads the start civil). Occurrences are
+/// computed at render and stored nowhere; the window is the horizon,
+/// capped at a year.
+pub fn occurrences_anchored(
+    store: &Store,
+    from: DateTime,
+    to: DateTime,
+    anchors: &[Id],
+) -> Vec<Occurrence> {
     let Some(recurrence_prop) = property_id(store, "recurrence") else {
-        return Vec::new();
-    };
-    let Some(due_prop) = property_id(store, "due") else {
         return Vec::new();
     };
     let exception_prop = property_id(store, "exception-of");
@@ -81,7 +98,7 @@ pub fn occurrences(store: &Store, from: DateTime, to: DateTime) -> Vec<Occurrenc
     let cap = add_days(from, 366);
     let to = if day_of(to).civil > cap.civil { cap } else { day_of(to) };
 
-    let mut series: Vec<(&Entity, Rule, DateTime)> = store
+    let mut series: Vec<(&Entity, Rule, DateTime, Id)> = store
         .entities()
         .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
         .filter_map(|e| {
@@ -89,18 +106,18 @@ pub fn occurrences(store: &Store, from: DateTime, to: DateTime) -> Vec<Occurrenc
                 Value::Text(text) => parse(text)?,
                 _ => return None,
             };
-            let anchor = match e.get(due_prop)? {
-                Value::DateTime(d) => day_of(*d),
-                _ => return None,
-            };
-            Some((e, rule, anchor))
+            let (anchor_prop, anchor) = anchors.iter().find_map(|&p| match e.get(p) {
+                Some(Value::DateTime(d)) => Some((p, day_of(*d))),
+                _ => None,
+            })?;
+            Some((e, rule, anchor, anchor_prop))
         })
         .collect();
-    series.sort_by_key(|(e, _, _)| e.id);
+    series.sort_by_key(|(e, _, _, _)| e.id);
 
     let mut out = Vec::new();
-    for (entity, rule, anchor) in series {
-        let exceptions = exception_dates(store, entity.id, exception_prop, due_prop);
+    for (entity, rule, anchor, anchor_prop) in series {
+        let exceptions = exception_dates(store, entity.id, exception_prop, anchor_prop);
         let mut day = if from.civil >= anchor.civil { from } else { anchor };
         while day.civil <= to.civil {
             if occurs_on(rule, anchor, day) && !exceptions.contains(&day.civil) {
@@ -131,12 +148,15 @@ fn occurs_on(rule: Rule, anchor: DateTime, day: DateTime) -> bool {
 }
 
 /// The dates an exception entity already covers: it references the series
-/// and carries its own due — a real entity holding one occurrence's truth.
+/// and carries its own date on the SERIES' anchor property — a real entity
+/// holding one occurrence's truth, never a detached copy. Pre-P11
+/// exceptions carry `due` and their series anchor on `due`, so they keep
+/// working verbatim (bp9 OQ-B, adopted).
 fn exception_dates(
     store: &Store,
     series: Id,
     exception_prop: Option<Id>,
-    due_prop: Id,
+    anchor_prop: Id,
 ) -> Vec<i64> {
     let Some(exception_prop) = exception_prop else {
         return Vec::new();
@@ -145,7 +165,7 @@ fn exception_dates(
         .entities()
         .filter(|e| !e.trashed)
         .filter(|e| e.has(exception_prop, &Value::Reference(series)))
-        .filter_map(|e| match e.get(due_prop) {
+        .filter_map(|e| match e.get(anchor_prop) {
             Some(Value::DateTime(d)) => Some(day_of(*d).civil),
             _ => None,
         })

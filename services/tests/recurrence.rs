@@ -214,3 +214,218 @@ fn nonsense_rules_recur_never() {
 
     clean(&path);
 }
+
+// ---- P11/11c — recurrence generalized to the positioning set ----
+
+/// A series anchored on an arbitrary date property — the generalized twin
+/// of `series` (which stays due-anchored, pinning the pre-P11 world).
+fn series_on(session: &mut Session, name: &str, prop: &str, anchor: DateTime, rule: &str) -> Id {
+    let id = session.allocate_id();
+    let anchor_prop = lotus_services::property_id(session.store(), prop).unwrap();
+    let recur_prop = lotus_services::property_id(session.store(), "recurrence").unwrap();
+    session
+        .commit(
+            vec![
+                Command::Create { entity: id },
+                Command::AddCell {
+                    entity: id,
+                    cell: Cell { property: props::NAME, value: Value::text(name) },
+                },
+                Command::AddCell {
+                    entity: id,
+                    cell: Cell { property: anchor_prop, value: Value::DateTime(anchor) },
+                },
+                Command::AddCell {
+                    entity: id,
+                    cell: Cell { property: recur_prop, value: Value::text(rule) },
+                },
+            ],
+            "series",
+            Author::User,
+        )
+        .unwrap();
+    id
+}
+
+#[test]
+fn recurrence_expands_on_a_non_event_dated_entity() {
+    // Repeat is available on ANY dated object (bp1 e23): a plain note with a
+    // calendar-role `date` and a rule expands like any series — nothing in
+    // the engine reads a type.
+    let (mut session, path) = boxed("gen_note");
+    // 2026-07-07 is a Tuesday.
+    let note = series_on(&mut session, "water plants", "date", DateTime::date(2026, 7, 7), "every week");
+
+    let july = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    let dates: Vec<i64> = july.iter().map(|o| o.date.civil / 10_000).collect();
+    assert_eq!(dates, vec![20260707, 20260714, 20260721, 20260728]);
+    assert!(july.iter().all(|o| o.series == note));
+    clean(&path);
+}
+
+#[test]
+fn a_date_anchored_series_uses_the_date_not_due() {
+    // An entity carrying BOTH: `date` (a Tuesday) wins over `due` (a Friday)
+    // — the calendar role is the anchor precedence (calendar_set order).
+    let (mut session, path) = boxed("gen_precedence");
+    let id = series_on(&mut session, "both", "date", DateTime::date(2026, 7, 7), "every week");
+    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
+    session
+        .commit(
+            vec![Command::AddCell {
+                entity: id,
+                cell: Cell {
+                    property: due_prop,
+                    value: Value::DateTime(DateTime::date(2026, 7, 10)),
+                },
+            }],
+            "add a due too",
+            Author::User,
+        )
+        .unwrap();
+
+    let july = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    let dates: Vec<i64> = july.iter().filter(|o| o.series == id).map(|o| o.date.civil / 10_000).collect();
+    assert_eq!(dates, vec![20260707, 20260714, 20260721, 20260728], "Tuesdays, not Fridays");
+    clean(&path);
+}
+
+#[test]
+fn a_rule_on_a_lookup_only_entity_is_inert() {
+    // A rule beside only lookup-role dates expands NOWHERE by default — the
+    // positioning set is the anchor set. The parameterized engine is the
+    // sanctioned escape hatch, not a behavior flag.
+    let (mut session, path) = boxed("gen_inert");
+    let id = series_on(&mut session, "archived ritual", "occurred", DateTime::date(2026, 7, 7), "every week");
+
+    let july = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    assert!(july.iter().all(|o| o.series != id), "inert on the default expansion");
+
+    let occurred = lotus_services::property_id(session.store(), "occurred").unwrap();
+    let asked = lotus_services::recurrence::occurrences_anchored(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+        &[occurred],
+    );
+    assert_eq!(
+        asked.iter().filter(|o| o.series == id).count(),
+        4,
+        "explicitly asked, it expands"
+    );
+    clean(&path);
+}
+
+#[test]
+fn an_exception_on_a_date_anchored_series_suppresses_exactly_one_date() {
+    // The exception stays an ordinary entity; it covers the date of its own
+    // cell on the SERIES' anchor property (bp9 OQ-B, adopted).
+    let (mut session, path) = boxed("gen_exception");
+    let ritual = series_on(&mut session, "ritual", "date", DateTime::date(2026, 7, 7), "every week");
+    let exception = session.allocate_id();
+    let date_prop = lotus_services::property_id(session.store(), "date").unwrap();
+    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    session
+        .commit(
+            vec![
+                Command::Create { entity: exception },
+                Command::AddCell {
+                    entity: exception,
+                    cell: Cell { property: exc_prop, value: Value::Reference(ritual) },
+                },
+                Command::AddCell {
+                    entity: exception,
+                    cell: Cell {
+                        property: date_prop,
+                        value: Value::DateTime(DateTime::date(2026, 7, 14)),
+                    },
+                },
+            ],
+            "move one",
+            Author::User,
+        )
+        .unwrap();
+
+    let july = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    let dates: Vec<i64> =
+        july.iter().filter(|o| o.series == ritual).map(|o| o.date.civil / 10_000).collect();
+    assert_eq!(dates, vec![20260707, 20260721, 20260728]);
+    clean(&path);
+}
+
+#[test]
+fn occurrences_stay_virtual_for_any_anchor() {
+    let (mut session, path) = boxed("gen_virtual");
+    series_on(&mut session, "virtual", "date", DateTime::date(2026, 7, 7), "every week");
+    let stored = session.store().history().len();
+    let _ = occurrences(
+        session.store(),
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+    );
+    assert_eq!(session.store().history().len(), stored, "nothing lands in the log");
+    clean(&path);
+}
+
+#[test]
+fn the_year_horizon_cap_holds_regardless_of_anchor() {
+    let (mut session, path) = boxed("gen_horizon");
+    series_on(&mut session, "daily", "date", DateTime::date(2026, 1, 1), "every day");
+    let expanded = occurrences(
+        session.store(),
+        DateTime::date(2026, 1, 1),
+        DateTime::date(2029, 1, 1),
+    );
+    assert!(expanded.len() <= 367, "got {}", expanded.len());
+    clean(&path);
+}
+
+#[test]
+fn a_due_anchored_series_is_unchanged_by_generalization() {
+    // The explicit same-output pin: the default expansion IS the anchored
+    // expansion over the positioning set, and pre-P11 (due-only) series come
+    // out bit-identical.
+    let (mut session, path) = boxed("gen_pin");
+    series(&mut session, "standup", DateTime::date(2026, 7, 7), "every week");
+    let store = session.store();
+    let default = occurrences(store, DateTime::date(2026, 7, 1), DateTime::date(2026, 7, 31));
+    let anchored = lotus_services::recurrence::occurrences_anchored(
+        store,
+        DateTime::date(2026, 7, 1),
+        DateTime::date(2026, 7, 31),
+        &lotus_services::calendar_set(store),
+    );
+    assert_eq!(default, anchored);
+    assert_eq!(default.len(), 4);
+    clean(&path);
+}
+
+#[test]
+fn a_date_anchored_series_occurring_today_joins_today() {
+    // §4.3, pinned as deliberate: a birthday (a date-anchored series)
+    // appears in Today on its day — the calendar-lens behavior bp1 e21
+    // describes. No pre-P11 data changes appearance (no `date` cells exist).
+    let (mut session, path) = boxed("gen_today");
+    let birthday = series_on(&mut session, "birthday", "date", DateTime::date(2026, 7, 7), "every week");
+    let sections = today_sections(session.store(), DateTime::date(2026, 7, 14));
+    assert!(sections.due.contains(&birthday), "the occurrence day joins Today");
+    let off = today_sections(session.store(), DateTime::date(2026, 7, 15));
+    assert!(!off.due.contains(&birthday), "an off day does not");
+    clean(&path);
+}
