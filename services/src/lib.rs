@@ -68,7 +68,51 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_priority(session)?;
     seed_lists(session)?;
     seed_event_fields(session)?;
+    seed_date_roles(session)?;
     seed_workspaces(session)
+}
+
+/// The date ROLES of the amended spine (P11/R1, bp1 e10/e23): four datetime
+/// properties beside `due` — `date` is the calendar role (positions on the
+/// calendar, with `due`); `valid-until`, `occurred`, `purchased-on` are
+/// lookup roles (filterable facts, never appointments — bp9 #15). A role is
+/// a property, not a value attribute: zero migration, and Space-cycling a
+/// role is one transaction moving the value between properties. Own guard
+/// (`occurred`), NOT the starter-library `due` guard which short-circuits on
+/// every shipped box — an older box gains all four on open. Offered, never
+/// EXPECTED: no type's expectations change ("a date is just a row").
+fn seed_date_roles(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "occurred").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    for name in ["date", "valid-until", "occurred", "purchased-on"] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text("datetime") },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+    }
+    session.commit(commands, "date roles", Author::System)?;
+    Ok(())
+}
+
+/// The properties that POSITION an entity on the calendar: {date, due}.
+/// Lookup roles (valid-until / occurred / purchased-on) are never in this
+/// set — that absence IS bp9 #15's off-calendar rule. Resolved by name at
+/// read (the seed law: no code keys on ids). One function, one place: the
+/// snapshot's `dated` union and the recurrence anchor both read it, so
+/// "what renders" and "what anchors a series" can never drift apart. Order
+/// matters: `date` before `due` is the anchor and display precedence for
+/// rows carrying both. The per-view configurable set (feature-map #24
+/// `dateField`) is deferred to the P14 calendar re-base; this function is
+/// where that config will be consulted when it exists.
+pub fn calendar_set(store: &Store) -> Vec<Id> {
+    ["date", "due"].iter().filter_map(|n| property_id(store, n)).collect()
 }
 
 /// Event fields the calendar offers: `location` (text) and `attendees` (a

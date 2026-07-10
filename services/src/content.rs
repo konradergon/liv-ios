@@ -302,6 +302,67 @@ pub fn create_event(
     Ok(id)
 }
 
+/// Why a role cycle did not happen. The split matters at the FFI cache:
+/// a refusal never touched the store (the cached snapshot stays valid,
+/// `Committed::Read`), while a persist failure may have poisoned the
+/// session (the entry must be evicted, `Committed::Failed`).
+#[derive(Debug)]
+pub enum CycleError {
+    /// Refused before touching the store — the box is unchanged.
+    Refused(String),
+    /// The commit itself failed; the session may be poisoned.
+    Persist(String),
+}
+
+/// Space-cycles a date row's role (bp1 e10, bp6 #25, bp9 #17): ONE
+/// transaction moving the value — civil and the date_only bit intact — from
+/// `from` to the next role in the closed ring
+/// due → date → valid-until → occurred → purchased-on → due.
+/// RemoveCell + AddCell, one commit, one undo. Switching a calendar-role
+/// date to a lookup role "pulls it off the calendar without losing the
+/// dates" purely because the lens reads `calendar_set`. Returns the new
+/// property. Refused — without touching the store — when the entity has no
+/// datetime on `from`, when `from` is not a date role, or when the target
+/// role already carries a value here (one entity's several date rows are
+/// independent; cycling never merges or clobbers a sibling, bp9 #28).
+pub fn cycle_date_role(session: &mut Session, entity: Id, from: Id) -> Result<Id, CycleError> {
+    const RING: [&str; 5] = ["due", "date", "valid-until", "occurred", "purchased-on"];
+    let store = session.store();
+    let entity = store.resolve(entity);
+    let e = store
+        .get(entity)
+        .ok_or(CycleError::Refused(format!("no entity #{entity}")))?;
+    let from_name = match store.get(from).and_then(|p| p.get(props::NAME)) {
+        Some(Value::Text(n)) => n.clone(),
+        _ => return Err(CycleError::Refused(format!("no property #{from}"))),
+    };
+    let position = RING
+        .iter()
+        .position(|n| *n == from_name)
+        .ok_or(CycleError::Refused(format!("{from_name} is not a date role")))?;
+    let value = match e.get(from) {
+        Some(Value::DateTime(d)) => Value::DateTime(*d),
+        _ => return Err(CycleError::Refused(format!("#{entity} has no {from_name} date"))),
+    };
+    let next_name = RING[(position + 1) % RING.len()];
+    let next = property_id(store, next_name)
+        .ok_or(CycleError::Refused(format!("no property named {next_name}")))?;
+    if e.get(next).is_some() {
+        return Err(CycleError::Refused(format!("#{entity} already carries {next_name}")));
+    }
+    session
+        .commit(
+            vec![
+                Command::RemoveCell { entity, cell: Cell { property: from, value: value.clone() } },
+                Command::AddCell { entity, cell: Cell { property: next, value } },
+            ],
+            "cycle date role",
+            Author::User,
+        )
+        .map_err(|e| CycleError::Persist(e.to_string()))?;
+    Ok(next)
+}
+
 /// Birth of a list: Create + type=list + name + created, one transaction.
 /// Named at birth (a list is named before you add to it, unlike a note).
 /// Members are added later, one AddCell(related, Reference) each.

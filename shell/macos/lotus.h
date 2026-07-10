@@ -98,6 +98,12 @@ uint64_t lotus_create_task_at(const char *path);
    + created. Returns the id, 0 on failure. Distinct from capture. */
 uint64_t lotus_create_event_at(const char *path, int64_t due_civil, int32_t date_only);
 
+/* Space-cycles a date row's role: one transaction moving the value (civil +
+   date_only intact) from `property` to the next role in the ring
+   due -> date -> valid-until -> occurred -> purchased-on -> due. Returns the
+   NEW property name (free with lotus_string_free), NULL on busy/refusal. */
+char *lotus_cycle_date_role_at(const char *path, uint64_t id, const char *property);
+
 /* Birth of a list: Create + type:list + name + created, one transaction.
    Named at birth (unlike a note). Returns the id, 0 on failure. */
 uint64_t lotus_create_list_at(const char *path, const char *name);

@@ -1225,6 +1225,54 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
     })
 }
 
+/// Space-cycles a date row's role (P11/11a): one transaction moving the
+/// value — civil + date_only intact — from `property` to the next role in
+/// the ring due → date → valid-until → occurred → purchased-on → due.
+/// Returns the NEW property name (malloc'd — free with `lotus_string_free`),
+/// or NULL on busy/refusal. A refusal never touched the store, so the cached
+/// snapshot stays valid (`Read`); only a real write re-sweeps (`Wrote`).
+///
+/// # Safety
+/// `path` and `property` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_cycle_date_role_at(
+    path: *const c_char,
+    id: u64,
+    property: *const c_char,
+) -> *mut c_char {
+    if property.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(prop_name) = CStr::from_ptr(property).to_str() else {
+        return std::ptr::null_mut();
+    };
+    with_box(path, std::ptr::null_mut(), |session| {
+        let Some(prop) = property_id(session.store(), prop_name) else {
+            return (std::ptr::null_mut(), Committed::Read);
+        };
+        match lotus_services::content::cycle_date_role(session, id, prop) {
+            Ok(next) => {
+                let name = match session.store().get(next).and_then(|p| p.get(props::NAME)) {
+                    Some(Value::Text(n)) => n.clone(),
+                    _ => String::new(),
+                };
+                match CString::new(name) {
+                    Ok(s) => (s.into_raw(), Committed::Wrote),
+                    // The write landed even if the name can't cross the C
+                    // boundary — the cache must still see it.
+                    Err(_) => (std::ptr::null_mut(), Committed::Wrote),
+                }
+            }
+            Err(lotus_services::content::CycleError::Refused(_)) => {
+                (std::ptr::null_mut(), Committed::Read)
+            }
+            Err(lotus_services::content::CycleError::Persist(_)) => {
+                (std::ptr::null_mut(), Committed::Failed)
+            }
+        }
+    })
+}
+
 /// Create an event by hand (the "+ Event" button, or double-click a day/hour).
 /// One transaction: type=event + due (from `due_civil`, all-day when
 /// `date_only` != 0) + created. Returns the new id, or 0 (busy box / failure).
@@ -1726,6 +1774,64 @@ mod tests {
         assert_eq!(e["due_date_only"], false);
         // A non-recurring dated entity, so it rides `dated` (bucketed by day).
         assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    // ---- role cycling through the cache (P11/11a) ----
+
+    #[test]
+    fn role_cycle_round_trips_through_the_cache() {
+        let (path, c_path) = fresh_box("lotus_ffi_cycle.log");
+        let id = unsafe {
+            lotus_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 11, 9, 0).civil, 0)
+        };
+        assert_ne!(id, 0);
+        // Warm the cache, then cycle due -> date on the HIT path.
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+        let due = CString::new("due").unwrap();
+        let raw = unsafe { lotus_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()) };
+        assert!(!raw.is_null(), "the cycle succeeds");
+        let next = unsafe { CStr::from_ptr(raw).to_str().unwrap().to_string() };
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(next, "date", "due cycles to date");
+
+        // The Wrote contract: the very next snapshot (a cache hit) sees it.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let cells = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap()["cells"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(cells.iter().any(|c| c["property"] == "date"), "the date cell is there");
+        assert!(!cells.iter().any(|c| c["property"] == "due"), "the due cell is gone");
+
+        // And a from-scratch replay agrees — the cache never diverges.
+        clear_cache_for_tests();
+        let full = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(snap, full);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_refused_cycle_is_tagged_read_and_leaves_the_cache_verbatim() {
+        let (path, c_path) = fresh_box("lotus_ffi_cycle_refused.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        assert_ne!(id, 0);
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+
+        // No due cell on the note: the cycle is refused, nothing written.
+        let due = CString::new("due").unwrap();
+        let raw = unsafe { lotus_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()) };
+        assert!(raw.is_null(), "the cycle is refused");
+
+        // The refusal never touched the store: the next snapshot — still the
+        // cached one — is identical.
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(before, after);
         cleanup(&path);
     }
 
