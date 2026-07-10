@@ -70,7 +70,44 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_event_fields(session)?;
     seed_date_roles(session)?;
     seed_workspaces(session)?;
-    seed_status_scoping(session)
+    seed_status_scoping(session)?;
+    seed_display_attributes(session)
+}
+
+/// The V3 inspector's substrate (P11/11e, bp1 e8/e14/e20/e26 + D11/D21):
+/// five display attributes, each a cell ON a property-definition entity —
+/// definitions are entities, so this is ordinary data, no core change.
+/// `icon` (glyph token) · `digit-key` (the shortcut, one global map — R2
+/// owns assignments) · `hide-on-kind` (reference: types where the row is
+/// hidden) · `hide-when-empty` (bool: the resting panel stays short) ·
+/// `core-on-kind` (reference: types where the row sits in the core card
+/// instead of MORE). P11 seeds the DEFINITIONS only — no icon/digit values;
+/// the starter value table is P11.5's call with R2, and it is data, not
+/// schema. Own additive guard; an older box gains all five on open.
+fn seed_display_attributes(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "hide-when-empty").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    for (name, kind) in [
+        ("icon", "text"),
+        ("digit-key", "text"),
+        ("hide-on-kind", "reference"),
+        ("hide-when-empty", "bool"),
+        ("core-on-kind", "reference"),
+    ] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+    }
+    session.commit(commands, "display attributes", Author::System)?;
+    Ok(())
 }
 
 /// Universal status, scoped (P11/11d — R2, with R6 recorded as: ONE `status`

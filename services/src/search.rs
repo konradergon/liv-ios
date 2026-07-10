@@ -261,6 +261,59 @@ pub fn facet_properties(store: &Store, sq: &SearchQuery) -> Vec<Id> {
     out
 }
 
+/// How many live entities carry at least one cell of each user property —
+/// the "on 12 objects" count in the add-property picker (bp1 e13) and the
+/// property table. Every user definition appears, zeros included (the
+/// picker still offers an unused property); working entities and the trash
+/// are excluded, the query laws. Deterministic: sorted by definition id.
+pub fn usage_counts(store: &Store) -> Vec<(Id, usize)> {
+    let mut counts: Vec<(Id, usize)> = store
+        .entities()
+        .filter(|e| {
+            e.id >= props::FIRST_USER_ID
+                && !e.trashed
+                && matches!(e.get(props::VALUE_KIND), Some(Value::Text(_)))
+        })
+        .map(|e| (e.id, 0))
+        .collect();
+    counts.sort_by_key(|(id, _)| *id);
+    for e in store
+        .entities()
+        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+    {
+        for (definition, count) in counts.iter_mut() {
+            if e.all(*definition).next().is_some() {
+                *count += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// The distinct values of a property across the live set, each with its
+/// carrier count, deterministically ordered (count desc, then display) —
+/// layer 1 of the value pool (bp1 e9: "values in this vault, with usage
+/// counts") and the status picker's per-option counts. The facet-internal
+/// candidate walk, promoted and counted — never a parallel engine.
+pub fn distinct_values(store: &Store, property: Id) -> Vec<(Value, usize)> {
+    let mut out: Vec<(Value, usize)> = Vec::new();
+    for e in store
+        .entities()
+        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+    {
+        for value in e.all(property) {
+            match out.iter_mut().find(|(seen, _)| seen == value) {
+                Some((_, count)) => *count += 1,
+                None => out.push((value.clone(), 1)),
+            }
+        }
+    }
+    out.sort_by(|(va, ca), (vb, cb)| {
+        cb.cmp(ca).then_with(|| display(store, va).cmp(&display(store, vb)))
+    });
+    out
+}
+
 /// The distinct values of a property across a query's result — the candidate
 /// universe for a facet, so values absent from the current result never show.
 fn candidate_values(store: &Store, base: &Query, property: Id) -> Vec<Value> {

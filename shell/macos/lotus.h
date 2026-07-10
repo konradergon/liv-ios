@@ -122,6 +122,11 @@ char *lotus_status_options_at(const char *path, const char *kind);
 uint64_t lotus_add_status_option_at(const char *path, const char *kind,
                                     const char *name, double hue);
 
+/* Layer 1 of the value pool: a property's distinct live values with usage
+   counts, JSON [{value, count}], deterministic order (count desc, then
+   display). NULL on busy/unknown property. Free with lotus_string_free. */
+char *lotus_distinct_values_at(const char *path, const char *property);
+
 /* Birth of a list: Create + type:list + name + created, one transaction.
    Named at birth (unlike a note). Returns the id, 0 on failure. */
 uint64_t lotus_create_list_at(const char *path, const char *name);

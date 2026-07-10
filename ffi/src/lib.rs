@@ -106,6 +106,20 @@ struct PropertyRow {
     name: String,
     kind: String,
     options: Vec<OptionRow>,
+    /// Live-carrier count (P11/11e) — the picker's "on 12 objects".
+    usage: usize,
+    /// Display attributes, absent when unset (P11.5 reads them; Swift's
+    /// decoder ignores unknown keys until then).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    digit_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hide_when_empty: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hide_on_kinds: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    core_on_kinds: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -421,6 +435,28 @@ fn cell_target(value: &Value) -> Option<Id> {
 /// offering `working` would let an edit silently hide the entity from
 /// every view.
 fn build_properties(store: &Store) -> Vec<PropertyRow> {
+    let usage: std::collections::HashMap<Id, usize> =
+        lotus_services::search::usage_counts(store).into_iter().collect();
+    let icon_prop = property_id(store, "icon");
+    let digit_prop = property_id(store, "digit-key");
+    let hide_empty_prop = property_id(store, "hide-when-empty");
+    let hide_on_prop = property_id(store, "hide-on-kind");
+    let core_on_prop = property_id(store, "core-on-kind");
+    let text_of = |e: &Entity, p: Option<Id>| match p.and_then(|p| e.get(p)) {
+        Some(Value::Text(t)) => Some(t.clone()),
+        _ => None,
+    };
+    let kinds_of = |e: &Entity, p: Option<Id>| -> Vec<String> {
+        p.map(|p| {
+            e.all(p)
+                .filter_map(|v| match v {
+                    Value::Reference(t) => Some(reference_name(store, *t)),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    };
     let mut rows: Vec<PropertyRow> = store
         .entities()
         .filter(|e| !e.trashed && e.id >= props::FIRST_USER_ID)
@@ -473,7 +509,21 @@ fn build_properties(store: &Store) -> Vec<PropertyRow> {
             } else {
                 Vec::new()
             };
-            Some(PropertyRow { id: e.id, name, kind, options })
+            Some(PropertyRow {
+                id: e.id,
+                name,
+                kind,
+                options,
+                usage: usage.get(&e.id).copied().unwrap_or(0),
+                icon: text_of(e, icon_prop),
+                digit_key: text_of(e, digit_prop),
+                hide_when_empty: match hide_empty_prop.and_then(|p| e.get(p)) {
+                    Some(Value::Bool(b)) => Some(*b),
+                    _ => None,
+                },
+                hide_on_kinds: kinds_of(e, hide_on_prop),
+                core_on_kinds: kinds_of(e, core_on_prop),
+            })
         })
         .collect();
     rows.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1272,6 +1322,47 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
     })
 }
 
+/// Layer ① of the value pool (P11/11e): a property's distinct live values
+/// with usage counts, JSON [{value, count}] in deterministic order (count
+/// desc, then display). Values render through views::display, so a span
+/// reads "start -> end" and a select reads its option's name. Null on
+/// busy/unknown property. Free with `lotus_string_free`.
+///
+/// # Safety
+/// `path` and `property` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_distinct_values_at(
+    path: *const c_char,
+    property: *const c_char,
+) -> *mut c_char {
+    if property.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(prop_name) = CStr::from_ptr(property).to_str() else {
+        return std::ptr::null_mut();
+    };
+    with_box(path, std::ptr::null_mut(), |session| {
+        let store = session.store();
+        let Some(prop) = property_id(store, prop_name) else {
+            return (std::ptr::null_mut(), Committed::Read);
+        };
+        let rows: Vec<serde_json::Value> = lotus_services::search::distinct_values(store, prop)
+            .into_iter()
+            .map(|(value, count)| {
+                serde_json::json!({
+                    "value": lotus_views::display(store, &value),
+                    "count": count,
+                })
+            })
+            .collect();
+        let out = match serde_json::to_string(&rows).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Read)
+    })
+}
+
 /// The status vocabulary OFFERED to a kind (P11/11d), sorted by board
 /// order: JSON [{id,name,order,hue,completes}]. Options with no carriers
 /// are included — an empty board column keeps its header. Null on
@@ -1944,6 +2035,72 @@ mod tests {
         assert_eq!(e["due_date_only"], false);
         // A non-recurring dated entity, so it rides `dated` (bucketed by day).
         assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    // ---- display attributes + the value pool (P11/11e) ----
+
+    #[test]
+    fn distinct_values_is_a_read() {
+        let (path, c_path) = fresh_box("lotus_ffi_distinct.log");
+        let a = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        let _b = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        let _c = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        let status = CString::new("status").unwrap();
+        let done = CString::new("done").unwrap();
+        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), a, status.as_ptr(), done.as_ptr()) }, 1);
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+
+        let raw = unsafe { lotus_distinct_values_at(c_path.as_ptr(), status.as_ptr()) };
+        assert!(!raw.is_null());
+        let pool: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        let rows = pool.as_array().unwrap();
+        assert_eq!(rows.len(), 2, "todo and done");
+        assert_eq!(rows[0]["value"], "todo", "count desc: two todos outrank one done");
+        assert_eq!(rows[0]["count"], 2);
+        assert_eq!(rows[1]["value"], "done");
+
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(before, after, "a read leaves the cached snapshot verbatim");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn the_catalog_carries_usage_and_attributes() {
+        let (path, c_path) = fresh_box("lotus_ffi_attrs.log");
+        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let due = CString::new("due").unwrap();
+        let when = CString::new("2026-07-11").unwrap();
+        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), a, due.as_ptr(), when.as_ptr()) }, 1);
+
+        // Set an icon ON the due definition through the ordinary seam.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let due_row = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "due")
+            .unwrap();
+        let due_id = due_row["id"].as_u64().unwrap();
+        assert_eq!(due_row["usage"].as_u64(), Some(1), "one live carrier");
+        assert!(due_row.get("icon").is_none(), "unset attributes stay absent");
+
+        let icon = CString::new("icon").unwrap();
+        let glyph = CString::new("i-flag").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), due_id, icon.as_ptr(), glyph.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let due_row = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "due")
+            .unwrap();
+        assert_eq!(due_row["icon"], "i-flag", "the attribute rides the catalog");
         cleanup(&path);
     }
 
