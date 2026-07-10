@@ -340,6 +340,14 @@ pub fn cycle_date_role(session: &mut Session, entity: Id, from: Id) -> Result<Id
         .iter()
         .position(|n| *n == from_name)
         .ok_or(CycleError::Refused(format!("{from_name} is not a date role")))?;
+    // A merge can leave several cells on one date property; the seam
+    // addresses a cycle by (entity, property) only, so "which one moves"
+    // would be a guess — refuse, never guess (the review's finding).
+    if e.all(from).count() > 1 {
+        return Err(CycleError::Refused(format!(
+            "#{entity} carries several {from_name} dates — the cycle is ambiguous"
+        )));
+    }
     let value = match e.get(from) {
         Some(Value::DateTime(d)) => Value::DateTime(*d),
         _ => return Err(CycleError::Refused(format!("#{entity} has no {from_name} date"))),

@@ -16,11 +16,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{Author, Command, Proposal, Transaction};
 use crate::store::{Store, StoreError};
-use crate::value::Id;
+use crate::value::{Id, Value};
 
-/// The log format version. It goes in the header on day one; one integer
-/// buys every future migration.
-pub const LOG_VERSION: u32 = 1;
+/// The newest log format this build understands — and refuses beyond
+/// (`UnsupportedVersion`). v2: DateTime values may carry a span `end` (P11).
+pub const LOG_VERSION: u32 = 2;
+
+/// What a fresh box is born as: the OLDEST format its content needs, so an
+/// older binary keeps working with any box until a newer-format value
+/// actually lands in it.
+const CREATED_VERSION: u32 = 1;
+
+/// The format a span requires. The first span to touch disk bumps the
+/// header here IN PLACE (same byte length), so an older binary refuses the
+/// box cleanly instead of silently dropping ends on read — whose end-less
+/// RemoveCell would make the log unreplayable for every span-aware build.
+const SPAN_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct Header {
@@ -105,6 +116,12 @@ pub struct Session {
     store: Store,
     log: FileLog,
     healthy: bool,
+    /// The log's own path — kept for the in-place header bump, which needs
+    /// a second, non-append handle (an O_APPEND handle cannot write at 0).
+    log_path: std::path::PathBuf,
+    /// The version the header carries right now. Bumped in place the first
+    /// time a value needing a newer format is appended (the version fence).
+    header_version: u32,
     /// Refusals live beside the log: `<log>.declined`, one JSON line per
     /// refusal. A refusal is user intent and must survive a restart —
     /// nothing asks again.
@@ -153,14 +170,17 @@ impl Session {
         file.read_to_end(&mut bytes)?;
 
         let fresh = bytes.is_empty();
-        let (transactions, good_len) = if fresh {
-            (Vec::new(), 0)
+        let (transactions, good_len, header_version) = if fresh {
+            (Vec::new(), 0, CREATED_VERSION)
         } else {
             parse(&bytes)?
         };
 
         if fresh {
-            let header = serde_json::to_string(&Header { lotus_log: LOG_VERSION })
+            // Born at the OLDEST format its (empty) content needs — older
+            // binaries keep working until a newer-format value lands and
+            // bumps the header (persist_last).
+            let header = serde_json::to_string(&Header { lotus_log: CREATED_VERSION })
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             file.write_all(header.as_bytes())?;
             file.write_all(b"\n")?;
@@ -235,6 +255,8 @@ impl Session {
             store,
             log: FileLog { file },
             healthy: true,
+            log_path: path.to_path_buf(),
+            header_version,
             declined_path,
             pending_path,
         })
@@ -274,7 +296,7 @@ impl Session {
     /// already-locked log handle — the FFI cache's fast path, when the log
     /// length proves nothing was appended since the store was cached. No read,
     /// no replay: the store IS the log's consequence, and it is already in hand.
-    pub fn from_cached(store: Store, file: File, path: &Path) -> Session {
+    pub fn from_cached(store: Store, file: File, path: &Path, header_version: u32) -> Session {
         let mut declined = path.as_os_str().to_owned();
         declined.push(".declined");
         let mut pending = path.as_os_str().to_owned();
@@ -283,9 +305,18 @@ impl Session {
             store,
             log: FileLog { file },
             healthy: true,
+            log_path: path.to_path_buf(),
+            header_version,
             declined_path: std::path::PathBuf::from(declined),
             pending_path: std::path::PathBuf::from(pending),
         }
+    }
+
+    /// The version the log's header carries right now — the FFI cache stores
+    /// it beside the store, so a cached session knows whether the fence has
+    /// already been raised.
+    pub fn header_version(&self) -> u32 {
+        self.header_version
     }
 
     /// Consume the session, returning its materialized store for the cache to
@@ -400,6 +431,27 @@ impl Session {
     /// session is poisoned: memory is one transaction ahead of disk, and we
     /// refuse further writes rather than append onto the gap.
     fn persist_last(&mut self) -> Result<(), PersistError> {
+        // The version fence: the FIRST span to touch disk bumps the header
+        // in place, BEFORE the span lands — a crash between the two writes
+        // leaves a v2 header on a span-free log, which is harmless. An older
+        // binary then refuses the box cleanly instead of silently dropping
+        // ends (whose end-less RemoveCell would brick the log for every
+        // span-aware build — the review's live repro).
+        let needs_fence = self.header_version < SPAN_VERSION
+            && self
+                .store
+                .history()
+                .last()
+                .map(tx_carries_span)
+                .unwrap_or(false);
+        if needs_fence {
+            if let Err(e) = self.upgrade_header(SPAN_VERSION) {
+                // The store already applied the write; disk refused the
+                // fence. Fail-stop exactly like a failed append.
+                self.healthy = false;
+                return Err(e);
+            }
+        }
         let tx = self
             .store
             .history()
@@ -411,13 +463,49 @@ impl Session {
         }
         Ok(())
     }
+
+    /// Rewrite the version header in place — same byte length by
+    /// construction (single-digit versions), one small synced write through
+    /// a second non-append handle (an O_APPEND handle cannot write at 0).
+    fn upgrade_header(&mut self, to: u32) -> Result<(), PersistError> {
+        use std::io::{Seek as _, SeekFrom};
+        let old = serde_json::to_string(&Header { lotus_log: self.header_version })
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let new = serde_json::to_string(&Header { lotus_log: to })
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if old.len() != new.len() {
+            return Err(PersistError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "header versions must rewrite length-stable",
+            )));
+        }
+        let mut file = OpenOptions::new().write(true).open(&self.log_path)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(new.as_bytes())?;
+        file.flush()?;
+        file.sync_all()?;
+        self.header_version = to;
+        Ok(())
+    }
+}
+
+/// Does this transaction carry any span-valued cell (a DateTime with an
+/// `end`)? Checked at the ONE append choke point, so commit, undo, redo,
+/// accept, and merge are all fenced uniformly.
+fn tx_carries_span(tx: &Transaction) -> bool {
+    tx.commands.iter().any(|c| match c {
+        Command::AddCell { cell, .. } | Command::RemoveCell { cell, .. } => {
+            matches!(&cell.value, Value::DateTime(d) if d.end.is_some())
+        }
+        _ => false,
+    })
 }
 
 /// Parse the header and every complete transaction line, returning the
-/// transactions and the byte length of the good prefix. A final line without
-/// a trailing newline is treated as a torn append and dropped; a complete but
-/// unparseable line is corruption.
-fn parse(bytes: &[u8]) -> Result<(Vec<Transaction>, u64), PersistError> {
+/// transactions, the byte length of the good prefix, and the header's
+/// version. A final line without a trailing newline is treated as a torn
+/// append and dropped; a complete but unparseable line is corruption.
+fn parse(bytes: &[u8]) -> Result<(Vec<Transaction>, u64, u32), PersistError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| PersistError::Corrupt("log is not valid utf-8".into()))?;
 
@@ -460,5 +548,5 @@ fn parse(bytes: &[u8]) -> Result<(Vec<Transaction>, u64), PersistError> {
             }
         }
     }
-    Ok((transactions, good_len))
+    Ok((transactions, good_len, header.lotus_log))
 }

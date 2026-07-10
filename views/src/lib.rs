@@ -129,13 +129,23 @@ pub fn display(store: &Store, value: &Value) -> String {
         Value::Number(n) => format!("{n}"),
         Value::Bool(b) => if *b { "yes" } else { "no" }.to_string(),
         Value::DateTime(dt) => {
-            let (ymd, hm) = (dt.civil / 10_000, dt.civil % 10_000);
-            let (y, m, d) = (ymd / 10_000, (ymd / 100) % 100, ymd % 100);
-            if dt.date_only {
-                // No invented 00:00.
-                format!("{y:04}-{m:02}-{d:02}")
-            } else {
-                format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", hm / 100, hm % 100)
+            let one = |civil: i64| {
+                let (ymd, hm) = (civil / 10_000, civil % 10_000);
+                let (y, m, d) = (ymd / 10_000, (ymd / 100) % 100, ymd % 100);
+                if dt.date_only {
+                    // No invented 00:00.
+                    format!("{y:04}-{m:02}-{d:02}")
+                } else {
+                    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", hm / 100, hm % 100)
+                }
+            };
+            match dt.end {
+                None => one(dt.civil),
+                // The span names its end in EXACTLY the parseable form —
+                // display and parse are one grammar, so a text write-back
+                // (the inspector's field row) is a lossless no-op, never a
+                // silent end-destroyer (the review's finding).
+                Some(end) => format!("{} -> {}", one(dt.civil), one(end)),
             }
         }
         Value::Select(id) | Value::Reference(id) => reference(store, *id),

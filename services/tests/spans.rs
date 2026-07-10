@@ -90,6 +90,35 @@ fn span_editing_is_one_command_one_undo() {
 }
 
 #[test]
+fn a_span_matches_at_most_queries_by_its_start() {
+    // The review's live repro: ordering must project onto the START — a trip
+    // "13th → 15th" is due at-or-before the 13th exactly like its plain twin.
+    let (path, mut session) = fresh("atmost");
+    let plain = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    content::set_property(&mut session, plain, "due", "2026-07-13").unwrap();
+    let span = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    content::set_property(&mut session, span, "due", "2026-07-13 -> 2026-07-15").unwrap();
+
+    let q = lotus_services::search::parse(session.store(), "due<2026-07-13");
+    let hits = lotus_services::search::search(session.store(), &q, 200, |_| String::new());
+    assert!(hits.iter().any(|h| h.id == plain), "the plain boundary date matches");
+    assert!(hits.iter().any(|h| h.id == span), "the span starting on the boundary matches too");
+    cleanup(&path);
+}
+
+#[test]
+fn a_timed_span_still_joins_today() {
+    // Same root cause at the Today boundary: a span leaving late tonight is
+    // still due today.
+    let (path, mut session) = fresh("today");
+    let id = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    content::set_property(&mut session, id, "due", "2026-07-10 23:59 -> 2026-07-11 09:00").unwrap();
+    let sections = lotus_services::today_sections(session.store(), DateTime::date(2026, 7, 10));
+    assert!(sections.due.contains(&id), "the span's start keeps it in Today");
+    cleanup(&path);
+}
+
+#[test]
 fn cycling_a_span_keeps_its_end() {
     // §2.3 meets §3: the role moves, the whole value — end included — rides.
     let (path, mut session) = fresh("cycle");

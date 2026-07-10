@@ -202,6 +202,10 @@ struct Cached {
     /// The log's inode — a same-length file REPLACEMENT at the same path is
     /// caught here (Guard 3).
     inode: u64,
+    /// The header version the log carries — a cached session must know
+    /// whether the span fence (v2) is already raised, or a second span write
+    /// would try to raise it again.
+    header_version: u32,
 }
 
 static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
@@ -277,7 +281,10 @@ unsafe fn open_box(raw_path: *const c_char) -> Option<(Session, PathBuf)> {
         });
         if fresh {
             let hit = map.remove(&key).unwrap();
-            return Some((Session::from_cached(hit.store, file, path), key));
+            return Some((
+                Session::from_cached(hit.store, file, path, hit.header_version),
+                key,
+            ));
         }
     }
 
@@ -337,6 +344,7 @@ fn cache_store(key: PathBuf, session: Session) {
         inode: meta.ino(),
         declined_len,
         pending_len,
+        header_version: session.header_version(),
         store: session.into_store(), // consumes the session -> drops the lock
     };
     cache().lock().unwrap().insert(key, entry);
@@ -1883,6 +1891,111 @@ mod tests {
         );
         let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_span_displays_as_its_own_parseable_text() {
+        // The mirror contract's read side (the review's finding: display
+        // never learned spans, so a text write-back silently destroyed the
+        // end). The snapshot's cell text IS the parseable span form — writing
+        // it back through the ordinary set seam is a lossless no-op.
+        let (path, c_path) = fresh_box("lotus_ffi_span_display.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let due = CString::new("due").unwrap();
+        let start = DateTime::date(2026, 7, 11).civil;
+        let end = DateTime::date(2026, 7, 13).civil;
+        assert_eq!(
+            unsafe { lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), start, end, 1) },
+            1
+        );
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let text = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap()["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["property"] == "due")
+            .unwrap()["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(text, "2026-07-11 -> 2026-07-13", "the span names its end");
+
+        // Round-trip: the displayed text re-parses to the identical value.
+        let raw = CString::new(text).unwrap();
+        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), id, due.as_ptr(), raw.as_ptr()) }, 1);
+        clear_cache_for_tests();
+        let session = Session::open(&path).unwrap();
+        let due_prop = property_id(session.store(), "due").unwrap();
+        match session.store().get(id).unwrap().get(due_prop) {
+            Some(Value::DateTime(d)) => {
+                assert_eq!(d.civil, start);
+                assert_eq!(d.end, Some(end), "the write-back kept the end");
+            }
+            other => panic!("expected the span, got {other:?}"),
+        }
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_lookup_role_only_entity_stays_off_dated() {
+        // The design's real positioning assertion (the review flagged the
+        // services-level version as vacuous): an entity whose only date is a
+        // lookup role carries the cell, yet never enters the snapshot's
+        // `dated` — the calendar surface.
+        let (path, c_path) = fresh_box("lotus_ffi_lookup.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let occurred = CString::new("occurred").unwrap();
+        let when = CString::new("2026-07-09").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), id, occurred.as_ptr(), when.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["entities"].as_array().unwrap().iter().find(|e| e["id"] == id).unwrap();
+        assert!(
+            row["cells"].as_array().unwrap().iter().any(|c| c["property"] == "occurred"),
+            "the occurred cell is really there (not a vacuous pass)"
+        );
+        assert!(
+            !snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)),
+            "a lookup-only entity never positions on the calendar"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_second_span_write_rides_the_bumped_header() {
+        // The version fence through the CACHE: the first span bumps the
+        // header to 2; the cached session must carry that fact, so the
+        // second span write doesn't try to bump again (and the box reopens).
+        let (path, c_path) = fresh_box("lotus_ffi_span_ver.log");
+        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let b = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let due = CString::new("due").unwrap();
+        let date = CString::new("date").unwrap();
+        let s1 = DateTime::date(2026, 7, 11).civil;
+        let e1 = DateTime::date(2026, 7, 13).civil;
+        assert_eq!(unsafe { lotus_set_span_at(c_path.as_ptr(), a, due.as_ptr(), s1, e1, 1) }, 1);
+        assert_eq!(unsafe { lotus_set_span_at(c_path.as_ptr(), b, date.as_ptr(), s1, e1, 1) }, 1);
+
+        let header = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        assert_eq!(header, r#"{"lotus_log":2}"#);
+        clear_cache_for_tests();
+        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        assert!(!raw.is_null(), "the bumped box reopens from scratch");
+        unsafe { lotus_string_free(raw) };
         cleanup(&path);
     }
 

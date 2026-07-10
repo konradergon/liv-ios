@@ -59,6 +59,10 @@ fn log_roundtrips_state() {
 
 #[test]
 fn header_carries_version() {
+    // A fresh box is BORN at v1 — the oldest format its (empty) content
+    // needs, so older binaries keep working with it — while this build
+    // understands up to LOG_VERSION. The header bumps in place only when a
+    // newer-format value (a span, v2) actually lands: core/tests/versioning.rs.
     let path = temp_path("header");
     {
         Session::open(&path).unwrap();
@@ -66,7 +70,7 @@ fn header_carries_version() {
     let content = std::fs::read_to_string(&path).unwrap();
     let first = content.lines().next().unwrap();
     assert_eq!(first, r#"{"lotus_log":1}"#);
-    assert_eq!(LOG_VERSION, 1);
+    assert_eq!(LOG_VERSION, 2);
     let _ = std::fs::remove_file(&path);
 }
 

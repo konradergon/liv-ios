@@ -650,7 +650,14 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
         (Value::RichText(x), Value::RichText(y)) => plain(x).cmp(&plain(y)),
         (Value::Number(x), Value::Number(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
-        (Value::DateTime(x), Value::DateTime(y)) => x.cmp(y),
+        // A span ORDERS by its start — a trip "13th → 15th" is due at-or-
+        // before the 13th exactly like its plain twin, and Today's AtMost
+        // boundary must agree (the review's live repro). The `end` field
+        // stays out of ordering entirely; per-kind *equality* still tells a
+        // span from its start-only twin, which is RemoveCell's concern.
+        (Value::DateTime(x), Value::DateTime(y)) => {
+            (x.civil, x.date_only).cmp(&(y.civil, y.date_only))
+        }
         (Value::Select(x), Value::Select(y)) => x.cmp(y),
         (Value::Reference(x), Value::Reference(y)) => x.cmp(y),
         (Value::File(x), Value::File(y)) => x.path.cmp(&y.path),

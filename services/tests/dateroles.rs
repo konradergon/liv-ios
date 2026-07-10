@@ -80,7 +80,10 @@ fn a_lookup_role_date_is_filter_only_never_positioned() {
     let id = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
     content::set_property(&mut session, id, "occurred", "2026-07-09").unwrap();
 
-    // Never positioned: not in Today's due section on its own date…
+    // Not in Today's due section on its own date. (Today reads `due` by
+    // construction, so alone this would be vacuous — the real positioning
+    // pin, absence from the snapshot's `dated`, lives at the FFI:
+    // a_lookup_role_only_entity_stays_off_dated.)
     let sections = today_sections(session.store(), DateTime::date(2026, 7, 9));
     assert!(!sections.due.contains(&id), "occurred never positions an entity");
 
@@ -176,5 +179,29 @@ fn cycling_refuses_when_the_target_role_is_occupied() {
         content::cycle_date_role(&mut session, bare, due),
         Err(CycleError::Refused(_))
     ));
+    cleanup(&path);
+}
+
+#[test]
+fn cycling_refuses_on_a_multi_valued_date_row() {
+    // A merge can leave two cells on one date property. The FFI addresses a
+    // cycle by (entity, property) only, so "which of the two moves" would be
+    // ambiguous — refuse, never guess (the review's finding).
+    let (path, mut session) = fresh("multicell");
+    let id = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    content::add_cell(&mut session, id, "due", "2026-07-11").unwrap();
+    content::add_cell(&mut session, id, "due", "2026-07-12").unwrap();
+    let store = session.store();
+    let due = property_id(store, "due").unwrap();
+    assert_eq!(store.get(id).unwrap().all(due).count(), 2, "two due cells");
+    let before = store.history().len();
+
+    match content::cycle_date_role(&mut session, id, due) {
+        Err(CycleError::Refused(_)) => {}
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    let store = session.store();
+    assert_eq!(store.history().len(), before, "the store is untouched");
+    assert_eq!(store.get(id).unwrap().all(due).count(), 2, "both cells survive");
     cleanup(&path);
 }
