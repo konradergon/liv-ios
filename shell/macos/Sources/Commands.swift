@@ -41,6 +41,9 @@ struct Hotkey {
         case "ArrowDown": return event.keyCode == 125
         case "ArrowUp": return event.keyCode == 126
         case "Escape": return event.keyCode == 53
+        case "Return": return event.keyCode == 36
+        // Function keys type private-use glyphs, so they match by code.
+        case "F2": return event.keyCode == 120
         // Punctuation matches by key code: charactersIgnoringModifiers
         // applies Shift, so ⌘⇧` would read "~" and never match a
         // character comparison. (Same philosophy as Liv matching digits
@@ -71,6 +74,10 @@ struct Hotkey {
         case "ArrowRight": out += "→"
         case "ArrowUp": out += "↑"
         case "ArrowDown": out += "↓"
+        case "Return": out += "⏎"
+        case "Escape": out += "⎋"
+        case " ": out += "Space"
+        case "F2": out += "F2"
         default: out += key.uppercased()
         }
         return out
