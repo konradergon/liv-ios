@@ -744,3 +744,117 @@ struct AddPropertyPopover: View {
         }
     }
 }
+
+// MARK: - the row menu (badge 26, entry 700)
+
+/// Opened by ⋯, H, or right-click. Property definitions are entities and
+/// PropertyRow.id IS the definition's entity id, so the writes are the
+/// ordinary seams. Two items wait for the schema pass: "Change type"
+/// (vault-wide re-parse story) and "Hide on <kind>" — hide-on-kind is a
+/// REFERENCE cell to the kind entity, whose id the snapshot doesn't
+/// carry (the same gap that defers the type editor; recorded delta).
+struct RowMenuPopover: View {
+    @ObservedObject var model: BoxModel
+    let entity: EntityRow
+    let spec: InspectorRowSpec
+    var onDone: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PopCap(text: "property · \(spec.property.name)")
+            PopRow(selected: false, action: { editName() }) {
+                AnyView(
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil").font(.system(size: 10))
+                        Text("Edit name").font(.system(size: 12))
+                        Spacer(minLength: 6)
+                        Text("vault-wide").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                    })
+            }
+            deferredRow(
+                icon: "textformat", label: "Change type",
+                detail: "\(spec.property.kind) ▸",
+                help: "Deferred to the schema pass — a kind change forces a vault-wide re-parse story.")
+            Divider().padding(.vertical, 2)
+            deferredRow(
+                icon: "eye.slash", label: "Hide on \(entity.kinds.first ?? "kind")",
+                detail: "per kind",
+                help: "Waits for the kind-resolution seam (hide-on-kind references the kind entity).")
+            PopRow(selected: false, action: { toggleHideWhenEmpty() }) {
+                AnyView(
+                    HStack(spacing: 8) {
+                        Image(
+                            systemName: spec.property.hidesWhenEmpty
+                                ? "checkmark.square" : "square"
+                        )
+                        .font(.system(size: 10))
+                        Text("Hide when empty").font(.system(size: 12))
+                        Spacer(minLength: 6)
+                        Text("vault-wide").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                    })
+            }
+            if !spec.isEmpty {
+                Divider().padding(.vertical, 2)
+                PopRow(selected: false, action: { removeFromObject() }) {
+                    AnyView(
+                        HStack(spacing: 8) {
+                            Image(systemName: "trash").font(.system(size: 10))
+                            Text("Remove from this object").font(.system(size: 12))
+                            Spacer(minLength: 6)
+                            Text("this object").font(.system(size: 10)).opacity(0.7)
+                        }
+                        .foregroundColor(Theme.destructive))
+                }
+            }
+            PopHint(text: "H or right-click on any row · Obsidian parity is the floor")
+        }
+        .frame(width: 250)
+        .padding(.bottom, 2)
+        .onKeyPress(.escape) {
+            onDone()
+            return .handled
+        }
+    }
+
+    private func deferredRow(
+        icon: String, label: String, detail: String, help: String
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).font(.system(size: 10))
+            Text(label).font(.system(size: 12))
+            Spacer(minLength: 6)
+            Text(detail).font(.system(size: 10))
+        }
+        .foregroundColor(Theme.mutedFg.opacity(0.55))
+        .padding(.horizontal, 10)
+        .frame(minHeight: 26)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(help)
+    }
+
+    private func editName() {
+        onDone()
+        Dialogs.shared.prompt(
+            "Rename property",
+            message: "One property, vault-wide — every object using it follows.",
+            initial: spec.property.name, confirmLabel: "Rename"
+        ) { name in
+            guard let name = name?.trimmingCharacters(in: .whitespaces).lowercased(),
+                !name.isEmpty, name != spec.property.name
+            else { return }
+            model.set(spec.property.id, property: "name", value: name)
+        }
+    }
+
+    private func toggleHideWhenEmpty() {
+        model.set(
+            spec.property.id, property: "hide-when-empty",
+            value: spec.property.hidesWhenEmpty ? "false" : "true")
+        onDone()
+    }
+
+    private func removeFromObject() {
+        model.unset(entity.id, property: spec.property.name)
+        onDone()
+    }
+}

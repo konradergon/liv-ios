@@ -25,6 +25,8 @@ extension Notification.Name {
     /// mounted pane acts on it (the calendar never coexists with the
     /// global pane — Window.swift's surface gate).
     static let lotusInspectorKey = Notification.Name("lotus.inspector.key")
+    /// Open an entity in a (background) tab — CONNECTIONS' Ctrl/⌘-click.
+    static let lotusOpenEntity = Notification.Name("lotus.openEntity")
 }
 
 /// Ordinary CommandDefs in the one registry (§2.3), registered once.
@@ -124,6 +126,9 @@ struct InspectorPane: View {
     @State private var hoveringPane = false
     /// A hidden row a digit materialized (§2.5.3) — shown in MORE while set.
     @State private var materialized: UInt64? = nil
+    /// The row whose ⋯ menu is up (⋯ click, H, or right-click).
+    @State private var menuRow: UInt64? = nil
+    @State private var backlinksOpen = false
     /// The trash undo affordance (badge 3: NO confirm dialog).
     @State private var undoOffer: String? = nil
     @State private var undoGeneration = 0
@@ -151,7 +156,12 @@ struct InspectorPane: View {
         .onAppear { InspectorCommands.register() }
         .onDisappear { blur() }
         .onChange(of: selection) { blur() }
-        .onChange(of: editingRow) { InspectorFocus.shared.editorOpen = editingRow != nil }
+        .onChange(of: editingRow) {
+            InspectorFocus.shared.editorOpen = editingRow != nil || menuRow != nil
+        }
+        .onChange(of: menuRow) {
+            InspectorFocus.shared.editorOpen = editingRow != nil || menuRow != nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: .lotusInspectorKey)) { note in
             guard let key = note.object as? String else { return }
             handle(key)
@@ -212,6 +222,7 @@ struct InspectorPane: View {
             .padding(.top, 5)
         }
         moreSection(placement, entity: entity, hints: hints)
+        connectionsSection(entity)
         if entity.cells.contains(where: { $0.property == "content" }) {
             HistorySection(model: model, id: entity.id)
                 .padding(.horizontal, 13)
@@ -261,6 +272,9 @@ struct InspectorPane: View {
             editorPresented: Binding(
                 get: { editingRow == spec.id && isPopover },
                 set: { if !$0 && editingRow == spec.id { editingRow = nil } }),
+            menuPresented: Binding(
+                get: { menuRow == spec.id },
+                set: { if !$0 && menuRow == spec.id { menuRow = nil } }),
             hints: hints, inMore: inMore,
             onFocus: { focusedRow = spec.id },
             onBeginEdit: { beginEdit(spec) },
@@ -363,6 +377,120 @@ struct InspectorPane: View {
         }
     }
 
+    // MARK: CONNECTIONS (§2.7) — derived, three strata minus one
+
+    /// Stratum 1: this entity's own reference cells (deliberate relations;
+    /// `type` classifies, so it stays out). Stratum 2: the snapshot's
+    /// reverse-reference index, collapsible. Stratum 3 (body wikilinks)
+    /// is deferred with hover-peek. Click navigates the inspector;
+    /// Ctrl/⌘-click opens a background tab.
+    @ViewBuilder
+    private func connectionsSection(_ entity: EntityRow) -> some View {
+        let relations = entity.cells.filter {
+            $0.kind == "reference" && $0.refTarget != nil && $0.property != "type"
+        }
+        let backlinks = model.backlinks(of: entity.id)
+        InspectorSect(title: "Connections · \(relations.count + backlinks.count)")
+            .padding(.top, 4)
+            .overlay(Divider(), alignment: .top)
+        if relations.isEmpty && backlinks.isEmpty {
+            // Badge 31: empty is a valid resting state — the quiet dashed
+            // box names the two ways in, no illustration.
+            Text(
+                "Nothing links here yet.\nRelate an object via its ⋯ menu, or type [[\(entity.title.isEmpty ? "Untitled" : entity.title)]] in any note."
+            )
+            .font(.system(size: 11.5))
+            .foregroundColor(Theme.mutedFg)
+            .multilineTextAlignment(.center)
+            .lineSpacing(3)
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        Color(nsColor: .separatorColor),
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            .padding(.init(top: 6, leading: 13, bottom: 12, trailing: 13))
+        } else {
+            ForEach(relations, id: \.self) { cell in
+                if let target = cell.refTarget, let row = model.entity(target) {
+                    connectionRow(
+                        icon: "link", title: row.title.isEmpty ? "Untitled" : row.title,
+                        detail: "\(cell.property) · \(row.kinds.first ?? "object")",
+                        target: target)
+                }
+            }
+            if !backlinks.isEmpty {
+                Button {
+                    withAnimation(Theme.springFast) { backlinksOpen.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: backlinksOpen ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Backlinks · \(backlinks.count)").font(.system(size: 12))
+                        Spacer(minLength: 6)
+                        if !backlinksOpen {
+                            Text(backlinkPreview(backlinks))
+                                .font(.system(size: 10.5))
+                                .foregroundColor(Theme.mutedFg)
+                                .lineLimit(1)
+                        }
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 13)
+                    .frame(minHeight: 28)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if backlinksOpen {
+                    ForEach(backlinks) { source in
+                        connectionRow(
+                            icon: "arrow.turn.up.left",
+                            title: source.title.isEmpty ? "Untitled" : source.title,
+                            detail: source.kinds.first ?? "object",
+                            target: source.id)
+                        .padding(.leading, 10)
+                    }
+                }
+            }
+            Spacer(minLength: 8).frame(height: 8)
+        }
+    }
+
+    private func backlinkPreview(_ rows: [EntityRow]) -> String {
+        let names = rows.prefix(2).map { $0.title.isEmpty ? "Untitled" : $0.title }
+        let extra = rows.count - names.count
+        return names.joined(separator: ", ") + (extra > 0 ? ", +\(extra)" : "")
+    }
+
+    private func connectionRow(
+        icon: String, title: String, detail: String, target: UInt64
+    ) -> some View {
+        Button {
+            let flags = NSApp.currentEvent?.modifierFlags ?? []
+            if flags.contains(.command) || flags.contains(.control) {
+                NotificationCenter.default.post(name: .lotusOpenEntity, object: target)
+            } else {
+                selection = target
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 10))
+                Text(title).font(.system(size: 12)).lineLimit(1)
+                Spacer(minLength: 6)
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.mutedFg)
+            }
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 13)
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open · ⌘-click for a background tab")
+    }
+
     /// A read-only system row (created/edited in the blueprint's MORE) —
     /// no kbd, no menu, never editable.
     private func systemRow(icon: String, name: String, value: String) -> some View {
@@ -407,7 +535,12 @@ struct InspectorPane: View {
         case "N":
             focusedRow = Self.newRowId
             editingRow = Self.newRowId
-        case "H": NSSound.beep()  // the row menu ships in 11.5h
+        case "H":
+            if let focused = focusedRow, focused != Self.newRowId {
+                menuRow = focused
+            } else {
+                NSSound.beep()
+            }
         case "F2": renamePrompt(entity)
         case "Return":
             if focusedRow == Self.newRowId {
@@ -441,6 +574,7 @@ struct InspectorPane: View {
 
     private func blur() {
         editingRow = nil
+        menuRow = nil
         focusedRow = nil
         materialized = nil
         if scopePushed {
@@ -801,6 +935,8 @@ struct PropertyRowView: View {
     let editing: Bool
     /// The anchored editor (11.5g): pane-owned presentation state.
     var editorPresented: Binding<Bool>
+    /// The ⋯ row menu (11.5h): pane-owned so H can open it too.
+    var menuPresented: Binding<Bool>
     let hints: Bool
     let inMore: Bool
     var onFocus: () -> Void
@@ -846,6 +982,18 @@ struct PropertyRowView: View {
         .onHover { hovering = $0 }
         .popover(isPresented: editorPresented, arrowEdge: .leading) {
             popoverEditor
+        }
+        .popover(isPresented: menuPresented, arrowEdge: .leading) {
+            RowMenuPopover(
+                model: model, entity: entity, spec: spec,
+                onDone: { menuPresented.wrappedValue = false })
+        }
+        // Right-click = the same menu (entry 700's third doorway).
+        .contextMenu {
+            Button("Property menu…") {
+                onFocus()
+                menuPresented.wrappedValue = true
+            }
         }
     }
 
@@ -1120,27 +1268,20 @@ struct PropertyRowView: View {
     /// The ⋯ cell: opacity 0 at rest, fades on hover. In the static slice
     /// it carries the one per-object action; the display-attribute items
     /// arrive with 11.5h.
-    @ViewBuilder
     private var rowMenu: some View {
-        if !spec.isEmpty {
-            Menu {
-                Button("Remove from this object", role: .destructive) {
-                    model.unset(entity.id, property: spec.property.name)
-                }
-            } label: {
-                Text("⋯")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(Theme.mutedFg)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .opacity(hovering ? 1 : 0)
-        } else {
-            Color.clear.frame(width: 16, height: 16)
+        Button {
+            onFocus()
+            menuPresented.wrappedValue = true
+        } label: {
+            Text("⋯")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .opacity(hovering ? 1 : 0)
+        .help("Row menu (H)")
     }
 }
 

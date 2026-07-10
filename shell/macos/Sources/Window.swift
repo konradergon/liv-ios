@@ -1063,6 +1063,10 @@ struct WindowChrome: View {
                 pendingSearch = note.object as? String
                 chrome.searchOpen = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenEntity)) { note in
+                // CONNECTIONS' Ctrl/⌘-click: the entity opens in a tab.
+                if let id = note.object as? UInt64 { openEntityTab(id) }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
                 closeEditor()
                 chrome.surface = .notes
