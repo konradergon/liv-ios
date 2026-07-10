@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use lotus_core::{props, Author, DateTime, Entity, Id, Session, Store, Value};
-use lotus_services::{clerk, files, property_id, run, search, Constraint, Op, Query, Sort};
+use lotus_services::{clerk, files, property_id, run, search, Constraint, Op, Query};
 
 /// Capture one scrap into the box at `path`, creating and seeding the box
 /// if it is fresh. Returns the new entity's id, or 0 on failure — 0 is
@@ -127,7 +127,19 @@ struct EntityRow {
     id: Id,
     title: String,
     kinds: Vec<String>,
+    /// The POSITIONING date (P11/11f): the first calendar-set property with
+    /// a DateTime cell — `date` before `due`, the same one order that
+    /// anchors recurrence, so what renders and what anchors never drift.
     due: Option<i64>,
+    /// The positioning cell's span end (P11/11f, additive — the P14 span
+    /// bar reads it). Absent for a plain date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    due_end: Option<i64>,
+    /// The positioning property's name ("due"/"date"), absent when undated
+    /// (additive — the P14 grid draws the task checkbox on `due` rows
+    /// without re-deriving).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    positioned_by: Option<String>,
     due_date_only: bool,
     status: Option<String>,
     created: Option<i64>,
@@ -550,7 +562,6 @@ fn build_snapshot(store: &Store) -> Snapshot {
 /// the recurrence engine's expansion — follows `[from, to]`, which the engine
 /// caps at a year. Same `Snapshot` shape, a caller-chosen horizon.
 fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snapshot {
-    let due_prop = property_id(store, "due");
     let status_prop = property_id(store, "status");
     let bookmarked_prop = property_id(store, "bookmarked");
     let archived_prop = property_id(store, "archived");
@@ -560,24 +571,37 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     let sections = lotus_services::today_sections(store, civil_today());
     let (today, unstructured) = (sections.due, sections.unstructured);
 
-    // The calendar's plain dates: everything with a due that is not a
-    // recurring series — those arrive as occurrences instead.
-    let dated = match due_prop {
-        None => Vec::new(),
-        Some(due) => {
-            let mut constraints = vec![Constraint { property: due, op: Op::Exists }];
-            if let Some(recurrence) = property_id(store, "recurrence") {
+    // The calendar's plain dates (P11/11f): everything with a cell on ANY
+    // positioning property that is not a recurring series — those arrive as
+    // occurrences instead. Per-role queries, merged, deduped, sorted by
+    // positioning date then id. Lookup-role-only entities stay out
+    // structurally — their absence from the set IS the off-calendar rule.
+    let positioning = lotus_services::calendar_set(store);
+    let positioning_date = |id: Id| -> i64 {
+        positioning
+            .iter()
+            .find_map(|p| match store.get(id).and_then(|e| e.get(*p)) {
+                Some(Value::DateTime(d)) => Some(d.civil),
+                _ => None,
+            })
+            .unwrap_or(0)
+    };
+    let dated = {
+        let recurrence = property_id(store, "recurrence");
+        let mut ids: Vec<Id> = Vec::new();
+        for p in &positioning {
+            let mut constraints = vec![Constraint { property: *p, op: Op::Exists }];
+            if let Some(recurrence) = recurrence {
                 constraints.push(Constraint { property: recurrence, op: Op::Missing });
             }
-            run(
-                store,
-                &Query {
-                    constraints,
-                    sort: Some(Sort { property: due, descending: false }),
-                    ..Query::default()
-                },
-            )
+            for id in run(store, &Query { constraints, ..Query::default() }) {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
         }
+        ids.sort_by_key(|id| (positioning_date(*id), *id));
+        ids
     };
 
     // The caller's window is the horizon the calendar asks for.
@@ -590,12 +614,19 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .iter()
         .filter_map(|id| store.get(*id))
         .map(|entity| {
-            let (due, due_date_only) = due_prop
-                .and_then(|p| match entity.get(p) {
-                    Some(Value::DateTime(d)) => Some((Some(d.civil), d.date_only)),
-                    _ => None,
-                })
-                .unwrap_or((None, false));
+            // The positioning date: the FIRST calendar-set property with a
+            // DateTime cell (`date` before `due` — the design's §2.2 order;
+            // §7.3's due-first wording contradicted it and lost: ONE order
+            // rules both the recurrence anchor and the rendered row, or the
+            // calendar bucket and the occurrence day drift apart).
+            let positioned = positioning.iter().find_map(|p| match entity.get(*p) {
+                Some(Value::DateTime(d)) => Some((*d, reference_name(store, *p))),
+                _ => None,
+            });
+            let (due, due_date_only, due_end, positioned_by) = match positioned {
+                Some((d, name)) => (Some(d.civil), d.date_only, d.end, Some(name)),
+                None => (None, false, None, None),
+            };
             EntityRow {
                 id: entity.id,
                 title: lotus_views::summary(store, entity),
@@ -607,6 +638,8 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                     })
                     .collect(),
                 due,
+                due_end,
+                positioned_by,
                 due_date_only,
                 status: status_prop.and_then(|p| {
                     entity.get(p).map(|v| lotus_views::display(store, v))
@@ -2035,6 +2068,180 @@ mod tests {
         assert_eq!(e["due_date_only"], false);
         // A non-recurring dated entity, so it rides `dated` (bucketed by day).
         assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    // ---- the snapshot re-base (P11/11f — the phase's visible effect) ----
+
+    /// A recurring series anchored on an arbitrary date property, written
+    /// directly as the CLI would.
+    fn seed_series_on(path: &std::path::Path, prop: &str, anchor: DateTime, rule: &str) {
+        let mut session = Session::open(path).unwrap();
+        lotus_services::seed_if_fresh(&mut session).unwrap();
+        let id = session.allocate_id();
+        let anchor_prop = property_id(session.store(), prop).unwrap();
+        let recur = property_id(session.store(), "recurrence").unwrap();
+        session
+            .commit(
+                vec![
+                    Command::Create { entity: id },
+                    Command::AddCell {
+                        entity: id,
+                        cell: Cell { property: anchor_prop, value: Value::DateTime(anchor) },
+                    },
+                    Command::AddCell {
+                        entity: id,
+                        cell: Cell { property: recur, value: Value::text(rule) },
+                    },
+                ],
+                "series",
+                Author::User,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_due_only_box_positions_by_due() {
+        // The compat pin: on a box with no calendar-role cells, every dated
+        // row positions by `due` with no span end — the shipped world,
+        // byte-identical modulo the additive fields.
+        let (path, c_path) = fresh_box("lotus_ffi_rebase_compat.log");
+        let id = unsafe {
+            lotus_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 11, 9, 0).civil, 0)
+        };
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        assert_eq!(row["positioned_by"], "due");
+        assert!(row.get("due_end").is_none(), "a plain date carries no end");
+        assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_calendar_role_date_enters_dated_and_fills_due() {
+        // The re-base itself: an entity carrying only a calendar-role `date`
+        // fills the very field the shipped CalendarView already buckets by.
+        let (path, c_path) = fresh_box("lotus_ffi_rebase_date.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let date = CString::new("date").unwrap();
+        let when = CString::new("2026-07-12").unwrap();
+        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), id, date.as_ptr(), when.as_ptr()) }, 1);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        assert_eq!(row["due"].as_i64(), Some(DateTime::date(2026, 7, 12).civil));
+        assert_eq!(row["due_date_only"], true);
+        assert_eq!(row["positioned_by"], "date");
+        assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn an_entity_with_both_date_and_due_positions_once_by_set_precedence() {
+        // ONE order rules both the recurrence anchor and the rendered row
+        // (design §2.2: date before due) — and the union never doubles a row.
+        let (path, c_path) = fresh_box("lotus_ffi_rebase_both.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let due = CString::new("due").unwrap();
+        let date = CString::new("date").unwrap();
+        let friday = CString::new("2026-07-10").unwrap();
+        let tuesday = CString::new("2026-07-07").unwrap();
+        unsafe {
+            assert_eq!(lotus_set_at(c_path.as_ptr(), id, due.as_ptr(), friday.as_ptr()), 1);
+            assert_eq!(lotus_set_at(c_path.as_ptr(), id, date.as_ptr(), tuesday.as_ptr()), 1);
+        }
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let appearances = snap["dated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d.as_u64() == Some(id))
+            .count();
+        assert_eq!(appearances, 1, "the union dedupes");
+        let row = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        assert_eq!(row["positioned_by"], "date", "the set precedence");
+        assert_eq!(row["due"].as_i64(), Some(DateTime::date(2026, 7, 7).civil));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_span_fills_due_end_and_a_plain_date_leaves_it_absent() {
+        let (path, c_path) = fresh_box("lotus_ffi_rebase_span.log");
+        let spanned = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let plain = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let due = CString::new("due").unwrap();
+        let start = DateTime::date(2026, 7, 11).civil;
+        let end = DateTime::date(2026, 7, 13).civil;
+        unsafe {
+            assert_eq!(lotus_set_span_at(c_path.as_ptr(), spanned, due.as_ptr(), start, end, 1), 1);
+            assert_eq!(lotus_set_span_at(c_path.as_ptr(), plain, due.as_ptr(), start, 0, 1), 1);
+        }
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let rows = snap["entities"].as_array().unwrap();
+        let spanned_row = rows.iter().find(|e| e["id"] == spanned).unwrap();
+        let plain_row = rows.iter().find(|e| e["id"] == plain).unwrap();
+        assert_eq!(spanned_row["due_end"].as_i64(), Some(end), "the span bar's feed");
+        assert!(plain_row.get("due_end").is_none());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_date_anchored_series_reaches_the_windowed_snapshot() {
+        // P10's window-steer test, re-run for the generalized anchor: a
+        // weekly series on `date` (not due) fills a FUTURE month's window.
+        let (path, c_path) = fresh_box("lotus_ffi_rebase_series.log");
+        seed_series_on(&path, "date", DateTime::date(2026, 7, 7), "every week");
+        let snap = unsafe {
+            read_json(lotus_snapshot_window_at(
+                c_path.as_ptr(),
+                DateTime::date(2026, 8, 1).civil,
+                DateTime::date(2026, 8, 31).civil,
+            ))
+        };
+        let civils: Vec<i64> = snap["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["civil"].as_i64().unwrap() / 10_000)
+            .collect();
+        assert_eq!(civils, vec![20260804, 20260811, 20260818, 20260825], "August's Tuesdays");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn an_external_append_of_a_dated_entity_is_seen_by_the_union() {
+        // The cache battery's representative: an external writer adds a
+        // date-role entity; the grown log forces a full re-open and the NEW
+        // union path serves it — never a stale dated list.
+        let (path, c_path) = fresh_box("lotus_ffi_rebase_external.log");
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm
+        let external = {
+            let mut session = Session::open(&path).unwrap();
+            let id = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+                .unwrap();
+            lotus_services::content::set_property(&mut session, id, "date", "2026-07-12").unwrap();
+            id
+        };
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(
+            snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(external)),
+            "the external date-role entity is positioned"
+        );
         cleanup(&path);
     }
 
