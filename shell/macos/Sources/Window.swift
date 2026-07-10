@@ -2072,7 +2072,11 @@ struct FacetBar: View {
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(.secondary)
                             ForEach(facet.values) { value in
-                                FacetChip(value: value) { toggle(facet.label, value) }
+                                FacetChip(
+                                    value: value,
+                                    hue: facet.label == "status"
+                                        ? nil : Hues.valueHex(value.label)
+                                ) { toggle(facet.label, value) }
                             }
                         }
                     }
@@ -2100,26 +2104,31 @@ struct FacetBar: View {
 /// One facet value pill: label + hypothetical count, lake-green when active.
 struct FacetChip: View {
     let value: SearchFacetValue
+    /// nil = neutral (the status facet — status is never VALUE_HEX).
+    var hue: NSColor? = nil
     let action: () -> Void
 
     var body: some View {
+        // Converged on THE chip recipe (P11.5d): the value's VALUE_HEX mixes
+        // carry the hue; active adds the accent ring; the count rides along.
+        let ink: Color = hue.map { Hues.chipInk($0) } ?? Color(nsColor: .secondaryLabelColor)
+        let bg: Color = hue.map { Hues.chipBackground($0) } ?? Color.secondary.opacity(0.10)
+        let border: Color = hue.map { Hues.chipBorder($0) } ?? Color.secondary.opacity(0.30)
         Button(action: action) {
             HStack(spacing: 4) {
                 Text(value.label)
                     .font(.system(size: 11.5))
+                    .foregroundColor(value.active ? Theme.accent : ink)
                 Text("\(value.count)")
                     .font(.system(size: 10))
                     .foregroundColor(value.active ? Theme.accent : .secondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .foregroundColor(value.active ? Theme.accent : .primary)
-            .background(
-                Capsule().fill(value.active ? Theme.accent.opacity(0.14) : Color.primary.opacity(0.05))
-            )
+            .background(Capsule().fill(value.active ? Theme.accent.opacity(0.14) : bg))
             .overlay(
                 Capsule().strokeBorder(
-                    value.active ? Theme.accent.opacity(0.6) : Color.clear, lineWidth: 1)
+                    value.active ? Theme.accent.opacity(0.6) : border, lineWidth: value.active ? 1 : 0.5)
             )
         }
         .buttonStyle(.plain)
@@ -2202,18 +2211,21 @@ struct SearchPopup: View {
                     ScrollView {
                         VStack(spacing: 1) {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                                Button {
-                                    open(row.id)
-                                    dismiss()
-                                } label: {
-                                    resultRow(row)
-                                }
-                                .buttonStyle(.plain)
-                                .background(
-                                    RoundedRectangle(cornerRadius: Theme.radiusMd)
-                                        .fill(index == highlighted ? Theme.primary.opacity(0.12) : .clear)
-                                )
-                                .onHover { if $0 { highlighted = index } }
+                                // Not a Button: the row is a tap target so the
+                                // anchor chip inside can capture its own tap
+                                // (the nested-button trap). Tap = open, the
+                                // palette is a navigator.
+                                resultRow(row)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        open(row.id)
+                                        dismiss()
+                                    }
+                                    .background(
+                                        RoundedRectangle(cornerRadius: Theme.radiusMd)
+                                            .fill(index == highlighted ? Theme.primary.opacity(0.12) : .clear)
+                                    )
+                                    .onHover { if $0 { highlighted = index } }
                             }
                         }
                         .padding(6)
@@ -2261,9 +2273,12 @@ struct SearchPopup: View {
     }
 
     @ViewBuilder
+    /// The V2 compact grammar (P11.5d): icon · title · one anchor chip ·
+    /// the labeled status chip. Chips filter IN the palette — a chip click
+    /// swaps the query for its filter instead of leaving search.
     private func resultRow(_ row: EntityRow) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: kindIcon(row))
+            Image(systemName: rowKindIcon(row))
                 .font(.system(size: 13))
                 .foregroundColor(Theme.accent)
                 .frame(width: 18)
@@ -2272,23 +2287,22 @@ struct SearchPopup: View {
                 .foregroundColor(.primary)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            if !row.kinds.isEmpty {
-                Text(row.kinds.joined(separator: " · "))
-                    .font(.system(size: 10.5))
-                    .foregroundColor(Theme.mutedFg)
+            if let anchor = anchorChip(for: row) {
+                ValueChip(
+                    text: anchor.text, hue: anchor.hue,
+                    tap: anchor.filter.map { f in { query = f } },
+                    help: anchor.filter.map { "filter: \($0)" })
+            }
+            if let status = row.status {
+                StatusChip(
+                    option: statusVocabulary(model, kind: row.kinds.first ?? "")
+                        .first { $0.name == status },
+                    statusName: status,
+                    tap: { query = "status:\(status)" })
             }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 10)
-        .contentShape(Rectangle())
-    }
-
-    private func kindIcon(_ row: EntityRow) -> String {
-        if row.kinds.contains("task") || row.status != nil { return "checkmark.square" }
-        if row.kinds.contains("event") { return "calendar" }
-        if row.kinds.contains("person") { return "person" }
-        if row.kinds.contains("project") { return "folder" }
-        return "doc.text"
     }
 }
 
@@ -2457,9 +2471,15 @@ struct LibraryView: View {
                 } else {
                     VStack(spacing: 0) {
                         ForEach(files) { row in
-                            EntityLine(row: row, selected: selection == row.id) {
-                                open(row.id)
-                            }
+                            ObjectRow(
+                                row: row,
+                                selected: selection == row.id,
+                                chipTap: { filter in
+                                    NotificationCenter.default.post(
+                                        name: .lotusSearchFor, object: filter)
+                                },
+                                select: { selection = row.id },
+                                openRow: { open(row.id) })
                         }
                     }
                     .padding(.horizontal, 32)
