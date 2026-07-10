@@ -451,6 +451,29 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// One cell onto a multi-valued property — the value pool's add leg.
+    func addCell(
+        _ id: UInt64, property: String, value: String,
+        done: @escaping (Bool) -> Void = { _ in }
+    ) {
+        act(done) { lotus_add_cell_at(self.path, id, property, value) == 1 }
+    }
+
+    /// Birth a property definition (P11.5g add-property create leg) — the
+    /// one seam the failing test forced out of the core. nil on refusal.
+    func addProperty(
+        name: String, kind: String, done: @escaping (UInt64?) -> Void = { _ in }
+    ) {
+        boxQueue.async {
+            let id = lotus_add_property_at(self.path, name, kind)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
     func createNote(_ done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
             let id = lotus_create_note_at(self.path)

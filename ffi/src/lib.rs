@@ -1473,6 +1473,37 @@ pub unsafe extern "C" fn lotus_add_status_option_at(
     })
 }
 
+/// Birth a property definition by name + value kind — the add-property
+/// popover's create leg (P11.5g; the single Rust exception, carved after
+/// the failing test showed set refuses unknown names). Returns the new
+/// definition id, or 0 on busy/refusal (empty name, duplicate, unknown
+/// kind).
+///
+/// # Safety
+/// `path`, `name`, and `kind` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_add_property_at(
+    path: *const c_char,
+    name: *const c_char,
+    kind: *const c_char,
+) -> u64 {
+    if name.is_null() || kind.is_null() {
+        return 0;
+    }
+    let (Ok(name), Ok(kind)) = (CStr::from_ptr(name).to_str(), CStr::from_ptr(kind).to_str())
+    else {
+        return 0;
+    };
+    with_box(path, 0, |session| {
+        match lotus_services::content::birth_property(session, name, kind) {
+            Ok(id) => (id, Committed::Wrote),
+            // A refusal never touched the store — the cache stays valid.
+            Err(lotus_services::content::WriteError::Refused(_)) => (0, Committed::Read),
+            Err(lotus_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
+        }
+    })
+}
+
 /// The packed civil as the seam's date text — "yyyy-mm-dd", with " hh:mm"
 /// when timed. The FFI's span writer formats through this and re-parses via
 /// parse_value, so the drag gestures and the inspector row are provably the
@@ -2131,6 +2162,89 @@ mod tests {
             cell["ref_target"].as_u64(),
             Some(survivor),
             "the wire resolves the redirect"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn add_property_births_one_definition_vault_wide() {
+        // Entry 670's promise ("exists vault-wide the moment one object
+        // uses it") is NOT what the core does — set on an unknown name
+        // refuses (content.rs: "no property named ..."). This test ran
+        // FIRST (the design's contingent-exception clause): the seam
+        // births the definition; everything after is the ordinary set.
+        let (path, c_path) = fresh_box("lotus_ffi_add_property.log");
+        let note = {
+            let mut session = Session::open(&path).unwrap();
+            lotus_services::seed_if_fresh(&mut session).unwrap();
+            lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+                .unwrap()
+        };
+        let c_grade = CString::new("grade").unwrap();
+        let c_number = CString::new("number").unwrap();
+        let c_value = CString::new("12").unwrap();
+        // The refusal the seam compensates for, pinned:
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), note, c_grade.as_ptr(), c_value.as_ptr()) },
+            0,
+            "set on an unknown property name refuses"
+        );
+        // Birth: one definition, vault-wide; the id comes back for the
+        // shell to reveal the row.
+        let born = unsafe {
+            lotus_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_number.as_ptr())
+        };
+        assert_ne!(born, 0);
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), note, c_grade.as_ptr(), c_value.as_ptr()) },
+            1,
+            "the born property accepts its first value"
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let prop = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "grade")
+            .expect("the catalog carries the born definition");
+        assert_eq!(prop["kind"], "number");
+        assert_eq!(prop["id"].as_u64(), Some(born));
+        let cell_value = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == note)
+            .unwrap()["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["property"] == "grade")
+            .expect("the first value landed")["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(cell_value.starts_with("12"), "got {cell_value}");
+        // One name, one definition — a re-add refuses, other kind or not.
+        let c_text = CString::new("text").unwrap();
+        assert_eq!(
+            unsafe { lotus_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_text.as_ptr()) },
+            0
+        );
+        // Garbage refused: empty name, unknown kind, an existing/reserved name.
+        let c_empty = CString::new("  ").unwrap();
+        let c_widget = CString::new("widget").unwrap();
+        let c_name = CString::new("name").unwrap();
+        assert_eq!(
+            unsafe { lotus_add_property_at(c_path.as_ptr(), c_empty.as_ptr(), c_text.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { lotus_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_widget.as_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { lotus_add_property_at(c_path.as_ptr(), c_name.as_ptr(), c_text.as_ptr()) },
+            0
         );
         cleanup(&path);
     }

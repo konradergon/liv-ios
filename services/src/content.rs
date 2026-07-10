@@ -389,6 +389,42 @@ pub enum WriteError {
     Persist(String),
 }
 
+/// Birth one property definition — the add-property popover's create leg
+/// (P11.5g). The design ASSUMED set-on-unknown-name births a definition;
+/// the failing test showed the core refuses instead, so this is the one
+/// sanctioned exception: a definition entity (name + value-kind +
+/// working), exactly the seeds' shape. One name, one definition — a
+/// duplicate refuses; the kind must be one parse_value can read back
+/// (file stays out: those are born through files::add_file).
+pub fn birth_property(session: &mut Session, name: &str, kind: &str) -> Result<Id, WriteError> {
+    const KINDS: [&str; 7] = [
+        "text", "richtext", "number", "bool", "datetime", "reference", "select",
+    ];
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(WriteError::Refused("a property needs a name".into()));
+    }
+    if !KINDS.contains(&kind) {
+        return Err(WriteError::Refused(format!("unknown value kind {kind}")));
+    }
+    if property_id(session.store(), name).is_some() {
+        return Err(WriteError::Refused(format!("a property named {name} already exists")));
+    }
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    for cell in [
+        Cell { property: props::NAME, value: Value::text(name) },
+        Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: id, cell });
+    }
+    session
+        .commit(commands, format!("add property {name}"), Author::User)
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
+    Ok(id)
+}
+
 /// Space-cycles a date row's role (bp1 e10, bp6 #25, bp9 #17): ONE
 /// transaction moving the value — civil and the date_only bit intact — from
 /// `from` to the next role in the closed ring

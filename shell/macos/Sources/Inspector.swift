@@ -15,6 +15,9 @@ import SwiftUI
 final class InspectorFocus: ObservableObject {
     static let shared = InspectorFocus()
     @Published var active = false
+    /// A popover editor is up: the panel's scoped commands go inert so the
+    /// popover's own key handling (digits pick, Esc closes) owns the event.
+    @Published var editorOpen = false
 }
 
 extension Notification.Name {
@@ -55,7 +58,10 @@ enum InspectorCommands {
             registry.register(
                 CommandDef(
                     id: id, label: label, scope: .global, category: "Inspector",
-                    binding: binding, enabled: { InspectorFocus.shared.active }
+                    binding: binding,
+                    enabled: {
+                        InspectorFocus.shared.active && !InspectorFocus.shared.editorOpen
+                    }
                 ) { post(key) })
         }
         scopedCommand(
@@ -121,9 +127,6 @@ struct InspectorPane: View {
     /// The trash undo affordance (badge 3: NO confirm dialog).
     @State private var undoOffer: String? = nil
     @State private var undoGeneration = 0
-    /// Optimistic role names by definition id — the cycle seam returns the
-    /// new name so the pill repaints before the snapshot lands (§2.2).
-    @State private var roleNames: [UInt64: String] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -148,6 +151,7 @@ struct InspectorPane: View {
         .onAppear { InspectorCommands.register() }
         .onDisappear { blur() }
         .onChange(of: selection) { blur() }
+        .onChange(of: editingRow) { InspectorFocus.shared.editorOpen = editingRow != nil }
         .onReceive(NotificationCenter.default.publisher(for: .lotusInspectorKey)) { note in
             guard let key = note.object as? String else { return }
             handle(key)
@@ -248,12 +252,16 @@ struct InspectorPane: View {
     private func propertyRow(
         _ spec: InspectorRowSpec, entity: EntityRow, hints: Bool, inMore: Bool
     ) -> some View {
-        PropertyRowView(
+        let editor = rowEditor(for: spec.property)
+        let isPopover = editor == .status || editor == .pool || editor == .date
+        return PropertyRowView(
             model: model, entity: entity, spec: spec,
             focused: focusedRow == spec.id,
-            editing: editingRow == spec.id,
+            editing: editingRow == spec.id && editor == .inline,
+            editorPresented: Binding(
+                get: { editingRow == spec.id && isPopover },
+                set: { if !$0 && editingRow == spec.id { editingRow = nil } }),
             hints: hints, inMore: inMore,
-            roleName: roleNames[spec.id],
             onFocus: { focusedRow = spec.id },
             onBeginEdit: { beginEdit(spec) },
             onEndEdit: { committed in
@@ -292,7 +300,26 @@ struct InspectorPane: View {
                     focusedRow == Self.newRowId ? Theme.accent : Color.clear,
                     lineWidth: 1.5))
         .contentShape(Rectangle())
-        .onTapGesture { focusedRow = Self.newRowId }
+        .onTapGesture {
+            focusedRow = Self.newRowId
+            editingRow = Self.newRowId
+        }
+        .popover(
+            isPresented: Binding(
+                get: { editingRow == Self.newRowId },
+                set: { if !$0 && editingRow == Self.newRowId { editingRow = nil } }),
+            arrowEdge: .leading
+        ) {
+            if let entity = model.entity(selection) {
+                AddPropertyPopover(
+                    model: model, entity: entity,
+                    onReveal: { born in
+                        reveal(born)
+                        lastEdited = born
+                    },
+                    onDone: { editingRow = nil })
+            }
+        }
     }
 
     @ViewBuilder
@@ -377,11 +404,17 @@ struct InspectorPane: View {
         case "Up": step(-1, in: entity)
         case "Down": step(1, in: entity)
         case "M": withAnimation(Theme.springFast) { moreOpen.toggle() }
-        case "N": focusedRow = Self.newRowId
+        case "N":
+            focusedRow = Self.newRowId
+            editingRow = Self.newRowId
         case "H": NSSound.beep()  // the row menu ships in 11.5h
         case "F2": renamePrompt(entity)
         case "Return":
-            if let spec = spec(of: focusedRow, in: entity) { beginEdit(spec) }
+            if focusedRow == Self.newRowId {
+                editingRow = Self.newRowId
+            } else if let spec = spec(of: focusedRow, in: entity) {
+                beginEdit(spec)
+            }
         case "Space":
             if let spec = spec(of: focusedRow, in: entity),
                 spec.property.kind == "datetime"
@@ -427,15 +460,7 @@ struct InspectorPane: View {
             NSSound.beep()
             return
         }
-        let placement = placement(for: entity)
-        let inCore = placement.core.contains { $0.id == prop.id }
-        let inTask = placement.taskFields.contains { $0.id == prop.id }
-        let inMore = placement.more.contains { $0.id == prop.id }
-        if !inCore && !inTask {
-            if !inMore { materialized = prop.id }
-            withAnimation(Theme.springFast) { moreOpen = true }
-        }
-        focusedRow = prop.id
+        reveal(prop.id)
         if let spec = spec(of: prop.id, in: entity) { beginEdit(spec) }
     }
 
@@ -465,33 +490,51 @@ struct InspectorPane: View {
             .first { $0.id == id }
     }
 
-    /// What ⏎ / a digit landing means per value kind, in the static slice:
-    /// text-shaped rows edit inline; bool toggles; select/reference wait
-    /// for their anchored editors (11.5g) — their menus stay clickable.
+    /// What ⏎ / a digit landing means per value kind: text-shaped rows
+    /// edit inline; bool toggles; status/pool/date rows open their
+    /// anchored popovers (§2.4); `type` and file rows refuse (deferred).
     private func beginEdit(_ spec: InspectorRowSpec) {
         focusedRow = spec.id
-        switch spec.property.kind {
-        case "text", "number", "datetime":
+        switch rowEditor(for: spec.property) {
+        case .inline, .status, .pool, .date:
             editingRow = spec.id
-        case "bool":
+        case .toggle:
             guard let id = selection else { return }
             let on = spec.cells.first.map { $0.value == "yes" || $0.value == "true" } ?? false
             model.set(id, property: spec.property.name, value: on ? "false" : "true")
             lastEdited = spec.id
-        default:
-            break  // select/tag/reference editors arrive in 11.5g
+        case .none:
+            NSSound.beep()
         }
     }
 
     private func cycleRole(_ spec: InspectorRowSpec, entity: EntityRow) {
         model.cycleDateRole(id: entity.id, property: spec.property.name) { newRole in
-            if let newRole {
-                roleNames[spec.id] = newRole
-                lastEdited = spec.id
-            } else {
-                NSSound.beep()  // refusal — nothing changed
-            }
+            editingRow = nil
+            guard let newRole,
+                let target = model.properties().first(where: { $0.name == newRole })
+            else { return }  // refusal already beeped
+            // The cycle MOVED the value to the next role's property — the
+            // row disappears here and appears there; focus follows it.
+            reveal(target.id)
+            lastEdited = target.id
         }
+    }
+
+    /// Focus one definition's row wherever the law placed it, unfolding
+    /// MORE or materializing a hidden row on the way.
+    private func reveal(_ propertyId: UInt64) {
+        guard let entity = model.entity(selection) else { return }
+        let placement = placement(for: entity)
+        let inCore = placement.core.contains { $0.id == propertyId }
+        let inTask = placement.taskFields.contains { $0.id == propertyId }
+        if !inCore && !inTask {
+            if !placement.more.contains(where: { $0.id == propertyId }) {
+                materialized = propertyId
+            }
+            withAnimation(Theme.springFast) { moreOpen = true }
+        }
+        focusedRow = propertyId
     }
 
     private func renamePrompt(_ entity: EntityRow) {
@@ -756,9 +799,10 @@ struct PropertyRowView: View {
     let spec: InspectorRowSpec
     let focused: Bool
     let editing: Bool
+    /// The anchored editor (11.5g): pane-owned presentation state.
+    var editorPresented: Binding<Bool>
     let hints: Bool
     let inMore: Bool
-    let roleName: String?
     var onFocus: () -> Void
     var onBeginEdit: () -> Void
     /// `committed` = a write happened (tracks last-edited for Alt+→).
@@ -800,6 +844,32 @@ struct PropertyRowView: View {
         .contentShape(Rectangle())
         .onTapGesture { onFocus() }
         .onHover { hovering = $0 }
+        .popover(isPresented: editorPresented, arrowEdge: .leading) {
+            popoverEditor
+        }
+    }
+
+    /// The anchored editor by row kind (§2.4) — one popover shape, edge
+    /// toward the content pane.
+    @ViewBuilder
+    private var popoverEditor: some View {
+        switch rowEditor(for: spec.property) {
+        case .status:
+            StatusPickerPopover(
+                model: model, entity: entity, spec: spec,
+                onDone: { onEndEdit($0) })
+        case .pool:
+            ValuePoolPopover(
+                model: model, entity: entity, spec: spec,
+                onDone: { onEndEdit($0) })
+        case .date:
+            DateEditorPopover(
+                model: model, entity: entity, spec: spec,
+                onCycleRole: onCycleRole,
+                onDone: { onEndEdit($0) })
+        default:
+            EmptyView()
+        }
     }
 
     private var displayName: String {
@@ -874,16 +944,6 @@ struct PropertyRowView: View {
             Text("—")
                 .font(.system(size: 12))
                 .foregroundColor(Theme.mutedFg)
-        } else if spec.property.kind == "select" {
-            // The ghost doubles as the options menu until 11.5g's picker.
-            Menu {
-                selectOptions
-            } label: {
-                ghost(ghostLabel)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
         } else if spec.property.kind == "bool" {
             Button { toggleBool() } label: { ghost(ghostLabel) }
                 .buttonStyle(.plain)
@@ -943,13 +1003,14 @@ struct PropertyRowView: View {
         onEndEdit(true)
     }
 
-    /// Select rows keep the P5 menu until the anchored picker (11.5g);
-    /// status renders the vocabulary dot beside its name.
+    /// A select value: click opens the anchored picker (status gets the
+    /// vocabulary dot beside its name).
     private var selectValue: some View {
-        Menu {
-            selectOptions
+        let value = spec.cells.first?.value ?? ""
+        return Button {
+            onFocus()
+            onBeginEdit()
         } label: {
-            let value = spec.cells.first?.value ?? ""
             HStack(spacing: 5) {
                 if spec.property.name == "status" {
                     StatusDot(
@@ -962,19 +1023,7 @@ struct PropertyRowView: View {
             }
             .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-
-    @ViewBuilder
-    private var selectOptions: some View {
-        ForEach(spec.property.options) { option in
-            Button(option.name) {
-                model.set(entity.id, property: spec.property.name, value: option.name)
-                onEndEdit(true)
-            }
-        }
+        .buttonStyle(.plain)
     }
 
     /// The date row: role pill (solid accent = positions the entity on the
@@ -985,7 +1034,7 @@ struct PropertyRowView: View {
         let isPositioning = entity.positionedBy == spec.property.name
         HStack(spacing: 5) {
             Button(action: onCycleRole) {
-                Text(roleName ?? (isPositioning ? "calendar" : "lookup"))
+                Text(isPositioning ? "calendar" : "lookup")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(isPositioning ? Theme.accent : Theme.mutedFg)
                     .padding(.horizontal, 6)
@@ -1030,13 +1079,16 @@ struct PropertyRowView: View {
 
     private var chips: some View {
         // Wrap-free chip run; VALUE_HEX per value, neutral for the
-        // never-hue classes (frozen law).
-        HStack(spacing: 5) {
+        // never-hue classes (frozen law). Clicking opens the pool —
+        // except `type`, whose editor waits for the schema pass.
+        let editable = rowEditor(for: spec.property) != RowEditor.none
+        return HStack(spacing: 5) {
             ForEach(spec.cells, id: \.self) { cell in
                 ValueChip(
                     text: chipText(cell),
                     hue: Self.neverHue.contains(spec.property.name)
-                        ? nil : Hues.valueHex(chipText(cell)))
+                        ? nil : Hues.valueHex(chipText(cell)),
+                    tap: editable ? { onFocus(); onBeginEdit() } : nil)
             }
         }
     }

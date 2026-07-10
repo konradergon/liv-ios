@@ -127,6 +127,11 @@ uint64_t lotus_add_status_option_at(const char *path, const char *kind,
    display). NULL on busy/unknown property. Free with lotus_string_free. */
 char *lotus_distinct_values_at(const char *path, const char *property);
 
+// Birth a property definition (P11.5g add-property create leg). Returns
+// the new definition id, 0 on refusal (empty/duplicate name, unknown kind).
+uint64_t lotus_add_property_at(const char *path, const char *name,
+                               const char *kind);
+
 /* Birth of a list: Create + type:list + name + created, one transaction.
    Named at birth (unlike a note). Returns the id, 0 on failure. */
 uint64_t lotus_create_list_at(const char *path, const char *name);
