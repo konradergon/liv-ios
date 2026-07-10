@@ -32,14 +32,36 @@ struct CellRow: Codable, Hashable {
 struct OptionRow: Codable, Hashable, Identifiable {
     let id: UInt64
     let name: String
+    /// P11 catalog enrichment (wire: snake_case; every field Optional —
+    /// applySnapshot decodes with try?, so one missing key would silently
+    /// drop the whole snapshot. Optionality is resilience, not politeness.)
+    let order: Double?
+    let hue: Double?
+    let completes: Bool?
+    let forTypes: [String]?
+    var boardOrder: Double { order ?? 0 }
+    var isTerminal: Bool { completes ?? false }
 }
 
-/// A property definition — the inspector's catalog entry.
+/// A property definition — the inspector's catalog entry. `id` is the
+/// definition ENTITY id: the row menu writes display-attribute cells to it
+/// through the ordinary set seams.
 struct PropertyRow: Codable, Identifiable, Hashable {
     let id: UInt64
     let name: String
     let kind: String
     let options: [OptionRow]
+    /// Live-carrier count (P11) — the add-property picker's "on N objects".
+    let usage: Int?
+    /// Display attributes (P11): absent when unset on the definition.
+    let icon: String?
+    let digitKey: String?
+    let hideWhenEmpty: Bool?
+    let hideOnKinds: [String]?
+    let coreOnKinds: [String]?
+    var carrierCount: Int { usage ?? 0 }
+    /// nil defaults ON — hide-when-empty is what keeps the resting panel short.
+    var hidesWhenEmpty: Bool { hideWhenEmpty ?? true }
 }
 
 struct EntityRow: Codable, Identifiable, Hashable {
@@ -47,6 +69,10 @@ struct EntityRow: Codable, Identifiable, Hashable {
     let title: String
     let kinds: [String]
     let due: Int64?
+    /// The positioning cell's span end (P11) — absent for plain dates.
+    let dueEnd: Int64?
+    /// The positioning property's name ("due"/"date"), absent when undated.
+    let positionedBy: String?
     let dueDateOnly: Bool
     let status: String?
     let created: Int64?
@@ -136,6 +162,23 @@ struct SearchResult: Codable {
     static let empty = SearchResult()
 }
 
+/// One status option as the kind's board/picker sees it —
+/// the lotus_status_options_at payload (P11.5a). A new seam with no legacy
+/// payloads, so required is safe.
+struct StatusOption: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let name: String
+    let order: Double
+    let hue: Double?
+    let completes: Bool
+}
+
+/// One value-pool row — the lotus_distinct_values_at payload (P11.5a).
+struct DistinctValue: Codable, Hashable {
+    let value: String
+    let count: Int
+}
+
 // MARK: - the model: refresh-after-every-act, never hold the box
 
 struct BoxFault: Codable {
@@ -152,11 +195,32 @@ final class BoxModel: ObservableObject {
     /// per-row on every surface render; a linear scan made them O(n²), which
     /// is a real share of the general sluggishness. The index makes them O(1).
     private var entityIndex: [UInt64: EntityRow] = [:]
+    private var backlinkIndex: [UInt64: [UInt64]] = [:]
     private func rebuildEntityIndex() {
         let all = snap?.entities ?? []
         var idx = [UInt64: EntityRow](minimumCapacity: all.count)
         for e in all { idx[e.id] = e }
         entityIndex = idx
+        // The reverse-reference index (P11.5a): target -> the entities whose
+        // reference/select cells point at it — CONNECTIONS' backlinks
+        // stratum, derived once per snapshot, stored nowhere.
+        var back: [UInt64: [UInt64]] = [:]
+        for e in all {
+            var seen = Set<UInt64>()
+            for cell in e.cells {
+                guard let target = cell.refTarget, target != e.id else { continue }
+                if seen.insert(target).inserted {
+                    back[target, default: []].append(e.id)
+                }
+            }
+        }
+        backlinkIndex = back
+    }
+
+    /// Entities pointing AT `id` through any reference/select cell, sorted
+    /// for stable rendering.
+    func backlinks(of id: UInt64) -> [EntityRow] {
+        rows((backlinkIndex[id] ?? []).sorted())
     }
     /// A box that cannot open for a reason retrying will not fix —
     /// corrupt, wrong version, io. Rendered as a blocking notice.
@@ -309,6 +373,82 @@ final class BoxModel: ObservableObject {
 
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
         act(done) { lotus_set_at(self.path, id, property, value) == 1 }
+    }
+
+    // ---- the P11 spine seams (P11.5a) — thin wrappers on the box queue ----
+
+    /// The status vocabulary offered to a kind, in board order. A read.
+    func statusOptions(kind: String, done: @escaping ([StatusOption]) -> Void) {
+        boxQueue.async {
+            var options: [StatusOption] = []
+            if let raw = lotus_status_options_at(self.path, kind) {
+                let json = String(cString: raw)
+                lotus_string_free(raw)
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                options = (try? decoder.decode([StatusOption].self, from: Data(json.utf8))) ?? []
+            }
+            DispatchQueue.main.async { done(options) }
+        }
+    }
+
+    /// A new status option for a kind — one commit, ordered last. hue nil = none.
+    func addStatusOption(
+        kind: String, name: String, hue: Double? = nil,
+        done: @escaping (UInt64?) -> Void = { _ in }
+    ) {
+        boxQueue.async {
+            let id = lotus_add_status_option_at(self.path, kind, name, hue ?? -1.0)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
+    /// Layer ① of the value pool: a property's distinct live values with
+    /// usage counts. A read; fetched once per editor open, never per keystroke.
+    func distinctValues(property: String, done: @escaping ([DistinctValue]) -> Void) {
+        boxQueue.async {
+            var values: [DistinctValue] = []
+            if let raw = lotus_distinct_values_at(self.path, property) {
+                let json = String(cString: raw)
+                lotus_string_free(raw)
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                values = (try? decoder.decode([DistinctValue].self, from: Data(json.utf8))) ?? []
+            }
+            DispatchQueue.main.async { done(values) }
+        }
+    }
+
+    /// Space-cycles a date row's role; `done` receives the NEW role name
+    /// (nil on refusal — the caller shakes, nothing else changes).
+    func cycleDateRole(id: UInt64, property: String, done: @escaping (String?) -> Void = { _ in }) {
+        boxQueue.async {
+            var next: String?
+            if let raw = lotus_cycle_date_role_at(self.path, id, property) {
+                next = String(cString: raw)
+                lotus_string_free(raw)
+            }
+            DispatchQueue.main.async {
+                if next == nil { NSSound.beep() }
+                done(next)
+                self.refresh()
+            }
+        }
+    }
+
+    /// One date/span write — the mirror contract's single seam (inspector
+    /// row, calendar drag, span grips are all THIS). end 0 = a plain date.
+    func setSpan(
+        id: UInt64, property: String, start: Int64, end: Int64, dateOnly: Bool,
+        done: @escaping (Bool) -> Void = { _ in }
+    ) {
+        act(done) {
+            lotus_set_span_at(self.path, id, property, start, end, dateOnly ? 1 : 0) == 1
+        }
     }
 
     func createNote(_ done: @escaping (UInt64?) -> Void) {
