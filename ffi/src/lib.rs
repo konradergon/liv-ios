@@ -690,8 +690,8 @@ pub unsafe extern "C" fn lotus_snapshot_window_at(
     to_civil: i64,
 ) -> *mut c_char {
     with_box(path, std::ptr::null_mut(), |session| {
-        let from = DateTime { civil: from_civil, date_only: true };
-        let to = DateTime { civil: to_civil, date_only: true };
+        let from = DateTime { civil: from_civil, date_only: true, end: None };
+        let to = DateTime { civil: to_civil, date_only: true, end: None };
         let snapshot = build_snapshot_windowed(session.store(), from, to);
         let out = match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
             Some(s) => s.into_raw(),
@@ -1225,6 +1225,61 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
     })
 }
 
+/// The packed civil as the seam's date text — "yyyy-mm-dd", with " hh:mm"
+/// when timed. The FFI's span writer formats through this and re-parses via
+/// parse_value, so the drag gestures and the inspector row are provably the
+/// SAME write (the mirror contract).
+fn civil_text(civil: i64, date_only: bool) -> String {
+    let (ymd, hhmm) = (civil / 10_000, civil % 10_000);
+    let mut s = format!("{:04}-{:02}-{:02}", ymd / 10_000, (ymd / 100) % 100, ymd % 100);
+    if !date_only {
+        s.push_str(&format!(" {:02}:{:02}", hhmm / 100, hhmm % 100));
+    }
+    s
+}
+
+/// Writes a date/span cell as ONE command (P11/11b — the mirror contract:
+/// the inspector row, a calendar drag, and a span-grip drag are all this
+/// write). `end_civil` = 0 means no end (a plain date); an end not strictly
+/// after the start is refused before the box is even opened. `date_only`
+/// applies to both ends. Returns 1, or 0 on busy/refusal.
+///
+/// # Safety
+/// `path` and `property` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_set_span_at(
+    path: *const c_char,
+    id: u64,
+    property: *const c_char,
+    start_civil: i64,
+    end_civil: i64,
+    date_only: i32,
+) -> i32 {
+    if property.is_null() {
+        return 0;
+    }
+    let Ok(prop_name) = CStr::from_ptr(property).to_str() else {
+        return 0;
+    };
+    let date_only = date_only != 0;
+    // A date-only civil carries no time; zero the HH:mm like create_event.
+    let normalize = |c: i64| if date_only { (c / 10_000) * 10_000 } else { c };
+    let start = normalize(start_civil);
+    let end = normalize(end_civil);
+    if end_civil != 0 && end <= start {
+        return 0; // refused before the box is opened — nothing to tag
+    }
+    let raw = if end_civil == 0 {
+        civil_text(start, date_only)
+    } else {
+        format!("{} -> {}", civil_text(start, date_only), civil_text(end, date_only))
+    };
+    with_box(path, 0, move |session| {
+        let ok = lotus_services::content::set_property(session, id, prop_name, &raw).is_ok();
+        (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
 /// Space-cycles a date row's role (P11/11a): one transaction moving the
 /// value — civil + date_only intact — from `property` to the next role in
 /// the ring due → date → valid-until → occurred → purchased-on → due.
@@ -1292,6 +1347,7 @@ pub unsafe extern "C" fn lotus_create_event_at(
         let due = DateTime {
             civil: if date_only != 0 { (due_civil / 10_000) * 10_000 } else { due_civil },
             date_only: date_only != 0,
+            end: None,
         };
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
@@ -1774,6 +1830,59 @@ mod tests {
         assert_eq!(e["due_date_only"], false);
         // A non-recurring dated entity, so it rides `dated` (bucketed by day).
         assert!(snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(id)));
+        cleanup(&path);
+    }
+
+    // ---- spans through the seam (P11/11b) ----
+
+    #[test]
+    fn a_span_write_is_tagged_wrote_and_a_bad_span_is_refused() {
+        let (path, c_path) = fresh_box("lotus_ffi_span.log");
+        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        assert_ne!(id, 0);
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm the cache
+        let due = CString::new("due").unwrap();
+
+        // A real span writes (the Wrote contract: the very next snapshot —
+        // a cache hit — carries the new due start).
+        let start = DateTime::date(2026, 7, 11).civil;
+        let end = DateTime::date(2026, 7, 13).civil;
+        assert_eq!(
+            unsafe { lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), start, end, 1) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let row = snap["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == id)
+            .unwrap();
+        assert_eq!(row["due"].as_i64(), Some(start), "the span's start positions the row");
+
+        // The full value — end included — survives a from-scratch replay.
+        clear_cache_for_tests();
+        let session = Session::open(&path).unwrap();
+        let due_prop = property_id(session.store(), "due").unwrap();
+        match session.store().get(id).unwrap().get(due_prop) {
+            Some(Value::DateTime(d)) => {
+                assert_eq!(d.civil, start);
+                assert_eq!(d.end, Some(end));
+                assert!(d.date_only);
+            }
+            other => panic!("expected the span, got {other:?}"),
+        }
+        drop(session);
+
+        // A backwards span is refused before the box is opened: no write,
+        // and the cached snapshot stays exactly what it was.
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(
+            unsafe { lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), end, start, 1) },
+            0
+        );
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(before, after);
         cleanup(&path);
     }
 

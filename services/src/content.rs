@@ -675,6 +675,21 @@ pub fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result
 }
 
 fn parse_civil(raw: &str) -> Option<Value> {
+    // "<start> -> <end>" is a SPAN (P11/11b): each side the base grammar
+    // below, the same date_only reading on both (mixed sides refused), and
+    // the end strictly after the start — one cell, one fact.
+    if let Some((s, e)) = raw.split_once("->") {
+        let start = parse_civil_single(s.trim())?;
+        let end = parse_civil_single(e.trim())?;
+        if start.date_only != end.date_only || end.civil <= start.civil {
+            return None;
+        }
+        return Some(Value::DateTime(DateTime::span(start, end.civil)));
+    }
+    parse_civil_single(raw).map(Value::DateTime)
+}
+
+fn parse_civil_single(raw: &str) -> Option<DateTime> {
     let (date, time) = match raw.split_once(' ') {
         Some((d, t)) => (d, Some(t)),
         None => (raw, None),
@@ -687,7 +702,7 @@ fn parse_civil(raw: &str) -> Option<Value> {
         return None;
     }
     match time {
-        None => Some(Value::DateTime(DateTime::date(year, month, day))),
+        None => Some(DateTime::date(year, month, day)),
         Some(t) => {
             let (h, m) = t.split_once(':')?;
             let hour: u32 = h.parse().ok()?;
@@ -695,7 +710,7 @@ fn parse_civil(raw: &str) -> Option<Value> {
             if hour > 23 || minute > 59 {
                 return None;
             }
-            Some(Value::DateTime(DateTime::at(year, month, day, hour, minute)))
+            Some(DateTime::at(year, month, day, hour, minute))
         }
     }
 }

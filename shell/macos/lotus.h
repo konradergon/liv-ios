@@ -104,6 +104,13 @@ uint64_t lotus_create_event_at(const char *path, int64_t due_civil, int32_t date
    NEW property name (free with lotus_string_free), NULL on busy/refusal. */
 char *lotus_cycle_date_role_at(const char *path, uint64_t id, const char *property);
 
+/* Writes a date/span cell as ONE command (the mirror contract: inspector
+   row, calendar drag, and span-grip drag are all this write). end_civil = 0
+   means no end (a plain date); an end not strictly after the start is
+   refused. date_only applies to both ends. Returns 1, or 0 on busy/refusal. */
+int32_t lotus_set_span_at(const char *path, uint64_t id, const char *property,
+                          int64_t start_civil, int64_t end_civil, int32_t date_only);
+
 /* Birth of a list: Create + type:list + name + created, one transaction.
    Named at birth (unlike a note). Returns the id, 0 on failure. */
 uint64_t lotus_create_list_at(const char *path, const char *name);

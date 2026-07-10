@@ -173,6 +173,15 @@ pub struct DateTime {
     pub civil: i64,
     /// "friday" vs "friday 10:00" — different values.
     pub date_only: bool,
+    /// A value may be a SPAN (P11): `end`, when present, is a second packed
+    /// civil strictly after `civil`, with the same `date_only` reading
+    /// applied to both ends — "start → end", one cell, one fact, one drag
+    /// target. Absent on every value written before P11 (serde default), so
+    /// old logs replay unchanged. `end == start` is not a span; writers
+    /// collapse it to None. `civil` stays the first field so derived Ord
+    /// sorts by start.
+    #[serde(default)]
+    pub end: Option<i64>,
 }
 
 impl DateTime {
@@ -180,6 +189,7 @@ impl DateTime {
         DateTime {
             civil: Self::pack(year, month, day, 0, 0),
             date_only: true,
+            end: None,
         }
     }
 
@@ -187,6 +197,16 @@ impl DateTime {
         DateTime {
             civil: Self::pack(year, month, day, hour, minute),
             date_only: false,
+            end: None,
+        }
+    }
+
+    /// A span from `start` to `end_civil` — or the plain `start` when the
+    /// asked end is not strictly after it (a zero-length span is not a span).
+    pub fn span(start: DateTime, end_civil: i64) -> Self {
+        DateTime {
+            end: (end_civil > start.civil).then_some(end_civil),
+            ..start
         }
     }
 

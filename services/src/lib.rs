@@ -347,6 +347,7 @@ pub fn today_sections(store: &Store, today: DateTime) -> TodaySections {
     let tonight = DateTime {
         civil: ymd * 10_000 + 2359,
         date_only: false,
+        end: None,
     };
 
     let mut constraints = vec![Constraint {

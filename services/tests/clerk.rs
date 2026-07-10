@@ -22,6 +22,7 @@ fn capture(session: &mut Session, text: &str) -> Id {
 const MONDAY: DateTime = DateTime {
     civil: 202607060000,
     date_only: true,
+    end: None,
 };
 
 #[test]
