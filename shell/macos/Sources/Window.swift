@@ -3656,17 +3656,23 @@ struct TasksView: View {
         }
     }
 
-    /// The shared pipeline: everything → tasks → the All/Open/Done gate.
+    /// The ungated task pool — everything → tasks. The BOARD renders THIS
+    /// (its columns carry status, so the Open/Done gate would empty the Done
+    /// columns and vanish a card dragged to Done — the review's high).
+    private var allTasks: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
+    }
+
+    /// The list/schedule/cards pool: allTasks → the All/Open/Done gate.
     /// Done-ness follows the option's `completes` (the vocabulary-aware law).
     private var tasks: [EntityRow] {
-        let all = model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
         let terminal = Set(
             statusVocabulary(model, kind: "task").filter(\.isTerminal).map(\.name)
         ).union(["done"])
         switch filter {
-        case .all: return all
-        case .open: return all.filter { !terminal.contains($0.status ?? "") }
-        case .done: return all.filter { terminal.contains($0.status ?? "") }
+        case .all: return allTasks
+        case .open: return allTasks.filter { !terminal.contains($0.status ?? "") }
+        case .done: return allTasks.filter { terminal.contains($0.status ?? "") }
         }
     }
 
@@ -3676,11 +3682,14 @@ struct TasksView: View {
             HStack(alignment: .firstTextBaseline) {
                 LensHeader(
                     title: "Tasks",
-                    subtitle: tasks.count == 1 ? "1 task" : "\(tasks.count) tasks")
+                    subtitle: lens == .board
+                        ? (allTasks.count == 1 ? "1 task" : "\(allTasks.count) tasks")
+                        : (tasks.count == 1 ? "1 task" : "\(tasks.count) tasks"))
                 Spacer()
                 lensSwitcher
                 // The Board's columns carry status, so the Open/Done gate is
-                // a list-lens concern; it stays hidden on the board.
+                // a list-lens concern; it stays hidden on (and unused by) the
+                // board — which renders the ungated pool.
                 if lens != .board { filterSegments }
             }
             .padding(.horizontal, 32)
@@ -3689,7 +3698,7 @@ struct TasksView: View {
 
             switch lens {
             case .list: listLens(tasks)
-            case .board: boardLens(tasks)
+            case .board: boardLens(allTasks)
             case .schedule: scheduleLens(tasks)
             case .cards: cardsLens(tasks)
             }
@@ -3968,7 +3977,7 @@ struct TasksView: View {
     /// The lens switcher tabs (bp6 a6) — List | Board | Schedule | Cards.
     private var lensSwitcher: some View {
         HStack(spacing: 2) {
-            ForEach(TaskLens.allCases, id: \.self) { option in
+            ForEach(Array(TaskLens.allCases.enumerated()), id: \.element) { index, option in
                 Button { lens = option } label: {
                     HStack(spacing: 5) {
                         Image(systemName: option.symbol).font(.system(size: 11))
@@ -3981,6 +3990,9 @@ struct TasksView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // Ctrl+1..4 switches the lens (bp6 a6, the review's finding).
+                .keyboardShortcut(
+                    KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
             }
         }
         .padding(2)

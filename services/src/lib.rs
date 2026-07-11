@@ -405,11 +405,15 @@ pub fn calendar_set(store: &Store) -> Vec<Id> {
 /// EXPECTED — a person is valid without any of them. Same shape as the
 /// event/file field seeds. Own guard on `role`.
 fn seed_contact_fields(session: &mut Session) -> Result<(), PersistError> {
-    if property_id(session.store(), "role").is_some() {
-        return Ok(());
-    }
+    // Per-field guard, not a single sentinel: email/org/phone are common
+    // fields a user may already have created by hand, so seed only the ones
+    // that are ACTUALLY absent — else an upgrade box duplicates a definition
+    // (the review's finding; `property_id` would then be nondeterministic).
     let mut commands = Vec::new();
     for name in ["role", "org", "email", "phone"] {
+        if property_id(session.store(), name).is_some() {
+            continue;
+        }
         let id = session.allocate_id();
         commands.push(Command::Create { entity: id });
         for cell in [
@@ -419,6 +423,9 @@ fn seed_contact_fields(session: &mut Session) -> Result<(), PersistError> {
         ] {
             commands.push(Command::AddCell { entity: id, cell });
         }
+    }
+    if commands.is_empty() {
+        return Ok(());
     }
     session.commit(commands, "contact fields", Author::System)?;
     Ok(())
