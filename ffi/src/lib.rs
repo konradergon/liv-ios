@@ -1346,6 +1346,33 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
     })
 }
 
+/// Get-or-create the daily note for a day + workspace (P12 12a) and return
+/// its id — the one place a query-then-create runs in ONE session so two
+/// entry points can never double-create. `date_civil` is any packed civil in
+/// the day (the minute is normalized away); `workspace` 0 = none (global).
+/// Read on the found path (store untouched), Wrote on birth (forces re-sweep).
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_open_daily_note_at(
+    path: *const c_char,
+    date_civil: i64,
+    workspace: u64,
+) -> u64 {
+    // Normalize to the DAY: zero the packed time, date_only.
+    let day = DateTime { civil: (date_civil / 10_000) * 10_000, date_only: true, end: None };
+    let ws = (workspace != 0).then_some(workspace);
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        match lotus_services::content::get_or_create_daily_note(session, day, ws, created) {
+            Ok((id, created)) => (id, if created { Committed::Wrote } else { Committed::Read }),
+            Err(_) => (0, Committed::Failed),
+        }
+    })
+}
+
 /// Create a task by hand (the Tasks quick-add): one transaction — type=task
 /// + status=todo + created. Returns the new id, 0 on failure. Distinct from
 /// capture, which makes an untyped scrap the clerk quarantines.
@@ -2246,6 +2273,79 @@ mod tests {
             unsafe { lotus_add_property_at(c_path.as_ptr(), c_name.as_ptr(), c_text.as_ptr()) },
             0
         );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn open_daily_note_is_get_or_create_per_date_and_workspace() {
+        // P12 12a (failing-test-first, memory: test-drive-core-changes): the
+        // one new P12 seam. It must be idempotent per (date, workspace) — the
+        // find and the conditional create run in ONE session so two entry
+        // points can never double-create — and per-workspace (D3): the same
+        // date in two workspaces is two notes.
+        let (path, c_path) = fresh_box("lotus_ffi_daily.log");
+        // Two stand-in workspace targets (any entity id serves as a reference).
+        let (ws_a, ws_b) = {
+            let mut session = Session::open(&path).unwrap();
+            lotus_services::seed_if_fresh(&mut session).unwrap();
+            let a = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 1))
+                .unwrap();
+            let b = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 1))
+                .unwrap();
+            (a, b)
+        };
+        let jul11 = DateTime::date(2026, 7, 11).civil;
+        let jul12 = DateTime::date(2026, 7, 12).civil;
+
+        // Idempotent: twice on one (date, workspace) is ONE note.
+        let first = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, ws_a) };
+        assert_ne!(first, 0);
+        let again = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, ws_a) };
+        assert_eq!(first, again, "the same day+workspace resolves to one note");
+
+        // A different date is a different note.
+        let other_day = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul12, ws_a) };
+        assert_ne!(other_day, first);
+
+        // Per-workspace (D3): the same date in another workspace is another note.
+        let other_ws = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, ws_b) };
+        assert_ne!(other_ws, first, "each workspace has its own today");
+
+        // Time in the civil is normalized away — an afternoon call finds the
+        // morning's note.
+        let afternoon = DateTime::at(2026, 7, 11, 15, 30).civil;
+        let same = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), afternoon, ws_a) };
+        assert_eq!(same, first, "the seam keys on the day, not the minute");
+
+        // Exactly two daily notes on Jul 11 (one per workspace), one on Jul 12.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let entities = snap["entities"].as_array().unwrap();
+        let dailies: Vec<_> = entities
+            .iter()
+            .filter(|e| {
+                e["kinds"]
+                    .as_array()
+                    .map(|ks| ks.iter().any(|k| k == "daily-note"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(dailies.len(), 3, "two on Jul 11 + one on Jul 12");
+
+        // The born note carries type + date + workspace + a non-empty template body.
+        let born = entities.iter().find(|e| e["id"] == first).unwrap();
+        let cells = born["cells"].as_array().unwrap();
+        assert!(cells.iter().any(|c| c["property"] == "date"), "has a date cell");
+        assert!(
+            cells.iter().any(|c| c["property"] == "workspace"
+                && c["ref_target"].as_u64() == Some(ws_a)),
+            "carries the workspace reference"
+        );
+        assert_ne!(
+            born["content_print"].as_u64(),
+            Some(0),
+            "born with the default template body"
+        );
+        assert_eq!(born["title"], "2026-07-11", "named the ISO date");
         cleanup(&path);
     }
 

@@ -474,6 +474,23 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Get-or-create today's (or any day's) daily note for a workspace
+    /// (P12 12a). `dateCivil` is a packed civil in the day; workspace 0 =
+    /// none. Idempotent per (date, workspace) — the atomic seam.
+    func openDailyNote(
+        dateCivil: Int64, workspace: UInt64,
+        done: @escaping (UInt64?) -> Void = { _ in }
+    ) {
+        boxQueue.async {
+            let id = lotus_open_daily_note_at(self.path, dateCivil, workspace)
+            DispatchQueue.main.async {
+                if id == 0 { NSSound.beep() }
+                done(id == 0 ? nil : id)
+                self.refresh()
+            }
+        }
+    }
+
     func createNote(_ done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
             let id = lotus_create_note_at(self.path)

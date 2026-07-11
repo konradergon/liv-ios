@@ -7,8 +7,8 @@
 //! parses "friday 10:00" the same way) and the birth of a note.
 
 use lotus_core::{
-    props, Author, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session, Span,
-    Store, Value,
+    props, Author, Block, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session,
+    Span, Store, Value,
 };
 
 use crate::{property_id, run, Constraint, Op, Query};
@@ -192,6 +192,102 @@ pub fn content_history(store: &Store, id: Id) -> Vec<ContentVersion> {
 /// Birth of a note: Create + type + created, one transaction. The caller
 /// drops straight into renaming — the entity is born nameless, like a
 /// scrap, but typed, so expectations apply from the first moment.
+/// The default daily-note body (D4 — a fixed "template note", NOT a template
+/// engine): a date H1, then the Agenda / Notes / Log sections. The Agenda
+/// heading reserves the slot for P16's live-agenda projection (bp9 OQ-C);
+/// everything is ordinary markdown the user edits like any note. The only
+/// substitution is the ISO date into the H1 — no `{{variable}}` machinery.
+fn daily_template(iso_date: &str) -> RichText {
+    RichText {
+        spans: vec![
+            Span::Break(Block::Heading(1)),
+            Span::text(iso_date),
+            Span::Break(Block::Heading(2)),
+            Span::text("Agenda"),
+            Span::Break(Block::Heading(2)),
+            Span::text("Notes"),
+            Span::Break(Block::Body),
+            Span::Break(Block::Heading(2)),
+            Span::text("Log"),
+            Span::Break(Block::Body),
+        ],
+    }
+}
+
+/// Get-or-create today's (or any day's) daily note — the ONE new P12 seam
+/// (12a). Idempotent per (date, workspace): the find-query and the
+/// conditional create run in ONE session so two entry points firing close
+/// together can never double-create (the daily-notes reader's race). Returns
+/// (id, created) — `created=false` on the found path so the FFI can leave the
+/// store's cache valid. `date` is normalized to date-only by the caller; a
+/// `workspace` of `None` keys globally (an older box with no active workspace).
+pub fn get_or_create_daily_note(
+    session: &mut Session,
+    date: DateTime,
+    workspace: Option<Id>,
+    created: DateTime,
+) -> Result<(Id, bool), PersistError> {
+    let store = session.store();
+    let daily_type = find_type(store, "daily-note");
+    let date_prop = property_id(store, "date");
+    let workspace_prop = property_id(store, "workspace");
+
+    // The find: a daily note on this day (in this workspace, if one is given).
+    let mut constraints = Vec::new();
+    if let Some(t) = daily_type {
+        constraints.push(Constraint { property: props::TYPE, op: Op::Equals(Value::Reference(t)) });
+    }
+    if let Some(dp) = date_prop {
+        constraints.push(Constraint { property: dp, op: Op::Equals(Value::DateTime(date)) });
+    }
+    if let (Some(wp), Some(ws)) = (workspace_prop, workspace) {
+        constraints.push(Constraint { property: wp, op: Op::Equals(Value::Reference(ws)) });
+    }
+    let query = Query { constraints, ..Query::default() };
+    if let Some(found) = run(store, &query).first().copied() {
+        return Ok((found, false));
+    }
+
+    // The birth: a normal note carrying the two identifying cells + workspace
+    // + name (the ISO date) + created + the template body.
+    let ymd = date.civil / 10_000;
+    let iso = format!("{:04}-{:02}-{:02}", ymd / 10_000, (ymd / 100) % 100, ymd % 100);
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    if let Some(t) = daily_type {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::TYPE, value: Value::Reference(t) },
+        });
+    }
+    if let Some(dp) = date_prop {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: dp, value: Value::DateTime(date) },
+        });
+    }
+    if let (Some(wp), Some(ws)) = (workspace_prop, workspace) {
+        commands.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: wp, value: Value::Reference(ws) },
+        });
+    }
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::NAME, value: Value::text(&iso) },
+    });
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::CREATED, value: Value::DateTime(created) },
+    });
+    commands.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::CONTENT, value: Value::RichText(daily_template(&iso)) },
+    });
+    session.commit(commands, "open daily note", Author::User)?;
+    Ok((id, true))
+}
+
 pub fn create_note(session: &mut Session, created: DateTime) -> Result<Id, PersistError> {
     let note_type = find_type(session.store(), "note");
     let id = session.allocate_id();

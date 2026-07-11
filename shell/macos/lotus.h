@@ -88,6 +88,12 @@ char *lotus_content_history_at(const char *path, uint64_t id);
    Returns the id, 0 on failure. Caller drops straight into renaming. */
 uint64_t lotus_create_note_at(const char *path);
 
+/* Get-or-create the daily note for a day (any packed civil in it) and
+   workspace (0 = none). Returns the note id, 0 on failure. Idempotent per
+   (date, workspace) — the one place find-then-create is atomic. */
+uint64_t lotus_open_daily_note_at(const char *path, int64_t date_civil,
+                                  uint64_t workspace);
+
 /* Create a task by hand (Tasks quick-add): Create + type:task +
    status:todo + created, one transaction. Returns the id, 0 on failure.
    Distinct from capture, which quarantines an untyped scrap. */

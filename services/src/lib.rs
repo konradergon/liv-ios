@@ -70,6 +70,7 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_event_fields(session)?;
     seed_date_roles(session)?;
     seed_workspaces(session)?;
+    seed_daily_note(session)?;
     seed_status_scoping(session)?;
     seed_display_attributes(session)
 }
@@ -84,6 +85,50 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
 /// instead of MORE). P11 seeds the DEFINITIONS only — no icon/digit values;
 /// the starter value table is P11.5's call with R2, and it is data, not
 /// schema. Own additive guard; an older box gains all five on open.
+/// The daily-note type + its `workspace` reference property (P12 12a, D3).
+/// A daily note is an ordinary note that carries a `type=daily-note` cell and
+/// a calendar-role `date` cell (§2.3); `workspace` is the first content-to-
+/// workspace membership — a narrow reference cell scoped to daily notes, NOT a
+/// general membership model. Own guard (`workspace` absent) so an older box
+/// gains both on open — and runs AFTER seed_date_roles so `date` resolves for
+/// the type's EXPECTED cell.
+fn seed_daily_note(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "workspace").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    let workspace = session.allocate_id();
+    commands.push(Command::Create { entity: workspace });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("workspace") },
+        Cell { property: props::VALUE_KIND, value: Value::text("reference") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: workspace, cell });
+    }
+
+    // The type, EXPECTED=[content, date] so `find_type` resolves it and the
+    // inspector offers both rows. `date` was seeded by seed_date_roles.
+    let date = property_id(session.store(), "date");
+    let daily = session.allocate_id();
+    commands.push(Command::Create { entity: daily });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("daily-note") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: props::EXPECTED, value: Value::Reference(props::CONTENT) },
+    ] {
+        commands.push(Command::AddCell { entity: daily, cell });
+    }
+    if let Some(date) = date {
+        commands.push(Command::AddCell {
+            entity: daily,
+            cell: Cell { property: props::EXPECTED, value: Value::Reference(date) },
+        });
+    }
+    session.commit(commands, "daily-note type", Author::System)?;
+    Ok(())
+}
+
 fn seed_display_attributes(session: &mut Session) -> Result<(), PersistError> {
     if property_id(session.store(), "hide-when-empty").is_some() {
         return Ok(());
@@ -946,6 +991,7 @@ mod seed_tests {
         seed_event_fields(&mut session).unwrap();
         seed_date_roles(&mut session).unwrap();
         seed_workspaces(&mut session).unwrap();
+        seed_daily_note(&mut session).unwrap();
 
         // A user decoy: named "project", no VALUE_KIND, no EXPECTED — the
         // exact shape the loose finder matched. Not WORKING, like all user
