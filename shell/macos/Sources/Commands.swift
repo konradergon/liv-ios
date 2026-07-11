@@ -44,6 +44,13 @@ struct Hotkey {
         case "Return": return event.keyCode == 36
         // Function keys type private-use glyphs, so they match by code.
         case "F2": return event.keyCode == 120
+        // Digits match by physical key code (layout-safe): on a shifted-
+        // number-row layout (AZERTY) the unmodified top-row key yields a
+        // glyph, not the digit, so charactersIgnoringModifiers would never
+        // match — the inspector's digit-jump grammar (bp1) depends on this.
+        case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+            let digitCodes: [UInt16] = [29, 18, 19, 20, 21, 23, 22, 26, 28, 25]
+            return event.keyCode == digitCodes[Int(key)!]
         // Punctuation matches by key code: charactersIgnoringModifiers
         // applies Shift, so ⌘⇧` would read "~" and never match a
         // character comparison. (Same philosophy as Liv matching digits

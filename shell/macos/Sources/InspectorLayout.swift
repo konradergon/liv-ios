@@ -52,6 +52,14 @@ enum InspectorLayout {
     /// ordinary properties everywhere else.
     static let taskFieldNames = ["due", "priority", "recurrence"]
 
+    /// Base-core names a kind neither cores NOR folds — dropped entirely,
+    /// not shown as an empty MORE ghost. Only `people` on a person (§3.2
+    /// folds form/project/tier for person, never people — a person having a
+    /// "people" row is the CONNECTIONS territory, not a property ghost).
+    static let foldExclusions: [String: Set<String>] = [
+        "person": ["people"],
+    ]
+
     struct Placement {
         var core: [InspectorRowSpec] = []
         var taskFields: [InspectorRowSpec] = []
@@ -113,12 +121,14 @@ enum InspectorLayout {
             placement.core.append(spec(prop))
             placed.insert(prop.id)
         }
-        // Folded base core → MORE, even empty, base order — EXCEPT an
-        // empty datetime: a kind whose table omits `date` substitutes its
-        // own dated field (task's due), and the blueprint's task MORE
-        // shows no empty date row. A valued one still folds (§2.2: every
-        // datetime role property with a cell renders its own row).
-        for name in noteBase where !coreNames.contains(name) {
+        // Folded base core → MORE, even empty, base order — EXCEPT: an
+        // empty datetime (a kind that omits `date` substitutes its own dated
+        // field, e.g. task's due — the blueprint task MORE shows no empty
+        // date row; a VALUED one still folds, §2.2), and a name in the
+        // kind's fold-exclusion set (people on a person). A valued excluded
+        // property still surfaces below as an ordinary non-core MORE row.
+        let excluded = foldExclusions[kind] ?? []
+        for name in noteBase where !coreNames.contains(name) && !excluded.contains(name) {
             guard let prop = catalog.first(where: { $0.name == name }),
                 !hidden(prop), !placed.contains(prop.id), !isTaskField(prop)
             else { continue }

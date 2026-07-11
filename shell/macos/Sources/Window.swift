@@ -1624,6 +1624,7 @@ struct WindowChrome: View {
                 event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                 Dialogs.shared.current == nil,  // a dialog owns Return
                 !chrome.switcherOpen,  // so does the switcher
+                !InspectorFocus.shared.active,  // a focused inspector owns ⏎ (its 'edit')
                 chrome.surface == .notes,
                 editor == nil,
                 let id = selection,

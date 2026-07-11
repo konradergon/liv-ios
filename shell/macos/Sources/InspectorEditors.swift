@@ -273,10 +273,14 @@ struct ValuePoolPopover: View {
     private func write(_ value: String) {
         var raw = value
         if spec.property.kind == "reference" {
-            guard
-                let target = model.rows(model.snap?.everything ?? [])
-                    .first(where: { $0.title.lowercased() == value.lowercased() })
-            else {
+            // Resolve the display title to an id. The pool carries titles,
+            // not ids, so a duplicate title is genuinely ambiguous — REFUSE
+            // rather than silently linking whichever entity sorts first (the
+            // review's finding; the core's own "refuse, never guess" ethos).
+            // Id disambiguation waits for an id-carrying pool (recorded).
+            let matches = model.rows(model.snap?.everything ?? [])
+                .filter { $0.title.lowercased() == value.lowercased() }
+            guard matches.count == 1, let target = matches.first else {
                 NSSound.beep()
                 return
             }
@@ -428,10 +432,15 @@ struct DateEditorPopover: View {
     /// content.rs's RING, mirrored — the one place the shell names it.
     static let ring = ["due", "date", "valid-until", "occurred", "purchased-on"]
 
+    /// Which text field, if any, holds the caret — Space must type a space
+    /// there, and cycle the role only when focus is on the role list (the
+    /// review: the old single startFocused guard broke end/repeat input).
+    private enum Field { case start, end, repeatRule }
+
     @State private var start = ""
     @State private var end = ""
     @State private var repeatRule = ""
-    @FocusState private var startFocused: Bool
+    @FocusState private var focus: Field?
 
     private var isPositioning: Bool { entity.positionedBy == spec.property.name }
 
@@ -464,13 +473,14 @@ struct DateEditorPopover: View {
                 TextField("yyyy-mm-dd [hh:mm]", text: $start)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12).monospacedDigit())
-                    .focused($startFocused)
+                    .focused($focus, equals: .start)
                     .onSubmit { save() }
                     .onExitCommand { onDone(false) }
                 Text("→").font(.system(size: 11)).foregroundColor(Theme.mutedFg)
                 TextField("end (optional)", text: $end)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12).monospacedDigit())
+                    .focused($focus, equals: .end)
                     .onSubmit { save() }
                     .onExitCommand { onDone(false) }
                 if !end.isEmpty {
@@ -496,6 +506,7 @@ struct DateEditorPopover: View {
                     TextField("Repeat… (every week, every 2 days)", text: $repeatRule)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
+                        .focused($focus, equals: .repeatRule)
                         .onSubmit { saveRepeat() }
                         .onExitCommand { onDone(false) }
                 }
@@ -506,14 +517,18 @@ struct DateEditorPopover: View {
         }
         .frame(width: 250)
         .onAppear {
-            startFocused = true
+            focus = .start
             if isPositioning, let due = entity.due {
                 start = Civil.seamText(due, dateOnly: entity.dueDateOnly)
                 if let dueEnd = entity.dueEnd {
                     end = Civil.seamText(dueEnd, dateOnly: entity.dueDateOnly)
                 }
             } else if let value = spec.cells.first?.value {
-                let parts = value.components(separatedBy: "→")
+                // The cell serializes a span as ASCII "start -> end"
+                // (lotus_views::display); splitting on the display arrow
+                // U+2192 left the whole string in `start`, and save() then
+                // refused the 3-token parse (the review's high).
+                let parts = value.components(separatedBy: " -> ")
                 start = parts.first?.trimmingCharacters(in: .whitespaces) ?? value
                 if parts.count > 1 {
                     end = parts[1].trimmingCharacters(in: .whitespaces)
@@ -523,9 +538,10 @@ struct DateEditorPopover: View {
                 entity.cells.first { $0.property == "recurrence" }?.value ?? ""
         }
         .onKeyPress(.space, phases: .down) { _ in
-            // Space cycles only while no field holds the caret — a typed
-            // space in the span fields stays a space.
-            if startFocused { return .ignored }
+            // Space cycles the role only when NO text field holds the caret
+            // (focus is on the role list); inside any span/repeat field a
+            // space stays a space (the review's finding).
+            if focus != nil { return .ignored }
             onCycleRole()
             return .handled
         }
@@ -793,18 +809,19 @@ struct RowMenuPopover: View {
                         Text("vault-wide").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                     })
             }
-            if !spec.isEmpty {
-                Divider().padding(.vertical, 2)
-                PopRow(selected: false, action: { removeFromObject() }) {
-                    AnyView(
-                        HStack(spacing: 8) {
-                            Image(systemName: "trash").font(.system(size: 10))
-                            Text("Remove from this object").font(.system(size: 12))
-                            Spacer(minLength: 6)
-                            Text("this object").font(.system(size: 10)).opacity(0.7)
-                        }
-                        .foregroundColor(Theme.destructive))
-                }
+            // Always shown (bp1's row-menu exhibit is on an empty tier row):
+            // unset of an absent cell is a harmless no-op, and hiding it made
+            // the menu jump depending on fill state (the review's finding).
+            Divider().padding(.vertical, 2)
+            PopRow(selected: false, action: { removeFromObject() }) {
+                AnyView(
+                    HStack(spacing: 8) {
+                        Image(systemName: "trash").font(.system(size: 10))
+                        Text("Remove from this object").font(.system(size: 12))
+                        Spacer(minLength: 6)
+                        Text("this object").font(.system(size: 10)).opacity(0.7)
+                    }
+                    .foregroundColor(Theme.destructive))
             }
             PopHint(text: "H or right-click on any row · Obsidian parity is the floor")
         }

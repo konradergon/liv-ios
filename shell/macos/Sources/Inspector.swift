@@ -156,6 +156,7 @@ struct InspectorPane: View {
         .onAppear { InspectorCommands.register() }
         .onDisappear { blur() }
         .onChange(of: selection) { blur() }
+        .onChange(of: moreOpen) { reconcileFocusAfterFold() }
         .onChange(of: editingRow) {
             InspectorFocus.shared.editorOpen = editingRow != nil || menuRow != nil
         }
@@ -347,7 +348,7 @@ struct InspectorPane: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .rotationEffect(.degrees(moreOpen ? 180 : 0))
-                Text("More properties · \(placement.more.count)")
+                Text("More properties · \(moreCount(placement, entity: entity))")
                     .font(.system(size: 11.5, weight: .bold))
                     .kerning(0.5)
                     .textCase(.uppercase)
@@ -375,6 +376,14 @@ struct InspectorPane: View {
             .padding(.horizontal, 6)
             .padding(.bottom, 4)
         }
+    }
+
+    /// The MORE header's count: the placed rows PLUS the always-appended
+    /// `created` system row, so the label matches what renders (the
+    /// blueprint counts created/edited among the More rows; the review's
+    /// off-by-one).
+    private func moreCount(_ placement: InspectorLayout.Placement, entity: EntityRow) -> Int {
+        placement.more.count + (entity.created != nil ? 1 : 0)
     }
 
     // MARK: CONNECTIONS (§2.7) — derived, three strata minus one
@@ -416,7 +425,7 @@ struct InspectorPane: View {
                 if let target = cell.refTarget, let row = model.entity(target) {
                     connectionRow(
                         icon: "link", title: row.title.isEmpty ? "Untitled" : row.title,
-                        detail: "\(cell.property) · \(row.kinds.first ?? "object")",
+                        detail: "relation · \(row.kinds.first ?? "object")",
                         target: target)
                 }
             }
@@ -536,7 +545,9 @@ struct InspectorPane: View {
             focusedRow = Self.newRowId
             editingRow = Self.newRowId
         case "H":
-            if let focused = focusedRow, focused != Self.newRowId {
+            if let focused = focusedRow, focused != Self.newRowId,
+                isVisible(focused, in: entity)
+            {
                 menuRow = focused
             } else {
                 NSSound.beep()
@@ -567,9 +578,43 @@ struct InspectorPane: View {
         InspectorFocus.shared.active = true
         if focusedRow == nil {
             let placement = placement(for: entity)
-            focusedRow = lastEdited ?? placement.core.first?.id
+            // lastEdited is only a valid landing spot if that row still
+            // exists on THIS entity — it leaks across a selection change
+            // otherwise (the review's finding), landing focus on a ghost.
+            let restored = lastEdited.flatMap { id in
+                (placement.core + placement.taskFields).first { $0.id == id }?.id
+            }
+            focusedRow = restored ?? placement.core.first?.id
                 ?? placement.taskFields.first?.id ?? Self.newRowId
         }
+    }
+
+    /// Is this row currently mounted? Core/task rows always are; a MORE row
+    /// only while MORE is open; the add-property sentinel always. Used to
+    /// keep H/⏎ from addressing an unmounted row whose editor/menu nothing
+    /// could then dismiss (the keyboard-deadlock finding).
+    private func isVisible(_ id: UInt64, in entity: EntityRow) -> Bool {
+        if id == Self.newRowId { return true }
+        let placement = placement(for: entity)
+        if placement.core.contains(where: { $0.id == id }) { return true }
+        if placement.taskFields.contains(where: { $0.id == id }) { return true }
+        return moreOpen && placement.more.contains { $0.id == id }
+    }
+
+    /// When MORE folds shut under a focus that was sitting inside it, move
+    /// focus to a still-mounted row and drop any editor/menu bound to the
+    /// row that just unmounted — else editorOpen stays wedged true and the
+    /// panel keyboard deadlocks (the review's medium).
+    private func reconcileFocusAfterFold() {
+        guard !moreOpen, let focused = focusedRow, focused != Self.newRowId,
+            let entity = model.entity(selection), !isVisible(focused, in: entity)
+        else { return }
+        let placement = placement(for: entity)
+        editingRow = nil
+        menuRow = nil
+        materialized = nil
+        focusedRow = placement.core.last?.id
+            ?? placement.taskFields.last?.id ?? Self.newRowId
     }
 
     private func blur() {
@@ -577,6 +622,7 @@ struct InspectorPane: View {
         menuRow = nil
         focusedRow = nil
         materialized = nil
+        lastEdited = nil
         if scopePushed {
             CommandRegistry.shared.popCaptureScope()
             scopePushed = false
@@ -628,6 +674,12 @@ struct InspectorPane: View {
     /// edit inline; bool toggles; status/pool/date rows open their
     /// anchored popovers (§2.4); `type` and file rows refuse (deferred).
     private func beginEdit(_ spec: InspectorRowSpec) {
+        // Never open an editor for a row that isn't on screen — its popover
+        // would have nothing to anchor to and nothing to dismiss it.
+        if let entity = model.entity(selection), !isVisible(spec.id, in: entity) {
+            NSSound.beep()
+            return
+        }
         focusedRow = spec.id
         switch rowEditor(for: spec.property) {
         case .inline, .status, .pool, .date:
@@ -1159,15 +1211,26 @@ struct PropertyRowView: View {
             onFocus()
             onBeginEdit()
         } label: {
-            HStack(spacing: 5) {
+            Group {
                 if spec.property.name == "status" {
-                    StatusDot(
-                        option: spec.property.options.first { $0.name == value },
-                        statusName: value)
+                    // A neutral chip framing the statusdot + name (bp1 task
+                    // tab: <span class=chip><span class=statusdot>waiting).
+                    HStack(spacing: 5) {
+                        StatusDot(
+                            option: spec.property.options.first { $0.name == value },
+                            statusName: value)
+                        Text(value).font(.system(size: 11))
+                    }
+                    .foregroundColor(Color(nsColor: .secondaryLabelColor))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1.5)
+                    .background(Capsule().fill(Color.secondary.opacity(0.10)))
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.30), lineWidth: 0.5))
+                } else {
+                    Text(value)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
                 }
-                Text(value)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
             }
             .contentShape(Rectangle())
         }
@@ -1182,7 +1245,11 @@ struct PropertyRowView: View {
         let isPositioning = entity.positionedBy == spec.property.name
         HStack(spacing: 5) {
             Button(action: onCycleRole) {
-                Text(isPositioning ? "calendar" : "lookup")
+                // The pill ALWAYS names the concrete role (due/valid-until/
+                // occurred/purchased-on); solid accent vs dashed muted is
+                // what signals positioning (bp1:310/555 — "lookup" is only
+                // the popover's aft label, never the pill).
+                Text(spec.property.name)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(isPositioning ? Theme.accent : Theme.mutedFg)
                     .padding(.horizontal, 6)
@@ -1350,7 +1417,6 @@ struct InspectorFootbar: View {
                 pair("⎋", "close")
                 pair("H", "row menu")
                 pair("M", "more")
-                pair("N", "add")
             }
         }
         .padding(.init(top: 9, leading: 12, bottom: 9, trailing: 12))

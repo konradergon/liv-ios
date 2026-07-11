@@ -278,7 +278,7 @@ struct NavChevrons: View {
             }
             .buttonStyle(.plain)
             .foregroundColor(chrome.nav.canGoBack ? Theme.mutedFg : Theme.mutedFg.opacity(0.25))
-            .help("Back (⌥←)")
+            .help("Back (⌘[)")
             Button { chrome.goForward() } label: {
                 Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
                     .frame(width: 22, height: 28)
@@ -286,7 +286,7 @@ struct NavChevrons: View {
             .buttonStyle(.plain)
             .foregroundColor(
                 chrome.nav.canGoForward ? Theme.mutedFg : Theme.mutedFg.opacity(0.25))
-            .help("Forward (⌥→)")
+            .help("Forward (⌘])")
         }
         .padding(.trailing, 4)
     }
