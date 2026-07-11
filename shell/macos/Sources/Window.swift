@@ -1614,6 +1614,18 @@ struct WindowChrome: View {
                 NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
             })
         registry.register(
+            // ⌘F is the CANONICAL search-palette chord (P13, owner-confirmed:
+            // the blessed native-Find law, interface.md 0.5); ⌘O above stays
+            // the alias (the shipped code + bp3's Ctrl+O). Both open the one
+            // palette — no chord means two things.
+            CommandDef(
+                id: "search:open", label: "Search", scope: .global,
+                category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "f")
+            ) {
+                if chrome.focusMode { chrome.toggleFocus() }
+                NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+            })
+        registry.register(
             CommandDef(
                 id: "app:toggle-left-sidebar", label: "Toggle left sidebar", scope: .global,
                 category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "`"),

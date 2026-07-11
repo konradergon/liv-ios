@@ -235,11 +235,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         inbox.target = self
         view.addItem(NSMenuItem.separator())
         let search = view.addItem(
-            withTitle: "Search…", action: #selector(focusSearch), keyEquivalent: "")
-        search.target = self
-        let palette = view.addItem(
-            withTitle: "Command Palette…", action: nil, keyEquivalent: "")
-        palette.isEnabled = false  // arrives with P6
+            withTitle: "Search…", action: #selector(focusSearch), keyEquivalent: "f")
+        search.target = self  // ⌘F canonical (P13)
+        // "Command Palette…" is REFUSED (the constitution's palette ban;
+        // ⌘F searches entities) — the item is gone, not disabled.
         viewItem.submenu = view
 
         NSApp.mainMenu = main
