@@ -2809,6 +2809,10 @@ struct SearchPopup: View {
     @State private var highlighted = 0
     @State private var keyMonitor: Any?
     @FocusState private var fieldFocused: Bool
+    /// The result display mode, remembered across sessions (bp3 a21).
+    @AppStorage("app.search.displayMode.v1") private var displayModeRaw = SearchDisplayMode.compact.rawValue
+    /// Collapsed kind groups (bp3 a22 — the header toggles).
+    @State private var collapsed: Set<String> = []
 
     /// The hits resolved against the snapshot, always fresh (computed) so
     /// keyboard nav and Enter never read a stale count.
@@ -2862,6 +2866,53 @@ struct SearchPopup: View {
         query = toks.joined(separator: " ")
     }
 
+    // MARK: display modes + kind grouping (13d)
+
+    private var displayMode: SearchDisplayMode {
+        SearchDisplayMode(rawValue: displayModeRaw) ?? .compact
+    }
+    private var isEmptyQuery: Bool { searchTokens(query).isEmpty }
+
+    /// The MatchField per hit (Name/Cell/Content) — Context mode shows it.
+    private var fieldFor: [UInt64: String] {
+        Dictionary(model.searchResult.hits.map { ($0.id, $0.field) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Kind-grouped display (bp3 a22): fixed order tasks→events→notes→files→
+    /// contacts, rank preserved WITHIN each group (client-side over the
+    /// ranked ids). The empty-query recents stay one "Recent" group.
+    private var grouped: [(name: String, rows: [EntityRow])] {
+        if isEmptyQuery { return [("Recent", rows)] }
+        var buckets: [Int: [EntityRow]] = [:]
+        for row in rows { buckets[Self.groupOrder(row), default: []].append(row) }
+        return buckets.keys.sorted().map { (Self.groupNames[$0] ?? "Other", buckets[$0]!) }
+    }
+
+    /// The flat display order (grouped, minus collapsed) — keyboard nav and
+    /// Enter follow THIS, not the pure-rank list, so the highlight tracks
+    /// what the eye sees.
+    private var displayRows: [EntityRow] {
+        grouped.flatMap { collapsed.contains($0.name) ? [] : $0.rows }
+    }
+
+    private static let groupNames = [0: "Tasks", 1: "Events", 2: "Notes", 3: "Files", 4: "Contacts"]
+    private static func groupOrder(_ row: EntityRow) -> Int {
+        if row.kinds.contains("task") || row.status != nil { return 0 }
+        if row.kinds.contains("event") { return 1 }
+        if row.cells.contains(where: { $0.kind == "file" }) { return 3 }
+        if row.kinds.contains("person") { return 4 }
+        return 2  // notes + everything else
+    }
+
+    private var countLine: String {
+        let total = model.searchResult.matchCount
+        if isEmptyQuery {
+            return "\(total) object\(total == 1 ? "" : "s") · showing \(rows.count) recent"
+        }
+        return "\(total) match\(total == 1 ? "" : "es")"
+    }
+
     var body: some View {
         let rows = self.rows
         let fresh = model.searchedFor == query
@@ -2881,8 +2932,9 @@ struct SearchPopup: View {
                         .font(.system(size: 15))
                         .focused($fieldFocused)
                         .onSubmit {
-                            if rows.indices.contains(highlighted) {
-                                open(rows[highlighted].id)
+                            let ordered = displayRows
+                            if ordered.indices.contains(highlighted) {
+                                open(ordered[highlighted].id)
                                 dismiss()
                             }
                         }
@@ -2907,6 +2959,21 @@ struct SearchPopup: View {
                         .padding(.top, 6)
                 }
 
+                // The results toolbar: the true (never-capped) count line +
+                // the Compact/Context/Metadata display switch (bp3 a12/a21).
+                HStack(spacing: 10) {
+                    Text(countLine)
+                        .font(.system(size: 11.5)).foregroundColor(.secondary)
+                    Spacer()
+                    Picker("", selection: $displayModeRaw) {
+                        ForEach(SearchDisplayMode.allCases, id: \.rawValue) { m in
+                            Text(m.label).tag(m.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented).fixedSize().controlSize(.small)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 6)
+
                 Divider()
 
                 if rows.isEmpty {
@@ -2917,23 +2984,29 @@ struct SearchPopup: View {
                         .padding(16)
                 } else {
                     ScrollView {
-                        VStack(spacing: 1) {
-                            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                                // Not a Button: the row is a tap target so the
-                                // anchor chip inside can capture its own tap
-                                // (the nested-button trap). Tap = open, the
-                                // palette is a navigator.
-                                resultRow(row)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        open(row.id)
-                                        dismiss()
+                        VStack(alignment: .leading, spacing: 1) {
+                            ForEach(grouped, id: \.name) { group in
+                                ResultGroupHeader(
+                                    name: group.name, count: group.rows.count,
+                                    collapsed: collapsed.contains(group.name),
+                                    grouping: !isEmptyQuery,
+                                    toggle: {
+                                        if collapsed.contains(group.name) { collapsed.remove(group.name) }
+                                        else { collapsed.insert(group.name) }
+                                    })
+                                if !collapsed.contains(group.name) {
+                                    ForEach(group.rows, id: \.id) { row in
+                                        let index = displayRows.firstIndex { $0.id == row.id } ?? 0
+                                        resultRow(row, mode: displayMode, field: fieldFor[row.id])
+                                            .contentShape(Rectangle())
+                                            .onTapGesture { open(row.id); dismiss() }
+                                            .background(
+                                                RoundedRectangle(cornerRadius: Theme.radiusMd)
+                                                    .fill(index == highlighted
+                                                        ? Theme.primary.opacity(0.12) : .clear))
+                                            .onHover { if $0 { highlighted = index } }
                                     }
-                                    .background(
-                                        RoundedRectangle(cornerRadius: Theme.radiusMd)
-                                            .fill(index == highlighted ? Theme.primary.opacity(0.12) : .clear)
-                                    )
-                                    .onHover { if $0 { highlighted = index } }
+                                }
                             }
                         }
                         .padding(6)
@@ -2958,7 +3031,13 @@ struct SearchPopup: View {
             fieldFocused = true
             model.search(query) // seed recent immediately, don't wait 150ms
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                let count = self.rows.count
+                let count = self.displayRows.count
+                // Alt+1/2/3 switches display mode (bp3 a21).
+                if event.modifierFlags.contains(.option),
+                    let idx = [18: 0, 19: 1, 20: 2][Int(event.keyCode)] {
+                    displayModeRaw = SearchDisplayMode.allCases[idx].rawValue
+                    return nil
+                }
                 switch event.keyCode {
                 case 125:
                     highlighted = min(max(count - 1, 0), highlighted + 1)
@@ -2986,20 +3065,32 @@ struct SearchPopup: View {
         .onChange(of: query) { highlighted = 0 }
     }
 
+    /// The V2 compact grammar (P11.5d): icon · title · one anchor chip · the
+    /// labeled status chip. Three display modes (bp3 a21): Compact is the row;
+    /// Context adds a matched-FIELD label (the highlighted-body snippet is
+    /// deferred — the seam returns no offsets); Metadata adds up to two more
+    /// VALUE_HEX chips + "+N" (NOT ObjectCard — the palette stays scannable
+    /// rows; recorded delta). Chips filter IN the palette, additively.
     @ViewBuilder
-    /// The V2 compact grammar (P11.5d): icon · title · one anchor chip ·
-    /// the labeled status chip. Chips filter IN the palette — a chip click
-    /// swaps the query for its filter instead of leaving search.
-    private func resultRow(_ row: EntityRow) -> some View {
-        HStack(spacing: 9) {
+    private func resultRow(_ row: EntityRow, mode: SearchDisplayMode, field: String?) -> some View {
+        HStack(alignment: .top, spacing: 9) {
             Image(systemName: rowKindIcon(row))
                 .font(.system(size: 13))
                 .foregroundColor(Theme.accent)
                 .frame(width: 18)
-            Text(row.title.isEmpty ? "Untitled" : row.title)
-                .font(.system(size: 13))
-                .foregroundColor(.primary)
-                .lineLimit(1)
+                .padding(.top, mode == .context ? 1 : 0)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.title.isEmpty ? "Untitled" : row.title)
+                    .font(.system(size: 13))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                if mode == .context, let field, field != "structured", field != "name" {
+                    Text("matched in \(field)")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: 8)
             if let anchor = anchorChip(for: row) {
                 ValueChip(
@@ -3007,6 +3098,7 @@ struct SearchPopup: View {
                     tap: anchor.filter.map { f in { addQualifier(f) } },
                     help: anchor.filter.map { "add filter: \($0)" })
             }
+            if mode == .metadata { metadataChips(row) }
             if let status = row.status {
                 StatusChip(
                     option: statusVocabulary(model, kind: row.kinds.first ?? "")
@@ -3015,8 +3107,66 @@ struct SearchPopup: View {
                     tap: { addQualifier(searchQualifier("status", status)) })
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, mode == .compact ? 6 : 8)
         .padding(.horizontal, 10)
+    }
+
+    /// Metadata mode's extra chips (bp3 a21): up to two more VALUE_HEX
+    /// values beyond the anchor + a "+N" — the BP-7 chip budget, as rows.
+    @ViewBuilder
+    private func metadataChips(_ row: EntityRow) -> some View {
+        let anchorText = anchorChip(for: row)?.text
+        let extras = row.cells
+            .filter { ["subjects", "people", "project", "area", "tier"].contains($0.property) }
+            .map(\.value)
+            .filter { !$0.isEmpty && $0 != anchorText }
+        HStack(spacing: 4) {
+            ForEach(Array(extras.prefix(2).enumerated()), id: \.offset) { _, v in
+                ValueChip(text: v, hue: Hues.valueHex(v))
+            }
+            if extras.count > 2 {
+                Text("+\(extras.count - 2)")
+                    .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+            }
+        }
+    }
+}
+
+/// The result display modes (bp3 a21) — Compact rows, Context adds a match
+/// field, Metadata adds chips. Alt+1/2/3 and remembered per session.
+enum SearchDisplayMode: String, CaseIterable {
+    case compact, context, metadata
+    var label: String { rawValue.capitalized }
+}
+
+/// A kind-group header in the results (bp3 a22): the group name + count,
+/// tappable to collapse. The empty-query "Recent" header names the intent.
+struct ResultGroupHeader: View {
+    let name: String
+    let count: Int
+    let collapsed: Bool
+    /// True when this is a kind group (collapsible); the recents header is not.
+    let grouping: Bool
+    var toggle: () -> Void
+
+    var body: some View {
+        Button(action: { if grouping { toggle() } }) {
+            HStack(spacing: 6) {
+                if grouping {
+                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                Text(name.uppercased())
+                    .font(.system(size: 10.5, weight: .bold)).kerning(0.6)
+                Text("· \(count)").font(.system(size: 10.5, weight: .semibold))
+                Spacer()
+            }
+            .foregroundColor(Theme.mutedFg)
+            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!grouping)
     }
 }
 
