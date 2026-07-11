@@ -12,7 +12,6 @@ enum CalendarMode: String, CaseIterable {
     case month = "Month"
     case week = "Week"
     case day = "Day"
-    case agenda = "Agenda"
 }
 
 // MARK: - shared civil-date helpers (file-scoped)
@@ -77,8 +76,8 @@ struct CalendarView: View {
     // every single tap by the double-click interval — the tab-strip lesson).
     @State private var lastItemTap: (id: UInt64, at: Date)?
 
-    // Liv's "My calendars" checklist: which kinds land on the grid. Shell
-    // state (Liv keeps it in localStorage; here UserDefaults) — never cells.
+    // Which kinds land on the grid — the default calendar filter (bp9 has
+    // no "My calendars" rail; these persist the sensible defaults below).
     @AppStorage("app.calendar.show.event") private var showEvents = true
     @AppStorage("app.calendar.show.task") private var showTasks = true
     @AppStorage("app.calendar.show.note") private var showNotes = true
@@ -93,13 +92,8 @@ struct CalendarView: View {
             // A tight window sheds panels instead of crushing the grid: the
             // rail goes first, then the right column — the grid is the point.
             let byDay = buildByDay()
-            let showRail = geo.size.width >= 1000
             let showRight = panelOpen && geo.size.width >= 760
             HStack(spacing: 0) {
-                if showRail {
-                    rail(byDay)
-                    Divider()
-                }
                 VStack(spacing: 0) {
                     topBar
                     Divider()
@@ -126,8 +120,6 @@ struct CalendarView: View {
                                 loadWindow()
                             },
                             createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
-                    case .agenda:
-                        agendaBody(byDay)
                     }
                 }
                 // Liv's fixed right column — the day panel, or (while an
@@ -244,135 +236,6 @@ struct CalendarView: View {
         }
     }
 
-    // MARK: the left rail — mini-month + My calendars (Liv's calendar rail)
-
-    private func rail(_ byDay: [Int64: [EntityRow]]) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                miniMonth(byDay)
-                sectionCaption("My calendars").padding(.top, 26).padding(.bottom, 6)
-                kindToggle("Events", $showEvents)
-                kindToggle("Task due dates", $showTasks)
-                kindToggle("Notes", $showNotes)
-                kindToggle("Files", $showFiles)
-                kindToggle("Contacts", $showContacts)
-                kindToggle("Lists", $showLists)
-                sectionCaption("Other calendars").padding(.top, 26).padding(.bottom, 6)
-                HStack(spacing: 7) {
-                    Image(systemName: "plus").font(.system(size: 10.5))
-                    Text("Subscribe to a calendar").font(.system(size: 12.5))
-                }
-                .foregroundColor(Theme.mutedFg)
-                .padding(.vertical, 3)
-                .help("Calendar subscriptions arrive with ICS feeds")
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(width: 232)
-        .background(Theme.background)
-    }
-
-    private func sectionCaption(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .kerning(0.6)
-            .foregroundColor(.secondary)
-    }
-
-    private func kindToggle(_ label: String, _ on: Binding<Bool>) -> some View {
-        Button { on.wrappedValue.toggle() } label: {
-            HStack(spacing: 8) {
-                Image(systemName: on.wrappedValue ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 13))
-                    .foregroundColor(on.wrappedValue ? Theme.accent : Theme.mutedFg)
-                Text(label).font(.system(size: 12.5)).foregroundColor(.primary)
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 3)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func miniMonth(_ byDay: [Int64: [EntityRow]]) -> some View {
-        let cells = monthCells()
-        let weeks = max(cells.count / 7, 1)
-        return VStack(spacing: 5) {
-            HStack {
-                miniChevron("chevron.left") { stepMonthOnly(-1) }
-                Spacer()
-                Text(monthYearText()).font(.system(size: 12.5, weight: .semibold))
-                Spacer()
-                miniChevron("chevron.right") { stepMonthOnly(1) }
-            }
-            .padding(.bottom, 3)
-            HStack(spacing: 0) {
-                ForEach(0..<7, id: \.self) { i in
-                    Text(["M", "T", "W", "T", "F", "S", "S"][i])
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            ForEach(0..<weeks, id: \.self) { w in
-                HStack(spacing: 0) {
-                    ForEach(0..<7, id: \.self) { d in
-                        let cell = cells[w * 7 + d]
-                        miniDay(
-                            cell.key, inMonth: cell.inMonth,
-                            hasItems: !(byDay[cell.key] ?? []).isEmpty)
-                    }
-                }
-            }
-        }
-    }
-
-    private func miniChevron(_ symbol: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundColor(Theme.mutedFg)
-                .frame(width: 18, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // A mini day: today gets the accent square (Liv's filled square), the
-    // selected day a soft one, and a dot marks days with items (Liv §6.6).
-    private func miniDay(_ key: Int64, inMonth: Bool, hasItems: Bool) -> some View {
-        Button {
-            selectedDay = key
-            viewYear = Int(key / 10000)
-            viewMonth = Int((key / 100) % 100)
-            loadWindow()
-        } label: {
-            VStack(spacing: 1) {
-                Text("\(Int(key % 100))")
-                    .font(.system(size: 10.5).monospacedDigit())
-                    .foregroundColor(
-                        key == Civil.todayYMD
-                            ? .white : (inMonth ? .primary : Color.secondary.opacity(0.45))
-                    )
-                    .frame(width: 20, height: 17)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(
-                                key == Civil.todayYMD
-                                    ? Theme.accent
-                                    : (key == selectedDay
-                                        ? Color.secondary.opacity(0.18) : Color.clear)))
-                Circle()
-                    .fill(hasItems ? Color.secondary.opacity(0.6) : Color.clear)
-                    .frame(width: 3, height: 3)
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: the top bar — title · mode switcher · ‹ Today › · + Event (Liv's)
 
     private var topBar: some View {
@@ -466,7 +329,7 @@ struct CalendarView: View {
 
     private func subtitleText() -> String {
         switch viewMode {
-        case .month, .agenda:
+        case .month:
             return monthYearText()
         case .week:
             let d = weekDays(selectedDay)
@@ -555,83 +418,6 @@ struct CalendarView: View {
         }
     }
 
-    // MARK: agenda — Liv's AgendaList: date rail + the day's rows
-
-    private func agendaBody(_ byDay: [Int64: [EntityRow]]) -> some View {
-        let monthPrefix = Int64(viewYear * 100 + viewMonth)
-        let keys = byDay.keys.filter { $0 / 100 == monthPrefix }.sorted()
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if keys.isEmpty {
-                    Text("Nothing this month.")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Theme.mutedFg)
-                        .padding(.top, 30)
-                }
-                ForEach(keys, id: \.self) { key in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(spacing: 0) {
-                            Text(Fmt.dow.string(from: civilDate(key)))
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.secondary)
-                            Text("\(Int(key % 100))")
-                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
-                            Text(Fmt.dayMonth.string(from: civilDate(key)).components(
-                                separatedBy: " ").last ?? "")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(width: 46)
-                        VStack(spacing: 5) {
-                            ForEach(byDay[key] ?? []) { row in
-                                agendaRow(row)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func agendaRow(_ row: EntityRow) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: kindSymbol(row))
-                .font(.system(size: 11.5))
-                .foregroundColor(.secondary)
-            if let due = row.due, !row.dueDateOnly {
-                Text(timeHHmm(due))
-                    .font(.system(size: 11.5).monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
-            Text(row.title.isEmpty ? "Untitled" : row.title)
-                .font(.system(size: 12.5))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(Color.secondary.opacity(selection == row.id ? 0.2 : 0.10)))
-        .overlay(
-            Rectangle().fill(Color.secondary.opacity(0.5)).frame(width: 2), alignment: .leading
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .contentShape(Rectangle())
-        .onTapGesture { itemTapped(row.id) }
-    }
-
-    private func kindSymbol(_ row: EntityRow) -> String {
-        if row.kinds.contains("event") { return "calendar" }
-        if row.kinds.contains("task") || row.status != nil { return "checkmark.square" }
-        if row.kinds.contains("file") { return "doc" }
-        if row.kinds.contains("list") { return "list.bullet" }
-        return "doc.text"
-    }
-
     // MARK: the day panel — Liv's fixed right column
 
     private func dayPanel(_ key: Int64, items: [EntityRow]) -> some View {
@@ -703,7 +489,7 @@ struct CalendarView: View {
 
     private func step(_ delta: Int) {
         switch viewMode {
-        case .month, .agenda: stepMonthOnly(delta)
+        case .month: stepMonthOnly(delta)
         case .week: moveAnchor(days: delta * 7)
         case .day: moveAnchor(days: delta)
         }
