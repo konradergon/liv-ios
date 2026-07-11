@@ -3521,42 +3521,77 @@ struct TasksView: View {
 
     @State private var draft = ""
     @State private var filter: TaskFilter = .open
+    /// The lens over the ONE task pool (bp6 a6, P14a): List | Board |
+    /// Schedule | Cards — ephemeral shell state, NOT a persisted view-object
+    /// (D3). Only the grouping key + layout change; the pool is shared.
+    @State private var lens: TaskLens = .list
     @FocusState private var addFocused: Bool
 
     enum TaskFilter: String, CaseIterable { case all = "All", open = "Open", done = "Done" }
+    enum TaskLens: String, CaseIterable {
+        case list = "List", board = "Board", schedule = "Schedule", cards = "Cards"
+        var symbol: String {
+            switch self {
+            case .list: return "list.bullet"
+            case .board: return "rectangle.split.3x1"
+            case .schedule: return "calendar.day.timeline.left"
+            case .cards: return "square.grid.2x2"
+            }
+        }
+    }
 
-    var body: some View {
+    /// The shared pipeline: everything → tasks → the All/Open/Done gate.
+    /// Done-ness follows the option's `completes` (the vocabulary-aware law).
+    private var tasks: [EntityRow] {
         let all = model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
-        // Done-ness follows the option's `completes`, exactly as the row's
-        // checkbox does (the review: string-matching "done" diverged from
-        // the vocabulary-aware display law).
         let terminal = Set(
             statusVocabulary(model, kind: "task").filter(\.isTerminal).map(\.name)
         ).union(["done"])
-        let tasks: [EntityRow]
         switch filter {
-        case .all: tasks = all
-        case .open: tasks = all.filter { !terminal.contains($0.status ?? "") }
-        case .done: tasks = all.filter { terminal.contains($0.status ?? "") }
+        case .all: return all
+        case .open: return all.filter { !terminal.contains($0.status ?? "") }
+        case .done: return all.filter { terminal.contains($0.status ?? "") }
         }
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    LensHeader(
-                        title: "Tasks",
-                        subtitle: tasks.count == 1 ? "1 task" : "\(tasks.count) tasks")
-                    Spacer()
-                    filterSegments
-                }
-                quickAdd
+    }
 
+    var body: some View {
+        let tasks = self.tasks
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                LensHeader(
+                    title: "Tasks",
+                    subtitle: tasks.count == 1 ? "1 task" : "\(tasks.count) tasks")
+                Spacer()
+                lensSwitcher
+                // The Board's columns carry status, so the Open/Done gate is
+                // a list-lens concern; it stays hidden on the board.
+                if lens != .board { filterSegments }
+            }
+            .padding(.horizontal, 32)
+            .padding(.top, 40)
+            .padding(.bottom, 8)
+
+            switch lens {
+            case .list: listLens(tasks)
+            case .board, .schedule, .cards: comingLens
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+    }
+
+    /// The List lens (bp6 a14): the status-grouped list — rows are ObjectRow
+    /// at the 34px budget with the StatusDot (the one lens that shows the
+    /// status dot; the board tile drops even that). Sections ARE the user's
+    /// vocabulary in board order (P11.5c).
+    @ViewBuilder
+    private func listLens(_ tasks: [EntityRow]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                quickAdd
                 if tasks.isEmpty {
                     emptyState
                 } else {
-                    // Sections ARE the user's vocabulary in board order
-                    // (P11.5c): the catalog's task-scoped options replace the
-                    // hardcoded todo/doing/done, and the "other" bucket
-                    // disappears — options are data.
                     let vocabulary = statusVocabulary(model, kind: "task")
                     let unstatused = tasks.filter { $0.status == nil }
                         .sorted { dueKey($0) < dueKey($1) }
@@ -3574,9 +3609,7 @@ struct TasksView: View {
                         }
                     }
                     // A status whose option left the vocabulary still shows —
-                    // the row's own status text is the truth. Grouped and
-                    // LABELED like every other section (the review: unlabeled
-                    // orphans read as members of whatever section came last).
+                    // labeled like every other section (the P11.5 review).
                     let known = Set(vocabulary.map(\.name))
                     let orphanNames = Set(
                         tasks.compactMap(\.status).filter { !known.contains($0) }
@@ -3591,11 +3624,41 @@ struct TasksView: View {
                 }
             }
             .padding(.horizontal, 32)
-            .padding(.top, 40)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+    }
+
+    /// Board arrives in P14b; Schedule + Cards in P14d.
+    private var comingLens: some View {
+        VStack(spacing: 8) {
+            Image(systemName: lens.symbol)
+                .font(.system(size: 28)).foregroundColor(Theme.foreground.opacity(0.12))
+            Text("The \(lens.rawValue) lens is landing next.")
+                .font(.system(size: 12.5)).foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The lens switcher tabs (bp6 a6) — List | Board | Schedule | Cards.
+    private var lensSwitcher: some View {
+        HStack(spacing: 2) {
+            ForEach(TaskLens.allCases, id: \.self) { option in
+                Button { lens = option } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: option.symbol).font(.system(size: 11))
+                        Text(option.rawValue).font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(lens == option ? Theme.accent : .secondary)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 7)
+                        .fill(lens == option ? Theme.accentTint : Color.clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color.secondary.opacity(0.08)))
     }
 
     /// A task row in the V2 chip-forward grammar (P11.5c): checkbox (the
