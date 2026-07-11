@@ -2429,6 +2429,64 @@ func searchQualifier(_ property: String, _ value: String) -> String {
     return needsQuotes ? "\(property):\"\(value)\"" : "\(property):\(value)"
 }
 
+/// Split a raw DSL string into tokens, quote-aware: a double-quoted run is
+/// one token (spaces preserved, quotes kept). Mirrors the Rust tokenizer so
+/// the shell edits the same query the core parses (P11.5 quoting law).
+func searchTokens(_ query: String) -> [String] {
+    var tokens: [String] = []
+    var current = ""
+    var quoted = false
+    for c in query {
+        if c == "\"" { quoted.toggle(); current.append(c) }
+        else if c == " " && !quoted {
+            if !current.isEmpty { tokens.append(current); current = "" }
+        } else { current.append(c) }
+    }
+    if !current.isEmpty { tokens.append(current) }
+    return tokens
+}
+
+/// The include→exclude→off three-state cycle for one facet value (bp3 a19):
+/// off → `key:value` (include) → `-key:value` (exclude) → off. Quote-aware,
+/// case-insensitive; rewrites the raw query the field shows and the core
+/// parses — one query, two views (chips and pills).
+func cycleFacetValue(_ query: inout String, key: String, value: String) {
+    let inc = searchQualifier(key, value)
+    let exc = "-" + inc
+    var tokens = searchTokens(query)
+    let hasInc = tokens.contains { $0.caseInsensitiveCompare(inc) == .orderedSame }
+    let hasExc = tokens.contains { $0.caseInsensitiveCompare(exc) == .orderedSame }
+    tokens.removeAll {
+        $0.caseInsensitiveCompare(inc) == .orderedSame
+            || $0.caseInsensitiveCompare(exc) == .orderedSame
+    }
+    if hasInc {
+        tokens.append(exc)  // include → exclude
+    } else if !hasExc {
+        tokens.append(inc)  // off → include
+    }  // else exclude → off (removed above, add nothing)
+    query = tokens.joined(separator: " ")
+}
+
+/// Set a facet value directly to a state (bp3 a8: I include · X exclude ·
+/// O off), the popover's I/X/O keys and clicks land here.
+enum FacetState { case include, exclude, off }
+func setFacetValue(_ query: inout String, key: String, value: String, to state: FacetState) {
+    let inc = searchQualifier(key, value)
+    let exc = "-" + inc
+    var tokens = searchTokens(query)
+    tokens.removeAll {
+        $0.caseInsensitiveCompare(inc) == .orderedSame
+            || $0.caseInsensitiveCompare(exc) == .orderedSame
+    }
+    switch state {
+    case .include: tokens.append(inc)
+    case .exclude: tokens.append(exc)
+    case .off: break
+    }
+    query = tokens.joined(separator: " ")
+}
+
 /// The checkbox toggle, vocabulary-aware (the review's diverged-laws
 /// finding): display derives done-ness from the option's `completes`, so
 /// the WRITE must too — toggling moves between the kind's first terminal
@@ -2468,95 +2526,194 @@ func priorityColor(_ priority: String) -> Color {
 /// splicing its `key:value` token into the query string — the field and the
 /// chips are one source of truth (parse-first, ported from Liv). Native
 /// pills, lake-green when active — not Liv's rainbow chrome.
+/// The bp3 v2 facet rail (a6/a7): one chip PER PROPERTY (name + distinct-
+/// value count + its D21 digit), not per value. Clicking a chip opens the
+/// FacetValuePopover; the property's digit opens it from anywhere. Reshaped
+/// from the P11.5d per-value chip row.
 struct FacetBar: View {
+    @ObservedObject var model: BoxModel
     let facets: [SearchFacet]
     @Binding var query: String
 
-    var body: some View {
-        if !facets.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(facets) { facet in
-                        HStack(spacing: 5) {
-                            Text(facet.label.capitalized)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.secondary)
-                            ForEach(facet.values) { value in
-                                FacetChip(
-                                    value: value,
-                                    // The frozen chip-hue law: status/tier/
-                                    // priority are never VALUE_HEX, and type
-                                    // is an icon (objects render neutral).
-                                    hue: ["status", "priority", "tier", "type"]
-                                        .contains(facet.label.lowercased())
-                                        ? nil : Hues.valueHex(value.label)
-                                ) { toggle(facet.label, value) }
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .padding(.bottom, 8)
-        }
-    }
+    @State private var openFacet: UInt64?
 
-    /// Single-select pivot: drop any existing qualifier for this facet, then
-    /// add the clicked value unless it was already the active one (toggle
-    /// off). Re-running the same string the field shows keeps them in sync.
-    private func toggle(_ key: String, _ value: SearchFacetValue) {
-        let key = key.lowercased()
-        // Quote-aware: a quoted qualifier value is one token with spaces.
-        var tokens: [String] = []
-        var current = ""
-        var quoted = false
-        for c in query {
-            if c == "\"" { quoted.toggle(); current.append(c) }
-            else if c == " " && !quoted {
-                if !current.isEmpty { tokens.append(current); current = "" }
-            } else { current.append(c) }
+    private var keys: [String: String] { DigitMap.resolve(model.properties()) }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                Text("Quick filter")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                ForEach(facets) { facet in
+                    PropertyFacetChip(
+                        facet: facet,
+                        digit: keys[facet.label.lowercased()],
+                        open: openFacet == facet.id,
+                        toggleOpen: { openFacet = openFacet == facet.id ? nil : facet.id },
+                        query: $query,
+                        close: { openFacet = nil })
+                }
+            }
+            .padding(.vertical, 4)
         }
-        if !current.isEmpty { tokens.append(current) }
-        tokens.removeAll { $0.lowercased().hasPrefix("\(key):") }
-        if !value.active {
-            tokens.append(searchQualifier(key, value.label.lowercased()))
-        }
-        query = tokens.joined(separator: " ")
+        .padding(.bottom, 8)
     }
 }
 
-/// One facet value pill: label + hypothetical count, lake-green when active.
-struct FacetChip: View {
-    let value: SearchFacetValue
-    /// nil = neutral (the status facet — status is never VALUE_HEX).
-    var hue: NSColor? = nil
-    let action: () -> Void
+/// One property chip in the rail; its popover floats below when open.
+struct PropertyFacetChip: View {
+    let facet: SearchFacet
+    var digit: String?
+    let open: Bool
+    var toggleOpen: () -> Void
+    @Binding var query: String
+    var close: () -> Void
+
+    /// A property is "engaged" when any of its values is in the query.
+    private var engaged: (inc: Int, exc: Int) {
+        (facet.values.filter(\.active).count,
+         facet.values.filter(\.isExcluded).count)
+    }
 
     var body: some View {
-        // Converged on THE chip recipe (P11.5d): the value's VALUE_HEX mixes
-        // carry the hue; active adds the accent ring; the count rides along.
-        let ink: Color = hue.map { Hues.chipInk($0) } ?? Color(nsColor: .secondaryLabelColor)
-        let bg: Color = hue.map { Hues.chipBackground($0) } ?? Color.secondary.opacity(0.10)
-        let border: Color = hue.map { Hues.chipBorder($0) } ?? Color.secondary.opacity(0.30)
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Text(value.label)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(value.active ? Theme.accent : ink)
-                Text("\(value.count)")
-                    .font(.system(size: 10))
-                    .foregroundColor(value.active ? Theme.accent : .secondary)
+        let e = engaged
+        let anyInc = e.inc > 0, anyExc = e.exc > 0
+        Button(action: toggleOpen) {
+            HStack(spacing: 5) {
+                Text(facet.label.capitalized).font(.system(size: 12, weight: .medium))
+                Text(countLabel(e)).font(.system(size: 11)).foregroundColor(.secondary)
+                if let digit {
+                    Text(digit)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 3)
+                        .background(RoundedRectangle(cornerRadius: 3)
+                            .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.75))
+                }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(value.active ? Theme.accent.opacity(0.14) : bg))
-            .overlay(
-                Capsule().strokeBorder(
-                    value.active ? Theme.accent.opacity(0.6) : border, lineWidth: value.active ? 1 : 0.5)
-            )
+            .foregroundColor(anyExc ? Theme.destructive : anyInc ? Theme.accent : .primary)
+            .padding(.horizontal, 11).frame(height: 28)
+            .background(Capsule().fill(
+                anyExc ? Theme.destructive.opacity(0.12)
+                    : anyInc ? Theme.accentTint : Color.secondary.opacity(0.08)))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(value.active ? "Remove filter" : "Filter to \(value.label)")
+        .popover(isPresented: Binding(get: { open }, set: { if !$0 { close() } }),
+                 arrowEdge: .bottom) {
+            FacetValuePopover(facet: facet, query: $query, onClose: close)
+        }
+    }
+
+    private func countLabel(_ e: (inc: Int, exc: Int)) -> String {
+        if e.inc > 0 && e.exc > 0 { return "· \(e.inc) in · \(e.exc) out" }
+        if e.inc > 0 { return "· \(e.inc) in" }
+        if e.exc > 0 { return "· \(e.exc) out" }
+        return "· \(facet.values.count)"
+    }
+}
+
+/// The facet value popover (bp3 a8/a18/a19): the P11.5 value-pool chrome —
+/// a type-to-filter field over the counted value list — plus the
+/// include→exclude→off tri-state. Digits 1–9 cycle a value; I/X/O set it
+/// directly; Esc closes. Include renders accent, exclude red + strikethrough.
+struct FacetValuePopover: View {
+    let facet: SearchFacet
+    @Binding var query: String
+    var onClose: () -> Void
+
+    @State private var filter = ""
+    @FocusState private var fieldFocused: Bool
+
+    /// status/tier/priority/type never take VALUE_HEX (the frozen budget).
+    private var neutral: Bool {
+        ["status", "priority", "tier", "type", "object"].contains(facet.label.lowercased())
+    }
+
+    private var shown: [SearchFacetValue] {
+        let needle = filter.lowercased()
+        return needle.isEmpty
+            ? facet.values
+            : facet.values.filter { $0.label.lowercased().contains(needle) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(facet.label) · counts are live")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundColor(Theme.mutedFg)
+                .textCase(.uppercase)
+                .padding(.init(top: 8, leading: 10, bottom: 4, trailing: 10))
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                TextField("filter…", text: $filter)
+                    .textFieldStyle(.plain).font(.system(size: 12))
+                    .focused($fieldFocused)
+                    .onExitCommand { onClose() }
+            }
+            .padding(.init(top: 2, leading: 10, bottom: 6, trailing: 10))
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(shown.prefix(40).enumerated()), id: \.element.id) { at, v in
+                        valueRow(v, index: at)
+                    }
+                }
+            }
+            .frame(maxHeight: 240)
+            Text("1–9 cycle in→out→off · I in · X out · Esc done")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                .padding(.init(top: 5, leading: 10, bottom: 8, trailing: 10))
+        }
+        .frame(width: 244)
+        .onAppear { fieldFocused = true }
+        .onKeyPress(phases: .down) { press in
+            if let d = press.characters.first?.wholeNumberValue, (1...9).contains(d),
+               d <= shown.count {
+                cycle(shown[d - 1]); return .handled
+            }
+            switch press.characters.lowercased() {
+            case "i": if let v = shown.first { set(v, .include) }; return .handled
+            case "x": if let v = shown.first { set(v, .exclude) }; return .handled
+            case "o": if let v = shown.first { set(v, .off) }; return .handled
+            default: return .ignored
+            }
+        }
+    }
+
+    private func valueRow(_ v: SearchFacetValue, index: Int) -> some View {
+        let dot = neutral ? Color(nsColor: .tertiaryLabelColor)
+            : Color(nsColor: Hues.valueHex(v.label))
+        return Button { cycle(v) } label: {
+            HStack(spacing: 8) {
+                Text("\(index + 1)").font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Theme.mutedFg).frame(width: 14)
+                Circle().fill(dot).frame(width: 7, height: 7)
+                Text(v.label).font(.system(size: 12.5))
+                    .strikethrough(v.isExcluded, color: Theme.destructive)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text("\(v.count)").font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+                if v.active {
+                    Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(Theme.accent)
+                }
+            }
+            .foregroundColor(v.active ? Theme.accent : v.isExcluded ? Theme.destructive : .primary)
+            .padding(.horizontal, 9).frame(minHeight: 30)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(v.active ? Theme.accentTint
+                : v.isExcluded ? Theme.destructive.opacity(0.10) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func cycle(_ v: SearchFacetValue) {
+        cycleFacetValue(&query, key: facet.label.lowercased(), value: v.label.lowercased())
+    }
+    private func set(_ v: SearchFacetValue, _ state: FacetState) {
+        setFacetValue(&query, key: facet.label.lowercased(), value: v.label.lowercased(), to: state)
     }
 }
 
@@ -2618,7 +2775,7 @@ struct SearchPopup: View {
 
                 if !model.searchResult.facets.isEmpty {
                     Divider()
-                    FacetBar(facets: model.searchResult.facets, query: $query)
+                    FacetBar(model: model, facets: model.searchResult.facets, query: $query)
                         .padding(.horizontal, 6)
                         .padding(.top, 6)
                 }
