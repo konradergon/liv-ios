@@ -242,6 +242,12 @@ pub fn get_or_create_daily_note(
     }
     if let (Some(wp), Some(ws)) = (workspace_prop, workspace) {
         constraints.push(Constraint { property: wp, op: Op::Equals(Value::Reference(ws)) });
+    } else if let Some(wp) = workspace_prop {
+        // None = the global bucket: the note must have NO workspace cell, so
+        // a workspace-less find never adopts a workspace-scoped note and the
+        // two buckets stay isolated (the review's finding). The shell resolves
+        // nil to the Home workspace id, so None is only genuine no-workspace.
+        constraints.push(Constraint { property: wp, op: Op::Missing });
     }
     let query = Query { constraints, ..Query::default() };
     if let Some(found) = run(store, &query).first().copied() {

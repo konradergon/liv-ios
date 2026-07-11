@@ -195,9 +195,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let note = file.addItem(
             withTitle: "New Note", action: #selector(newNote), keyEquivalent: "")
         note.target = self
+        // ⌘⌥D is owned by the CommandRegistry (daily:open-today), which is
+        // correctly suppressed behind modals/overlays; a native menu
+        // key-equivalent would punch through that guard (the review), so the
+        // item stays clickable without an accelerator.
         let daily = file.addItem(
-            withTitle: "Daily Note", action: #selector(openDailyNote), keyEquivalent: "d")
-        daily.keyEquivalentModifierMask = [.command, .option]  // ⌘⌥D (P12 12b, D2)
+            withTitle: "Daily Note", action: #selector(openDailyNote), keyEquivalent: "")
         daily.target = self
         fileItem.submenu = file
 

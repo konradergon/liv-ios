@@ -2344,6 +2344,17 @@ mod tests {
         let same = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), afternoon, ws_a) };
         assert_eq!(same, first, "the seam keys on the day, not the minute");
 
+        // The global (workspace 0 = None) bucket is SELF-CONSISTENT and
+        // ISOLATED from workspace buckets (the review's high): two None opens
+        // on one day are one note, and that note is neither `first` nor
+        // `other_ws` (which are workspace-scoped).
+        let global1 = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, 0) };
+        let global2 = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, 0) };
+        assert_ne!(global1, 0);
+        assert_eq!(global1, global2, "None is self-consistent, not double-created");
+        assert_ne!(global1, first, "None never adopts a workspace-scoped note");
+        assert_ne!(global1, other_ws, "None never adopts a workspace-scoped note");
+
         // Exactly two daily notes on Jul 11 (one per workspace), one on Jul 12.
         let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
         let entities = snap["entities"].as_array().unwrap();
@@ -2356,7 +2367,7 @@ mod tests {
                     .unwrap_or(false)
             })
             .collect();
-        assert_eq!(dailies.len(), 3, "two on Jul 11 + one on Jul 12");
+        assert_eq!(dailies.len(), 4, "ws_a/ws_b/global on Jul 11 + ws_a on Jul 12");
 
         // The born note carries type + date + workspace + a non-empty template body.
         let born = entities.iter().find(|e| e["id"] == first).unwrap();

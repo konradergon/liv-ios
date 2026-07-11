@@ -188,7 +188,11 @@ struct BoxFault: Codable {
 
 final class BoxModel: ObservableObject {
     let path: String
-    @Published var snap: Snapshot? { didSet { rebuildEntityIndex() } }
+    @Published var snap: Snapshot? { didSet { rebuildEntityIndex(); orphanCache = nil } }
+    /// Memoized orphan set (P12) — recomputed once per snapshot, reused by
+    /// the rail badge and the Inbox/Capture lenses instead of materializing
+    /// the whole box on every render (the review's finding).
+    private var orphanCache: [EntityRow]?
     @Published var boxBusy = false
 
     /// id -> row, rebuilt once when a snapshot lands. entity()/rows() are hit
@@ -495,8 +499,11 @@ final class BoxModel: ObservableObject {
     /// scrap that has words but no classification. `everything` already
     /// excludes working plumbing, so no definitions/types leak.
     func orphans() -> [EntityRow] {
-        rows(snap?.everything ?? [])
+        if let orphanCache { return orphanCache }
+        let result = rows(snap?.everything ?? [])
             .filter { !$0.trashed && $0.kinds.isEmpty && $0.contentPrint != 0 }
+        orphanCache = result
+        return result
     }
 
     /// Stamp an entity's TYPE by name (P12 12d — the Inbox Route commit).
@@ -884,6 +891,9 @@ struct WindowChrome: View {
     /// Today IS the daily note (P12 12b, D1): the id of today's daily note,
     /// hosted in `editor` on the desk's Today lens.
     @State private var dailyNoteId: UInt64?
+    /// The day dailyNoteId belongs to (yyyymmdd) — so a rollover past
+    /// midnight re-opens the new day's note (the review's finding).
+    @State private var dailyNoteDay: Int64 = 0
     /// The working set of the active workspace, as the Notes top bar.
     @StateObject private var tabs = TabsModel()
     @State private var returnMonitor: Any?
@@ -1338,11 +1348,35 @@ struct WindowChrome: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { ensureDailyNote() }
         .onChange(of: chrome.activeWorkspace) { ensureDailyNote() }
+        // The first snapshot is what resolves nil-workspace → Home; until it
+        // lands, ensureDailyNote defers, so the note is never born global-
+        // then-reborn Home (the duplication the review's high describes).
+        .onChange(of: model.snap != nil) { ensureDailyNote() }
+        // A rollover past midnight re-opens the new day's note; the day
+        // guard makes the tick a no-op within one day (no box churn).
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            if Civil.todayYMD != dailyNoteDay { ensureDailyNote() }
+        }
+    }
+
+    /// The active workspace as a concrete id — nil resolves to the built-in
+    /// Home so the daily-note seam never uses its workspace-less global
+    /// bucket, which would duplicate across the nil<->Home boundary (the
+    /// review's high).
+    private func activeWorkspaceId() -> UInt64 {
+        if let ws = chrome.activeWorkspace { return ws }
+        return (model.snap?.workspaces.first { $0.builtin == "home" }?.id) ?? 0
     }
 
     private func ensureDailyNote() {
+        // Defer until the first snapshot: it is what resolves a nil active
+        // workspace to Home. Creating before it lands would use the global
+        // (workspace-less) bucket, then re-create Home-scoped when snap
+        // arrives — two notes for one day (the review's high).
+        guard model.snap != nil else { return }
         let civil = Civil.todayYMD * 10_000
-        let workspace = chrome.activeWorkspace ?? 0
+        dailyNoteDay = Civil.todayYMD
+        let workspace = activeWorkspaceId()
         model.openDailyNote(dateCivil: civil, workspace: workspace) { id in
             guard let id else { return }
             dailyNoteId = id
@@ -1398,6 +1432,11 @@ struct WindowChrome: View {
             } else {
                 selection = id
             }
+        } else if case .desk? = tabs.active?.kind, lens == .today {
+            // The desk's Today lens legitimately hosts today's daily note in
+            // `editor`; re-ensure instead of retiring, so closing a sibling
+            // tab (or any non-.note sync) never blanks Today (the review).
+            ensureDailyNote()
         } else {
             retireEditor {}
         }
@@ -1501,6 +1540,10 @@ struct WindowChrome: View {
             if clearQuery { query = "" }
             lens = lensValue
             selection = nil
+            // Re-entering Today while already on it won't re-fire the lens's
+            // onAppear, and closeEditor just nilled `editor` — so reopen the
+            // daily note explicitly, else Today goes blank (the review's high).
+            if lensValue == .today { ensureDailyNote() }
         }
     }
 
@@ -2035,6 +2078,7 @@ struct InboxView: View {
     @Binding var selection: UInt64?
     var open: (UInt64) -> Void = { _ in }
     @State private var lens: InboxLens = .route
+    @FocusState private var surfaceFocused: Bool
 
     private var orphans: [EntityRow] { model.orphans() }
     private var proposals: [ProposalRow] { model.snap?.inbox ?? [] }
@@ -2050,6 +2094,13 @@ struct InboxView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // [ ] cycles the lens (digits stay reserved for the D21 map, a14).
+        // The surface takes focus on appear so the chord fires without a
+        // prior click (the review's finding); onKeyPress needs a focused
+        // view in its subtree.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($surfaceFocused)
+        .onAppear { surfaceFocused = true }
         .onKeyPress(.init("[")) { cycleLens(-1); return .handled }
         .onKeyPress(.init("]")) { cycleLens(1); return .handled }
     }
@@ -2161,9 +2212,11 @@ struct InboxView: View {
     /// After Commit/Later, select the next orphan (a21: auto-advance).
     private func advance(after row: EntityRow) {
         let remaining = model.orphans().filter { $0.id != row.id }
+        guard !remaining.isEmpty else { selection = nil; return }
         let at = orphans.firstIndex { $0.id == row.id } ?? 0
-        selection = remaining.indices.contains(at)
-            ? remaining[at].id : remaining.first?.id
+        // Clamp so committing the LAST orphan lands on the new last (not a
+        // bounce to the first — the review's finding).
+        selection = remaining[min(at, remaining.count - 1)].id
     }
 
     private var inboxZero: some View {
