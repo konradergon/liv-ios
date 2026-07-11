@@ -535,3 +535,32 @@ tri-state popover 13c/13d build on, so 13b precedes 13c/13d.
 entity ships now, the subnotes default-gate, kind-grouping-vs-pure-rank, and
 scope-tile fidelity (single tile vs omit). Each forks a mockup or the code; none
 blocks 13a.
+
+## 8 · Fix-round deltas (P13 review, recorded)
+
+The adversarial review confirmed 7 findings (+2 correct-but-split); fixed:
+
+- **Query pills: input binds directly to the raw query; pills are a VIEW,
+  not a hidden-qualifier split.** The 13c freeText binding was fragile — it
+  collapsed multi-word free text (a typed space was normalized away) and its
+  ⌫-pop stole Backspace from the facet popover's filter field. Reverted to
+  `TextField(text: $query)` with the pill row rendering the query's qualifier
+  tokens (✕ removal, Clear-all, exclude-red). Qualifiers show inline in the
+  input too — a recorded delta from bp3's hidden-qualifier input, chosen for
+  robustness (the split had data-loss bugs). The ⌫-pop is dropped (the ✕
+  removes pills).
+- **FacetValuePopover keyboard digit/I·X·O cycle deferred.** The bare-key
+  onKeyPress handler stole digits and i/x/o from the auto-focused type-to-
+  filter field (canonical labels like "doing"/"done" were unfilterable).
+  Removed it; click-to-cycle (off→include→exclude→off) + type-to-filter
+  remain. Keyboard value-cycle conflicts with the filter field and is
+  deferred.
+- **"0–9 open a facet" un-advertised.** No palette-level digit opens a facet
+  (a bare digit types into the query); the footbar no longer claims it.
+  Deferred — it needs a focus mode where the rail, not the input, owns digits.
+- **metadataChips honors the never-hue set** (tier renders neutral, not
+  VALUE_HEX — the frozen budget).
+- **Kind-group collapse re-anchors the selection** (highlighted resets, so
+  Enter can't open the wrong row over the shifted display order).
+- **Chip-click include drops a contradicting exclude** of the same value
+  (no more `key:value` AND `-key:value`).

@@ -2480,25 +2480,6 @@ func cycleFacetValue(_ query: inout String, key: String, value: String) {
     query = tokens.joined(separator: " ")
 }
 
-/// Set a facet value directly to a state (bp3 a8: I include · X exclude ·
-/// O off), the popover's I/X/O keys and clicks land here.
-enum FacetState { case include, exclude, off }
-func setFacetValue(_ query: inout String, key: String, value: String, to state: FacetState) {
-    let inc = searchQualifier(key, value)
-    let exc = "-" + inc
-    var tokens = searchTokens(query)
-    tokens.removeAll {
-        $0.caseInsensitiveCompare(inc) == .orderedSame
-            || $0.caseInsensitiveCompare(exc) == .orderedSame
-    }
-    switch state {
-    case .include: tokens.append(inc)
-    case .exclude: tokens.append(exc)
-    case .off: break
-    }
-    query = tokens.joined(separator: " ")
-}
-
 /// Does a token read as a qualifier (key:value / -key:value / key<value with
 /// a non-empty value)? Used to split the input's free text from the pills —
 /// a display-only parse; the Rust `parse` stays the single search parser.
@@ -2745,34 +2726,27 @@ struct FacetValuePopover: View {
                 }
             }
             .frame(maxHeight: 240)
-            Text("1–9 cycle in→out→off · I in · X out · Esc done")
+            Text("click cycles in→out→off · type to filter · Esc done")
                 .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                 .padding(.init(top: 5, leading: 10, bottom: 8, trailing: 10))
         }
         .frame(width: 244)
         .onAppear { fieldFocused = true }
-        .onKeyPress(phases: .down) { press in
-            if let d = press.characters.first?.wholeNumberValue, (1...9).contains(d),
-               d <= shown.count {
-                cycle(shown[d - 1]); return .handled
-            }
-            switch press.characters.lowercased() {
-            case "i": if let v = shown.first { set(v, .include) }; return .handled
-            case "x": if let v = shown.first { set(v, .exclude) }; return .handled
-            case "o": if let v = shown.first { set(v, .off) }; return .handled
-            default: return .ignored
-            }
-        }
     }
 
     private func valueRow(_ v: SearchFacetValue, index: Int) -> some View {
         let dot = neutral ? Color(nsColor: .tertiaryLabelColor)
             : Color(nsColor: Hues.valueHex(v.label))
+        _ = index
         return Button { cycle(v) } label: {
             HStack(spacing: 8) {
-                Text("\(index + 1)").font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Theme.mutedFg).frame(width: 14)
-                Circle().fill(dot).frame(width: 7, height: 7)
+                // A leading state glyph: red − for exclude, else the hue dot.
+                if v.isExcluded {
+                    Image(systemName: "minus").font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Theme.destructive).frame(width: 7)
+                } else {
+                    Circle().fill(dot).frame(width: 7, height: 7)
+                }
                 Text(v.label).font(.system(size: 12.5))
                     .strikethrough(v.isExcluded, color: Theme.destructive)
                     .lineLimit(1)
@@ -2795,9 +2769,6 @@ struct FacetValuePopover: View {
 
     private func cycle(_ v: SearchFacetValue) {
         cycleFacetValue(&query, key: facet.label.lowercased(), value: v.label.lowercased())
-    }
-    private func set(_ v: SearchFacetValue, _ state: FacetState) {
-        setFacetValue(&query, key: facet.label.lowercased(), value: v.label.lowercased(), to: state)
     }
 }
 
@@ -2857,32 +2828,6 @@ struct SearchPopup: View {
         query = toks.joined(separator: " ")
     }
 
-    /// The input binds to the FREE text only; a completed qualifier token
-    /// (followed by a space, or not the last token) promotes to a pill.
-    /// Never loses data — every free word and every qualifier is preserved.
-    private var freeText: Binding<String> {
-        Binding(
-            get: { searchTokens(query).filter { !isSearchQualifier($0) }.joined(separator: " ") },
-            set: { newValue in
-                let existing = searchTokens(query).filter(isSearchQualifier)
-                let typed = searchTokens(newValue)
-                let promoteAll = newValue.hasSuffix(" ")
-                var frees: [String] = []
-                var promoted: [String] = []
-                for (i, token) in typed.enumerated() {
-                    let complete = promoteAll || i < typed.count - 1
-                    if complete && isSearchQualifier(token) { promoted.append(token) }
-                    else { frees.append(token) }
-                }
-                var merged = existing
-                for q in promoted
-                where !merged.contains(where: { $0.caseInsensitiveCompare(q) == .orderedSame }) {
-                    merged.append(q)
-                }
-                query = (frees + merged).joined(separator: " ")
-            })
-    }
-
     private func removePill(_ token: String) {
         var toks = searchTokens(query)
         toks.removeAll { $0.caseInsensitiveCompare(token) == .orderedSame }
@@ -2892,7 +2837,11 @@ struct SearchPopup: View {
     /// Chip clicks in the palette ADD an include qualifier (bp3 a24: pills
     /// coexist), not the old single-select pivot.
     private func addQualifier(_ token: String) {
+        // Adding an INCLUDE drops any contradicting EXCLUDE of the same value
+        // (the review: a chip click over an excluded value built both pills).
+        let contradiction = "-" + token
         var toks = searchTokens(query)
+        toks.removeAll { $0.caseInsensitiveCompare(contradiction) == .orderedSame }
         if !toks.contains(where: { $0.caseInsensitiveCompare(token) == .orderedSame }) {
             toks.append(token)
         }
@@ -2960,7 +2909,7 @@ struct SearchPopup: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
-                    TextField("Search or jump to anything…", text: freeText)
+                    TextField("Search or jump to anything…", text: $query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15))
                         .focused($fieldFocused)
@@ -3053,6 +3002,7 @@ struct SearchPopup: View {
                                     toggle: {
                                         if collapsed.contains(group.name) { collapsed.remove(group.name) }
                                         else { collapsed.insert(group.name) }
+                                        highlighted = 0  // re-anchor: displayRows just shifted
                                     })
                                 if !collapsed.contains(group.name) {
                                     ForEach(group.rows, id: \.id) { row in
@@ -3119,12 +3069,6 @@ struct SearchPopup: View {
                 case 126:
                     highlighted = max(0, highlighted - 1)
                     return nil
-                case 51:  // ⌫ on an empty free-text input pops the newest pill.
-                    if freeText.wrappedValue.isEmpty, let last = pills.last {
-                        removePill(last)
-                        return nil
-                    }
-                    return event
                 default:
                     return event
                 }
@@ -3189,14 +3133,19 @@ struct SearchPopup: View {
     /// values beyond the anchor + a "+N" — the BP-7 chip budget, as rows.
     @ViewBuilder
     private func metadataChips(_ row: EntityRow) -> some View {
+        // The frozen never-hue budget: tier (with status/priority/type) renders
+        // neutral, never VALUE_HEX (the review's finding).
+        let neverHue: Set<String> = ["status", "priority", "tier", "type"]
         let anchorText = anchorChip(for: row)?.text
         let extras = row.cells
             .filter { ["subjects", "people", "project", "area", "tier"].contains($0.property) }
-            .map(\.value)
-            .filter { !$0.isEmpty && $0 != anchorText }
-        HStack(spacing: 4) {
-            ForEach(Array(extras.prefix(2).enumerated()), id: \.offset) { _, v in
-                ValueChip(text: v, hue: Hues.valueHex(v))
+            .map { (property: $0.property, value: $0.value) }
+            .filter { !$0.value.isEmpty && $0.value != anchorText }
+        return HStack(spacing: 4) {
+            ForEach(Array(extras.prefix(2).enumerated()), id: \.offset) { _, cell in
+                ValueChip(
+                    text: cell.value,
+                    hue: neverHue.contains(cell.property) ? nil : Hues.valueHex(cell.value))
             }
             if extras.count > 2 {
                 Text("+\(extras.count - 2)")
@@ -3318,8 +3267,6 @@ struct PaletteFootbar: View {
             pair("↑↓", "move")
             pair("⏎", "open")
             pair("⌥1/2/3", "mode")
-            pair("0–9", "facet")
-            pair("⌫", "pop pill")
             pair("⎋", "close")
             Spacer()
         }
