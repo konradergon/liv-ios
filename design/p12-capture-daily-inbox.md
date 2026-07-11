@@ -489,3 +489,26 @@ recommendations where they differ and are written into §2.3 / §3.1 / §5.
 
 **Owner refines at the mockup gate:** the exact daily-note template copy (bp9
 flags it "needs Viktor's voice" — it is one string constant).
+
+## 8 · Deltas that emerged during implementation (recorded)
+
+- **Quick Capture's home = a desk lens (owner, 2026-07-11).** D1 ("Today IS
+  the daily note") displaced the design's assumption that QuickCaptureView
+  replaces the Today capture line. With Today now the daily-note editor, the
+  owner chose to home the capture WALL as a new `Capture` desk lens beside
+  `Everything` (§12c); the take box is the desk-lens field + the global
+  ⌃⌥Space popup. No new surface.
+- **A SECOND tiny seam — `lotus_set_type_at` (12d).** The design's "Commit
+  stamps a `type` cell" assumed existing seams could set type; verified FALSE
+  (test-drive-core-changes): `set_property` needs `#id` for a reference and
+  type entities are working plumbing off the snapshot. `set_type` resolves the
+  name via `find_type` and replaces the TYPE cell (failing-test-first). The
+  P12 Rust budget is thus TWO small seams (daily note + set-type), not one —
+  and set-type also retires P11.5 §2.8's deferred type editor gap.
+- **bp5's inline Route inspector = lotus's RIGHT pane (12d).** The Inbox
+  surface renders the app's shared right inspector (body3Pane, surface !=
+  calendar), so selecting an orphan drives it — no duplicate inline mount.
+- **Today hosts the daily note via the WINDOW editor, not a note tab (12b).**
+  The desk's Today lens opens today's note into the same `editor` state the
+  note tabs use, so it rides the existing flush machinery (no parallel editor
+  lifecycle, no dirty-draft risk) while remaining a surface, not a tab.
