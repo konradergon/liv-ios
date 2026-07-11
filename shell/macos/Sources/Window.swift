@@ -1284,6 +1284,10 @@ struct WindowChrome: View {
                     model: model, selection: $selection,
                     addFile: { addFileFlow() },
                     open: { id in openEntityTab(id) })
+            case .contacts:
+                ContactsView(
+                    model: model, selection: $selection,
+                    open: { id in openEntityTab(id) })
             default:
                 ExtensionStub(surface: chrome.surface)
             }
@@ -2089,6 +2093,103 @@ struct QuickCaptureView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         model.capture(text) { ok in if ok { draft = "" } }
+    }
+}
+
+// MARK: - Contacts (P14i)
+
+/// bp9's thin Contacts surface: a person-filtered ObjectRow list + a
+/// type-to-filter box + the shared right-pane inspector on selection.
+/// A "New contact" births a person (createNote + setType, the P13 seam).
+/// The groups rail, in-body card block, vCard, and Google sync all defer.
+struct ContactsView: View {
+    @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    var open: (UInt64) -> Void = { _ in }
+
+    @State private var filter = ""
+    @FocusState private var filterFocused: Bool
+
+    private var people: [EntityRow] {
+        let needle = filter.lowercased()
+        return model.rows(model.snap?.everything ?? [])
+            .filter { $0.kinds.contains("person") && !$0.trashed }
+            .filter { row in
+                needle.isEmpty
+                    || row.title.lowercased().contains(needle)
+                    || row.cells.contains { $0.value.lowercased().contains(needle) }
+            }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                LensHeader(
+                    title: "Contacts",
+                    subtitle: people.count == 1 ? "1 contact" : "\(people.count) contacts")
+                Spacer()
+                Button(action: newContact) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "person.badge.plus").font(.system(size: 11))
+                        Text("New contact").font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(Theme.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.accentTint))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 32).padding(.top, 40).padding(.bottom, 8)
+
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
+                TextField("Filter contacts…", text: $filter)
+                    .textFieldStyle(.plain).font(.system(size: 13))
+                    .focused($filterFocused)
+                    .onSubmit { if let one = people.first, people.count == 1 { open(one.id) } }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.08)))
+            .padding(.horizontal, 32).padding(.bottom, 6)
+
+            if people.isEmpty {
+                VStack(spacing: 9) {
+                    Image(systemName: "person.2")
+                        .font(.system(size: 28)).foregroundColor(Theme.foreground.opacity(0.12))
+                    Text(filter.isEmpty ? "No contacts yet." : "No contact matches “\(filter)”.")
+                        .font(.system(size: 12.5)).foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(people) { row in
+                            ObjectRow(
+                                row: row,
+                                selected: selection == row.id,
+                                chipTap: { f in
+                                    NotificationCenter.default.post(name: .lotusSearchFor, object: f)
+                                },
+                                select: { selection = row.id },
+                                openRow: { open(row.id) })
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+    }
+
+    /// New contact = a note born as a person (createNote + the P13 setType
+    /// seam), then selected so the inspector opens its empty profile rows.
+    private func newContact() {
+        model.createNote { id in
+            guard let id else { return }
+            model.setType(id, "person") { _ in selection = id }
+        }
     }
 }
 
