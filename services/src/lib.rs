@@ -68,6 +68,7 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_priority(session)?;
     seed_lists(session)?;
     seed_event_fields(session)?;
+    seed_contact_fields(session)?;
     seed_date_roles(session)?;
     seed_workspaces(session)?;
     seed_daily_note(session)?;
@@ -399,6 +400,30 @@ pub fn calendar_set(store: &Store) -> Vec<Id> {
 /// every existing box — so an older box that already has `due` gains these on
 /// open. Offered by the calendar, never EXPECTED: an event is valid without
 /// either, so the `event` type's expectations ([due]) are left untouched.
+/// The contact profile fields (P14-CT): role/org/email/phone, all text,
+/// additive on open (an older box gains them next launch). Offered, never
+/// EXPECTED — a person is valid without any of them. Same shape as the
+/// event/file field seeds. Own guard on `role`.
+fn seed_contact_fields(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "role").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    for name in ["role", "org", "email", "phone"] {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text("text") },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+    }
+    session.commit(commands, "contact fields", Author::System)?;
+    Ok(())
+}
+
 fn seed_event_fields(session: &mut Session) -> Result<(), PersistError> {
     if property_id(session.store(), "location").is_some() {
         return Ok(());
@@ -989,6 +1014,7 @@ mod seed_tests {
         seed_priority(&mut session).unwrap();
         seed_lists(&mut session).unwrap();
         seed_event_fields(&mut session).unwrap();
+        seed_contact_fields(&mut session).unwrap();
         seed_date_roles(&mut session).unwrap();
         seed_workspaces(&mut session).unwrap();
         seed_daily_note(&mut session).unwrap();

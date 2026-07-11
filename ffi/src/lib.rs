@@ -2443,6 +2443,38 @@ mod tests {
         cleanup(&path);
     }
 
+    #[test]
+    fn contact_profile_fields_are_seeded_additively() {
+        // P14-CT (failing-test-first): a fresh box seeds the contact profile
+        // fields role/org/email/phone (all text), and an older box gains them
+        // on open — the seed_event_fields additive pattern.
+        let (path, c_path) = fresh_box("lotus_ffi_contacts.log");
+        {
+            let mut session = Session::open(&path).unwrap();
+            lotus_services::seed_if_fresh(&mut session).unwrap();
+        }
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let props: std::collections::HashMap<String, String> = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["name"].as_str().unwrap().to_string(),
+                    p["kind"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        for field in ["role", "org", "email", "phone"] {
+            assert_eq!(
+                props.get(field).map(String::as_str),
+                Some("text"),
+                "contact field {field} seeded as text"
+            );
+        }
+        cleanup(&path);
+    }
+
     // ---- the snapshot re-base (P11/11f — the phase's visible effect) ----
 
     /// A recurring series anchored on an arbitrary date property, written
