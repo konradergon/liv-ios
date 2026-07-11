@@ -2185,56 +2185,110 @@ struct InboxView: View {
     @ViewBuilder
     private var tidyLens: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack {
+                    Text("Assist queue — the clerk’s live proposals; nothing here was applied")
+                        .font(.system(size: 11.5)).foregroundColor(.secondary)
+                    Spacer()
+                    Button { NSSound.beep() } label: {
+                        Label("Suggest for all", systemImage: "wand.and.stars")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("The batch metadata suggester arrives with the AI pass (P16)")
+                }
                 if proposals.isEmpty {
-                    Text("Nothing to tidy. Assist re-scans in the background.")
-                        .font(.system(size: 13)).foregroundColor(.secondary)
-                        .padding(.top, 8)
+                    Text("Nothing to tidy. Assist re-scans in the background; the amber badge only counts what is actionable.")
+                        .font(.system(size: 12.5)).foregroundColor(.secondary)
+                        .padding(.top, 4)
                 } else {
                     ForEach(proposals) { proposal in
-                        ProposalLine(model: model, proposal: proposal)
+                        AssistCard(model: model, proposal: proposal)
                     }
-                    Text("Decline once and the clerk never asks again.")
-                        .font(.system(size: 12)).foregroundColor(Color.secondary.opacity(0.8))
-                        .padding(.top, 20)
                 }
+                // A static heuristic card — the proposer defers to P16, but
+                // the card + accept path are the frame it will ride (§1.3).
+                StaticAssistCard()
+                Text("Dismissals are remembered — suggestions carry deterministic ids and are never re-asked.")
+                    .font(.system(size: 11)).foregroundColor(Color.secondary.opacity(0.8))
+                    .padding(.top, 2)
             }
-            .padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 24)
+            .padding(.horizontal, 32).padding(.top, 14).padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
 
-struct ProposalLine: View {
+/// The marigold-halo assist card (bp5 a23): one live clerk proposal —
+/// "date mentioned", "person mentioned" — with the accept/reject that
+/// ships. AI presence is the amber halo (Theme.warning), never a silent edit.
+struct AssistCard: View {
     @ObservedObject var model: BoxModel
     let proposal: ProposalRow
 
-    var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                subjectAndReason
-                Text("#\(String(proposal.entity)) · \(Text("clerk · \(proposal.author)").foregroundColor(Theme.accent))")
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-            Button("Accept") { model.accept(proposal) }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accent)
-            Button("Decline") { model.reject(proposal) }
-                .buttonStyle(.bordered)
-        }
-        .padding(.vertical, 14)
-        .overlay(Divider(), alignment: .bottom)
+    private var subject: String {
+        model.entity(proposal.entity)?.title ?? "#\(proposal.entity)"
     }
 
-    private var subjectAndReason: some View {
-        let subject = model.entity(proposal.entity)?.title ?? "#\(proposal.entity)"
-        return Text(
-            "\(subject) — \(Text(proposal.reason).fontWeight(.semibold).foregroundColor(Theme.accentDeep))"
-        )
-        .font(.system(size: 14))
-        .lineLimit(2)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Text("✦ Clerk")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 7).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.warning.opacity(0.14)))
+                Text(proposal.reason)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+            Text(subject)
+                .font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
+            HStack(spacing: 7) {
+                Button("Accept · ⏎") { model.accept(proposal) }
+                    .buttonStyle(.borderedProminent).tint(Theme.accent).controlSize(.small)
+                Button("Dismiss · Esc") { model.reject(proposal) }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 11).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Theme.warning, lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11)
+                .strokeBorder(Theme.warning.opacity(0.14), lineWidth: 3))
+        .frame(maxWidth: 520, alignment: .leading)
+    }
+}
+
+/// A static heuristic card (bp5 a23: "3 notes missing type") — the proposer
+/// is P16; this shows the card grammar and marks itself STATIC so nothing
+/// reads as applied.
+struct StaticAssistCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Text("✦ Assist")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 7).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.warning.opacity(0.14)))
+                Text("Notes missing a type")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text("STATIC · P16")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1))
+            }
+            Text("Suggested from your own vocabulary + the seed, never invented. The heuristic proposer arrives with the AI pass; the card and accept path are the frame it will ride.")
+                .font(.system(size: 11.5)).foregroundColor(.secondary)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 11).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Theme.warning.opacity(0.5), lineWidth: 1))
+        .frame(maxWidth: 520, alignment: .leading)
+        .opacity(0.9)
     }
 }
 
