@@ -3372,6 +3372,30 @@ struct SearchFiltersPanel: View {
 
 /// The palette's always-visible shortcut contract (bp3 a16) — same footbar
 /// grammar as the inspector (P11.5 InspectorFootbar).
+/// A reusable shortcut footbar (P14e): the same KeyCap-pair grammar the
+/// inspector and search palette teach (bp6 a27), driven by a pair list.
+struct ShortcutBar: View {
+    let pairs: [(String, String)]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ForEach(Array(pairs.enumerated()), id: \.offset) { _, p in
+                HStack(spacing: 4) {
+                    Text(p.0).font(.system(size: 10.5, design: .monospaced))
+                        .padding(.horizontal, 3).frame(minHeight: 16)
+                        .background(RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
+                    Text(p.1).font(.system(size: 11))
+                }
+                .foregroundColor(Theme.mutedFg)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 32).padding(.vertical, 8)
+        .overlay(Divider(), alignment: .top)
+    }
+}
+
 struct PaletteFootbar: View {
     var body: some View {
         HStack(spacing: 10) {
@@ -3686,6 +3710,7 @@ struct TasksView: View {
                         ? (allTasks.count == 1 ? "1 task" : "\(allTasks.count) tasks")
                         : (tasks.count == 1 ? "1 task" : "\(tasks.count) tasks"))
                 Spacer()
+                agentsButton
                 lensSwitcher
                 // The Board's columns carry status, so the Open/Done gate is
                 // a list-lens concern; it stays hidden on (and unused by) the
@@ -3702,6 +3727,15 @@ struct TasksView: View {
             case .schedule: scheduleLens(tasks)
             case .cards: cardsLens(tasks)
             }
+
+            // The shortcut contract (bp6 a27 — "the two surfaces teach each
+            // other"; same footbar grammar as the P13 palette). [Selection |
+            // View]: Selection is the shared right inspector (already shown
+            // on this surface via body3Pane); the View config frame is
+            // reserved (needs the views substrate, D3).
+            ShortcutBar(pairs: lens == .board
+                ? [("⌃1–4", "lens"), ("drag", "set status"), ("N", "new"), ("⏎", "open")]
+                : [("⌃1–4", "lens"), ("↑↓", "move"), ("⏎", "open"), ("N", "new")])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background)
@@ -3975,6 +4009,20 @@ struct TasksView: View {
     }
 
     /// The lens switcher tabs (bp6 a6) — List | Board | Schedule | Cards.
+    /// The AI Agents frame (bp6) — inert; the task copilot's proposals enter
+    /// the ONE inbox in the P16 pass, never a second mutation door here.
+    private var agentsButton: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "wand.and.stars").font(.system(size: 10.5))
+            Text("Agents").font(.system(size: 12, weight: .medium))
+        }
+        .foregroundColor(Theme.warning.opacity(0.8))
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.35), lineWidth: 1))
+        .opacity(0.7)
+        .help("Task agents arrive with the AI pass (P16) — proposals in the one inbox")
+    }
+
     private var lensSwitcher: some View {
         HStack(spacing: 2) {
             ForEach(Array(TaskLens.allCases.enumerated()), id: \.element) { index, option in
