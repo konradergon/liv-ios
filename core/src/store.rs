@@ -173,6 +173,21 @@ impl Store {
             .map(|tx| tx.time)
     }
 
+    /// A monotonic recency key per entity: the seq of the newest transaction
+    /// that touched it, in one O(history) pass. The empty-query recents sort
+    /// (bp3 a10, "jump back to where you were") needs a monotonic signal —
+    /// wall-clock `modified` ties across rapid edits. Later transactions
+    /// overwrite earlier ones for the same (redirect-resolved) entity.
+    pub fn recency(&self) -> HashMap<Id, u64> {
+        let mut map = HashMap::new();
+        for tx in &self.history {
+            for command in &tx.commands {
+                map.insert(self.resolve(command.entity()), tx.seq);
+            }
+        }
+        map
+    }
+
     /// The append-only log, read-only. Provenance and undo history live here.
     pub fn history(&self) -> &[Transaction] {
         &self.history

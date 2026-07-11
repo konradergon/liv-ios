@@ -54,7 +54,11 @@ pub struct FacetValue {
     pub value: Value,
     pub label: String,
     pub count: usize,
+    /// The current query INCLUDES this value (Op::Equals) — renders accent.
     pub active: bool,
+    /// The current query EXCLUDES this value (Op::NotEquals) — renders red +
+    /// strikethrough. include→exclude→off is the three-state cycle (bp3 a19).
+    pub excluded: bool,
 }
 
 /// All candidate values for one facetable property, ready to render as a chip
@@ -102,10 +106,19 @@ pub fn parse(store: &Store, raw: &str) -> SearchQuery {
                     Some(p) => constraints.push(Constraint { property: p, op: Op::Missing }),
                     None => terms.push(lower),
                 },
-                _ => match equals_constraint(store, key, val) {
-                    Some(c) => constraints.push(c),
-                    None => terms.push(lower),
-                },
+                // A leading '-' on a property qualifier EXCLUDES it
+                // (bp3 a17): `-object:contact` → Op::NotEquals. is/has/no
+                // do not take the prefix — a '-is:'/'-has:' demotes to text.
+                _ => {
+                    let constraint = match key.strip_prefix('-') {
+                        Some(bare) => not_equals_constraint(store, bare, val),
+                        None => equals_constraint(store, key, val),
+                    };
+                    match constraint {
+                        Some(c) => constraints.push(c),
+                        None => terms.push(lower),
+                    }
+                }
             }
         } else if let Some((key, val)) = split_qualifier(token, '<') {
             match at_most_constraint(store, key, val) {
@@ -183,11 +196,16 @@ pub fn search<F: Fn(&Entity) -> String>(
         }
     }
 
+    // Recency tiebreak (bp3 a10): most-recently-EDITED first. One O(history)
+    // pass builds a monotonic seq per entity — wall-clock `modified` ties
+    // across rapid edits and cannot order recents.
+    let recency = store.recency();
+    let seq = |id: Id| recency.get(&id).copied().unwrap_or(0);
     hits.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| created_key(store, b.id).cmp(&created_key(store, a.id)))
+            .then_with(|| seq(b.id).cmp(&seq(a.id)))
             .then_with(|| a.id.cmp(&b.id))
     });
     hits.truncate(limit);
@@ -205,16 +223,15 @@ pub fn facet(store: &Store, sq: &SearchQuery, property: Id) -> Facet {
     let mut base = sq.query.clone();
     base.constraints.retain(|c| c.property != property);
 
-    let active: Vec<&Value> = sq
+    let own: Vec<&Op> = sq
         .query
         .constraints
         .iter()
         .filter(|c| c.property == property)
-        .filter_map(|c| match &c.op {
-            Op::Equals(v) => Some(v),
-            _ => None,
-        })
+        .map(|c| &c.op)
         .collect();
+    let is_active = |v: &Value| own.iter().any(|op| matches!(op, Op::Equals(x) if x == v));
+    let is_excluded = |v: &Value| own.iter().any(|op| matches!(op, Op::NotEquals(x) if x == v));
 
     let mut values = Vec::new();
     for value in candidate_values(store, &base, property) {
@@ -225,7 +242,8 @@ pub fn facet(store: &Store, sq: &SearchQuery, property: Id) -> Facet {
             continue;
         }
         values.push(FacetValue {
-            active: active.contains(&&value),
+            active: is_active(&value),
+            excluded: is_excluded(&value),
             label: display(store, &value),
             value,
             count,
@@ -469,6 +487,16 @@ fn equals_constraint(store: &Store, key: &str, val: &str) -> Option<Constraint> 
     Some(Constraint { property, op: Op::Equals(value) })
 }
 
+/// `-key:value` → a NotEquals constraint (exclude). Same resolution as
+/// `equals_constraint`; Op::NotEquals already exists and is evaluated by
+/// `satisfies` (vacuously true where the cell is absent), so a user
+/// exclusion rides the identical path the archived gate already proves.
+fn not_equals_constraint(store: &Store, key: &str, val: &str) -> Option<Constraint> {
+    let property = property_id(store, key)?;
+    let value = qualifier_value(store, property, val)?;
+    Some(Constraint { property, op: Op::NotEquals(value) })
+}
+
 /// `key<value` → an AtMost constraint (dates: "due at or before"). Only the
 /// `≤` direction exists in `Op`; `>` / `after:` is deferred.
 fn at_most_constraint(store: &Store, key: &str, val: &str) -> Option<Constraint> {
@@ -509,13 +537,4 @@ fn resolve_reference(store: &Store, raw: &str) -> Option<Value> {
         })
         .min_by_key(|e| e.id)
         .map(|e| Value::Reference(e.id))
-}
-
-/// A sortable recency key: the CREATED civil timestamp, else 0 (undated
-/// entities sort oldest).
-fn created_key(store: &Store, id: Id) -> i64 {
-    match store.get(id).and_then(|e| e.get(props::CREATED)) {
-        Some(Value::DateTime(dt)) => dt.civil,
-        _ => 0,
-    }
 }

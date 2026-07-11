@@ -55,6 +55,7 @@ struct Fx {
     due: Id,
     archived: Id,
     task_type: Id,
+    note_type: Id,
     done_opt: Id,
 }
 
@@ -156,7 +157,7 @@ fn fixture() -> Fx {
     Fx {
         store, r_exact, r_prefix, r_word, r_cell, r_body, anna, meeting,
         oldreport, laundry, grocery, finish, early, late, status, due,
-        archived, task_type, done_opt,
+        archived, task_type, note_type, done_opt,
     }
 }
 
@@ -361,4 +362,90 @@ fn a_quoted_qualifier_value_keeps_its_spaces() {
     assert!(hits.iter().any(|h| h.id == event));
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- P13 13a: facet exclusion (include→exclude→off) + recency + true count ----
+
+#[test]
+fn a_leading_minus_excludes_a_qualifier() {
+    // bp3 a17/a18: `-key:value` renders an exclude pill. parse() must emit
+    // Op::NotEquals (which already exists and is already evaluated — the
+    // archived gate proves it), and run() drops the matching value while
+    // KEEPING cell-absent entities (NotEquals is vacuously true where absent).
+    let fx = fixture();
+    let sq = search::parse(&fx.store, "-type:task");
+    assert!(
+        sq.query.constraints.iter().any(|con| con.property == props::TYPE
+            && con.op == Op::NotEquals(Value::Reference(fx.task_type))),
+        "-type:task must build a NotEquals constraint on the type property",
+    );
+    let order = ids(&fx, "-type:task");
+    assert!(!order.contains(&fx.laundry), "type:task is excluded");
+    assert!(order.contains(&fx.grocery), "type:note survives");
+    assert!(order.contains(&fx.anna), "a type-absent entity survives (vacuous NotEquals)");
+}
+
+#[test]
+fn include_and_exclude_coexist() {
+    // Two constraints ANDed by run(): include note, exclude the done status.
+    let fx = fixture();
+    let sq = search::parse(&fx.store, "type:note -status:done");
+    assert!(sq.query.constraints.iter().any(|con| con.property == props::TYPE
+        && con.op == Op::Equals(Value::Reference(fx.note_type))));
+    assert!(sq.query.constraints.iter().any(|con| con.property == fx.status
+        && con.op == Op::NotEquals(Value::Select(fx.done_opt))));
+    let order = ids(&fx, "type:note -status:done");
+    assert!(order.contains(&fx.grocery), "a note without a done status survives");
+    assert!(!order.contains(&fx.finish), "finish is status:done — excluded (and not a note)");
+}
+
+#[test]
+fn a_facet_marks_an_excluded_value() {
+    // The FacetValue tri-state: with -type:task active, the task value is
+    // marked excluded (renders red), note is neither active nor excluded.
+    let fx = fixture();
+    let sq = search::parse(&fx.store, "-type:task");
+    let f = search::facet(&fx.store, &sq, props::TYPE);
+    let task = f.values.iter().find(|v| v.label == "task").expect("task value");
+    let note = f.values.iter().find(|v| v.label == "note").expect("note sibling");
+    assert!(task.excluded, "the excluded value is flagged");
+    assert!(!task.active, "excluded is not active(include)");
+    assert!(!note.excluded && !note.active, "an untouched sibling is off");
+}
+
+#[test]
+fn empty_query_sorts_by_recency() {
+    // bp3 a10: the empty-query recents jump list is MODIFIED-desc (most
+    // recently edited first), not CREATED-desc.
+    let mut store = Store::new();
+    let name = props::NAME;
+    let older = store.allocate_id();
+    let newer = store.allocate_id();
+    // `older` is CREATED last (higher created), `newer` first — so a
+    // created-desc sort would put `older` first. But `newer` is EDITED last.
+    store.commit(
+        vec![
+            Command::Create { entity: newer },
+            Command::AddCell { entity: newer, cell: c(name, Value::text("newer")) },
+        ],
+        "a", Author::User,
+    ).unwrap();
+    store.commit(
+        vec![
+            Command::Create { entity: older },
+            Command::AddCell { entity: older, cell: c(name, Value::text("older")) },
+        ],
+        "b", Author::User,
+    ).unwrap();
+    // A later edit to `newer` — now its modified time is the latest.
+    store.commit(
+        vec![Command::AddCell { entity: newer, cell: c(name, Value::text("newer edited")) }],
+        "c", Author::User,
+    ).unwrap();
+
+    let sq = search::parse(&store, "");
+    let order: Vec<Id> = search::search(&store, &sq, 50, |_| String::new())
+        .into_iter().map(|h| h.id).collect();
+    let pos = |id: Id| order.iter().position(|x| *x == id).unwrap();
+    assert!(pos(newer) < pos(older), "most-recently-edited sorts first (modified-desc)");
 }

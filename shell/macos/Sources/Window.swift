@@ -143,7 +143,11 @@ struct SearchFacetValue: Codable, Identifiable {
     let label: String
     let count: Int
     let active: Bool
+    /// The query EXCLUDES this value (Op::NotEquals) — renders red +
+    /// strikethrough (P13; Optional so an older wire still decodes).
+    let excluded: Bool?
     var id: String { label }
+    var isExcluded: Bool { excluded ?? false }
 }
 
 /// One facetable property and its candidate values, count-descending.
@@ -158,8 +162,14 @@ struct SearchFacet: Codable, Identifiable {
 struct SearchResult: Codable {
     var hits: [SearchHit] = []
     var facets: [SearchFacet] = []
+    /// The TRUE match count (bp3 a12) — `hits` is the first page, `total`
+    /// the whole set, so the count line never reads a silently-capped number
+    /// (Optional so an older wire still decodes).
+    var total: Int? = nil
 
     static let empty = SearchResult()
+    /// The count to show: the true total when present, else the page size.
+    var matchCount: Int { total ?? hits.count }
 }
 
 /// One status option as the kind's board/picker sees it —

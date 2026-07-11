@@ -847,6 +847,9 @@ pub unsafe extern "C" fn lotus_snapshot_window_at(
 struct SearchResult {
     hits: Vec<search::Hit>,
     facets: Vec<search::Facet>,
+    /// The TRUE match count (bp3 a12): results are never silently capped —
+    /// `hits` is the first page, `total` is the whole matching set.
+    total: usize,
 }
 
 fn build_search(store: &Store, raw: &str, cache_dir: &Path) -> SearchResult {
@@ -868,13 +871,17 @@ fn build_search(store: &Store, raw: &str, cache_dir: &Path) -> SearchResult {
             .unwrap_or("");
         files::extracted_text(cache_dir, file, format)
     };
-    let hits = search::search(store, &sq, 200, extracted);
+    // The full ranked set decides `total` (never capped); the wire carries
+    // the first page. The shell can raise the page size later.
+    let mut all = search::search(store, &sq, usize::MAX, extracted);
+    let total = all.len();
+    all.truncate(200);
     let facets = search::facet_properties(store, &sq)
         .into_iter()
         .map(|property| search::facet(store, &sq, property))
         .filter(|facet| !facet.values.is_empty())
         .collect();
-    SearchResult { hits, facets }
+    SearchResult { hits: all, facets, total }
 }
 
 /// Search the box: parse the raw DSL, rank the hits, count the facets.
