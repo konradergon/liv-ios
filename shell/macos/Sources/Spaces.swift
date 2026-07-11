@@ -357,7 +357,7 @@ struct SpacesTree: View {
     /// Interim: the desk's own views, until the tab strip owns them.
     private var deskGroup: some View {
         VStack(alignment: .leading, spacing: 1) {
-            ForEach([Lens.today, .everything]) { item in
+            ForEach([Lens.today, .capture, .everything]) { item in
                 Button {
                     // Land on the desk tab, then set the lens — a lens
                     // switch while a note tab is active must show the desk.

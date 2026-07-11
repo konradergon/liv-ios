@@ -827,6 +827,7 @@ extension Notification.Name {
 
 enum Lens: String, CaseIterable, Identifiable {
     case today = "Today"
+    case capture = "Capture"
     case calendar = "Calendar"
     case everything = "Everything"
     case inbox = "Inbox"
@@ -835,6 +836,7 @@ enum Lens: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .today: return "sparkles"
+        case .capture: return "square.and.pencil"
         case .calendar: return "calendar"
         case .everything: return "line.3.horizontal"
         case .inbox: return "tray"
@@ -843,9 +845,10 @@ enum Lens: String, CaseIterable, Identifiable {
     var shortcut: KeyEquivalent {
         switch self {
         case .today: return "1"
-        case .calendar: return "2"
-        case .everything: return "3"
-        case .inbox: return "4"
+        case .capture: return "2"
+        case .calendar: return "3"
+        case .everything: return "4"
+        case .inbox: return "5"
         }
     }
 }
@@ -1295,6 +1298,10 @@ struct WindowChrome: View {
         switch lens {
         case .everything:
             EverythingView(model: model, selection: $selection)
+        case .capture:
+            QuickCaptureView(model: model, selection: $selection) {
+                navigate(to: .inbox)
+            }
         default:
             dailyNoteDesk
         }
@@ -1891,6 +1898,110 @@ struct EntityLine: View {
             }
         }
         .frame(width: 16, height: 16)
+    }
+}
+
+// MARK: - Quick Capture (P12 12c) — the wall of orphan captures (a desk lens)
+
+/// bp5 panel A, reconciled to the lotus IA: the take box writes a bare scrap
+/// through `lotus_capture_at` (capture asks nothing, never blocks — the
+/// silent workspace-stamp is REFUSED, design delta a4), and the wall is the
+/// debut mount of the BP-7 V2 `ObjectCard` over the client-side orphan set
+/// (content ∧ ¬type). The global ⌃⌥Space popup is the other doorway; this
+/// lens is where you browse and route what you have not typed yet.
+struct QuickCaptureView: View {
+    @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    var openInbox: () -> Void = {}
+
+    @State private var draft = ""
+    @FocusState private var captureFocused: Bool
+
+    /// content ∧ ¬type (§3.2): a scrap has content and no classification.
+    /// `everything`/`entities[]` already exclude working plumbing, so no
+    /// definitions or types leak into the wall.
+    private var orphans: [EntityRow] {
+        model.rows(model.snap?.everything ?? [])
+            .filter { !$0.trashed && $0.kinds.isEmpty && $0.contentPrint != 0 }
+    }
+
+    private let columns = [GridItem(.adaptive(minimum: 210), spacing: 11)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                LensHeader(
+                    title: "Capture",
+                    subtitle: orphans.isEmpty
+                        ? "nothing unrouted"
+                        : "\(orphans.count) unrouted")
+
+                takeBox
+
+                if orphans.isEmpty {
+                    Text("Nothing waiting. Jot a thought above, or from anywhere with ⌃⌥Space.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 11) {
+                        ForEach(orphans) { row in
+                            ObjectCard(
+                                row: row,
+                                chips: anchorChip(for: row).map { [$0] } ?? []
+                            )
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selection == row.id ? Theme.accentTint : Color.clear))
+                            .contentShape(Rectangle())
+                            .onTapGesture { selection = row.id }
+                        }
+                    }
+                    HStack(spacing: 4) {
+                        Text("\(orphans.count) unrouted —")
+                            .foregroundColor(.secondary)
+                        Button("open the Inbox to route") { openInbox() }
+                            .buttonStyle(.plain)
+                            .foregroundColor(Theme.accent)
+                            .fontWeight(.semibold)
+                    }
+                    .font(.system(size: 13))
+                    .padding(.top, 4)
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.top, 40)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The frictionless take box: text → bare scrap, clears only on a
+    /// log-confirmed save (never lose a thought), focus stays put so five
+    /// captures land in a row (bp5 a1/a7).
+    private var takeBox: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "plus")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            TextField("Capture a thought…", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($captureFocused)
+                .onSubmit { commit() }
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.25)))
+        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+            captureFocused = true
+        }
+    }
+
+    private func commit() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        model.capture(text) { ok in if ok { draft = "" } }
     }
 }
 
