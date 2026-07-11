@@ -2813,6 +2813,8 @@ struct SearchPopup: View {
     @AppStorage("app.search.displayMode.v1") private var displayModeRaw = SearchDisplayMode.compact.rawValue
     /// Collapsed kind groups (bp3 a22 — the header toggles).
     @State private var collapsed: Set<String> = []
+    /// The Filters panel (bp3 a20) — pushes results down, never covers them.
+    @State private var filtersOpen = false
 
     /// The hits resolved against the snapshot, always fresh (computed) so
     /// keyboard nav and Enter never read a stale count.
@@ -2820,9 +2822,28 @@ struct SearchPopup: View {
         model.rows(model.searchResult.hits.map(\.id))
     }
 
-    /// The qualifier tokens in the query — rendered as pills, hidden from the
-    /// free-text input (bp3 a2: qualifiers parse into pills as you type).
-    private var pills: [String] { searchTokens(query).filter(isSearchQualifier) }
+    /// The qualifier tokens rendered as pills (bp3 a2) — the is:/has:/no:
+    /// GATES are managed in the Filters panel, not shown as value pills.
+    private var pills: [String] {
+        searchTokens(query).filter { isSearchQualifier($0) && !isGateToken($0) }
+    }
+
+    private func isGateToken(_ token: String) -> Bool {
+        let l = token.lowercased()
+        return l.hasPrefix("is:") || l.hasPrefix("has:") || l.hasPrefix("no:")
+    }
+
+    /// The Filters "Include archived" toggle (bp3 a20) — splices the existing
+    /// is:archived gate the DSL already honors (P6 §4.3, zero new work).
+    private var includeArchived: Bool {
+        searchTokens(query).contains { $0.lowercased() == "is:archived" }
+    }
+    private func setArchived(_ on: Bool) {
+        var toks = searchTokens(query)
+        toks.removeAll { $0.lowercased() == "is:archived" }
+        if on { toks.append("is:archived") }
+        query = toks.joined(separator: " ")
+    }
 
     /// The input binds to the FREE text only; a completed qualifier token
     /// (followed by a space, or not the last token) promotes to a pill.
@@ -2952,6 +2973,20 @@ struct SearchPopup: View {
                     .padding(.bottom, 4)
                 }
 
+                // The scope row (bp3 a4): one static "This vault" tile — one
+                // box is one scope; Drive/Web/connectors + "add source" defer.
+                HStack(spacing: 7) {
+                    Text("Search in").font(.system(size: 11)).foregroundColor(.secondary)
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                        Text("This vault").font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(Theme.accent)
+                    .padding(.horizontal, 10).frame(height: 26)
+                    .background(Capsule().fill(Theme.accentTint))
+                }
+                .padding(.horizontal, 14).padding(.bottom, 4)
+
                 if !model.searchResult.facets.isEmpty {
                     Divider()
                     FacetBar(model: model, facets: model.searchResult.facets, query: $query)
@@ -2959,11 +2994,28 @@ struct SearchPopup: View {
                         .padding(.top, 6)
                 }
 
+                if filtersOpen {
+                    Divider()
+                    SearchFiltersPanel(
+                        includeArchived: includeArchived, setArchived: setArchived)
+                }
+
                 // The results toolbar: the true (never-capped) count line +
                 // the Compact/Context/Metadata display switch (bp3 a12/a21).
                 HStack(spacing: 10) {
                     Text(countLine)
                         .font(.system(size: 11.5)).foregroundColor(.secondary)
+                    Button {
+                        filtersOpen.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "line.3.horizontal.decrease")
+                                .font(.system(size: 10))
+                            Text("Filters").font(.system(size: 11.5, weight: .medium))
+                        }
+                        .foregroundColor(filtersOpen || includeArchived ? Theme.accent : .secondary)
+                    }
+                    .buttonStyle(.plain)
                     Spacer()
                     Picker("", selection: $displayModeRaw) {
                         ForEach(SearchDisplayMode.allCases, id: \.rawValue) { m in
@@ -2977,11 +3029,7 @@ struct SearchPopup: View {
                 Divider()
 
                 if rows.isEmpty {
-                    Text(fresh && !query.isEmpty ? "Nothing matches." : "Type to search.")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Theme.mutedFg)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
+                    searchEmptyState(fresh: fresh)
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 1) {
@@ -3013,6 +3061,20 @@ struct SearchPopup: View {
                     }
                     .frame(maxHeight: 380)
                 }
+
+                PaletteFootbar()
+
+                // The footer actions (bp3 a13/a14/a15) — reserved disabled
+                // frames: Save-as-view / Export / Open-in-view need the views
+                // substrate lotus lacks; the raw query stays re-runnable.
+                Divider()
+                HStack(spacing: 8) {
+                    Spacer()
+                    reservedFooterButton("square.and.arrow.up", "Export")
+                    reservedFooterButton("bookmark", "Save")
+                    reservedFooterButton("arrow.up.forward.square", "Open in view", primary: true)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .frame(maxWidth: 620)
             .background(RoundedRectangle(cornerRadius: Theme.radiusXl).fill(Theme.popover))
@@ -3129,6 +3191,139 @@ struct SearchPopup: View {
                     .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
             }
         }
+    }
+
+    /// The empty results state (bp3 a26 reconciled): not a bare "Nothing
+    /// matches" but the next moves — pop the last qualifier, open Filters,
+    /// include archived. A blank query just prompts to type.
+    @ViewBuilder
+    private func searchEmptyState(fresh: Bool) -> some View {
+        if !fresh || query.isEmpty {
+            Text("Type to search, or jump to a recent object.")
+                .font(.system(size: 12.5)).foregroundColor(Theme.mutedFg)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Nothing matches.").font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 8) {
+                    if let last = pills.last {
+                        emptyMove("Remove “\(QueryPillDisplay(last))”") { removePill(last) }
+                    }
+                    emptyMove(filtersOpen ? "Close Filters" : "Open Filters") { filtersOpen.toggle() }
+                    if !includeArchived {
+                        emptyMove("Include archived") { setArchived(true) }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+        }
+    }
+
+    private func emptyMove(_ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label).font(.system(size: 11.5, weight: .medium))
+                .padding(.horizontal, 10).frame(height: 26)
+                .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        }
+        .buttonStyle(.plain).foregroundColor(Theme.accent)
+    }
+
+    private func reservedFooterButton(_ symbol: String, _ label: String, primary: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 10))
+            Text(label).font(.system(size: 11.5, weight: .medium))
+        }
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 11).frame(height: 28)
+        .overlay(Capsule().strokeBorder(
+            Color(nsColor: .separatorColor),
+            style: StrokeStyle(lineWidth: 1, dash: [3, 2.5])))
+        .opacity(0.5)
+        .help("\(label) needs the views/export substrate — arrives with the files/views pass")
+    }
+}
+
+/// Human-readable pill text ("object: not contact") for the empty-state hint.
+func QueryPillDisplay(_ token: String) -> String {
+    let excluded = token.hasPrefix("-")
+    let body = excluded ? String(token.dropFirst()) : token
+    for sep in [":", "<"] as [Character] {
+        if let at = body.firstIndex(of: sep) {
+            let key = body[..<at]
+            let val = body[body.index(after: at)...].replacingOccurrences(of: "\"", with: "")
+            return excluded ? "\(key): not \(val)" : "\(key): \(val)"
+        }
+    }
+    return body
+}
+
+/// The Filters panel (bp3 a20): the working Archived toggle over the DSL's
+/// existing is:archived gate, plus the deferred rows (date ranges need a new
+/// AtLeast op; created-in-workspace, subnotes, match-scope) rendered static
+/// so the layout diffs clean when they land.
+struct SearchFiltersPanel: View {
+    let includeArchived: Bool
+    var setArchived: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Filters").font(.system(size: 10.5, weight: .bold)).kerning(0.5)
+                .foregroundColor(Theme.mutedFg)
+            HStack(spacing: 24) {
+                Toggle(isOn: Binding(get: { includeArchived }, set: { setArchived($0) })) {
+                    Text("Include archived").font(.system(size: 12))
+                }
+                .toggleStyle(.switch).controlSize(.mini)
+                deferredFilter("Edited", "Any time", "needs ranges")
+            }
+            HStack(spacing: 24) {
+                deferredFilter("Match", "Name + content", "name-only soon")
+                deferredFilter("Subnotes", "Included", "gate deferred")
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func deferredFilter(_ key: String, _ value: String, _ note: String) -> some View {
+        HStack(spacing: 7) {
+            Text(key).font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+            Text(value).font(.system(size: 12)).foregroundColor(.secondary)
+            Text(note)
+                .font(.system(size: 9, weight: .semibold)).foregroundColor(Theme.mutedFg)
+                .padding(.horizontal, 5)
+                .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1))
+        }
+        .opacity(0.6)
+    }
+}
+
+/// The palette's always-visible shortcut contract (bp3 a16) — same footbar
+/// grammar as the inspector (P11.5 InspectorFootbar).
+struct PaletteFootbar: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            pair("↑↓", "move")
+            pair("⏎", "open")
+            pair("⌥1/2/3", "mode")
+            pair("0–9", "facet")
+            pair("⌫", "pop pill")
+            pair("⎋", "close")
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .overlay(Divider(), alignment: .top)
+    }
+
+    private func pair(_ cap: String, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Text(cap).font(.system(size: 10, design: .monospaced))
+                .padding(.horizontal, 3).frame(minHeight: 16)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
+            Text(label).font(.system(size: 10.5))
+        }
+        .foregroundColor(Theme.mutedFg)
     }
 }
 
