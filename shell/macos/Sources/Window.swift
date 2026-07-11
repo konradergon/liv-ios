@@ -2487,6 +2487,78 @@ func setFacetValue(_ query: inout String, key: String, value: String, to state: 
     query = tokens.joined(separator: " ")
 }
 
+/// Does a token read as a qualifier (key:value / -key:value / key<value with
+/// a non-empty value)? Used to split the input's free text from the pills —
+/// a display-only parse; the Rust `parse` stays the single search parser.
+func isSearchQualifier(_ token: String) -> Bool {
+    let body = token.hasPrefix("-") ? String(token.dropFirst()) : token
+    for sep in [":", "<"] as [Character] {
+        if let at = body.firstIndex(of: sep) {
+            let key = body[..<at]
+            let val = body[body.index(after: at)...]
+            if !key.isEmpty && !val.isEmpty { return true }
+        }
+    }
+    return false
+}
+
+/// The parsed-qualifier pill row (bp3 a2/a17): each qualifier token as a
+/// removable pill — include = accent, exclude (`-` prefix) = red "not".
+/// Pills and the facet chips are two views of the ONE query string.
+struct QueryPillRow: View {
+    let pills: [String]
+    var remove: (String) -> Void
+    var clearAll: () -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(pills, id: \.self) { token in
+                    QueryPill(token: token, remove: { remove(token) })
+                }
+                Button("Clear all", action: clearAll)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 6)
+        }
+    }
+}
+
+struct QueryPill: View {
+    let token: String
+    var remove: () -> Void
+
+    var body: some View {
+        let excluded = token.hasPrefix("-")
+        let body = excluded ? String(token.dropFirst()) : token
+        let tint = excluded ? Theme.destructive : Theme.accent
+        HStack(spacing: 5) {
+            Text(pillText(body, excluded: excluded))
+                .font(.system(size: 11.5, weight: .semibold))
+            Button(action: remove) {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+            }
+            .buttonStyle(.plain).opacity(0.55)
+        }
+        .foregroundColor(tint)
+        .padding(.horizontal, 9).frame(height: 24)
+        .background(Capsule().fill(tint.opacity(0.14)))
+    }
+
+    private func pillText(_ body: String, excluded: Bool) -> String {
+        for sep in [":", "<"] as [Character] {
+            if let at = body.firstIndex(of: sep) {
+                let key = body[..<at]
+                let val = body[body.index(after: at)...].replacingOccurrences(of: "\"", with: "")
+                return excluded ? "\(key): not \(val)" : "\(key): \(val)"
+            }
+        }
+        return body
+    }
+}
+
 /// The checkbox toggle, vocabulary-aware (the review's diverged-laws
 /// finding): display derives done-ness from the option's `completes`, so
 /// the WRITE must too — toggling moves between the kind's first terminal
@@ -2744,6 +2816,52 @@ struct SearchPopup: View {
         model.rows(model.searchResult.hits.map(\.id))
     }
 
+    /// The qualifier tokens in the query — rendered as pills, hidden from the
+    /// free-text input (bp3 a2: qualifiers parse into pills as you type).
+    private var pills: [String] { searchTokens(query).filter(isSearchQualifier) }
+
+    /// The input binds to the FREE text only; a completed qualifier token
+    /// (followed by a space, or not the last token) promotes to a pill.
+    /// Never loses data — every free word and every qualifier is preserved.
+    private var freeText: Binding<String> {
+        Binding(
+            get: { searchTokens(query).filter { !isSearchQualifier($0) }.joined(separator: " ") },
+            set: { newValue in
+                let existing = searchTokens(query).filter(isSearchQualifier)
+                let typed = searchTokens(newValue)
+                let promoteAll = newValue.hasSuffix(" ")
+                var frees: [String] = []
+                var promoted: [String] = []
+                for (i, token) in typed.enumerated() {
+                    let complete = promoteAll || i < typed.count - 1
+                    if complete && isSearchQualifier(token) { promoted.append(token) }
+                    else { frees.append(token) }
+                }
+                var merged = existing
+                for q in promoted
+                where !merged.contains(where: { $0.caseInsensitiveCompare(q) == .orderedSame }) {
+                    merged.append(q)
+                }
+                query = (frees + merged).joined(separator: " ")
+            })
+    }
+
+    private func removePill(_ token: String) {
+        var toks = searchTokens(query)
+        toks.removeAll { $0.caseInsensitiveCompare(token) == .orderedSame }
+        query = toks.joined(separator: " ")
+    }
+
+    /// Chip clicks in the palette ADD an include qualifier (bp3 a24: pills
+    /// coexist), not the old single-select pivot.
+    private func addQualifier(_ token: String) {
+        var toks = searchTokens(query)
+        if !toks.contains(where: { $0.caseInsensitiveCompare(token) == .orderedSame }) {
+            toks.append(token)
+        }
+        query = toks.joined(separator: " ")
+    }
+
     var body: some View {
         let rows = self.rows
         let fresh = model.searchedFor == query
@@ -2758,7 +2876,7 @@ struct SearchPopup: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
-                    TextField("Search…  try type:task  status:done  #idea", text: $query)
+                    TextField("Search or jump to anything…", text: freeText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15))
                         .focused($fieldFocused)
@@ -2772,6 +2890,15 @@ struct SearchPopup: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
+
+                if !pills.isEmpty {
+                    QueryPillRow(
+                        pills: pills,
+                        remove: { removePill($0) },
+                        clearAll: { query = "" })
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                }
 
                 if !model.searchResult.facets.isEmpty {
                     Divider()
@@ -2839,6 +2966,12 @@ struct SearchPopup: View {
                 case 126:
                     highlighted = max(0, highlighted - 1)
                     return nil
+                case 51:  // ⌫ on an empty free-text input pops the newest pill.
+                    if freeText.wrappedValue.isEmpty, let last = pills.last {
+                        removePill(last)
+                        return nil
+                    }
+                    return event
                 default:
                     return event
                 }
@@ -2871,15 +3004,15 @@ struct SearchPopup: View {
             if let anchor = anchorChip(for: row) {
                 ValueChip(
                     text: anchor.text, hue: anchor.hue,
-                    tap: anchor.filter.map { f in { query = f } },
-                    help: anchor.filter.map { "filter: \($0)" })
+                    tap: anchor.filter.map { f in { addQualifier(f) } },
+                    help: anchor.filter.map { "add filter: \($0)" })
             }
             if let status = row.status {
                 StatusChip(
                     option: statusVocabulary(model, kind: row.kinds.first ?? "")
                         .first { $0.name == status },
                     statusName: status,
-                    tap: { query = searchQualifier("status", status) })
+                    tap: { addQualifier(searchQualifier("status", status)) })
             }
         }
         .padding(.vertical, 6)
