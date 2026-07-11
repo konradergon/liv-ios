@@ -3579,7 +3579,8 @@ struct TasksView: View {
             switch lens {
             case .list: listLens(tasks)
             case .board: boardLens(tasks)
-            case .schedule, .cards: comingLens
+            case .schedule: scheduleLens(tasks)
+            case .cards: cardsLens(tasks)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -3750,15 +3751,77 @@ struct TasksView: View {
         }
     }
 
-    /// Schedule + Cards arrive in P14d.
-    private var comingLens: some View {
-        VStack(spacing: 8) {
-            Image(systemName: lens.symbol)
-                .font(.system(size: 28)).foregroundColor(Theme.foreground.opacity(0.12))
-            Text("The \(lens.rawValue) lens is landing next.")
-                .font(.system(size: 12.5)).foregroundColor(.secondary)
+    /// The Schedule lens (bp6 a16): the same task rows re-bucketed by `due`
+    /// into Overdue / Today / This week / Later (client-side). Rows are
+    /// ObjectRow; drag-to-set-due is deferred (the calendar owns the drag).
+    private func scheduleLens(_ tasks: [EntityRow]) -> some View {
+        let buckets = ["Overdue", "Today", "This week", "Later", "No date"]
+        let grouped = Dictionary(grouping: tasks) { scheduleBucket($0).name }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                quickAdd
+                ForEach(buckets, id: \.self) { name in
+                    if let group = grouped[name], !group.isEmpty {
+                        SectionLabel(text: name).padding(.top, 14)
+                        ForEach(group.sorted { dueKey($0) < dueKey($1) }) { row in
+                            taskRow(row, option: statusOptionFor(row))
+                        }
+                    }
+                }
+                if tasks.isEmpty { emptyState }
+            }
+            .padding(.horizontal, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The Cards lens (bp6 a15): an ObjectCard gallery — description clamp,
+    /// ≤3 chips + "+N", no status dot (the grouping carries state).
+    private func cardsLens(_ tasks: [EntityRow]) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 210), spacing: 11)]
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                quickAdd
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 11) {
+                    ForEach(tasks.sorted { dueKey($0) < dueKey($1) }) { row in
+                        ObjectCard(
+                            row: row,
+                            descriptionText: row.cells.first { $0.property == "description" }?.value ?? "",
+                            chips: [anchorChip(for: row)].compactMap { $0 })
+                        .background(RoundedRectangle(cornerRadius: 8)
+                            .fill(selection == row.id ? Theme.accentTint : Color.clear))
+                        .contentShape(Rectangle())
+                        .onTapGesture { selection = row.id }
+                    }
+                }
+                if tasks.isEmpty { emptyState }
+            }
+            .padding(.horizontal, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The status option for a row (so the schedule/list rows show the right
+    /// dot hue) — nil when the status left the vocabulary.
+    private func statusOptionFor(_ row: EntityRow) -> OptionRow? {
+        statusVocabulary(model, kind: "task").first { $0.name == row.status }
+    }
+
+    /// The Schedule bucket for a task, by calendar-day distance from today.
+    private func scheduleBucket(_ row: EntityRow) -> (order: Int, name: String) {
+        guard let due = row.due else { return (4, "No date") }
+        func date(_ ymd: Int64) -> Date? {
+            var c = DateComponents()
+            c.year = Int(ymd / 10_000); c.month = Int((ymd / 100) % 100); c.day = Int(ymd % 100)
+            return Civil.gregorian.date(from: c)
+        }
+        guard let d = date(due / 10_000), let t = date(Civil.todayYMD),
+            let days = Civil.gregorian.dateComponents([.day], from: t, to: d).day
+        else { return (4, "No date") }
+        if days < 0 { return (0, "Overdue") }
+        if days == 0 { return (1, "Today") }
+        if days <= 7 { return (2, "This week") }
+        return (3, "Later")
     }
 
     /// The lens switcher tabs (bp6 a6) — List | Board | Schedule | Cards.
