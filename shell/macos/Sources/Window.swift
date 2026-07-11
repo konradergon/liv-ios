@@ -1277,7 +1277,8 @@ struct WindowChrome: View {
             case .calendar:
                 CalendarView(
                     model: model, selection: $selection,
-                    open: { id in openEntityTab(id) })
+                    open: { id in openEntityTab(id) },
+                    openDaily: { day in openDailyNote(forDay: day) })
             case .library:
                 LibraryView(
                     model: model, selection: $selection,
@@ -1376,6 +1377,15 @@ struct WindowChrome: View {
     private func activeWorkspaceId() -> UInt64 {
         if let ws = chrome.activeWorkspace { return ws }
         return (model.snap?.workspaces.first { $0.builtin == "home" }?.id) ?? 0
+    }
+
+    /// Open (or create) a SPECIFIC day's daily note as a note tab (P14h —
+    /// the calendar's daily-note doorway). Reuses the P12 seam + the active-
+    /// workspace resolution; the note opens through the ordinary tab path.
+    private func openDailyNote(forDay dayYMD: Int64) {
+        model.openDailyNote(dateCivil: dayYMD * 10_000, workspace: activeWorkspaceId()) { id in
+            if let id { openNoteTab(id) }
+        }
     }
 
     private func ensureDailyNote() {

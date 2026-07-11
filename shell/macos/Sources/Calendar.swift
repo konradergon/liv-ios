@@ -64,6 +64,9 @@ struct CalendarView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
     var open: (UInt64) -> Void = { _ in }
+    /// Open (or create) a day's daily note (P14h) — wired to the P12 seam by
+    /// the window, which owns the active-workspace resolution + tab open.
+    var openDaily: (Int64) -> Void = { _ in }
 
     // Transient view state, never a cell (interface.md 0.5). selectedDay is
     // always a real day (today at first), as in Liv — the day panel always
@@ -358,6 +361,7 @@ struct CalendarView: View {
     private func monthBody(_ byDay: [Int64: [EntityRow]]) -> some View {
         let cells = monthCells()
         let weekCount = max(cells.count / 7, 1)
+        let dailyDays = dailyNoteDays
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(dowsMon, id: \.self) { dow in
@@ -385,8 +389,10 @@ struct CalendarView: View {
                                     isSelected: selectedDay == cell.key,
                                     events: byDay[cell.key] ?? [],
                                     rowHeight: rowH,
+                                    hasDailyNote: dailyDays.contains(cell.key),
                                     addEvent: { quickCreate(dayKey: cell.key) },
                                     selectDay: { selectedDay = cell.key },
+                                    openDaily: { openDaily(cell.key) },
                                     itemTap: itemTapped)
                             }
                         }
@@ -477,12 +483,53 @@ struct CalendarView: View {
                     .padding(.top, 12)
                 }
             }
+            dailyNoteFooter(key)
         }
         .padding(.horizontal, 16)
         .padding(.top, 18)
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.background)
+    }
+
+    /// The daily-note doorway (P14h, bp9): the day's note, get-or-created
+    /// through the landed P12 seam. The headline calendar↔writing link.
+    private func dailyNoteFooter(_ key: Int64) -> some View {
+        let exists = dailyNoteDays.contains(key)
+        return VStack(spacing: 0) {
+            Divider().padding(.vertical, 10)
+            Button { openDaily(key) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "sun.max.fill").font(.system(size: 12))
+                    Text(exists ? "Open daily note" : "Create daily note")
+                        .font(.system(size: 12.5, weight: .medium))
+                    Spacer()
+                    if key == Civil.todayYMD {
+                        Text("⌘⌥D").font(.system(size: 10.5, design: .monospaced))
+                            .foregroundColor(Theme.accent.opacity(0.7))
+                    } else {
+                        Image(systemName: "arrow.up.right").font(.system(size: 10))
+                    }
+                }
+                .foregroundColor(Theme.accent)
+                .padding(.horizontal, 11).frame(height: 34)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.accentTint))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open (or create) this day's daily note")
+        }
+    }
+
+    /// The days that HAVE a daily note (bp9 "dot beside a day = a note
+    /// exists"). A daily note is positioned by its `date` cell, so its
+    /// `due` (the positioning civil) names its day.
+    private var dailyNoteDays: Set<Int64> {
+        Set(
+            model.rows(model.snap?.everything ?? [])
+                .filter { $0.kinds.contains("daily-note") }
+                .compactMap { $0.due.map { civil in civil / 10_000 } })
     }
 
     // MARK: navigation + the occurrence window
@@ -592,8 +639,10 @@ struct DayCell: View {
     var isSelected = false
     let events: [EntityRow]
     let rowHeight: CGFloat
+    var hasDailyNote = false
     var addEvent: () -> Void = {}
     var selectDay: () -> Void = {}
+    var openDaily: () -> Void = {}
     var itemTap: (UInt64) -> Void = { _ in }
 
     @State private var hovering = false
@@ -602,18 +651,29 @@ struct DayCell: View {
         let maxPills = max(1, Int((rowHeight - 30) / 17))
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 0) {
-                if isToday {
-                    Text("\(Int(key % 100))")
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                        .foregroundColor(.white)
-                        .frame(width: 20, height: 20)
-                        .background(Circle().fill(Theme.accent))
-                } else {
-                    Text("\(Int(key % 100))")
-                        .font(.system(size: 12).monospacedDigit())
-                        .foregroundColor(inMonth ? .primary : Color.secondary.opacity(0.45))
-                        .padding(.leading, 2)
+                Button(action: openDaily) {
+                    HStack(spacing: 3) {
+                        if isToday {
+                            Text("\(Int(key % 100))")
+                                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                                .foregroundColor(.white)
+                                .frame(width: 20, height: 20)
+                                .background(Circle().fill(Theme.accent))
+                        } else {
+                            Text("\(Int(key % 100))")
+                                .font(.system(size: 12).monospacedDigit())
+                                .foregroundColor(inMonth ? .primary : Color.secondary.opacity(0.45))
+                                .padding(.leading, 2)
+                        }
+                        // The bp9 "a daily note exists" dot.
+                        if hasDailyNote {
+                            Circle().fill(Theme.accent).frame(width: 4, height: 4)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help("Open this day's daily note")
                 Spacer(minLength: 0)
                 // The cell is NOT a Button (day-select is a background tap
                 // gesture), so the hover "+" captures its own tap.
