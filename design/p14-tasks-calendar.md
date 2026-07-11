@@ -670,3 +670,48 @@ Agenda, D4), and the task-field digit allocation (task-local, D5). None blocks t
 one failing-test-first slice (P14-CT) or the mockup gates. **P14 is large and
 should sequence the Tasks track before the Calendar track**, with Contacts landing
 in parallel.
+
+## 8 · P14g build-note (as shipped)
+
+The month-grid renderers of §1.13 landed in `Calendar.swift`, all over the landed
+substrate, ZERO core change:
+
+- **In-grid task checkbox** — `DayCell.pill` gains a leading checkbox for any
+  task row (`kinds.contains("task") || status != nil`); it fires the same
+  `taskStatusToggle(model,row)` used everywhere, wired down as a `taskToggle`
+  closure. Done-ness (fill + strikethrough) is `taskIsDone` on `CalendarView`,
+  deriving the terminal status client-side from `statusVocabulary` — the exact
+  `completes` rule the list uses, so a cell reads done identically in both
+  surfaces. **This also covers the cancelled strikethrough (bp9 a18):** a
+  terminal `cancelled` option strikes through by the same path; a distinct
+  non-task "cancelled event" strike was NOT built (no such vocab today).
+- **Recurrence ↻ marker** — a trailing `repeat` glyph when the row carries a
+  non-empty `recurrence` cell (occurrences already draw the series entity).
+- **Multi-day span bar** — a `monthByDay` expansion (MONTH-ONLY: the week/day
+  time grids place a row at its start HHmm and a continuation day has no honest
+  time on that axis, so `buildByDay` stays the single-placement source) appends
+  a spanning row to every civil day in `(start, end]`. `pill` reads the span
+  geometry from `key` vs `dueEnd`: a continuation cell squares off the edge it
+  flows through (`UnevenRoundedRectangle`), drops its leading bar + start time,
+  and re-anchors the title at each week row's first cell (Google/Fantastical).
+  Spans float to the top of every crossed cell so a single bar reads continuous.
+  A TIMED end at exactly midnight is EXCLUSIVE (iCal/Google: a 09:00→next-00:00
+  event is one day, not two); all-day (`dueDateOnly`) ends stay inclusive —
+  centralized in the file-scoped `spanEndDay(row)` so `monthByDay` and `pill`
+  agree. The week-row title re-anchor tests MONDAY (`isMondayFirstCell`, matching
+  the grid's fixed Mon..Sun layout) — NOT the locale's `firstWeekday`, which is
+  Sunday on the default en_US config and put the title on the wrong column. The
+  leading element (checkbox/time) draws on the START cell only; continuation
+  cells carry the bare bar. (All three were P14g-review findings, fixed + logic-
+  verified with a standalone civil-arithmetic check before commit.)
+
+**Deferred within P14g (named):**
+- **Span drag-grips** (interactive resize writing `DateTime.end`) — the read-only
+  bar ships; the write path is the inspector's date row today. A grip that
+  rewrites `dueEnd` across month cells is real geometry+command machinery for
+  marginal gain over the inspector; deferred.
+- **Off-calendar lookup strip** (bp9 a15) — the load-bearing part (lookup roles
+  never position) is already law+tested; the dismissible explainer strip with an
+  "Open as filter" jump to the ⌘F palette is polish, deferred.
+- **Event-chip drag→date-write** (bp9 a11) — single-day drag-to-reschedule; the
+  same command as the deferred grips, deferred with them.

@@ -29,6 +29,34 @@ private func timeHHmm(_ due: Int64) -> String {
     return String(format: "%02d:%02d", hhmm / 100, hhmm % 100)
 }
 
+private func civilKey(_ date: Date) -> Int64 {
+    let c = Civil.gregorian.dateComponents([.year, .month, .day], from: date)
+    return Int64((c.year ?? 0) * 10_000 + (c.month ?? 0) * 100 + (c.day ?? 0))
+}
+
+// The inclusive last civil day a span covers, shared by the month expansion
+// and the per-cell geometry so both agree. A TIMED end at exactly midnight is
+// exclusive (iCal/Google): it belongs to the prior day, so a 09:00→next-00:00
+// event is ONE day, not two. All-day ends (dueDateOnly) stay inclusive.
+private func spanEndDay(_ row: EntityRow) -> Int64 {
+    let startDay = (row.due ?? 0) / 10_000
+    guard let end = row.dueEnd else { return startDay }
+    let endDay = end / 10_000
+    if !row.dueDateOnly, end % 10_000 == 0, endDay > startDay,
+        let prev = Civil.gregorian.date(byAdding: .day, value: -1, to: civilDate(endDay))
+    {
+        return max(startDay, civilKey(prev))
+    }
+    return endDay
+}
+
+// Monday-first week-start test, matching the month grid's fixed Mon..Sun
+// layout (monthCells uses (weekday+5)%7; the locale's firstWeekday is NOT the
+// grid's, so a span title must re-anchor on Monday, not on firstWeekday).
+private func isMondayFirstCell(_ key: Int64) -> Bool {
+    (Civil.gregorian.component(.weekday, from: civilDate(key)) + 5) % 7 == 0
+}
+
 private func makeFormatter(_ format: String) -> DateFormatter {
     let f = DateFormatter()
     f.calendar = Civil.gregorian
@@ -239,6 +267,16 @@ struct CalendarView: View {
         }
     }
 
+    // Done-ness for a grid task (P14g checkbox fill + strikethrough), derived
+    // client-side from the row's status option — the same `completes` rule the
+    // list uses, so a cell reads done identically in both surfaces.
+    private func taskIsDone(_ row: EntityRow) -> Bool {
+        guard let status = row.status else { return false }
+        let kind = row.kinds.first ?? "task"
+        let option = statusVocabulary(model, kind: kind).first { $0.name == status }
+        return option?.isTerminal ?? (status == "done")
+    }
+
     // MARK: the top bar — title · mode switcher · ‹ Today › · + Event (Liv's)
 
     private var topBar: some View {
@@ -358,7 +396,49 @@ struct CalendarView: View {
 
     private let dowsMon = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 
-    private func monthBody(_ byDay: [Int64: [EntityRow]]) -> some View {
+    // A multi-day event (dueEnd on a later civil day) is drawn as a bar across
+    // every day it covers, not just its start (bp9). The expansion is
+    // month-only: the week/day time grids place a row at its start HHmm, and a
+    // continuation day has no honest time on that axis. buildByDay stays the
+    // single-placement source; this layers the continuation cells on top.
+    private func monthByDay(_ base: [Int64: [EntityRow]]) -> [Int64: [EntityRow]] {
+        var byDay = base
+        for row in model.rows(model.snap?.dated ?? []) where kindShown(row) {
+            guard row.dueEnd != nil else { continue }
+            let startDay = (row.due ?? 0) / 10_000
+            let endDay = spanEndDay(row)
+            guard endDay > startDay else { continue }
+            var day = civilDate(startDay)
+            let last = civilDate(endDay)
+            while let next = Civil.gregorian.date(byAdding: .day, value: 1, to: day),
+                next <= last
+            {
+                byDay[civilKey(next), default: []].append(row)
+                day = next
+            }
+        }
+        // Multi-day spans float to the top of every cell they cross, ordered by
+        // (start, id): a single span then holds the same row across the week so
+        // its bar reads continuous. Single-day items keep their time order.
+        func span(_ r: EntityRow) -> Bool { spanEndDay(r) > (r.due ?? 0) / 10_000 }
+        for key in byDay.keys {
+            byDay[key]?.sort { a, b in
+                let sa = span(a), sb = span(b)
+                if sa != sb { return sa }
+                if sa {
+                    let ka = (a.due ?? 0), kb = (b.due ?? 0)
+                    return ka != kb ? ka < kb : a.id < b.id
+                }
+                let at = a.dueDateOnly ? -1 : Int((a.due ?? 0) % 10_000)
+                let bt = b.dueDateOnly ? -1 : Int((b.due ?? 0) % 10_000)
+                return at < bt
+            }
+        }
+        return byDay
+    }
+
+    private func monthBody(_ rawByDay: [Int64: [EntityRow]]) -> some View {
+        let byDay = monthByDay(rawByDay)
         let cells = monthCells()
         let weekCount = max(cells.count / 7, 1)
         let dailyDays = dailyNoteDays
@@ -393,7 +473,9 @@ struct CalendarView: View {
                                     addEvent: { quickCreate(dayKey: cell.key) },
                                     selectDay: { selectedDay = cell.key },
                                     openDaily: { openDaily(cell.key) },
-                                    itemTap: itemTapped)
+                                    itemTap: itemTapped,
+                                    taskToggle: { row in taskStatusToggle(model, row)?() },
+                                    taskDone: taskIsDone)
                             }
                         }
                         .frame(height: rowH)
@@ -644,6 +726,10 @@ struct DayCell: View {
     var selectDay: () -> Void = {}
     var openDaily: () -> Void = {}
     var itemTap: (UInt64) -> Void = { _ in }
+    /// Toggle a task's status in place (P14g in-grid checkbox).
+    var taskToggle: (EntityRow) -> Void = { _ in }
+    /// Whether a task reads as done (checkbox fill + strikethrough).
+    var taskDone: (EntityRow) -> Bool = { _ in false }
 
     @State private var hovering = false
 
@@ -714,26 +800,69 @@ struct DayCell: View {
     // A filled pill, time-first like Liv's ("09:00 New event"); all-day items
     // are just the title. Neutral fill — the accent stays the today circle's.
     private func pill(_ row: EntityRow) -> some View {
-        HStack(spacing: 4) {
-            if let due = row.due, !row.dueDateOnly {
-                Text(timeHHmm(due))
-                    .font(.system(size: 9.5).monospacedDigit())
-                    .foregroundColor(.secondary)
+        let isTask = row.kinds.contains("task") || row.status != nil
+        let done = isTask && taskDone(row)
+        let recurring = row.cells.contains { $0.property == "recurrence" && !$0.value.isEmpty }
+        // Multi-day span geometry (P14g): a continuation cell squares off the
+        // edge it flows through, drops the leading bar + start time, and re-
+        // anchors the title at each week row's first cell (Google/Fantastical).
+        let startDay = (row.due ?? 0) / 10_000
+        let endDay = spanEndDay(row)
+        let isSpan = endDay > startDay
+        let continuesLeft = isSpan && key > startDay
+        let continuesRight = isSpan && key < endDay
+        // Re-anchor the title at each week row's first cell — MONDAY, matching
+        // the fixed Monday-first grid (not the locale's firstWeekday).
+        let showTitle = !continuesLeft || isMondayFirstCell(key)
+        let r: CGFloat = 3
+        let corners = RectangleCornerRadii(
+            topLeading: continuesLeft ? 0 : r, bottomLeading: continuesLeft ? 0 : r,
+            bottomTrailing: continuesRight ? 0 : r, topTrailing: continuesRight ? 0 : r)
+        let fill = isSpan ? Theme.accentTint : Color.secondary.opacity(0.14)
+        return HStack(spacing: 4) {
+            // The leading element belongs to the START cell only — a
+            // continuation cell drops it so the span reads as one bar.
+            if !continuesLeft {
+                if isTask {
+                    // The in-grid task-due checkbox (P14g) — the same status
+                    // toggle as everywhere; its own tap target.
+                    Button { taskToggle(row) } label: {
+                        Image(systemName: done ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(done ? Theme.accent : Color.secondary.opacity(0.7))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else if let due = row.due, !row.dueDateOnly {
+                    Text(timeHHmm(due))
+                        .font(.system(size: 9.5).monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
             }
-            Text(row.title.isEmpty ? "Untitled" : row.title)
+            Text(showTitle ? (row.title.isEmpty ? "Untitled" : row.title) : " ")
                 .font(.system(size: 10.5))
                 .lineLimit(1)
-                .foregroundColor(.primary)
+                .strikethrough(done, color: .secondary)
+                .foregroundColor(done ? .secondary : .primary)
+            if recurring {
+                Image(systemName: "repeat")
+                    .font(.system(size: 8))
+                    .foregroundColor(Theme.mutedFg)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 1.5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.14)))
+        .background(UnevenRoundedRectangle(cornerRadii: corners).fill(fill))
         .overlay(
-            Rectangle().fill(Color.secondary.opacity(0.5)).frame(width: 2), alignment: .leading
+            Rectangle()
+                .fill((isSpan ? Theme.accent : Color.secondary).opacity(0.5))
+                .frame(width: 2)
+                .opacity(continuesLeft ? 0 : 1),
+            alignment: .leading
         )
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .clipShape(UnevenRoundedRectangle(cornerRadii: corners))
         .contentShape(Rectangle())
         .onTapGesture { itemTap(row.id) }
     }
