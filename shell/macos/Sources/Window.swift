@@ -3660,10 +3660,40 @@ struct TasksView: View {
                         title: name, statusName: name, option: nil,
                         cards: tasks.filter { $0.status == name }.sorted { dueKey($0) < dueKey($1) })
                 }
+                addColumn
             }
             .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 20)
             .frame(maxHeight: .infinity, alignment: .top)
         }
+    }
+
+    /// The trailing "+ New status" column (bp6 a8) — adds a status OPTION
+    /// entity to the task vocabulary via the landed lotus_add_status_option
+    /// seam (hue −1: the vocabulary editor assigns hues, P19). Rename /
+    /// reorder / retire the option happen on its entity in the inspector.
+    private var addColumn: some View {
+        Button {
+            Dialogs.shared.prompt(
+                "New status", message: "Adds a column to the task board.",
+                placeholder: "e.g. blocked", confirmLabel: "Add"
+            ) { name in
+                let trimmed = (name ?? "").trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return }
+                model.addStatusOption(kind: "task", name: trimmed)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus").font(.system(size: 11))
+                Text("New status").font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(.secondary)
+            .frame(width: 150, alignment: .leading)
+            .padding(9)
+            .background(RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.secondary.opacity(0.25),
+                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
