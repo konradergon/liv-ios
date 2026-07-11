@@ -816,6 +816,8 @@ extension Notification.Name {
     /// the chip-click filter (P11.5c).
     static let lotusSearchFor = Notification.Name("lotus.searchFor")
     static let lotusFocusCapture = Notification.Name("lotus.focusCapture")
+    /// The File → Daily Note menu item (P12 12b) — opens today's daily note.
+    static let lotusOpenDailyNote = Notification.Name("lotus.openDailyNote")
     static let lotusNewNote = Notification.Name("lotus.newNote")
     static let lotusNewTab = Notification.Name("lotus.newTab")
     static let lotusOpenStaleDraft = Notification.Name("lotus.openStaleDraft")
@@ -863,6 +865,9 @@ struct WindowChrome: View {
     @State private var spacesOpen = false
     /// The editor of the active note tab, when one is active.
     @State private var editor: EditorModel?
+    /// Today IS the daily note (P12 12b, D1): the id of today's daily note,
+    /// hosted in `editor` on the desk's Today lens.
+    @State private var dailyNoteId: UInt64?
     /// The working set of the active workspace, as the Notes top bar.
     @StateObject private var tabs = TabsModel()
     @State private var returnMonitor: Any?
@@ -1084,6 +1089,9 @@ struct WindowChrome: View {
                 // CONNECTIONS' Ctrl/⌘-click: the entity opens in a tab.
                 if let id = note.object as? UInt64 { openEntityTab(id) }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenDailyNote)) { _ in
+                showDesk(.today)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
                 closeEditor()
                 chrome.surface = .notes
@@ -1282,14 +1290,44 @@ struct WindowChrome: View {
 
     @ViewBuilder
     private var deskContent: some View {
-        // Search is a centered palette now, not the desk lens — the desk
-        // shows Today / Everything.
+        // The desk shows Everything (the full list) or, on the Today lens,
+        // today's daily note itself (D1: "Today IS the daily note").
         switch lens {
         case .everything:
             EverythingView(model: model, selection: $selection)
         default:
-            TodayView(model: model, selection: $selection) {
-                navigate(to: .inbox)
+            dailyNoteDesk
+        }
+    }
+
+    /// The Today lens (D1): today's daily note, hosted in the window editor
+    /// so it rides the exact same flush machinery as any note tab — every
+    /// navigation exit already flushes `editor`. Get-or-created on appear
+    /// and on a workspace switch (each workspace has its own today, D3).
+    @ViewBuilder
+    private var dailyNoteDesk: some View {
+        Group {
+            if let editor, editor.id == dailyNoteId {
+                EditorView(model: editor).id(editor.id)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { ensureDailyNote() }
+        .onChange(of: chrome.activeWorkspace) { ensureDailyNote() }
+    }
+
+    private func ensureDailyNote() {
+        let civil = Civil.todayYMD * 10_000
+        let workspace = chrome.activeWorkspace ?? 0
+        model.openDailyNote(dateCivil: civil, workspace: workspace) { id in
+            guard let id else { return }
+            dailyNoteId = id
+            if editor?.id != id {
+                // Retire whatever the editor last held (flushing it), then
+                // host today's note — openEditor is guarded on editor == nil.
+                retireEditor { openEditor(id: id) }
             }
         }
     }
@@ -1620,6 +1658,18 @@ struct WindowChrome: View {
                 chrome.goForward()
             })
         registry.register(
+            // Today IS the daily note (P12 12b, D2): ⌘⌥D lands on the Today
+            // lens, which get-or-creates and opens today's note. (bp9 cited
+            // Ctrl+D; the owner chose the shipped-Liv ⌘⌥D chord — verified
+            // free: ⌘[ /⌘] are nav history, Alt+←/→ are inspector focus.)
+            CommandDef(
+                id: "daily:open-today", label: "Open today\u{2019}s daily note",
+                scope: .global, category: "Navigate",
+                binding: Hotkey(modifiers: [.mod, .alt], key: "d")
+            ) {
+                showDesk(.today)
+            })
+        registry.register(
             CommandDef(
                 id: "app:exit-focus", label: "Exit focus mode", scope: .global,
                 category: "View", binding: Hotkey(modifiers: [], key: "Escape"),
@@ -1841,111 +1891,6 @@ struct EntityLine: View {
             }
         }
         .frame(width: 16, height: 16)
-    }
-}
-
-// MARK: - Today
-
-struct TodayView: View {
-    @ObservedObject var model: BoxModel
-    @Binding var selection: UInt64?
-    /// The inbox is a rail surface now; Today only points at it.
-    var openInbox: () -> Void = {}
-    @State private var draft = ""
-    @FocusState private var captureFocused: Bool
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                LensHeader(title: "Today", subtitle: todayLine)
-
-                HStack(spacing: 9) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                    TextField("Capture a thought…", text: $draft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14))
-                        .focused($captureFocused)
-                        .onSubmit {
-                            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !text.isEmpty else { return }
-                            // The draft clears only when the log said yes:
-                            // never lose a thought. A beep means retry.
-                            model.capture(text) { ok in
-                                if ok { draft = "" }
-                            }
-                        }
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.secondary.opacity(0.25))
-                )
-                .onReceive(
-                    NotificationCenter.default.publisher(for: .lotusFocusCapture)
-                ) { _ in
-                    captureFocused = true
-                }
-
-                if let snap = model.snap {
-                    if !snap.today.isEmpty {
-                        VStack(alignment: .leading, spacing: 0) {
-                            SectionLabel(text: "Due")
-                            ForEach(model.rows(snap.today)) { row in
-                                EntityLine(
-                                    row: row,
-                                    selected: selection == row.id,
-                                    toggle: taskStatusToggle(model, row)
-                                ) { selection = row.id }
-                            }
-                        }
-                    }
-                    if !snap.unstructured.isEmpty {
-                        VStack(alignment: .leading, spacing: 0) {
-                            SectionLabel(text: "Captured · unstructured")
-                            ForEach(model.rows(snap.unstructured)) { row in
-                                EntityLine(
-                                    row: row,
-                                    showWhen: false,
-                                    selected: selection == row.id,
-                                    toggle: taskStatusToggle(model, row)
-                                ) { selection = row.id }
-                            }
-                        }
-                    }
-                    if snap.today.isEmpty && snap.unstructured.isEmpty {
-                        Text("Nothing waiting. Absence creates no debt.")
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary)
-                    }
-                    if !snap.inbox.isEmpty {
-                        HStack(spacing: 4) {
-                            Text(snap.inbox.count == 1
-                                 ? "1 proposal waiting —"
-                                 : "\(snap.inbox.count) proposals waiting —")
-                                .foregroundColor(.secondary)
-                            Button("open the inbox") { openInbox() }
-                                .buttonStyle(.plain)
-                                .foregroundColor(Theme.accent)
-                                .fontWeight(.semibold)
-                        }
-                        .font(.system(size: 13))
-                    }
-                }
-            }
-            .padding(.horizontal, 32)
-            .padding(.top, 40)
-            .padding(.bottom, 24)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var todayLine: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMMM d"
-        return formatter.string(from: Date())
     }
 }
 

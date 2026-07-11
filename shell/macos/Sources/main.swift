@@ -132,6 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         NotificationCenter.default.post(name: .lotusFocusCapture, object: nil)
     }
 
+    @objc private func openDailyNote() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusOpenDailyNote, object: nil)
+    }
+
     /// ⌘⌥Z is always the box. Under a dirty draft it flushes first —
     /// box undo over unsaved words is unreachable by construction.
     @objc private func undoLastChange() {
@@ -191,8 +196,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             withTitle: "New Note", action: #selector(newNote), keyEquivalent: "")
         note.target = self
         let daily = file.addItem(
-            withTitle: "Daily Note", action: nil, keyEquivalent: "")
-        daily.isEnabled = false  // arrives with P11
+            withTitle: "Daily Note", action: #selector(openDailyNote), keyEquivalent: "d")
+        daily.keyEquivalentModifierMask = [.command, .option]  // ⌘⌥D (P12 12b, D2)
+        daily.target = self
         fileItem.submenu = file
 
         let editItem = NSMenuItem()
