@@ -3525,6 +3525,11 @@ struct TasksView: View {
     /// Schedule | Cards — ephemeral shell state, NOT a persisted view-object
     /// (D3). Only the grouping key + layout change; the pool is shared.
     @State private var lens: TaskLens = .list
+    /// Done (completes) columns fold by default (bp6 a11); the header
+    /// chevron adds a column name here to expand it. Session state.
+    @State private var expandedDone: Set<String> = []
+    /// The column currently under a drag (accent-tinted while hovered).
+    @State private var dropTarget: String? = nil
     @FocusState private var addFocused: Bool
 
     enum TaskFilter: String, CaseIterable { case all = "All", open = "Open", done = "Done" }
@@ -3573,7 +3578,8 @@ struct TasksView: View {
 
             switch lens {
             case .list: listLens(tasks)
-            case .board, .schedule, .cards: comingLens
+            case .board: boardLens(tasks)
+            case .schedule, .cards: comingLens
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -3628,7 +3634,123 @@ struct TasksView: View {
         }
     }
 
-    /// Board arrives in P14b; Schedule + Cards in P14d.
+    /// The Board lens (bp6 a8–a13): horizontal columns = the status
+    /// vocabulary in board order; tiles carry NO status (the column does);
+    /// cross-column DRAG writes status (the existing set-status seam);
+    /// completes columns fold; manual within-column ordering is DEFERRED
+    /// (D1 — cards sort by due). No board replaces the list — it is one lens.
+    private func boardLens(_ tasks: [EntityRow]) -> some View {
+        let vocabulary = statusVocabulary(model, kind: "task")
+        let known = Set(vocabulary.map(\.name))
+        let orphanNames = Set(tasks.compactMap(\.status).filter { !known.contains($0) }).sorted()
+        let unstatused = tasks.filter { $0.status == nil }.sorted { dueKey($0) < dueKey($1) }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 12) {
+                if !unstatused.isEmpty {
+                    boardColumn(title: "no status", statusName: nil, option: nil, cards: unstatused)
+                }
+                ForEach(vocabulary) { option in
+                    boardColumn(
+                        title: option.name, statusName: option.name, option: option,
+                        cards: tasks.filter { $0.status == option.name }.sorted { dueKey($0) < dueKey($1) })
+                }
+                ForEach(orphanNames, id: \.self) { name in
+                    boardColumn(
+                        title: name, statusName: name, option: nil,
+                        cards: tasks.filter { $0.status == name }.sorted { dueKey($0) < dueKey($1) })
+                }
+            }
+            .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 20)
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    @ViewBuilder
+    private func boardColumn(
+        title: String, statusName: String?, option: OptionRow?, cards: [EntityRow]
+    ) -> some View {
+        let terminal = option?.isTerminal ?? false
+        let folded = terminal && !expandedDone.contains(title)
+        let dot = option?.hue.map { Hues.degrees($0) } ?? Color(nsColor: .tertiaryLabelColor)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Circle().fill(dot).frame(width: 8, height: 8)
+                Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text("\(cards.count)").font(.system(size: 11)).foregroundColor(.secondary)
+                Spacer(minLength: 4)
+                if terminal {
+                    Button {
+                        if folded { expandedDone.insert(title) } else { expandedDone.remove(title) }
+                    } label: {
+                        Image(systemName: folded ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain).foregroundColor(.secondary)
+                } else if statusName != nil {
+                    Button { addToColumn(statusName) } label: {
+                        Image(systemName: "plus").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain).foregroundColor(.secondary).help("New task here")
+                }
+            }
+            .padding(.horizontal, 4)
+            if !folded {
+                LazyVStack(spacing: 7) {
+                    ForEach(cards) { card in boardTile(card) }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(9)
+        .frame(width: 252, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 10).fill(
+            dropTarget == title ? Theme.accentTint : Color.secondary.opacity(0.05)))
+        .onDrop(
+            of: [.plainText],
+            isTargeted: Binding(get: { dropTarget == title }, set: { dropTarget = $0 ? title : nil })
+        ) { providers in
+            providers.first?.loadObject(ofClass: NSString.self) { obj, _ in
+                guard let s = obj as? String, s.hasPrefix("task:"),
+                    let id = UInt64(s.dropFirst(5)) else { return }
+                DispatchQueue.main.async {
+                    // Drag = the existing set-status command; the no-status
+                    // column unsets (moving a task back out of the vocabulary).
+                    if let statusName { model.set(id, property: "status", value: statusName) }
+                    else { model.unset(id, property: "status") }
+                }
+            }
+            return true
+        }
+    }
+
+    /// A board card — ObjectTile carries NO status by construction (the
+    /// column is the status). The date leg never hues (never-hue law), so it
+    /// rides the neutral dateText slot, not the VALUE_HEX person slot.
+    private func boardTile(_ row: EntityRow) -> some View {
+        let anchor = anchorChip(for: row)
+        return ObjectTile(
+            title: row.title,
+            person: anchor?.isDate == false ? anchor?.text : nil,
+            dateText: row.due.map { Civil.text($0, dateOnly: row.dueDateOnly) },
+            tier: row.cells.first { $0.property == "priority" }?.value)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.background))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(selection == row.id ? Theme.accent : Color.clear, lineWidth: 1.5))
+        .contentShape(Rectangle())
+        .onTapGesture { selection = row.id }
+        .onDrag { NSItemProvider(object: "task:\(row.id)" as NSString) }
+    }
+
+    private func addToColumn(_ statusName: String?) {
+        model.createTask { id in
+            guard let id else { return }
+            if let statusName { model.set(id, property: "status", value: statusName) }
+            selection = id
+        }
+    }
+
+    /// Schedule + Cards arrive in P14d.
     private var comingLens: some View {
         VStack(spacing: 8) {
             Image(systemName: lens.symbol)
