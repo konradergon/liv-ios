@@ -1373,6 +1373,33 @@ pub unsafe extern "C" fn lotus_open_daily_note_at(
     })
 }
 
+/// Stamp an entity's TYPE by name (P12 12d — the Inbox Route commit). 1 on
+/// success, 0 on refusal (unknown type name / no entity). A refusal never
+/// touched the store, so the cache stays valid.
+///
+/// # Safety
+/// `path` and `type_name` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_set_type_at(
+    path: *const c_char,
+    id: u64,
+    type_name: *const c_char,
+) -> i32 {
+    if type_name.is_null() {
+        return 0;
+    }
+    let Ok(type_name) = CStr::from_ptr(type_name).to_str() else {
+        return 0;
+    };
+    with_box(path, 0, |session| {
+        match lotus_services::content::set_type(session, id, type_name) {
+            Ok(()) => (1, Committed::Wrote),
+            Err(lotus_services::content::WriteError::Refused(_)) => (0, Committed::Read),
+            Err(lotus_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
+        }
+    })
+}
+
 /// Create a task by hand (the Tasks quick-add): one transaction — type=task
 /// + status=todo + created. Returns the new id, 0 on failure. Distinct from
 /// capture, which makes an untyped scrap the clerk quarantines.
@@ -2346,6 +2373,55 @@ mod tests {
             "born with the default template body"
         );
         assert_eq!(born["title"], "2026-07-11", "named the ISO date");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn set_type_stamps_a_named_type_onto_an_orphan_scrap() {
+        // P12 12d (failing-test-first): the Inbox Route commit stamps a
+        // TYPE cell by NAME so a bare capture leaves the content∧¬type
+        // orphan set. set_property can't (reference needs #id) and types are
+        // working plumbing off the snapshot, so this is the seam that closes
+        // the gap (the design's "stamp type" assumption verified false).
+        let (path, c_path) = fresh_box("lotus_ffi_set_type.log");
+        let scrap = unsafe {
+            let c_text = CString::new("Steven owes me 300 kr").unwrap();
+            lotus_capture_at(c_path.as_ptr(), c_text.as_ptr())
+        };
+        assert_ne!(scrap, 0);
+
+        // Before: the scrap is a content-only orphan (no kinds).
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let scrap_before = before["entities"].as_array().unwrap()
+            .iter().find(|e| e["id"] == scrap).unwrap();
+        assert!(scrap_before["kinds"].as_array().unwrap().is_empty(), "starts typeless");
+        assert_ne!(scrap_before["content_print"].as_u64(), Some(0), "has content");
+
+        // Stamp type = note.
+        let c_note = CString::new("note").unwrap();
+        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, c_note.as_ptr()) }, 1);
+
+        // After: it is a note; it left the orphan set.
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let scrap_after = after["entities"].as_array().unwrap()
+            .iter().find(|e| e["id"] == scrap).unwrap();
+        assert!(
+            scrap_after["kinds"].as_array().unwrap().iter().any(|k| k == "note"),
+            "now typed as note"
+        );
+
+        // Re-stamping a different type REPLACES (one type, not two).
+        let c_task = CString::new("task").unwrap();
+        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, c_task.as_ptr()) }, 1);
+        let retyped = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let kinds = retyped["entities"].as_array().unwrap()
+            .iter().find(|e| e["id"] == scrap).unwrap()["kinds"].as_array().unwrap().clone();
+        assert_eq!(kinds.len(), 1, "one type, replaced not appended");
+        assert!(kinds.iter().any(|k| k == "task"));
+
+        // An unknown type name is refused; nothing changes.
+        let c_bogus = CString::new("nonesuch").unwrap();
+        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, c_bogus.as_ptr()) }, 0);
         cleanup(&path);
     }
 

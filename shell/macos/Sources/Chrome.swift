@@ -348,7 +348,8 @@ struct SurfaceNav: View {
                 NavRow(
                     surface: surface,
                     active: chrome.surface == surface,
-                    badge: surface == .inbox ? (model.snap?.unstructured.count ?? 0) : 0
+                    badge: surface == .inbox
+                        ? (model.orphans().count + (model.snap?.inbox.count ?? 0)) : 0
                 ) { select(surface) }
             }
         }

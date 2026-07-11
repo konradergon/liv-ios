@@ -94,6 +94,10 @@ uint64_t lotus_create_note_at(const char *path);
 uint64_t lotus_open_daily_note_at(const char *path, int64_t date_civil,
                                   uint64_t workspace);
 
+/* Stamp an entity's TYPE by name (P12 12d Inbox Route commit). 1 ok, 0 on
+   refusal (unknown type name / no entity). */
+int32_t lotus_set_type_at(const char *path, uint64_t id, const char *type_name);
+
 /* Create a task by hand (Tasks quick-add): Create + type:task +
    status:todo + created, one transaction. Returns the id, 0 on failure.
    Distinct from capture, which quarantines an untyped scrap. */

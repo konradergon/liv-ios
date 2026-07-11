@@ -491,6 +491,19 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// The Route/Capture orphan set (P12): content ∧ ¬type — a captured
+    /// scrap that has words but no classification. `everything` already
+    /// excludes working plumbing, so no definitions/types leak.
+    func orphans() -> [EntityRow] {
+        rows(snap?.everything ?? [])
+            .filter { !$0.trashed && $0.kinds.isEmpty && $0.contentPrint != 0 }
+    }
+
+    /// Stamp an entity's TYPE by name (P12 12d — the Inbox Route commit).
+    func setType(_ id: UInt64, _ typeName: String, done: @escaping (Bool) -> Void = { _ in }) {
+        act(done) { lotus_set_type_at(self.path, id, typeName) == 1 }
+    }
+
     func createNote(_ done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
             let id = lotus_create_note_at(self.path)
@@ -1238,7 +1251,9 @@ struct WindowChrome: View {
                     model: model, selection: $selection,
                     open: { id in openEntityTab(id) })
             case .inbox:
-                InboxView(model: model)
+                InboxView(
+                    model: model, selection: $selection,
+                    open: { id in openEntityTab(id) })
             case .calendar:
                 CalendarView(
                     model: model, selection: $selection,
@@ -1920,10 +1935,7 @@ struct QuickCaptureView: View {
     /// content ∧ ¬type (§3.2): a scrap has content and no classification.
     /// `everything`/`entities[]` already exclude working plumbing, so no
     /// definitions or types leak into the wall.
-    private var orphans: [EntityRow] {
-        model.rows(model.snap?.everything ?? [])
-            .filter { !$0.trashed && $0.kinds.isEmpty && $0.contentPrint != 0 }
-    }
+    private var orphans: [EntityRow] { model.orphans() }
 
     private let columns = [GridItem(.adaptive(minimum: 210), spacing: 11)]
 
@@ -2007,33 +2019,187 @@ struct QuickCaptureView: View {
 
 // MARK: - Inbox
 
+enum InboxLens: String, CaseIterable, Identifiable {
+    case route = "Route"
+    case tidy = "Tidy"
+    var id: String { rawValue }
+}
+
+/// bp5 panel B (P12 12d/12e): ONE inbox, two LENSES (never two cleanup
+/// surfaces — a13/a14). Route = orphan scraps → give each a type and it
+/// leaves the set. Tidy = the clerk's live assist proposals. The shared V3
+/// inspector is the app's RIGHT pane (this surface shows it, bound to
+/// selection) — lotus's mapping of bp5's inline inspector, not a duplicate.
 struct InboxView: View {
     @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    var open: (UInt64) -> Void = { _ in }
+    @State private var lens: InboxLens = .route
+
+    private var orphans: [EntityRow] { model.orphans() }
+    private var proposals: [ProposalRow] { model.snap?.inbox ?? [] }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            switch lens {
+            case .route: routeLens
+            case .tidy: tidyLens
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // [ ] cycles the lens (digits stay reserved for the D21 map, a14).
+        .onKeyPress(.init("[")) { cycleLens(-1); return .handled }
+        .onKeyPress(.init("]")) { cycleLens(1); return .handled }
+    }
+
+    private func cycleLens(_ delta: Int) {
+        let all = InboxLens.allCases
+        let at = all.firstIndex(of: lens) ?? 0
+        lens = all[(at + delta + all.count) % all.count]
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Text("Inbox").font(.system(size: 21, weight: .bold))
+            let badge = orphans.count + proposals.count
+            if badge > 0 {
+                Text("\(badge)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(nsColor: .black).opacity(0.75))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.warning))
+            }
+            Picker("", selection: $lens) {
+                Text("Route · \(orphans.count)").tag(InboxLens.route)
+                Text("Tidy · \(proposals.count)").tag(InboxLens.tidy)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            Spacer()
+            Text("one cleanup home · cycle [ ]")
+                .font(.system(size: 11)).foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 32).padding(.top, 34).padding(.bottom, 14)
+    }
+
+    // MARK: Route — orphans → a type
+
+    @ViewBuilder
+    private var routeLens: some View {
+        if orphans.isEmpty {
+            inboxZero
+        } else {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(orphans) { row in
+                            ObjectRow(
+                                row: row,
+                                selected: selection == row.id,
+                                chipTap: { f in
+                                    NotificationCenter.default.post(name: .lotusSearchFor, object: f)
+                                },
+                                select: { selection = row.id },
+                                openRow: { open(row.id) })
+                        }
+                    }
+                    .padding(.horizontal, 24).padding(.top, 8)
+                }
+                Divider()
+                routeBar
+            }
+        }
+    }
+
+    /// The routing question + commit (a16/a21). "New note" stamps type=note
+    /// so the scrap leaves the orphan set — NO folder move (design §1.2).
+    /// "Suggest a merge" is static (proposer + execution defer to P16, §1.7).
+    private var routeBar: some View {
+        let target = selection.flatMap { id in orphans.first { $0.id == id } }
+        return VStack(alignment: .leading, spacing: 8) {
+            if let target {
+                Text("Which note should this go in?")
+                    .font(.system(size: 12.5, weight: .semibold))
+                HStack(spacing: 8) {
+                    Button { commit(target) } label: {
+                        Label("New note", systemImage: "1.square")
+                    }
+                    .buttonStyle(.borderedProminent).tint(Theme.accent)
+                    Button { NSSound.beep() } label: {
+                        Label("Suggest a merge", systemImage: "wand.and.stars")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("The merge proposer arrives with the AI pass (P16)")
+                    Spacer()
+                    Button("Later") { advance(after: target) }
+                        .buttonStyle(.bordered)
+                    Button { commit(target) } label: {
+                        Text("Commit").fontWeight(.semibold)
+                    }
+                    .buttonStyle(.borderedProminent).tint(Theme.accent)
+                }
+                Text("Commit stamps the type cell — the scrap leaves the inbox. No file move.")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            } else {
+                Text("Select a capture to route it.")
+                    .font(.system(size: 12.5)).foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 32).padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    private func commit(_ row: EntityRow) {
+        model.setType(row.id, "note") { ok in
+            if ok { advance(after: row) }
+        }
+    }
+
+    /// After Commit/Later, select the next orphan (a21: auto-advance).
+    private func advance(after row: EntityRow) {
+        let remaining = model.orphans().filter { $0.id != row.id }
+        let at = orphans.firstIndex { $0.id == row.id } ?? 0
+        selection = remaining.indices.contains(at)
+            ? remaining[at].id : remaining.first?.id
+    }
+
+    private var inboxZero: some View {
+        VStack(spacing: 9) {
+            Image(systemName: "tray")
+                .font(.system(size: 30)).foregroundColor(.secondary.opacity(0.4))
+            Text("Inbox zero — nothing waiting.")
+                .font(.system(size: 13, weight: .semibold)).foregroundColor(.secondary)
+            Text("New captures land here. Jot one from anywhere with ⌃⌥Space.")
+                .font(.system(size: 11.5)).foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+
+    // MARK: Tidy — the clerk's assist proposals (12e polishes into cards)
+
+    @ViewBuilder
+    private var tidyLens: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                LensHeader(
-                    title: "Inbox",
-                    subtitle: model.snap.map { "\($0.inbox.count) waiting" } ?? "…"
-                )
-                if let inbox = model.snap?.inbox, !inbox.isEmpty {
-                    ForEach(inbox) { proposal in
+                if proposals.isEmpty {
+                    Text("Nothing to tidy. Assist re-scans in the background.")
+                        .font(.system(size: 13)).foregroundColor(.secondary)
+                        .padding(.top, 8)
+                } else {
+                    ForEach(proposals) { proposal in
                         ProposalLine(model: model, proposal: proposal)
                     }
                     Text("Decline once and the clerk never asks again.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color.secondary.opacity(0.8))
+                        .font(.system(size: 12)).foregroundColor(Color.secondary.opacity(0.8))
                         .padding(.top, 20)
-                } else {
-                    Text("Nothing waiting.")
-                        .font(.system(size: 14))
-                        .foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 40)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

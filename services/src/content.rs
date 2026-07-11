@@ -829,6 +829,32 @@ pub fn set_property(
     Ok(())
 }
 
+/// Stamp an entity's TYPE by type NAME — the Inbox Route commit (P12 12d)
+/// and, later, the inspector's type editor. `set_property` can't: TYPE is a
+/// reference and its parser wants "#id", but type entities are working
+/// plumbing the shell never sees. This resolves the name via `find_type`
+/// and replaces the TYPE cell (one type, not two). An unknown name refuses.
+pub fn set_type(session: &mut Session, id: Id, type_name: &str) -> Result<(), WriteError> {
+    let store = session.store();
+    let id = store.resolve(id);
+    let entity = store.get(id).ok_or(WriteError::Refused(format!("no entity #{id}")))?;
+    let type_id = find_type(store, type_name)
+        .ok_or(WriteError::Refused(format!("no type named {type_name}")))?;
+    let commands: Vec<Command> = entity
+        .all(props::TYPE)
+        .cloned()
+        .map(|old| Command::RemoveCell { entity: id, cell: Cell { property: props::TYPE, value: old } })
+        .chain(std::iter::once(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::TYPE, value: Value::Reference(type_id) },
+        }))
+        .collect();
+    session
+        .commit(commands, format!("set type {type_name}"), Author::User)
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
+    Ok(())
+}
+
 /// Parse a raw string into a typed Value by a property's declared kind —
 /// the one kind-aware parser the inspector's `set` and the search DSL's
 /// qualifiers both go through, so `status:done` and a hand-set status
