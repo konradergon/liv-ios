@@ -8,11 +8,11 @@
 //!
 //! The language model of milestone 8 is a brain swap behind this socket.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use lotus_core::{
-    props, Author, Block, Cell, Command, DateTime, Entity, Id, Proposal, RichText, Span, Store,
-    Value, NONE,
+    props, Author, Block, Cell, Command, DateTime, Entity, Id, PersistError, Proposal, RichText,
+    Session, Span, Store, Value, NONE,
 };
 
 use crate::content::{find_option, find_type};
@@ -131,6 +131,111 @@ pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
             })
     });
     proposals
+}
+
+// MARK: - grouping + severable group-accept (P16b)
+
+/// What makes two proposals "alike" (constitution 1.3): the same proposer and
+/// the same kind of change — a merge, a promotion, or a specific property.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Facet {
+    Merge,
+    Promote,
+    Property(Id),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GroupKey {
+    pub author: String,
+    pub facet: Facet,
+}
+
+/// A group of alike proposals (indices into the slice `groups` was given).
+#[derive(Debug, Clone)]
+pub struct Group {
+    pub key: GroupKey,
+    pub members: Vec<usize>,
+}
+
+/// The group a proposal belongs to — a pure function (the inbox is re-derived by
+/// every process, so the group is derived, never stored).
+pub fn group_key(proposal: &Proposal) -> GroupKey {
+    let author = match &proposal.author {
+        Author::Proposer(name) => name.clone(),
+        _ => "user".into(),
+    };
+    let facet = if proposal.commands.iter().any(|c| matches!(c, Command::Redirect { .. })) {
+        Facet::Merge
+    } else if proposal
+        .commands
+        .iter()
+        .any(|c| matches!(c, Command::AddCell { cell, .. } if cell.property == props::TYPE))
+    {
+        Facet::Promote
+    } else if let Some(Command::AddCell { cell, .. }) = proposal.commands.first() {
+        Facet::Property(cell.property)
+    } else {
+        Facet::Property(NONE)
+    };
+    GroupKey { author, facet }
+}
+
+/// Bucket proposals into groups, in first-seen order (deterministic because the
+/// sweep yields proposals in entity-id order).
+pub fn groups(proposals: &[Proposal]) -> Vec<Group> {
+    let mut order: Vec<GroupKey> = Vec::new();
+    let mut members: HashMap<GroupKey, Vec<usize>> = HashMap::new();
+    for (i, proposal) in proposals.iter().enumerate() {
+        let key = group_key(proposal);
+        if !members.contains_key(&key) {
+            order.push(key.clone());
+        }
+        members.entry(key).or_default().push(i);
+    }
+    order
+        .into_iter()
+        .map(|key| {
+            let members = members.remove(&key).unwrap_or_default();
+            Group { key, members }
+        })
+        .collect()
+}
+
+/// Accept several pending proposals (by index) as ONE transaction, one undo
+/// (constitution 1.3). Concatenates their commands, commits once under the first
+/// member's author, then retracts each from the pending queue. Commit-then-retract
+/// is crash-safe *because clerk proposals are re-derivable* — a crash after the
+/// commit leaves stale pending whose preconditions the next sweep no longer finds,
+/// so nothing is re-derived. (This safety does NOT transfer to a future Agent's
+/// non-re-derivable draft.) Composed entirely from public Session methods.
+pub fn accept_group(session: &mut Session, selected: &[usize]) -> Result<u64, PersistError> {
+    let (commands, author) = {
+        let pending = session.store().pending();
+        let author = selected
+            .first()
+            .and_then(|&i| pending.get(i))
+            .map(|p| p.author.clone())
+            .unwrap_or(Author::User);
+        let mut commands = Vec::new();
+        for &i in selected {
+            if let Some(p) = pending.get(i) {
+                commands.extend(p.commands.clone());
+            }
+        }
+        (commands, author)
+    };
+    if commands.is_empty() {
+        return Ok(0);
+    }
+    let seq = session.commit(commands, "accept group".to_string(), author)?;
+    // Descending, so the indices stay valid as members are drained.
+    let mut ordered = selected.to_vec();
+    ordered.sort_unstable_by(|a, b| b.cmp(a));
+    ordered.dedup();
+    for i in ordered {
+        let _ = session.retract(i);
+    }
+    Ok(seq)
 }
 
 /// The durable meaning of a refusal: (proposer, entity, property). A single

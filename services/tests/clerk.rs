@@ -459,3 +459,59 @@ fn the_sweep_never_duplicates_pending() {
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
+
+// ---- P16b: grouping + severable group-accept ----
+
+#[test]
+fn alike_proposals_share_a_group_key() {
+    let (mut session, path) = boxed("groupkey");
+    typed(&mut session, "note", "Anna", vec![]); // a known name → a mention too
+    capture(&mut session, "call Anna friday");
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    let dates = from(&proposals, "dates").unwrap();
+    let mentions = from(&proposals, "mentions").unwrap();
+    assert_ne!(
+        clerk::group_key(&dates),
+        clerk::group_key(&mentions),
+        "a date and a mention are different groups"
+    );
+    assert!(clerk::groups(&proposals).len() >= 2);
+    cleanup(&path);
+}
+
+#[test]
+fn accept_group_is_one_transaction_one_undo() {
+    let (mut session, path) = boxed("acceptgroup");
+    let a = capture(&mut session, "ship it friday");
+    let b = capture(&mut session, "review pr monday");
+    for p in clerk::sweep(session.store(), MONDAY) {
+        session.propose(p).unwrap();
+    }
+    assert_eq!(session.store().pending().len(), 2);
+
+    clerk::accept_group(&mut session, &[0, 1]).unwrap();
+    let due = lotus_services::property_id(session.store(), "due").unwrap();
+    assert!(session.store().get(a).unwrap().get(due).is_some());
+    assert!(session.store().get(b).unwrap().get(due).is_some());
+    assert!(session.store().pending().is_empty(), "both drained");
+
+    // ONE undo reverts BOTH — the group committed as one transaction.
+    session.undo(Author::User).unwrap();
+    assert!(session.store().get(a).unwrap().get(due).is_none());
+    assert!(session.store().get(b).unwrap().get(due).is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn severing_leaves_a_member_pending() {
+    let (mut session, path) = boxed("sever");
+    capture(&mut session, "ship it friday");
+    capture(&mut session, "review pr monday");
+    for p in clerk::sweep(session.store(), MONDAY) {
+        session.propose(p).unwrap();
+    }
+    assert_eq!(session.store().pending().len(), 2);
+    clerk::accept_group(&mut session, &[0]).unwrap();
+    assert_eq!(session.store().pending().len(), 1, "one severed, one remains");
+    cleanup(&path);
+}
