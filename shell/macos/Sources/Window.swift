@@ -918,10 +918,12 @@ struct WindowChrome: View {
                 if chrome.focusMode { FocusChip(chrome: chrome) }
             }
             .overlay(alignment: .topTrailing) {
-                // The Spaces / files picker at the window's far top-right,
-                // over the inspector's titlebar band — its views open as a
-                // popover, never in the panel.
-                if chrome.surface == .notes && !chrome.focusMode {
+                // The Spaces / files picker at the window's far top-right, over
+                // the inspector's titlebar band — its views open as a popover,
+                // never in the panel. Shown on every surface that has the global
+                // inspector, so that reserved band is never an empty row (the
+                // Calendar has its own right column, so it is excluded).
+                if chrome.surface != .calendar && !chrome.focusMode {
                     spacesPicker
                 }
             }
@@ -991,7 +993,9 @@ struct WindowChrome: View {
             Spacer(minLength: 0)
             WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
         }
-        .background(SidebarMaterial().ignoresSafeArea())
+        // An opaque panel card; the window material now lives behind ALL panes
+        // (body3Pane), showing through the gaps for the layered look.
+        .background(Theme.panel)
     }
 
     /// The workspace switcher (§2.7.3), above the content, below the
@@ -1227,6 +1231,7 @@ struct WindowChrome: View {
                 if chrome.leftOpen && !chrome.focusMode {
                     leftPanel
                         .frame(width: max(total * chrome.leftPct / 100, 0))
+                        .panelCard()
                     PaneDivider(
                         pct: $chrome.leftPct, total: total,
                         minPct: 12, maxPct: chrome.leftLiveMax, leadingEdge: true,
@@ -1235,6 +1240,9 @@ struct WindowChrome: View {
                 }
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // Notes cards its own tab CONTENT (below the tab strip),
+                    // so the strip never sits inside a rounded card.
+                    .panelCard(if: chrome.surface != .notes)
                 // The right divider outlives its panel: a drag-collapsed
                 // inspector must stay reopenable by mouse (§1.5). The Calendar
                 // never shows the GLOBAL inspector: it embeds one inside its
@@ -1250,10 +1258,16 @@ struct WindowChrome: View {
                 if chrome.rightOpen && !chrome.focusMode && chrome.surface != .calendar {
                     InspectorPane(model: model, selection: $selection)
                         .frame(width: max(total * chrome.rightPct / 100, 0))
+                        .panelCard()
                 }
             }
             .coordinateSpace(name: "chrome.body")
         }
+        // The layer underneath: the window material shows through the ~7pt gaps
+        // between panes (the dividers), so the opaque panel cards read as
+        // floating on top. Panes stay FLUSH to the window edges — no outer
+        // inset, so the traffic lights sit on the sidebar, not out in a margin.
+        .background(SidebarMaterial().ignoresSafeArea())
     }
 
     @ViewBuilder
@@ -1311,6 +1325,9 @@ struct WindowChrome: View {
             )
             activeTabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // The tab strip above stays flush chrome; only the content
+                // below it is the rounded card.
+                .panelCard()
         }
     }
 
@@ -1902,6 +1919,25 @@ struct SidebarMaterial: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+extension View {
+    /// A pane rendered as a rounded, layered card (Calendar / Claude style): a
+    /// continuous-radius clip + a hairline edge, so an opaque pane reads as
+    /// floating on the window material showing through the gaps between panes.
+    @ViewBuilder
+    func panelCard(if enabled: Bool = true) -> some View {
+        if enabled {
+            clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Theme.border.opacity(0.55), lineWidth: 0.5)
+                )
+                .shadow(color: Color.black.opacity(0.05), radius: 3, y: 1)
+        } else {
+            self
+        }
+    }
 }
 
 // MARK: - shared lens scaffolding

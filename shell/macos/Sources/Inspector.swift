@@ -151,7 +151,10 @@ struct InspectorPane: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        // The right pane is an opaque panel card, the SAME fill as the left
+        // sidebar — not the dim `underPageBackgroundColor` that let the window
+        // material bleed through and read greyed-out.
+        .background(Theme.panel)
         .onHover { hoveringPane = $0 }
         .onAppear { InspectorCommands.register() }
         .onDisappear { blur() }
