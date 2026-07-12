@@ -63,6 +63,95 @@ fn from(proposals: &[Proposal], proposer: &str) -> Option<Proposal> {
     proposals.iter().find(|p| p.author == Author::Proposer(proposer.into())).cloned()
 }
 
+/// A typed, named entity (+ optional extra cells) for the dedupe tests.
+fn typed(session: &mut Session, type_name: &str, name: &str, extra: Vec<Cell>) -> Id {
+    let ty = lotus_services::content::find_type(session.store(), type_name);
+    let id = session.allocate_id();
+    let mut cmds = vec![Command::Create { entity: id }];
+    if let Some(ty) = ty {
+        cmds.push(Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::TYPE, value: Value::Reference(ty) },
+        });
+    }
+    cmds.push(Command::AddCell {
+        entity: id,
+        cell: Cell { property: props::NAME, value: Value::text(name) },
+    });
+    for cell in extra {
+        cmds.push(Command::AddCell { entity: id, cell });
+    }
+    session.commit(cmds, "e", Author::User).unwrap();
+    id
+}
+
+// ---- P16 dedupe: exact-identity merge proposals ----
+
+#[test]
+fn dedupe_proposes_a_merge_for_same_type_and_name() {
+    let (mut session, path) = boxed("dedupe_prop");
+    let due = lotus_services::property_id(session.store(), "due").unwrap();
+    let older = typed(&mut session, "note", "Meeting notes", vec![]);
+    let newer = typed(
+        &mut session,
+        "note",
+        "meeting NOTES", // casefold-equal
+        vec![Cell { property: due, value: Value::DateTime(DateTime::date(2026, 7, 10)) }],
+    );
+
+    let p = from(&clerk::sweep(session.store(), MONDAY), "dedupe").expect("a dedupe proposal");
+    // Survivor is the older id; the newer redirects into it.
+    session.propose(p.clone()).unwrap();
+    session.accept(0).unwrap();
+    assert_eq!(session.store().resolve(newer), older, "loser redirects to survivor");
+    // Survivor absorbed the loser's unique due cell.
+    assert!(session.store().get(older).unwrap().get(due).is_some(), "survivor got the due");
+    cleanup(&path);
+}
+
+#[test]
+fn dedupe_is_exact_not_fuzzy() {
+    let (mut session, path) = boxed("dedupe_fuzzy");
+    typed(&mut session, "note", "Anna", vec![]);
+    typed(&mut session, "note", "Annabel", vec![]);
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "dedupe").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn dedupe_never_copies_tier_or_private() {
+    let (mut session, path) = boxed("dedupe_tier");
+    // A loser carrying a private flag — the merge must not copy it.
+    typed(&mut session, "note", "Dup", vec![]);
+    typed(
+        &mut session,
+        "note",
+        "Dup",
+        vec![Cell { property: props::PRIVATE, value: Value::Bool(true) }],
+    );
+    let p = from(&clerk::sweep(session.store(), MONDAY), "dedupe").expect("still proposes");
+    assert!(
+        !p.commands.iter().any(|c| matches!(
+            c,
+            Command::AddCell { cell, .. } if cell.property == props::PRIVATE
+        )),
+        "the merge copied a private cell"
+    );
+    cleanup(&path);
+}
+
+#[test]
+fn a_declined_dedupe_is_not_re_asked() {
+    let (mut session, path) = boxed("dedupe_decl");
+    typed(&mut session, "note", "Twice", vec![]);
+    typed(&mut session, "note", "Twice", vec![]);
+    let p = from(&clerk::sweep(session.store(), MONDAY), "dedupe").unwrap();
+    session.propose(p.clone()).unwrap();
+    session.reject(0).unwrap();
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "dedupe").is_none());
+    cleanup(&path);
+}
+
 // ---- P16a: the priority-word proposer ----
 
 #[test]

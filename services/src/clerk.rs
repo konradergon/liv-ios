@@ -8,9 +8,11 @@
 //!
 //! The language model of milestone 8 is a brain swap behind this socket.
 
+use std::collections::BTreeMap;
+
 use lotus_core::{
     props, Author, Block, Cell, Command, DateTime, Entity, Id, Proposal, RichText, Span, Store,
-    Value,
+    Value, NONE,
 };
 
 use crate::content::{find_option, find_type};
@@ -102,6 +104,8 @@ pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
         propose_priority(store, &vocabulary, entity, &text, &mut proposals);
         propose_promotion(&vocabulary, entity, &mut proposals);
     }
+    // Whole-store, once per sweep: exact-identity duplicate merges.
+    propose_dedupe(store, &mut proposals);
 
     // AI never touches the owner's value judgments (catalog a13): drop any
     // proposal that would set `tier` or `private`. A hard, tested invariant so
@@ -136,6 +140,13 @@ fn decline_key(proposal: &Proposal) -> Option<(&str, Id, Id)> {
     let Author::Proposer(name) = &proposal.author else {
         return None;
     };
+    // A merge (contains a Redirect) keys on (survivor, first loser) — stable even
+    // if the copied cells drift between the decline and the next sweep.
+    if let Some(Command::Redirect { entity, to, .. }) =
+        proposal.commands.iter().find(|c| matches!(c, Command::Redirect { .. }))
+    {
+        return Some((name.as_str(), *to, *entity));
+    }
     match proposal.commands.as_slice() {
         [Command::AddCell { entity, cell }] => Some((name.as_str(), *entity, cell.property)),
         cmds if !cmds.is_empty() && cmds.iter().all(|c| matches!(c, Command::AddCell { .. })) => {
@@ -322,6 +333,99 @@ fn propose_promotion(vocabulary: &Vocabulary, entity: &Entity, proposals: &mut V
         author: Author::Proposer("promotion".into()),
         reason: "starts with a checkbox → make it a task?".into(),
     });
+}
+
+/// Exact-identity duplicate merges (P16). Buckets non-trashed/non-working
+/// entities by an EXACT key — url, else external-id, else (type, casefold name)
+/// — and for each bucket ≥2 emits ONE severable merge into the oldest (survivor).
+/// Never fuzzy ("Anna" ≠ "Annabel" — near-matches are the LLM audit tier); never
+/// copies `tier`/`private`; each entity is in exactly one bucket, so pairs are
+/// vertex-disjoint (a star into the survivor, no chains).
+fn propose_dedupe(store: &Store, proposals: &mut Vec<Proposal>) {
+    let protected: Vec<Id> = [property_id(store, "tier"), Some(props::PRIVATE)]
+        .into_iter()
+        .flatten()
+        .collect();
+    let url_prop = property_id(store, "url");
+
+    let mut ents: Vec<&Entity> = store
+        .entities()
+        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+        .collect();
+    ents.sort_by_key(|e| e.id);
+
+    // BTreeMap for a deterministic bucket order; within a bucket the ids stay in
+    // ascending (push) order, so ids[0] is the oldest survivor.
+    let mut buckets: BTreeMap<String, Vec<Id>> = BTreeMap::new();
+    for e in &ents {
+        if let Some(key) = identity_key(e, url_prop) {
+            buckets.entry(key).or_default().push(e.id);
+        }
+    }
+
+    for ids in buckets.into_values() {
+        if ids.len() < 2 {
+            continue;
+        }
+        let survivor = ids[0];
+        let Some(surv) = store.get(survivor) else {
+            continue;
+        };
+        let mut commands = Vec::new();
+        let mut planned: Vec<Cell> = Vec::new();
+        for &loser_id in &ids[1..] {
+            let Some(loser) = store.get(loser_id) else {
+                continue;
+            };
+            // Copy every loser cell the survivor lacks — except the protected
+            // value-judgments and already-planned duplicates (mirrors Store::merge).
+            for cell in &loser.cells {
+                if protected.contains(&cell.property)
+                    || surv.has(cell.property, &cell.value)
+                    || planned.iter().any(|c| c == cell)
+                {
+                    continue;
+                }
+                planned.push(cell.clone());
+                commands.push(Command::AddCell { entity: survivor, cell: cell.clone() });
+            }
+            commands.push(Command::Trash { entity: loser_id });
+            commands.push(Command::Redirect { entity: loser_id, to: survivor, before: NONE });
+        }
+        let losers = ids.len() - 1;
+        proposals.push(Proposal {
+            commands,
+            label: format!(
+                "merge {losers} duplicate{} into #{survivor}",
+                if losers == 1 { "" } else { "s" }
+            ),
+            author: Author::Proposer("dedupe".into()),
+            reason: format!("exact duplicate → merge into #{survivor}?"),
+        });
+    }
+}
+
+/// An entity's EXACT identity for dedupe, or None (no identity → never merged).
+fn identity_key(entity: &Entity, url_prop: Option<Id>) -> Option<String> {
+    if let Some(url) = url_prop {
+        if let Some(Value::Text(u)) = entity.get(url) {
+            return Some(format!("url\u{1}{}", u.to_lowercase()));
+        }
+    }
+    if let Some(Value::Text(ext)) = entity.get(props::EXTERNAL_ID) {
+        return Some(format!("ext\u{1}{ext}"));
+    }
+    if let Some(Value::Text(name)) = entity.get(props::NAME) {
+        let ty = entity
+            .all(props::TYPE)
+            .find_map(|v| match v {
+                Value::Reference(t) => Some(*t),
+                _ => None,
+            })
+            .unwrap_or(NONE);
+        return Some(format!("name\u{1}{ty}\u{1}{}", name.to_lowercase()));
+    }
+    None
 }
 
 /// True when the content's first paragraph break types it a task.
