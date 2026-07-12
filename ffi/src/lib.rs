@@ -1798,6 +1798,55 @@ pub unsafe extern "C" fn lotus_import_batch_at(
     })
 }
 
+/// Export (P15c): `ids_json` is `[u64,…]` (the shell-resolved matched-minus-
+/// unchecked set), `group_props_json` is `[u64,…]` group-by properties (≤2
+/// used), `dest` a folder OUTSIDE the box. Copy-only, a projection — the log is
+/// untouched (Committed::Read). Returns the count written, -1 on parse/IO error.
+///
+/// # Safety
+/// `path`, `ids_json`, `group_props_json`, `dest` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_export_at(
+    path: *const c_char,
+    ids_json: *const c_char,
+    group_props_json: *const c_char,
+    dest: *const c_char,
+) -> i64 {
+    if ids_json.is_null() || dest.is_null() {
+        return -1;
+    }
+    let (Ok(ids_str), Ok(dest_str)) =
+        (CStr::from_ptr(ids_json).to_str(), CStr::from_ptr(dest).to_str())
+    else {
+        return -1;
+    };
+    let Ok(ids) = serde_json::from_str::<Vec<u64>>(ids_str) else {
+        return -1;
+    };
+    let groups: Vec<u64> = if group_props_json.is_null() {
+        Vec::new()
+    } else {
+        let Ok(g) = CStr::from_ptr(group_props_json).to_str() else {
+            return -1;
+        };
+        match serde_json::from_str(g) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        }
+    };
+
+    with_box(path, -1, move |session| {
+        let plan = lotus_services::export::export_plan(session.store(), &ids, &groups);
+        let out = std::path::Path::new(dest_str);
+        // Read-only: the box is never written, whether the outbound copy
+        // succeeds or fails.
+        match lotus_services::export::export_write(session.store(), &plan, out) {
+            Ok(n) => (n as i64, Committed::Read),
+            Err(_) => (-1, Committed::Read),
+        }
+    })
+}
+
 /// Birth of a workspace: Create + type + name (+ parent, trailing
 /// order), one transaction. parent 0 = top level. Returns the id, 0 on
 /// failure.
@@ -3736,6 +3785,50 @@ mod tests {
             -1
         );
 
+        cleanup(&path);
+    }
+
+    #[test]
+    fn export_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_export.log");
+        // Import two notes, then read their ids from the snapshot.
+        let items = r#"[
+            {"kind":"note","frontmatter":[["title","One"]],"body":"first","source_id":"/1"},
+            {"kind":"note","frontmatter":[["title","Two"]],"body":"second","source_id":"/2"}
+        ]"#;
+        let items_c = CString::new(items).unwrap();
+        let stamps_c = CString::new("[]").unwrap();
+        assert_eq!(
+            unsafe { lotus_import_batch_at(c_path.as_ptr(), items_c.as_ptr(), stamps_c.as_ptr()) },
+            2
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let ids: Vec<u64> = snap["entities"].as_array().unwrap().iter()
+            .filter(|e| e["title"] == "One" || e["title"] == "Two")
+            .map(|e| e["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids.len(), 2);
+
+        let out = std::env::temp_dir().join("lotus_ffi_export_out");
+        let _ = std::fs::remove_dir_all(&out);
+        let ids_c = CString::new(serde_json::to_string(&ids).unwrap()).unwrap();
+        let groups_c = CString::new("[]").unwrap();
+        let dest_c = CString::new(out.to_str().unwrap()).unwrap();
+        let n = unsafe {
+            lotus_export_at(c_path.as_ptr(), ids_c.as_ptr(), groups_c.as_ptr(), dest_c.as_ptr())
+        };
+        assert_eq!(n, 2);
+        assert!(out.join("One.md").exists());
+        assert!(out.join("Two.md").exists());
+
+        // Bad ids json → -1.
+        let bad = CString::new("nope").unwrap();
+        assert_eq!(
+            unsafe { lotus_export_at(c_path.as_ptr(), bad.as_ptr(), groups_c.as_ptr(), dest_c.as_ptr()) },
+            -1
+        );
+
+        let _ = std::fs::remove_dir_all(&out);
         cleanup(&path);
     }
 
