@@ -143,6 +143,11 @@ func anchorChip(for row: EntityRow) -> Anchor? {
             text: Civil.text(due, dateOnly: row.dueDateOnly),
             hue: nil, filter: nil, isDate: true)
     }
+    // A file entity's anchor is its `format` — text + neutral, never the value
+    // rainbow (a format is a fact, not a value; P15/LB7). Chip-click filters.
+    if let cell = row.cells.first(where: { $0.property == "format" && !$0.value.isEmpty }) {
+        return Anchor(text: cell.value, hue: nil, filter: searchQualifier("format", cell.value))
+    }
     return nil
 }
 

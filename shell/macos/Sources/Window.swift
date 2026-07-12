@@ -3627,61 +3627,157 @@ struct LibraryView: View {
     let addFile: () -> Void
     let open: (UInt64) -> Void
 
-    var body: some View {
-        let files = model.rows(model.snap?.everything ?? []).filter {
+    /// The lens over the file pool (bp7 a15, P15d): Table ships; Gallery is a
+    /// deferred candidate — 2-slot-ready in the switcher, disabled until image
+    /// volume justifies the renderer (#35). Folder + Kanban are refused (no
+    /// folders; files carry no status).
+    enum LibraryLens: String, CaseIterable {
+        case table = "Table", gallery = "Gallery"
+        var symbol: String { self == .table ? "list.bullet" : "square.grid.2x2" }
+    }
+    @State private var lens: LibraryLens = .table
+    /// The reconciled "Folder" control (bp7 a23): group the collection by a
+    /// property value, one level. nil = flat.
+    @State private var groupBy: String? = nil
+
+    private var files: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter {
             $0.cells.contains { $0.kind == "file" }
         }
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    LensHeader(
-                        title: "Library",
-                        subtitle: files.count == 1 ? "1 file" : "\(files.count) files")
-                    Spacer()
-                    Button(action: addFile) {
-                        Label("Add file", systemImage: "plus").font(.system(size: 12))
-                    }
-                    .buttonStyle(.borderless)
-                }
-                .padding(.horizontal, 32)
-                .padding(.top, 40)
+    }
 
-                if files.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 34))
-                            .foregroundColor(Theme.foreground.opacity(0.12))
-                        Text("No files yet.")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                        Text("Add a file by reference — lotus links it, never copies it.")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(Theme.mutedFg)
-                        Button("Add file…", action: addFile).padding(.top, 4)
+    var body: some View {
+        let files = self.files
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header(files.count)
+                    if files.isEmpty {
+                        emptyState
+                    } else {
+                        tableLens(files)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 80)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(files) { row in
-                            ObjectRow(
-                                row: row,
-                                selected: selection == row.id,
-                                chipTap: { filter in
-                                    NotificationCenter.default.post(
-                                        name: .lotusSearchFor, object: filter)
-                                },
-                                select: { selection = row.id },
-                                openRow: { open(row.id) })
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 12)
                 }
             }
+            ShortcutBar(pairs: [("⌃1", "table"), ("↵", "open"), ("⌘⇧O", "add file")])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background)
+    }
+
+    private func header(_ count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            LensHeader(title: "Library", subtitle: subtitle(count))
+            Spacer()
+            libraryLensSwitcher
+            groupByMenu
+            Button(action: addFile) {
+                Label("Add file", systemImage: "plus").font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 32)
+        .padding(.top, 40)
+    }
+
+    private func subtitle(_ count: Int) -> String {
+        let base = count == 1 ? "1 file" : "\(count) files"
+        return groupBy.map { "\(base) · by \($0)" } ?? base
+    }
+
+    private var libraryLensSwitcher: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(LibraryLens.allCases.enumerated()), id: \.element) { index, option in
+                Button { if option == .table { lens = option } } label: {
+                    Image(systemName: option.symbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(lens == option ? Theme.accent : .secondary)
+                        .frame(width: 27, height: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(lens == option ? Theme.accentTint : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(option == .gallery)
+                .help(
+                    option == .gallery
+                        ? "Gallery — arrives when image volume justifies it"
+                        : "\(option.rawValue)  ⌃\(index + 1)"
+                )
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+        .fixedSize()
+    }
+
+    private var groupByMenu: some View {
+        Menu {
+            Button("None") { groupBy = nil }
+            Button("Format") { groupBy = "format" }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "square.stack.3d.up").font(.system(size: 11))
+                Text(groupBy.map { "Group: \($0)" } ?? "Group").font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundColor(groupBy == nil ? .secondary : Theme.accent)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func tableLens(_ files: [EntityRow]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let key = groupBy {
+                let groups = Dictionary(grouping: files) { row in
+                    row.cells.first(where: { $0.property == key })?.value ?? "—"
+                }
+                ForEach(groups.keys.sorted(), id: \.self) { value in
+                    SectionLabel(text: "\(value) · \(groups[value]?.count ?? 0)")
+                        .padding(.top, 14)
+                    rows(groups[value] ?? [])
+                }
+            } else {
+                rows(files)
+            }
+        }
+        .padding(.horizontal, 32)
+        .padding(.top, 12)
+    }
+
+    @ViewBuilder
+    private func rows(_ files: [EntityRow]) -> some View {
+        ForEach(files) { row in
+            ObjectRow(
+                row: row,
+                selected: selection == row.id,
+                chipTap: { filter in
+                    NotificationCenter.default.post(name: .lotusSearchFor, object: filter)
+                },
+                select: { selection = row.id },
+                openRow: { open(row.id) })
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "folder")
+                .font(.system(size: 34))
+                .foregroundColor(Theme.foreground.opacity(0.12))
+            Text("No files yet.")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+            Text("Add a file by reference — lotus links it, never copies it.")
+                .font(.system(size: 11.5))
+                .foregroundColor(Theme.mutedFg)
+            Button("Add file…", action: addFile).padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 80)
     }
 }
 
