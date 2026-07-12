@@ -12,6 +12,13 @@ final class ExportComposerModel: ObservableObject {
     @Published var group1: PropertyRow?
     @Published var group2: PropertyRow?
     @Published var dest: URL?
+
+    /// A fresh selection each time it opens (the sheet reuses one @StateObject);
+    /// the destination + grouping persist as harmless convenience preferences.
+    func reset() {
+        filterText = ""
+        excluded = []
+    }
 }
 
 struct ExportComposerView: View {

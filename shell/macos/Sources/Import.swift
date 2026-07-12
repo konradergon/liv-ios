@@ -64,6 +64,14 @@ final class ImportFunnelModel: ObservableObject {
         if selected == nil { selected = staged.first?.id }
     }
 
+    /// A fresh funnel each time it opens — "a tool you run, close it and it's
+    /// gone" (the sheet reuses one @StateObject, so without this a committed
+    /// pool would re-stage and re-import on reopen; scraps have no dedupe).
+    func reset() {
+        candidates = []
+        selected = nil
+    }
+
     func setState(_ id: UUID, _ s: ImportCandidate.State) {
         guard let i = candidates.firstIndex(where: { $0.id == id }) else { return }
         candidates[i].state = s
@@ -133,12 +141,27 @@ enum ImportDrop {
     }
 
     static func fromText(_ text: String) -> [ImportCandidate] {
-        let lines = text.split(whereSeparator: \.isNewline).map(String.init)
-        let urls = lines.filter { $0.contains("://") }
-        if !urls.isEmpty { return urls.map { link($0) } }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        return [ImportCandidate(kind: .scrap, title: String(trimmed.prefix(60)), detail: "pasted text", source: trimmed)]
+        // Per line: a line that IS a bare URL becomes a link; every other line
+        // is prose, collected into ONE scrap — so mixed paste never silently
+        // drops the words around a link.
+        var out: [ImportCandidate] = []
+        var prose: [String] = []
+        for line in text.split(whereSeparator: \.isNewline).map(String.init) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty { continue }
+            if (t.hasPrefix("http://") || t.hasPrefix("https://")) && !t.contains(" ") {
+                out.append(link(t))
+            } else {
+                prose.append(t)
+            }
+        }
+        if !prose.isEmpty {
+            let joined = prose.joined(separator: "\n")
+            out.append(
+                ImportCandidate(
+                    kind: .scrap, title: String(joined.prefix(60)), detail: "pasted text", source: joined))
+        }
+        return out
     }
 
     private static func link(_ url: String) -> ImportCandidate {

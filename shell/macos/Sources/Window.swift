@@ -988,9 +988,11 @@ struct WindowChrome: View {
                     dismiss: { exportOpen = false })
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenImport)) { _ in
+                importFunnel.reset()  // fresh each open — no re-import of committed items
                 importOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
+                exportComposer.reset()
                 exportOpen = true
             }
             .onAppear {
@@ -3734,7 +3736,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            ShortcutBar(pairs: [("⌃1", "table"), ("↵", "open"), ("⌘⇧O", "add file")])
+            ShortcutBar(pairs: [("⌃1", "table"), ("↵", "open"), ("⌘⇧I", "import")])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background)
