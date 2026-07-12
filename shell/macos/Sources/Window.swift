@@ -615,7 +615,7 @@ final class BoxModel: ObservableObject {
     /// Export a resolved id set to a folder (P15f) — copy-only, the log
     /// untouched. Returns the count written (-1 on error).
     func exportBatch(
-        ids: [UInt64], groupProps: [String], dest: String,
+        ids: [UInt64], groupProps: [UInt64], dest: String,
         done: @escaping (Int) -> Void = { _ in }
     ) {
         let idsJSON = (try? String(data: JSONEncoder().encode(ids), encoding: .utf8)) ?? "[]"
@@ -947,6 +947,9 @@ struct WindowChrome: View {
     /// The Import funnel (P15e) — a transient sheet, its pool pure shell scratch.
     @State private var importOpen = false
     @StateObject private var importFunnel = ImportFunnelModel()
+    /// The Export composer (P15f) — a transient sheet; copy-only, a projection.
+    @State private var exportOpen = false
+    @StateObject private var exportComposer = ExportComposerModel()
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -979,8 +982,16 @@ struct WindowChrome: View {
                     dismiss: { importOpen = false },
                     onImported: { navigate(to: .inbox) })
             }
+            .sheet(isPresented: $exportOpen) {
+                ExportComposerView(
+                    model: model, composer: exportComposer,
+                    dismiss: { exportOpen = false })
+            }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenImport)) { _ in
                 importOpen = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
+                exportOpen = true
             }
             .onAppear {
                 model.refresh()
@@ -1749,6 +1760,13 @@ struct WindowChrome: View {
                 category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "i")
             ) {
                 NotificationCenter.default.post(name: .lotusOpenImport, object: nil)
+            })
+        registry.register(
+            CommandDef(
+                id: "export:open", label: "Export…", scope: .global,
+                category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "e")
+            ) {
+                NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
             })
         registry.register(
             CommandDef(
@@ -3735,6 +3753,13 @@ struct LibraryView: View {
             }
             .buttonStyle(.borderless)
             .help("Import…  ⌘⇧I")
+            Button {
+                NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+            } label: {
+                Image(systemName: "square.and.arrow.up").font(.system(size: 12.5))
+            }
+            .buttonStyle(.borderless)
+            .help("Export…  ⌘⇧E")
             Button(action: addFile) {
                 Label("Add file", systemImage: "plus").font(.system(size: 12))
             }
