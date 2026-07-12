@@ -170,12 +170,75 @@ struct ProposalRow {
     fingerprint: u64,
     reason: String,
     author: String,
+    /// The structured writes this proposal would make — the honest source for
+    /// the shell's +/- diff card (P16), one entry per command. Never a
+    /// string-parse of `reason`.
+    commands: Vec<ProposalCommand>,
+}
+
+/// One command of a proposal, rendered for the diff card.
+#[derive(Serialize)]
+struct ProposalCommand {
+    /// "add" | "trash" | "redirect" | "create" | "remove" | "restore".
+    kind: String,
+    property: Option<String>,
+    /// The proposed value in display form (the `+` side; the `-` is the row's
+    /// current value, derived shell-side).
+    value: Option<String>,
+    value_kind: Option<String>,
+    /// The id a select/reference value points at (for chip rendering).
+    ref_target: Option<Id>,
 }
 
 /// FNV-1a over the serialized commands — deterministic across processes,
 /// because the sweep is deterministic.
 fn fingerprint(proposal: &lotus_core::Proposal) -> u64 {
     lotus_services::content::fnv(&serde_json::to_vec(&proposal.commands).unwrap_or_default())
+}
+
+/// A proposal's commands rendered for the diff card (P16).
+fn proposal_commands(store: &Store, proposal: &lotus_core::Proposal) -> Vec<ProposalCommand> {
+    use lotus_core::Command;
+    proposal
+        .commands
+        .iter()
+        .map(|command| match command {
+            Command::AddCell { cell, .. } => ProposalCommand {
+                kind: "add".into(),
+                property: Some(reference_name(store, cell.property)),
+                value: Some(lotus_views::display(store, &cell.value)),
+                value_kind: property_kind(store, cell.property),
+                ref_target: cell_target(store, &cell.value),
+            },
+            Command::RemoveCell { cell, .. } => ProposalCommand {
+                kind: "remove".into(),
+                property: Some(reference_name(store, cell.property)),
+                value: Some(lotus_views::display(store, &cell.value)),
+                value_kind: property_kind(store, cell.property),
+                ref_target: cell_target(store, &cell.value),
+            },
+            Command::Redirect { to, .. } => ProposalCommand {
+                kind: "redirect".into(),
+                property: None,
+                value: None,
+                value_kind: None,
+                ref_target: Some(*to),
+            },
+            Command::Trash { .. } => command_kind("trash"),
+            Command::Create { .. } => command_kind("create"),
+            Command::Restore { .. } => command_kind("restore"),
+        })
+        .collect()
+}
+
+fn command_kind(kind: &str) -> ProposalCommand {
+    ProposalCommand {
+        kind: kind.into(),
+        property: None,
+        value: None,
+        value_kind: None,
+        ref_target: None,
+    }
 }
 
 #[derive(Serialize)]
@@ -757,6 +820,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                     Author::User => "user".into(),
                     Author::System => "system".into(),
                 },
+                commands: proposal_commands(store, p),
             })
         })
         .collect();
@@ -1059,6 +1123,49 @@ pub unsafe extern "C" fn lotus_reject_at(
     fingerprint: u64,
 ) -> i32 {
     triage(path, entity, ordinal, fingerprint, false)
+}
+
+/// Accept a GROUP of pending proposals as ONE transaction, one undo (P16b,
+/// constitution 1.3). `fingerprints_json` is `[u64,…]` — the group's members by
+/// their displayed fingerprints (the true identity; unique in the queue).
+/// All-or-nothing: if ANY fingerprint no longer matches a pending proposal, the
+/// whole group is refused untouched (the shell refreshes and re-reads). Returns
+/// 1 on success, 0 on busy / a stale group / a bad payload.
+///
+/// # Safety
+/// `path` and `fingerprints_json` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_accept_group_at(
+    path: *const c_char,
+    fingerprints_json: *const c_char,
+) -> i32 {
+    if fingerprints_json.is_null() {
+        return 0;
+    }
+    let Ok(json) = CStr::from_ptr(fingerprints_json).to_str() else {
+        return 0;
+    };
+    let Ok(wanted) = serde_json::from_str::<Vec<u64>>(json) else {
+        return 0;
+    };
+    if wanted.is_empty() {
+        return 0;
+    }
+    with_box(path, 0, move |session| {
+        // Resolve every member to its pending index by fingerprint; a single
+        // miss refuses the whole group without touching the store.
+        let indices: Option<Vec<usize>> = wanted
+            .iter()
+            .map(|&fp| session.store().pending().iter().position(|p| fingerprint(p) == fp))
+            .collect();
+        let Some(indices) = indices else {
+            return (0, Committed::Read);
+        };
+        match lotus_services::clerk::accept_group(session, &indices) {
+            Ok(_) => (1, Committed::Wrote),
+            Err(_) => (0, Committed::Failed),
+        }
+    })
 }
 
 /// Undo the last committed transaction — capture, accept, set, anything
@@ -3352,6 +3459,60 @@ mod tests {
         // sidecar, so the clerk was free to re-derive.
         let session = Session::open(&path).unwrap();
         assert!(session.store().declined().is_empty());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn accept_group_commits_a_group_as_one_transaction() {
+        let (path, c_path) = fresh_box("lotus_ffi_group.log");
+        let a = CString::new("kickoff friday").unwrap();
+        let b = CString::new("review monday").unwrap();
+        let ida = unsafe { lotus_capture_at(c_path.as_ptr(), a.as_ptr()) };
+        let idb = unsafe { lotus_capture_at(c_path.as_ptr(), b.as_ptr()) };
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let inbox = snap["inbox"].as_array().unwrap();
+        assert_eq!(inbox.len(), 2);
+        // P16c: each proposal carries structured commands for the diff card.
+        assert_eq!(inbox[0]["commands"][0]["kind"], "add");
+        assert_eq!(inbox[0]["commands"][0]["property"], "due");
+
+        let fps: Vec<u64> = inbox.iter().map(|p| p["fingerprint"].as_u64().unwrap()).collect();
+        let fps_json = CString::new(serde_json::to_string(&fps).unwrap()).unwrap();
+        assert_eq!(
+            unsafe { lotus_accept_group_at(c_path.as_ptr(), fps_json.as_ptr()) },
+            1
+        );
+
+        // Both scraps got a due; the queue drained.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["inbox"].as_array().unwrap().is_empty());
+        let has_due = |snap: &serde_json::Value, id: u64| {
+            snap["entities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["id"] == id)
+                .unwrap()["cells"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["property"] == "due")
+        };
+        assert!(has_due(&snap, ida) && has_due(&snap, idb));
+
+        // ONE undo reverts BOTH — the group committed as one transaction.
+        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(!has_due(&snap, ida) && !has_due(&snap, idb), "one undo reverted the whole group");
+
+        // A stale fingerprint refuses the whole group, untouched.
+        let stale = CString::new("[123456789]").unwrap();
+        assert_eq!(
+            unsafe { lotus_accept_group_at(c_path.as_ptr(), stale.as_ptr()) },
+            0
+        );
 
         cleanup(&path);
     }

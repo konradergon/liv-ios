@@ -32,6 +32,12 @@ int lotus_accept_at(const char *path, uint64_t entity, uint32_t ordinal,
 int lotus_reject_at(const char *path, uint64_t entity, uint32_t ordinal,
                     uint64_t fingerprint);
 
+/* Accept a GROUP of pending proposals as ONE transaction, one undo (P16).
+   fingerprints_json is [u64,...] — the group's members by their displayed
+   fingerprints. All-or-nothing: any stale member refuses the whole group
+   untouched. 1 on success, 0 on busy / a stale group / a bad payload. */
+int lotus_accept_group_at(const char *path, const char *fingerprints_json);
+
 /* Undo the last committed transaction. 1 on success. */
 int lotus_undo_at(const char *path);
 
