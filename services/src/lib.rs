@@ -10,6 +10,7 @@ pub mod clerk;
 pub mod content;
 mod dates;
 pub mod files;
+pub mod markdown;
 pub mod recurrence;
 pub mod search;
 
