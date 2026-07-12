@@ -477,3 +477,31 @@ surfaces (LB6).
 **Still my call (implementation, not owner-blocking):** the shell-scratch buffer
 model (D1) — confirm at the P15e funnel mockup if you want to weigh in; P15a–c
 proceed on the recommendations.
+
+## 8 · P15d–f build-note (surfaces, as shipped)
+
+The three surfaces landed over the shipped services, shell-only, and were
+adversarially reviewed (4 findings fixed). Recorded deltas:
+
+- **P15d Library** (`LibraryView`): a lens switcher (Table ships; Gallery is
+  2-slot-ready but disabled), a group-by control (by any property, the
+  reconciled "Folder"), and file rows carry `format` as a neutral anchor chip
+  (LB7, gated to file entities). Import/Export header icons + a ShortcutBar.
+- **P15e Import funnel** (`Import.swift`): **DELTA — a transient SHEET, not a
+  Notes tab** (LB6 wanted a tab, but lotus's tab system is Notes-scoped; the
+  "run-a-tool, close-and-gone" contract is preserved). ⌘⇧I (repurposed from
+  Add-file, which keeps the Library button + palette) / the Library icon / the
+  palette open it. Drop → shell-scratch pool → "Import N →" = one `commit_batch`
+  transaction → route to the Inbox. `ImportDrop` parses files / web URLs /
+  bookmarks.html / mixed text. **Deferred within P15e:** inherited project/area
+  STAMPING (needs the workspace picker + a project property — imports unstamped
+  for now); the deferred-shelf *persistence* (in-session only). Reset-on-open
+  guarantees no re-import of committed items.
+- **P15f Export composer** (`Export.swift`): a sheet (⌘⇧E). Filter →
+  uncheck-to-exclude → group by ≤2 catalog properties → live client-side tree
+  preview → Browse a dest → "Export N → Copy" = `export_write`, copy-only (LB5;
+  move-out refused).
+
+**FFI:** `lotus_import_batch_at` + `lotus_export_at` declared in `lotus.h`;
+`BoxModel.importBatch`/`exportBatch` added (export passes group PROPERTY IDS).
+Zero core change across all of P15.
