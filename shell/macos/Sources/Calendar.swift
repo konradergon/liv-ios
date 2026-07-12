@@ -95,6 +95,10 @@ struct CalendarView: View {
     /// Open (or create) a day's daily note (P14h) — wired to the P12 seam by
     /// the window, which owns the active-workspace resolution + tab open.
     var openDaily: (Int64) -> Void = { _ in }
+    /// Leading inset for the top bar so its title clears the floating collapse
+    /// controls (+ traffic lights) when the sidebar is collapsed/focused — the
+    /// window passes it; 0 when the sidebar is open and owns that space.
+    var leadingInset: CGFloat = 0
 
     // Transient view state, never a cell (interface.md 0.5). selectedDay is
     // always a real day (today at first), as in Liv — the day panel always
@@ -107,14 +111,6 @@ struct CalendarView: View {
     // every single tap by the double-click interval — the tab-strip lesson).
     @State private var lastItemTap: (id: UInt64, at: Date)?
 
-    // Which kinds land on the grid — the default calendar filter (bp9 has
-    // no "My calendars" rail; these persist the sensible defaults below).
-    @AppStorage("app.calendar.show.event") private var showEvents = true
-    @AppStorage("app.calendar.show.task") private var showTasks = true
-    @AppStorage("app.calendar.show.note") private var showNotes = true
-    @AppStorage("app.calendar.show.file") private var showFiles = false
-    @AppStorage("app.calendar.show.contact") private var showContacts = false
-    @AppStorage("app.calendar.show.list") private var showLists = false
     // The right column is collapsible (the panel toggle in the top bar).
     @AppStorage("app.calendar.panel.open") private var panelOpen = true
 
@@ -213,19 +209,24 @@ struct CalendarView: View {
 
     // MARK: data
 
-    // Liv's calendar-source filter, by kind; anything untyped-but-dated
-    // counts as a note (Liv's default bucket).
+    // Which dated entities land on the grid, by kind. Fixed defaults — bp9
+    // removed the "My calendars" rail, so there is no UI to toggle these; the
+    // old per-kind @AppStorage flags were dead gating that, once a stale `false`
+    // was persisted, silently hid EVERY event/note with no way to re-enable it.
     private func kindShown(_ row: EntityRow) -> Bool {
-        if row.kinds.contains("event") { return showEvents }
+        // A daily note is represented by the day's dot (bp9), not a redundant
+        // pill labelled with its own date.
+        if row.kinds.contains("daily-note") { return false }
+        if row.kinds.contains("event") { return true }
         // A task is task-typed OR merely status-bearing — the same test
         // EntityLine's checkbox and taskStatusToggle apply.
-        if row.kinds.contains("task") || row.status != nil { return showTasks }
-        // A file is an entity CARRYING a file cell — files have no type (P7),
-        // so a kinds check would never match one.
-        if row.cells.contains(where: { $0.kind == "file" }) { return showFiles }
-        if row.kinds.contains("person") || row.kinds.contains("contact") { return showContacts }
-        if row.kinds.contains("list") { return showLists }
-        return showNotes
+        if row.kinds.contains("task") || row.status != nil { return true }
+        // Files, contacts, and lists stay off the grid by default (they rarely
+        // carry a calendar date); events, tasks, and dated notes are the set.
+        if row.cells.contains(where: { $0.kind == "file" }) { return false }
+        if row.kinds.contains("person") || row.kinds.contains("contact") { return false }
+        if row.kinds.contains("list") { return false }
+        return true
     }
 
     // A day's contents: the dated one-offs unioned with the recurrence
@@ -280,23 +281,23 @@ struct CalendarView: View {
     // MARK: the top bar — title · mode switcher · ‹ Today › · + Event (Liv's)
 
     private var topBar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 9) {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "calendar")
-                    .font(.system(size: 15))
+                    .font(.system(size: 13.5))
                     .foregroundColor(Theme.accent)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text("Calendar")
-                        .font(.system(size: 14.5, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .fixedSize()
                     Text(subtitleText())
-                        .font(.system(size: 11))
+                        .font(.system(size: 10.5))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 4)
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 ForEach(CalendarMode.allCases, id: \.self) { mode in
                     Button {
                         guard viewMode != mode else { return }
@@ -304,13 +305,13 @@ struct CalendarView: View {
                         loadWindow()
                     } label: {
                         Text(mode.rawValue)
-                            .font(.system(size: 12, weight: viewMode == mode ? .medium : .regular))
+                            .font(.system(size: 11.5, weight: viewMode == mode ? .semibold : .regular))
                             .foregroundColor(viewMode == mode ? .white : Theme.mutedFg)
                             .fixedSize()
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
                             .background(
-                                RoundedRectangle(cornerRadius: 6)
+                                RoundedRectangle(cornerRadius: 5)
                                     .fill(viewMode == mode ? Theme.accent : Color.clear))
                             .contentShape(Rectangle())
                     }
@@ -321,40 +322,42 @@ struct CalendarView: View {
                 navChevron("chevron.left") { step(-1) }
                 Button(action: goToday) {
                     Text("Today")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11.5))
                         .foregroundColor(.primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 navChevron("chevron.right") { step(1) }
             }
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border, lineWidth: 0.5))
             Button { quickCreate(dayKey: selectedDay) } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus").font(.system(size: 10.5, weight: .semibold))
-                    Text("Event").font(.system(size: 12, weight: .medium)).fixedSize()
+                HStack(spacing: 3) {
+                    Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
+                    Text("Event").font(.system(size: 11.5, weight: .medium)).fixedSize()
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.accent))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.accent))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("New event on the selected day")
             Button { panelOpen.toggle() } label: {
                 Image(systemName: "sidebar.right")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundColor(panelOpen ? Theme.accent : Theme.mutedFg)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(panelOpen ? "Hide the day panel" : "Show the day panel")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.leading, 14 + leadingInset)
+        .padding(.trailing, 14)
+        .padding(.vertical, 7)
     }
 
     private func navChevron(_ symbol: String, _ action: @escaping () -> Void) -> some View {

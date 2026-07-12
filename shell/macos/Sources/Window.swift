@@ -1278,7 +1278,11 @@ struct WindowChrome: View {
                 CalendarView(
                     model: model, selection: $selection,
                     open: { id in openEntityTab(id) },
-                    openDaily: { day in openDailyNote(forDay: day) })
+                    openDaily: { day in openDailyNote(forDay: day) },
+                    // Clear the floating collapse controls + traffic lights when
+                    // the sidebar isn't there to own that top-left space.
+                    leadingInset: (!chrome.leftOpen || chrome.focusMode)
+                        ? Theme.trafficLightSpacer + 60 : 0)
             case .library:
                 LibraryView(
                     model: model, selection: $selection,

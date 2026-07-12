@@ -29,8 +29,8 @@ extension Theme {
     static let secondary = dyn("#e6e8ea", "#42474c")
     // A touch more contrast, both modes: secondary text darker (light) / lighter
     // (dark), hairlines more defined — the grid + dividers read faint otherwise.
-    static let mutedFg = dyn("#53575b", "#adb3b9")
-    static let border = dyn("#cbcfd4", "#4a4f55")
+    static let mutedFg = dyn("#4d5155", "#b1b7bd")
+    static let border = dyn("#c2c6cc", "#51565c")
     static let destructive = dyn("#d93025", "#f28b82")
     /// Amber: reserved app-wide for AI presence (badges, rings, cards).
     static let warning = dyn("#e37400", "#fdd663")
