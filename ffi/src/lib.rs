@@ -1746,6 +1746,53 @@ pub unsafe extern "C" fn lotus_add_file_at(
     })
 }
 
+/// Import a batch (P15a): `items_json` is a JSON array of tagged import items
+/// (`{"kind":"link","url":…}` / `"file"` / `"note"` / `"scrap"`); `stamps_json`
+/// is `[[property,target],…]` reference cells stamped on every committed entity
+/// (the funnel's inherited project/area). One transaction, one undo. Returns the
+/// count committed (deduped items are skipped), -1 on a parse/box error.
+///
+/// # Safety
+/// `path`, `items_json`, `stamps_json` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_import_batch_at(
+    path: *const c_char,
+    items_json: *const c_char,
+    stamps_json: *const c_char,
+) -> i64 {
+    if items_json.is_null() {
+        return -1;
+    }
+    let Ok(items_str) = CStr::from_ptr(items_json).to_str() else {
+        return -1;
+    };
+    let Ok(items) = serde_json::from_str::<Vec<lotus_services::import::ImportItem>>(items_str) else {
+        return -1;
+    };
+    let stamps: Vec<(u64, u64)> = if stamps_json.is_null() {
+        Vec::new()
+    } else {
+        CStr::from_ptr(stamps_json)
+            .to_str()
+            .ok()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default()
+    };
+    let defaults = lotus_services::import::ImportDefaults { stamps };
+
+    with_box(path, -1, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        match lotus_services::import::commit_batch(session, &items, created, &defaults) {
+            Ok(ids) => {
+                let n = ids.len() as i64;
+                (n, if ids.is_empty() { Committed::Read } else { Committed::Wrote })
+            }
+            Err(_) => (-1, Committed::Failed),
+        }
+    })
+}
+
 /// Birth of a workspace: Create + type + name (+ parent, trailing
 /// order), one transaction. parent 0 = top level. Returns the id, 0 on
 /// failure.
@@ -3643,6 +3690,47 @@ mod tests {
         assert_eq!(unsafe { lotus_add_file_at(c_path.as_ptr(), bad.as_ptr()) }, 0);
 
         let _ = std::fs::remove_file(&doc);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn import_batch_through_the_seam() {
+        let (path, c_path) = fresh_box("lotus_ffi_import.log");
+        let items = r#"[
+            {"kind":"link","url":"https://a.example","title":"Alpha"},
+            {"kind":"link","url":"https://b.example","title":null},
+            {"kind":"scrap","text":"a loose thought"}
+        ]"#;
+        let items_c = CString::new(items).unwrap();
+        let stamps_c = CString::new("[]").unwrap();
+        let n = unsafe {
+            lotus_import_batch_at(c_path.as_ptr(), items_c.as_ptr(), stamps_c.as_ptr())
+        };
+        assert_eq!(n, 3);
+
+        // The titled link shows its title; the batch really landed.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let entities = snap["entities"].as_array().unwrap();
+        assert!(entities.iter().any(|e| e["title"] == "Alpha"), "titled link not found");
+
+        // Re-import the same urls → 0 new (external-id dedupe).
+        let items2 = r#"[
+            {"kind":"link","url":"https://a.example","title":"Alpha"},
+            {"kind":"link","url":"https://b.example","title":null}
+        ]"#;
+        let items2_c = CString::new(items2).unwrap();
+        let n2 = unsafe {
+            lotus_import_batch_at(c_path.as_ptr(), items2_c.as_ptr(), stamps_c.as_ptr())
+        };
+        assert_eq!(n2, 0, "re-import should be a no-op");
+
+        // A malformed items json returns -1, writes nothing.
+        let bad = CString::new("not json").unwrap();
+        assert_eq!(
+            unsafe { lotus_import_batch_at(c_path.as_ptr(), bad.as_ptr(), stamps_c.as_ptr()) },
+            -1
+        );
+
         cleanup(&path);
     }
 

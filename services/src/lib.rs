@@ -10,6 +10,7 @@ pub mod clerk;
 pub mod content;
 mod dates;
 pub mod files;
+pub mod import;
 pub mod markdown;
 pub mod recurrence;
 pub mod search;
@@ -66,6 +67,7 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_starter_library(session)?;
     seed_recurrence(session)?;
     seed_files(session)?;
+    seed_links(session)?;
     seed_priority(session)?;
     seed_lists(session)?;
     seed_event_fields(session)?;
@@ -549,6 +551,40 @@ fn seed_files(session: &mut Session) -> Result<(), PersistError> {
     Ok(())
 }
 
+/// The link substrate (P15/D6): a `url` text property + a `link` type, so a
+/// dropped browser tab becomes a first-class link entity (type=link + url +
+/// name) that Library facets and kind filters key on. Additive + idempotent
+/// (guarded on `url`), like `seed_files` — a pre-existing box gains it on open.
+fn seed_links(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "url").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    // The url property.
+    let url = session.allocate_id();
+    commands.push(Command::Create { entity: url });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("url") },
+        Cell { property: props::VALUE_KIND, value: Value::text("text") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: url, cell });
+    }
+    // The link type — NAME + WORKING + EXPECTED→url, so `find_type("link")`
+    // (which requires an EXPECTED cell) resolves it.
+    let link = session.allocate_id();
+    commands.push(Command::Create { entity: link });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("link") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: props::EXPECTED, value: Value::Reference(url) },
+    ] {
+        commands.push(Command::AddCell { entity: link, cell });
+    }
+    session.commit(commands, "link substrate", Author::System)?;
+    Ok(())
+}
+
 /// Milestone 6's vocabulary, additive like the starter library: the
 /// recurrence rule (a text cell on the series) and exception-of (the
 /// reference an exception entity carries). Old boxes gain both on open.
@@ -1001,6 +1037,32 @@ fn kind_rank(v: &Value) -> u8 {
 #[cfg(test)]
 mod seed_tests {
     use super::*;
+
+    /// The link substrate (P15/D6) is additive + idempotent: a fresh box gains
+    /// a `url` property and a `link` type; a second pass mints nothing (the
+    /// contact-fields guard pattern), and `find_type("link")` resolves.
+    #[test]
+    fn seed_links_is_additive_and_idempotent() {
+        let dir = std::env::temp_dir().join("lotus_seed_links");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut session = Session::open(dir.join("box.log")).unwrap();
+
+        seed_bootstrap(&mut session).unwrap();
+        seed_starter_library(&mut session).unwrap();
+        assert!(property_id(session.store(), "url").is_none());
+
+        seed_links(&mut session).unwrap();
+        let url = property_id(session.store(), "url").expect("url property born");
+        let link = crate::content::find_type(session.store(), "link").expect("link type born");
+        let count = session.store().entities().count();
+
+        // A second pass is a no-op — no duplicate url property or link type.
+        seed_links(&mut session).unwrap();
+        assert_eq!(property_id(session.store(), "url"), Some(url));
+        assert_eq!(crate::content::find_type(session.store(), "link"), Some(link));
+        assert_eq!(session.store().entities().count(), count, "re-seed created entities");
+    }
 
     /// The scoping seed's type finder must never stamp user content (the
     /// review's live-reproduced high): a decoy entity named "project" that
