@@ -1769,14 +1769,19 @@ pub unsafe extern "C" fn lotus_import_batch_at(
     let Ok(items) = serde_json::from_str::<Vec<lotus_services::import::ImportItem>>(items_str) else {
         return -1;
     };
+    // A non-null but malformed stamps_json is an error, not silently empty —
+    // else the funnel's inherited project/area would vanish and the import
+    // would still report success (the P15a review's finding).
     let stamps: Vec<(u64, u64)> = if stamps_json.is_null() {
         Vec::new()
     } else {
-        CStr::from_ptr(stamps_json)
-            .to_str()
-            .ok()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_default()
+        let Ok(s) = CStr::from_ptr(stamps_json).to_str() else {
+            return -1;
+        };
+        match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        }
     };
     let defaults = lotus_services::import::ImportDefaults { stamps };
 

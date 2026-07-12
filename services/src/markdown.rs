@@ -28,6 +28,7 @@ pub fn parse_markdown(raw: &str) -> RichText {
     let mut quote_depth: usize = 0;
     let mut in_code = false;
     let mut code_lang: Option<String> = None;
+    let mut code_buf = String::new(); // buffered until End(CodeBlock), then line-split
     let mut suppress_para = false; // an item's own break already opened its block
     let mut last_item_break: Option<usize> = None;
 
@@ -57,12 +58,26 @@ pub fn parse_markdown(raw: &str) -> RichText {
                     _ => None,
                 };
                 in_code = true;
+                code_buf.clear();
                 spans.push(Span::Break(Block::Code { lang: code_lang.clone() }));
             }
             Event::End(TagEnd::CodeBlock) => {
+                // Emit the buffered code as one Break(Code) per line (the model
+                // forbids a newline inside a Text). Drop pulldown's single
+                // fence-terminating trailing newline so no empty last line.
+                let content = code_buf.strip_suffix('\n').unwrap_or(&code_buf);
+                for (i, line) in content.split('\n').enumerate() {
+                    if i > 0 {
+                        spans.push(Span::Break(Block::Code { lang: code_lang.clone() }));
+                    }
+                    push_text(&mut spans, line, 0);
+                }
                 in_code = false;
                 code_lang = None;
+                code_buf.clear();
             }
+            // A block of raw HTML starts its own paragraph (it is not inline).
+            Event::Start(Tag::HtmlBlock) => spans.push(Span::Break(Block::Body)),
             Event::Start(Tag::List(start)) => list_stack.push(start),
             Event::End(TagEnd::List(_)) => {
                 list_stack.pop();
@@ -93,12 +108,7 @@ pub fn parse_markdown(raw: &str) -> RichText {
             Event::End(TagEnd::Strikethrough) => marks &= !Marks::STRIKE,
             Event::Text(text) => {
                 if in_code {
-                    for (i, line) in text.split('\n').enumerate() {
-                        if i > 0 {
-                            spans.push(Span::Break(Block::Code { lang: code_lang.clone() }));
-                        }
-                        push_text(&mut spans, line, 0);
-                    }
+                    code_buf.push_str(&text);
                 } else {
                     push_text(&mut spans, &text, marks);
                 }
@@ -110,7 +120,11 @@ pub fn parse_markdown(raw: &str) -> RichText {
                 }
             }
             Event::Rule => spans.push(Span::Break(Block::Rule)),
-            Event::Html(text) | Event::InlineHtml(text) => push_text(&mut spans, &text, marks),
+            // Raw HTML has no first-class span home; keep its text, but never
+            // a newline (the model's invariant) — collapse them to spaces.
+            Event::Html(text) | Event::InlineHtml(text) => {
+                push_text(&mut spans, &text.replace('\n', " "), marks)
+            }
             // Links/images: keep the inner text (emitted as Text events); the
             // dest url has no slot in the model (D7). Everything else ignored.
             _ => {}
@@ -299,7 +313,13 @@ pub fn resolve_wikilinks(text: &mut RichText, resolve: &dyn Fn(&str) -> Option<I
     let mut run = String::new();
     let mut run_marks = Marks(0);
     let flush = |out: &mut Vec<Span>, run: &mut String, marks: Marks| {
-        if !run.is_empty() {
+        if run.is_empty() {
+            return;
+        }
+        // Inline code is literal — `[[Foo]]` inside it is text, not a link.
+        if marks.0 & Marks::CODE != 0 {
+            out.push(Span::Text(TextSpan { text: std::mem::take(run), marks }));
+        } else {
             out.extend(split_wikilinks(run, marks, resolve));
             run.clear();
         }
@@ -453,6 +473,40 @@ mod tests {
         let (pairs, body) = split_frontmatter("Just a body\nwith two lines");
         assert!(pairs.is_empty());
         assert_eq!(body, "Just a body\nwith two lines");
+    }
+
+    #[test]
+    fn html_block_never_puts_a_newline_in_a_text_span() {
+        let rt = parse_markdown("para\n\n<div>\nhi\n</div>\n\nmore");
+        for sp in &rt.spans {
+            if let Span::Text(ts) = sp {
+                assert!(!ts.text.contains('\n'), "text span holds a newline: {:?}", ts.text);
+            }
+        }
+    }
+
+    #[test]
+    fn code_block_has_no_trailing_empty_line() {
+        let rt = parse_markdown("```\na\nb\n```");
+        let texts: Vec<&str> = rt.spans.iter().filter_map(|s| match s {
+            Span::Text(ts) => Some(ts.text.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(texts, vec!["a", "b"]);
+        // Exactly one Code break per line — no spurious trailing empty break.
+        let code_breaks = rt.spans.iter().filter(|s| matches!(s, Span::Break(Block::Code { .. }))).count();
+        assert_eq!(code_breaks, 2, "spurious trailing Code break: {:?}", rt.spans);
+        // And it round-trips stably (no growing blank lines).
+        let twice = parse_markdown(&render_markdown(&rt, &no_names));
+        assert_eq!(rt, twice);
+    }
+
+    #[test]
+    fn wikilink_inside_inline_code_stays_code() {
+        let mut rt = parse_markdown("run `[[Foo]]` now");
+        resolve_wikilinks(&mut rt, &|_| Some(7)); // resolver would match anything
+        assert!(!rt.spans.iter().any(|s| matches!(s, Span::Ref(_))), "code wikilink became a ref: {:?}", rt.spans);
+        assert!(rt.spans.iter().any(|s| matches!(s, Span::Text(ts) if ts.text == "[[Foo]]" && ts.marks.0 & Marks::CODE != 0)));
     }
 
     #[test]

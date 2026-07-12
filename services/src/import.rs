@@ -66,14 +66,20 @@ pub fn commit_batch(
     struct Planned<'a> {
         id: Id,
         item: &'a ImportItem,
+        /// A File's hash, computed once in pass 1 and reused in pass 2 (never
+        /// re-read from disk — a source removed between passes must not panic).
+        hash: Option<[u8; 32]>,
     }
     let mut planned: Vec<Planned> = Vec::new();
     let mut name_map: HashMap<String, Id> = HashMap::new();
     let mut seen_ext: HashSet<String> = HashSet::new();
+    let mut seen_hash: HashSet<[u8; 32]> = HashSet::new();
 
     for item in items {
         // Dedupe (LB3): links/notes by external-id, files by their referenced
-        // hash (so a file already in the box however it arrived is skipped).
+        // hash (so a file already in the box however it arrived is skipped) —
+        // BOTH within this batch (the seen sets) and against the store.
+        let mut item_hash = None;
         match item {
             ImportItem::Link { url, .. } => {
                 if seen_ext.contains(url) || external_id_exists(session.store(), url) {
@@ -89,11 +95,16 @@ pub fn commit_batch(
             }
             ImportItem::File { path } => {
                 let Ok(hash) = hash_file(path) else { continue };
+                if seen_hash.contains(&hash) {
+                    continue;
+                }
                 if let Some(fp) = file_prop {
                     if file_hash_exists(session.store(), fp, hash) {
                         continue;
                     }
                 }
+                seen_hash.insert(hash);
+                item_hash = Some(hash);
             }
             ImportItem::Scrap { .. } => {} // scraps never dedupe (no identity)
         }
@@ -102,7 +113,7 @@ pub fn commit_batch(
         if let Some(name) = item_name(item) {
             name_map.entry(name.to_lowercase()).or_insert(id);
         }
-        planned.push(Planned { id, item });
+        planned.push(Planned { id, item, hash: item_hash });
     }
 
     // Pass 2 — build every command, then commit once.
@@ -110,7 +121,7 @@ pub fn commit_batch(
     let mut new_props: HashMap<String, Id> = HashMap::new();
     let mut result: Vec<Id> = Vec::new();
 
-    for Planned { id, item } in &planned {
+    for Planned { id, item, hash } in &planned {
         let id = *id;
         commands.push(Command::Create { entity: id });
 
@@ -127,8 +138,9 @@ pub fn commit_batch(
                 add(&mut commands, id, props::EXTERNAL_ID, Value::text(url.clone()));
             }
             ImportItem::File { path } => {
-                // Unwrap is safe: pass 1 skipped any path that failed to hash.
-                let hash = hash_file(path).expect("pass 1 hashed this path");
+                // The hash was computed in pass 1 (in memory) — never re-read
+                // the source, which may have vanished between the passes.
+                let hash = hash.expect("a File is planned with its hash");
                 let p = std::path::Path::new(path);
                 let filename = p
                     .file_name()
@@ -178,8 +190,11 @@ pub fn commit_batch(
                     if key.eq_ignore_ascii_case("title") {
                         continue;
                     }
-                    let prop = get_or_create_text_prop(session, &mut commands, &mut new_props, key);
-                    add(&mut commands, id, prop, Value::text(value.clone()));
+                    if let Some((prop, cell)) =
+                        frontmatter_cell(session, &mut commands, &mut new_props, key, value)
+                    {
+                        add(&mut commands, id, prop, cell);
+                    }
                 }
             }
             ImportItem::Scrap { text } => {
@@ -237,19 +252,35 @@ fn note_name(item: &ImportItem) -> String {
     String::new()
 }
 
-/// Get an existing text property by name, or plan a new definition in this
-/// batch (created on demand — the frontmatter-keys-become-cells rule).
-fn get_or_create_text_prop(
+/// Resolve a frontmatter `key: value` to the (property, cell) to stamp, or
+/// `None` to skip it. Three cases (the frontmatter-keys-become-cells rule,
+/// hardened after the P15a review):
+///   - an EXISTING user property → the value parsed by its declared kind, so a
+///     `status: doing` becomes a `Select`, not a raw `Text` under a select
+///     property; an unparseable value is skipped rather than stored malformed.
+///   - a RESERVED core property (id < FIRST_USER_ID: name/type/created/…) →
+///     skipped, so frontmatter can never overwrite plumbing with a wrong type.
+///   - a NEW key → a text property minted on demand + a text value.
+fn frontmatter_cell(
     session: &mut Session,
     commands: &mut Vec<Command>,
     new_props: &mut HashMap<String, Id>,
     key: &str,
-) -> Id {
-    if let Some(id) = property_id(session.store(), key) {
-        return id;
+    raw: &str,
+) -> Option<(Id, Value)> {
+    if let Some(prop) = property_id(session.store(), key) {
+        if prop < props::FIRST_USER_ID {
+            return None; // never stamp under core plumbing
+        }
+        let kind = match session.store().get(prop).and_then(|p| p.get(props::VALUE_KIND)) {
+            Some(Value::Text(k)) => k.clone(),
+            _ => return None,
+        };
+        let value = crate::content::parse_value(session.store(), prop, &kind, raw).ok()?;
+        return Some((prop, value));
     }
-    if let Some(id) = new_props.get(key) {
-        return *id;
+    if let Some(&prop) = new_props.get(key) {
+        return Some((prop, Value::text(raw)));
     }
     let id = session.allocate_id();
     commands.push(Command::Create { entity: id });
@@ -257,7 +288,7 @@ fn get_or_create_text_prop(
     add(commands, id, props::VALUE_KIND, Value::text("text"));
     add(commands, id, props::WORKING, Value::Bool(true));
     new_props.insert(key.to_string(), id);
-    id
+    Some((id, Value::text(raw)))
 }
 
 fn external_id_exists(store: &lotus_core::Store, ext: &str) -> bool {
@@ -436,9 +467,12 @@ mod tests {
         let e = s.store().get(ids[0]).unwrap();
         assert_eq!(e.get(props::NAME).cloned(), Some(Value::text("My Note")));
         assert_eq!(e.get(props::EXTERNAL_ID).cloned(), Some(Value::text("/vault/my-note.md")));
-        // The new "status" frontmatter key became a cell (a def was minted).
+        // "status" is a seeded SELECT property — the value is parsed by its
+        // declared kind (resolved to the "doing" option), not stored as raw
+        // Text under a select property (the P15a review's fidelity fix).
         let status_prop = property_id(s.store(), "status").unwrap();
-        assert!(matches!(e.get(status_prop), Some(Value::Text(t)) if t == "doing"));
+        let doing = crate::content::find_option(s.store(), status_prop, "doing").unwrap();
+        assert_eq!(e.get(status_prop).cloned(), Some(Value::Select(doing)));
         // The body parsed to rich spans (a heading break is present).
         match e.get(props::CONTENT) {
             Some(Value::RichText(rt)) => {
@@ -478,6 +512,51 @@ mod tests {
         }
         // The earlier default-less scrap carries no such cell.
         assert!(s.store().get(target).unwrap().all(related).next().is_none());
+    }
+
+    #[test]
+    fn duplicate_files_in_one_batch_import_once() {
+        let mut s = session("filedup");
+        let path = tempfile("dup.txt", b"same bytes both times");
+        let ids = commit_batch(
+            &mut s,
+            &[
+                ImportItem::File { path: path.clone() },
+                ImportItem::File { path: path.clone() },
+            ],
+            now(),
+            &ImportDefaults::default(),
+        )
+        .unwrap();
+        assert_eq!(ids.len(), 1, "identical files in one drop must import once");
+    }
+
+    #[test]
+    fn frontmatter_never_overwrites_core_plumbing() {
+        let mut s = session("fmcore");
+        let ids = commit_batch(
+            &mut s,
+            &[ImportItem::Note {
+                frontmatter: vec![
+                    ("title".into(), "Doc".into()),
+                    ("type".into(), "article".into()),      // collides with props::TYPE
+                    ("created".into(), "not a date".into()), // collides with props::CREATED
+                ],
+                body: "body".into(),
+                source_id: "/v/doc.md".into(),
+            }],
+            now(),
+            &ImportDefaults::default(),
+        )
+        .unwrap();
+        let e = s.store().get(ids[0]).unwrap();
+        // type stayed the note-type reference (a Text "article" was NOT stamped).
+        let note_type = crate::content::find_type(s.store(), "note").unwrap();
+        assert_eq!(e.get(props::TYPE).cloned(), Some(Value::Reference(note_type)));
+        assert!(e.all(props::TYPE).all(|v| matches!(v, Value::Reference(_))), "a text crept under type");
+        // created stayed the real DateTime (a Text "not a date" was NOT stamped).
+        assert!(matches!(e.get(props::CREATED), Some(Value::DateTime(_))));
+        assert!(e.all(props::CREATED).all(|v| matches!(v, Value::DateTime(_))));
     }
 
     #[test]
