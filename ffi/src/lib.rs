@@ -1835,16 +1835,22 @@ pub unsafe extern "C" fn lotus_export_at(
         }
     };
 
-    with_box(path, -1, move |session| {
-        let plan = lotus_services::export::export_plan(session.store(), &ids, &groups);
-        let out = std::path::Path::new(dest_str);
-        // Read-only: the box is never written, whether the outbound copy
-        // succeeds or fails.
-        match lotus_services::export::export_write(session.store(), &plan, out) {
-            Ok(n) => (n as i64, Committed::Read),
-            Err(_) => (-1, Committed::Read),
-        }
-    })
+    // Compute the plan under the box lock (a store read), then RELEASE the lock
+    // before the outbound copy — never hold the single-writer lock across a
+    // multi-GB byte copy (the P15c review's finding).
+    let plan = with_box(path, None, move |session| {
+        (
+            Some(lotus_services::export::export_plan(session.store(), &ids, &groups)),
+            Committed::Read,
+        )
+    });
+    let Some(plan) = plan else {
+        return -1; // box busy
+    };
+    match lotus_services::export::export_write(&plan, std::path::Path::new(dest_str)) {
+        Ok(n) => n as i64,
+        Err(_) => -1,
+    }
 }
 
 /// Birth of a workspace: Create + type + name (+ parent, trailing

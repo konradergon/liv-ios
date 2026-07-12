@@ -291,10 +291,28 @@ pub fn split_frontmatter(raw: &str) -> (Vec<(String, String)>, String) {
 fn unquote(s: &str) -> String {
     let s = s.trim();
     let bytes = s.as_bytes();
-    if s.len() >= 2
-        && ((bytes[0] == b'"' && bytes[s.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[s.len() - 1] == b'\''))
-    {
+    if s.len() >= 2 && bytes[0] == b'"' && bytes[s.len() - 1] == b'"' {
+        // Double quotes: unescape \" and \\ (the export escaping, symmetric).
+        let inner = &s[1..s.len() - 1];
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    } else if s.len() >= 2 && bytes[0] == b'\'' && bytes[s.len() - 1] == b'\'' {
         s[1..s.len() - 1].to_string()
     } else {
         s.to_string()

@@ -37,7 +37,11 @@ pub struct ExportTree {
 /// Pure and read-only.
 pub fn export_plan(store: &Store, ids: &[Id], group_by: &[Id]) -> ExportTree {
     let mut files = Vec::new();
-    let mut used: HashSet<PathBuf> = HashSet::new();
+    // Collision keys are lowercased: the app's default macOS filesystem is
+    // case- (and normalization-) insensitive, so "Report.md" and "report.md"
+    // are the SAME file on disk — dedupe them or the second write clobbers the
+    // first silently (the P15c review's HIGH).
+    let mut used: HashSet<String> = HashSet::new();
 
     for &id in ids {
         let Some(entity) = store.get(id) else { continue };
@@ -80,11 +84,12 @@ pub fn export_plan(store: &Store, ids: &[Id], group_by: &[Id]) -> ExportTree {
     ExportTree { files }
 }
 
-/// Write the plan under `dest`. Copy-only; reads originals, mutates nothing in
-/// the store. Returns the count written. Per-file errors abort with the io error
-/// (never a silent partial success).
-pub fn export_write(store: &Store, plan: &ExportTree, dest: &Path) -> io::Result<u64> {
-    let _ = store; // read-only; the plan already carries rendered content
+/// Write the plan under `dest`. Copy-only; the plan already carries all rendered
+/// content + source paths, so this touches NO store — the caller runs it OUTSIDE
+/// the box lock, never holding the single-writer lock across a multi-GB copy
+/// (the P15c review's finding). Per-file errors abort with the io error (never a
+/// silent partial success).
+pub fn export_write(plan: &ExportTree, dest: &Path) -> io::Result<u64> {
     let mut written = 0u64;
     for file in &plan.files {
         let full = dest.join(&file.rel_path);
@@ -109,12 +114,14 @@ pub fn export_write(store: &Store, plan: &ExportTree, dest: &Path) -> io::Result
 fn render_entity(store: &Store, id: Id) -> String {
     let Some(entity) = store.get(id) else { return String::new() };
 
+    // One (key, value) pair per cell value — a multi-valued property emits a
+    // repeated key line, NOT `[a, b]` (which is ambiguous when a value holds a
+    // comma; repeated lines re-import as the same multi-valued cell). Keys and
+    // values are escaped so no newline/colon/`---` can corrupt the block.
     let mut fm: Vec<(String, String)> = Vec::new();
-    // title first, from NAME.
     if let Some(v) = entity.get(props::NAME) {
         fm.push(("title".to_string(), lotus_views::display(store, v)));
     }
-    // Every other cell except the body + backstage plumbing, grouped by property.
     let mut seen: HashSet<Id> = HashSet::new();
     for cell in &entity.cells {
         let prop = cell.property;
@@ -124,25 +131,17 @@ fn render_entity(store: &Store, id: Id) -> String {
         if !seen.insert(prop) {
             continue; // handled the whole (possibly multi-valued) property already
         }
-        let values: Vec<String> =
-            entity.all(prop).map(|v| lotus_views::display(store, v)).collect();
-        if values.is_empty() {
-            continue;
-        }
         let key = prop_name(store, prop);
-        let value = if values.len() == 1 {
-            values[0].clone()
-        } else {
-            format!("[{}]", values.join(", "))
-        };
-        fm.push((key, value));
+        for v in entity.all(prop) {
+            fm.push((key.clone(), lotus_views::display(store, v)));
+        }
     }
 
     let mut out = String::new();
     if !fm.is_empty() {
         out.push_str("---\n");
         for (k, v) in &fm {
-            out.push_str(&format!("{k}: {v}\n"));
+            out.push_str(&format!("{}: {}\n", fm_key(k), fm_value(v)));
         }
         out.push_str("---\n\n");
     }
@@ -179,6 +178,39 @@ fn prop_name(store: &Store, prop: Id) -> String {
     }
 }
 
+/// A frontmatter key: no colon or newline (either would break `key: value`
+/// parsing or the block); collapse them to a dash.
+fn fm_key(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c == ':' || c == '\n' || c == '\r' { '-' } else { c })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "field".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// A frontmatter value: never a newline (collapsed to a space, so nothing can
+/// inject a `---` terminator or a fake key); quoted when it would otherwise be
+/// mis-parsed (a leading `[`, an inner `: `, a `#`, leading/trailing space, or
+/// an empty value), with `\` and `"` escaped so the import unquoter restores it.
+fn fm_value(raw: &str) -> String {
+    let s = raw.replace(['\n', '\r'], " ");
+    let needs_quote = s.is_empty()
+        || s != s.trim()
+        || s.starts_with(['[', '"', '\'', '#', '-', '&', '*', '!', '|', '>'])
+        || s.contains(": ")
+        || s.contains(" #");
+    if needs_quote {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        s
+    }
+}
+
 /// Filesystem-safe path segment: strip separators and control chars.
 fn sanitize(seg: &str) -> String {
     let cleaned: String = seg
@@ -205,8 +237,9 @@ fn sanitize_stem(stem: &str, id: Id) -> String {
 }
 
 /// A path unique within this export — names are not unique in lotus, so a
-/// collision disambiguates with " (2)", " (3)", … before the extension.
-fn unique(used: &mut HashSet<PathBuf>, dir: &Path, stem: &str, ext: &str) -> PathBuf {
+/// collision disambiguates with " (2)", " (3)", … before the extension. The
+/// used-set is keyed case-insensitively (see `export_plan`).
+fn unique(used: &mut HashSet<String>, dir: &Path, stem: &str, ext: &str) -> PathBuf {
     let build = |stem: &str| -> PathBuf {
         let filename = if ext.is_empty() {
             stem.to_string()
@@ -215,13 +248,14 @@ fn unique(used: &mut HashSet<PathBuf>, dir: &Path, stem: &str, ext: &str) -> Pat
         };
         dir.join(filename)
     };
+    let key = |p: &Path| p.to_string_lossy().to_lowercase();
     let mut candidate = build(stem);
     let mut n = 2;
-    while used.contains(&candidate) {
+    while used.contains(&key(&candidate)) {
         candidate = build(&format!("{stem} ({n})"));
         n += 1;
     }
-    used.insert(candidate.clone());
+    used.insert(key(&candidate));
     candidate
 }
 
@@ -267,7 +301,7 @@ mod tests {
         let before = s.store().entities().count();
         let plan = export_plan(s.store(), &ids, &[]);
         let d = dest("count");
-        let n = export_write(s.store(), &plan, &d).unwrap();
+        let n = export_write(&plan, &d).unwrap();
         assert_eq!(n, 2);
         assert!(d.join("A.md").exists());
         assert!(d.join("B.md").exists());
@@ -314,7 +348,7 @@ mod tests {
         .unwrap();
         let plan = export_plan(s.store(), &ids, &[]);
         let d = dest("filecopy");
-        export_write(s.store(), &plan, &d).unwrap();
+        export_write(&plan, &d).unwrap();
         let out = d.join("report.pdf");
         assert_eq!(std::fs::read(&out).unwrap(), b"the real bytes");
         // Source untouched (copy, not move — LB5).
@@ -360,9 +394,69 @@ mod tests {
         .unwrap();
         let plan = export_plan(s.store(), &ids, &[]);
         let d = dest("collide");
-        let n = export_write(s.store(), &plan, &d).unwrap();
+        let n = export_write(&plan, &d).unwrap();
         assert_eq!(n, 2);
         assert!(d.join("Same.md").exists());
         assert!(d.join("Same (2).md").exists(), "collision not disambiguated");
+    }
+
+    #[test]
+    fn case_only_names_do_not_clobber_on_a_case_insensitive_fs() {
+        let mut s = session("case");
+        let ids = commit_batch(
+            &mut s,
+            &[
+                ImportItem::Note { frontmatter: vec![("title".into(), "Report".into())], body: "a".into(), source_id: "/1".into() },
+                ImportItem::Note { frontmatter: vec![("title".into(), "report".into())], body: "b".into(), source_id: "/2".into() },
+            ],
+            now(),
+            &ImportDefaults::default(),
+        )
+        .unwrap();
+        let plan = export_plan(s.store(), &ids, &[]);
+        // The two paths must differ case-INSENSITIVELY (or macOS maps them to
+        // the same file and the second write clobbers the first).
+        let keys: Vec<String> =
+            plan.files.iter().map(|f| f.rel_path.to_string_lossy().to_lowercase()).collect();
+        assert_ne!(keys[0], keys[1], "case-only paths collide: {keys:?}");
+        let d = dest("case");
+        assert_eq!(export_write(&plan, &d).unwrap(), 2);
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 2, "an export was clobbered");
+    }
+
+    #[test]
+    fn frontmatter_escaping_neutralizes_injection() {
+        // A value carrying a newline + a fake `---` terminator collapses to one
+        // safe line — nothing can inject a terminator or a smuggled key.
+        let v = fm_value("foo\n---\nsmuggled: true");
+        assert!(!v.contains('\n'), "value kept a newline: {v}");
+        let line = format!("{}: {}", fm_key("title"), fm_value("Draft\n---\nx: y"));
+        assert_eq!(line.lines().count(), 1, "emitted frontmatter line is multi-line: {line}");
+        // A colon in a key is de-fanged so `key: value` parsing stays sane.
+        assert!(!fm_key("a: b").contains(':'));
+    }
+
+    #[test]
+    fn multi_valued_property_exports_as_repeated_lines() {
+        let mut s = session("multi");
+        let ids = commit_batch(
+            &mut s,
+            &[ImportItem::Note {
+                frontmatter: vec![
+                    ("title".into(), "N".into()),
+                    ("tags".into(), "a".into()),
+                    ("tags".into(), "b".into()),
+                ],
+                body: "x".into(),
+                source_id: "/m".into(),
+            }],
+            now(),
+            &ImportDefaults::default(),
+        )
+        .unwrap();
+        let md = render_entity(s.store(), ids[0]);
+        let tag_lines = md.lines().filter(|l| l.starts_with("tags:")).count();
+        assert_eq!(tag_lines, 2, "multi-valued should be repeated lines, not a bracket list:\n{md}");
+        assert!(!md.contains("tags: [a, b]"));
     }
 }
