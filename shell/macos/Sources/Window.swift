@@ -4023,28 +4023,31 @@ struct TasksView: View {
         .help("Task agents arrive with the AI pass (P16) — proposals in the one inbox")
     }
 
+    // Icon-only so four lenses fit beside the header controls even with the
+    // inspector open — a labelled switcher overflowed and wrapped its text
+    // vertically. The active lens is named in the ⌃1–4 footbar + each tooltip.
     private var lensSwitcher: some View {
         HStack(spacing: 2) {
             ForEach(Array(TaskLens.allCases.enumerated()), id: \.element) { index, option in
                 Button { lens = option } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: option.symbol).font(.system(size: 11))
-                        Text(option.rawValue).font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(lens == option ? Theme.accent : .secondary)
-                    .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 7)
-                        .fill(lens == option ? Theme.accentTint : Color.clear))
-                    .contentShape(Rectangle())
+                    Image(systemName: option.symbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(lens == option ? Theme.accent : .secondary)
+                        .frame(width: 27, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6)
+                            .fill(lens == option ? Theme.accentTint : Color.clear))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help("\(option.rawValue)  ⌃\(index + 1)")
                 // Ctrl+1..4 switches the lens (bp6 a6, the review's finding).
                 .keyboardShortcut(
                     KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
             }
         }
         .padding(2)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.secondary.opacity(0.08)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+        .fixedSize()
     }
 
     /// A task row in the V2 chip-forward grammar (P11.5c): checkbox (the

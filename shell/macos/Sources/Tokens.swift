@@ -26,9 +26,11 @@ extension Theme {
     static let popover = dyn("#ffffff", "#292a2d")
     /// Sidebar / activity bar / title bar chrome.
     static let panel = dyn("#f1f3f4", "#1b1b1b")
-    static let secondary = dyn("#e8eaed", "#3c4043")
-    static let mutedFg = dyn("#5f6368", "#9aa0a6")
-    static let border = dyn("#dadce0", "#3c4043")
+    static let secondary = dyn("#e6e8ea", "#42474c")
+    // A touch more contrast, both modes: secondary text darker (light) / lighter
+    // (dark), hairlines more defined — the grid + dividers read faint otherwise.
+    static let mutedFg = dyn("#53575b", "#adb3b9")
+    static let border = dyn("#cbcfd4", "#4a4f55")
     static let destructive = dyn("#d93025", "#f28b82")
     /// Amber: reserved app-wide for AI presence (badges, rings, cards).
     static let warning = dyn("#e37400", "#fdd663")
