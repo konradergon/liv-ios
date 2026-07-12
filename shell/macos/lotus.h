@@ -162,6 +162,23 @@ int32_t lotus_remove_cell_at(const char *path, uint64_t id,
    id, 0 on failure (unreadable path, busy box). */
 uint64_t lotus_add_file_at(const char *path, const char *file_path);
 
+/* Import a batch (P15). items_json is a JSON array of tagged items
+   ({"kind":"link","url":...,"title":...} / {"kind":"file","path":...} /
+   {"kind":"note","frontmatter":[[k,v]...],"body":...,"source_id":...} /
+   {"kind":"scrap","text":...}); stamps_json is [[property,target]...] reference
+   cells stamped on every committed entity (the funnel's inherited project/area).
+   ONE transaction, one undo; external-id / file-hash dedupe skips re-imports.
+   Returns the count committed (deduped items skipped), -1 on a parse/box error. */
+int64_t lotus_import_batch_at(const char *path, const char *items_json,
+                              const char *stamps_json);
+
+/* Export (P15). ids_json is [id...] (the shell-resolved matched-minus-unchecked
+   set); group_props_json is [property...] group-by properties (<=2 used); dest a
+   folder OUTSIDE the box. Copy-only, a projection — the log is untouched.
+   Returns the count written, -1 on a parse/IO error. */
+int64_t lotus_export_at(const char *path, const char *ids_json,
+                        const char *group_props_json, const char *dest);
+
 /* Re-hash a file entity's referenced path; if the bytes changed, replace
    the file cell (one transaction — a changed hash is the integration).
    1 changed & rewritten, 0 unchanged, -1 the path no longer resolves

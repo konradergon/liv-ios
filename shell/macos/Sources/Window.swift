@@ -595,6 +595,41 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Import a batch (P15e) — one transaction, one undo. `itemsJSON` is the
+    /// tagged wire array; `stampsJSON` is [[prop,target]...] (empty for now).
+    /// Returns the count committed (-1 on error).
+    func importBatch(
+        _ itemsJSON: String, stamps stampsJSON: String = "[]",
+        done: @escaping (Int) -> Void = { _ in }
+    ) {
+        boxQueue.async {
+            let n = lotus_import_batch_at(self.path, itemsJSON, stampsJSON)
+            DispatchQueue.main.async {
+                if n < 0 { NSSound.beep() }
+                done(Int(n))
+                self.refresh()
+            }
+        }
+    }
+
+    /// Export a resolved id set to a folder (P15f) — copy-only, the log
+    /// untouched. Returns the count written (-1 on error).
+    func exportBatch(
+        ids: [UInt64], groupProps: [String], dest: String,
+        done: @escaping (Int) -> Void = { _ in }
+    ) {
+        let idsJSON = (try? String(data: JSONEncoder().encode(ids), encoding: .utf8)) ?? "[]"
+        let groupsJSON =
+            (try? String(data: JSONEncoder().encode(groupProps), encoding: .utf8)) ?? "[]"
+        boxQueue.async {
+            let n = lotus_export_at(self.path, idsJSON, groupsJSON, dest)
+            DispatchQueue.main.async {
+                if n < 0 { NSSound.beep() }
+                done(Int(n))
+            }
+        }
+    }
+
     /// Re-hash a file's referenced path (on open, never a timer). A changed
     /// hash is rewritten and the snapshot refreshed; `done(true)` on a change.
     func resyncFile(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
@@ -851,6 +886,9 @@ extension Notification.Name {
     static let lotusNewNote = Notification.Name("lotus.newNote")
     static let lotusNewTab = Notification.Name("lotus.newTab")
     static let lotusOpenStaleDraft = Notification.Name("lotus.openStaleDraft")
+    /// Open the Import funnel (P15e) / Export composer (P15f) sheets — ⌘⇧I / ⌘⇧E.
+    static let lotusOpenImport = Notification.Name("lotus.openImport")
+    static let lotusOpenExport = Notification.Name("lotus.openExport")
 }
 
 // MARK: - lenses
@@ -906,6 +944,9 @@ struct WindowChrome: View {
     @State private var dailyNoteDay: Int64 = 0
     /// The working set of the active workspace, as the Notes top bar.
     @StateObject private var tabs = TabsModel()
+    /// The Import funnel (P15e) — a transient sheet, its pool pure shell scratch.
+    @State private var importOpen = false
+    @StateObject private var importFunnel = ImportFunnelModel()
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -932,6 +973,15 @@ struct WindowChrome: View {
             .overlay(faultNotice)
             .overlay(DialogHost())
             .background(eventHandlers)
+            .sheet(isPresented: $importOpen) {
+                ImportFunnelView(
+                    model: model, funnel: importFunnel,
+                    dismiss: { importOpen = false },
+                    onImported: { navigate(to: .inbox) })
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenImport)) { _ in
+                importOpen = true
+            }
             .onAppear {
                 model.refresh()
                 installReturnMonitor()
@@ -1689,9 +1739,16 @@ struct WindowChrome: View {
         registry.register(
             CommandDef(
                 id: "file:add", label: "Add file…", scope: .global,
-                category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "i")
+                category: "File", binding: nil  // ⌘⇧I now opens Import (the umbrella); Add file lives on the Library button + palette
             ) {
                 addFileFlow()
+            })
+        registry.register(
+            CommandDef(
+                id: "import:open", label: "Import…", scope: .global,
+                category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "i")
+            ) {
+                NotificationCenter.default.post(name: .lotusOpenImport, object: nil)
             })
         registry.register(
             CommandDef(
@@ -3671,6 +3728,13 @@ struct LibraryView: View {
             Spacer()
             libraryLensSwitcher
             groupByMenu
+            Button {
+                NotificationCenter.default.post(name: .lotusOpenImport, object: nil)
+            } label: {
+                Image(systemName: "square.and.arrow.down").font(.system(size: 12.5))
+            }
+            .buttonStyle(.borderless)
+            .help("Import…  ⌘⇧I")
             Button(action: addFile) {
                 Label("Add file", systemImage: "plus").font(.system(size: 12))
             }
