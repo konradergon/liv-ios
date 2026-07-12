@@ -9,17 +9,24 @@
 //! The language model of milestone 8 is a brain swap behind this socket.
 
 use lotus_core::{
-    props, Author, Cell, Command, DateTime, Entity, Id, Proposal, RichText, Span, Store, Value,
+    props, Author, Block, Cell, Command, DateTime, Entity, Id, Proposal, RichText, Span, Store,
+    Value,
 };
 
+use crate::content::{find_option, find_type};
 use crate::dates::{add_days, days_in_month, parts, show_date, weekday, WEEKDAYS};
 use crate::{property_id, run, Constraint, Op, Query};
 
 /// The properties the clerk proposes with, looked up by name once per
-/// sweep. None when a box predates the starter library.
+/// sweep. `due`/`related` are required (a box that predates the starter
+/// library gets no proposals); the P16 vocabulary is optional per proposer.
 struct Vocabulary {
     due: Id,
     related: Id,
+    priority: Option<Id>,
+    status: Option<Id>,
+    task_type: Option<Id>,
+    todo: Option<Id>,
 }
 
 impl Vocabulary {
@@ -27,8 +34,25 @@ impl Vocabulary {
         Some(Vocabulary {
             due: property_id(store, "due")?,
             related: property_id(store, "related")?,
+            priority: property_id(store, "priority"),
+            status: property_id(store, "status"),
+            task_type: find_type(store, "task"),
+            todo: todo_option(store),
         })
     }
+}
+
+/// The `todo` status option a promoted task takes — the same resolution
+/// `create_task` uses (the type's `default-status`, else the `todo` option).
+fn todo_option(store: &Store) -> Option<Id> {
+    find_type(store, "task")
+        .and_then(|t| store.get(t))
+        .zip(property_id(store, "default-status"))
+        .and_then(|(t, p)| match t.get(p) {
+            Some(Value::Reference(option)) => Some(*option),
+            _ => None,
+        })
+        .or_else(|| property_id(store, "status").and_then(|s| find_option(store, s, "todo")))
 }
 
 /// Read every candidate entity, propose, and drop duplicates of anything
@@ -75,7 +99,22 @@ pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
         };
         propose_dates(&vocabulary, entity, &text, anchor, &mut proposals);
         propose_mentions(&vocabulary, entity, &text, &gazetteer, &mut proposals);
+        propose_priority(store, &vocabulary, entity, &text, &mut proposals);
+        propose_promotion(&vocabulary, entity, &mut proposals);
     }
+
+    // AI never touches the owner's value judgments (catalog a13): drop any
+    // proposal that would set `tier` or `private`. A hard, tested invariant so
+    // a future proposer can never smuggle one in.
+    let protected: Vec<Id> = [property_id(store, "tier"), Some(props::PRIVATE)]
+        .into_iter()
+        .flatten()
+        .collect();
+    proposals.retain(|p| {
+        !p.commands.iter().any(|c| {
+            matches!(c, Command::AddCell { cell, .. } if protected.contains(&cell.property))
+        })
+    });
 
     // Pending dedups by exact commands. Declined dedups by what the user
     // actually refused — this proposer, this entity, this property — so a
@@ -90,11 +129,23 @@ pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
     proposals
 }
 
-/// The durable meaning of a refusal: (proposer, entity, property).
+/// The durable meaning of a refusal: (proposer, entity, property). A single
+/// AddCell keys on its cell; a multi-cell proposal on ONE entity (promotion)
+/// keys on the first cell's property — so declining it never re-asks.
 fn decline_key(proposal: &Proposal) -> Option<(&str, Id, Id)> {
-    match (&proposal.author, proposal.commands.as_slice()) {
-        (Author::Proposer(name), [Command::AddCell { entity, cell }]) => {
-            Some((name.as_str(), *entity, cell.property))
+    let Author::Proposer(name) = &proposal.author else {
+        return None;
+    };
+    match proposal.commands.as_slice() {
+        [Command::AddCell { entity, cell }] => Some((name.as_str(), *entity, cell.property)),
+        cmds if !cmds.is_empty() && cmds.iter().all(|c| matches!(c, Command::AddCell { .. })) => {
+            let (entity, first_prop) = match &cmds[0] {
+                Command::AddCell { entity, cell } => (*entity, cell.property),
+                _ => return None,
+            };
+            cmds.iter()
+                .all(|c| matches!(c, Command::AddCell { entity: e, .. } if *e == entity))
+                .then_some((name.as_str(), entity, first_prop))
         }
         _ => None,
     }
@@ -202,6 +253,89 @@ fn propose_mentions(
             reason: format!("mentions \"{name}\" → relate?"),
         });
     }
+}
+
+/// A CLOSED priority-word lexicon (P16): the first trigger wins, and only
+/// when it resolves to a real `priority` option (never an invented value).
+/// Proposes only for an entity with no priority yet — suggests, never competes.
+fn propose_priority(
+    store: &Store,
+    vocabulary: &Vocabulary,
+    entity: &Entity,
+    text: &str,
+    proposals: &mut Vec<Proposal>,
+) {
+    let Some(priority) = vocabulary.priority else {
+        return;
+    };
+    if entity.all(priority).next().is_some() {
+        return;
+    }
+    let lower = text.to_lowercase();
+    let name = if lower.contains("urgent") || lower.contains("asap") || text.contains("!!!") {
+        "high"
+    } else if lower.contains("low priority") || lower.contains("whenever") {
+        "low"
+    } else {
+        return;
+    };
+    let Some(option) = find_option(store, priority, name) else {
+        return; // the option doesn't exist — stay quiet, never invent
+    };
+    proposals.push(Proposal {
+        commands: vec![Command::AddCell {
+            entity: entity.id,
+            cell: Cell { property: priority, value: Value::Select(option) },
+        }],
+        label: format!("priority {name}"),
+        author: Author::Proposer("priority".into()),
+        reason: format!("a priority word → priority {name}?"),
+    });
+}
+
+/// An untyped capture whose content's first block is a task checkbox is a task
+/// waiting for its type (P16 promotion). Promotes the scrap IN PLACE (line-item
+/// extraction from inside a note is the Agent's door — it needs a new id).
+fn propose_promotion(vocabulary: &Vocabulary, entity: &Entity, proposals: &mut Vec<Proposal>) {
+    let Some(task_type) = vocabulary.task_type else {
+        return; // no task type in this box — nothing to promote to
+    };
+    if entity.all(props::TYPE).next().is_some() {
+        return; // already typed
+    }
+    if !first_block_is_task(entity) {
+        return;
+    }
+    let mut commands = vec![Command::AddCell {
+        entity: entity.id,
+        cell: Cell { property: props::TYPE, value: Value::Reference(task_type) },
+    }];
+    if let (Some(status), Some(todo)) = (vocabulary.status, vocabulary.todo) {
+        commands.push(Command::AddCell {
+            entity: entity.id,
+            cell: Cell { property: status, value: Value::Select(todo) },
+        });
+    }
+    proposals.push(Proposal {
+        commands,
+        label: "promote to task".into(),
+        author: Author::Proposer("promotion".into()),
+        reason: "starts with a checkbox → make it a task?".into(),
+    });
+}
+
+/// True when the content's first paragraph break types it a task.
+fn first_block_is_task(entity: &Entity) -> bool {
+    let Some(Value::RichText(rich)) = entity.get(props::CONTENT) else {
+        return false;
+    };
+    matches!(
+        rich.spans.iter().find_map(|s| match s {
+            Span::Break(block) => Some(block),
+            _ => None,
+        }),
+        Some(Block::Task { .. })
+    )
 }
 
 /// Scan the words; the first one that names a date wins. Relative words

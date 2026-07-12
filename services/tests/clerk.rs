@@ -18,6 +18,143 @@ fn capture(session: &mut Session, text: &str) -> Id {
     lotus_services::capture(session, text, DateTime::at(2026, 7, 6, 9, 0)).unwrap()
 }
 
+fn cleanup(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+}
+
+/// An UNTYPED entity whose content's first block is a task checkbox (P16
+/// promotion's candidate: the capture literally is a checkbox).
+fn task_note(session: &mut Session, text: &str) -> Id {
+    let id = session.allocate_id();
+    session
+        .commit(
+            vec![
+                Command::Create { entity: id },
+                Command::AddCell {
+                    entity: id,
+                    cell: Cell {
+                        property: props::CONTENT,
+                        value: Value::RichText(RichText {
+                            spans: vec![
+                                Span::Break(Block::Task { depth: 0, done: false }),
+                                Span::text(text),
+                            ],
+                        }),
+                    },
+                },
+                Command::AddCell {
+                    entity: id,
+                    cell: Cell {
+                        property: props::CREATED,
+                        value: Value::DateTime(DateTime::at(2026, 7, 6, 9, 0)),
+                    },
+                },
+            ],
+            "task note",
+            Author::User,
+        )
+        .unwrap();
+    id
+}
+
+fn from(proposals: &[Proposal], proposer: &str) -> Option<Proposal> {
+    proposals.iter().find(|p| p.author == Author::Proposer(proposer.into())).cloned()
+}
+
+// ---- P16a: the priority-word proposer ----
+
+#[test]
+fn priority_word_proposes_the_matching_option() {
+    let (mut session, path) = boxed("prio");
+    let scrap = capture(&mut session, "URGENT: the server is down");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    let p = from(&proposals, "priority").expect("a priority proposal");
+    assert!(p.reason.to_lowercase().contains("high"), "{}", p.reason);
+
+    session.propose(p.clone()).unwrap();
+    session.accept(0).unwrap();
+    let priority = lotus_services::property_id(session.store(), "priority").unwrap();
+    let high = lotus_services::content::find_option(session.store(), priority, "high").unwrap();
+    assert_eq!(session.store().get(scrap).unwrap().get(priority), Some(&Value::Select(high)));
+
+    // Once set, the proposer stays quiet.
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "priority").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn priority_is_quiet_without_a_trigger_word() {
+    let (mut session, path) = boxed("noprio");
+    capture(&mut session, "buy milk and eggs");
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "priority").is_none());
+    cleanup(&path);
+}
+
+// ---- P16a: the promotion proposer (checkbox capture -> task) ----
+
+#[test]
+fn promotion_promotes_an_untyped_checkbox() {
+    let (mut session, path) = boxed("promote");
+    let note = task_note(&mut session, "call the dentist");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    let p = from(&proposals, "promotion").expect("a promotion proposal");
+
+    session.propose(p.clone()).unwrap();
+    session.accept(0).unwrap();
+    let ty = lotus_services::content::find_type(session.store(), "task").unwrap();
+    assert!(
+        session.store().get(note).unwrap().has(props::TYPE, &Value::Reference(ty)),
+        "the note became a task"
+    );
+    cleanup(&path);
+}
+
+#[test]
+fn promotion_is_quiet_when_already_typed() {
+    let (mut session, path) = boxed("typed");
+    // A plain scrap (no leading task block) is never promoted.
+    capture(&mut session, "just a thought");
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "promotion").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn a_declined_promotion_is_not_re_asked() {
+    let (mut session, path) = boxed("declpromote");
+    task_note(&mut session, "water the plants");
+
+    let p = from(&clerk::sweep(session.store(), MONDAY), "promotion").unwrap();
+    session.propose(p.clone()).unwrap();
+    session.reject(0).unwrap();
+    // The next sweep must not re-propose the same promotion.
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "promotion").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn the_sweep_never_proposes_tier_or_private() {
+    let (mut session, path) = boxed("protected");
+    capture(&mut session, "URGENT call anna friday");
+    task_note(&mut session, "urgent thing");
+    let private = props::PRIVATE;
+    let tier = lotus_services::property_id(session.store(), "tier");
+    for p in clerk::sweep(session.store(), MONDAY) {
+        for c in &p.commands {
+            if let Command::AddCell { cell, .. } = c {
+                assert_ne!(cell.property, private, "proposed a private cell");
+                if let Some(tier) = tier {
+                    assert_ne!(cell.property, tier, "proposed a tier cell");
+                }
+            }
+        }
+    }
+    cleanup(&path);
+}
+
 /// 2026-07-06 is a Monday.
 const MONDAY: DateTime = DateTime {
     civil: 202607060000,
