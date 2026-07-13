@@ -1388,21 +1388,33 @@ struct WindowChrome: View {
                     // material (body3Pane's SidebarMaterial) shows straight through,
                     // and only the side panels (sidebar + inspector) are cards on it.
                 // The right divider outlives its panel: a drag-collapsed
-                // inspector must stay reopenable by mouse (§1.5). The Calendar
-                // never shows the GLOBAL inspector: it embeds one inside its
-                // own fixed-width right column, so selecting an item never
-                // reflows the grid — a reflow between the two clicks of a
-                // double-tap made the second click miss (the review's high).
-                if !chrome.focusMode && chrome.surface != .calendar {
+                // inspector must stay reopenable by mouse (§1.5).
+                if !chrome.focusMode {
                     PaneDivider(
                         pct: $chrome.rightPct, open: $chrome.rightOpen, total: total,
                         minPct: 10, maxPct: chrome.rightLiveMax, leadingEdge: false
                     ) { chrome.persistPanes() }
                 }
-                if chrome.rightOpen && !chrome.focusMode && chrome.surface != .calendar {
-                    InspectorPane(model: model, selection: $selection, topPadding: 0)
-                        .frame(width: max(total * chrome.rightPct / 100, 0))
-                        .panelCard()
+                // ONE right card for every surface — same width, same toggle,
+                // same shape. On the Calendar with nothing selected its content
+                // is the day panel; any selection swaps in the same InspectorPane
+                // as everywhere else. Content swaps INSIDE the constant-width
+                // card, so selection never reflows the grid (the double-tap
+                // guarantee, now structural).
+                if chrome.rightOpen && !chrome.focusMode {
+                    Group {
+                        if chrome.surface == .calendar && selection == nil {
+                            CalendarDayPanel(
+                                model: model, selection: $selection,
+                                day: chrome.calendarDay,
+                                open: { id in openEntityTab(id) },
+                                openDaily: { day in openDailyNote(forDay: day) })
+                        } else {
+                            InspectorPane(model: model, selection: $selection, topPadding: 0)
+                        }
+                    }
+                    .frame(width: max(total * chrome.rightPct / 100, 0))
+                    .panelCard()
                 }
             }
             .coordinateSpace(name: "chrome.body")
@@ -1437,7 +1449,7 @@ struct WindowChrome: View {
             case .calendar:
                 CalendarView(
                     model: model, selection: $selection,
-                    rightOpen: $chrome.rightOpen,
+                    selectedDay: $chrome.calendarDay,
                     open: { id in openEntityTab(id) },
                     openDaily: { day in openDailyNote(forDay: day) })
                     // No leadingInset: the traffic lights + toggles live in the

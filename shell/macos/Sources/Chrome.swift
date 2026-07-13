@@ -110,6 +110,11 @@ final class ChromeModel: ObservableObject {
     @Published var focusMode = false
     @Published var isFullscreen = false
     @Published var pinnedProject: UInt64?
+    /// The calendar's selected day (civil YMD) — on the chrome, not inside
+    /// CalendarView, because the GLOBAL right card renders the day panel for
+    /// it (one right-panel code path; the calendar owns no private column).
+    /// Transient view state, never a cell (interface.md 0.5).
+    @Published var calendarDay: Int64 = Civil.todayYMD
     /// The active workspace — nil means the built-in Home (§2.7.1).
     /// A shell preference: losing it loses no data.
     @Published var activeWorkspace: UInt64? {

@@ -86,14 +86,97 @@ private func hairlineH() -> some View {
     Rectangle().fill(Theme.border).frame(height: 0.5)
 }
 
+// MARK: - shared calendar data (grid + day panel — ONE derivation)
+
+// Which dated entities land on the grid, by kind. Fixed defaults — bp9
+// removed the "My calendars" rail, so there is no UI to toggle these; the
+// old per-kind @AppStorage flags were dead gating that, once a stale `false`
+// was persisted, silently hid EVERY event/note with no way to re-enable it.
+private func calendarKindShown(_ row: EntityRow) -> Bool {
+    // A daily note is represented by the day's dot (bp9), not a redundant
+    // pill labelled with its own date.
+    if row.kinds.contains("daily-note") { return false }
+    if row.kinds.contains("event") { return true }
+    // A task is task-typed OR merely status-bearing — the same test
+    // EntityLine's checkbox and taskStatusToggle apply.
+    if row.kinds.contains("task") || row.status != nil { return true }
+    // Files, contacts, and lists stay off the grid by default (they rarely
+    // carry a calendar date); events, tasks, and dated notes are the set.
+    if row.cells.contains(where: { $0.kind == "file" }) { return false }
+    if row.kinds.contains("person") || row.kinds.contains("contact") { return false }
+    if row.kinds.contains("list") { return false }
+    return true
+}
+
+// A day's contents: the dated one-offs unioned with the recurrence
+// engine's virtual occurrences (the series entity drawn on each day its
+// rule names), in day order — all-day items first (Liv's rail order),
+// then by time. Free-standing so the grid AND the window's day panel
+// derive from the same function, never two copies.
+func calendarByDay(_ model: BoxModel) -> [Int64: [EntityRow]] {
+    var byDay: [Int64: [EntityRow]] = [:]
+    for row in model.rows(model.snap?.dated ?? []) where calendarKindShown(row) {
+        byDay[(row.due ?? 0) / 10_000, default: []].append(row)
+    }
+    for occurrence in model.snap?.occurrences ?? [] {
+        if let series = model.entity(occurrence.series), calendarKindShown(series) {
+            byDay[occurrence.civil / 10_000, default: []].append(series)
+        }
+    }
+    for key in byDay.keys {
+        byDay[key]?.sort { a, b in
+            let at = a.dueDateOnly ? -1 : Int((a.due ?? 0) % 10_000)
+            let bt = b.dueDateOnly ? -1 : Int((b.due ?? 0) % 10_000)
+            return at < bt
+        }
+    }
+    return byDay
+}
+
+/// The days that HAVE a daily note (bp9 "dot beside a day = a note
+/// exists"). A daily note is positioned by its `date` cell, so its
+/// `due` (the positioning civil) names its day. Shared by the month
+/// grid's dot and the day panel's footer.
+func calendarDailyNoteDays(_ model: BoxModel) -> Set<Int64> {
+    Set(
+        model.rows(model.snap?.everything ?? [])
+            .filter { $0.kinds.contains("daily-note") }
+            .compactMap { $0.due.map { civil in civil / 10_000 } })
+}
+
+// Create an event on a day (09:00, Liv's default hour). Liv births it
+// named "New event" and drops into renaming — a cancelled rename keeps a
+// name, never a bare #id on the grid. The prompt is asked directly with
+// the "New event" initial: the generic rename path reads the model, and
+// the snapshot carrying the newborn hasn't landed yet when it opens.
+// Shared by the grid and the day panel's + button.
+func calendarQuickCreate(
+    _ model: BoxModel, dayKey: Int64, hour: Int = 9, select: @escaping (UInt64) -> Void
+) {
+    model.createEvent(dueCivil: dayKey * 10000 + Int64(hour) * 100, allDay: false) { id in
+        guard let id = id else { return }
+        model.set(id, property: "name", value: "New event") { _ in
+            select(id)
+            Dialogs.shared.prompt(
+                "Name the event", initial: "New event", confirmLabel: "Name"
+            ) { name in
+                let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, trimmed != "New event" else { return }
+                model.set(id, property: "name", value: trimmed)
+            }
+        }
+    }
+}
+
 // MARK: - the surface
 
 struct CalendarView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
-    /// The right column rides the SAME chrome.rightOpen the inspector does, so
-    /// the top band's one inspector toggle collapses it too — no bespoke handle.
-    @Binding var rightOpen: Bool
+    /// The selected day lives on the CHROME (calendarDay): the global right
+    /// card renders the day panel for it. The calendar owns NO private column —
+    /// one right-panel code path for every surface.
+    @Binding var selectedDay: Int64
     var open: (UInt64) -> Void = { _ in }
     /// Open (or create) a day's daily note (P14h) — wired to the P12 seam by
     /// the window, which owns the active-workspace resolution + tab open.
@@ -103,89 +186,46 @@ struct CalendarView: View {
     /// window passes it; 0 when the sidebar is open and owns that space.
     var leadingInset: CGFloat = 0
 
-    // Transient view state, never a cell (interface.md 0.5). selectedDay is
-    // always a real day (today at first), as in Liv — the day panel always
-    // has a day to show.
+    // Transient view state, never a cell (interface.md 0.5).
     @State private var viewYear = Civil.gregorian.component(.year, from: Date())
     @State private var viewMonth = Civil.gregorian.component(.month, from: Date())
     @State private var viewMode: CalendarMode = .month
-    @State private var selectedDay: Int64 = Civil.todayYMD
     // Manual double-tap detection (a sibling count:2 gesture would stall
     // every single tap by the double-click interval — the tab-strip lesson).
     @State private var lastItemTap: (id: UInt64, at: Date)?
 
     var body: some View {
-        GeometryReader { geo in
-            // A tight window sheds panels instead of crushing the grid: the
-            // rail goes first, then the right column — the grid is the point.
-            let byDay = buildByDay()
-            let wide = geo.size.width >= 760
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    topBar
-                    Divider()
-                    switch viewMode {
-                    case .month:
-                        monthBody(byDay)
-                    case .week:
-                        WeekTimeGrid(
-                            days: weekDays(selectedDay), byDay: byDay, today: Civil.todayYMD,
-                            selected: selectedDay,
-                            itemTap: itemTapped,
-                            selectDay: { key in
-                                selectedDay = key
-                                loadWindow()
-                            },
-                            createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
-                    case .day:
-                        WeekTimeGrid(
-                            days: [selectedDay], byDay: byDay, today: Civil.todayYMD,
-                            selected: selectedDay,
-                            itemTap: itemTapped,
-                            selectDay: { key in
-                                selectedDay = key
-                                loadWindow()
-                            },
-                            createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
-                    }
-                }
-                // Liv's fixed right column — the day panel, or (while an
-                // entity is selected) the inspector embedded in its place.
-                // Same width is load-bearing: selection must never reflow the
-                // grid, or the second click of a double-tap lands on a moved
-                // target (the review's high finding). Collapse is the top band's
-                // one inspector toggle now (rightOpen) — no bespoke edge chevron.
-                if wide && rightOpen {
-                    rightColumn(byDay)
-                }
+        let byDay = calendarByDay(model)
+        return VStack(spacing: 0) {
+            topBar
+            Divider()
+            switch viewMode {
+            case .month:
+                monthBody(byDay)
+            case .week:
+                WeekTimeGrid(
+                    days: weekDays(selectedDay), byDay: byDay, today: Civil.todayYMD,
+                    selected: selectedDay,
+                    itemTap: itemTapped,
+                    selectDay: { key in
+                        selectedDay = key
+                        loadWindow()
+                    },
+                    createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
+            case .day:
+                WeekTimeGrid(
+                    days: [selectedDay], byDay: byDay, today: Civil.todayYMD,
+                    selected: selectedDay,
+                    itemTap: itemTapped,
+                    selectDay: { key in
+                        selectedDay = key
+                        loadWindow()
+                    },
+                    createAt: { key, hour in quickCreate(dayKey: key, hour: hour) })
             }
         }
         .onAppear { loadWindow() }
         .onDisappear { model.resetWindow() }
-    }
-
-    // The right column: the day panel, or the embedded inspector with a back
-    // button (the deselect path this surface otherwise lacks) and an Open
-    // button (the open path for day-panel rows, whose own double-tap can't
-    // survive the panel-to-inspector content swap).
-    private func rightColumn(_ byDay: [Int64: [EntityRow]]) -> some View {
-        Group {
-            if selection != nil {
-                // The EXACT same inspector as every other surface — no back-header,
-                // no extra line. Esc deselects (footbar) → back to the day panel;
-                // double-click an event in the grid opens it.
-                InspectorPane(model: model, selection: $selection, topPadding: 0)
-            } else {
-                dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
-            }
-        }
-        .frame(width: 300)
-        // The SAME floating panel card as the global inspector, aligned to the
-        // same top/right/bottom as it (the center already carries the frame's
-        // outer inset); only a leading gap from the grid is ours to add.
-        .background(Theme.panel)
-        .panelCard()
-        .padding(.leading, 8)
     }
 
     // MARK: data
@@ -194,46 +234,6 @@ struct CalendarView: View {
     // removed the "My calendars" rail, so there is no UI to toggle these; the
     // old per-kind @AppStorage flags were dead gating that, once a stale `false`
     // was persisted, silently hid EVERY event/note with no way to re-enable it.
-    private func kindShown(_ row: EntityRow) -> Bool {
-        // A daily note is represented by the day's dot (bp9), not a redundant
-        // pill labelled with its own date.
-        if row.kinds.contains("daily-note") { return false }
-        if row.kinds.contains("event") { return true }
-        // A task is task-typed OR merely status-bearing — the same test
-        // EntityLine's checkbox and taskStatusToggle apply.
-        if row.kinds.contains("task") || row.status != nil { return true }
-        // Files, contacts, and lists stay off the grid by default (they rarely
-        // carry a calendar date); events, tasks, and dated notes are the set.
-        if row.cells.contains(where: { $0.kind == "file" }) { return false }
-        if row.kinds.contains("person") || row.kinds.contains("contact") { return false }
-        if row.kinds.contains("list") { return false }
-        return true
-    }
-
-    // A day's contents: the dated one-offs unioned with the recurrence
-    // engine's virtual occurrences (the series entity drawn on each day its
-    // rule names), filtered by the checklist, in day order — all-day items
-    // first (Liv's rail order), then by time.
-    private func buildByDay() -> [Int64: [EntityRow]] {
-        var byDay: [Int64: [EntityRow]] = [:]
-        for row in model.rows(model.snap?.dated ?? []) where kindShown(row) {
-            byDay[(row.due ?? 0) / 10_000, default: []].append(row)
-        }
-        for occurrence in model.snap?.occurrences ?? [] {
-            if let series = model.entity(occurrence.series), kindShown(series) {
-                byDay[occurrence.civil / 10_000, default: []].append(series)
-            }
-        }
-        for key in byDay.keys {
-            byDay[key]?.sort { a, b in
-                let at = a.dueDateOnly ? -1 : Int((a.due ?? 0) % 10_000)
-                let bt = b.dueDateOnly ? -1 : Int((b.due ?? 0) % 10_000)
-                return at < bt
-            }
-        }
-        return byDay
-    }
-
     // Select on the first tap (cheap, idempotent), open on a second inside
     // the system interval — no sibling count:2 gesture, so nothing stalls.
     private func itemTapped(_ id: UInt64) {
@@ -378,7 +378,7 @@ struct CalendarView: View {
     // single-placement source; this layers the continuation cells on top.
     private func monthByDay(_ base: [Int64: [EntityRow]]) -> [Int64: [EntityRow]] {
         var byDay = base
-        for row in model.rows(model.snap?.dated ?? []) where kindShown(row) {
+        for row in model.rows(model.snap?.dated ?? []) where calendarKindShown(row) {
             guard row.dueEnd != nil else { continue }
             let startDay = (row.due ?? 0) / 10_000
             let endDay = spanEndDay(row)
@@ -416,7 +416,7 @@ struct CalendarView: View {
         let byDay = monthByDay(rawByDay)
         let cells = monthCells()
         let weekCount = max(cells.count / 7, 1)
-        let dailyDays = dailyNoteDays
+        let dailyDays = calendarDailyNoteDays(model)
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(dowsMon, id: \.self) { dow in
@@ -479,115 +479,6 @@ struct CalendarView: View {
             let key = Int64((c.year ?? 0) * 10000 + (c.month ?? 0) * 100 + (c.day ?? 0))
             return (key, c.month == viewMonth && c.year == viewYear)
         }
-    }
-
-    // MARK: the day panel — Liv's fixed right column
-
-    private func dayPanel(_ key: Int64, items: [EntityRow]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(Fmt.weekdayDay.string(from: civilDate(key)))
-                    .font(.system(size: 16, weight: .semibold))
-                if key == Civil.todayYMD {
-                    Text("TODAY")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .kerning(0.6)
-                        .foregroundColor(Theme.accent)
-                }
-                Spacer()
-                Button { quickCreate(dayKey: key) } label: {
-                    Image(systemName: "calendar.badge.plus")
-                        .font(.system(size: 13))
-                        .foregroundColor(Theme.mutedFg)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("New event this day")
-            }
-            Text(Fmt.dayMonthYearLong.string(from: civilDate(key)))
-                .font(.system(size: 11.5))
-                .foregroundColor(.secondary)
-                .padding(.top, 1)
-            if items.isEmpty {
-                Spacer()
-                VStack(spacing: 10) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 30))
-                        .foregroundColor(Color.secondary.opacity(0.35))
-                    Text("Nothing on this day")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Theme.mutedFg)
-                }
-                .frame(maxWidth: .infinity)
-                Spacer()
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(items) { row in
-                            // An occurrence row carries its SERIES' anchor due —
-                            // another day's date. Show the due text only when it
-                            // genuinely is this day's.
-                            EntityLine(
-                                row: row,
-                                showWhen: (row.due ?? 0) / 10_000 == key,
-                                selected: selection == row.id,
-                                toggle: taskStatusToggle(model, row)
-                            ) {
-                                itemTapped(row.id)
-                            }
-                        }
-                    }
-                    .padding(.top, 12)
-                }
-            }
-            dailyNoteFooter(key)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 18)
-        .padding(.bottom, 12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        // Inside the panel card now — match it, don't paint a white slab.
-        .background(Theme.panel)
-    }
-
-    /// The daily-note doorway (P14h, bp9): the day's note, get-or-created
-    /// through the landed P12 seam. The headline calendar↔writing link.
-    private func dailyNoteFooter(_ key: Int64) -> some View {
-        let exists = dailyNoteDays.contains(key)
-        return VStack(spacing: 0) {
-            Divider().padding(.vertical, 10)
-            Button { openDaily(key) } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "sun.max.fill").font(.system(size: 12))
-                    Text(exists ? "Open daily note" : "Create daily note")
-                        .font(.system(size: 12.5, weight: .medium))
-                    Spacer()
-                    if key == Civil.todayYMD {
-                        Text("⌘⌥D").font(.system(size: 10.5, design: .monospaced))
-                            .foregroundColor(Theme.accent.opacity(0.7))
-                    } else {
-                        Image(systemName: "arrow.up.right").font(.system(size: 10))
-                    }
-                }
-                .foregroundColor(Theme.accent)
-                .padding(.horizontal, 11).frame(height: 34)
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.accentTint))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Open (or create) this day's daily note")
-        }
-    }
-
-    /// The days that HAVE a daily note (bp9 "dot beside a day = a note
-    /// exists"). A daily note is positioned by its `date` cell, so its
-    /// `due` (the positioning civil) names its day.
-    private var dailyNoteDays: Set<Int64> {
-        Set(
-            model.rows(model.snap?.everything ?? [])
-                .filter { $0.kinds.contains("daily-note") }
-                .compactMap { $0.due.map { civil in civil / 10_000 } })
     }
 
     // MARK: navigation + the occurrence window
@@ -666,25 +557,8 @@ struct CalendarView: View {
         model.snapshotWindow(from: lo * 10000, to: hi * 10000)
     }
 
-    // Create an event on a day (09:00, Liv's default hour). Liv births it
-    // named "New event" and drops into renaming — a cancelled rename keeps a
-    // name, never a bare #id on the grid. The prompt is asked directly with
-    // the "New event" initial: the generic rename path reads the model, and
-    // the snapshot carrying the newborn hasn't landed yet when it opens.
     private func quickCreate(dayKey: Int64, hour: Int = 9) {
-        model.createEvent(dueCivil: dayKey * 10000 + Int64(hour) * 100, allDay: false) { id in
-            guard let id = id else { return }
-            model.set(id, property: "name", value: "New event") { _ in
-                selection = id
-                Dialogs.shared.prompt(
-                    "Name the event", initial: "New event", confirmLabel: "Name"
-                ) { name in
-                    let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty, trimmed != "New event" else { return }
-                    model.set(id, property: "name", value: trimmed)
-                }
-            }
-        }
+        calendarQuickCreate(model, dayKey: dayKey, hour: hour) { selection = $0 }
     }
 }
 
@@ -1107,5 +981,135 @@ struct WeekTimeGrid: View {
             i = j
         }
         return out
+    }
+}
+
+// MARK: - the day panel (bp9's right column, now the GLOBAL right card's guest)
+
+/// Liv's day panel — the selected day's items + the daily-note doorway. It
+/// renders INSIDE the window's one right card (body3Pane) when the Calendar
+/// surface has nothing selected; selecting anything swaps the card's content
+/// to the same InspectorPane every surface uses. The calendar owns no private
+/// column, so the card's width/toggle/shape can never drift again.
+struct CalendarDayPanel: View {
+    @ObservedObject var model: BoxModel
+    @Binding var selection: UInt64?
+    let day: Int64
+    var open: (UInt64) -> Void = { _ in }
+    var openDaily: (Int64) -> Void = { _ in }
+
+    // Manual double-tap detection — same idiom as the grid's.
+    @State private var lastItemTap: (id: UInt64, at: Date)?
+
+    var body: some View {
+        let items = calendarByDay(model)[day] ?? []
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(Fmt.weekdayDay.string(from: civilDate(day)))
+                    .font(.system(size: 16, weight: .semibold))
+                if day == Civil.todayYMD {
+                    Text("TODAY")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .kerning(0.6)
+                        .foregroundColor(Theme.accent)
+                }
+                Spacer()
+                Button {
+                    calendarQuickCreate(model, dayKey: day) { selection = $0 }
+                } label: {
+                    Image(systemName: "calendar.badge.plus")
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.mutedFg)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("New event this day")
+            }
+            Text(Fmt.dayMonthYearLong.string(from: civilDate(day)))
+                .font(.system(size: 11.5))
+                .foregroundColor(.secondary)
+                .padding(.top, 1)
+            if items.isEmpty {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 30))
+                        .foregroundColor(Color.secondary.opacity(0.35))
+                    Text("Nothing on this day")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(Theme.mutedFg)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer()
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(items) { row in
+                            // An occurrence row carries its SERIES' anchor due —
+                            // another day's date. Show the due text only when it
+                            // genuinely is this day's.
+                            EntityLine(
+                                row: row,
+                                showWhen: (row.due ?? 0) / 10_000 == day,
+                                selected: selection == row.id,
+                                toggle: taskStatusToggle(model, row)
+                            ) {
+                                itemTapped(row.id)
+                            }
+                        }
+                    }
+                    .padding(.top, 12)
+                }
+            }
+            dailyNoteFooter
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.panel)
+    }
+
+    private func itemTapped(_ id: UInt64) {
+        selection = id
+        let now = Date()
+        if let last = lastItemTap, last.id == id,
+            now.timeIntervalSince(last.at) < NSEvent.doubleClickInterval
+        {
+            lastItemTap = nil
+            open(id)
+        } else {
+            lastItemTap = (id, now)
+        }
+    }
+
+    /// The daily-note doorway (P14h, bp9): the day's note, get-or-created
+    /// through the landed P12 seam. The headline calendar↔writing link.
+    private var dailyNoteFooter: some View {
+        let exists = calendarDailyNoteDays(model).contains(day)
+        return VStack(spacing: 0) {
+            Divider().padding(.vertical, 10)
+            Button { openDaily(day) } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "sun.max.fill").font(.system(size: 12))
+                    Text(exists ? "Open daily note" : "Create daily note")
+                        .font(.system(size: 12.5, weight: .medium))
+                    Spacer()
+                    if day == Civil.todayYMD {
+                        Text("⌘⌥D").font(.system(size: 10.5, design: .monospaced))
+                            .foregroundColor(Theme.accent.opacity(0.7))
+                    } else {
+                        Image(systemName: "arrow.up.right").font(.system(size: 10))
+                    }
+                }
+                .foregroundColor(Theme.accent)
+                .padding(.horizontal, 11).frame(height: 34)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.accentTint))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open (or create) this day's daily note")
+        }
     }
 }
