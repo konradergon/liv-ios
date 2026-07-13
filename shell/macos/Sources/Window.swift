@@ -1303,9 +1303,10 @@ struct WindowChrome: View {
                 }
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    // Notes cards its own tab CONTENT (below the tab strip),
-                    // so the strip never sits inside a rounded card.
-                    .panelCard(if: chrome.surface != .notes)
+                    // The middle is the flush canvas — NOT a card. Only the side
+                    // panels (sidebar + inspector) float; the content + its tab
+                    // strip read as one surface (the tab bar isn't a separate hue).
+                    .background(Theme.background)
                 // The right divider outlives its panel: a drag-collapsed
                 // inspector must stay reopenable by mouse (§1.5). The Calendar
                 // never shows the GLOBAL inspector: it embeds one inside its
@@ -1388,9 +1389,6 @@ struct WindowChrome: View {
             )
             activeTabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                // The tab strip above stays flush chrome; only the content
-                // below it is the rounded card.
-                .panelCard()
         }
     }
 
