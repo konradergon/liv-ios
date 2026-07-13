@@ -1100,6 +1100,10 @@ struct WindowChrome: View {
                     .padding(.leading, 12)
             } else {
                 Spacer(minLength: 0)
+                // The + is a constant of the band, not a Notes privilege: from
+                // any surface it opens a fresh tab (openBlankTab hops to Notes
+                // itself). Same far-right position the tab lane pins it to.
+                bandButton("plus", "New tab (⌘T)") { openBlankTab() }
             }
             // The RIGHT panel's toggle — mirrors the left one, in the band, over
             // the inspector. One grammar for both sides; the calendar's bespoke
@@ -1353,25 +1357,30 @@ struct WindowChrome: View {
         GeometryReader { geo in
             let total = geo.size.width
             HStack(spacing: 0) {
-                if chrome.leftOpen && !chrome.focusMode {
-                    // The rail is its OWN card now, beside the Spaces|Vault panel
-                    // card (owner's ask). Both sit inside the leftPct region so
-                    // the pane math is untouched (the fixed-frame split is 17b).
-                    HStack(spacing: 8) {
-                        LeftRail(chrome: chrome, model: model) { target in navigate(to: target) }
-                            .background(Theme.panel)
-                            .panelCard()
+                // The rail is PINNED (17b): always present outside the collapse,
+                // its own fixed card — only the Spaces|Vault panel hides with
+                // chrome.leftOpen. Focus mode is the one thing that clears it.
+                if !chrome.focusMode {
+                    LeftRail(chrome: chrome, model: model) { target in navigate(to: target) }
+                        .background(Theme.panel)
+                        .panelCard()
+                    if chrome.leftOpen {
                         leftPanelBody
-                            .frame(maxWidth: .infinity)
+                            // leftPct still means the whole left region, so the
+                            // panel is that minus the rail's fixed footprint —
+                            // the persisted value keeps its old meaning.
+                            .frame(width: max(total * chrome.leftPct / 100 - 52, 150))
                             .background(Theme.panel)
                             .panelCard()
+                            .padding(.leading, 8)
+                        PaneDivider(
+                            pct: $chrome.leftPct, total: total,
+                            minPct: 16, maxPct: chrome.leftLiveMax, leadingEdge: true,
+                            collapsible: false
+                        ) { chrome.persistPanes() }
+                    } else {
+                        Color.clear.frame(width: 8)
                     }
-                    .frame(width: max(total * chrome.leftPct / 100, 0))
-                    PaneDivider(
-                        pct: $chrome.leftPct, total: total,
-                        minPct: 16, maxPct: chrome.leftLiveMax, leadingEdge: true,
-                        collapsible: false
-                    ) { chrome.persistPanes() }
                 }
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

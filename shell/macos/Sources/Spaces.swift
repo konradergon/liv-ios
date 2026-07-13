@@ -197,26 +197,111 @@ struct AppSidebar: View {
                     selection: $selection, filter: $filter,
                     willNavigate: willNavigate, showDesk: showDesk)
             case .vault:
-                sidebarStub(
-                    "folder",
-                    "The files tree lands here in a later shell slice. For now your files live in the Library surface.")
+                VaultTree(model: model, filter: $filter, openEntity: openEntity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func sidebarStub(_ symbol: String, _ message: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 30))
-                .foregroundColor(Theme.foreground.opacity(0.12))
-            Text(message)
-                .font(.system(size: 11.5))
-                .foregroundColor(Theme.mutedFg)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 16)
+}
+
+// MARK: - the Vault tree (BP-4 · P17)
+
+/// The panel's files view: the pool grouped by format, one compact row per
+/// file — click opens it in a tab. The SAME data the Library surface tables
+/// (entities carrying a cell of kind "file"), rendered at panel density; the
+/// Library stays the full browser, this is the always-there shortcut.
+struct VaultTree: View {
+    @ObservedObject var model: BoxModel
+    @Binding var filter: String
+    var openEntity: (UInt64) -> Void = { _ in }
+
+    private var files: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter { row in
+            row.cells.contains { $0.kind == "file" }
+                && (filter.isEmpty || row.title.localizedCaseInsensitiveContains(filter))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Pools by `format` (the file anchor, P15) — a fact, so plain groups, no
+    /// value rainbow.
+    private var pools: [(format: String, rows: [EntityRow])] {
+        let grouped = Dictionary(grouping: files) { row in
+            row.cells.first { $0.property == "format" && !$0.value.isEmpty }?.value ?? "file"
+        }
+        return grouped.keys.sorted().map { (format: $0, rows: grouped[$0] ?? []) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.mutedFg)
+                TextField("Filter…", text: $filter)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .overlay(Divider(), alignment: .bottom)
+
+            if files.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 24))
+                        .foregroundColor(Theme.foreground.opacity(0.12))
+                    Text(filter.isEmpty
+                        ? "No files yet. Import with ⌘⇧I, or drop files on the window."
+                        : "Nothing matches.")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(Theme.mutedFg)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(pools, id: \.format) { pool in
+                            Text("\(pool.format.uppercased()) · \(pool.rows.count)")
+                                .font(.system(size: 11, weight: .bold))
+                                .kerning(0.6)
+                                .foregroundColor(Theme.mutedFg)
+                                .padding(.horizontal, 6)
+                                .padding(.top, 8)
+                                .padding(.bottom, 2)
+                            ForEach(pool.rows, id: \.id) { row in
+                                fileRow(row)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+        }
+    }
+
+    private func fileRow(_ row: EntityRow) -> some View {
+        Button { openEntity(row.id) } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "doc")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(width: 16)
+                Text(row.title)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Theme.foreground.opacity(0.85))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
