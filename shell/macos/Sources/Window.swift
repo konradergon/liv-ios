@@ -1060,39 +1060,46 @@ struct WindowChrome: View {
             body3Pane
         }
         .background(SidebarMaterial().ignoresSafeArea())
-        .overlay(alignment: .topLeading) {
-            // Collapsed or focused: the only way back to the sidebar floats
-            // top-left, under the band, beside the lights.
-            if (!chrome.leftOpen || chrome.focusMode) {
-                CollapsedControls(
-                    chrome: chrome,
-                    expand: {
-                        if chrome.focusMode { chrome.toggleFocus() }
-                        if !chrome.leftOpen {
-                            chrome.leftOpen = true
-                            chrome.persistPanes()
-                        }
-                    },
-                    search: { chrome.searchOpen = true })
-                .padding(.top, Theme.headerBandHeight)
-            }
-        }
+        // No floating collapsed-controls: the top band's sidebar toggle + search
+        // are always present, so nothing pops in from nowhere when collapsed.
     }
 
     /// The top band (BP-4 title/global row, P17a): traffic-light room on the
     /// left, then the workspace hub — lifted up out of the panel footer to
     /// sit ABOVE the side panels. The global tab lane joins it in 17b.
     private var topBand: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Color.clear.frame(width: Theme.trafficLightSpacer - 8)
+            // The ONE panel toggle — the macOS-standard sidebar chevron, always
+            // in the band (collapse when open, expand when closed). No floating
+            // control that pops in from nowhere, no button buried in the panel.
+            bandButton("sidebar.left", "Toggle the panel") {
+                chrome.leftOpen.toggle()
+                chrome.persistPanes()
+            }
             if !chrome.focusMode {
                 WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
                     .fixedSize()
             }
+            // Search sits right of the workspace hub (owner's call) — a quiet
+            // icon, never the blueprint's full-width search-bar-as-a-button.
+            bandButton("magnifyingglass", "Search (⌘O)") { chrome.searchOpen = true }
             Spacer(minLength: 0)
         }
         .frame(height: Theme.headerBandHeight)
         .padding(.horizontal, 8)
+    }
+
+    private func bandButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     /// The Spaces|Vault panel body (BP-4 · P17a): the two-tab control + the
@@ -1119,8 +1126,8 @@ struct WindowChrome: View {
     }
 
     /// The Spaces | Vault two-tab control — a compact segmented pill, in the
-    /// panel (not the content bar). A small edge chevron collapses the panel;
-    /// no separate search box (⌘O owns search).
+    /// panel. Collapse lives in the top band's sidebar toggle now (one place,
+    /// not a button buried here); no search box (⌘O owns search).
     private var leftViewTabs: some View {
         HStack(spacing: 5) {
             ForEach(SidebarView.allCases, id: \.rawValue) { v in
@@ -1138,18 +1145,6 @@ struct WindowChrome: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button {
-                chrome.leftOpen = false
-                chrome.persistPanes()
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.mutedFg)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Hide the panel")
         }
         .padding(.horizontal, 8)
         .padding(.top, 8)
