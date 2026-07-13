@@ -227,6 +227,11 @@ final class ChromeModel: ObservableObject {
         NotificationCenter.default.post(
             name: .lotusNavFocus, object: entry.selection)
     }
+
+    /// The rail chevrons' dim state (repainted on the objectWillChange the nav
+    /// mutations already send).
+    var canNavBack: Bool { nav.canGoBack }
+    var canNavForward: Bool { nav.canGoForward }
 }
 
 extension Notification.Name {
@@ -388,6 +393,106 @@ struct NavRow: View {
             RoundedRectangle(cornerRadius: Theme.radiusMd)
                 .fill(active ? Theme.primary.opacity(0.1) : .clear)
         )
+    }
+}
+
+// MARK: - the activity rail (BP-4 · P17a)
+
+/// A tight 44px icon strip — the global nav, pulled OUT of the panel so the
+/// panel is pure Spaces/Vault. Feature-complete-but-tighter (owner ruling): the
+/// 7 items that WORK ship now; the utility trio (Pin-project / Extensions /
+/// Settings) mounts when its features land (17g / P19), never as dead buttons.
+/// Notes sits alone at primary altitude above the seam; the 6 ambient surfaces
+/// (Lists folds into Library, IA) sit below it.
+struct LeftRail: View {
+    @ObservedObject var chrome: ChromeModel
+    @ObservedObject var model: BoxModel
+    let select: (Surface) -> Void
+
+    private let ambient: [Surface] = [.aiChat, .tasks, .library, .inbox, .contacts, .calendar]
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 0) {
+                chevron("chevron.left", enabled: chrome.canNavBack) { chrome.goBack() }
+                chevron("chevron.right", enabled: chrome.canNavForward) { chrome.goForward() }
+            }
+            .padding(.top, 2)
+            hair()
+            icon(.notes)          // Notes — alone, primary altitude
+            hair()                // the altitude seam
+            ForEach(ambient, id: \.rawValue) { icon($0) }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 7)
+        .frame(width: 44)
+    }
+
+    private func icon(_ surface: Surface) -> some View {
+        let active = chrome.surface == surface
+        return Button { select(surface) } label: {
+            ZStack {
+                Image(systemName: surface.symbol)
+                    .font(.system(size: 15))
+                    .foregroundColor(active ? Theme.accent : Theme.mutedFg)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(active ? Theme.accent.opacity(0.12) : .clear))
+                if surface == .inbox { inboxCounts }
+            }
+            .frame(width: 34, height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .leading) {
+            if active {
+                RoundedRectangle(cornerRadius: 2).fill(Theme.accent)
+                    .frame(width: 3, height: 18).offset(x: -6)
+            }
+        }
+        .help(surface.label)
+    }
+
+    /// Dual count on the ONE Inbox icon (space-conservative — no extra row):
+    /// a neutral Route pip (top-right, never blue/lake-green) + an amber Tidy
+    /// pip (bottom-right; amber = the AI hue).
+    private var inboxCounts: some View {
+        let route = model.orphans().count
+        let tidy = model.snap?.inbox.count ?? 0
+        return ZStack {
+            if route > 0 {
+                pip("\(route)", bg: Theme.mutedFg, fg: Color(nsColor: .windowBackgroundColor))
+                    .offset(x: 12, y: -9)
+            }
+            if tidy > 0 {
+                pip("\(tidy)", bg: Theme.warning, fg: Color(red: 0.22, green: 0.14, blue: 0))
+                    .offset(x: 12, y: 9)
+            }
+        }
+    }
+
+    private func pip(_ text: String, bg: Color, fg: Color) -> some View {
+        Text(text)
+            .font(.system(size: 8.5, weight: .bold)).foregroundColor(fg)
+            .padding(.horizontal, 3).frame(minWidth: 12, minHeight: 12)
+            .background(Capsule().fill(bg))
+    }
+
+    private func chevron(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(enabled ? Theme.mutedFg : Theme.mutedFg.opacity(0.3))
+                .frame(width: 20, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    private func hair() -> some View {
+        Rectangle().fill(Theme.border).frame(width: 20, height: 1).padding(.vertical, 1)
     }
 }
 

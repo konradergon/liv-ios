@@ -985,6 +985,10 @@ struct WindowChrome: View {
     /// or freshly created. A notification can't reach a subscriber that doesn't
     /// exist yet — the binding can.
     @State private var inboxLens: InboxLens = .route
+    /// Which left-panel view is showing — the Spaces|Vault two-tab pref, now
+    /// read by the panel's own segmented control (BP-4 · P17a). Shares the key
+    /// the old content-bar SidebarViewToggle wrote, so state carries over.
+    @AppStorage("app.leftView.v1") private var leftViewRaw = SidebarView.tree.rawValue
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -996,16 +1000,8 @@ struct WindowChrome: View {
             .overlay(alignment: .topTrailing) {
                 if chrome.focusMode { FocusChip(chrome: chrome) }
             }
-            .overlay(alignment: .topTrailing) {
-                // The Spaces / files picker at the window's far top-right, over
-                // the inspector's titlebar band — its views open as a popover,
-                // never in the panel. Shown on every surface that has the global
-                // inspector, so that reserved band is never an empty row (the
-                // Calendar has its own right column, so it is excluded).
-                if chrome.surface != .calendar && !chrome.focusMode {
-                    spacesPicker
-                }
-            }
+            // The top-right Spaces/files popover is retired (BP-4 · P17a): the
+            // Spaces|Vault content lives in the left panel now, not a popover.
             .overlay(switcherOverlay)
             .overlay(searchOverlay)
             .overlay(faultNotice)
@@ -1077,27 +1073,77 @@ struct WindowChrome: View {
     /// The persistent left panel: header controls, the labeled surface
     /// nav, the notes desk (Spaces tree etc.) when Notes is active, and
     /// the workspace switcher pinned at the bottom.
+    /// BP-4 · P17a: the left region is [ 44px activity rail | Spaces|Vault
+    /// panel ]. The rail took the labeled nav out of the panel; the panel now
+    /// holds the two-tab tree/vault content (retiring the top-right Spaces
+    /// popover) + the workspace footer. Search is the ⌘O omni — no panel search
+    /// box (owner's space-conservative ruling).
     private var leftPanel: some View {
-        VStack(spacing: 0) {
-            SidebarHeader(
-                chrome: chrome,
-                collapse: {
-                    chrome.leftOpen = false
-                    chrome.persistPanes()
-                },
-                search: { chrome.searchOpen = true })
-            SurfaceNav(chrome: chrome, model: model) { target in
-                navigate(to: target)
-            }
-            .padding(.top, 2)
-            // The workspace tree lives in the top-right Spaces popover now,
-            // not the panel — the panel stays nav + footer.
-            Spacer(minLength: 0)
-            WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
+        HStack(spacing: 0) {
+            LeftRail(chrome: chrome, model: model) { target in navigate(to: target) }
+            leftPanelBody
         }
         // An opaque panel card; the window material now lives behind ALL panes
         // (body3Pane), showing through the gaps for the layered look.
         .background(Theme.panel)
+    }
+
+    private var leftPanelBody: some View {
+        VStack(spacing: 0) {
+            leftViewTabs
+            AppSidebar(
+                model: model, chrome: chrome, lens: $lens, query: $query,
+                selection: $selection, searchFocused: $searchFocused,
+                willNavigate: { onSuccess in
+                    closeEditor { ok in
+                        guard ok else { return }
+                        selection = nil
+                        onSuccess()
+                    }
+                },
+                openEntity: { id in openEntityTab(id) },
+                showDesk: { lensValue in showDesk(lensValue) })
+            WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The Spaces | Vault two-tab control — a compact segmented pill, in the
+    /// panel (not the content bar). A small edge chevron collapses the panel;
+    /// no separate search box (⌘O owns search).
+    private var leftViewTabs: some View {
+        HStack(spacing: 5) {
+            ForEach(SidebarView.allCases, id: \.rawValue) { v in
+                let on = leftViewRaw == v.rawValue
+                Button { leftViewRaw = v.rawValue } label: {
+                    Text(v == .tree ? "Spaces" : "Vault")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(on ? Theme.accent : Theme.mutedFg)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(on ? Theme.accent.opacity(0.12) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                chrome.leftOpen = false
+                chrome.persistPanes()
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Hide the panel")
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     /// The workspace switcher (§2.7.3), above the content, below the
