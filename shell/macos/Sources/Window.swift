@@ -1084,9 +1084,11 @@ struct WindowChrome: View {
             // Search sits right of the workspace hub (owner's call) — a quiet
             // icon, never the blueprint's full-width search-bar-as-a-button.
             bandButton("magnifyingglass", "Search (⌘O)") { chrome.searchOpen = true }
-            // The note tabs live HERE now — in the band's empty middle, spanning
-            // above the cards (the owner's idea) — so the midsection loses its
-            // tab-strip row. Only the Notes surface has tabs.
+            // The note tabs live HERE now — in the band's empty middle (the
+            // owner's idea), so the midsection loses its tab-strip row. Fixed-
+            // width pills, centered between min-gap spacers, so the lane never
+            // bleeds into the top-left buttons or the inspector toggle.
+            Spacer(minLength: 16)
             if chrome.surface == .notes {
                 TabStrip(
                     tabs: tabs, model: model, chrome: chrome,
@@ -1094,10 +1096,7 @@ struct WindowChrome: View {
                     close: { tab in closeTab(tab) },
                     openNew: { openBlankTab() },
                     rename: { id in renameEntity(id) })
-                    .frame(maxWidth: .infinity)
-                    .padding(.leading, 10)
-            } else {
-                Spacer(minLength: 0)
+                Spacer(minLength: 16)
             }
             // The RIGHT panel's toggle — mirrors the left one, in the band, over
             // the inspector. One grammar for both sides; the calendar's bespoke
@@ -2239,7 +2238,7 @@ struct QuickCaptureView: View {
                 }
             }
             .padding(.horizontal, 32)
-            .padding(.top, 40)
+            .padding(.top, 16)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -2318,7 +2317,7 @@ struct ContactsView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 32).padding(.top, 40).padding(.bottom, 8)
+            .padding(.horizontal, 32).padding(.top, 16).padding(.bottom, 8)
 
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
@@ -2543,7 +2542,7 @@ struct InboxView: View {
             Text("one cleanup home · cycle [ ]")
                 .font(.system(size: 11)).foregroundColor(.secondary)
         }
-        .padding(.horizontal, 32).padding(.top, 34).padding(.bottom, 14)
+        .padding(.horizontal, 32).padding(.top, 16).padding(.bottom, 14)
     }
 
     // MARK: Route — orphans → a type
@@ -2712,7 +2711,7 @@ struct EverythingView: View {
                 subtitle: model.snap.map { "\($0.everything.count) items" } ?? "…"
             )
             .padding(.horizontal, 32)
-            .padding(.top, 40)
+            .padding(.top, 16)
 
             Table(model.rows(model.snap?.everything ?? []), selection: $selection) {
                 TableColumn("Title") { row in
@@ -3876,7 +3875,7 @@ struct LibraryView: View {
             .buttonStyle(.borderless)
         }
         .padding(.horizontal, 32)
-        .padding(.top, 40)
+        .padding(.top, 16)
     }
 
     private func subtitle(_ count: Int) -> String {
@@ -4053,7 +4052,7 @@ struct TasksView: View {
                 if lens != .board { filterSegments }
             }
             .padding(.horizontal, 32)
-            .padding(.top, 40)
+            .padding(.top, 16)
             .padding(.bottom, 8)
 
             switch lens {
@@ -4589,7 +4588,7 @@ struct ListsSurface: View {
                     Text("No lists yet. Name one above.")
                         .font(.system(size: 12.5))
                         .foregroundColor(Theme.mutedFg)
-                        .padding(.top, 40)
+                        .padding(.top, 16)
                 } else {
                     ForEach(lists) { row in
                         indexRow(row)
@@ -4598,7 +4597,7 @@ struct ListsSurface: View {
                 }
             }
             .padding(.horizontal, 32)
-            .padding(.top, 40)
+            .padding(.top, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -4666,7 +4665,7 @@ struct ListsSurface: View {
                 }
             }
             .padding(.horizontal, 32)
-            .padding(.top, 40)
+            .padding(.top, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
