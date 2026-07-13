@@ -39,11 +39,12 @@ private struct HaloModifier: ViewModifier {
 }
 
 /// The +/- diff (bp10 a11): one line per command, the trust primitive — never
-/// collapsed. Built from the proposal's structured commands (P16c); the `−` side
-/// is the entity's CURRENT value, derived here.
+/// collapsed. It mirrors the proposal's structured command list EXACTLY (P16c):
+/// a core AddCell only ever appends, so an `add` is a pure `+` — the card never
+/// synthesizes a `−` from current state (that lied about append-valued
+/// properties like relations; the review's finding). A genuine replacement
+/// arrives as its own RemoveCell, rendered by the `remove` branch.
 struct DiffBlock: View {
-    @ObservedObject var model: BoxModel
-    let entity: UInt64
     let commands: [ProposalCommandRow]
 
     var body: some View {
@@ -62,11 +63,10 @@ struct DiffBlock: View {
     private func line(_ command: ProposalCommandRow) -> some View {
         switch command.kind {
         case "add":
-            let prop = command.property ?? "?"
-            let old = model.entity(entity)?.cells.first { $0.property == prop && !$0.value.isEmpty }?
-                .value
-            Text("− \(prop): \(old ?? "—")").foregroundColor(Theme.mutedFg)
-            Text("+ \(prop): \(command.value ?? "")").foregroundColor(Theme.accentDeep)
+            // Foreground (not the lake-green accent — that stays reserved for
+            // selection + today): the added value is emphasis, not a commit.
+            Text("+ \(command.property ?? "?"): \(command.value ?? "")")
+                .foregroundColor(Theme.foreground)
         case "remove":
             Text("− \(command.property ?? "?"): \(command.value ?? "")").foregroundColor(Theme.mutedFg)
         case "trash":
@@ -110,15 +110,26 @@ struct SuggestionCard: View {
             }
             Text(subject).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
             if let commands = proposal.commands, !commands.isEmpty {
-                DiffBlock(model: model, entity: proposal.entity, commands: commands)
+                DiffBlock(commands: commands)
             }
             HStack(spacing: 7) {
-                Button("Accept · ⏎") {
+                // A custom amber capsule with a dark label: macOS keeps a white
+                // label on .borderedProminent regardless of tint, and dark-mode
+                // Theme.warning (#fdd663) is a light gold — white-on-gold is
+                // unreadable (the review's finding). Black-on-amber mirrors the
+                // header badge and stays legible in both appearances.
+                Button {
                     model.accept(proposal)
                     onAct()
+                } label: {
+                    Text("Accept · ⏎")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color(nsColor: .black).opacity(0.85))
+                        .padding(.horizontal, 11).padding(.vertical, 4)
+                        .background(Capsule().fill(Theme.warning))
                 }
-                .buttonStyle(.borderedProminent).tint(Theme.warning).controlSize(.small)
-                Button("Dismiss · Esc") {
+                .buttonStyle(.plain)
+                Button("Dismiss · r") {
                     model.reject(proposal)
                     onAct()
                 }

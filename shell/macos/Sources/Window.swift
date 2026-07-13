@@ -978,6 +978,13 @@ struct WindowChrome: View {
     /// The Export composer (P15f) — a transient sheet; copy-only, a projection.
     @State private var exportOpen = false
     @StateObject private var exportComposer = ExportComposerModel()
+    /// The Inbox lens lives HERE, not inside InboxView, so a `.lotusGoTidy`
+    /// posted from another surface (the Tasks ✦ badge, the Agents doorway)
+    /// survives InboxView being mounted lazily: the window sets .tidy BEFORE
+    /// navigating, and the binding delivers it whether InboxView is already up
+    /// or freshly created. A notification can't reach a subscriber that doesn't
+    /// exist yet — the binding can.
+    @State private var inboxLens: InboxLens = .route
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -1024,6 +1031,7 @@ struct WindowChrome: View {
                 exportOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoTidy)) { _ in
+                inboxLens = .tidy
                 navigate(to: .inbox)
             }
             .onAppear {
@@ -1382,6 +1390,7 @@ struct WindowChrome: View {
             case .inbox:
                 InboxView(
                     model: model, selection: $selection,
+                    lens: $inboxLens,
                     open: { id in openEntityTab(id) })
             case .calendar:
                 CalendarView(
@@ -2355,12 +2364,18 @@ enum InboxLens: String, CaseIterable, Identifiable {
 struct InboxView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
+    /// Owned by the window so a cross-surface `.lotusGoTidy` lands on Tidy even
+    /// when InboxView was not yet mounted at post time (see WindowChrome).
+    @Binding var lens: InboxLens
     var open: (UInt64) -> Void = { _ in }
-    @State private var lens: InboxLens = .route
     @FocusState private var surfaceFocused: Bool
     /// The Tidy cursor — a FINGERPRINT, so it re-anchors across a refresh even
     /// as ordinals shift (P16e). nil = the first proposal.
     @State private var cursor: UInt64?
+    /// The queue index we last triaged from the keyboard — re-anchored against
+    /// the refreshed queue (reAnchor), not a pre-computed fingerprint that a
+    /// cascading accept may itself retract.
+    @State private var lastActedIndex: Int?
 
     private var orphans: [EntityRow] { model.orphans() }
     private var proposals: [ProposalRow] { model.snap?.inbox ?? [] }
@@ -2390,12 +2405,21 @@ struct InboxView: View {
 
     private func actFocused(accept: Bool) {
         guard let p = focused else { return }
-        // Advance the cursor to the next survivor before the queue mutates.
-        let i = proposals.firstIndex { $0.fingerprint == p.fingerprint } ?? 0
-        cursor =
-            (i + 1 < proposals.count)
-            ? proposals[i + 1].fingerprint : (i > 0 ? proposals[i - 1].fingerprint : nil)
+        // Record WHERE we acted; reAnchor lands the cursor once the refreshed
+        // queue arrives. Pre-computing "the next fingerprint" bounced the cursor
+        // to the top when an accept cascade-retracted that sibling (a dedupe
+        // merge) — the review's finding.
+        lastActedIndex = proposals.firstIndex { $0.fingerprint == p.fingerprint }
         if accept { model.accept(p) } else { model.reject(p) }
+    }
+
+    /// Land the Tidy cursor on whatever now occupies the slot we acted from,
+    /// clamped to the new last — mirrors Route's advance, so triaging the last
+    /// proposal stays put instead of jumping to the first.
+    private func reAnchor() {
+        guard let i = lastActedIndex else { return }
+        lastActedIndex = nil
+        cursor = proposals.isEmpty ? nil : proposals[min(i, proposals.count - 1)].fingerprint
     }
 
     private func actGroup(accept: Bool) {
@@ -2428,19 +2452,33 @@ struct InboxView: View {
         .focusEffectDisabled()
         .focused($surfaceFocused)
         .onAppear { surfaceFocused = true }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusGoTidy)) { _ in lens = .tidy }
         .onKeyPress { handleInboxKey($0) }
     }
 
     /// [ ] cycle the lens; in Tidy, j/k move the cursor and a/r (A/R) accept or
     /// reject the focused proposal (or its whole group) — the home-row triage.
     private func handleInboxKey(_ press: KeyPress) -> KeyPress.Result {
+        // Chords (⌘/⌥/⌃) must PASS THROUGH, never read as a bare letter: ⌘R must
+        // not become "r" and silently reject an AI proposal (the review's
+        // finding — the quarantine forbids a silent write). Shift stays, so the
+        // A/R group keys still work.
+        guard press.modifiers.intersection([.command, .option, .control]).isEmpty else {
+            return .ignored
+        }
         switch press.characters {
         case "[": cycleLens(-1); return .handled
         case "]": cycleLens(1); return .handled
         default: break
         }
         guard lens == .tidy else { return .ignored }
+        // ⏎ accepts the focused card (the label promises it) — safe because an
+        // accept is one undoable transaction. Esc is deliberately NOT bound to
+        // dismiss: a dismissal is permanent (declines never hit the undo stack),
+        // so it stays on the explicit `r`, never the reflexive Escape.
+        if press.key == .return {
+            actFocused(accept: true)
+            return .handled
+        }
         switch press.characters {
         case "j": moveCursor(1)
         case "k": moveCursor(-1)
@@ -2598,7 +2636,7 @@ struct InboxView: View {
                         groupBlock(group)
                     }
                 }
-                Text("⌘Z never expires · dismissals are remembered by a deterministic id, never re-asked.")
+                Text("Accept is one undo — ⌘Z never expires. Dismiss is remembered by a deterministic id: never re-asked, and not reversed by ⌘Z.")
                     .font(.system(size: 11)).foregroundColor(Color.secondary.opacity(0.8))
                     .padding(.top, 2)
             }
@@ -2606,6 +2644,7 @@ struct InboxView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear { if cursor == nil { cursor = proposals.first?.fingerprint } }
+        .onChange(of: proposals.map(\.fingerprint)) { reAnchor() }
     }
 
     private func groupBlock(_ group: (author: String, items: [ProposalRow])) -> some View {
@@ -2633,80 +2672,6 @@ struct InboxView: View {
         }
     }
 
-}
-
-/// The marigold-halo assist card (bp5 a23): one live clerk proposal —
-/// "date mentioned", "person mentioned" — with the accept/reject that
-/// ships. AI presence is the amber halo (Theme.warning), never a silent edit.
-struct AssistCard: View {
-    @ObservedObject var model: BoxModel
-    let proposal: ProposalRow
-
-    private var subject: String {
-        model.entity(proposal.entity)?.title ?? "#\(proposal.entity)"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Text("✦ Clerk")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Theme.warning)
-                    .padding(.horizontal, 7).padding(.vertical, 1)
-                    .background(Capsule().fill(Theme.warning.opacity(0.14)))
-                Text(proposal.reason)
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-            }
-            Text(subject)
-                .font(.system(size: 12)).foregroundColor(.secondary).lineLimit(2)
-            HStack(spacing: 7) {
-                Button("Accept · ⏎") { model.accept(proposal) }
-                    .buttonStyle(.borderedProminent).tint(Theme.accent).controlSize(.small)
-                Button("Dismiss · Esc") { model.reject(proposal) }
-                    .buttonStyle(.bordered).controlSize(.small)
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 11).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Theme.warning, lineWidth: 1))
-        .overlay(
-            RoundedRectangle(cornerRadius: 11)
-                .strokeBorder(Theme.warning.opacity(0.14), lineWidth: 3))
-        .frame(maxWidth: 520, alignment: .leading)
-    }
-}
-
-/// A static heuristic card (bp5 a23: "3 notes missing type") — the proposer
-/// is P16; this shows the card grammar and marks itself STATIC so nothing
-/// reads as applied.
-struct StaticAssistCard: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Text("✦ Assist")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Theme.warning)
-                    .padding(.horizontal, 7).padding(.vertical, 1)
-                    .background(Capsule().fill(Theme.warning.opacity(0.14)))
-                Text("Notes missing a type")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text("STATIC · P16")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 6)
-                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1))
-            }
-            Text("Suggested from your own vocabulary + the seed, never invented. The heuristic proposer arrives with the AI pass; the card and accept path are the frame it will ride.")
-                .font(.system(size: 11.5)).foregroundColor(.secondary)
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 11).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Theme.warning.opacity(0.5), lineWidth: 1))
-        .frame(maxWidth: 520, alignment: .leading)
-        .opacity(0.9)
-    }
 }
 
 // MARK: - Everything
