@@ -91,6 +91,9 @@ private func hairlineH() -> some View {
 struct CalendarView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
+    /// The right column rides the SAME chrome.rightOpen the inspector does, so
+    /// the top band's one inspector toggle collapses it too — no bespoke handle.
+    @Binding var rightOpen: Bool
     var open: (UInt64) -> Void = { _ in }
     /// Open (or create) a day's daily note (P14h) — wired to the P12 seam by
     /// the window, which owns the active-workspace resolution + tab open.
@@ -110,9 +113,6 @@ struct CalendarView: View {
     // Manual double-tap detection (a sibling count:2 gesture would stall
     // every single tap by the double-click interval — the tab-strip lesson).
     @State private var lastItemTap: (id: UInt64, at: Date)?
-
-    // The right column is collapsible (the panel toggle in the top bar).
-    @AppStorage("app.calendar.panel.open") private var panelOpen = true
 
     var body: some View {
         GeometryReader { geo in
@@ -153,17 +153,10 @@ struct CalendarView: View {
                 // entity is selected) the inspector embedded in its place.
                 // Same width is load-bearing: selection must never reflow the
                 // grid, or the second click of a double-tap lands on a moved
-                // target (the review's high finding).
-                //
-                // The collapse control lives ON the panel edge (panelHandle),
-                // not out in the toolbar, and stays visible when collapsed so
-                // the panel reopens — the same edge grammar as the other
-                // surfaces' pane divider. (Full cross-surface unification is P17.)
-                if wide {
-                    panelHandle
-                    if panelOpen {
-                        rightColumn(byDay)
-                    }
+                // target (the review's high finding). Collapse is the top band's
+                // one inspector toggle now (rightOpen) — no bespoke edge chevron.
+                if wide && rightOpen {
+                    rightColumn(byDay)
                 }
             }
         }
@@ -210,29 +203,13 @@ struct CalendarView: View {
                 dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
             }
         }
-        .frame(width: 296)
-        // The same floating panel card as the global inspector — Theme.panel on
-        // the bare face, not a white slab. (Was a mismatched Theme.background.)
+        .frame(width: 300)
+        // The SAME floating panel card as the global inspector, aligned to the
+        // same top/right/bottom as it (the center already carries the frame's
+        // outer inset); only a leading gap from the grid is ours to add.
         .background(Theme.panel)
         .panelCard()
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
-    }
-
-    /// The on-panel collapse handle: a thin edge strip that toggles the right
-    /// column and STAYS when collapsed, so the panel can be reopened without a
-    /// bespoke toolbar button. The chevron points the way the panel will move.
-    private var panelHandle: some View {
-        Button { withAnimation(.easeInOut(duration: 0.16)) { panelOpen.toggle() } } label: {
-            Image(systemName: panelOpen ? "chevron.right" : "chevron.left")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Theme.mutedFg)
-                .frame(width: 16)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(panelOpen ? "Hide the panel" : "Show the panel")
+        .padding(.leading, 8)
     }
 
     // MARK: data

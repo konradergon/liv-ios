@@ -1083,6 +1083,15 @@ struct WindowChrome: View {
             // icon, never the blueprint's full-width search-bar-as-a-button.
             bandButton("magnifyingglass", "Search (⌘O)") { chrome.searchOpen = true }
             Spacer(minLength: 0)
+            // The RIGHT panel's toggle — mirrors the left one, in the band, over
+            // the inspector. One grammar for both sides; the calendar's bespoke
+            // edge chevron is gone (it now rides this same chrome.rightOpen).
+            if !chrome.focusMode {
+                bandButton("sidebar.right", "Toggle the inspector") {
+                    chrome.rightOpen.toggle()
+                    chrome.persistPanes()
+                }
+            }
         }
         .frame(height: Theme.headerBandHeight)
         .padding(.horizontal, 8)
@@ -1364,7 +1373,7 @@ struct WindowChrome: View {
                     ) { chrome.persistPanes() }
                 }
                 if chrome.rightOpen && !chrome.focusMode && chrome.surface != .calendar {
-                    InspectorPane(model: model, selection: $selection)
+                    InspectorPane(model: model, selection: $selection, topPadding: 0)
                         .frame(width: max(total * chrome.rightPct / 100, 0))
                         .panelCard()
                 }
@@ -1401,12 +1410,11 @@ struct WindowChrome: View {
             case .calendar:
                 CalendarView(
                     model: model, selection: $selection,
+                    rightOpen: $chrome.rightOpen,
                     open: { id in openEntityTab(id) },
-                    openDaily: { day in openDailyNote(forDay: day) },
-                    // Clear the floating collapse controls + traffic lights when
-                    // the sidebar isn't there to own that top-left space.
-                    leadingInset: (!chrome.leftOpen || chrome.focusMode)
-                        ? Theme.trafficLightSpacer + 60 : 0)
+                    openDaily: { day in openDailyNote(forDay: day) })
+                    // No leadingInset: the traffic lights + toggles live in the
+                    // top band now, so nothing floats over the calendar's corner.
             case .library:
                 LibraryView(
                     model: model, selection: $selection,
