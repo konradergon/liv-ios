@@ -548,9 +548,8 @@ struct WorkspaceFooter: View {
                 NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .overlay(Divider(), alignment: .top)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
     }
 
     private var appearanceButton: some View {

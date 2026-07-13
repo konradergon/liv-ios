@@ -1051,43 +1051,54 @@ struct WindowChrome: View {
     /// No chrome rows: the whole window is sidebar · content · inspector.
     /// (Decided divergence — the Claude-style chrome, interface.md 0.3.)
     private var chromeStack: some View {
-        body3Pane
-            .overlay(alignment: .topLeading) {
-                // Collapsed or focused: the only way back to the sidebar
-                // floats top-left over the content, beside the lights.
-                if (!chrome.leftOpen || chrome.focusMode) {
-                    CollapsedControls(
-                        chrome: chrome,
-                        expand: {
-                            if chrome.focusMode { chrome.toggleFocus() }
-                            if !chrome.leftOpen {
-                                chrome.leftOpen = true
-                                chrome.persistPanes()
-                            }
-                        },
-                        search: { chrome.searchOpen = true })
-                }
-            }
-    }
-
-    /// The persistent left panel: header controls, the labeled surface
-    /// nav, the notes desk (Spaces tree etc.) when Notes is active, and
-    /// the workspace switcher pinned at the bottom.
-    /// BP-4 · P17a: the left region is [ 44px activity rail | Spaces|Vault
-    /// panel ]. The rail took the labeled nav out of the panel; the panel now
-    /// holds the two-tab tree/vault content (retiring the top-right Spaces
-    /// popover) + the workspace footer. Search is the ⌘O omni — no panel search
-    /// box (owner's space-conservative ruling).
-    private var leftPanel: some View {
-        HStack(spacing: 0) {
-            LeftRail(chrome: chrome, model: model) { target in navigate(to: target) }
-            leftPanelBody
+        // BP-4 frame (P17a rev): a top band (traffic lights · workspace hub)
+        // over the card row — the rail + panels are cards that sit BELOW the
+        // band, not up against the lights. The window material runs behind the
+        // whole thing so the cards read as floating on one face.
+        VStack(spacing: 0) {
+            topBand
+            body3Pane
         }
-        // An opaque panel card; the window material now lives behind ALL panes
-        // (body3Pane), showing through the gaps for the layered look.
-        .background(Theme.panel)
+        .background(SidebarMaterial().ignoresSafeArea())
+        .overlay(alignment: .topLeading) {
+            // Collapsed or focused: the only way back to the sidebar floats
+            // top-left, under the band, beside the lights.
+            if (!chrome.leftOpen || chrome.focusMode) {
+                CollapsedControls(
+                    chrome: chrome,
+                    expand: {
+                        if chrome.focusMode { chrome.toggleFocus() }
+                        if !chrome.leftOpen {
+                            chrome.leftOpen = true
+                            chrome.persistPanes()
+                        }
+                    },
+                    search: { chrome.searchOpen = true })
+                .padding(.top, Theme.headerBandHeight)
+            }
+        }
     }
 
+    /// The top band (BP-4 title/global row, P17a): traffic-light room on the
+    /// left, then the workspace hub — lifted up out of the panel footer to
+    /// sit ABOVE the side panels. The global tab lane joins it in 17b.
+    private var topBand: some View {
+        HStack(spacing: 8) {
+            Color.clear.frame(width: Theme.trafficLightSpacer - 8)
+            if !chrome.focusMode {
+                WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
+                    .fixedSize()
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: Theme.headerBandHeight)
+        .padding(.horizontal, 8)
+    }
+
+    /// The Spaces|Vault panel body (BP-4 · P17a): the two-tab control + the
+    /// tree/vault content. The rail is now its OWN card beside this one, and
+    /// the workspace hub moved up to the top band — so the panel is pure
+    /// navigation, no footer.
     private var leftPanelBody: some View {
         VStack(spacing: 0) {
             leftViewTabs
@@ -1103,7 +1114,6 @@ struct WindowChrome: View {
                 },
                 openEntity: { id in openEntityTab(id) },
                 showDesk: { lensValue in showDesk(lensValue) })
-            WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
         }
         .frame(maxWidth: .infinity)
     }
@@ -1377,12 +1387,22 @@ struct WindowChrome: View {
             let total = geo.size.width
             HStack(spacing: 0) {
                 if chrome.leftOpen && !chrome.focusMode {
-                    leftPanel
-                        .frame(width: max(total * chrome.leftPct / 100, 0))
-                        .panelCard()
+                    // The rail is its OWN card now, beside the Spaces|Vault panel
+                    // card (owner's ask). Both sit inside the leftPct region so
+                    // the pane math is untouched (the fixed-frame split is 17b).
+                    HStack(spacing: 8) {
+                        LeftRail(chrome: chrome, model: model) { target in navigate(to: target) }
+                            .background(Theme.panel)
+                            .panelCard()
+                        leftPanelBody
+                            .frame(maxWidth: .infinity)
+                            .background(Theme.panel)
+                            .panelCard()
+                    }
+                    .frame(width: max(total * chrome.leftPct / 100, 0))
                     PaneDivider(
                         pct: $chrome.leftPct, total: total,
-                        minPct: 12, maxPct: chrome.leftLiveMax, leadingEdge: true,
+                        minPct: 16, maxPct: chrome.leftLiveMax, leadingEdge: true,
                         collapsible: false
                     ) { chrome.persistPanes() }
                 }
@@ -1410,12 +1430,13 @@ struct WindowChrome: View {
                 }
             }
             .coordinateSpace(name: "chrome.body")
+            // The cards float on the material below the top band: an outer inset
+            // all round (the lights live in the band now, not on the sidebar) +
+            // a small top gap so nothing rides up against the band.
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+            .padding(.bottom, 8)
         }
-        // The layer underneath: the window material shows through the ~7pt gaps
-        // between panes (the dividers), so the opaque panel cards read as
-        // floating on top. Panes stay FLUSH to the window edges — no outer
-        // inset, so the traffic lights sit on the sidebar, not out in a margin.
-        .background(SidebarMaterial().ignoresSafeArea())
     }
 
     @ViewBuilder
