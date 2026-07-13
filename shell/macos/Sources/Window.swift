@@ -960,8 +960,6 @@ struct WindowChrome: View {
     /// The chip-click filter waiting for the palette to open (P11.5c).
     @State private var pendingSearch: String? = nil
     @State private var selection: UInt64?
-    /// The top-right Spaces popover (the workspace tree, out of the panel).
-    @State private var spacesOpen = false
     /// The editor of the active note tab, when one is active.
     @State private var editor: EditorModel?
     /// Today IS the daily note (P12 12b, D1): the id of today's daily note,
@@ -1179,59 +1177,6 @@ struct WindowChrome: View {
                 initialQuery: pendingSearch
             )
         }
-    }
-
-    /// The Spaces / files picker, pinned to the window's far top-right. ⊞
-    /// drops the workspace tree as a popover (out of the panel); the folder
-    /// jumps to the Library surface (the real files browser).
-    private var spacesPicker: some View {
-        HStack(spacing: 2) {
-            Button { spacesOpen.toggle() } label: {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 28, height: 28)
-                    .foregroundColor(spacesOpen ? Theme.accent : Theme.mutedFg)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Spaces")
-            .popover(isPresented: $spacesOpen, arrowEdge: .top) {
-                AppSidebar(
-                    model: model, chrome: chrome, lens: $lens, query: $query,
-                    selection: $selection, searchFocused: $searchFocused,
-                    willNavigate: { onSuccess in
-                        closeEditor { ok in
-                            guard ok else { return }
-                            selection = nil
-                            onSuccess()
-                        }
-                    },
-                    openEntity: { id in
-                        spacesOpen = false
-                        openEntityTab(id)
-                    },
-                    showDesk: { lensValue in
-                        spacesOpen = false
-                        showDesk(lensValue)
-                    }
-                )
-                .frame(width: 280, height: 440)
-            }
-            Button {
-                spacesOpen = false
-                navigate(to: .library)
-            } label: {
-                Image(systemName: "folder")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 28, height: 28)
-                    .foregroundColor(Theme.mutedFg)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Files (Library)")
-        }
-        .frame(height: Theme.headerBandHeight, alignment: .top)
-        .padding(.trailing, 12)
     }
 
     private var workspaceActions: WorkspaceActions {

@@ -199,7 +199,7 @@ struct AppSidebar: View {
             case .vault:
                 sidebarStub(
                     "folder",
-                    "The Vault view becomes the import staging browser — it arrives with P12.")
+                    "The files tree lands here in a later shell slice. For now your files live in the Library surface.")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

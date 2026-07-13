@@ -241,161 +241,6 @@ extension Notification.Name {
     static let lotusGoInbox = Notification.Name("lotus.goInbox")
 }
 
-// MARK: - sidebar header (the Claude-style panel top)
-
-/// The two small controls over the traffic-light band: collapse the
-/// panel, and open search. Decided divergence from Liv's title row —
-/// no window-centered search field, no drag-to-collapse.
-struct SidebarHeader: View {
-    @ObservedObject var chrome: ChromeModel
-    let collapse: () -> Void
-    let search: () -> Void
-
-    var body: some View {
-        HStack(spacing: 2) {
-            if !chrome.isFullscreen {
-                // The traffic lights live here; the controls sit to
-                // their right, level with them.
-                Color.clear.frame(width: Theme.trafficLightSpacer)
-            }
-            headerButton("sidebar.left", "Collapse sidebar (⌘⇧\\)", collapse)
-            headerButton("magnifyingglass", "Search (⌘O)", search)
-            Spacer(minLength: 0)
-            NavChevrons(chrome: chrome)
-        }
-        // Top-aligned so the buttons line up with the traffic lights
-        // (their centres sit ~14pt down), not centred in the band.
-        .frame(height: Theme.headerBandHeight, alignment: .top)
-        .background(WindowDragRegion())
-    }
-}
-
-/// Back / forward over the merged nav history — moved off the old rail
-/// into the header's trailing edge.
-struct NavChevrons: View {
-    @ObservedObject var chrome: ChromeModel
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Button { chrome.goBack() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 11, weight: .medium))
-                    .frame(width: 22, height: 28)
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(chrome.nav.canGoBack ? Theme.mutedFg : Theme.mutedFg.opacity(0.25))
-            .help("Back (⌘[)")
-            Button { chrome.goForward() } label: {
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .medium))
-                    .frame(width: 22, height: 28)
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(
-                chrome.nav.canGoForward ? Theme.mutedFg : Theme.mutedFg.opacity(0.25))
-            .help("Forward (⌘])")
-        }
-        .padding(.trailing, 4)
-    }
-}
-
-/// The same two controls, floating top-left when the panel is collapsed
-/// — the only way back to an expanded sidebar (Claude's pattern).
-struct CollapsedControls: View {
-    @ObservedObject var chrome: ChromeModel
-    let expand: () -> Void
-    let search: () -> Void
-
-    var body: some View {
-        // A compact leading cluster, NOT a full-width strip: the drag
-        // region must not float over the content's top edge and steal
-        // clicks from whatever a surface renders there.
-        HStack(spacing: 2) {
-            if !chrome.isFullscreen {
-                Color.clear.frame(width: Theme.trafficLightSpacer)
-            }
-            headerButton("sidebar.left", "Expand sidebar (⌘⇧\\)", expand)
-            headerButton("magnifyingglass", "Search (⌘O)", search)
-        }
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(height: Theme.headerBandHeight, alignment: .top)
-        .background(WindowDragRegion())
-    }
-}
-
-/// A 28×28 chrome icon button, the header idiom.
-private func headerButton(
-    _ symbol: String, _ help: String, _ action: @escaping () -> Void
-) -> some View {
-    Button(action: action) {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .medium))
-            .frame(width: 28, height: 28)
-            .foregroundColor(Theme.mutedFg)
-            .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .help(help)
-}
-
-// MARK: - surface nav (the labeled rail, folded into the sidebar)
-
-/// The activity rail, expanded Claude-style into labeled rows: icon +
-/// name + trailing (a badge, or a keycap once a surface earns one).
-/// Persistent — every surface reaches it, no full-bleed hiding.
-struct SurfaceNav: View {
-    @ObservedObject var chrome: ChromeModel
-    @ObservedObject var model: BoxModel
-    /// Switches go through the owner's flush gate.
-    let select: (Surface) -> Void
-
-    var body: some View {
-        VStack(spacing: 2) {
-            ForEach(Surface.allCases, id: \.rawValue) { surface in
-                NavRow(
-                    surface: surface,
-                    active: chrome.surface == surface,
-                    badge: surface == .inbox
-                        ? (model.orphans().count + (model.snap?.inbox.count ?? 0)) : 0
-                ) { select(surface) }
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.top, 6)
-    }
-}
-
-struct NavRow: View {
-    let surface: Surface
-    let active: Bool
-    let badge: Int
-    let select: () -> Void
-
-    var body: some View {
-        Button(action: select) {
-            HStack(spacing: 9) {
-                Image(systemName: surface.symbol)
-                    .font(.system(size: 13))
-                    .frame(width: 18)
-                    .foregroundColor(active ? Theme.primary : Theme.mutedFg)
-                Text(surface.label)
-                    .font(.system(size: 13, weight: active ? .semibold : .regular))
-                    .foregroundColor(active ? Theme.foreground : Theme.foreground.opacity(0.85))
-                Spacer(minLength: 4)
-                if badge > 0 {
-                    SoftBadge(count: badge)
-                }
-            }
-            .padding(.vertical, 7)
-            .padding(.horizontal, 9)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.radiusMd)
-                .fill(active ? Theme.primary.opacity(0.1) : .clear)
-        )
-    }
-}
-
 // MARK: - the activity rail (BP-4 · P17a)
 
 /// A tight 44px icon strip — the global nav, pulled OUT of the panel so the
@@ -494,6 +339,22 @@ struct LeftRail: View {
     private func hair() -> some View {
         Rectangle().fill(Theme.border).frame(width: 20, height: 1).padding(.vertical, 1)
     }
+}
+
+/// A quiet 28pt chrome icon-button — shared by the workspace footer's
+/// appearance/settings controls.
+private func headerButton(
+    _ symbol: String, _ help: String, _ action: @escaping () -> Void
+) -> some View {
+    Button(action: action) {
+        Image(systemName: symbol)
+            .font(.system(size: 13, weight: .medium))
+            .frame(width: 28, height: 28)
+            .foregroundColor(Theme.mutedFg)
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help(help)
 }
 
 // MARK: - workspace footer (the bottom switcher, popup opens upward)
