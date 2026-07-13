@@ -236,8 +236,10 @@ struct TabStrip: View {
                             if case .note(let id) = tab.kind { rename(id) }
                         }
                     )
-                    .frame(width: 150)
+                    .frame(maxWidth: .infinity)
                 }
+            } else {
+                Spacer(minLength: 0)
             }
             Button(action: openNew) {
                 Image(systemName: "plus")
