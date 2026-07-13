@@ -219,15 +219,10 @@ struct TabStrip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // Collapsed / focus mode: the expand + search controls float
-            // top-left over the content, level with the traffic lights.
-            if !chrome.leftOpen || chrome.focusMode {
-                Color.clear.frame(width: Theme.trafficLightSpacer + 56)
-            }
-            // The tab strip shows only when there are 2+ tabs (Terminal-
-            // style): a single tab needs no chrome. When shown, tabs are
-            // EQUAL WIDTH, dividing the row — no per-tab width measurement,
-            // so no render loop.
+            // The tab lane (BP-4 · P17): the note tabs live UP in the top band's
+            // empty middle now, not as a strip in the midsection — one fewer row.
+            // Tabs are EQUAL WIDTH (no per-tab measurement, no render loop); a
+            // single tab needs no chrome.
             if tabs.tabs.count >= 2 {
                 ForEach(tabs.tabs) { tab in
                     TabPill(
@@ -249,26 +244,14 @@ struct TabStrip: View {
             Button(action: openNew) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
-                    .frame(width: 26, height: 26)
+                    .frame(width: 24, height: 24)
                     .foregroundColor(Theme.mutedFg)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("New tab (⌘T)")
-            // With the inspector closed, the window's Spaces picker floats
-            // over the content's top-right — reserve room so + never sits
-            // under it. (Inspector open: the picker is over the inspector.)
-            if !chrome.rightOpen {
-                Color.clear.frame(width: 66)
-            }
         }
-        .padding(.horizontal, 8)
-        .frame(height: Theme.headerBandHeight)
-        // No face of its own: the tab strip sits flush on the bare window
-        // material like the rest of the middle. Only the tabs themselves carry
-        // a fill (the active tab's pill); the strip and the seam under it are
-        // gone, so the tabs read as lifted off the same face as the content.
-        .background(WindowDragRegion())
+        .frame(maxHeight: Theme.headerBandHeight)
     }
 
     private func title(_ tab: WorkspaceTab) -> String {

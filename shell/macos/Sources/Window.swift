@@ -1084,7 +1084,21 @@ struct WindowChrome: View {
             // Search sits right of the workspace hub (owner's call) — a quiet
             // icon, never the blueprint's full-width search-bar-as-a-button.
             bandButton("magnifyingglass", "Search (⌘O)") { chrome.searchOpen = true }
-            Spacer(minLength: 0)
+            // The note tabs live HERE now — in the band's empty middle, spanning
+            // above the cards (the owner's idea) — so the midsection loses its
+            // tab-strip row. Only the Notes surface has tabs.
+            if chrome.surface == .notes {
+                TabStrip(
+                    tabs: tabs, model: model, chrome: chrome,
+                    activate: { tab in activateTab(tab) },
+                    close: { tab in closeTab(tab) },
+                    openNew: { openBlankTab() },
+                    rename: { id in renameEntity(id) })
+                    .frame(maxWidth: .infinity)
+                    .padding(.leading, 10)
+            } else {
+                Spacer(minLength: 0)
+            }
             // The RIGHT panel's toggle — mirrors the left one, in the band, over
             // the inspector. One grammar for both sides; the calendar's bespoke
             // edge chevron is gone (it now rides this same chrome.rightOpen).
@@ -1435,17 +1449,10 @@ struct WindowChrome: View {
 
     /// The Notes surface: the tab strip over the active tab's content.
     private var notesBody: some View {
-        VStack(spacing: 0) {
-            TabStrip(
-                tabs: tabs, model: model, chrome: chrome,
-                activate: { tab in activateTab(tab) },
-                close: { tab in closeTab(tab) },
-                openNew: { openBlankTab() },
-                rename: { id in renameEntity(id) }
-            )
-            activeTabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
+        // The tabs moved UP to the top band (P17) — the midsection is just the
+        // active tab's content now, no strip of its own.
+        activeTabContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
