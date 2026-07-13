@@ -1342,10 +1342,9 @@ struct WindowChrome: View {
                 }
                 center
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    // The middle is the flush canvas — NOT a card. Only the side
-                    // panels (sidebar + inspector) float; the content + its tab
-                    // strip read as one surface (the tab bar isn't a separate hue).
-                    .background(Theme.background)
+                    // The middle is the bare face — NO fill of its own. The window
+                    // material (body3Pane's SidebarMaterial) shows straight through,
+                    // and only the side panels (sidebar + inspector) are cards on it.
                 // The right divider outlives its panel: a drag-collapsed
                 // inspector must stay reopenable by mouse (§1.5). The Calendar
                 // never shows the GLOBAL inspector: it embeds one inside its
@@ -2335,7 +2334,9 @@ struct ContactsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+        // The middle is the bare face: the window material shows through, so the
+        // side panels are the only cards floating on it (owner's model). The
+        // content (rows, cards, the editor page) carries its own surface.
     }
 
     /// New contact = a note born as a person (createNote + the P13 setType
@@ -3759,7 +3760,9 @@ struct BaseFileView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+        // The middle is the bare face: the window material shows through, so the
+        // side panels are the only cards floating on it (owner's model). The
+        // content (rows, cards, the editor page) carries its own surface.
         // On open: re-hash (a changed file re-extracts), then load the
         // preview. No timer — freshness is per-open.
         .onAppear {
@@ -3818,7 +3821,9 @@ struct LibraryView: View {
             ShortcutBar(pairs: [("⌃1", "table"), ("↵", "open"), ("⌘⇧I", "import")])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+        // The middle is the bare face: the window material shows through, so the
+        // side panels are the only cards floating on it (owner's model). The
+        // content (rows, cards, the editor page) carries its own surface.
     }
 
     private func header(_ count: Int) -> some View {
@@ -4044,7 +4049,9 @@ struct TasksView: View {
                 : [("⌃1–4", "lens"), ("↑↓", "move"), ("⏎", "open"), ("N", "new")])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+        // The middle is the bare face: the window material shows through, so the
+        // side panels are the only cards floating on it (owner's model). The
+        // content (rows, cards, the editor page) carries its own surface.
     }
 
     /// The List lens (bp6 a14): the status-grouped list — rows are ObjectRow
@@ -4571,7 +4578,9 @@ struct ListsSurface: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+        // The middle is the bare face: the window material shows through, so the
+        // side panels are the only cards floating on it (owner's model). The
+        // content (rows, cards, the editor page) carries its own surface.
     }
 
     private func indexRow(_ row: EntityRow) -> some View {
@@ -4637,7 +4646,9 @@ struct ListsSurface: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.background)
+        // The middle is the bare face: the window material shows through, so the
+        // side panels are the only cards floating on it (owner's model). The
+        // content (rows, cards, the editor page) carries its own surface.
     }
 
     private func removeButton(list: UInt64, member: UInt64) -> some View {
