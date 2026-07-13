@@ -170,35 +170,11 @@ struct CalendarView: View {
     // survive the panel-to-inspector content swap).
     private func rightColumn(_ byDay: [Int64: [EntityRow]]) -> some View {
         Group {
-            if let sel = selection {
-                VStack(spacing: 0) {
-                    HStack(spacing: 6) {
-                        Button { selection = nil } label: {
-                            Label(
-                                Fmt.weekdayDay.string(from: civilDate(selectedDay)),
-                                systemImage: "chevron.left"
-                            )
-                            .font(.system(size: 12))
-                            .foregroundColor(Theme.accent)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Back to the day")
-                        Spacer()
-                        Button { open(sel) } label: {
-                            Image(systemName: "arrow.up.forward.square")
-                                .font(.system(size: 12.5))
-                                .foregroundColor(Theme.mutedFg)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open")
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    Divider()
-                    InspectorPane(model: model, selection: $selection, topPadding: 0)
-                }
+            if selection != nil {
+                // The EXACT same inspector as every other surface — no back-header,
+                // no extra line. Esc deselects (footbar) → back to the day panel;
+                // double-click an event in the grid opens it.
+                InspectorPane(model: model, selection: $selection, topPadding: 0)
             } else {
                 dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
             }

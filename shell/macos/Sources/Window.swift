@@ -1067,7 +1067,9 @@ struct WindowChrome: View {
     /// sit ABOVE the side panels. The global tab lane joins it in 17b.
     private var topBand: some View {
         HStack(spacing: 6) {
-            Color.clear.frame(width: Theme.trafficLightSpacer - 8)
+            // Room for the traffic lights — but they vanish in fullscreen, so the
+            // band would otherwise carry 64pt of dead space that shifts everything.
+            Color.clear.frame(width: chrome.isFullscreen ? 0 : Theme.trafficLightSpacer - 8)
             // The ONE panel toggle — the macOS-standard sidebar chevron, always
             // in the band (collapse when open, expand when closed). No floating
             // control that pops in from nowhere, no button buried in the panel.

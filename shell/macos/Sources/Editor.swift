@@ -1790,7 +1790,10 @@ struct EditorView: View {
                 }
             }
             .frame(maxWidth: LotusTextView.measure - 10)
-            .padding(.top, 44)
+            // Modest breathing room — the editor sits under the tab strip + top
+            // band now, not the window top, so the old 44pt clearance was an
+            // empty row.
+            .padding(.top, 16)
             .padding(.horizontal, 28)
 
             NoteTextView(model: model)
