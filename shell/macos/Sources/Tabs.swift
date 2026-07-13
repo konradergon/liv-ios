@@ -217,14 +217,45 @@ struct TabStrip: View {
     let openNew: () -> Void
     let rename: (UInt64) -> Void
 
+    // The lane's geometry, all deterministic (no per-tab measurement, so no
+    // render loop): pills clamp between MIN and MAX width; when even MIN-width
+    // pills can't all fit, the excess collapses into a compact +N overflow menu
+    // and the window slides so the ACTIVE tab is always visible. The + never
+    // moves and the lane can never overflow its slot.
+    private static let minTab: CGFloat = 76
+    private static let maxTab: CGFloat = 170
+    private static let gap: CGFloat = 6
+    private static let plusWidth: CGFloat = 24
+    private static let overflowWidth: CGFloat = 34
+
     var body: some View {
-        HStack(spacing: 6) {
-            // The tab lane (BP-4 · P17): the note tabs live UP in the top band's
-            // empty middle now, not as a strip in the midsection — one fewer row.
-            // Tabs are EQUAL WIDTH (no per-tab measurement, no render loop); a
-            // single tab needs no chrome.
-            if tabs.tabs.count >= 2 {
-                ForEach(tabs.tabs) { tab in
+        GeometryReader { geo in
+            let all = tabs.tabs
+            let lane = max(0, geo.size.width - Self.plusWidth - Self.gap)
+            // How many MIN-width pills fit (leave room for the +N chip when
+            // some don't).
+            let fitAll = Int((lane + Self.gap) / (Self.minTab + Self.gap))
+            let overflowing = all.count >= 2 && fitAll < all.count
+            let usable = overflowing ? max(0, lane - Self.overflowWidth - Self.gap) : lane
+            let visibleCount = overflowing
+                ? max(1, Int((usable + Self.gap) / (Self.minTab + Self.gap)))
+                : all.count
+            // Slide the window so the active tab is in view; prefer the front.
+            let activeAt = all.firstIndex { $0.id == tabs.activeId } ?? 0
+            let start = overflowing
+                ? min(max(0, activeAt - visibleCount + 1), max(0, all.count - visibleCount))
+                : 0
+            let end = min(start + visibleCount, all.count)
+            let visible = all.count >= 2 ? Array(all[start..<end]) : []
+            let width = visible.isEmpty
+                ? 0
+                : min(Self.maxTab,
+                      max(Self.minTab,
+                          (usable - Self.gap * CGFloat(visible.count - 1)) / CGFloat(visible.count)))
+            let hidden = all.count >= 2 ? Array(all[..<start]) + Array(all[end...]) : []
+
+            HStack(spacing: Self.gap) {
+                ForEach(visible) { tab in
                     TabPill(
                         tab: tab,
                         title: title(tab),
@@ -236,20 +267,37 @@ struct TabStrip: View {
                             if case .note(let id) = tab.kind { rename(id) }
                         }
                     )
-                    .frame(maxWidth: .infinity)
+                    .frame(width: width)
                 }
-            } else {
+                if !hidden.isEmpty {
+                    Menu {
+                        ForEach(hidden) { tab in
+                            Button(title(tab)) { activate(tab) }
+                        }
+                    } label: {
+                        Text("+\(hidden.count)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Theme.mutedFg)
+                            .frame(width: Self.overflowWidth - 6, height: 22)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.secondary.opacity(0.4)))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("\(hidden.count) more tab\(hidden.count == 1 ? "" : "s")")
+                }
                 Spacer(minLength: 0)
+                Button(action: openNew) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: Self.plusWidth, height: 24)
+                        .foregroundColor(Theme.mutedFg)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("New tab (⌘T)")
             }
-            Button(action: openNew) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: 24, height: 24)
-                    .foregroundColor(Theme.mutedFg)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("New tab (⌘T)")
+            .frame(height: geo.size.height)
         }
         .frame(maxHeight: Theme.headerBandHeight)
     }
