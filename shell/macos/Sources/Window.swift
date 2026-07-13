@@ -93,6 +93,19 @@ struct ProposalRow: Codable, Identifiable, Hashable {
     let fingerprint: UInt64
     let reason: String
     let author: String
+    /// The structured writes this proposal makes — the diff card's source
+    /// (P16c). Optional per the decoder rule: a missing key must not drop the
+    /// whole snapshot.
+    let commands: [ProposalCommandRow]?
+}
+
+/// One command of a proposal, for the +/- diff (P16c).
+struct ProposalCommandRow: Codable, Hashable {
+    let kind: String  // add | trash | redirect | create | remove | restore
+    let property: String?
+    let value: String?
+    let valueKind: String?
+    let refTarget: UInt64?
 }
 
 struct OccurrenceRow: Codable, Hashable {
@@ -379,6 +392,19 @@ final class BoxModel: ObservableObject {
 
     func reject(_ proposal: ProposalRow) {
         act { lotus_reject_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
+    }
+
+    /// Accept a whole group as ONE transaction, one undo (P16b) — the members'
+    /// fingerprints through lotus_accept_group_at.
+    func acceptGroup(_ fingerprints: [UInt64]) {
+        let json = (try? String(data: JSONEncoder().encode(fingerprints), encoding: .utf8)) ?? "[]"
+        act { lotus_accept_group_at(self.path, json) == 1 }
+    }
+
+    /// How many pending proposals point at this entity — the in-place ✦ halo
+    /// count (P16f). Same queue, same fingerprints as Inbox › Tidy.
+    func proposalCount(_ entity: UInt64) -> Int {
+        (snap?.inbox ?? []).filter { $0.entity == entity }.count
     }
 
     func undo() {
@@ -889,6 +915,8 @@ extension Notification.Name {
     /// Open the Import funnel (P15e) / Export composer (P15f) sheets — ⌘⇧I / ⌘⇧E.
     static let lotusOpenImport = Notification.Name("lotus.openImport")
     static let lotusOpenExport = Notification.Name("lotus.openExport")
+    /// Jump to Inbox › Tidy (P16f): the Agents doorway + row-halo taps.
+    static let lotusGoTidy = Notification.Name("lotus.goTidy")
 }
 
 // MARK: - lenses
@@ -994,6 +1022,9 @@ struct WindowChrome: View {
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
                 exportComposer.reset()
                 exportOpen = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusGoTidy)) { _ in
+                navigate(to: .inbox)
             }
             .onAppear {
                 model.refresh()
@@ -2327,9 +2358,57 @@ struct InboxView: View {
     var open: (UInt64) -> Void = { _ in }
     @State private var lens: InboxLens = .route
     @FocusState private var surfaceFocused: Bool
+    /// The Tidy cursor — a FINGERPRINT, so it re-anchors across a refresh even
+    /// as ordinals shift (P16e). nil = the first proposal.
+    @State private var cursor: UInt64?
 
     private var orphans: [EntityRow] { model.orphans() }
     private var proposals: [ProposalRow] { model.snap?.inbox ?? [] }
+
+    /// Proposals grouped by author, in first-seen order (alike proposals group —
+    /// constitution 1.3). Deterministic because the sweep yields entity-id order.
+    private var proposalGroups: [(author: String, items: [ProposalRow])] {
+        var order: [String] = []
+        var byAuthor: [String: [ProposalRow]] = [:]
+        for p in proposals {
+            if byAuthor[p.author] == nil { order.append(p.author) }
+            byAuthor[p.author, default: []].append(p)
+        }
+        return order.map { (author: $0, items: byAuthor[$0] ?? []) }
+    }
+
+    /// The proposal the cursor points at (by fingerprint), else the first.
+    private var focused: ProposalRow? {
+        proposals.first { $0.fingerprint == cursor } ?? proposals.first
+    }
+
+    private func moveCursor(_ delta: Int) {
+        guard !proposals.isEmpty else { return }
+        let i = proposals.firstIndex { $0.fingerprint == focused?.fingerprint } ?? 0
+        cursor = proposals[(i + delta + proposals.count) % proposals.count].fingerprint
+    }
+
+    private func actFocused(accept: Bool) {
+        guard let p = focused else { return }
+        // Advance the cursor to the next survivor before the queue mutates.
+        let i = proposals.firstIndex { $0.fingerprint == p.fingerprint } ?? 0
+        cursor =
+            (i + 1 < proposals.count)
+            ? proposals[i + 1].fingerprint : (i > 0 ? proposals[i - 1].fingerprint : nil)
+        if accept { model.accept(p) } else { model.reject(p) }
+    }
+
+    private func actGroup(accept: Bool) {
+        guard let author = focused?.author,
+            let group = proposalGroups.first(where: { $0.author == author })
+        else { return }
+        cursor = nil
+        if accept {
+            model.acceptGroup(group.items.map(\.fingerprint))
+        } else {
+            group.items.forEach { model.reject($0) }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2349,8 +2428,29 @@ struct InboxView: View {
         .focusEffectDisabled()
         .focused($surfaceFocused)
         .onAppear { surfaceFocused = true }
-        .onKeyPress(.init("[")) { cycleLens(-1); return .handled }
-        .onKeyPress(.init("]")) { cycleLens(1); return .handled }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusGoTidy)) { _ in lens = .tidy }
+        .onKeyPress { handleInboxKey($0) }
+    }
+
+    /// [ ] cycle the lens; in Tidy, j/k move the cursor and a/r (A/R) accept or
+    /// reject the focused proposal (or its whole group) — the home-row triage.
+    private func handleInboxKey(_ press: KeyPress) -> KeyPress.Result {
+        switch press.characters {
+        case "[": cycleLens(-1); return .handled
+        case "]": cycleLens(1); return .handled
+        default: break
+        }
+        guard lens == .tidy else { return .ignored }
+        switch press.characters {
+        case "j": moveCursor(1)
+        case "k": moveCursor(-1)
+        case "a": actFocused(accept: true)
+        case "r": actFocused(accept: false)
+        case "A": actGroup(accept: true)
+        case "R": actGroup(accept: false)
+        default: return .ignored
+        }
+        return .handled
     }
 
     private func cycleLens(_ delta: Int) {
@@ -2486,37 +2586,53 @@ struct InboxView: View {
     @ViewBuilder
     private var tidyLens: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 11) {
-                HStack {
-                    Text("Assist queue — the clerk’s live proposals; nothing here was applied")
-                        .font(.system(size: 11.5)).foregroundColor(.secondary)
-                    Spacer()
-                    Button { NSSound.beep() } label: {
-                        Label("Suggest for all", systemImage: "wand.and.stars")
-                    }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .help("The batch metadata suggester arrives with the AI pass (P16)")
-                }
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Assist queue — the clerk’s live proposals, grouped; nothing here was applied")
+                    .font(.system(size: 11.5)).foregroundColor(.secondary)
                 if proposals.isEmpty {
-                    Text("Nothing to tidy. Assist re-scans in the background; the amber badge only counts what is actionable.")
+                    Text("Nothing to tidy. Assist re-scans at open; the amber badge only counts what is actionable.")
                         .font(.system(size: 12.5)).foregroundColor(.secondary)
                         .padding(.top, 4)
                 } else {
-                    ForEach(proposals) { proposal in
-                        AssistCard(model: model, proposal: proposal)
+                    ForEach(proposalGroups, id: \.author) { group in
+                        groupBlock(group)
                     }
                 }
-                // A static heuristic card — the proposer defers to P16, but
-                // the card + accept path are the frame it will ride (§1.3).
-                StaticAssistCard()
-                Text("Dismissals are remembered — suggestions carry deterministic ids and are never re-asked.")
+                Text("⌘Z never expires · dismissals are remembered by a deterministic id, never re-asked.")
                     .font(.system(size: 11)).foregroundColor(Color.secondary.opacity(0.8))
                     .padding(.top, 2)
             }
             .padding(.horizontal, 32).padding(.top, 14).padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { if cursor == nil { cursor = proposals.first?.fingerprint } }
     }
+
+    private func groupBlock(_ group: (author: String, items: [ProposalRow])) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("✦ \(group.author.uppercased())")
+                    .font(.system(size: 11, weight: .bold)).kerning(0.3).foregroundColor(Theme.warning)
+                Text("· \(group.items.count)").font(.system(size: 11)).foregroundColor(.secondary)
+                Spacer()
+                Button("Accept all · A") { model.acceptGroup(group.items.map(\.fingerprint)) }
+                    .buttonStyle(.bordered).controlSize(.small).tint(Theme.warning)
+                Button("Reject all · R") { group.items.forEach { model.reject($0) } }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+            ForEach(group.items) { proposal in
+                SuggestionCard(model: model, proposal: proposal)
+                    .overlay(alignment: .leading) {
+                        if proposal.fingerprint == focused?.fingerprint {
+                            RoundedRectangle(cornerRadius: 2).fill(Theme.warning)
+                                .frame(width: 3).padding(.vertical, 3)
+                        }
+                    }
+                    .onTapGesture { cursor = proposal.fingerprint }
+            }
+        }
+    }
+
 }
 
 /// The marigold-halo assist card (bp5 a23): one live clerk proposal —
@@ -4237,15 +4353,21 @@ struct TasksView: View {
     /// The AI Agents frame (bp6) — inert; the task copilot's proposals enter
     /// the ONE inbox in the P16 pass, never a second mutation door here.
     private var agentsButton: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "wand.and.stars").font(.system(size: 10.5))
-            Text("Agents").font(.system(size: 12, weight: .medium))
+        let count = model.snap?.inbox.count ?? 0
+        return Button {
+            NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "wand.and.stars").font(.system(size: 10.5))
+                Text(count > 0 ? "Agents · \(count)" : "Agents").font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(Theme.warning)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.4), lineWidth: 1))
+            .contentShape(Capsule())
         }
-        .foregroundColor(Theme.warning.opacity(0.8))
-        .padding(.horizontal, 9).padding(.vertical, 4)
-        .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.35), lineWidth: 1))
-        .opacity(0.7)
-        .help("Task agents arrive with the AI pass (P16) — proposals in the one inbox")
+        .buttonStyle(.plain)
+        .help("The clerk’s suggestions — review in the one inbox (Inbox › Tidy)")
     }
 
     // Icon-only so four lenses fit beside the header controls even with the
@@ -4291,7 +4413,9 @@ struct TasksView: View {
                 NotificationCenter.default.post(name: .lotusSearchFor, object: filter)
             },
             select: { selection = row.id },
-            openRow: { open(row.id) })
+            openRow: { open(row.id) },
+            haloCount: model.proposalCount(row.id),
+            onHalo: { NotificationCenter.default.post(name: .lotusGoTidy, object: nil) })
     }
 
     /// The priority flag — a menu over the seeded `priority` options (never

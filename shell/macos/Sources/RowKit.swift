@@ -174,6 +174,10 @@ struct ObjectRow: View {
     var chipTap: ((String) -> Void)? = nil
     var select: () -> Void = {}
     var openRow: () -> Void = {}
+    /// In-place AI halo (P16f): the count of pending proposals for this row's
+    /// entity. 0 renders nothing — the density budget is intact.
+    var haloCount: Int = 0
+    var onHalo: () -> Void = {}
 
     @State private var hovering = false
     @State private var lastTap: Date? = nil
@@ -214,6 +218,20 @@ struct ObjectRow: View {
                 .foregroundColor(isDone && toggle != nil ? .secondary : .primary)
                 .strikethrough(isDone && toggle != nil, color: .secondary)
             Spacer(minLength: 8)
+            if haloCount > 0 {
+                Button(action: onHalo) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "sparkle").font(.system(size: 8.5))
+                        Text("\(haloCount)").font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.warning.opacity(0.13)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("\(haloCount) suggestion\(haloCount == 1 ? "" : "s") — review in Inbox › Tidy")
+            }
             if let trailing { trailing }
             if let anchor {
                 ValueChip(
