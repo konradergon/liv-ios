@@ -327,3 +327,37 @@ proposal accepted with one keystroke — no model, fully offline.
 The angles otherwise agree on the spine: one queue by law, accept = the normal
 seam (no AI-only write path), closed vocabulary, deterministic decline ids that
 never re-ask, always-on undo, and the generative fence.
+
+## 9 · Shipped (P16a–f) + the surface-review deltas
+
+P16 landed as: two proposers + dedupe (16a), severable group-accept (16b), the
+FFI seam — structured proposal commands + `lotus_accept_group_at` (16c), and the
+AI surfaces (16d–f). The whole Rust workspace is green (clerk 21, ffi 17).
+
+A 4-lens adversarial pass (find → verify) over the surfaces produced 10 confirmed
+findings; the deltas from the naive mockup port:
+
+- **The diff mirrors the command list, not current state.** A core AddCell only
+  ever appends, so a shell-synthesized `− prop: old` line lied on append-valued
+  properties (adding a mention read as "removes the existing relation"). The card
+  now renders `add` as a pure `+`; a genuine replacement arrives as its own
+  RemoveCell (`−` branch). This is the single most important trust fix — the diff
+  is the one consent surface (bp10 a11) and it must never misstate the write.
+- **The Inbox lens lives on the window, not inside InboxView.** A `.lotusGoTidy`
+  posted from another surface (the Tasks ✦ badge, the Agents doorway) can't reach
+  a view that is mounted lazily and wasn't subscribed at post time — so the lens
+  is a window-owned `@Binding`, set before navigation.
+- **⏎ = accept, `r` = dismiss; Esc stays unbound.** A dismissal is permanent
+  (declines never touch the undo stack), so it must not ride the reflexive Escape.
+  The footer states the real asymmetry: accept is one undo (⌘Z never expires),
+  dismiss is deterministic + never re-asked + never undone.
+- **The triage keys guard ⌘/⌥/⌃.** Bare-letter matching let ⌘R read as `r` and
+  silently reject a proposal — a quarantine break; chords now pass through.
+- **The cursor re-anchors against the refreshed queue** (a cascading dedupe-accept
+  can retract the pre-computed next sibling), and the amber Accept CTA is a custom
+  black-on-amber capsule (macOS keeps `.borderedProminent` labels white — illegible
+  on dark-mode gold).
+
+Deferred as named (mechanism in place): the inspector ✦ wand, the funnel's
+read-only ✦ preview chip, broad Everything/Route row-halos, and the generative
+brain behind the socket.
