@@ -119,7 +119,7 @@ struct CalendarView: View {
             // A tight window sheds panels instead of crushing the grid: the
             // rail goes first, then the right column — the grid is the point.
             let byDay = buildByDay()
-            let showRight = panelOpen && geo.size.width >= 760
+            let wide = geo.size.width >= 760
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     topBar
@@ -154,9 +154,16 @@ struct CalendarView: View {
                 // Same width is load-bearing: selection must never reflow the
                 // grid, or the second click of a double-tap lands on a moved
                 // target (the review's high finding).
-                if showRight {
-                    Divider()
-                    rightColumn(byDay)
+                //
+                // The collapse control lives ON the panel edge (panelHandle),
+                // not out in the toolbar, and stays visible when collapsed so
+                // the panel reopens — the same edge grammar as the other
+                // surfaces' pane divider. (Full cross-surface unification is P17.)
+                if wide {
+                    panelHandle
+                    if panelOpen {
+                        rightColumn(byDay)
+                    }
                 }
             }
         }
@@ -203,8 +210,29 @@ struct CalendarView: View {
                 dayPanel(selectedDay, items: byDay[selectedDay] ?? [])
             }
         }
-        .frame(width: 320)
-        .background(Theme.background)
+        .frame(width: 296)
+        // The same floating panel card as the global inspector — Theme.panel on
+        // the bare face, not a white slab. (Was a mismatched Theme.background.)
+        .background(Theme.panel)
+        .panelCard()
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+    }
+
+    /// The on-panel collapse handle: a thin edge strip that toggles the right
+    /// column and STAYS when collapsed, so the panel can be reopened without a
+    /// bespoke toolbar button. The chevron points the way the panel will move.
+    private var panelHandle: some View {
+        Button { withAnimation(.easeInOut(duration: 0.16)) { panelOpen.toggle() } } label: {
+            Image(systemName: panelOpen ? "chevron.right" : "chevron.left")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 16)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(panelOpen ? "Hide the panel" : "Show the panel")
     }
 
     // MARK: data
@@ -345,15 +373,6 @@ struct CalendarView: View {
             }
             .buttonStyle(.plain)
             .help("New event on the selected day")
-            Button { panelOpen.toggle() } label: {
-                Image(systemName: "sidebar.right")
-                    .font(.system(size: 12))
-                    .foregroundColor(panelOpen ? Theme.accent : Theme.mutedFg)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(panelOpen ? "Hide the day panel" : "Show the day panel")
         }
         .padding(.leading, 14 + leadingInset)
         .padding(.trailing, 14)
@@ -574,7 +593,8 @@ struct CalendarView: View {
         .padding(.top, 18)
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Theme.background)
+        // Inside the panel card now — match it, don't paint a white slab.
+        .background(Theme.panel)
     }
 
     /// The daily-note doorway (P14h, bp9): the day's note, get-or-created
