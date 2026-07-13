@@ -1085,10 +1085,9 @@ struct WindowChrome: View {
             // icon, never the blueprint's full-width search-bar-as-a-button.
             bandButton("magnifyingglass", "Search (⌘O)") { chrome.searchOpen = true }
             // The note tabs live in the band's middle now (the owner's idea).
-            // A FIXED-WIDTH slot, pushed right by the spacer so it never invades
-            // the top-left buttons; the tabs share the slot (shrinking to fit,
-            // like before) and the + stays pinned at the slot's right edge.
-            Spacer(minLength: 20)
+            // A FIXED-WIDTH slot, LEFT-aligned right after the search (a small
+            // gap keeps it off the button); the tabs share the slot (shrinking
+            // to fit) and the + stays pinned at the slot's right edge.
             if chrome.surface == .notes {
                 TabStrip(
                     tabs: tabs, model: model, chrome: chrome,
@@ -1097,7 +1096,9 @@ struct WindowChrome: View {
                     openNew: { openBlankTab() },
                     rename: { id in renameEntity(id) })
                     .frame(width: 420)
+                    .padding(.leading, 12)
             }
+            Spacer(minLength: 0)
             // The RIGHT panel's toggle — mirrors the left one, in the band, over
             // the inspector. One grammar for both sides; the calendar's bespoke
             // edge chevron is gone (it now rides this same chrome.rightOpen).
