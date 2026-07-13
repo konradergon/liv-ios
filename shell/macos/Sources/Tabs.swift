@@ -264,9 +264,11 @@ struct TabStrip: View {
         }
         .padding(.horizontal, 8)
         .frame(height: Theme.headerBandHeight)
+        // No face of its own: the tab strip sits flush on the bare window
+        // material like the rest of the middle. Only the tabs themselves carry
+        // a fill (the active tab's pill); the strip and the seam under it are
+        // gone, so the tabs read as lifted off the same face as the content.
         .background(WindowDragRegion())
-        .background(Theme.background)
-        .overlay(Divider(), alignment: .bottom)
     }
 
     private func title(_ tab: WorkspaceTab) -> String {
