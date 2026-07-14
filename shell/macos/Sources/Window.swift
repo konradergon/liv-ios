@@ -1868,10 +1868,10 @@ struct WindowChrome: View {
                 enabled: { selection != nil }
             ) {
                 guard let id = selection, let row = model.entity(id) else { return }
-                let starred = row.cells.contains {
-                    $0.property == "bookmarked" && $0.value == "yes"
-                }
-                model.set(id, property: "bookmarked", value: starred ? "false" : "true")
+                // row.bookmarked is the decoded flag — the same source the
+                // inspector's 🔖 and the Favourites pins read, never a string
+                // compare against the display form.
+                model.set(id, property: "bookmarked", value: row.bookmarked ? "false" : "true")
             })
         registry.register(
             CommandDef(
