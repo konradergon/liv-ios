@@ -2601,10 +2601,13 @@ struct InboxView: View {
     /// The routing question + commit (a16/a21). "New note" stamps type=note
     /// so the scrap leaves the orphan set — NO folder move (design §1.2).
     /// "Suggest a merge" is static (proposer + execution defer to P16, §1.7).
+    /// The routing bar rides the bare face now — no boxed dark fill, and when
+    /// nothing is selected it simply isn't there (the empty box that said
+    /// "Select a capture to route it." was chrome with no job).
+    @ViewBuilder
     private var routeBar: some View {
-        let target = selection.flatMap { id in orphans.first { $0.id == id } }
-        return VStack(alignment: .leading, spacing: 8) {
-            if let target {
+        if let target = selection.flatMap({ id in orphans.first { $0.id == id } }) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Which note should this go in?")
                     .font(.system(size: 12.5, weight: .semibold))
                 HStack(spacing: 8) {
@@ -2627,14 +2630,11 @@ struct InboxView: View {
                 }
                 Text("Commit stamps the type cell — the scrap leaves the inbox. No file move.")
                     .font(.system(size: 11)).foregroundColor(.secondary)
-            } else {
-                Text("Select a capture to route it.")
-                    .font(.system(size: 12.5)).foregroundColor(.secondary)
             }
+            .padding(.horizontal, 32).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(Divider(), alignment: .top)
         }
-        .padding(.horizontal, 32).padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .underPageBackgroundColor))
     }
 
     private func commit(_ row: EntityRow) {
@@ -3253,7 +3253,7 @@ struct SearchPopup: View {
     var body: some View {
         let rows = self.rows
         let fresh = model.searchedFor == query
-        return ZStack(alignment: .top) {
+        return ZStack {
             Theme.background.opacity(0.6)
                 .background(.ultraThinMaterial)
                 .ignoresSafeArea()
@@ -3397,7 +3397,11 @@ struct SearchPopup: View {
             .background(RoundedRectangle(cornerRadius: Theme.radiusXl).fill(Theme.popover))
             .overlay(RoundedRectangle(cornerRadius: Theme.radiusXl).strokeBorder(Theme.border))
             .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
-            .padding(.top, 96)
+            // CENTERED on the window (the owner's call — it hung 96pt off the
+            // top before). The fixed-height anchor keeps the box's TOP pinned
+            // while results grow downward, so the palette doesn't bounce as
+            // the hit list changes height.
+            .frame(height: 520, alignment: .top)
         }
         // Debounce keystrokes before hitting the box lock.
         .task(id: query) {

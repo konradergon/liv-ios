@@ -1849,7 +1849,7 @@ struct EditorView: View {
         }
         .padding(.vertical, 7)
         .padding(.horizontal, 14)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        // A quiet inline strip on the bare face — not an opaque dark slab.
         .overlay(Divider(), alignment: .bottom)
     }
 }
