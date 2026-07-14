@@ -5,6 +5,7 @@
 // interface.md is the law here: system materials, Apple text styles,
 // lake green in exactly three jobs, the inbox count as the only badge.
 
+import Combine
 import SwiftUI
 
 // MARK: - theme
@@ -1131,6 +1132,62 @@ struct WindowChrome: View {
         .help(help)
     }
 
+    /// What the non-inspector lenses look at: the selection, else the open
+    /// tab's entity on Notes. The inspector keeps its own selection binding.
+    private var rightFocusId: UInt64? {
+        if let sel = selection { return sel }
+        if chrome.surface == .notes {
+            switch tabs.active?.kind {
+            case .note(let id), .file(let id): return id
+            default: return nil
+            }
+        }
+        return nil
+    }
+
+    /// The lens bar (bp4: active = accent underline; ✦ Assist is amber — the
+    /// one AI hue — with a live count pip).
+    private var lensBar: some View {
+        HStack(spacing: 2) {
+            ForEach(RightLens.allCases, id: \.rawValue) { lens in
+                let on = chrome.rightLens == lens
+                let tint: Color = lens == .assist ? Theme.warning : Theme.accent
+                Button { chrome.rightLens = lens } label: {
+                    ZStack {
+                        Image(systemName: lens.symbol)
+                            .font(.system(size: 12.5))
+                            .foregroundColor(on ? tint : Theme.mutedFg)
+                        if lens == .assist {
+                            let count = (model.snap?.inbox ?? [])
+                                .filter { $0.entity == rightFocusId }.count
+                            if count > 0 {
+                                Text("\(count)")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundColor(Color(red: 0.22, green: 0.14, blue: 0))
+                                    .padding(.horizontal, 3)
+                                    .frame(minWidth: 11, minHeight: 11)
+                                    .background(Capsule().fill(Theme.warning))
+                                    .offset(x: 10, y: -8)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .overlay(alignment: .bottom) {
+                    if on {
+                        RoundedRectangle(cornerRadius: 1).fill(tint)
+                            .frame(height: 2).padding(.horizontal, 14)
+                    }
+                }
+                .help(lens.label)
+            }
+        }
+        .overlay(Divider(), alignment: .bottom)
+    }
+
     /// The Spaces|Vault panel body (BP-4 · P17a): the two-tab control + the
     /// tree/vault content. The rail is now its OWN card beside this one, and
     /// the workspace hub moved up to the top band — so the panel is pure
@@ -1403,17 +1460,36 @@ struct WindowChrome: View {
                 // card, so selection never reflows the grid (the double-tap
                 // guarantee, now structural).
                 if chrome.rightOpen && !chrome.focusMode {
-                    Group {
-                        if chrome.surface == .calendar && selection == nil {
-                            CalendarDayPanel(
-                                model: model, selection: $selection,
-                                day: chrome.calendarDay,
-                                open: { id in openEntityTab(id) },
-                                openDaily: { day in openDailyNote(forDay: day) })
-                        } else {
-                            InspectorPane(model: model, selection: $selection, topPadding: 0)
+                    VStack(spacing: 0) {
+                        // The five-lens bar (bp4 · P17; Graph waits for P18 —
+                        // no dead buttons). Hidden while the calendar's day
+                        // panel owns the card.
+                        if !(chrome.surface == .calendar && selection == nil) {
+                            lensBar
                         }
+                        Group {
+                            if chrome.surface == .calendar && selection == nil {
+                                CalendarDayPanel(
+                                    model: model, selection: $selection,
+                                    day: chrome.calendarDay,
+                                    open: { id in openEntityTab(id) },
+                                    openDaily: { day in openDailyNote(forDay: day) })
+                            } else {
+                                switch chrome.rightLens {
+                                case .metadata:
+                                    InspectorPane(model: model, selection: $selection, topPadding: 0)
+                                case .assist:
+                                    AssistLensPane(model: model, focus: rightFocusId)
+                                case .outline:
+                                    OutlineLensPane(editor: editor)
+                                case .history:
+                                    HistoryLensPane(model: model, focus: rightFocusId)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
+                    .background(Theme.panel)
                     .frame(width: max(total * chrome.rightPct / 100, 0))
                     .panelCard()
                 }
@@ -4738,6 +4814,9 @@ struct ListsSurface: View {
 struct HistorySection: View {
     @ObservedObject var model: BoxModel
     let id: UInt64
+    /// The History LENS mounts this expanded; the inspector-era default was
+    /// a collapsed disclosure.
+    var startOpen = false
 
     @State private var open = false
     @State private var versions: [HistoryVersion] = []
@@ -4787,10 +4866,20 @@ struct HistorySection: View {
                 }
             }
         }
+        .onAppear {
+            if startOpen && !open {
+                open = true
+                load()
+            }
+        }
         .onChange(of: id) {
             open = false
             versions = []
             currentSpans = []
+            if startOpen {
+                open = true
+                load()
+            }
         }
     }
 
@@ -4849,5 +4938,128 @@ struct HistoryRow: View {
         .padding(.vertical, 7)
         .overlay(Divider(), alignment: .bottom)
         .onHover { hovering = $0 }
+    }
+}
+
+// MARK: - the right-panel lenses (bp4 five-lens bar · P17)
+
+/// A quiet lens empty state — text on the panel face, never a slab.
+private struct LensEmpty: View {
+    let symbol: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 24))
+                .foregroundColor(Theme.foreground.opacity(0.12))
+            Text(message)
+                .font(.system(size: 11.5))
+                .foregroundColor(Theme.mutedFg)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Outline — a live shell parse of the open note's headings; click jumps.
+struct OutlineLensPane: View {
+    let editor: EditorModel?
+    @State private var entries: [OutlineEntry] = []
+
+    var body: some View {
+        Group {
+            if editor == nil {
+                LensEmpty(symbol: "list.bullet.indent", message: "Open a note to see its outline.")
+            } else if entries.isEmpty {
+                LensEmpty(symbol: "list.bullet.indent", message: "No headings yet — start a line with #.")
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(entries) { entry in
+                            Button { editor?.reveal(entry.id) } label: {
+                                Text(entry.text)
+                                    .font(.system(
+                                        size: entry.level == 1 ? 12.5 : 12,
+                                        weight: entry.level == 1 ? .semibold : .regular))
+                                    .foregroundColor(Theme.foreground.opacity(0.85))
+                                    .lineLimit(1)
+                                    .padding(.leading, CGFloat(max(0, entry.level - 1)) * 13)
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
+                }
+            }
+        }
+        .onAppear { entries = editor?.outline() ?? [] }
+        .onReceive(
+            editor?.objectWillChange.eraseToAnyPublisher()
+                ?? Empty<Void, Never>().eraseToAnyPublisher()
+        ) { _ in
+            // willChange — read after the update lands.
+            DispatchQueue.main.async { entries = editor?.outline() ?? [] }
+        }
+    }
+}
+
+/// History — the content-version projection, expanded (Snapshots renamed,
+/// IA-5). Restore is an append, never a rewrite.
+struct HistoryLensPane: View {
+    @ObservedObject var model: BoxModel
+    let focus: UInt64?
+
+    var body: some View {
+        if let id = focus {
+            ScrollView {
+                HistorySection(model: model, id: id, startOpen: true)
+                    .padding(.horizontal, 13)
+                    .padding(.top, 12)
+            }
+        } else {
+            LensEmpty(symbol: "clock", message: "Select an object to see its history.")
+        }
+    }
+}
+
+/// ✦ Assist — the P16 amber cards for THIS object; the AI's only panel home.
+/// Same fingerprints as Inbox › Tidy, accept/dismiss run the same seams.
+struct AssistLensPane: View {
+    @ObservedObject var model: BoxModel
+    let focus: UInt64?
+
+    var body: some View {
+        let proposals = (model.snap?.inbox ?? []).filter { $0.entity == focus }
+        Group {
+            if focus == nil {
+                LensEmpty(symbol: "sparkle", message: "Select an object to see its suggestions.")
+            } else if proposals.isEmpty {
+                LensEmpty(
+                    symbol: "sparkle",
+                    message: "Nothing suggested for this object.\nThe full queue lives in Inbox › Tidy.")
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(proposals) { proposal in
+                            SuggestionCard(model: model, proposal: proposal)
+                        }
+                        Button("All suggestions — Inbox › Tidy") {
+                            NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+                        }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11.5))
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 }

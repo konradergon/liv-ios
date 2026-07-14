@@ -50,6 +50,33 @@ enum Surface: String, CaseIterable {
     }
 }
 
+/// The right panel's lenses (bp4 five-lens bar, P17): each is already-owned
+/// machinery re-homed — Metadata = the BP-1 inspector; ✦ Assist = the P16
+/// amber cards (the AI's only panel home); Outline = a shell parse of the open
+/// note; History = the content-version projection. The local Graph lens waits
+/// for P18 (no dead buttons).
+enum RightLens: String, CaseIterable {
+    case metadata, assist, outline, history
+
+    var symbol: String {
+        switch self {
+        case .metadata: return "slider.horizontal.3"
+        case .assist: return "sparkle"
+        case .outline: return "list.bullet.indent"
+        case .history: return "clock"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .metadata: return "Metadata"
+        case .assist: return "Assist"
+        case .outline: return "Outline"
+        case .history: return "History"
+        }
+    }
+}
+
 // MARK: - navigation history (§2.6, the P1 slice)
 
 /// One merged stack for the rail chevrons and ⌥←/⌥→: where the user
@@ -100,7 +127,23 @@ final class NavHistory {
 
 final class ChromeModel: ObservableObject {
     @Published var surface: Surface {
-        didSet { UserDefaults.standard.set(surface.rawValue, forKey: "app.activeExtension.v1") }
+        didSet {
+            UserDefaults.standard.set(surface.rawValue, forKey: "app.activeExtension.v1")
+            // Per-extension last-lens memory (bp4): each surface remembers
+            // which right-panel lens it was on.
+            rightLens =
+                RightLens(
+                    rawValue: UserDefaults.standard.string(forKey: "app.rightLens.v1.\(surface.rawValue)")
+                        ?? "") ?? .metadata
+        }
+    }
+    /// The right panel's active lens for the CURRENT surface — persisted
+    /// per surface (shell state).
+    @Published var rightLens: RightLens = .metadata {
+        didSet {
+            UserDefaults.standard.set(
+                rightLens.rawValue, forKey: "app.rightLens.v1.\(surface.rawValue)")
+        }
     }
     /// Panel widths, percentages of the body (§1.5).
     @Published var leftPct: Double
@@ -143,6 +186,11 @@ final class ChromeModel: ObservableObject {
         rightOpen = defaults.object(forKey: "app.rightPanel.open.v1") as? Bool ?? true
         let workspace = UInt64(defaults.integer(forKey: "app.activeWorkspace.v1"))
         activeWorkspace = workspace == 0 ? nil : workspace
+        // Observers don't fire in init — load the surface's last lens by hand.
+        rightLens =
+            RightLens(
+                rawValue: defaults.string(forKey: "app.rightLens.v1.\(surface.rawValue)") ?? "")
+            ?? .metadata
     }
 
     func persistPanes() {

@@ -227,11 +227,8 @@ struct InspectorPane: View {
         }
         moreSection(placement, entity: entity, hints: hints)
         connectionsSection(entity)
-        if entity.cells.contains(where: { $0.property == "content" }) {
-            HistorySection(model: model, id: entity.id)
-                .padding(.horizontal, 13)
-                .padding(.top, 14)
-        }
+        // History lifted OUT of the inspector scroll into its own right-panel
+        // lens (the bp4 five-lens bar, P17 — IA-5's Snapshots→History rename).
         Spacer(minLength: 12)
     }
 

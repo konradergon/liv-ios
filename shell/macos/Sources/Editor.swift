@@ -1853,3 +1853,45 @@ struct EditorView: View {
         .overlay(Divider(), alignment: .bottom)
     }
 }
+
+// MARK: - the outline projection (P17 five-lens panel)
+
+/// One heading of the open note — the Outline lens's row. `id` is the
+/// heading's character location, which is also the reveal target.
+struct OutlineEntry: Identifiable, Equatable {
+    let id: Int
+    let level: Int
+    let text: String
+}
+
+extension EditorModel {
+    /// A shell parse of the live document: every heading paragraph, in order.
+    /// No storage — derived from the text view's block attributes on demand.
+    func outline() -> [OutlineEntry] {
+        guard let storage = textView?.textStorage else { return [] }
+        let ns = storage.string as NSString
+        var entries: [OutlineEntry] = []
+        ns.enumerateSubstrings(
+            in: NSRange(location: 0, length: ns.length), options: [.byParagraphs]
+        ) { sub, range, _, _ in
+            guard range.length > 0,
+                let box = storage.attribute(.lotusBlock, at: range.location, effectiveRange: nil)
+                    as? BlockBox,
+                case .heading(let n) = box.block
+            else { return }
+            let text = (sub ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            entries.append(OutlineEntry(id: range.location, level: Int(n), text: text))
+        }
+        return entries
+    }
+
+    /// Jump the editor to a heading (the Outline lens's click).
+    func reveal(_ location: Int) {
+        guard let view = textView, let storage = view.textStorage else { return }
+        let loc = max(0, min(location, storage.length - 1))
+        view.setSelectedRange(NSRange(location: loc, length: 0))
+        view.scrollRangeToVisible(NSRange(location: loc, length: 0))
+        view.window?.makeFirstResponder(view)
+    }
+}
