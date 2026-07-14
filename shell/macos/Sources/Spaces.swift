@@ -195,7 +195,8 @@ struct AppSidebar: View {
                 SpacesTree(
                     model: model, chrome: chrome, lens: $lens, query: $query,
                     selection: $selection, filter: $filter,
-                    willNavigate: willNavigate, showDesk: showDesk)
+                    willNavigate: willNavigate, showDesk: showDesk,
+                    openEntity: openEntity)
             case .vault:
                 VaultTree(model: model, filter: $filter, openEntity: openEntity)
             }
@@ -317,6 +318,8 @@ struct SpacesTree: View {
     var willNavigate: (@escaping () -> Void) -> Void
     /// The desk lens buttons land on the desk tab (and set the lens).
     var showDesk: (Lens) -> Void = { _ in }
+    /// Open a bookmarked entity in a tab (the pin rows).
+    var openEntity: (UInt64) -> Void = { _ in }
 
     @State private var expanded: Set<UInt64> = []
     @State private var archiveOpen = false
@@ -325,6 +328,15 @@ struct SpacesTree: View {
     @State private var spacesDropActive = false
     @State private var boardsDropActive = false
     @FocusState private var newNameFocused: Bool
+
+    /// The pinned entities — anything whose `bookmarked` cell is set, filtered
+    /// like every other row here.
+    private var bookmarkedRows: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter { row in
+            row.bookmarked
+                && (filter.isEmpty || row.title.localizedCaseInsensitiveContains(filter))
+        }
+    }
 
     private var tree: WorkspaceTree {
         WorkspaceTree(model.snap?.workspaces ?? [])
@@ -349,12 +361,19 @@ struct SpacesTree: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // Interim desk rows until tabs land (P3).
                     deskGroup
-                    if !tree.favourites.isEmpty {
+                    // ONE pin source (BP-4): favourite workspaces AND bookmarked
+                    // entities share this section. A bookmark is the entity's
+                    // existing `bookmarked` cell (the inspector's 🔖 writes it) —
+                    // no new chrome row, no second pin system.
+                    if !tree.favourites.isEmpty || !bookmarkedRows.isEmpty {
                         groupHeader("Favourites")
                         ForEach(tree.favourites, id: \.id) { row in
                             if matches(row) {
                                 WorkspaceLeaf(row: row, tree: tree, actions: actions)
                             }
+                        }
+                        ForEach(bookmarkedRows, id: \.id) { row in
+                            bookmarkRow(row)
                         }
                     }
                     groupHeader("Spaces")
@@ -481,6 +500,34 @@ struct SpacesTree: View {
             .padding(.bottom, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+    }
+
+    /// A pinned entity in Favourites: kind icon + title, click opens its tab.
+    /// Unpin from the context menu — the same `bookmarked` cell the inspector's
+    /// 🔖 toggles, one write path.
+    private func bookmarkRow(_ row: EntityRow) -> some View {
+        Button { openEntity(row.id) } label: {
+            HStack(spacing: 7) {
+                Image(systemName: rowKindIcon(row))
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(width: 16)
+                Text(row.title)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Theme.foreground.opacity(0.85))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Remove bookmark") {
+                model.set(row.id, property: "bookmarked", value: "false")
+            }
+        }
     }
 
     @ViewBuilder
