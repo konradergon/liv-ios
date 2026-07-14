@@ -69,7 +69,9 @@ final class VaultGraphModel: ObservableObject {
             return built.count - 1
         }
 
-        let shown = rows.filter { !hiddenKinds.contains(graphKind($0)) }
+        // Backstage rows ride the snapshot's row store for the Inspector
+        // (P18e) but are NOT vault objects — never map them.
+        let shown = rows.filter { !$0.kinds.contains("widget") && !hiddenKinds.contains(graphKind($0)) }
         let shownIds = Set(shown.map(\.id))
         for row in shown { _ = addObject(row) }
 
@@ -357,7 +359,7 @@ struct VaultGraphOverlay: View {
     }
 
     private var filterRail: some View {
-        let rows = model.snap?.entities ?? []
+        let rows = (model.snap?.entities ?? []).filter { !$0.kinds.contains("widget") }
         var kindCounts: [String: Int] = [:]
         for row in rows { kindCounts[graphKind(row), default: 0] += 1 }
         var valueProps: [String: Int] = [:]

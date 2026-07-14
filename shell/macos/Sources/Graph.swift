@@ -67,6 +67,7 @@ func buildLocalGraph(
     // the snapshot per build (never per frame).
     func sharers(property: String, value: String) -> [UInt64] {
         (model.snap?.entities ?? [])
+            .filter { !$0.kinds.contains("widget") }
             .filter { row in
                 row.cells.contains {
                     $0.kind == "select" && $0.property == property && $0.value == value
