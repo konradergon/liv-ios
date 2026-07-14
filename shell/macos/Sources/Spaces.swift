@@ -1323,29 +1323,118 @@ struct HomeHubPopover: View {
     let actions: WorkspaceActions
     let dismiss: () -> Void
 
+    /// bp4 ⑦: type-to-filter on top — never a full dump. Typing swaps the
+    /// tree for flat matches; ↑↓ move, ⏎ enters, Esc closes.
+    @State private var filter = ""
+    @State private var highlighted = 0
+    @FocusState private var filterFocused: Bool
+
     private var tree: WorkspaceTree {
         WorkspaceTree(model.snap?.workspaces ?? [])
     }
 
+    private var matches: [WorkspaceRow] {
+        tree.rows
+            .filter { !$0.archived && $0.name.localizedCaseInsensitiveContains(filter) }
+            .sorted { $0.order < $1.order }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if chrome.surface.isGlobalTool {
-                Text("Vault-wide tool — open a workspace:")
-                    .font(.system(size: 11))
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
                     .foregroundColor(Theme.mutedFg)
-                    .padding(10)
+                TextField("Switch workspace…", text: $filter)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($filterFocused)
+                    .onSubmit {
+                        if matches.indices.contains(highlighted) {
+                            actions.enter(matches[highlighted].id)
+                        }
+                        dismiss()
+                    }
+                    .onExitCommand { dismiss() }
+                    .onKeyPress(.downArrow) {
+                        highlighted = min(highlighted + 1, max(0, matches.count - 1))
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        highlighted = max(highlighted - 1, 0)
+                        return .handled
+                    }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            Divider()
+            if !filter.isEmpty {
+                filteredList
             } else {
-                scopeSection
+                if chrome.surface.isGlobalTool {
+                    Text("Vault-wide tool — open a workspace:")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(10)
+                } else {
+                    scopeSection
+                }
+                Divider()
+                ScrollView {
+                    WorkspaceList(model: model, chrome: chrome, actions: actions, dismiss: dismiss)
+                }
+                .frame(maxHeight: 280)
+                Divider()
+                footer
             }
-            Divider()
-            ScrollView {
-                WorkspaceList(model: model, chrome: chrome, actions: actions, dismiss: dismiss)
-            }
-            .frame(maxHeight: 280)
-            Divider()
-            footer
         }
         .frame(width: 288)
+        .onChange(of: filter) { highlighted = 0 }
+    }
+
+    @ViewBuilder
+    private var filteredList: some View {
+        if matches.isEmpty {
+            Text("No workspace matches \"\(filter)\".")
+                .font(.system(size: 12))
+                .foregroundColor(Theme.mutedFg)
+                .padding(12)
+        } else {
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(Array(matches.enumerated()), id: \.element.id) { index, row in
+                        Button {
+                            actions.enter(row.id)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 8) {
+                                WorkspaceGlyph(row: row, tree: tree, expanded: false)
+                                Text(row.name).font(.system(size: 12.5))
+                                Spacer()
+                                if chrome.activeWorkspace == row.id
+                                    || (chrome.activeWorkspace == nil && row.builtin == "home")
+                                {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(Theme.accent)
+                                }
+                            }
+                            .padding(.vertical, 5)
+                            .padding(.horizontal, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: Theme.radiusMd)
+                                .fill(index == highlighted ? Theme.primary.opacity(0.12) : .clear)
+                        )
+                        .onHover { inside in if inside { highlighted = index } }
+                    }
+                }
+                .padding(6)
+            }
+            .frame(maxHeight: 280)
+        }
     }
 
     private var scopeSection: some View {

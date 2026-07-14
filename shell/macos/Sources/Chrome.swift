@@ -372,6 +372,9 @@ struct WorkspaceFooter: View {
     @ObservedObject var chrome: ChromeModel
     let actions: WorkspaceActions
     @State private var hubOpen = false
+    // Manual double-click detection (the tab-strip idiom — a count:2 gesture
+    // would stall the single click by the double-click interval).
+    @State private var lastHubTap = Date.distantPast
 
     private var label: String {
         guard let id = chrome.activeWorkspace,
@@ -380,9 +383,23 @@ struct WorkspaceFooter: View {
         return row.name
     }
 
+    /// bp4 ⑥: single click toggles the switcher popover; a second click
+    /// inside the interval opens the Home hub surface itself.
+    private func hubTapped() {
+        let now = Date()
+        if now.timeIntervalSince(lastHubTap) < NSEvent.doubleClickInterval {
+            lastHubTap = .distantPast
+            hubOpen = false
+            NotificationCenter.default.post(name: .lotusGoHome, object: nil)
+        } else {
+            lastHubTap = now
+            hubOpen.toggle()
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            Button { hubOpen.toggle() } label: {
+            Button { hubTapped() } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "square.grid.2x2")
                         .font(.system(size: 12))

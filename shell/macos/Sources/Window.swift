@@ -1288,9 +1288,10 @@ struct WindowChrome: View {
                 selection = note.object as? UInt64
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoHome)) { _ in
-                navigate(to: .notes)
-                query = ""
-                lens = .today
+                // The Home hub surface (bp4 ⑥): the desk tab on Today — the
+                // full landing, not just a surface switch (the old receiver
+                // never activated the desk tab).
+                showDesk(.today)
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoInbox)) { _ in
                 navigate(to: .inbox)
