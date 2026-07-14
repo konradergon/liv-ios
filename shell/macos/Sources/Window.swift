@@ -1050,6 +1050,7 @@ extension Notification.Name {
     /// Jump to Inbox › Tidy (P16f): the Agents doorway + row-halo taps.
     static let lotusGoTidy = Notification.Name("lotus.goTidy")
     static let lotusSaveLayer = Notification.Name("lotus.saveLayer")
+    static let lotusVaultGraph = Notification.Name("lotus.vaultGraph")
     static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
@@ -1125,6 +1126,9 @@ struct WindowChrome: View {
     /// restore — pure shell state, cleared when the toast retires.
     @State private var layerStash: (tabs: [WorkspaceTab], activeId: UUID?)?
     @State private var layerToastVisible = false
+    /// The vault graph overlay (P18c) — the second interface-0.5 carve-out.
+    @State private var vaultGraphOpen = false
+    @State private var vaultGraphFocus: UInt64?
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -1140,6 +1144,7 @@ struct WindowChrome: View {
             // Spaces|Vault content lives in the left panel now, not a popover.
             .overlay(switcherOverlay)
             .overlay(searchOverlay)
+            .overlay(vaultGraphOverlay)
             .overlay(faultNotice)
             .overlay(DialogHost())
             .overlay(alignment: .bottom) {
@@ -1464,6 +1469,25 @@ struct WindowChrome: View {
                 guard let layer = note.object as? LayerRow else { return }
                 restoreLayer(layer)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusVaultGraph)) { note in
+                vaultGraphFocus = note.object as? UInt64 ?? rightFocusId
+                vaultGraphOpen = true
+            }
+    }
+
+    /// The vault graph (P18c): summon/glance/jump/Esc — no tab consumed.
+    @ViewBuilder
+    private var vaultGraphOverlay: some View {
+        if vaultGraphOpen {
+            VaultGraphOverlay(
+                model: model,
+                focus: vaultGraphFocus,
+                dismiss: { vaultGraphOpen = false },
+                open: { id in openEntityTab(id) },
+                searchFor: { q in
+                    NotificationCenter.default.post(name: .lotusSearchFor, object: q)
+                })
+        }
     }
 
     /// Save the current arrangement as a named layer: the content tabs (in
@@ -2272,6 +2296,13 @@ struct WindowChrome: View {
                 enabled: { chrome.surface == .notes }
             ) {
                 if let active = tabs.active { closeTab(active) }
+            })
+        registry.register(
+            CommandDef(
+                id: "view:vault-graph", label: "Vault graph", scope: .global,
+                category: "View", binding: Hotkey(modifiers: [.ctrl, .shift], key: "g")
+            ) {
+                NotificationCenter.default.post(name: .lotusVaultGraph, object: nil)
             })
         registry.register(
             CommandDef(

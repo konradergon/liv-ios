@@ -380,7 +380,13 @@ struct GraphLensPane: View {
             }
             .buttonStyle(.plain)
             .help("Hop through shared values")
-            // The "Vault graph" doorway mounts with 18c — no dead buttons.
+            Button("Vault graph") {
+                NotificationCenter.default.post(name: .lotusVaultGraph, object: focus)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(Theme.accent)
+            .help("The whole vault as a map (⌃⇧G)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
