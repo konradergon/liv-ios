@@ -56,7 +56,7 @@ enum Surface: String, CaseIterable {
 /// note; History = the content-version projection. The local Graph lens waits
 /// for P18 (no dead buttons).
 enum RightLens: String, CaseIterable {
-    case metadata, assist, outline, history
+    case metadata, assist, outline, history, graph
 
     var symbol: String {
         switch self {
@@ -64,6 +64,7 @@ enum RightLens: String, CaseIterable {
         case .assist: return "sparkle"
         case .outline: return "list.bullet.indent"
         case .history: return "clock"
+        case .graph: return "point.3.connected.trianglepath.dotted"
         }
     }
 
@@ -73,6 +74,7 @@ enum RightLens: String, CaseIterable {
         case .assist: return "Assist"
         case .outline: return "Outline"
         case .history: return "History"
+        case .graph: return "Graph"
         }
     }
 }

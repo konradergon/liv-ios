@@ -1730,6 +1730,14 @@ struct WindowChrome: View {
                                     OutlineLensPane(editor: editor)
                                 case .history:
                                     HistoryLensPane(model: model, focus: rightFocusId)
+                                case .graph:
+                                    GraphLensPane(
+                                        model: model, focus: rightFocusId,
+                                        select: { id in selection = id },
+                                        searchFor: { q in
+                                            NotificationCenter.default.post(
+                                                name: .lotusSearchFor, object: q)
+                                        })
                                 }
                             }
                         }
