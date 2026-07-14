@@ -919,6 +919,100 @@ pub fn create_layer(
     Ok(id)
 }
 
+// ---- habits (P18b): front-of-house habits, backstage check-in records ----
+
+/// Create a habit — an ordinary front-of-house entity (habits belong in
+/// Everything): NAME + type + optional `points` (default 1 at read) +
+/// optional `cadence` display text. One commit.
+pub fn create_habit(
+    session: &mut Session,
+    name: &str,
+    points: Option<f64>,
+    cadence: Option<&str>,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let habit_type = find_type(store, "habit");
+    let points_prop = property_id(store, "points");
+    let cadence_prop = property_id(store, "cadence");
+
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::NAME, Value::text(name));
+    add(props::CREATED, Value::DateTime(created));
+    if let Some(t) = habit_type {
+        add(props::TYPE, Value::Reference(t));
+    }
+    if let (Some(p), Some(pp)) = (points, points_prop) {
+        add(pp, Value::Number(p));
+    }
+    if let (Some(c), Some(cp)) = (cadence, cadence_prop) {
+        add(cp, Value::text(c));
+    }
+    session.commit(commands, "new habit", Author::User)?;
+    Ok(id)
+}
+
+/// A habit's live check-in on a civil day, if one exists.
+fn check_in_on(store: &Store, habit: Id, day: i64) -> Option<Id> {
+    let checkin_type = find_type(store, "check-in")?;
+    let habit_prop = property_id(store, "habit")?;
+    let date_prop = property_id(store, "date")?;
+    store
+        .entities()
+        .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(checkin_type)))
+        .filter(|e| e.has(habit_prop, &Value::Reference(habit)))
+        .find(|e| matches!(e.get(date_prop), Some(Value::DateTime(dt)) if dt.civil / 10_000 == day))
+        .map(|e| e.id)
+}
+
+/// Check a habit in on a day: one WORKING backstage record (habit reference +
+/// date), one commit, one undo. Idempotent per (habit, day) — the checkbox
+/// toggle is safe. Uncheck = trash the exact row (no verb of its own).
+pub fn check_in(
+    session: &mut Session,
+    habit: Id,
+    day: i64,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let habit = store.resolve(habit);
+    if let Some(existing) = check_in_on(store, habit, day) {
+        return Ok(existing);
+    }
+    let checkin_type = find_type(store, "check-in");
+    let habit_prop = property_id(store, "habit");
+    let date_prop = property_id(store, "date");
+
+    let id = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: id }];
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(created));
+    if let Some(t) = checkin_type {
+        add(props::TYPE, Value::Reference(t));
+    }
+    if let Some(hp) = habit_prop {
+        add(hp, Value::Reference(habit));
+    }
+    if let Some(dp) = date_prop {
+        add(dp, Value::DateTime(DateTime::at(
+            (day / 10_000) as i32,
+            ((day / 100) % 100) as u32,
+            (day % 100) as u32,
+            0,
+            0,
+        )));
+    }
+    session.commit(commands, "check in", Author::User)?;
+    Ok(id)
+}
+
 /// Remove every cell of one property — the inverse of set_property's
 /// replace, for "make top-level" and its kin. A property the entity
 /// does not carry is a no-op, not an error.

@@ -73,10 +73,18 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             history(&session);
             Ok(())
         }
+        Some((&"habit", rest)) if !rest.is_empty() => habit_add(&mut session, rest),
+        Some((&"checkin", rest)) if !rest.is_empty() => checkin(&mut session, rest),
+        Some((&"habits", _)) => {
+            habits(&session);
+            Ok(())
+        }
         _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
                   inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
-                  set ID PROP VALUE... | history"
+                  set ID PROP VALUE... | history | \
+                  habit NAME... [--points N] [--cadence TEXT] | \
+                  checkin HABIT-ID [DAY] | habits"
             .into()),
     }
 }
@@ -431,4 +439,77 @@ fn history(session: &Session) {
             reverses
         );
     }
+}
+
+/// P18b: birth a habit (front of house). `lotus habit Climb --points 2`.
+fn habit_add(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let mut points: Option<f64> = None;
+    let mut cadence: Option<String> = None;
+    let mut words: Vec<&str> = Vec::new();
+    let mut iter = rest.iter();
+    while let Some(arg) = iter.next() {
+        match *arg {
+            "--points" => {
+                points = iter.next().and_then(|v| v.parse().ok());
+            }
+            "--cadence" => {
+                cadence = iter.next().map(|v| v.to_string());
+            }
+            word => words.push(word),
+        }
+    }
+    if words.is_empty() {
+        return Err("usage: lotus habit NAME... [--points N] [--cadence TEXT]".into());
+    }
+    let id = lotus_services::content::create_habit(
+        session,
+        &words.join(" "),
+        points,
+        cadence.as_deref(),
+        civil_today(),
+    )
+    .map_err(|e| e.to_string())?;
+    println!("habit #{id}");
+    Ok(())
+}
+
+/// P18b: check a habit in (today, or a given civil day) — idempotent.
+fn checkin(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (id_arg, day_arg) = rest.split_first().ok_or("usage: lotus checkin HABIT-ID [DAY]")?;
+    let habit: Id =
+        id_arg.trim_start_matches('#').parse().map_err(|_| "HABIT-ID must be a number")?;
+    let day: i64 = match day_arg.first() {
+        Some(d) => d.parse().map_err(|_| "DAY must be YYYYMMDD")?,
+        None => civil_today().civil / 10_000,
+    };
+    let row = lotus_services::content::check_in(session, habit, day, civil_today())
+        .map_err(|e| e.to_string())?;
+    println!("checked in #{row} ({day})");
+    Ok(())
+}
+
+/// P18b: the habit card, in text — the same projection every shell reads.
+fn habits(session: &Session) {
+    let today = civil_today().civil / 10_000;
+    let stats = lotus_services::habits::habit_stats(session.store(), today);
+    if stats.habits.is_empty() {
+        println!("no habits yet — lotus habit NAME [--points N]");
+        return;
+    }
+    for line in &stats.habits {
+        let mark = if line.today_check_in.is_some() { "x" } else { " " };
+        let cadence = line.cadence.as_deref().unwrap_or("");
+        println!("[{mark}] #{:<5} {:<28} +{} {}", line.id, line.name, line.points, cadence);
+    }
+    println!(
+        "streak {}d · longest {}d · {} pts this week · {:.1} avg/active day",
+        stats.streak, stats.longest, stats.week_points, stats.avg_active
+    );
+    let glyphs = [" ", "░", "▒", "▓"];
+    let chain: String = stats
+        .heat
+        .iter()
+        .map(|c| glyphs[(*c as usize).min(3)])
+        .collect();
+    println!("chain [{chain}]");
 }

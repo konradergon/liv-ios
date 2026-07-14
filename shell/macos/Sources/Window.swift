@@ -140,8 +140,31 @@ struct Snapshot: Codable {
     let pins: [PinRow]?
     /// OPTIONAL, like pins.
     let layers: [LayerRow]?
+    /// The habit card (P18b) — lands dark until the widget mounts (18g).
+    /// OPTIONAL: a missing key must never drop the snapshot.
+    let habits: HabitsSection?
     let properties: [PropertyRow]
     let entities: [EntityRow]
+}
+
+/// The habit projection (P18b, D13): computed on read, stored nowhere.
+struct HabitsSection: Codable, Hashable {
+    let habits: [HabitLine]
+    let streak: UInt32
+    let longest: UInt32
+    let weekPoints: Double
+    let avgActive: Double
+    /// Check-ins per day, 84 days, oldest → today.
+    let heat: [UInt32]
+}
+
+struct HabitLine: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let name: String
+    let points: Double
+    let cadence: String?
+    /// Today's check-in row when checked — the uncheck (trash) target.
+    let todayCheckIn: UInt64?
 }
 
 /// One Favourites pin (P17g): a backstage entity pointing at an object,

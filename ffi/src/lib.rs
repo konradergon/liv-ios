@@ -295,6 +295,9 @@ struct Snapshot {
     pins: Vec<PinRow>,
     /// Saved layout layers (P17i). OPTIONAL shell-side, like pins.
     layers: Vec<LayerRow>,
+    /// The habit card (P18b): lines + streaks + the 84-day chain, computed
+    /// on read (D13). OPTIONAL shell-side.
+    habits: lotus_services::habits::HabitsSummary,
     /// Every property definition — the inspector's catalog.
     properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
@@ -927,6 +930,12 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         _ => Vec::new(),
     };
 
+    let now = Local::now();
+    let habits = lotus_services::habits::habit_stats(
+        store,
+        (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64,
+    );
+
     Snapshot {
         today,
         unstructured,
@@ -937,6 +946,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         workspaces,
         pins,
         layers,
+        habits,
         properties,
         entities,
     }
@@ -2140,6 +2150,79 @@ pub unsafe extern "C" fn lotus_unpin_at(path: *const c_char, target: u64) -> i32
             Ok(false) => (0, Committed::Read),
             Err(_) => (0, Committed::Failed),
         }
+    })
+}
+
+/// Create a habit (P18b): an ordinary front-of-house entity. `points` <= 0
+/// means "no points cell" (reads as 1); `cadence` may be null. Returns the
+/// habit id, 0 on failure.
+///
+/// Additive verb (boundary rule): with_box + Committed, shipped with a
+/// round-trip test, flagged in the PR.
+///
+/// # Safety
+/// `path` and `name` must be valid NUL-terminated UTF-8; `cadence` may be
+/// null or valid UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_habit_at(
+    path: *const c_char,
+    name: *const c_char,
+    points: f64,
+    cadence: *const c_char,
+) -> u64 {
+    if name.is_null() {
+        return 0;
+    }
+    let Ok(name) = CStr::from_ptr(name).to_str() else {
+        return 0;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return 0;
+    }
+    let cadence = if cadence.is_null() {
+        None
+    } else {
+        match CStr::from_ptr(cadence).to_str() {
+            Ok(c) if !c.trim().is_empty() => Some(c.trim().to_string()),
+            _ => None,
+        }
+    };
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let points = (points > 0.0).then_some(points);
+        let id = lotus_services::content::create_habit(
+            session,
+            name,
+            points,
+            cadence.as_deref(),
+            created,
+        )
+        .unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
+/// Check a habit in on a civil day (YYYYMMDD; 0 = today). One backstage
+/// record, one commit, one undo; idempotent per (habit, day) so the checkbox
+/// toggle is safe. Uncheck = lotus_trash_at on the returned row. Returns the
+/// check-in id, 0 on failure.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_check_in_at(path: *const c_char, habit: u64, day: i64) -> u64 {
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let day = if day > 0 {
+            day
+        } else {
+            (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64
+        };
+        let id = lotus_services::content::check_in(session, habit, day, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -4353,6 +4436,53 @@ mod tests {
 
         cleanup(&path);
     }
+    #[test]
+    fn habits_roundtrip_through_the_snapshot() {
+        let (path, c_path) = fresh_box("lotus_ffi_habits.log");
+
+        let name = CString::new("Climb").unwrap();
+        let cadence = CString::new("3\u{d7}/wk").unwrap();
+        let habit =
+            unsafe { lotus_create_habit_at(c_path.as_ptr(), name.as_ptr(), 2.0, cadence.as_ptr()) };
+        assert_ne!(habit, 0);
+        let other_name = CString::new("Mobility").unwrap();
+        let other = unsafe {
+            lotus_create_habit_at(c_path.as_ptr(), other_name.as_ptr(), 0.0, std::ptr::null())
+        };
+        assert_ne!(other, 0);
+
+        // Check in TODAY (0 = today, the shell's path) — idempotent.
+        let row = unsafe { lotus_check_in_at(c_path.as_ptr(), habit, 0) };
+        assert_ne!(row, 0);
+        assert_eq!(unsafe { lotus_check_in_at(c_path.as_ptr(), habit, 0) }, row);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let section = &snap["habits"];
+        let lines = section["habits"].as_array().unwrap();
+        assert_eq!(lines.len(), 2);
+        let climb = lines.iter().find(|h| h["id"] == habit).unwrap();
+        assert_eq!(climb["points"], 2.0);
+        assert_eq!(climb["today_check_in"], row);
+        let mobility = lines.iter().find(|h| h["id"] == other).unwrap();
+        assert_eq!(mobility["points"], 1.0);
+        assert!(mobility["today_check_in"].is_null());
+        assert_eq!(section["streak"], 1);
+        assert_eq!(section["heat"].as_array().unwrap().len(), 84);
+        assert_eq!(section["heat"][83], 1);
+
+        // The habit is front of house; the check-in record is backstage.
+        assert!(snap["everything"].as_array().unwrap().iter().any(|id| *id == habit));
+        assert!(!snap["everything"].as_array().unwrap().iter().any(|id| *id == row));
+
+        // Uncheck rides the ordinary trash door.
+        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), row) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["habits"]["habits"][0]["today_check_in"].is_null());
+        assert_eq!(snap["habits"]["streak"], 0);
+
+        cleanup(&path);
+    }
 }
+
 
 

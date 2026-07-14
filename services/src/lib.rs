@@ -11,6 +11,7 @@ pub mod content;
 mod dates;
 pub mod export;
 pub mod files;
+pub mod habits;
 pub mod import;
 pub mod markdown;
 pub mod recurrence;
@@ -71,6 +72,7 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_links(session)?;
     seed_priority(session)?;
     seed_lists(session)?;
+    seed_habits(session)?;
     seed_event_fields(session)?;
     seed_contact_fields(session)?;
     seed_date_roles(session)?;
@@ -485,6 +487,52 @@ fn seed_lists(session: &mut Session) -> Result<(), PersistError> {
         });
     }
     session.commit(commands, "list type", Author::System)?;
+    Ok(())
+}
+
+/// Habits (P18b): the `habit` type (front of house — habits belong in
+/// Everything) with `points` (number, default 1 at read) and `cadence`
+/// (display text; N-per-week semantics deferred, feature-map #19), plus the
+/// backstage `check-in` type and its `habit` reference. Self-guarded on
+/// `cadence`, additive on an older box's next open.
+fn seed_habits(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "cadence").is_some() {
+        return Ok(());
+    }
+    let mut commands = Vec::new();
+    let new_property = |session: &mut Session, commands: &mut Vec<Command>, name: &str, kind: &str| {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        id
+    };
+    let points = new_property(session, &mut commands, "points", "number");
+    let _cadence = new_property(session, &mut commands, "cadence", "text");
+    let habit_ref = new_property(session, &mut commands, "habit", "reference");
+
+    let new_type = |session: &mut Session, commands: &mut Vec<Command>, name: &str, expected: Id| {
+        let id = session.allocate_id();
+        commands.push(Command::Create { entity: id });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text(name) },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+            // EXPECTED makes find_type resolve it (the P9 rule).
+            Cell { property: props::EXPECTED, value: Value::Reference(expected) },
+        ] {
+            commands.push(Command::AddCell { entity: id, cell });
+        }
+        id
+    };
+    new_type(session, &mut commands, "habit", points);
+    new_type(session, &mut commands, "check-in", habit_ref);
+
+    session.commit(commands, "habit types", Author::System)?;
     Ok(())
 }
 
