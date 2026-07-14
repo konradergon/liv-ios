@@ -1744,7 +1744,7 @@ struct NoteTextView: NSViewRepresentable {
             view.forwardLinkName = nil
             var titles: [String] = []
             var exact = false
-            for row in model.box.snap?.entities ?? [] where row.id != model.id {
+            for row in model.box.snap?.entities ?? [] where row.id != model.id && !row.kinds.contains("widget") {
                 if row.title.lowercased() == partial { exact = true }
                 guard partial.isEmpty || row.title.lowercased().hasPrefix(partial),
                     view.completionIds[row.title] == nil

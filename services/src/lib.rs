@@ -497,11 +497,18 @@ fn seed_lists(session: &mut Session) -> Result<(), PersistError> {
 /// backstage `check-in` type and its `habit` reference. Self-guarded on
 /// `cadence`, additive on an older box's next open.
 fn seed_habits(session: &mut Session) -> Result<(), PersistError> {
-    if property_id(session.store(), "cadence").is_some() {
-        return Ok(());
-    }
+    // Per-ITEM guards (the seed_contact_fields lesson, and the review's):
+    // a single sentinel silently disables the whole set on any box that
+    // already carries one of the names (import mints arbitrary frontmatter
+    // keys as properties), and mints duplicates of the rest.
     let mut commands = Vec::new();
-    let new_property = |session: &mut Session, commands: &mut Vec<Command>, name: &str, kind: &str| {
+    let ensure_property = |session: &mut Session,
+                           commands: &mut Vec<Command>,
+                           name: &str,
+                           kind: &str| {
+        if let Some(existing) = property_id(session.store(), name) {
+            return existing;
+        }
         let id = session.allocate_id();
         commands.push(Command::Create { entity: id });
         for cell in [
@@ -513,11 +520,17 @@ fn seed_habits(session: &mut Session) -> Result<(), PersistError> {
         }
         id
     };
-    let points = new_property(session, &mut commands, "points", "number");
-    let _cadence = new_property(session, &mut commands, "cadence", "text");
-    let habit_ref = new_property(session, &mut commands, "habit", "reference");
+    let points = ensure_property(session, &mut commands, "points", "number");
+    let _cadence = ensure_property(session, &mut commands, "cadence", "text");
+    let habit_ref = ensure_property(session, &mut commands, "habit", "reference");
 
-    let new_type = |session: &mut Session, commands: &mut Vec<Command>, name: &str, expected: Id| {
+    let ensure_type = |session: &mut Session,
+                       commands: &mut Vec<Command>,
+                       name: &str,
+                       expected: Id| {
+        if crate::content::find_type(session.store(), name).is_some() {
+            return;
+        }
         let id = session.allocate_id();
         commands.push(Command::Create { entity: id });
         for cell in [
@@ -528,12 +541,13 @@ fn seed_habits(session: &mut Session) -> Result<(), PersistError> {
         ] {
             commands.push(Command::AddCell { entity: id, cell });
         }
-        id
     };
-    new_type(session, &mut commands, "habit", points);
-    new_type(session, &mut commands, "check-in", habit_ref);
+    ensure_type(session, &mut commands, "habit", points);
+    ensure_type(session, &mut commands, "check-in", habit_ref);
 
-    session.commit(commands, "habit types", Author::System)?;
+    if !commands.is_empty() {
+        session.commit(commands, "habit types", Author::System)?;
+    }
     Ok(())
 }
 

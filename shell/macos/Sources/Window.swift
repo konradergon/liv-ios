@@ -322,7 +322,11 @@ final class BoxModel: ObservableObject {
     /// is a real share of the general sluggishness. The index makes them O(1).
     private var entityIndex: [UInt64: EntityRow] = [:]
     private var backlinkIndex: [UInt64: [UInt64]] = [:]
+    /// Bumped once per applied snapshot — the widgets' honest refresh
+    /// trigger (counting `everything` missed edits that keep the count).
+    @Published private(set) var snapEpoch = 0
     private func rebuildEntityIndex() {
+        snapEpoch += 1
         let all = snap?.entities ?? []
         var idx = [UInt64: EntityRow](minimumCapacity: all.count)
         for e in all { idx[e.id] = e }
@@ -331,7 +335,10 @@ final class BoxModel: ObservableObject {
         // reference/select cells point at it — CONNECTIONS' backlinks
         // stratum, derived once per snapshot, stored nowhere.
         var back: [UInt64: [UInt64]] = [:]
-        for e in all {
+        // Widget rows ride the row store for the Inspector only — they are
+        // config, not connections (the review: a workspace's CONNECTIONS
+        // listed '#id' widget entries).
+        for e in all where !e.kinds.contains("widget") {
             var seen = Set<UInt64>()
             for cell in e.cells {
                 guard let target = cell.refTarget, target != e.id else { continue }
@@ -1173,8 +1180,7 @@ struct WindowChrome: View {
     /// restore — pure shell state, cleared when the toast retires.
     @State private var layerStash: (tabs: [WorkspaceTab], activeId: UUID?)?
     @State private var layerToastVisible = false
-    /// The vault graph overlay (P18c) — the second interface-0.5 carve-out.
-    @State private var vaultGraphOpen = false
+    /// The vault graph overlay's camera anchor (open-state lives on chrome).
     @State private var vaultGraphFocus: UInt64?
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
@@ -1246,7 +1252,7 @@ struct WindowChrome: View {
                 chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: nil))
                 // An open palette (workspace switcher or search) owns the
                 // keyboard, so global hotkeys don't fire behind it.
-                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen }
+                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen }
                 // A stored left+right that fit an old Notes layout must
                 // not launch a tool surface into a negative center.
                 chrome.reconcilePanes()
@@ -1314,6 +1320,10 @@ struct WindowChrome: View {
                 // itself). Same far-right position the tab lane pins it to.
                 bandButton("plus", "New tab (⌘T)") { openBlankTab() }
             }
+            // The one running timer, visible wherever you are (the review: a
+            // row-started timer had no indicator outside its widget). Ticks
+            // off the pref — zero box IO; click stops (one entry, one undo).
+            TimerBandChip(model: model)
             // The RIGHT panel's toggle — mirrors the left one, in the band, over
             // the inspector. One grammar for both sides; the calendar's bespoke
             // edge chevron is gone (it now rides this same chrome.rightOpen).
@@ -1499,6 +1509,9 @@ struct WindowChrome: View {
         closeEditor { ok in
             guard ok else { return }
             chrome.surface = target
+            // The old surface's selection must not follow (a selected WIDGET
+            // id fed the inspector on Tasks — the review's finding).
+            selection = nil
             chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: target, selection: nil))
         }
     }
@@ -1518,7 +1531,7 @@ struct WindowChrome: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusVaultGraph)) { note in
                 vaultGraphFocus = note.object as? UInt64 ?? rightFocusId
-                vaultGraphOpen = true
+                chrome.vaultGraphOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusStartTimer)) { note in
                 guard let target = note.object as? UInt64 else { return }
@@ -1535,7 +1548,7 @@ struct WindowChrome: View {
             model.logTime(
                 target: running.target,
                 start: TimerPref.civil(running.started),
-                end: TimerPref.civil(Date()))
+                end: TimerPref.honestEnd(started: running.started, ended: Date()))
         }
         TimerPref.save(target: target, started: Date())
     }
@@ -1543,11 +1556,11 @@ struct WindowChrome: View {
     /// The vault graph (P18c): summon/glance/jump/Esc — no tab consumed.
     @ViewBuilder
     private var vaultGraphOverlay: some View {
-        if vaultGraphOpen {
+        if chrome.vaultGraphOpen {
             VaultGraphOverlay(
                 model: model,
                 focus: vaultGraphFocus,
-                dismiss: { vaultGraphOpen = false },
+                dismiss: { chrome.vaultGraphOpen = false },
                 open: { id in openEntityTab(id) },
                 searchFor: { q in
                     NotificationCenter.default.post(name: .lotusSearchFor, object: q)

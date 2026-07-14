@@ -138,10 +138,10 @@ final class VaultGraphModel: ObservableObject {
         nodes = built
         edges = builtEdges
         reheat()
-        // The degrade threshold (owner call #6): a huge box settles
-        // synchronously once and freezes — never an animation loop.
+        // The degrade threshold (owner call #6): a huge box gets the STATIC
+        // seeded layout — deterministic, instant, no sim at all (90 synchronous
+        // O(n²) steps beachballed the main thread; the review's finding).
         if nodes.count > 2000 {
-            for _ in 0..<90 { step() }
             ticks = 10_000
             frozen = true
         }
@@ -205,9 +205,14 @@ final class VaultGraphModel: ObservableObject {
                 maxSpeed, abs(nodes[i].velocity.dx) + abs(nodes[i].velocity.dy))
         }
         if ticks > 240 || (ticks > 30 && maxSpeed < 0.05) {
-            frozen = true
+            // Never mutate a @Published from inside the render pass (the
+            // review's finding): freeze on the next runloop turn; the
+            // TimelineView pauses one frame later.
+            DispatchQueue.main.async { self.frozen = true }
         }
-        objectWillChange.send()
+        // No publish: TimelineView(.animation) re-evaluates its content every
+        // frame and the canvas reads nodes directly — a send here would
+        // re-render the WHOLE overlay (filter rail included) at 60fps.
     }
 
     func drag(_ index: Int, to point: CGPoint) {
@@ -248,6 +253,7 @@ struct VaultGraphOverlay: View {
     @State private var camera: CGSize = .zero
     @State private var zoom: CGFloat = 1
     @State private var draggedNode: Int?
+    @State private var panOrigin: CGSize?
     @State private var filtersOpen = true
     @State private var hiddenKinds: Set<String> = []
     @State private var hiddenValueProps: Set<String> = []
@@ -277,6 +283,9 @@ struct VaultGraphOverlay: View {
             .shadow(color: .black.opacity(0.4), radius: 30, y: 10)
             .padding(16)
         }
+        .focusable()
+        .focusEffectDisabled()
+        .onExitCommand { dismiss() }
         .onAppear { rebuild() }
         .onChange(of: hiddenKinds) { rebuild() }
         .onChange(of: hiddenValueProps) { rebuild() }
@@ -610,12 +619,19 @@ struct VaultGraphOverlay: View {
                     if let index = draggedNode, index >= 0 {
                         sim.drag(index, to: inverse(drag.location, in: size))
                     } else {
+                        // Anchored to the gesture START (translation is
+                        // cumulative — adding it per event compounded; the
+                        // review's finding). Factor 1: the map follows the hand.
+                        if panOrigin == nil { panOrigin = camera }
                         camera = CGSize(
-                            width: camera.width + drag.translation.width * 0.15,
-                            height: camera.height + drag.translation.height * 0.15)
+                            width: (panOrigin?.width ?? 0) + drag.translation.width,
+                            height: (panOrigin?.height ?? 0) + drag.translation.height)
                     }
                 }
-                .onEnded { _ in draggedNode = nil })
+                .onEnded { _ in
+                    draggedNode = nil
+                    panOrigin = nil
+                })
         .simultaneousGesture(
             SpatialTapGesture().onEnded { tap in
                 guard let hit = nearestNode(to: tap.location, in: size) else { return }

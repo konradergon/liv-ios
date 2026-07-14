@@ -51,6 +51,16 @@ pub struct HabitsSummary {
     pub check_ins: Vec<CheckInDay>,
 }
 
+/// Rata Die ordinal from a civil YMD — consecutive days differ by one.
+fn day_ordinal(ymd: i64) -> i64 {
+    let (mut y, mut m, d) = (ymd / 10_000, (ymd / 100) % 100, ymd % 100);
+    if m <= 2 {
+        y -= 1;
+        m += 12;
+    }
+    365 * y + y / 4 - y / 100 + y / 400 + (153 * (m - 3) + 2) / 5 + d
+}
+
 fn day_before(ymd: i64) -> i64 {
     let (mut y, mut m, mut d) = ((ymd / 10_000) as i32, ((ymd / 100) % 100) as u32, (ymd % 100) as u32);
     if d > 1 {
@@ -185,26 +195,21 @@ pub fn habit_stats(store: &Store, today: i64) -> HabitsSummary {
         cursor = day_before(cursor);
     }
 
-    // Longest run anywhere in the record.
+    // Longest run anywhere in the record: sort the day ordinals once and
+    // count consecutive stretches — O(n log n), never a per-step key scan
+    // (this runs on EVERY snapshot read; the review's finding).
+    let mut ordinals: Vec<i64> = by_day.keys().map(|d| day_ordinal(*d)).collect();
+    ordinals.sort_unstable();
     let mut longest = 0u32;
-    for day in by_day.keys() {
-        if by_day.contains_key(&day_before(*day)) {
-            continue; // not a run start
-        }
-        let mut run = 0u32;
-        let mut cursor = *day;
-        while by_day.contains_key(&cursor) {
-            run += 1;
-            // A run can only move forward through days that exist as keys —
-            // walk by scanning: the next day is whichever key has THIS day
-            // as its predecessor.
-            let next = by_day.keys().find(|d| day_before(**d) == cursor).copied();
-            match next {
-                Some(n) => cursor = n,
-                None => break,
-            }
-        }
+    let mut run = 0u32;
+    let mut previous: Option<i64> = None;
+    for ordinal in ordinals {
+        run = match previous {
+            Some(p) if ordinal == p + 1 => run + 1,
+            _ => 1,
+        };
         longest = longest.max(run);
+        previous = Some(ordinal);
     }
 
     HabitsSummary {

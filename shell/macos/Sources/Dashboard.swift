@@ -761,7 +761,8 @@ struct MetricChartBody: View {
             }
         }
         .onAppear { refresh() }
-        .onChange(of: model.snap?.everything.count ?? 0) { refresh() }
+        .onChange(of: model.snapEpoch) { refresh() }
+        .onChange(of: widget.view) { refresh() }
     }
 
     private var aimLabel: String {
@@ -861,7 +862,8 @@ struct SavedViewBody: View {
                     }
                 }
                 .onAppear { refresh(view.query) }
-                .onChange(of: model.snap?.everything.count ?? 0) { refresh(view.query) }
+                .onChange(of: model.snapEpoch) { refresh(view.query) }
+                .onChange(of: widget.view) { if let v = widget.view, let saved = (model.snap?.views ?? []).first(where: { $0.id == v }) { refresh(saved.query) } }
             } else if views.isEmpty {
                 // Idles without nagging: saving a view is the ⌘F palette's job.
                 Text("No saved views yet. Save one from the search palette (⌘F → Save view…).")
@@ -920,6 +922,17 @@ enum TimerPref {
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    /// The stop stamp, honest about sub-minute work: civil stamps carry
+    /// minutes only, so a 59-second timer would log a ZERO-length entry —
+    /// round a real-but-tiny interval up to one minute (the review).
+    static func honestEnd(started: Date, ended: Date) -> Int64 {
+        let end = civil(ended)
+        if end == civil(started), ended.timeIntervalSince(started) > 0 {
+            return civil(started.addingTimeInterval(60))
+        }
+        return end
     }
 
     /// A Date as the FFI's full civil stamp (YYYYMMDDHHMM).
@@ -1037,7 +1050,7 @@ struct TimeCardBody: View {
                         model.logTime(
                             target: running.target,
                             start: TimerPref.civil(running.started),
-                            end: TimerPref.civil(end))
+                            end: TimerPref.honestEnd(started: running.started, ended: end))
                     } label: {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 9))
@@ -1126,10 +1139,10 @@ struct WhatNextBody: View {
                                 .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                             Text(candidate.row.title).font(.system(size: 12)).lineLimit(1)
                             Text(candidate.why)
-                                .font(.system(size: 9.5))
-                                .foregroundColor(
-                                    candidate.why == "overdue"
-                                        ? Color(nsColor: .systemRed).opacity(0.8) : Theme.mutedFg)
+                                .font(.system(
+                                    size: 9.5,
+                                    weight: candidate.why == "overdue" ? .bold : .regular))
+                                .foregroundColor(Theme.mutedFg)
                         }
                         .contentShape(Rectangle())
                     }
@@ -1179,5 +1192,46 @@ struct WidgetReorderDrop: DropDelegate {
             }
         }
         return true
+    }
+}
+
+
+/// The one running timer's band chip (P18 review): visible on EVERY surface,
+/// ticking off the pref (zero box IO); click stops — one entry, one undo.
+struct TimerBandChip: View {
+    @ObservedObject var model: BoxModel
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            if let running = TimerPref.load() {
+                Button {
+                    TimerPref.clear()
+                    model.logTime(
+                        target: running.target,
+                        start: TimerPref.civil(running.started),
+                        end: TimerPref.honestEnd(started: running.started, ended: context.date))
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "stop.fill").font(.system(size: 7))
+                        Text(chipElapsed(from: running.started, to: context.date))
+                            .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        Text(model.entity(running.target)?.title ?? "#\(running.target)")
+                            .font(.system(size: 10.5)).lineLimit(1)
+                            .frame(maxWidth: 110)
+                    }
+                    .foregroundColor(Theme.foreground.opacity(0.8))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .overlay(Capsule().strokeBorder(Theme.border))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Stop the timer — writes one entry, one undo")
+            }
+        }
+    }
+
+    private func chipElapsed(from start: Date, to now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
     }
 }

@@ -63,17 +63,21 @@ func buildLocalGraph(
         return (objects, values)
     }
 
-    // Objects sharing a select value — the value-hop expansion. One scan of
-    // the snapshot per build (never per frame).
+    // Objects per select value — ONE snapshot pass builds every bucket
+    // (the per-value scan cost 12 full sweeps per render; the review's
+    // finding). Lazily built only when the value-hop expansion runs.
+    var valueBuckets: [String: [UInt64]]? = nil
     func sharers(property: String, value: String) -> [UInt64] {
-        (model.snap?.entities ?? [])
-            .filter { !$0.kinds.contains("widget") }
-            .filter { row in
-                row.cells.contains {
-                    $0.kind == "select" && $0.property == property && $0.value == value
+        if valueBuckets == nil {
+            var buckets: [String: [UInt64]] = [:]
+            for row in (model.snap?.entities ?? []) where !row.kinds.contains("widget") {
+                for cell in row.cells where cell.kind == "select" && !cell.value.isEmpty {
+                    buckets["\(cell.property)=\(cell.value)", default: []].append(row.id)
                 }
             }
-            .map(\.id)
+            valueBuckets = buckets
+        }
+        return valueBuckets?["\(property)=\(value)"] ?? []
     }
 
     var frontier: [(row: EntityRow, nodeId: String)] = [(hub, "")]
@@ -136,7 +140,19 @@ func buildLocalGraph(
         for candidate in candidates where seen.insert(candidate.node.id).inserted {
             unique.append(candidate)
         }
-        unique.sort { a, b in a.node.id > b.node.id }
+        // Recency is NUMERIC (a string sort ranked "o:99" over "o:100" —
+        // the review's finding): values first (stable by label), then
+        // objects newest-first by their real id.
+        func rank(_ node: GraphNode) -> (Int, UInt64, String) {
+            switch node.kind {
+            case .value: return (0, 0, node.label)
+            case .object(let id): return (1, UInt64.max - id, "")
+            }
+        }
+        unique.sort { a, b in
+            let (ra, rb) = (rank(a.node), rank(b.node))
+            return ra.0 != rb.0 ? ra.0 < rb.0 : (ra.1 != rb.1 ? ra.1 < rb.1 : ra.2 < rb.2)
+        }
         let kept = Array(unique.prefix(perRing))
         graph.hidden += unique.count - kept.count
 
