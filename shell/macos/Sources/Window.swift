@@ -143,8 +143,50 @@ struct Snapshot: Codable {
     /// The habit card (P18b) — lands dark until the widget mounts (18g).
     /// OPTIONAL: a missing key must never drop the snapshot.
     let habits: HabitsSection?
+    /// Time totals + the week's entries (P18d). OPTIONAL.
+    let timeEntries: TimeSection?
+    /// Saved views — the filter engine's bookmarks (P18d). OPTIONAL.
+    let views: [SavedViewRow]?
+    /// The board's widgets, ordered (P18d). OPTIONAL.
+    let widgets: [BoardWidgetRow]?
     let properties: [PropertyRow]
     let entities: [EntityRow]
+}
+
+struct TimeSection: Codable, Hashable {
+    let totals: [TimeTotalRow]
+    let entries: [TimeEntryWireRow]
+}
+
+struct TimeTotalRow: Codable, Hashable, Identifiable {
+    var id: UInt64 { target }
+    let target: UInt64
+    let name: String
+    let minutes: Int64
+}
+
+struct TimeEntryWireRow: Codable, Hashable, Identifiable {
+    let id: UInt64
+    let target: UInt64
+    /// Full civil stamps (YYYYMMDDHHMM).
+    let start: Int64
+    let end: Int64
+}
+
+struct SavedViewRow: Codable, Hashable, Identifiable {
+    let id: UInt64
+    let name: String
+    let query: String
+}
+
+struct BoardWidgetRow: Codable, Hashable, Identifiable {
+    let id: UInt64
+    let kind: String
+    let workspace: UInt64
+    let span: Double
+    let order: Double
+    let view: UInt64?
+    let range: String?
 }
 
 /// The habit projection (P18b, D13): computed on read, stored nowhere.
@@ -487,6 +529,18 @@ final class BoxModel: ObservableObject {
     /// The current workspace's saved layouts (0 = Home).
     func layers(for workspace: UInt64) -> [LayerRow] {
         (snap?.layers ?? []).filter { $0.workspace == workspace }
+    }
+
+    // ---- P18d: saved views + time ----
+
+    func saveView(name: String, query: String) {
+        act { lotus_create_view_at(self.path, name, query) != 0 }
+    }
+
+    /// Log a closed interval (full civil stamps) — the timer's stop writes
+    /// exactly one entity.
+    func logTime(target: UInt64, start: Int64, end: Int64) {
+        act { lotus_log_time_at(self.path, target, start, end) != 0 }
     }
 
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
@@ -3670,6 +3724,26 @@ struct SearchPopup: View {
                         .foregroundColor(filtersOpen || includeArchived ? Theme.accent : .secondary)
                     }
                     .buttonStyle(.plain)
+                    // Save view (P18d, feature-map #21/#28): bookmark the
+                    // QUERY on screen as a named view entity — the widget
+                    // board and the Library's Views group read the same list.
+                    if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Button("Save view…") {
+                            let saved = query
+                            Dialogs.shared.prompt(
+                                "Save view", placeholder: "Name", confirmLabel: "Save"
+                            ) { name in
+                                guard let name = name?.trimmingCharacters(in: .whitespaces),
+                                    !name.isEmpty
+                                else { return }
+                                model.saveView(name: name, query: saved)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundColor(Theme.accent)
+                        .padding(.leading, 10)
+                    }
                     Spacer()
                     Picker("", selection: $displayModeRaw) {
                         ForEach(SearchDisplayMode.allCases, id: \.rawValue) { m in
@@ -4200,6 +4274,7 @@ struct LibraryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header(files.count)
+                    viewsGroup
                     if files.isEmpty {
                         emptyState
                     } else {
@@ -4213,6 +4288,47 @@ struct LibraryView: View {
         // The middle is the bare face: the window material shows through, so the
         // side panels are the only cards floating on it (owner's model). The
         // content (rows, cards, the editor page) carries its own surface.
+    }
+
+    /// Saved views (P18d, the proving surface): the filter engine's bookmarks,
+    /// listed where files live — click re-runs the query in the one palette;
+    /// delete rides the ordinary trash door.
+    @ViewBuilder
+    private var viewsGroup: some View {
+        let views = model.snap?.views ?? []
+        if !views.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("VIEWS · \(views.count)")
+                    .font(.system(size: 11, weight: .bold)).kerning(0.6)
+                    .foregroundColor(Theme.mutedFg)
+                    .padding(.bottom, 2)
+                ForEach(views) { view in
+                    Button {
+                        NotificationCenter.default.post(name: .lotusSearchFor, object: view.query)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.mutedFg)
+                            Text(view.name).font(.system(size: 12.5))
+                            Text(view.query)
+                                .font(.system(size: 10.5).monospaced())
+                                .foregroundColor(Theme.mutedFg)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Delete view") { model.trash(view.id) }
+                    }
+                }
+            }
+            .padding(.horizontal, 32)
+            .padding(.bottom, 14)
+        }
     }
 
     private func header(_ count: Int) -> some View {

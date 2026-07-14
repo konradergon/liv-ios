@@ -16,6 +16,7 @@ pub mod import;
 pub mod markdown;
 pub mod recurrence;
 pub mod search;
+pub mod timeviews;
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;

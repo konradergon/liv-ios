@@ -1013,6 +1013,185 @@ pub fn check_in(
     Ok(id)
 }
 
+// ---- P18d: time entries · saved views · widgets (lazy-birth, one txn) ----
+
+/// Push Create+cells for a new backstage PROPERTY definition; returns its id.
+fn push_property_birth(
+    session: &mut Session,
+    commands: &mut Vec<Command>,
+    name: &str,
+    kind: &str,
+) -> Id {
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text(name) },
+        Cell { property: props::VALUE_KIND, value: Value::text(kind) },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: id, cell });
+    }
+    id
+}
+
+/// Push Create+cells for a new backstage TYPE; EXPECTED makes find_type
+/// resolve it (the P9 rule). Returns its id.
+fn push_type_birth(session: &mut Session, commands: &mut Vec<Command>, name: &str, expected: Id) -> Id {
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text(name) },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: props::EXPECTED, value: Value::Reference(expected) },
+    ] {
+        commands.push(Command::AddCell { entity: id, cell });
+    }
+    id
+}
+
+/// Log ONE closed time interval against a target — written whole, at stop
+/// (the log never holds a half-open promise; the running timer is shell
+/// state). Lazily births the `time-entry` type + start/end (+target)
+/// properties inside the same transaction: one commit, one undo.
+pub fn log_time(
+    session: &mut Session,
+    target: Id,
+    start: DateTime,
+    end: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let target = store.resolve(target);
+    let entry_type = find_type(store, "time-entry");
+    let target_prop = property_id(store, "target");
+    let start_prop = property_id(store, "start");
+    let end_prop = property_id(store, "end");
+
+    let mut commands = Vec::new();
+    let target_prop =
+        target_prop.unwrap_or_else(|| push_property_birth(session, &mut commands, "target", "reference"));
+    let start_prop =
+        start_prop.unwrap_or_else(|| push_property_birth(session, &mut commands, "start", "datetime"));
+    let end_prop =
+        end_prop.unwrap_or_else(|| push_property_birth(session, &mut commands, "end", "datetime"));
+    let type_id =
+        entry_type.unwrap_or_else(|| push_type_birth(session, &mut commands, "time-entry", start_prop));
+
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(end));
+    add(props::TYPE, Value::Reference(type_id));
+    add(target_prop, Value::Reference(target));
+    add(start_prop, Value::DateTime(start));
+    add(end_prop, Value::DateTime(end));
+    session.commit(commands, "log time", Author::User)?;
+    Ok(id)
+}
+
+/// Save a view: a NAMED backstage entity carrying the query string — the one
+/// filter engine's bookmark (feature-map #21/#28). One commit.
+pub fn create_view(
+    session: &mut Session,
+    name: &str,
+    query: &str,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let view_type = find_type(store, "view");
+    let query_prop = property_id(store, "query");
+
+    let mut commands = Vec::new();
+    let query_prop =
+        query_prop.unwrap_or_else(|| push_property_birth(session, &mut commands, "query", "text"));
+    let type_id =
+        view_type.unwrap_or_else(|| push_type_birth(session, &mut commands, "view", query_prop));
+
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::NAME, Value::text(name));
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(created));
+    add(props::TYPE, Value::Reference(type_id));
+    add(query_prop, Value::text(query));
+    session.commit(commands, "save view", Author::User)?;
+    Ok(id)
+}
+
+/// Add a board widget: a small backstage entity — kind + scope + span +
+/// float order (the pins pattern). Config edits ride the ordinary set door
+/// (the Inspector); removal rides trash. One commit, one undo — including
+/// the lazy type/property births on a fresh box.
+pub fn add_widget(
+    session: &mut Session,
+    kind: &str,
+    workspace: Option<Id>,
+    span: Option<f64>,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let widget_type = find_type(store, "widget");
+    let kind_prop = property_id(store, "widget-kind");
+    let span_prop = property_id(store, "span");
+    let range_prop = property_id(store, "range");
+    let order_prop = property_id(store, "order");
+    let ws_prop = property_id(store, "workspace");
+
+    // Land after the last widget: max order + 10.
+    let next_order = match (widget_type, order_prop) {
+        (Some(t), Some(order)) => {
+            store
+                .entities()
+                .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(t)))
+                .filter_map(|e| match e.get(order) {
+                    Some(Value::Number(n)) => Some(*n),
+                    _ => None,
+                })
+                .fold(0.0_f64, f64::max)
+                + 10.0
+        }
+        _ => 10.0,
+    };
+
+    let mut commands = Vec::new();
+    let kind_prop =
+        kind_prop.unwrap_or_else(|| push_property_birth(session, &mut commands, "widget-kind", "text"));
+    let span_prop =
+        span_prop.unwrap_or_else(|| push_property_birth(session, &mut commands, "span", "number"));
+    if range_prop.is_none() {
+        // Born beside widget-kind so the Inspector can offer it immediately.
+        let _ = push_property_birth(session, &mut commands, "range", "text");
+    }
+    let type_id =
+        widget_type.unwrap_or_else(|| push_type_birth(session, &mut commands, "widget", kind_prop));
+
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(created));
+    add(props::TYPE, Value::Reference(type_id));
+    add(kind_prop, Value::text(kind));
+    if let Some(s) = span {
+        add(span_prop, Value::Number(s));
+    }
+    if let (Some(w), Some(wp)) = (workspace, ws_prop) {
+        add(wp, Value::Reference(w));
+    }
+    if let Some(op) = order_prop {
+        add(op, Value::Number(next_order));
+    }
+    session.commit(commands, "add widget", Author::User)?;
+    Ok(id)
+}
+
 /// Remove every cell of one property — the inverse of set_property's
 /// replace, for "make top-level" and its kin. A property the entity
 /// does not carry is a no-op, not an error.

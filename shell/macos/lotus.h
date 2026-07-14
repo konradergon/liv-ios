@@ -218,6 +218,28 @@ uint64_t lotus_pin_at(const char *path, uint64_t target);
    0 when the target had none. */
 int32_t lotus_unpin_at(const char *path, uint64_t target);
 
+/* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
+   Start writes nothing anywhere - the running timer is shell state. */
+uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,
+                           int64_t end_civil);
+
+/* Save a view (P18d): a named query - the filter engine's bookmark. */
+uint64_t lotus_create_view_at(const char *path, const char *name, const char *query);
+
+/* Add a board widget (P18d): kind + workspace scope (0 = Home) + span
+   (<= 0 default). Config edits ride lotus_set_at; removal lotus_trash_at. */
+uint64_t lotus_widget_add_at(const char *path, const char *kind, uint64_t workspace,
+                             double span);
+
+/* Create a habit (P18b): points <= 0 means none (reads as 1); cadence may
+   be NULL. */
+uint64_t lotus_create_habit_at(const char *path, const char *name, double points,
+                               const char *cadence);
+
+/* Check a habit in on a civil day (YYYYMMDD; 0 = today). Idempotent per
+   (habit, day); uncheck = lotus_trash_at on the returned row. */
+uint64_t lotus_check_in_at(const char *path, uint64_t habit, int64_t day);
+
 /* Save a layout layer (P17i): one transaction — name + workspace scope
    (0 = Home) + ordered member ids ("[u64,...]"). Returns the layer id,
    0 on failure. Restore is pure shell; rename/delete ride set/trash. */

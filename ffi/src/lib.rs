@@ -298,6 +298,12 @@ struct Snapshot {
     /// The habit card (P18b): lines + streaks + the 84-day chain, computed
     /// on read (D13). OPTIONAL shell-side.
     habits: lotus_services::habits::HabitsSummary,
+    /// Time totals + the 7-day window's entries (P18d). OPTIONAL shell-side.
+    time_entries: lotus_services::timeviews::TimeSummary,
+    /// Saved views — the one filter engine's bookmarks (P18d). OPTIONAL.
+    views: Vec<lotus_services::timeviews::ViewRow>,
+    /// The board's widgets, float-key ordered (P18d). OPTIONAL.
+    widgets: Vec<lotus_services::timeviews::WidgetRow>,
     /// Every property definition — the inspector's catalog.
     properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
@@ -931,10 +937,11 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     };
 
     let now = Local::now();
-    let habits = lotus_services::habits::habit_stats(
-        store,
-        (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64,
-    );
+    let today_ymd = (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64;
+    let habits = lotus_services::habits::habit_stats(store, today_ymd);
+    let time_entries = lotus_services::timeviews::time_totals(store, today_ymd);
+    let views = lotus_services::timeviews::saved_views(store);
+    let widgets = lotus_services::timeviews::board_widgets(store);
 
     Snapshot {
         today,
@@ -947,6 +954,9 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         pins,
         layers,
         habits,
+        time_entries,
+        views,
+        widgets,
         properties,
         entities,
     }
@@ -2222,6 +2232,107 @@ pub unsafe extern "C" fn lotus_check_in_at(path: *const c_char, habit: u64, day:
             (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64
         };
         let id = lotus_services::content::check_in(session, habit, day, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
+/// Log ONE closed time interval (P18d): full civil stamps YYYYMMDDHHMM,
+/// written whole at stop — the running timer is shell state and start
+/// writes nothing. One commit, one undo. Returns the entry id, 0 on failure.
+///
+/// Additive verb (boundary rule): with_box + Committed, tested, flagged.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_log_time_at(
+    path: *const c_char,
+    target: u64,
+    start_civil: i64,
+    end_civil: i64,
+) -> u64 {
+    if start_civil <= 0 || end_civil <= 0 {
+        return 0;
+    }
+    let to_dt = |civil: i64| {
+        DateTime::at(
+            (civil / 100_000_000) as i32,
+            ((civil / 1_000_000) % 100) as u32,
+            ((civil / 10_000) % 100) as u32,
+            ((civil / 100) % 100) as u32,
+            (civil % 100) as u32,
+        )
+    };
+    with_box(path, 0, move |session| {
+        let id = lotus_services::content::log_time(session, target, to_dt(start_civil), to_dt(end_civil))
+            .unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
+/// Save a view (P18d): the one filter engine's bookmark — a named query.
+/// Returns the view id, 0 on failure. Additive verb, tested, flagged.
+///
+/// # Safety
+/// `path`, `name`, and `query` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_create_view_at(
+    path: *const c_char,
+    name: *const c_char,
+    query: *const c_char,
+) -> u64 {
+    if name.is_null() || query.is_null() {
+        return 0;
+    }
+    let (Ok(name), Ok(query)) = (CStr::from_ptr(name).to_str(), CStr::from_ptr(query).to_str())
+    else {
+        return 0;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return 0;
+    }
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::content::create_view(session, name, query.trim(), created)
+            .unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
+/// Add a board widget (P18d): kind + workspace scope (0 = Home) + span
+/// (columns; <= 0 for the default). One commit — on a fresh box the widget
+/// types are born in the SAME transaction, so one undo removes everything.
+/// Config edits ride lotus_set_at; removal rides lotus_trash_at. Returns
+/// the widget id, 0 on failure. Additive verb, tested, flagged.
+///
+/// # Safety
+/// `path` and `kind` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_widget_add_at(
+    path: *const c_char,
+    kind: *const c_char,
+    workspace: u64,
+    span: f64,
+) -> u64 {
+    if kind.is_null() {
+        return 0;
+    }
+    let Ok(kind) = CStr::from_ptr(kind).to_str() else {
+        return 0;
+    };
+    let kind = kind.trim();
+    if kind.is_empty() {
+        return 0;
+    }
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let workspace = (workspace != 0).then_some(workspace);
+        let span = (span > 0.0).then_some(span);
+        let id = lotus_services::content::add_widget(session, kind, workspace, span, created)
+            .unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -4482,7 +4593,59 @@ mod tests {
 
         cleanup(&path);
     }
+    #[test]
+    fn time_views_widgets_roundtrip_the_snapshot() {
+        let (path, c_path) = fresh_box("lotus_ffi_timeviews.log");
+
+        let text = CString::new("thesis work").unwrap();
+        let project = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+
+        // A closed interval: full civil stamps (YYYYMMDDHHMM).
+        let entry = unsafe {
+            lotus_log_time_at(c_path.as_ptr(), project, 202607140900, 202607141030)
+        };
+        assert_ne!(entry, 0);
+
+        let view_name = CString::new("Open tasks").unwrap();
+        let query = CString::new("is:task status!=done").unwrap();
+        let view = unsafe {
+            lotus_create_view_at(c_path.as_ptr(), view_name.as_ptr(), query.as_ptr())
+        };
+        assert_ne!(view, 0);
+
+        let kind = CString::new("habits").unwrap();
+        let widget = unsafe { lotus_widget_add_at(c_path.as_ptr(), kind.as_ptr(), 0, 3.0) };
+        assert_ne!(widget, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        // Time: totals + entries in the 7-day window.
+        let time = &snap["time_entries"];
+        assert_eq!(time["totals"][0]["target"], project);
+        assert_eq!(time["totals"][0]["minutes"], 90);
+        assert_eq!(time["entries"].as_array().unwrap().len(), 1);
+        // Views.
+        let views = snap["views"].as_array().unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0]["name"], "Open tasks");
+        assert_eq!(views[0]["query"], "is:task status!=done");
+        // Widgets, ordered.
+        let widgets = snap["widgets"].as_array().unwrap();
+        assert_eq!(widgets.len(), 1);
+        assert_eq!(widgets[0]["kind"], "habits");
+        assert_eq!(widgets[0]["span"], 3.0);
+        // All backstage: none of the records pollute Everything.
+        let everything = snap["everything"].as_array().unwrap();
+        assert!(!everything.iter().any(|id| *id == entry || *id == view || *id == widget));
+
+        // Removal rides the ordinary trash door.
+        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), widget) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["widgets"].as_array().unwrap().is_empty());
+
+        cleanup(&path);
+    }
 }
+
 
 
 

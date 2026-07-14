@@ -79,12 +79,14 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             habits(&session);
             Ok(())
         }
+        Some((&"time", rest)) => time(&mut session, rest),
         _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
                   inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
                   set ID PROP VALUE... | history | \
                   habit NAME... [--points N] [--cadence TEXT] | \
-                  checkin HABIT-ID [DAY] | habits"
+                  checkin HABIT-ID [DAY] | habits | \
+                  time [TARGET-ID START END]"
             .into()),
     }
 }
@@ -512,4 +514,45 @@ fn habits(session: &Session) {
         .map(|c| glyphs[(*c as usize).min(3)])
         .collect();
     println!("chain [{chain}]");
+}
+
+/// P18d: log a closed interval (`lotus time ID 202607140900 202607141030`),
+/// or with no args print the week's totals — the same projection the shell
+/// reads.
+fn time(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    if rest.is_empty() {
+        let today = civil_today().civil / 10_000;
+        let summary = lotus_services::timeviews::time_totals(session.store(), today);
+        if summary.totals.is_empty() {
+            println!("no time logged this week");
+            return Ok(());
+        }
+        for total in &summary.totals {
+            println!("#{:<5} {:<28} {}h {:02}m", total.target, total.name, total.minutes / 60, total.minutes % 60);
+        }
+        return Ok(());
+    }
+    let (id_arg, stamps) = rest.split_first().unwrap();
+    let target: Id =
+        id_arg.trim_start_matches('#').parse().map_err(|_| "TARGET-ID must be a number")?;
+    let (start, end) = match stamps {
+        [s, e] => (
+            s.parse::<i64>().map_err(|_| "START must be YYYYMMDDHHMM")?,
+            e.parse::<i64>().map_err(|_| "END must be YYYYMMDDHHMM")?,
+        ),
+        _ => return Err("usage: lotus time TARGET-ID START END".into()),
+    };
+    let to_dt = |civil: i64| {
+        DateTime::at(
+            (civil / 100_000_000) as i32,
+            ((civil / 1_000_000) % 100) as u32,
+            ((civil / 10_000) % 100) as u32,
+            ((civil / 100) % 100) as u32,
+            (civil % 100) as u32,
+        )
+    };
+    let id = lotus_services::content::log_time(session, target, to_dt(start), to_dt(end))
+        .map_err(|e| e.to_string())?;
+    println!("logged #{id}");
+    Ok(())
 }
