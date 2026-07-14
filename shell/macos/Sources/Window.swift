@@ -198,6 +198,17 @@ struct HabitsSection: Codable, Hashable {
     let avgActive: Double
     /// Check-ins per day, 84 days, oldest → today.
     let heat: [UInt32]
+    /// Points per day (the sparkline), oldest → today. Optional (18g).
+    let pointsHeat: [Double]?
+    /// The window's raw check-ins — the day-click popover. Optional (18g).
+    let checkIns: [CheckInDayRow]?
+}
+
+struct CheckInDayRow: Codable, Hashable, Identifiable {
+    let id: UInt64
+    let habit: UInt64
+    /// Civil YMD.
+    let day: Int64
 }
 
 struct HabitLine: Codable, Identifiable, Hashable {
@@ -547,6 +558,17 @@ final class BoxModel: ObservableObject {
     /// box); config edits ride set, removal rides trash.
     func addWidget(kind: String, workspace: UInt64, span: Double) {
         act { lotus_widget_add_at(self.path, kind, workspace, span) != 0 }
+    }
+
+    /// Create a habit (P18g): points <= 0 means none (reads as 1).
+    func createHabit(name: String, points: Double, cadence: String?) {
+        act { lotus_create_habit_at(self.path, name, points, cadence) != 0 }
+    }
+
+    /// Check a habit in today — one commit, one undo; idempotent, so the
+    /// checkbox toggle is safe. Uncheck = trash(the row).
+    func checkIn(_ habit: UInt64) {
+        act { lotus_check_in_at(self.path, habit, 0) != 0 }
     }
 
     /// One-shot query run (the Saved-view widget) — its own callback, never

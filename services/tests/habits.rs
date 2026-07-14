@@ -99,6 +99,13 @@ fn stats_compute_streaks_points_and_the_chain() {
     assert_eq!(stats.heat[80], 0);
     // Avg per active day over the window: 6 points / 3 active days.
     assert!((stats.avg_active - 2.0).abs() < 1e-9);
+    // The sparkline: POINTS per day (today = 1 + 3).
+    assert_eq!(stats.points_heat.len(), 84);
+    assert!((stats.points_heat[83] - 4.0).abs() < 1e-9);
+    assert!((stats.points_heat[82] - 1.0).abs() < 1e-9);
+    // The popover's rows: every window check-in, with its exact row id.
+    assert_eq!(stats.check_ins.len(), 4);
+    assert!(stats.check_ins.iter().any(|c| c.id == b_today && c.day == 20260714 && c.habit == b));
 
     // An unchecked TODAY does not break the run until the day passes:
     // seen from the 15th (nothing yet), the streak still reads 3 …

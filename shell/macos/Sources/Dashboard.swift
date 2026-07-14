@@ -20,6 +20,9 @@ struct WidgetSpec {
 
 let widgetRegistry: [WidgetSpec] = [
     WidgetSpec(
+        kind: "habits", title: "Habits & points",
+        reads: "reads → habit definitions + check-in records", defaultSpan: 3),
+    WidgetSpec(
         kind: "agenda", title: "Agenda · today",
         reads: "reads → today's events + dated objects + the daily note", defaultSpan: 2),
     WidgetSpec(
@@ -272,6 +275,8 @@ struct DashboardView: View {
             pinnedBody
         case "agenda":
             agendaBody
+        case "habits":
+            HabitsCardBody(model: model)
         case "metric":
             MetricChartBody(model: model, widget: widget)
         case "view":
@@ -467,6 +472,247 @@ struct DashboardView: View {
         let f = DateFormatter()
         f.dateFormat = "EEE"
         return f.string(from: date)
+    }
+}
+
+/// Habits & points (bp8 8–12, D13 whole): check-in rows wired to the real
+/// verbs, four stat tiles with plain-words formula tooltips, the 12-week
+/// chain (NEUTRAL ink ramp, the lake-green TODAY ring — never marigold, the
+/// recorded delta), a day-click popover with per-row uncheck, and the points
+/// sparkline in neutral ink. Everything recomputes from the projection —
+/// no stat is stored anywhere. Zero amber.
+struct HabitsCardBody: View {
+    @ObservedObject var model: BoxModel
+    @State private var poppedDay: Int?
+
+    private var stats: HabitsSection? { model.snap?.habits }
+
+    var body: some View {
+        if let stats, !stats.habits.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                checkInRows(stats)
+                tiles(stats)
+                heatmap(stats)
+                sparkline(stats)
+                footerRow
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("No habits yet.").font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+                addHabitButton
+            }
+        }
+    }
+
+    // MARK: today — check in
+
+    private func checkInRows(_ stats: HabitsSection) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("TODAY — CHECK IN")
+                .font(.system(size: 9, weight: .bold)).kerning(0.5)
+                .foregroundColor(Theme.mutedFg)
+                .padding(.bottom, 2)
+            ForEach(stats.habits) { habit in
+                Button {
+                    if let row = habit.todayCheckIn {
+                        model.trash(row)  // uncheck: the EXACT row, one undo back
+                    } else {
+                        model.checkIn(habit.id)
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: habit.todayCheckIn != nil
+                            ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 12))
+                            .foregroundColor(
+                                habit.todayCheckIn != nil ? Theme.accent : Theme.mutedFg)
+                        Text(habit.name).font(.system(size: 12))
+                        if let cadence = habit.cadence {
+                            Text(cadence).font(.system(size: 10))
+                                .foregroundColor(Theme.mutedFg)
+                        }
+                        Spacer(minLength: 4)
+                        Text("+" + trim(habit.points))
+                            .font(.system(size: 10.5).monospacedDigit())
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                    .frame(height: 26)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: tiles — plain-words formulas in the tooltips, never a percentage
+
+    private func tiles(_ stats: HabitsSection) -> some View {
+        HStack(spacing: 8) {
+            tile("\(stats.streak)d", "STREAK",
+                 "Days in a row with at least one check-in, ending today (an unchecked today doesn't break it until the day passes).")
+            tile("\(stats.longest)d", "LONGEST",
+                 "The longest run of consecutive checked days anywhere in the record.")
+            tile(trim(stats.weekPoints), "PTS · WK",
+                 "The points of every check-in in the last 7 days.")
+            tile(String(format: "%.1f", stats.avgActive), "AVG/DAY",
+                 "Window points divided by the days that had at least one check-in.")
+        }
+    }
+
+    private func tile(_ value: String, _ label: String, _ formula: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value).font(.system(size: 14, weight: .semibold).monospacedDigit())
+            Text(label).font(.system(size: 8.5)).kerning(0.3)
+                .foregroundColor(Theme.mutedFg)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+        .help(formula)
+    }
+
+    private func trim(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    // MARK: the 12-week chain
+
+    private func heatmap(_ stats: HabitsSection) -> some View {
+        // 84 cells column-per-week, oldest → today; NEUTRAL ink ramp; the
+        // today ring is the ONE lake-green.
+        let cells = Array(stats.heat.enumerated())
+        let columns = Array(repeating: GridItem(.fixed(11), spacing: 2), count: 12)
+        return VStack(alignment: .leading, spacing: 2) {
+            LazyHGrid(rows: Array(repeating: GridItem(.fixed(11), spacing: 2), count: 7), spacing: 2) {
+                ForEach(cells, id: \.offset) { index, count in
+                    let ramp: Double = count == 0 ? 0.08 : (count == 1 ? 0.3 : (count == 2 ? 0.55 : 0.8))
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(Theme.foreground.opacity(ramp))
+                        .frame(width: 11, height: 11)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .strokeBorder(
+                                    index == 83 ? Theme.accent : .clear, lineWidth: 1.5))
+                        .onTapGesture { poppedDay = index }
+                        .popover(
+                            isPresented: Binding(
+                                get: { poppedDay == index },
+                                set: { if !$0 { poppedDay = nil } })
+                        ) {
+                            dayPopover(index: index, stats: stats)
+                        }
+                }
+            }
+            .frame(height: 89)
+            Text("last 12 weeks · less → more")
+                .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+        }
+        // The column budget keeps 12 weeks; unused var silences nothing.
+        .id(columns.count)
+    }
+
+    private func dayPopover(index: Int, stats: HabitsSection) -> some View {
+        let day = civilDay(offsetFromToday: 83 - index)
+        let rows = (stats.checkIns ?? []).filter { $0.day == day }
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(dayLabel(day)).font(.system(size: 11.5, weight: .semibold))
+            if rows.isEmpty {
+                Text("No check-ins.").font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+            }
+            ForEach(rows) { row in
+                HStack(spacing: 8) {
+                    Text(habitName(row.habit, stats: stats)).font(.system(size: 11.5))
+                    Spacer(minLength: 10)
+                    Button("Uncheck") { model.trash(row.id) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(Theme.accent)
+                }
+            }
+        }
+        .padding(10)
+        .frame(minWidth: 170)
+    }
+
+    private func habitName(_ id: UInt64, stats: HabitsSection) -> String {
+        stats.habits.first { $0.id == id }?.name ?? "#\(id)"
+    }
+
+    private func civilDay(offsetFromToday: Int) -> Int64 {
+        var parts = DateComponents()
+        let today = Civil.todayYMD
+        parts.year = Int(today / 10_000)
+        parts.month = Int((today / 100) % 100)
+        parts.day = Int(today % 100)
+        guard let base = Civil.gregorian.date(from: parts),
+            let then = Civil.gregorian.date(byAdding: .day, value: -offsetFromToday, to: base)
+        else { return today }
+        let c = Civil.gregorian.dateComponents([.year, .month, .day], from: then)
+        return Int64((c.year ?? 0) * 10_000 + (c.month ?? 0) * 100 + (c.day ?? 0))
+    }
+
+    private func dayLabel(_ ymd: Int64) -> String {
+        var parts = DateComponents()
+        parts.year = Int(ymd / 10_000)
+        parts.month = Int((ymd / 100) % 100)
+        parts.day = Int(ymd % 100)
+        guard let date = Civil.gregorian.date(from: parts) else { return "\(ymd)" }
+        let f = DateFormatter()
+        f.dateFormat = "EEEE d MMM"
+        return f.string(from: date)
+    }
+
+    // MARK: the points sparkline — neutral ink
+
+    private func sparkline(_ stats: HabitsSection) -> some View {
+        let series = stats.pointsHeat ?? []
+        let maxValue = max(series.max() ?? 0, 0.001)
+        return VStack(alignment: .leading, spacing: 1) {
+            GeometryReader { geo in
+                Path { path in
+                    guard series.count > 1 else { return }
+                    let step = geo.size.width / CGFloat(series.count - 1)
+                    for (index, value) in series.enumerated() {
+                        let point = CGPoint(
+                            x: CGFloat(index) * step,
+                            y: geo.size.height * (1 - CGFloat(value / maxValue) * 0.9) - 1)
+                        if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                    }
+                }
+                .stroke(Theme.foreground.opacity(0.45), lineWidth: 1.2)
+            }
+            .frame(height: 26)
+            Text("points over time").font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+        }
+    }
+
+    private var footerRow: some View {
+        HStack {
+            addHabitButton
+            Spacer()
+            // The collection link: the SAME definition, another lens.
+            Button("habits ›") {
+                NotificationCenter.default.post(name: .lotusSearchFor, object: "is:habit")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundColor(Theme.accent)
+        }
+    }
+
+    private var addHabitButton: some View {
+        Button("＋ habit") {
+            Dialogs.shared.prompt(
+                "New habit", placeholder: "Name — e.g. Climb (3×/wk)", confirmLabel: "Create"
+            ) { name in
+                guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty
+                else { return }
+                model.createHabit(name: name, points: 0, cadence: nil)
+            }
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 10.5, weight: .medium))
+        .foregroundColor(Theme.accent)
     }
 }
 

@@ -21,6 +21,16 @@ pub struct HabitLine {
     pub today_check_in: Option<Id>,
 }
 
+/// One window check-in — the heatmap's day-click popover (uncheck = trash
+/// this exact row).
+#[derive(Serialize, Clone, Debug)]
+pub struct CheckInDay {
+    pub id: Id,
+    pub habit: Id,
+    /// Civil YMD.
+    pub day: i64,
+}
+
 /// The whole card, derived in one pass.
 #[derive(Serialize, Clone, Debug)]
 pub struct HabitsSummary {
@@ -35,6 +45,10 @@ pub struct HabitsSummary {
     pub avg_active: f64,
     /// Check-ins per day for the last 84 days, oldest → today.
     pub heat: Vec<u32>,
+    /// POINTS per day over the same window (the sparkline), oldest → today.
+    pub points_heat: Vec<f64>,
+    /// The window's raw check-ins — the day-click popover's rows.
+    pub check_ins: Vec<CheckInDay>,
 }
 
 fn day_before(ymd: i64) -> i64 {
@@ -61,6 +75,8 @@ pub fn habit_stats(store: &Store, today: i64) -> HabitsSummary {
         week_points: 0.0,
         avg_active: 0.0,
         heat: vec![0; 84],
+        points_heat: vec![0.0; 84],
+        check_ins: Vec::new(),
     };
     let (Some(habit_type), Some(checkin_type), Some(habit_prop)) = (
         find_type(store, "habit"),
@@ -136,13 +152,17 @@ pub fn habit_stats(store: &Store, today: i64) -> HabitsSummary {
 
     // The 84-day chain + week points + active days, walking back from today.
     let mut heat = vec![0u32; 84];
+    let mut points_heat = vec![0.0f64; 84];
     let mut week_points = 0.0;
     let mut window_points = 0.0;
     let mut active_days = 0u32;
+    let mut window_days: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let mut day = today;
     for offset in 0..84 {
+        window_days.insert(day, 83 - offset);
         if let Some((count, points)) = by_day.get(&day) {
             heat[83 - offset] = *count;
+            points_heat[83 - offset] = *points;
             window_points += points;
             active_days += 1;
             if offset < 7 {
@@ -151,6 +171,11 @@ pub fn habit_stats(store: &Store, today: i64) -> HabitsSummary {
         }
         day = day_before(day);
     }
+    let window_check_ins: Vec<CheckInDay> = checkins
+        .iter()
+        .filter(|(day, _, _)| window_days.contains_key(day))
+        .map(|(day, habit, id)| CheckInDay { id: *id, habit: *habit, day: *day })
+        .collect();
 
     // Streak: today, or yesterday if today is still unchecked.
     let mut streak = 0u32;
@@ -189,5 +214,7 @@ pub fn habit_stats(store: &Store, today: i64) -> HabitsSummary {
         week_points,
         avg_active: if active_days > 0 { window_points / active_days as f64 } else { 0.0 },
         heat,
+        points_heat,
+        check_ins: window_check_ins,
     }
 }
