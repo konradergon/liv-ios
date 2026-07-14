@@ -221,3 +221,10 @@ Ranked by constitutional + fidelity risk retired.
   whole place (workspace → surface → the object's tab → selection), a trashed
   target is pruned from the ring and the step continues, and replay echoes are
   kept out of the ring by a short record grace.
+- **17g pins, as-built:** the pin entity landed test-first (services 3 tests +
+  1 FFI round-trip; `lotus_pin_at`/`lotus_unpin_at` additive, flagged). ONE pin
+  source, three doors (inspector 🔖, ⌘⇧B, Spaces › Favourites with drag-reorder
+  on the float key). The band favorites PILL ROW is not mounted (owner's
+  no-new-rows ruling — Favourites is the one pin surface), and the interim
+  `bookmarked` cell is superseded (no surface reads it). Scope-pin-mints-a-view
+  and memo-pins wait for saved views (P13 remainder/P19).
