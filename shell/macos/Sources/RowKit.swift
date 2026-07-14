@@ -284,6 +284,14 @@ struct ObjectRow: View {
                 lastTap = now
             }
         }
+        .contextMenu {
+            // The timer's row door (P18h): start writes NOTHING — the pref
+            // flips; the widget's strip picks it up on its next tick.
+            Button("Start timer") {
+                NotificationCenter.default.post(name: .lotusStartTimer, object: row.id)
+            }
+            Button("Open") { openRow() }
+        }
         .onHover { hovering = $0 }
         .overlay(Divider(), alignment: .bottom)
     }

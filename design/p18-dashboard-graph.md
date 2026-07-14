@@ -161,3 +161,38 @@
 **Relocated, feature intact:** dashboard overlay→surface · gear popover→the standard Inspector · D19 banner→inbox proposal · `filter: tier=1`→pins shelf + re-aimable source · bp8 ㉔ focus-restore→places-history Esc.
 
 **Recorded deltas (the delta log for this file, maintained through 18h):** overlay→surface · gear→panel · D13 view-file→entity (lotus has no view-files) · WORKING extended from curation to backstage records · marigold today-ring→lake-green · streak flame→ink-opacity (neither amber nor lake-green) · accent wikilink edge→heavy neutral (weight, not hue) · heatmap/sparkline→neutral ink ramp · tier→pins shelf · OQ-2/3 answered as per-scope widget entities rather than a view-file · template re-apply collision dissolved by the cut · the second overlay carve-out (extends 0.5, does not repeal 0.2) · "+N more" as count label until 18c makes it a door.
+---
+
+## Delta log (as-built, 18a–18h — P18 COMPLETE)
+
+- **18a** local lens: ring budget 12 by recency; "+N more" is a rim LABEL (the
+  vault-graph door is the footer button). Zero Rust.
+- **18b** habits: front-of-house type + WORKING check-ins, exactly as specced;
+  CLI = the proving surface (`habit`/`checkin`/`habits` with chain glyphs).
+- **18c** overlay: determinism BY CONSTRUCTION (seeded FNV positions, fixed dt,
+  no Date/random in the sim) — no Swift test harness exists to hold a golden
+  test; recorded. Wikilink edges are not derivable shell-side (span targets
+  aren't in the snapshot cells), so the HEAVY edge class = explicit reference
+  cells; via-value stays thin. Labels: values always, objects on hover.
+- **18d** seeds: lazy-birth inside the first write's transaction (the pins
+  precedent) instead of open-seeds — strengthens the one-undo acceptance
+  (types unwind with the first record). Proving surfaces shipped: CLI `time`,
+  palette "Save view…", Library VIEWS group.
+- **18e** dashboard: overlay→surface (the 07-14 ruling); widget rows join the
+  FFI row store so the standard Inspector resolves a selected card (row store
+  only — id lists untouched, asserted); ⇧⇥ entry deferred (the Hotkey machinery
+  can't express Tab; ⌘⇧M + rail cover it); the 6-col span grid renders as an
+  adaptive flow v0.
+- **18f** metric chart: v0 series = the collection's CREATION CADENCE (the
+  numeric-property series waits for a property-picker config row); agenda
+  derives from calendarByDay — the calendar's own function, lookup roles
+  excluded by construction.
+- **18g** habits card: whole, zero amber, lake-green today-ring; projection
+  grew points-per-day + window check-ins (test-first) for the sparkline and
+  the day popover. Export-to-sheet deferred: the export grammar cannot reach
+  WORKING records yet (named).
+- **18h** timer: the pref is the single source (`app.timer.v1`); start doors =
+  the widget bars' ▶ + every ObjectRow's context menu (no top-band chrome);
+  stop = optimistic strip clear + one async commit; start-while-running folds.
+  What-next: deterministic candidates only (overdue → due-today → mid-flight),
+  dismissal sidecar in shell prefs, "no AI here" stated on the card.

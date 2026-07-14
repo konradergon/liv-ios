@@ -1097,6 +1097,7 @@ extension Notification.Name {
     static let lotusGoTidy = Notification.Name("lotus.goTidy")
     static let lotusSaveLayer = Notification.Name("lotus.saveLayer")
     static let lotusVaultGraph = Notification.Name("lotus.vaultGraph")
+    static let lotusStartTimer = Notification.Name("lotus.startTimer")
     static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
@@ -1519,6 +1520,24 @@ struct WindowChrome: View {
                 vaultGraphFocus = note.object as? UInt64 ?? rightFocusId
                 vaultGraphOpen = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusStartTimer)) { note in
+                guard let target = note.object as? UInt64 else { return }
+                startTimer(target)
+            }
+    }
+
+    /// Start (or re-aim) the ONE timer (P18h). Starting writes NOTHING —
+    /// the running timer is a shell pref; start-while-running FOLDS the old
+    /// interval first (one commit closing it), so a second never double-counts.
+    private func startTimer(_ target: UInt64) {
+        if let running = TimerPref.load() {
+            guard running.target != target else { return }
+            model.logTime(
+                target: running.target,
+                start: TimerPref.civil(running.started),
+                end: TimerPref.civil(Date()))
+        }
+        TimerPref.save(target: target, started: Date())
     }
 
     /// The vault graph (P18c): summon/glance/jump/Esc — no tab consumed.

@@ -37,6 +37,12 @@ let widgetRegistry: [WidgetSpec] = [
     WidgetSpec(
         kind: "view", title: "Saved view",
         reads: "reads → any saved view, rendered as a card", defaultSpan: 2),
+    WidgetSpec(
+        kind: "time", title: "Time tracking",
+        reads: "reads → time entries · hosts the one timer", defaultSpan: 3),
+    WidgetSpec(
+        kind: "whatnext", title: "What next",
+        reads: "reads → overdue + due-today tasks, deterministic only", defaultSpan: 2),
 ]
 
 struct DashboardView: View {
@@ -281,6 +287,10 @@ struct DashboardView: View {
             MetricChartBody(model: model, widget: widget)
         case "view":
             SavedViewBody(model: model, widget: widget, open: open)
+        case "time":
+            TimeCardBody(model: model, open: open)
+        case "whatnext":
+            WhatNextBody(model: model, open: open)
         default:
             // A kind from a newer box/CLI this build doesn't render yet —
             // honest, quiet, never a crash.
@@ -886,6 +896,262 @@ struct SavedViewBody: View {
 
     private func refresh(_ query: String) {
         model.runQuery(query) { ids in hits = ids }
+    }
+}
+
+/// The ONE running timer — a shell pref, never an entity (the timers law:
+/// start writes nothing; the log gets one closed interval at stop). Survives
+/// relaunch; the strip ticks off this pref with zero box IO.
+enum TimerPref {
+    private static let key = "app.timer.v1"
+
+    static func load() -> (target: UInt64, started: Date)? {
+        guard let dict = UserDefaults.standard.dictionary(forKey: key),
+            let target = dict["target"] as? UInt64 ?? (dict["target"] as? Int).map(UInt64.init),
+            let epoch = dict["started"] as? Double
+        else { return nil }
+        return (target, Date(timeIntervalSince1970: epoch))
+    }
+
+    static func save(target: UInt64, started: Date) {
+        UserDefaults.standard.set(
+            ["target": Int(target), "started": started.timeIntervalSince1970], forKey: key)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    /// A Date as the FFI's full civil stamp (YYYYMMDDHHMM).
+    static func civil(_ date: Date) -> Int64 {
+        let c = Civil.gregorian.dateComponents(
+            [.year, .month, .day, .hour, .minute], from: date)
+        return Int64(
+            (c.year ?? 0) * 100_000_000 + (c.month ?? 0) * 1_000_000 + (c.day ?? 0) * 10_000
+                + (c.hour ?? 0) * 100 + (c.minute ?? 0))
+    }
+}
+
+/// Time tracking (bp8 20): per-target VALUE_HEX bars (byte-matched to the
+/// same value's chips), click a bar for its window entries, hover ▶ starts
+/// the timer. The running strip ticks OFF THE PREF — the log's byte length
+/// is untouched by a minute of ticking; ■ stop writes exactly one entity
+/// (optimistic strip clear, async commit).
+struct TimeCardBody: View {
+    @ObservedObject var model: BoxModel
+    var open: (UInt64) -> Void = { _ in }
+    @State private var expanded: UInt64?
+    @State private var hoveredBar: UInt64?
+    /// Bumped by start/stop so the strip re-reads the pref immediately.
+    @State private var timerEpoch = 0
+
+    var body: some View {
+        let section = model.snap?.timeEntries
+        let totals = section?.totals ?? []
+        let maxMinutes = max(totals.map(\.minutes).max() ?? 0, 1)
+        VStack(alignment: .leading, spacing: 4) {
+            if totals.isEmpty {
+                Text("No time logged this week. ▶ on any bar — or a row's context menu — starts the one timer.")
+                    .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+            }
+            ForEach(totals) { total in
+                bar(total, maxMinutes: maxMinutes, entries: section?.entries ?? [])
+            }
+            runStrip
+        }
+    }
+
+    private func bar(
+        _ total: TimeTotalRow, maxMinutes: Int64, entries: [TimeEntryWireRow]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                expanded = expanded == total.target ? nil : total.target
+            } label: {
+                HStack(spacing: 8) {
+                    Text(total.name)
+                        .font(.system(size: 11)).lineLimit(1)
+                        .frame(width: 76, alignment: .leading)
+                    RoundedRectangle(cornerRadius: 4.5)
+                        .fill(Color(nsColor: Hues.valueHex(total.name)).opacity(0.75))
+                        .frame(
+                            width: max(8, 150 * CGFloat(total.minutes) / CGFloat(maxMinutes)),
+                            height: 9)
+                    Text("\(total.minutes / 60)h \(String(format: "%02d", total.minutes % 60))m")
+                        .font(.system(size: 10.5).monospacedDigit())
+                        .foregroundColor(Theme.mutedFg)
+                    Spacer(minLength: 0)
+                    if hoveredBar == total.target {
+                        Button {
+                            NotificationCenter.default.post(
+                                name: .lotusStartTimer, object: total.target)
+                            timerEpoch += 1
+                        } label: {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(Theme.accent)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Start the timer on \(total.name)")
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in
+                hoveredBar = inside ? total.target : (hoveredBar == total.target ? nil : hoveredBar)
+            }
+            if expanded == total.target {
+                ForEach(entries.filter { $0.target == total.target }) { entry in
+                    Text("\(stamp(entry.start)) → \(stamp(entry.end))")
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.leading, 84)
+                }
+            }
+        }
+    }
+
+    private func stamp(_ civil: Int64) -> String {
+        let hhmm = Int(civil % 10_000)
+        let day = civil / 10_000
+        return String(
+            format: "%02d/%02d %02d:%02d",
+            Int((day / 100) % 100), Int(day % 100), hhmm / 100, hhmm % 100)
+    }
+
+    @ViewBuilder
+    private var runStrip: some View {
+        // The 1s tick reads the PREF only — zero box IO (the acceptance).
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let _ = timerEpoch  // re-evaluate on start/stop
+            if let running = TimerPref.load() {
+                HStack(spacing: 8) {
+                    Button {
+                        // Optimistic: the strip clears NOW; the commit rides
+                        // the box queue behind it.
+                        let end = context.date
+                        TimerPref.clear()
+                        timerEpoch += 1
+                        model.logTime(
+                            target: running.target,
+                            start: TimerPref.civil(running.started),
+                            end: TimerPref.civil(end))
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(Theme.foreground.opacity(0.7))
+                            .frame(width: 18, height: 18)
+                            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop — writes one entry, one undo")
+                    Text(elapsed(from: running.started, to: context.date))
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    Text("on \(model.entity(running.target)?.title ?? "#\(running.target)")")
+                        .font(.system(size: 11)).foregroundColor(Theme.mutedFg).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 6)
+                .overlay(Divider(), alignment: .top)
+            }
+        }
+    }
+
+    private func elapsed(from start: Date, to now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return String(
+            format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
+    }
+}
+
+/// What next (bp8, DETERMINISTIC-ONLY — the AI candidates wait behind the
+/// P16 fence): overdue first, then due today, then anything mid-flight.
+/// Dismissals live in a shell sidecar (owner call #9) — a dismissed
+/// candidate never returns, across relaunch.
+struct WhatNextBody: View {
+    @ObservedObject var model: BoxModel
+    var open: (UInt64) -> Void = { _ in }
+    @AppStorage("app.whatnext.dismissed.v1") private var dismissedRaw = ""
+
+    private var dismissed: Set<UInt64> {
+        Set(dismissedRaw.split(separator: ",").compactMap { UInt64($0) })
+    }
+
+    private func dismiss(_ id: UInt64) {
+        var set = dismissed
+        set.insert(id)
+        dismissedRaw = set.map(String.init).joined(separator: ",")
+    }
+
+    private var candidates: [(row: EntityRow, why: String)] {
+        let today = Civil.todayYMD
+        let tasks = model.rows(model.snap?.everything ?? [])
+            .filter { ($0.kinds.contains("task") || $0.status != nil) && !dismissed.contains($0.id) }
+            .filter { !isDone($0) }
+        let overdue = tasks.filter { ($0.due.map { $0 / 10_000 } ?? .max) < today }
+            .map { (row: $0, why: "overdue") }
+        let dueToday = tasks.filter { ($0.due.map { $0 / 10_000 }) == today }
+            .map { (row: $0, why: "due today") }
+        let doing = tasks.filter { candidate in
+            candidate.due == nil && candidate.status != nil && candidate.status != "todo"
+        }
+        .map { (row: $0, why: $0.status ?? "") }
+        return Array((overdue + dueToday + doing).prefix(5))
+    }
+
+    private func isDone(_ row: EntityRow) -> Bool {
+        guard let status = row.status else { return false }
+        let kind = row.kinds.first ?? "task"
+        let option = statusVocabulary(model, kind: kind).first { $0.name == status }
+        return option?.isTerminal ?? (status == "done")
+    }
+
+    var body: some View {
+        let rows = candidates
+        VStack(alignment: .leading, spacing: 2) {
+            if rows.isEmpty {
+                Text("Nothing urgent. The board stays quiet on purpose.")
+                    .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+            }
+            ForEach(rows, id: \.row.id) { candidate in
+                HStack(spacing: 7) {
+                    Button {
+                        open(candidate.row.id)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: rowKindIcon(candidate.row))
+                                .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                            Text(candidate.row.title).font(.system(size: 12)).lineLimit(1)
+                            Text(candidate.why)
+                                .font(.system(size: 9.5))
+                                .foregroundColor(
+                                    candidate.why == "overdue"
+                                        ? Color(nsColor: .systemRed).opacity(0.8) : Theme.mutedFg)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 4)
+                    Button {
+                        dismiss(candidate.row.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8))
+                            .foregroundColor(Theme.mutedFg)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss — never suggested again")
+                }
+                .padding(.vertical, 2)
+            }
+            Text("deterministic — no AI here")
+                .font(.system(size: 8.5)).foregroundColor(Theme.mutedFg.opacity(0.7))
+                .padding(.top, 3)
+        }
     }
 }
 
