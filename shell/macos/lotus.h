@@ -218,6 +218,17 @@ uint64_t lotus_pin_at(const char *path, uint64_t target);
    0 when the target had none. */
 int32_t lotus_unpin_at(const char *path, uint64_t target);
 
+/* Rename one VALUE everywhere it is carried (P19b): one grouped
+   transaction, one undo. Text cells rewrite; select/status renames the
+   option or merges into an existing one. Returns the carrier count,
+   -1 on refusal. */
+int64_t lotus_rename_value_at(const char *path, const char *property,
+                              const char *old_value, const char *new_value);
+
+/* Mint an option for a select/status property - idempotent. Returns the
+   option id, 0 on failure. */
+uint64_t lotus_add_option_at(const char *path, uint64_t property, const char *name);
+
 /* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
    Start writes nothing anywhere - the running timer is shell state. */
 uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,

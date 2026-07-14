@@ -80,13 +80,14 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some((&"time", rest)) => time(&mut session, rest),
+        Some((&"rename-value", rest)) => rename_value(&mut session, rest),
         _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
                   inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
                   set ID PROP VALUE... | history | \
                   habit NAME... [--points N] [--cadence TEXT] | \
                   checkin HABIT-ID [DAY] | habits | \
-                  time [TARGET-ID START END]"
+                  time [TARGET-ID START END] | rename-value PROP OLD NEW..."
             .into()),
     }
 }
@@ -554,5 +555,20 @@ fn time(session: &mut Session, rest: &[&str]) -> Result<(), String> {
     let id = lotus_services::content::log_time(session, target, to_dt(start), to_dt(end))
         .map_err(|e| e.to_string())?;
     println!("logged #{id}");
+    Ok(())
+}
+
+/// P19b: `lotus rename-value subject uni university` — one transaction,
+/// the true carrier count, one undo.
+fn rename_value(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (prop, rest) = rest.split_first().ok_or("usage: lotus rename-value PROP OLD NEW...")?;
+    let (old, new_words) = rest.split_first().ok_or("usage: lotus rename-value PROP OLD NEW...")?;
+    if new_words.is_empty() {
+        return Err("usage: lotus rename-value PROP OLD NEW...".into());
+    }
+    let new = new_words.join(" ");
+    let count = lotus_services::content::rename_value(session, prop, old, &new)
+        .map_err(|e| format!("{e:?}"))?;
+    println!("renamed {old} -> {new} on {count} carriers (one undo restores)");
     Ok(())
 }

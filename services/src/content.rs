@@ -756,6 +756,181 @@ pub fn trash_workspace(session: &mut Session, id: Id) -> Result<(), ContentError
     Ok(())
 }
 
+// ---- the rename engine (P19b): one vault-wide value rename, one txn ----
+
+/// Mint an option entity for a select/status property (the shelves' ghost
+/// "+ option", P19): NAME + WORKING + an OPTIONS reference on the property,
+/// one commit. Idempotent — an existing option of that name is returned.
+pub fn add_option(session: &mut Session, property: Id, name: &str) -> Result<Id, WriteError> {
+    let store = session.store();
+    let property = store.resolve(property);
+    store
+        .get(property)
+        .ok_or_else(|| WriteError::Refused(format!("no property #{property}")))?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(WriteError::Refused("an option needs a name".into()));
+    }
+    if let Some(existing) = find_option(store, property, name) {
+        return Ok(existing);
+    }
+    let id = session.allocate_id();
+    let commands = vec![
+        Command::Create { entity: id },
+        Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::NAME, value: Value::text(name) },
+        },
+        Command::AddCell {
+            entity: id,
+            cell: Cell { property: props::WORKING, value: Value::Bool(true) },
+        },
+        Command::AddCell {
+            entity: property,
+            cell: Cell { property: props::OPTIONS, value: Value::Reference(id) },
+        },
+    ];
+    session
+        .commit(commands, "new option", Author::User)
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
+    Ok(id)
+}
+
+/// Rename one VALUE everywhere it is carried — ONE grouped transaction, one
+/// undo (the count-confirm seam; never a modal). Kind discipline: text cells
+/// rewrite; select/status renames the OPTION entity (carriers re-render for
+/// free) or MERGES into an existing option of the new name (carriers
+/// repointed, the loser trashed — undo un-merges wholesale). References and
+/// dates refuse: a rename is a vocabulary act, not a data edit. Returns the
+/// carrier count for the toast.
+pub fn rename_value(
+    session: &mut Session,
+    prop_name: &str,
+    old: &str,
+    new: &str,
+) -> Result<usize, WriteError> {
+    let store = session.store();
+    let old = old.trim();
+    let new = new.trim();
+    if new.is_empty() {
+        return Err(WriteError::Refused("a value needs a name".into()));
+    }
+    if old == new {
+        return Err(WriteError::Refused("that is already the name".into()));
+    }
+    let property = property_id(store, prop_name)
+        .ok_or_else(|| WriteError::Refused(format!("no property named {prop_name}")))?;
+    let kind = match store.get(property).and_then(|p| p.get(props::VALUE_KIND)) {
+        Some(Value::Text(kind)) => kind.clone(),
+        _ => return Err(WriteError::Refused("the property declares no value kind".into())),
+    };
+
+    let commands: Vec<Command>;
+    let count: usize;
+    match kind.as_str() {
+        "text" => {
+            let mut rewrites = Vec::new();
+            for entity in store.entities().filter(|e| !e.trashed) {
+                for cell in entity.cells.iter().filter(|c| c.property == property) {
+                    if matches!(&cell.value, Value::Text(t) if t == old) {
+                        rewrites.push(entity.id);
+                    }
+                }
+            }
+            count = rewrites.len();
+            commands = rewrites
+                .into_iter()
+                .flat_map(|id| {
+                    [
+                        Command::RemoveCell {
+                            entity: id,
+                            cell: Cell { property, value: Value::text(old) },
+                        },
+                        Command::AddCell {
+                            entity: id,
+                            cell: Cell { property, value: Value::text(new) },
+                        },
+                    ]
+                })
+                .collect();
+        }
+        "select" | "status" => {
+            let option = find_option(store, property, old).ok_or_else(|| {
+                WriteError::Refused(format!("no option named {old}"))
+            })?;
+            let target = find_option(store, property, new).filter(|t| *t != option);
+            let carriers: Vec<Id> = store
+                .entities()
+                .filter(|e| !e.trashed && e.has(property, &Value::Select(option)))
+                .map(|e| e.id)
+                .collect();
+            count = carriers.len();
+            match target {
+                None => {
+                    // A plain rename: the option's NAME cell moves; every
+                    // carrier re-renders for free.
+                    let current = match store.get(option).and_then(|o| o.get(props::NAME)) {
+                        Some(Value::Text(name)) => name.clone(),
+                        _ => old.to_string(),
+                    };
+                    commands = vec![
+                        Command::RemoveCell {
+                            entity: option,
+                            cell: Cell { property: props::NAME, value: Value::text(current) },
+                        },
+                        Command::AddCell {
+                            entity: option,
+                            cell: Cell { property: props::NAME, value: Value::text(new) },
+                        },
+                    ];
+                }
+                Some(existing) => {
+                    // MERGE: repoint every carrier, detach and trash the
+                    // loser — all one commit, un-merged by one undo.
+                    let mut merged = Vec::new();
+                    for id in &carriers {
+                        merged.push(Command::RemoveCell {
+                            entity: *id,
+                            cell: Cell { property, value: Value::Select(option) },
+                        });
+                        merged.push(Command::AddCell {
+                            entity: *id,
+                            cell: Cell { property, value: Value::Select(existing) },
+                        });
+                    }
+                    if store
+                        .get(property)
+                        .map(|p| p.has(props::OPTIONS, &Value::Reference(option)))
+                        == Some(true)
+                    {
+                        merged.push(Command::RemoveCell {
+                            entity: property,
+                            cell: Cell {
+                                property: props::OPTIONS,
+                                value: Value::Reference(option),
+                            },
+                        });
+                    }
+                    merged.push(Command::Trash { entity: option });
+                    commands = merged;
+                }
+            }
+        }
+        other => {
+            return Err(WriteError::Refused(format!(
+                "{other} values don't rename — vocabulary only (text, select, status)"
+            )));
+        }
+    }
+    if commands.is_empty() {
+        return Ok(0);
+    }
+    session
+        .commit(commands, "rename value", Author::User)
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
+    Ok(count)
+}
+
 // ---- pins (P17g): the Favourites shelf as small backstage entities ----
 
 /// A target's live pin, if one exists — the idempotence + unpin lookup.

@@ -2249,6 +2249,67 @@ pub unsafe extern "C" fn lotus_check_in_at(path: *const c_char, habit: u64, day:
     })
 }
 
+/// Rename one VALUE everywhere it is carried (P19b): ONE grouped
+/// transaction, one undo — text cells rewrite; select/status renames the
+/// option or MERGES into an existing one. Returns the carrier count, or -1
+/// on refusal (unknown property, wrong kind, empty/unchanged name).
+///
+/// Additive verb (boundary rule): with_box + Committed, crash-tested (the
+/// torn-tail test), flagged in the PR.
+///
+/// # Safety
+/// `path`, `property`, `old`, and `new` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_rename_value_at(
+    path: *const c_char,
+    property: *const c_char,
+    old: *const c_char,
+    new: *const c_char,
+) -> i64 {
+    if property.is_null() || old.is_null() || new.is_null() {
+        return -1;
+    }
+    let (Ok(property), Ok(old), Ok(new)) = (
+        CStr::from_ptr(property).to_str(),
+        CStr::from_ptr(old).to_str(),
+        CStr::from_ptr(new).to_str(),
+    ) else {
+        return -1;
+    };
+    with_box(path, -1, move |session| {
+        match lotus_services::content::rename_value(session, property, old, new) {
+            Ok(count) => (count as i64, Committed::Wrote),
+            Err(_) => (-1, Committed::Read),
+        }
+    })
+}
+
+/// Mint an option for a select/status property (P19b) — idempotent (an
+/// existing option of that name is returned). Returns the option id, 0 on
+/// failure. Additive verb, tested, flagged.
+///
+/// # Safety
+/// `path` and `name` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_add_option_at(
+    path: *const c_char,
+    property: u64,
+    name: *const c_char,
+) -> u64 {
+    if name.is_null() {
+        return 0;
+    }
+    let Ok(name) = CStr::from_ptr(name).to_str() else {
+        return 0;
+    };
+    with_box(path, 0, move |session| {
+        match lotus_services::content::add_option(session, property, name) {
+            Ok(id) => (id, Committed::Wrote),
+            Err(_) => (0, Committed::Read),
+        }
+    })
+}
+
 /// Log ONE closed time interval (P18d): full civil stamps YYYYMMDDHHMM,
 /// written whole at stop — the running timer is shell state and start
 /// writes nothing. One commit, one undo. Returns the entry id, 0 on failure.
@@ -4660,7 +4721,53 @@ mod tests {
 
         cleanup(&path);
     }
+    #[test]
+    fn rename_value_roundtrips_and_refuses_wrong_kinds() {
+        let (path, c_path) = fresh_box("lotus_ffi_rename.log");
+
+        let a_text = CString::new("carrier one").unwrap();
+        let a = unsafe { lotus_capture_at(c_path.as_ptr(), a_text.as_ptr()) };
+        let b_text = CString::new("carrier two").unwrap();
+        let b = unsafe { lotus_capture_at(c_path.as_ptr(), b_text.as_ptr()) };
+
+        // Birth a text property through the existing add-property door, set
+        // both carriers, rename across them.
+        let tag = CString::new("tag").unwrap();
+        let kind = CString::new("text").unwrap();
+        let prop = unsafe { lotus_add_property_at(c_path.as_ptr(), tag.as_ptr(), kind.as_ptr()) };
+        assert_ne!(prop, 0);
+        let old = CString::new("draft").unwrap();
+        for id in [a, b] {
+            assert_eq!(
+                unsafe { lotus_set_at(c_path.as_ptr(), id, tag.as_ptr(), old.as_ptr()) },
+                1
+            );
+        }
+        let new = CString::new("sketch").unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_rename_value_at(c_path.as_ptr(), tag.as_ptr(), old.as_ptr(), new.as_ptr())
+            },
+            2
+        );
+        // One undo restores both.
+        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
+
+        // Kind discipline: a datetime property refuses.
+        let due = CString::new("due").unwrap();
+        let x = CString::new("x").unwrap();
+        let y = CString::new("y").unwrap();
+        assert_eq!(
+            unsafe {
+                lotus_rename_value_at(c_path.as_ptr(), due.as_ptr(), x.as_ptr(), y.as_ptr())
+            },
+            -1
+        );
+
+        cleanup(&path);
+    }
 }
+
 
 
 
