@@ -79,11 +79,20 @@ enum RightLens: String, CaseIterable {
 
 // MARK: - navigation history (§2.6, the P1 slice)
 
-/// One merged stack for the rail chevrons and ⌥←/⌥→: where the user
-/// was looking — surface + selected object. Consecutive dedup, forward
-/// truncation, replays don't re-record.
+/// The PLACES history (bp4 ⟨1⟩, P17f) — one merged ring for the rail
+/// chevrons and ⌥←/⌥→: where the user was looking, as (workspace ·
+/// surface · object). Records places, never text edits. Consecutive
+/// dedup, forward truncation, bounded, replays don't re-record, and a
+/// dangling target is pruned on replay (never crashes).
+///
+/// bp4's SECOND history (the per-content-tab back-stack) collapses to
+/// nothing here by design: a lotus tab holds exactly one entity for its
+/// whole life (dedup on open, blank converts once at birth), so there is
+/// no within-tab navigation to stack — the places history subsumes it,
+/// and reopen-with-content rides the ⌘⇧T tombstone ring.
 final class NavHistory {
     struct Entry: Equatable {
+        let workspace: UInt64?
         let surface: Surface
         let selection: UInt64?
     }
@@ -116,11 +125,28 @@ final class NavHistory {
         return entries[index]
     }
 
+    /// Drop the entry the cursor sits on — a replay found its target gone
+    /// (trashed under us). `forward` re-aims the cursor so the NEXT step in
+    /// that direction lands on the entry that shifted into the hole.
+    func pruneCurrent(forward: Bool) {
+        guard index >= 0 && index < entries.count else { return }
+        entries.remove(at: index)
+        if forward { index -= 1 }
+        index = min(index, entries.count - 1)
+    }
+
     func replay(_ apply: () -> Void) {
         replaying = true
         apply()
         replaying = false
     }
+}
+
+/// The payload a chevron posts: the window completes the restore
+/// (workspace → surface → tab → selection) and prunes dangling targets.
+struct NavReplay {
+    let entry: NavHistory.Entry
+    let forward: Bool
 }
 
 // MARK: - the chrome model
@@ -230,7 +256,16 @@ final class ChromeModel: ObservableObject {
 
     /// Nav mutations repaint the chevrons: the history itself is not
     /// observable, so the model announces on its behalf.
+    /// Replays land asynchronously (selection onChange, workspace reload) —
+    /// a short grace keeps those echoes out of the ring.
+    private var recordGraceUntil = Date.distantPast
+
+    func beginReplayGrace() {
+        recordGraceUntil = Date().addingTimeInterval(0.4)
+    }
+
     func recordNav(_ entry: NavHistory.Entry) {
+        guard Date() >= recordGraceUntil else { return }
         objectWillChange.send()
         nav.record(entry)
     }
@@ -265,9 +300,9 @@ final class ChromeModel: ObservableObject {
             NSSound.beep()
             return
         }
-        nav.replay { surface = entry.surface }
+        beginReplayGrace()
         NotificationCenter.default.post(
-            name: .lotusNavFocus, object: entry.selection)
+            name: .lotusNavReplay, object: NavReplay(entry: entry, forward: false))
     }
 
     func goForward() {
@@ -276,9 +311,9 @@ final class ChromeModel: ObservableObject {
             NSSound.beep()
             return
         }
-        nav.replay { surface = entry.surface }
+        beginReplayGrace()
         NotificationCenter.default.post(
-            name: .lotusNavFocus, object: entry.selection)
+            name: .lotusNavReplay, object: NavReplay(entry: entry, forward: true))
     }
 
     /// The rail chevrons' dim state (repainted on the objectWillChange the nav
@@ -288,6 +323,7 @@ final class ChromeModel: ObservableObject {
 }
 
 extension Notification.Name {
+    static let lotusNavReplay = Notification.Name("lotus.navReplay")
     static let lotusNavFocus = Notification.Name("lotus.navFocus")
     static let lotusOpenSettings = Notification.Name("lotus.openSettings")
     static let lotusGoHome = Notification.Name("lotus.goHome")

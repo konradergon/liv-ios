@@ -212,3 +212,12 @@ Ranked by constitutional + fidelity risk retired.
   Spaces › Favourites (one write path: the `bookmarked` cell; inspector 🔖,
   ⌘⇧B, context-menu unpin). The full pin ENTITY (heterogeneous targets,
   ordering, favorites pill row) remains 17g.
+- **17f dual history, as-built:** the per-content-tab back-stack collapses to
+  nothing BY DESIGN — a lotus tab holds exactly one entity for its whole life
+  (dedup on open; blank converts once at birth), so there is no within-tab
+  navigation to stack; the places history subsumes it and ⌘⇧T's tombstone ring
+  covers reopen-with-content. The places history itself was upgraded to earn
+  the name: entries are (workspace · surface · object), replay restores the
+  whole place (workspace → surface → the object's tab → selection), a trashed
+  target is pruned from the ring and the step continues, and replay echoes are
+  kept out of the ring by a short record grace.

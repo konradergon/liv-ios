@@ -1035,7 +1035,7 @@ struct WindowChrome: View {
                 registerCommands()
                 // Seed the history with the launch location, or the
                 // first Back has nothing to return to.
-                chrome.recordNav(.init(surface: chrome.surface, selection: nil))
+                chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: nil))
                 // An open palette (workspace switcher or search) owns the
                 // keyboard, so global hotkeys don't fire behind it.
                 CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen }
@@ -1291,7 +1291,42 @@ struct WindowChrome: View {
         closeEditor { ok in
             guard ok else { return }
             chrome.surface = target
-            chrome.recordNav(.init(surface: target, selection: nil))
+            chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: target, selection: nil))
+        }
+    }
+
+    /// Complete a chevron/⌥-arrow replay (P17f): restore the PLACE —
+    /// workspace, then surface, then the object's tab, then selection.
+    /// A trashed target is pruned from the ring and the step continues in
+    /// the same direction (bounded by the ring), never a crash.
+    private func performReplay(_ replay: NavReplay) {
+        let entry = replay.entry
+        if let id = entry.selection, model.entity(id) == nil {
+            chrome.nav.pruneCurrent(forward: replay.forward)
+            if replay.forward { chrome.goForward() } else { chrome.goBack() }
+            return
+        }
+        let land = {
+            chrome.nav.replay {
+                if chrome.surface != entry.surface { chrome.surface = entry.surface }
+            }
+            if let id = entry.selection, entry.surface == .notes {
+                // An object-open place: bring its tab back (browser back).
+                openEntityTab(id)
+            } else {
+                selection = entry.selection
+            }
+        }
+        if entry.workspace != chrome.activeWorkspace {
+            closeEditor { ok in
+                guard ok else { return }
+                chrome.activeWorkspace = entry.workspace
+                // The workspace's tab set reloads on the change; land after
+                // that pass so the tab open works against the NEW set.
+                DispatchQueue.main.async { land() }
+            }
+        } else {
+            land()
         }
     }
 
@@ -1341,8 +1376,9 @@ struct WindowChrome: View {
                     selection = draft.entity
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusNavFocus)) { note in
-                selection = note.object as? UInt64
+            .onReceive(NotificationCenter.default.publisher(for: .lotusNavReplay)) { note in
+                guard let replay = note.object as? NavReplay else { return }
+                performReplay(replay)
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoHome)) { _ in
                 // The Home hub surface (bp4 ⑥): the desk tab on Today — the
@@ -1382,7 +1418,7 @@ struct WindowChrome: View {
             }
             .onChange(of: selection) {
                 if let id = selection {
-                    chrome.recordNav(.init(surface: chrome.surface, selection: id))
+                    chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: id))
                 }
             }
             .onReceive(model.$snap) { snap in

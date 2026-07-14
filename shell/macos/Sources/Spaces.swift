@@ -626,7 +626,7 @@ struct WorkspaceActions {
     func enter(_ id: UInt64) {
         landed {
             chrome.activeWorkspace = id
-            chrome.recordNav(.init(surface: .notes, selection: nil))
+            chrome.recordNav(.init(workspace: id, surface: .notes, selection: nil))
         }
     }
 
