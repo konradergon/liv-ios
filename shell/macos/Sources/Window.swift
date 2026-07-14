@@ -1198,6 +1198,7 @@ struct WindowChrome: View {
             .overlay(switcherOverlay)
             .overlay(searchOverlay)
             .overlay(vaultGraphOverlay)
+            .overlay(settingsOverlay)
             .overlay(faultNotice)
             .overlay(DialogHost())
             .overlay(alignment: .bottom) {
@@ -1252,7 +1253,7 @@ struct WindowChrome: View {
                 chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: nil))
                 // An open palette (workspace switcher or search) owns the
                 // keyboard, so global hotkeys don't fire behind it.
-                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen }
+                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen || chrome.settingsOpen }
                 // A stored left+right that fit an old Notes layout must
                 // not launch a tool surface into a negative center.
                 chrome.reconcilePanes()
@@ -1551,6 +1552,19 @@ struct WindowChrome: View {
                 end: TimerPref.honestEnd(started: running.started, ended: Date()))
         }
         TimerPref.save(target: target, started: Date())
+    }
+
+    /// Settings (P19a): the fourth palette — ⌘, or the hub gear.
+    @ViewBuilder
+    private var settingsOverlay: some View {
+        if chrome.settingsOpen {
+            SettingsOverlay(
+                model: model,
+                dismiss: { chrome.settingsOpen = false },
+                searchVault: { q in
+                    NotificationCenter.default.post(name: .lotusSearchFor, object: q)
+                })
+        }
     }
 
     /// The vault graph (P18c): summon/glance/jump/Esc — no tab consumed.
@@ -2427,8 +2441,7 @@ struct WindowChrome: View {
                 id: "app:open-settings", label: "Settings", scope: .global,
                 category: "App", binding: Hotkey(modifiers: [.mod], key: ",")
             ) {
-                Dialogs.shared.alert(
-                    "Settings", message: "Settings panels arrive with their surfaces.")
+                chrome.settingsOpen = true
             })
         registry.register(
             CommandDef(

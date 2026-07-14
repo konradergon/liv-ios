@@ -200,6 +200,8 @@ final class ChromeModel: ObservableObject {
     /// The vault graph overlay (P18c) — on the chrome so the command-map
     /// gate can see it (an @State copy in a stored closure goes stale).
     @Published var vaultGraphOpen = false
+    /// Settings (P19a) — the fourth overlay carve-out; same gate rule.
+    @Published var settingsOpen = false
     /// The centered search palette (⌘F / the magnifier). Search is a popup,
     /// not the list lens in place — the owner's call after seeing it live.
     @Published var searchOpen = false
