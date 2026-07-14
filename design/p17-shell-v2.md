@@ -190,3 +190,25 @@ Ranked by constitutional + fidelity risk retired.
 4. **The switcher popover + Spaces›Pinned, side by side.** Must show: the switcher's "✓ · stamps area=studies" line + footer rule, and the Pinned section showing the **same** four heterogeneous pins (daily note · view · workspace · file) the favorites row shows — the "one source, two surfaces" claim made literal.
 
 (If only three fit, draw 1, 2, 3 — #4's content is partly provable inside #1 and #3.)
+---
+
+## Delta log (as-built)
+
+- **17c two-tier tab store: SKIPPED, superseded.** The owner's standing space
+  ruling ("no new permanent rows") killed the second lane the two-tier store
+  existed to feed; the band lane absorbed the tab system whole. The 17e muscle
+  (groups · lock · melt · width freeze · middle-click · recently-closed/⌘⇧T)
+  shipped directly on the single per-workspace v1 store — `group`/`locked` ride
+  `WorkspaceTab` as OPTIONAL fields, so v1 data decodes unchanged both ways and
+  no migration was needed. Feature-complete vs BP-4's list minus the second
+  lane itself.
+- **17a/17b as-built:** rail pinned outside the collapse (its own card), top
+  band = lights · panel toggle · hub · search · tab lane · inspector toggle;
+  the tabs moved UP into the band (owner's idea) instead of a midsection strip;
+  the hub gained type-to-filter + double-click→Home. The calendar's private
+  right column was deleted for the ONE global right card (day panel ⇄ inspector
+  swap inside a constant-width card).
+- **Bookmarks = the pin story's first slice:** bookmarked entities render in
+  Spaces › Favourites (one write path: the `bookmarked` cell; inspector 🔖,
+  ⌘⇧B, context-menu unpin). The full pin ENTITY (heterogeneous targets,
+  ordering, favorites pill row) remains 17g.
