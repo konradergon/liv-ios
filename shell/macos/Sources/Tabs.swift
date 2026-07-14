@@ -31,6 +31,14 @@ enum TabKind: Codable, Equatable {
 struct WorkspaceTab: Codable, Identifiable, Equatable {
     var id = UUID()
     var kind: TabKind
+    /// Tab group (bp4, 17e): a shared name; members wear the group's
+    /// value-hue band. Optional so v1-persisted tabs decode unchanged.
+    var group: String? = nil
+    /// Category-lock (bp4): a locked tab refuses close (the close affordance
+    /// hides; middle-click and ⌘W bounce). Optional for v1 decode.
+    var locked: Bool? = nil
+
+    var isLocked: Bool { locked == true }
 }
 
 /// Per-workspace tab sets, persisted as shell state. Home is workspace 0.
@@ -64,6 +72,9 @@ enum TabsStore {
 final class TabsModel: ObservableObject {
     @Published private(set) var tabs: [WorkspaceTab] = []
     @Published private(set) var activeId: UUID?
+    /// Recently-closed ring (bp4 ▾ / ⌘⇧T) — session-only shell state,
+    /// newest last, capped small.
+    @Published private(set) var closed: [WorkspaceTab] = []
     private var workspace: UInt64 = 0
 
     var active: WorkspaceTab? { tabs.first { $0.id == activeId } }
@@ -144,7 +155,16 @@ final class TabsModel: ObservableObject {
     @discardableResult
     func close(_ id: UUID) -> UUID? {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return activeId }
+        // A locked tab refuses close — unlock first (bp4 category-lock).
+        guard !tabs[i].isLocked else { return activeId }
         let wasActive = activeId == id
+        // Content tabs are reopenable (▾ / ⌘⇧T); desk/blank carry nothing.
+        switch tabs[i].kind {
+        case .note, .file:
+            closed.append(tabs[i])
+            if closed.count > 10 { closed.removeFirst() }
+        default: break
+        }
         tabs.remove(at: i)
         if tabs.isEmpty {
             let desk = WorkspaceTab(kind: .desk)
@@ -181,6 +201,44 @@ final class TabsModel: ObservableObject {
         let insert = (tabs.firstIndex(where: { $0.id == target }) ?? tabs.count - 1) + 1
         tabs.insert(tab, at: min(insert, tabs.count))
         persist()
+    }
+
+    // ---- the 17e muscle: groups · lock · reopen ----
+
+    func setGroup(_ id: UUID, _ group: String?) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[i].group = group
+        persist()
+    }
+
+    func toggleLock(_ id: UUID) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[i].locked = tabs[i].isLocked ? nil : true
+        persist()
+    }
+
+    /// The distinct group names among open tabs, first-seen order — the
+    /// context menu's "add to" list.
+    var groups: [String] {
+        var seen: [String] = []
+        for tab in tabs {
+            if let g = tab.group, !seen.contains(g) { seen.append(g) }
+        }
+        return seen
+    }
+
+    /// Reopen the most recent closed tab (⌘⇧T), or a specific one (the ▾
+    /// menu). Returns it activated, or nil if the ring is empty.
+    func reopen(_ id: UUID? = nil) -> WorkspaceTab? {
+        let index: Int? =
+            id.flatMap { wanted in closed.firstIndex { $0.id == wanted } }
+            ?? (closed.isEmpty ? nil : closed.count - 1)
+        guard let index else { return nil }
+        let tab = closed.remove(at: index)
+        tabs.append(tab)
+        activeId = tab.id
+        persist()
+        return tab
     }
 
     /// Drop note tabs whose entity vanished (trashed here or by the CLI),
@@ -228,6 +286,13 @@ struct TabStrip: View {
     private static let plusWidth: CGFloat = 24
     private static let overflowWidth: CGFloat = 34
 
+    /// Rapid-close width freeze (17e): after a close, pill widths hold so the
+    /// next tab's ✕ lands under the cursor; released when the pointer leaves.
+    @State private var frozenWidth: CGFloat?
+    /// The pill under the pointer — the middle-click close target.
+    @State private var hoveredTab: UUID?
+    @State private var midMonitor: Any?
+
     var body: some View {
         GeometryReader { geo in
             let all = tabs.tabs
@@ -262,12 +327,35 @@ struct TabStrip: View {
                         icon: icon(tab),
                         active: tabs.activeId == tab.id,
                         activate: { activate(tab) },
-                        close: { close(tab) },
+                        close: {
+                            frozenWidth = frozenWidth ?? width
+                            close(tab)
+                        },
                         rename: {
                             if case .note(let id) = tab.kind { rename(id) }
+                        },
+                        existingGroups: tabs.groups,
+                        setGroup: { name in tabs.setGroup(tab.id, name) },
+                        newGroup: {
+                            Dialogs.shared.prompt(
+                                "New tab group", placeholder: "Name", confirmLabel: "Group"
+                            ) { name in
+                                guard let name = name?.trimmingCharacters(in: .whitespaces),
+                                    !name.isEmpty
+                                else { return }
+                                tabs.setGroup(tab.id, name)
+                            }
+                        },
+                        toggleLock: { tabs.toggleLock(tab.id) },
+                        hoverChanged: { inside in
+                            if inside {
+                                hoveredTab = tab.id
+                            } else if hoveredTab == tab.id {
+                                hoveredTab = nil
+                            }
                         }
                     )
-                    .frame(width: width)
+                    .frame(width: frozenWidth ?? width)
                 }
                 if !hidden.isEmpty {
                     Menu {
@@ -287,6 +375,27 @@ struct TabStrip: View {
                     .help("\(hidden.count) more tab\(hidden.count == 1 ? "" : "s")")
                 }
                 Spacer(minLength: 0)
+                // ▾ recently closed (bp4, ⌘⇧T) — only when there IS something
+                // to reopen; reopening restores the tab and activates it.
+                if !tabs.closed.isEmpty {
+                    Menu {
+                        ForEach(tabs.closed.reversed()) { closedTab in
+                            Button(title(closedTab)) {
+                                if let tab = tabs.reopen(closedTab.id) { activate(tab) }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(Theme.mutedFg)
+                            .frame(width: 18, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Recently closed (⌘⇧T)")
+                }
                 Button(action: openNew) {
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .medium))
@@ -300,6 +409,26 @@ struct TabStrip: View {
             .frame(height: geo.size.height)
         }
         .frame(maxHeight: Theme.headerBandHeight)
+        // Release the width freeze when the pointer leaves the lane.
+        .onHover { inside in
+            if !inside { frozenWidth = nil }
+        }
+        // Middle-click closes the hovered tab (bp4) — locked tabs bounce.
+        .onAppear {
+            midMonitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseUp) { event in
+                guard let id = hoveredTab,
+                    let tab = tabs.tabs.first(where: { $0.id == id })
+                else { return event }
+                if !tab.isLocked { close(tab) }
+                return nil
+            }
+        }
+        .onDisappear {
+            if let monitor = midMonitor {
+                NSEvent.removeMonitor(monitor)
+                midMonitor = nil
+            }
+        }
     }
 
     private func title(_ tab: WorkspaceTab) -> String {
@@ -343,15 +472,27 @@ struct TabPill: View {
     let activate: () -> Void
     let close: () -> Void
     let rename: () -> Void
+    /// Group verbs (17e) — the strip supplies them so the pill's context
+    /// menu stays dumb.
+    var existingGroups: [String] = []
+    var setGroup: (String?) -> Void = { _ in }
+    var newGroup: () -> Void = {}
+    var toggleLock: () -> Void = {}
+    /// Hover report for the strip's middle-click close.
+    var hoverChanged: (Bool) -> Void = { _ in }
 
     @State private var hovering = false
     @State private var lastTap = Date.distantPast
 
+    private var groupHue: Color? {
+        tab.group.map { Color(nsColor: Hues.valueHex($0)) }
+    }
+
     var body: some View {
         // A clean, native macOS tab (Safari/Arc idiom): a rounded pill,
         // the active one raised into the content colour, inactive quiet
-        // with a hover tint. No accent bar, no square edges — the theme
-        // is lotus's, the look is the platform's.
+        // with a hover tint. The MELT (§6-18): no border at all — the
+        // active pill is fill only, one sheet with the canvas.
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 11.5))
@@ -361,20 +502,29 @@ struct TabPill: View {
                 .foregroundColor(active ? Theme.foreground : Theme.foreground.opacity(0.72))
                 .lineLimit(1)
             Spacer(minLength: 2)
-            // The close slot holds its width so the title doesn't jump
-            // on hover.
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8.5, weight: .semibold))
+            if tab.isLocked {
+                // Locked: the lock replaces the close slot — no close affordance.
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 8.5))
                     .foregroundColor(Theme.mutedFg)
                     .frame(width: 15, height: 15)
-                    .background(
-                        Circle().fill(Theme.secondary.opacity(hovering ? 0.6 : 0)))
-                    .contentShape(Rectangle())
+                    .help("Locked — unlock from the tab menu")
+            } else {
+                // The close slot holds its width so the title doesn't jump
+                // on hover.
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundColor(Theme.mutedFg)
+                        .frame(width: 15, height: 15)
+                        .background(
+                            Circle().fill(Theme.secondary.opacity(hovering ? 0.6 : 0)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(hovering ? 1 : 0)
+                .help("Close tab")
             }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
-            .help("Close tab")
         }
         .padding(.leading, 10)
         .padding(.trailing, 5)
@@ -383,12 +533,40 @@ struct TabPill: View {
             RoundedRectangle(cornerRadius: 7)
                 .fill(active ? Theme.secondary.opacity(0.9) : (hovering ? Theme.secondary.opacity(0.4) : .clear))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Theme.border.opacity(active ? 0.5 : 0), lineWidth: 0.5)
-        )
+        // The group band (17e): a value-hue underline — colour, not lines;
+        // never the accent, and adjacent members read as one band.
+        .overlay(alignment: .bottom) {
+            if let hue = groupHue {
+                Capsule().fill(hue.opacity(0.65))
+                    .frame(height: 2.5)
+                    .padding(.horizontal, 6)
+            }
+        }
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            hoverChanged(inside)
+        }
+        .contextMenu {
+            Button(tab.isLocked ? "Unlock tab" : "Lock tab") { toggleLock() }
+            Menu("Group") {
+                Button("New group…") { newGroup() }
+                if !existingGroups.isEmpty {
+                    Divider()
+                    ForEach(existingGroups, id: \.self) { name in
+                        Button(name + (tab.group == name ? " ✓" : "")) { setGroup(name) }
+                    }
+                }
+                if tab.group != nil {
+                    Divider()
+                    Button("Remove from group") { setGroup(nil) }
+                }
+            }
+            if !tab.isLocked {
+                Divider()
+                Button("Close tab") { close() }
+            }
+        }
         // Select on single tap, rename on double — but detect the double
         // MANUALLY. A sibling `.onTapGesture(count: 2)` makes SwiftUI hold every
         // single tap for the system double-click interval to disambiguate, which

@@ -1892,6 +1892,14 @@ struct WindowChrome: View {
             })
         registry.register(
             CommandDef(
+                id: "workspace:reopen-tab", label: "Reopen closed tab", scope: .global,
+                category: "Tabs", binding: Hotkey(modifiers: [.mod, .shift], key: "t"),
+                enabled: { chrome.surface == .notes && !tabs.closed.isEmpty }
+            ) {
+                if let tab = tabs.reopen() { activateTab(tab) }
+            })
+        registry.register(
+            CommandDef(
                 id: "lotus:undo-last-change", label: "Undo last change", scope: .global,
                 category: "Edit", binding: Hotkey(modifiers: [.mod, .alt], key: "z")
             ) {
