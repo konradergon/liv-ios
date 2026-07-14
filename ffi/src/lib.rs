@@ -716,7 +716,20 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .map(|o| OccurrenceRow { series: o.series, civil: o.date.civil })
         .collect();
 
-    let entities = everything
+    // Backstage WIDGETS join the ROW STORE only (P18e): the standard
+    // Inspector must resolve a selected widget's cells. entities[] is the
+    // shell's id→row index; every surface iterates the ID LISTS
+    // (everything/dated/…), so a backstage row here leaks nowhere.
+    let mut projected: Vec<Id> = everything.clone();
+    if let Some(widget_type) = lotus_services::content::find_type(store, "widget") {
+        projected.extend(
+            store
+                .entities()
+                .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(widget_type)))
+                .map(|e| e.id),
+        );
+    }
+    let entities = projected
         .iter()
         .filter_map(|id| store.get(*id))
         .map(|entity| {
@@ -4636,6 +4649,9 @@ mod tests {
         // All backstage: none of the records pollute Everything.
         let everything = snap["everything"].as_array().unwrap();
         assert!(!everything.iter().any(|id| *id == entry || *id == view || *id == widget));
+        // But the WIDGET joins the row store, so the Inspector can resolve a
+        // selected card (P18e) — rows only, never the id lists.
+        assert!(snap["entities"].as_array().unwrap().iter().any(|e| e["id"] == widget));
 
         // Removal rides the ordinary trash door.
         assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), widget) }, 1);

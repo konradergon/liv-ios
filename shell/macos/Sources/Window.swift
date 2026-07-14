@@ -543,6 +543,12 @@ final class BoxModel: ObservableObject {
         act { lotus_log_time_at(self.path, target, start, end) != 0 }
     }
 
+    /// Add a board widget — one transaction (types born beside it on a fresh
+    /// box); config edits ride set, removal rides trash.
+    func addWidget(kind: String, workspace: UInt64, span: Double) {
+        act { lotus_widget_add_at(self.path, kind, workspace, span) != 0 }
+    }
+
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
         act(done) { lotus_set_at(self.path, id, property, value) == 1 }
     }
@@ -1872,6 +1878,11 @@ struct WindowChrome: View {
                 ContactsView(
                     model: model, selection: $selection,
                     open: { id in openEntityTab(id) })
+            case .dashboard:
+                DashboardView(
+                    model: model, chrome: chrome, selection: $selection,
+                    open: { id in openEntityTab(id) },
+                    navigate: { target in navigate(to: target) })
             default:
                 ExtensionStub(surface: chrome.surface)
             }
@@ -2296,6 +2307,13 @@ struct WindowChrome: View {
                 enabled: { chrome.surface == .notes }
             ) {
                 if let active = tabs.active { closeTab(active) }
+            })
+        registry.register(
+            CommandDef(
+                id: "view:dashboard", label: "Dashboard", scope: .global,
+                category: "View", binding: Hotkey(modifiers: [.mod, .shift], key: "m")
+            ) {
+                navigate(to: .dashboard)
             })
         registry.register(
             CommandDef(

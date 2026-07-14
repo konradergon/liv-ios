@@ -18,6 +18,7 @@ enum Surface: String, CaseIterable {
     case inbox
     case contacts
     case calendar
+    case dashboard
 
     /// Vault-wide tools: full-bleed, no note chrome, no left sidebar.
     var isGlobalTool: Bool { self != .notes }
@@ -32,6 +33,7 @@ enum Surface: String, CaseIterable {
         case .inbox: return "Inbox"
         case .contacts: return "Contacts"
         case .calendar: return "Calendar"
+        case .dashboard: return "Dashboard"
         }
     }
 
@@ -46,6 +48,7 @@ enum Surface: String, CaseIterable {
         case .inbox: return "tray"
         case .contacts: return "person.2"
         case .calendar: return "calendar"
+        case .dashboard: return "square.grid.2x2"
         }
     }
 }
@@ -345,7 +348,7 @@ struct LeftRail: View {
     @ObservedObject var model: BoxModel
     let select: (Surface) -> Void
 
-    private let ambient: [Surface] = [.aiChat, .tasks, .library, .inbox, .contacts, .calendar]
+    private let ambient: [Surface] = [.aiChat, .tasks, .library, .inbox, .contacts, .calendar, .dashboard]
 
     var body: some View {
         VStack(spacing: 5) {
