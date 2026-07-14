@@ -209,6 +209,15 @@ uint64_t lotus_create_workspace_at(const char *path, const char *name,
    them. 1 on success, 0 on failure. */
 int32_t lotus_trash_workspace_at(const char *path, uint64_t id);
 
+/* Pin an object to the Favourites shelf (P17g): one transaction, lands
+   after the last pin, idempotent (re-pin returns the existing pin's id).
+   Returns the pin id, 0 on failure. */
+uint64_t lotus_pin_at(const char *path, uint64_t target);
+
+/* Unpin a target: trash its live pin (soft). 1 when a pin was removed,
+   0 when the target had none. */
+int32_t lotus_unpin_at(const char *path, uint64_t target);
+
 /* Trash one entity — the inspector's Trash action. Soft, reversible,
    never cascades. 1 on success, 0 on failure. */
 int32_t lotus_trash_at(const char *path, uint64_t id);

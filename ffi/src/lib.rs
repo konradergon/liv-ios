@@ -255,6 +255,16 @@ struct WorkspaceRow {
     order: f64,
 }
 
+/// One pin on the Favourites shelf (P17g): a backstage entity pointing at
+/// an object, ordered by a float key. A pin whose target is trashed drops
+/// out of the projection (dangling tolerated), never out of the log.
+#[derive(Serialize)]
+struct PinRow {
+    id: Id,
+    target: Id,
+    order: f64,
+}
+
 #[derive(Serialize)]
 struct Snapshot {
     today: Vec<Id>,
@@ -268,6 +278,9 @@ struct Snapshot {
     /// Navigation chrome: working entities of type workspace, whole
     /// tree, archived included (the shell draws the Archive group).
     workspaces: Vec<WorkspaceRow>,
+    /// The Favourites shelf, in order. The shell decodes this OPTIONAL —
+    /// a missing key must never drop the snapshot (the H1 rule).
+    pins: Vec<PinRow>,
     /// Every property definition — the inspector's catalog.
     properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
@@ -827,6 +840,40 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
 
     let properties = build_properties(store);
 
+    // The Favourites shelf (P17g): live pins in float-key order; a pin whose
+    // target is trashed/missing drops out of the ROW set (dangling tolerated),
+    // never out of the log.
+    let pins = match (
+        lotus_services::content::find_type(store, "pin"),
+        property_id(store, "target"),
+        property_id(store, "order"),
+    ) {
+        (Some(pin_type), Some(target_prop), order_prop) => {
+            let mut rows: Vec<PinRow> = store
+                .entities()
+                .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(pin_type)))
+                .filter_map(|e| {
+                    let target = match e.get(target_prop) {
+                        Some(Value::Reference(t)) => store.resolve(*t),
+                        _ => return None,
+                    };
+                    // Dangling target → no row.
+                    if store.get(target).map(|t| t.trashed) != Some(false) {
+                        return None;
+                    }
+                    let order = match order_prop.and_then(|p| e.get(p)) {
+                        Some(Value::Number(n)) => *n,
+                        _ => 0.0,
+                    };
+                    Some(PinRow { id: e.id, target, order })
+                })
+                .collect();
+            rows.sort_by(|a, b| a.order.partial_cmp(&b.order).unwrap_or(std::cmp::Ordering::Equal));
+            rows
+        }
+        _ => Vec::new(),
+    };
+
     Snapshot {
         today,
         unstructured,
@@ -835,6 +882,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         occurrences,
         inbox,
         workspaces,
+        pins,
         properties,
         entities,
     }
@@ -2002,6 +2050,42 @@ pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) 
     with_box(path, 0, |session| {
         let ok = lotus_services::content::trash_workspace(session, id).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
+/// Pin an object to the Favourites shelf (P17g): one transaction that
+/// births the pin (and, first time, the `pin` type + `target` property),
+/// landing after the last pin. Idempotent — re-pinning returns the
+/// existing pin's id. Returns the pin id, 0 on failure.
+///
+/// Additive verb (boundary rule): with_box + Committed, shipped with a
+/// round-trip test, flagged in the PR.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_pin_at(path: *const c_char, target: u64) -> u64 {
+    with_box(path, 0, |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let id = lotus_services::content::create_pin(session, target, created).unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
+    })
+}
+
+/// Unpin a target: trash its live pin (soft, reversible). Returns 1 when a
+/// pin was removed, 0 when the target had none (a quiet no-op).
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_unpin_at(path: *const c_char, target: u64) -> i32 {
+    with_box(path, 0, |session| {
+        match lotus_services::content::remove_pin(session, target) {
+            Ok(true) => (1, Committed::Wrote),
+            Ok(false) => (0, Committed::Read),
+            Err(_) => (0, Committed::Failed),
+        }
     })
 }
 
@@ -4076,4 +4160,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(files::cache_dir(path.to_str().unwrap()));
         cleanup(&path);
     }
+    #[test]
+    fn pins_roundtrip_backstage_and_tolerate_dangling_targets() {
+        let (path, c_path) = fresh_box("lotus_ffi_pins.log");
+
+        let text = CString::new("pin me").unwrap();
+        let note = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        assert_ne!(note, 0);
+        let other_text = CString::new("me too").unwrap();
+        let other = unsafe { lotus_capture_at(c_path.as_ptr(), other_text.as_ptr()) };
+
+        // Pin both; pinning is idempotent.
+        let pin = unsafe { lotus_pin_at(c_path.as_ptr(), note) };
+        assert_ne!(pin, 0);
+        assert_eq!(unsafe { lotus_pin_at(c_path.as_ptr(), note) }, pin);
+        let pin_other = unsafe { lotus_pin_at(c_path.as_ptr(), other) };
+        assert_ne!(pin_other, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let pins = snap["pins"].as_array().unwrap();
+        assert_eq!(pins.len(), 2);
+        // Ordered by the float key: first pinned first.
+        assert_eq!(pins[0]["target"], note);
+        assert_eq!(pins[1]["target"], other);
+        assert!(pins[0]["order"].as_f64().unwrap() < pins[1]["order"].as_f64().unwrap());
+        // Backstage: the pin entity itself never pollutes Everything.
+        assert!(!snap["everything"].as_array().unwrap().iter().any(|id| *id == pin));
+
+        // A dangling target (trashed under the pin) drops the ROW, never
+        // the snapshot.
+        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), other) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let pins = snap["pins"].as_array().unwrap();
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0]["target"], note);
+
+        // Unpin by target; a second unpin is a quiet no-op.
+        assert_eq!(unsafe { lotus_unpin_at(c_path.as_ptr(), note) }, 1);
+        assert_eq!(unsafe { lotus_unpin_at(c_path.as_ptr(), note) }, 0);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["pins"].as_array().unwrap().is_empty());
+
+        cleanup(&path);
+    }
 }
+

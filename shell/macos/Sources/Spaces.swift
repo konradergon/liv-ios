@@ -329,12 +329,14 @@ struct SpacesTree: View {
     @State private var boardsDropActive = false
     @FocusState private var newNameFocused: Bool
 
-    /// The pinned entities — anything whose `bookmarked` cell is set, filtered
-    /// like every other row here.
-    private var bookmarkedRows: [EntityRow] {
-        model.rows(model.snap?.everything ?? []).filter { row in
-            row.bookmarked
-                && (filter.isEmpty || row.title.localizedCaseInsensitiveContains(filter))
+    /// The pinned objects (P17g): the snapshot's ordered pins joined to their
+    /// target rows, filtered like every other row here.
+    private var pinRows: [(pin: PinRow, row: EntityRow)] {
+        (model.snap?.pins ?? []).compactMap { pin in
+            guard let row = model.entity(pin.target),
+                filter.isEmpty || row.title.localizedCaseInsensitiveContains(filter)
+            else { return nil }
+            return (pin: pin, row: row)
         }
     }
 
@@ -361,19 +363,27 @@ struct SpacesTree: View {
                 VStack(alignment: .leading, spacing: 2) {
                     // Interim desk rows until tabs land (P3).
                     deskGroup
-                    // ONE pin source (BP-4): favourite workspaces AND bookmarked
-                    // entities share this section. A bookmark is the entity's
-                    // existing `bookmarked` cell (the inspector's 🔖 writes it) —
-                    // no new chrome row, no second pin system.
-                    if !tree.favourites.isEmpty || !bookmarkedRows.isEmpty {
+                    // ONE pin source (BP-4 · P17g): favourite workspaces AND
+                    // pinned objects share this section. A pin is a small
+                    // backstage entity (target + order) — the inspector's 🔖,
+                    // ⌘⇧B, and this list all read/write the same pins; drag
+                    // reorders by the float key.
+                    if !tree.favourites.isEmpty || !pinRows.isEmpty {
                         groupHeader("Favourites")
                         ForEach(tree.favourites, id: \.id) { row in
                             if matches(row) {
                                 WorkspaceLeaf(row: row, tree: tree, actions: actions)
                             }
                         }
-                        ForEach(bookmarkedRows, id: \.id) { row in
-                            bookmarkRow(row)
+                        ForEach(pinRows, id: \.pin.id) { entry in
+                            bookmarkRow(entry.row)
+                                .onDrag {
+                                    NSItemProvider(object: "pin:\(entry.pin.id)" as NSString)
+                                }
+                                .onDrop(
+                                    of: [.plainText],
+                                    delegate: PinReorderDrop(
+                                        model: model, over: entry.pin, all: pinRows.map(\.pin)))
                         }
                     }
                     groupHeader("Spaces")
@@ -524,9 +534,7 @@ struct SpacesTree: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("Remove bookmark") {
-                model.set(row.id, property: "bookmarked", value: "false")
-            }
+            Button("Unpin") { model.unpin(row.id) }
         }
     }
 
@@ -948,6 +956,34 @@ struct HeaderReroot: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         active = false
         return loadWorkspaceDrop(info) { id in actions.makeTopLevel(id) }
+    }
+}
+
+/// Pin drag-reorder (P17g): drop a pin on another pin's row and it lands
+/// BEFORE it — one set on the float `order` key (midpoint of the hovered
+/// pin and its predecessor), one transaction, one undo.
+struct PinReorderDrop: DropDelegate {
+    let model: BoxModel
+    let over: PinRow
+    let all: [PinRow]
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.plainText]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let raw = object as? String, raw.hasPrefix("pin:"),
+                let dragged = UInt64(raw.dropFirst(4)),
+                dragged != over.id
+            else { return }
+            let index = all.firstIndex { $0.id == over.id } ?? 0
+            let before = index > 0 ? all[index - 1].order : over.order - 20
+            let order = (before + over.order) / 2
+            DispatchQueue.main.async {
+                model.reorderPin(dragged, order: order)
+            }
+        }
+        return true
     }
 }
 

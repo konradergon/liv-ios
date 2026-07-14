@@ -777,14 +777,18 @@ struct ObjectHeader: View {
             Spacer(minLength: 8)
             HStack(spacing: 1) {
                 addToListMenu
+                // 🔖 = a PIN now (P17g, one pin source): the row appears in
+                // Spaces › Favourites, ordered; unpin trashes the pin.
                 headerAction(
-                    entity.bookmarked ? "bookmark.fill" : "bookmark",
-                    entity.bookmarked ? "Remove bookmark" : "Bookmark",
-                    active: entity.bookmarked
+                    model.isPinned(entity.id) ? "bookmark.fill" : "bookmark",
+                    model.isPinned(entity.id) ? "Unpin from Favourites" : "Pin to Favourites",
+                    active: model.isPinned(entity.id)
                 ) {
-                    model.set(
-                        entity.id, property: "bookmarked",
-                        value: entity.bookmarked ? "false" : "true")
+                    if model.isPinned(entity.id) {
+                        model.unpin(entity.id)
+                    } else {
+                        model.pin(entity.id)
+                    }
                 }
                 headerAction(
                     entity.archived ? "archivebox.fill" : "archivebox",

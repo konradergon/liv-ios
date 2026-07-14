@@ -135,8 +135,19 @@ struct Snapshot: Codable {
     let occurrences: [OccurrenceRow]
     let inbox: [ProposalRow]
     let workspaces: [WorkspaceRow]
+    /// OPTIONAL (the decoder rule): a missing key must never drop the
+    /// whole snapshot.
+    let pins: [PinRow]?
     let properties: [PropertyRow]
     let entities: [EntityRow]
+}
+
+/// One Favourites pin (P17g): a backstage entity pointing at an object,
+/// ordered by a float key.
+struct PinRow: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let target: UInt64
+    let order: Double
 }
 
 // MARK: - search (its own seam, its own rank order)
@@ -410,6 +421,26 @@ final class BoxModel: ObservableObject {
 
     func undo() {
         act { lotus_undo_at(self.path) == 1 }
+    }
+
+    // ---- pins (P17g): the ONE pin source ----
+
+    func pin(_ target: UInt64) {
+        act { lotus_pin_at(self.path, target) != 0 }
+    }
+
+    func unpin(_ target: UInt64) {
+        act { lotus_unpin_at(self.path, target) == 1 }
+    }
+
+    func isPinned(_ target: UInt64) -> Bool {
+        (snap?.pins ?? []).contains { $0.target == target }
+    }
+
+    /// Reorder one pin — a single set on its float `order` key (one
+    /// transaction, one undo).
+    func reorderPin(_ pinId: UInt64, order: Double) {
+        set(pinId, property: "order", value: String(order))
     }
 
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
@@ -1976,15 +2007,14 @@ struct WindowChrome: View {
             })
         registry.register(
             CommandDef(
-                id: "object:toggle-bookmark", label: "Bookmark", scope: .global,
+                id: "object:toggle-bookmark", label: "Pin to Favourites", scope: .global,
                 category: "Object", binding: Hotkey(modifiers: [.mod, .shift], key: "b"),
                 enabled: { selection != nil }
             ) {
-                guard let id = selection, let row = model.entity(id) else { return }
-                // row.bookmarked is the decoded flag — the same source the
-                // inspector's 🔖 and the Favourites pins read, never a string
-                // compare against the display form.
-                model.set(id, property: "bookmarked", value: row.bookmarked ? "false" : "true")
+                guard let id = selection else { return }
+                // ⌘⇧B = pin/unpin (P17g) — the same one pin source the
+                // inspector's 🔖 and Spaces › Favourites use.
+                if model.isPinned(id) { model.unpin(id) } else { model.pin(id) }
             })
         registry.register(
             CommandDef(

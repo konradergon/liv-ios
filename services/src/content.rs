@@ -756,6 +756,111 @@ pub fn trash_workspace(session: &mut Session, id: Id) -> Result<(), ContentError
     Ok(())
 }
 
+// ---- pins (P17g): the Favourites shelf as small backstage entities ----
+
+/// A target's live pin, if one exists — the idempotence + unpin lookup.
+fn live_pin(store: &Store, target: Id) -> Option<Id> {
+    let pin_type = find_type(store, "pin")?;
+    let target_prop = property_id(store, "target")?;
+    store
+        .entities()
+        .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(pin_type)))
+        .find(|e| e.has(target_prop, &Value::Reference(target)))
+        .map(|e| e.id)
+}
+
+/// Pin an object to the Favourites shelf. The pin is a small BACKSTAGE
+/// entity (WORKING — never in Everything, the workspace rule): type=pin,
+/// `target` reference, float `order` landing after the last pin. One pin
+/// per target — re-pinning returns the existing pin. The type and the
+/// `target` property are birthed lazily INSIDE the same transaction as the
+/// first pin, so a pin is always one commit, one undo.
+pub fn create_pin(
+    session: &mut Session,
+    target: Id,
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let target = store.resolve(target);
+    if let Some(existing) = live_pin(store, target) {
+        return Ok(existing);
+    }
+
+    let pin_type = find_type(store, "pin");
+    let target_prop = property_id(store, "target");
+    let order_prop = property_id(store, "order");
+
+    // Land after the last pin: max order among live pins, plus ten.
+    let next_order = match (pin_type, order_prop) {
+        (Some(t), Some(order)) => {
+            store
+                .entities()
+                .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(t)))
+                .filter_map(|e| match e.get(order) {
+                    Some(Value::Number(n)) => Some(*n),
+                    _ => None,
+                })
+                .fold(0.0_f64, f64::max)
+                + 10.0
+        }
+        _ => 10.0,
+    };
+
+    let mut commands = Vec::new();
+    let type_id = pin_type.unwrap_or_else(|| {
+        let t = session.allocate_id();
+        commands.push(Command::Create { entity: t });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text("pin") },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+            // EXPECTED makes find_type resolve it (the P9 rule).
+            Cell { property: props::EXPECTED, value: Value::Reference(props::NAME) },
+        ] {
+            commands.push(Command::AddCell { entity: t, cell });
+        }
+        t
+    });
+    let target_prop = target_prop.unwrap_or_else(|| {
+        let p = session.allocate_id();
+        commands.push(Command::Create { entity: p });
+        for cell in [
+            Cell { property: props::NAME, value: Value::text("target") },
+            Cell { property: props::VALUE_KIND, value: Value::text("reference") },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+        ] {
+            commands.push(Command::AddCell { entity: p, cell });
+        }
+        p
+    });
+
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(created));
+    add(props::TYPE, Value::Reference(type_id));
+    add(target_prop, Value::Reference(target));
+    if let Some(op) = order_prop {
+        add(op, Value::Number(next_order));
+    }
+    session.commit(commands, "pin", Author::User)?;
+    Ok(id)
+}
+
+/// Unpin a target: trash its live pin (soft, reversible). Returns whether
+/// a pin was found — a target with no pin is a quiet no-op, not an error.
+pub fn remove_pin(session: &mut Session, target: Id) -> Result<bool, PersistError> {
+    let store = session.store();
+    let target = store.resolve(target);
+    let Some(pin) = live_pin(store, target) else {
+        return Ok(false);
+    };
+    session.commit(vec![Command::Trash { entity: pin }], "unpin", Author::User)?;
+    Ok(true)
+}
+
 /// Remove every cell of one property — the inverse of set_property's
 /// replace, for "make top-level" and its kin. A property the entity
 /// does not carry is a no-op, not an error.
