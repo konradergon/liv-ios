@@ -549,6 +549,24 @@ final class BoxModel: ObservableObject {
         act { lotus_widget_add_at(self.path, kind, workspace, span) != 0 }
     }
 
+    /// One-shot query run (the Saved-view widget) — its own callback, never
+    /// the shared palette seam, so a widget refresh can't stomp an open ⌘F.
+    func runQuery(_ raw: String, done: @escaping ([UInt64]) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            guard let ptr = lotus_search_at(path, raw) else {
+                DispatchQueue.main.async { done([]) }
+                return
+            }
+            let json = String(cString: ptr)
+            lotus_string_free(ptr)
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let result = (try? decoder.decode(SearchResult.self, from: Data(json.utf8))) ?? .empty
+            DispatchQueue.main.async { done(result.hits.map(\.id)) }
+        }
+    }
+
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
         act(done) { lotus_set_at(self.path, id, property, value) == 1 }
     }
