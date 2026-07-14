@@ -1420,12 +1420,89 @@ struct HomeHubPopover: View {
                     WorkspaceList(model: model, chrome: chrome, actions: actions, dismiss: dismiss)
                 }
                 .frame(maxHeight: 280)
+                layoutsSection
                 Divider()
                 footer
             }
         }
         .frame(width: 288)
         .onChange(of: filter) { highlighted = 0 }
+    }
+
+    /// Layouts (bp4 Layers · P17i): this workspace's saved arrangements.
+    /// Click restores (pure shell — the window handles it); save prompts a
+    /// name; rename/delete ride the ordinary set/trash doors.
+    @ViewBuilder
+    private var layoutsSection: some View {
+        let layers = model.layers(for: chrome.activeWorkspace ?? 0)
+        Divider()
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("LAYOUTS")
+                    .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg)
+                Spacer()
+                Button {
+                    dismiss()
+                    NotificationCenter.default.post(name: .lotusSaveLayer, object: nil)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Theme.mutedFg)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Save the current layout")
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 7)
+            .padding(.bottom, layers.isEmpty ? 7 : 3)
+            ForEach(layers) { layer in
+                Button {
+                    dismiss()
+                    NotificationCenter.default.post(name: .lotusRestoreLayer, object: layer)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "square.3.layers.3d")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(Theme.mutedFg)
+                        Text(layer.name).font(.system(size: 12)).lineLimit(1)
+                        Spacer()
+                        Text("\(layer.members.count)")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Rename…") {
+                        dismiss()
+                        Dialogs.shared.prompt(
+                            "Rename layout", placeholder: layer.name, initial: layer.name,
+                            confirmLabel: "Rename"
+                        ) { name in
+                            guard let name = name?.trimmingCharacters(in: .whitespaces),
+                                !name.isEmpty
+                            else { return }
+                            model.set(layer.id, property: "name", value: name)
+                        }
+                    }
+                    Button("Delete") { model.trash(layer.id) }
+                }
+            }
+            if layers.isEmpty {
+                Text("Save the open tabs + panes as a named layout.")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.mutedFg.opacity(0.8))
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 7)
+            } else {
+                Spacer().frame(height: 5)
+            }
+        }
     }
 
     @ViewBuilder

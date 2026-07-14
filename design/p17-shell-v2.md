@@ -228,3 +228,13 @@ Ranked by constitutional + fidelity risk retired.
   no-new-rows ruling — Favourites is the one pin surface), and the interim
   `bookmarked` cell is superseded (no surface reads it). Scope-pin-mints-a-view
   and memo-pins wait for saved views (P13 remainder/P19).
+- **17i Layers, as-built:** test-first (services 2 + FFI 1; `lotus_layer_save_at`
+  additive, flagged). A layer = a named backstage entity (ordered `related`
+  members = the tabs, `workspace` scope); geometry = a shell-pref blob keyed by
+  the layer id; RESTORE WRITES NOTHING (tabs.adopt + pane prefs) with a one-shot
+  Undo toast off an in-memory stash; rename/delete ride the ordinary doors. The
+  home is the hub popover's LAYOUTS section (+ saves, click restores) — no
+  global-actions cluster (no-new-rows). Import deferred with export tooling.
+  **P17 is complete**: 17a/b (rail+band+panel+hub), 17e (tab muscle), the
+  four-lens right panel, 17f (places history), 17g (pins), 17i (layers);
+  17c/17d superseded by the band-lane delta above.

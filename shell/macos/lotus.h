@@ -218,6 +218,12 @@ uint64_t lotus_pin_at(const char *path, uint64_t target);
    0 when the target had none. */
 int32_t lotus_unpin_at(const char *path, uint64_t target);
 
+/* Save a layout layer (P17i): one transaction — name + workspace scope
+   (0 = Home) + ordered member ids ("[u64,...]"). Returns the layer id,
+   0 on failure. Restore is pure shell; rename/delete ride set/trash. */
+uint64_t lotus_layer_save_at(const char *path, const char *name, uint64_t workspace,
+                             const char *members_json);
+
 /* Trash one entity — the inspector's Trash action. Soft, reversible,
    never cascades. 1 on success, 0 on failure. */
 int32_t lotus_trash_at(const char *path, uint64_t id);

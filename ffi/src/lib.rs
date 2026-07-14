@@ -265,6 +265,18 @@ struct PinRow {
     order: f64,
 }
 
+/// One layout layer (P17i): a named backstage entity whose ordered members
+/// are the tabs to reopen. A trashed member drops from the row (dangling
+/// tolerated); restore is pure shell — no verb exists for it.
+#[derive(Serialize)]
+struct LayerRow {
+    id: Id,
+    name: String,
+    /// 0 = the built-in Home scope.
+    workspace: Id,
+    members: Vec<Id>,
+}
+
 #[derive(Serialize)]
 struct Snapshot {
     today: Vec<Id>,
@@ -281,6 +293,8 @@ struct Snapshot {
     /// The Favourites shelf, in order. The shell decodes this OPTIONAL —
     /// a missing key must never drop the snapshot (the H1 rule).
     pins: Vec<PinRow>,
+    /// Saved layout layers (P17i). OPTIONAL shell-side, like pins.
+    layers: Vec<LayerRow>,
     /// Every property definition — the inspector's catalog.
     properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
@@ -874,6 +888,45 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         _ => Vec::new(),
     };
 
+    // Layout layers (P17i): named, workspace-scoped, ordered members; a
+    // trashed member drops from the row, never the row from the snapshot.
+    let layers = match (
+        lotus_services::content::find_type(store, "layer"),
+        property_id(store, "related"),
+    ) {
+        (Some(layer_type), Some(related)) => {
+            let ws_prop = property_id(store, "workspace");
+            store
+                .entities()
+                .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(layer_type)))
+                .map(|e| LayerRow {
+                    id: e.id,
+                    name: match e.get(props::NAME) {
+                        Some(Value::Text(name)) => name.clone(),
+                        _ => format!("#{}", e.id),
+                    },
+                    workspace: match ws_prop.and_then(|p| e.get(p)) {
+                        Some(Value::Reference(w)) => *w,
+                        _ => 0,
+                    },
+                    members: e
+                        .cells
+                        .iter()
+                        .filter(|c| c.property == related)
+                        .filter_map(|c| match &c.value {
+                            Value::Reference(id) => {
+                                let id = store.resolve(*id);
+                                (store.get(id).map(|t| t.trashed) == Some(false)).then_some(id)
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+
     Snapshot {
         today,
         unstructured,
@@ -883,6 +936,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         inbox,
         workspaces,
         pins,
+        layers,
         properties,
         entities,
     }
@@ -2086,6 +2140,50 @@ pub unsafe extern "C" fn lotus_unpin_at(path: *const c_char, target: u64) -> i32
             Ok(false) => (0, Committed::Read),
             Err(_) => (0, Committed::Failed),
         }
+    })
+}
+
+/// Save a layout layer (P17i): one transaction — name + workspace scope
+/// (0 = Home) + the ordered member ids (`members_json` = `[u64,…]`, the
+/// open tabs). Returns the layer id, 0 on failure. Restore has NO verb
+/// (pure shell); rename/delete ride lotus_set_at / lotus_trash_at.
+///
+/// Additive verb (boundary rule): with_box + Committed, shipped with a
+/// round-trip test, flagged in the PR.
+///
+/// # Safety
+/// `path`, `name`, and `members_json` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_layer_save_at(
+    path: *const c_char,
+    name: *const c_char,
+    workspace: u64,
+    members_json: *const c_char,
+) -> u64 {
+    if name.is_null() || members_json.is_null() {
+        return 0;
+    }
+    let Ok(name) = CStr::from_ptr(name).to_str() else {
+        return 0;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return 0;
+    }
+    let Ok(json) = CStr::from_ptr(members_json).to_str() else {
+        return 0;
+    };
+    let Ok(members) = serde_json::from_str::<Vec<u64>>(json) else {
+        return 0;
+    };
+    with_box(path, 0, move |session| {
+        let now = Local::now();
+        let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
+        let workspace = (workspace != 0).then_some(workspace);
+        let id =
+            lotus_services::content::create_layer(session, name, workspace, &members, created)
+                .unwrap_or(0);
+        (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
 
@@ -4203,5 +4301,58 @@ mod tests {
 
         cleanup(&path);
     }
+    #[test]
+    fn layers_roundtrip_and_drop_dangling_members() {
+        let (path, c_path) = fresh_box("lotus_ffi_layers.log");
+
+        let a_text = CString::new("alpha").unwrap();
+        let a = unsafe { lotus_capture_at(c_path.as_ptr(), a_text.as_ptr()) };
+        let b_text = CString::new("beta").unwrap();
+        let b = unsafe { lotus_capture_at(c_path.as_ptr(), b_text.as_ptr()) };
+
+        let name = CString::new("Writing set").unwrap();
+        let members = CString::new(format!("[{b},{a}]")).unwrap();
+        let layer =
+            unsafe { lotus_layer_save_at(c_path.as_ptr(), name.as_ptr(), 0, members.as_ptr()) };
+        assert_ne!(layer, 0);
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let layers = snap["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0]["id"], layer);
+        assert_eq!(layers[0]["name"], "Writing set");
+        // Members in SAVED order: b before a.
+        let members: Vec<u64> = layers[0]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        assert_eq!(members, vec![b, a]);
+        // Backstage: the layer never pollutes Everything.
+        assert!(!snap["everything"].as_array().unwrap().iter().any(|id| *id == layer));
+
+        // A dangling member (trashed under the layer) drops from the ROW,
+        // not the snapshot; the layer survives with the live remainder.
+        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), b) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let layers = snap["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), 1);
+        let members: Vec<u64> = layers[0]["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
+        assert_eq!(members, vec![a]);
+
+        // Delete rides the ordinary trash door.
+        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), layer) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["layers"].as_array().unwrap().is_empty());
+
+        cleanup(&path);
+    }
 }
+
 

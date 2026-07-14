@@ -138,6 +138,8 @@ struct Snapshot: Codable {
     /// OPTIONAL (the decoder rule): a missing key must never drop the
     /// whole snapshot.
     let pins: [PinRow]?
+    /// OPTIONAL, like pins.
+    let layers: [LayerRow]?
     let properties: [PropertyRow]
     let entities: [EntityRow]
 }
@@ -148,6 +150,15 @@ struct PinRow: Codable, Identifiable, Hashable {
     let id: UInt64
     let target: UInt64
     let order: Double
+}
+
+/// One layout layer (P17i): a named tab-set snapshot, workspace-scoped
+/// (0 = Home). Members are live ids in saved order.
+struct LayerRow: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let name: String
+    let workspace: UInt64
+    let members: [UInt64]
 }
 
 // MARK: - search (its own seam, its own rank order)
@@ -441,6 +452,18 @@ final class BoxModel: ObservableObject {
     /// transaction, one undo).
     func reorderPin(_ pinId: UInt64, order: Double) {
         set(pinId, property: "order", value: String(order))
+    }
+
+    // ---- layers (P17i): layout snapshots ----
+
+    func saveLayer(name: String, workspace: UInt64, members: [UInt64]) {
+        let json = (try? String(data: JSONEncoder().encode(members), encoding: .utf8)) ?? "[]"
+        act { lotus_layer_save_at(self.path, name, workspace, json) != 0 }
+    }
+
+    /// The current workspace's saved layouts (0 = Home).
+    func layers(for workspace: UInt64) -> [LayerRow] {
+        (snap?.layers ?? []).filter { $0.workspace == workspace }
     }
 
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
@@ -949,6 +972,8 @@ extension Notification.Name {
     static let lotusOpenExport = Notification.Name("lotus.openExport")
     /// Jump to Inbox › Tidy (P16f): the Agents doorway + row-halo taps.
     static let lotusGoTidy = Notification.Name("lotus.goTidy")
+    static let lotusSaveLayer = Notification.Name("lotus.saveLayer")
+    static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
 // MARK: - lenses
@@ -1019,6 +1044,10 @@ struct WindowChrome: View {
     /// read by the panel's own segmented control (BP-4 · P17a). Shares the key
     /// the old content-bar SidebarViewToggle wrote, so state carries over.
     @AppStorage("app.leftView.v1") private var leftViewRaw = SidebarView.tree.rawValue
+    /// The pre-restore arrangement (P17i): one-step undo for a layout
+    /// restore — pure shell state, cleared when the toast retires.
+    @State private var layerStash: (tabs: [WorkspaceTab], activeId: UUID?)?
+    @State private var layerToastVisible = false
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -1036,6 +1065,25 @@ struct WindowChrome: View {
             .overlay(searchOverlay)
             .overlay(faultNotice)
             .overlay(DialogHost())
+            .overlay(alignment: .bottom) {
+                // The layout-restore toast (P17i): the sanctioned undo pattern —
+                // transient, one action, self-retiring.
+                if layerToastVisible {
+                    HStack(spacing: 10) {
+                        Text("Layout restored").font(.system(size: 12))
+                        Button("Undo") { undoLayerRestore() }
+                            .buttonStyle(.link)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Theme.popover))
+                    .overlay(Capsule().strokeBorder(Theme.border))
+                    .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+                    .padding(.bottom, 18)
+                    .transition(.opacity)
+                }
+            }
             .background(eventHandlers)
             .sheet(isPresented: $importOpen) {
                 ImportFunnelView(
@@ -1326,6 +1374,113 @@ struct WindowChrome: View {
         }
     }
 
+    // ---- layers (P17i): save/restore a layout ----
+
+    /// The layer notification seam — its own zero-size listener, off the big
+    /// receiver chain (which the type-checker already strains under).
+    private var layerHandlers: some View {
+        Color.clear
+            .onReceive(NotificationCenter.default.publisher(for: .lotusSaveLayer)) { _ in
+                saveLayerFlow()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusRestoreLayer)) { note in
+                guard let layer = note.object as? LayerRow else { return }
+                restoreLayer(layer)
+            }
+    }
+
+    /// Save the current arrangement as a named layer: the content tabs (in
+    /// order) as ONE entity write, the pane geometry as a shell-pref blob
+    /// keyed by the layer id.
+    private func saveLayerFlow() {
+        let members: [UInt64] = tabs.tabs.compactMap { tab in
+            switch tab.kind {
+            case .note(let id), .file(let id): return id
+            default: return nil
+            }
+        }
+        Dialogs.shared.prompt(
+            "Save layout", placeholder: "Name", confirmLabel: "Save"
+        ) { name in
+            guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+                return
+            }
+            model.saveLayer(
+                name: name, workspace: chrome.activeWorkspace ?? 0, members: members)
+            // The geometry blob rides beside the NEWEST layer once the
+            // snapshot lands — keyed by name until then would race, so it
+            // keys off the refreshed snapshot's row.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                if let layer = model.layers(for: chrome.activeWorkspace ?? 0)
+                    .first(where: { $0.name == name })
+                {
+                    UserDefaults.standard.set(
+                        [
+                            "left": chrome.leftPct, "right": chrome.rightPct,
+                            "leftOpen": chrome.leftOpen, "rightOpen": chrome.rightOpen,
+                        ] as [String: Any],
+                        forKey: "app.layer.geo.\(layer.id)")
+                }
+            }
+        }
+    }
+
+    /// Restore a layer: replace the tab set with its live members and apply
+    /// its geometry blob. MUTATES NOTHING IN THE LOG — the one-step undo is
+    /// the stashed previous arrangement (the toast).
+    private func restoreLayer(_ layer: LayerRow) {
+        closeEditor { ok in
+            guard ok else { return }
+            if chrome.surface != .notes { chrome.surface = .notes }
+            layerStash = (tabs.tabs, tabs.activeId)
+            let set: [WorkspaceTab] = layer.members.compactMap { id in
+                guard let row = model.entity(id) else { return nil }  // dangling: skip
+                let isFile = row.cells.contains { $0.kind == "file" }
+                return WorkspaceTab(kind: isFile ? .file(id) : .note(id))
+            }
+            let active = tabs.adopt(set)
+            if let geo = UserDefaults.standard.dictionary(forKey: "app.layer.geo.\(layer.id)") {
+                chrome.leftPct = geo["left"] as? Double ?? chrome.leftPct
+                chrome.rightPct = geo["right"] as? Double ?? chrome.rightPct
+                chrome.leftOpen = geo["leftOpen"] as? Bool ?? chrome.leftOpen
+                chrome.rightOpen = geo["rightOpen"] as? Bool ?? chrome.rightOpen
+                chrome.persistPanes()
+            }
+            if editor != nil {
+                editor?.closed()
+                editor = nil
+            }
+            activateTabAfterAdopt(active)
+            withAnimation(.easeOut(duration: 0.15)) { layerToastVisible = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                withAnimation(.easeOut(duration: 0.2)) { layerToastVisible = false }
+            }
+        }
+    }
+
+    private func activateTabAfterAdopt(_ tab: WorkspaceTab) {
+        tabs.setActive(tab.id)
+        syncEditorToActiveTab()
+    }
+
+    /// Put the pre-restore arrangement back (the toast's Undo) — shell
+    /// state only, like the restore itself.
+    private func undoLayerRestore() {
+        guard let stash = layerStash else { return }
+        layerStash = nil
+        layerToastVisible = false
+        closeEditor { ok in
+            guard ok else { return }
+            tabs.adopt(stash.tabs)
+            if let active = stash.activeId { tabs.setActive(active) }
+            if editor != nil {
+                editor?.closed()
+                editor = nil
+            }
+            syncEditorToActiveTab()
+        }
+    }
+
     /// Complete a chevron/⌥-arrow replay (P17f): restore the PLACE —
     /// workspace, then surface, then the object's tab, then selection.
     /// A trashed target is pruned from the ring and the step continues in
@@ -1417,6 +1572,7 @@ struct WindowChrome: View {
                 // never activated the desk tab).
                 showDesk(.today)
             }
+            .background(layerHandlers)
             .onReceive(NotificationCenter.default.publisher(for: .lotusGoInbox)) { _ in
                 navigate(to: .inbox)
             }

@@ -227,6 +227,22 @@ final class TabsModel: ObservableObject {
         return seen
     }
 
+    /// Replace the whole tab set (a layout-layer restore, P17i) — pure
+    /// shell state; the desk always survives at the front. Returns the tab
+    /// to activate.
+    @discardableResult
+    func adopt(_ set: [WorkspaceTab]) -> WorkspaceTab {
+        var next = set
+        if !next.contains(where: { $0.kind == .desk }) {
+            next.insert(WorkspaceTab(kind: .desk), at: 0)
+        }
+        tabs = next
+        let active = next.first { $0.kind != .desk } ?? next[0]
+        activeId = active.id
+        persist()
+        return active
+    }
+
     /// Reopen the most recent closed tab (⌘⇧T), or a specific one (the ▾
     /// menu). Returns it activated, or nil if the ring is empty.
     func reopen(_ id: UUID? = nil) -> WorkspaceTab? {

@@ -861,6 +861,64 @@ pub fn remove_pin(session: &mut Session, target: Id) -> Result<bool, PersistErro
     Ok(true)
 }
 
+// ---- layers (P17i): workspace layout snapshots as small entities ----
+
+/// Save a layout layer: a NAMED backstage entity whose ordered `related`
+/// cells are the tabs to reopen, scoped to a workspace. Mirrors the pin
+/// seed — the `layer` type is birthed lazily inside the same transaction
+/// as the first save, so a save is always one commit, one undo. Restore
+/// is pure shell (mutates nothing in the log); rename/delete ride the
+/// ordinary set/trash doors.
+pub fn create_layer(
+    session: &mut Session,
+    name: &str,
+    workspace: Option<Id>,
+    members: &[Id],
+    created: DateTime,
+) -> Result<Id, PersistError> {
+    let store = session.store();
+    let layer_type = find_type(store, "layer");
+    let related = property_id(store, "related");
+    let ws_prop = property_id(store, "workspace");
+    let members: Vec<Id> = members.iter().map(|m| store.resolve(*m)).collect();
+
+    let mut commands = Vec::new();
+    let type_id = layer_type.unwrap_or_else(|| {
+        let t = session.allocate_id();
+        commands.push(Command::Create { entity: t });
+        let expected = related.unwrap_or(props::NAME);
+        for cell in [
+            Cell { property: props::NAME, value: Value::text("layer") },
+            Cell { property: props::WORKING, value: Value::Bool(true) },
+            // EXPECTED makes find_type resolve it (the P9 rule).
+            Cell { property: props::EXPECTED, value: Value::Reference(expected) },
+        ] {
+            commands.push(Command::AddCell { entity: t, cell });
+        }
+        t
+    });
+
+    let id = session.allocate_id();
+    commands.push(Command::Create { entity: id });
+    let mut add = |property: Id, value: Value| {
+        commands.push(Command::AddCell { entity: id, cell: Cell { property, value } });
+    };
+    add(props::NAME, Value::text(name));
+    add(props::WORKING, Value::Bool(true));
+    add(props::CREATED, Value::DateTime(created));
+    add(props::TYPE, Value::Reference(type_id));
+    if let (Some(w), Some(wp)) = (workspace, ws_prop) {
+        add(wp, Value::Reference(w));
+    }
+    if let Some(related) = related {
+        for member in members {
+            add(related, Value::Reference(member));
+        }
+    }
+    session.commit(commands, "save layout", Author::User)?;
+    Ok(id)
+}
+
 /// Remove every cell of one property — the inverse of set_property's
 /// replace, for "make top-level" and its kin. A property the entity
 /// does not carry is a no-op, not an error.
