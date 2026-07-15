@@ -8,6 +8,7 @@
 // them.
 
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 // MARK: - the groups + entries
@@ -342,17 +343,17 @@ struct SettingsOverlay: View {
                 .foregroundColor(Theme.mutedFg)
             switch panel {
             case .appearance:
-                stub("Light / Dark / System, reading mode, glyph strength — lands with 19d.")
+                AppearancePanel()
             case .vocabulary:
                 stub("The definitions editor and the vocabulary shelves — land with 19e/19f. The rename engine underneath is live (try `lotus rename-value` from the CLI).")
             case .shortcuts:
                 stub("One table, two scopes — property digit-keys travel with the box, command chords stay on this Mac. Lands with 19g.")
             case .capture:
-                stub("The capture hotkey, the store's true path, and the honesty line — land with 19d.")
+                SettingsCapturePanel(model: model, dismiss: dismiss)
             case .assist:
                 stub("The automation switch (a vault cell — the CLI honors it too) and the dormant BYOK Keychain row — land with 19h.")
             case .startup:
-                stub("Continue where I left off · Fixed workspace · Today's note — lands with 19d.")
+                StartupPanel(model: model)
             }
             if let flashed, flashed.hasPrefix("prop.") || hitGroup(flashed) == panel {
                 Text("→ \(flashLabel(flashed))")
@@ -409,5 +410,252 @@ extension Text {
     }
     fileprivate func quiet() -> some View {
         self.font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+    }
+}
+
+// MARK: - the settings row kit (P19d)
+
+/// One settings row: label + scope tag on the left, the control on the right.
+/// Every control applies INSTANTLY per its scope — no Save exists.
+struct SettingRow<Control: View>: View {
+    let label: String
+    let scope: String
+    @ViewBuilder var control: () -> Control
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(label).font(.system(size: 12))
+            }
+            .frame(width: 170, alignment: .leading)
+            Text(scope)
+                .font(.system(size: 8.5)).kerning(0.3)
+                .padding(.horizontal, 5)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(scope == "vault" ? Theme.accent.opacity(0.5) : Theme.border))
+                .foregroundColor(scope == "vault" ? Theme.accent : Theme.mutedFg)
+            control()
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+/// A LOCKED convention row (bp13 a26's own move): the story kept, no control.
+struct LockedRow: View {
+    let label: String
+    let caption: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label).font(.system(size: 12)).frame(width: 170, alignment: .leading)
+            Text("convention — not configurable")
+                .font(.system(size: 9)).kerning(0.2)
+                .padding(.horizontal, 5)
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border))
+                .foregroundColor(Theme.mutedFg)
+            Text(caption).font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+// MARK: - Appearance (P19d)
+
+struct AppearancePanel: View {
+    @AppStorage("app.appearance") private var appearance = "system"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SettingRow(label: "Appearance", scope: "app") {
+                Picker("", selection: $appearance) {
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                    Text("System").tag("system")
+                }
+                .pickerStyle(.segmented).fixedSize().controlSize(.small)
+                .onChange(of: appearance) {
+                    switch appearance {
+                    case "light": NSApp.appearance = NSAppearance(named: .aqua)
+                    case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+                    default: NSApp.appearance = nil  // follow the system
+                    }
+                }
+            }
+            LockedRow(
+                label: "Accent",
+                caption: "Lake green means selection and today; amber means AI. The palette is the product.")
+            Text("Reading mode and glyph strength are deferred — display-only knobs land when a surface earns them.")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                .padding(.top, 6)
+        }
+    }
+}
+
+// MARK: - Startup (P19d)
+
+struct StartupPanel: View {
+    @ObservedObject var model: BoxModel
+    @AppStorage("app.startup.v1") private var mode = "continue"
+    @AppStorage("app.startup.workspace.v1") private var fixedWorkspace = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SettingRow(label: "On launch", scope: "app") {
+                Picker("", selection: $mode) {
+                    Text("Continue where I left off").tag("continue")
+                    Text("A fixed workspace").tag("workspace")
+                    Text("Today's note").tag("today")
+                }
+                .pickerStyle(.radioGroup).controlSize(.small)
+            }
+            if mode == "workspace" {
+                SettingRow(label: "Workspace", scope: "app") {
+                    Menu {
+                        Button("Home") { fixedWorkspace = 0 }
+                        ForEach(model.snap?.workspaces ?? []) { workspace in
+                            if !workspace.archived {
+                                Button(workspace.name) { fixedWorkspace = Int(workspace.id) }
+                            }
+                        }
+                    } label: {
+                        Text(workspaceName).font(.system(size: 11.5)).foregroundColor(Theme.accent)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                }
+            }
+            Text("Honored at the next launch — nothing moves under you now.")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                .padding(.top, 6)
+        }
+    }
+
+    private var workspaceName: String {
+        guard fixedWorkspace != 0,
+            let row = (model.snap?.workspaces ?? []).first(where: { $0.id == UInt64(fixedWorkspace) })
+        else { return "Home" }
+        return row.name
+    }
+}
+
+// MARK: - Capture & Store (P19d)
+
+struct SettingsCapturePanel: View {
+    @ObservedObject var model: BoxModel
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            SettingRow(label: "Capture hotkey", scope: "app") {
+                KeyRecorder()
+            }
+            LockedRow(
+                label: "Capture behavior",
+                caption: "One field, from anywhere; Esc closes; it asks nothing else.")
+            SettingRow(label: "Store", scope: "app") {
+                HStack(spacing: 8) {
+                    Text(model.path)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(Theme.mutedFg)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 300, alignment: .leading)
+                    Button("Reveal") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: model.path)])
+                    }
+                    .buttonStyle(.plain).font(.system(size: 11))
+                    .foregroundColor(Theme.accent)
+                    Button("Export…") {
+                        dismiss()
+                        NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+                    }
+                    .buttonStyle(.plain).font(.system(size: 11))
+                    .foregroundColor(Theme.accent)
+                }
+            }
+            Text("Your vault is this one file. Sync it with anything that syncs files — nothing phones home.")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                .padding(.top, 6)
+        }
+    }
+}
+
+/// The KeyRecorder (P19d, proven here first — 19g's table reuses it): click,
+/// press a chord, done. Esc cancels; a modifier is required; the capture
+/// hotkey re-registers LIVE via .lotusRebindCapture.
+struct KeyRecorder: View {
+    @State private var recording = false
+    @State private var monitor: Any?
+    @State private var display = KeyRecorder.currentDisplay()
+
+    var body: some View {
+        Button {
+            recording ? stop() : start()
+        } label: {
+            Text(recording ? "press a chord… (Esc cancels)" : display)
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 9).padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(recording ? Theme.accent : Theme.border))
+                .foregroundColor(recording ? Theme.accent : Theme.foreground.opacity(0.85))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onDisappear { stop() }
+    }
+
+    private func start() {
+        recording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {  // Esc — cancel, unchanged
+                stop()
+                return nil
+            }
+            var carbon = 0
+            if event.modifierFlags.contains(.control) { carbon |= controlKey }
+            if event.modifierFlags.contains(.option) { carbon |= optionKey }
+            if event.modifierFlags.contains(.command) { carbon |= cmdKey }
+            if event.modifierFlags.contains(.shift) { carbon |= shiftKey }
+            guard carbon != 0 else { return nil }  // a bare key can't be global
+            let label = KeyRecorder.chord(
+                flags: event.modifierFlags, key: event.charactersIgnoringModifiers ?? "?")
+            UserDefaults.standard.set(
+                [
+                    "keyCode": Int(event.keyCode), "modifiers": carbon,
+                    "display": label,
+                ], forKey: "app.capture.hotkey.v1")
+            NotificationCenter.default.post(
+                name: Notification.Name("lotus.rebindCapture"), object: nil)
+            display = label
+            stop()
+            return nil
+        }
+    }
+
+    private func stop() {
+        recording = false
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        monitor = nil
+    }
+
+    static func currentDisplay() -> String {
+        (UserDefaults.standard.dictionary(forKey: "app.capture.hotkey.v1")?["display"] as? String)
+            ?? "⌃⌥Space"
+    }
+
+    static func chord(flags: NSEvent.ModifierFlags, key: String) -> String {
+        var out = ""
+        if flags.contains(.control) { out += "⌃" }
+        if flags.contains(.option) { out += "⌥" }
+        if flags.contains(.shift) { out += "⇧" }
+        if flags.contains(.command) { out += "⌘" }
+        let name = key == " " ? "Space" : key.uppercased()
+        return out + name
     }
 }

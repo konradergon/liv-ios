@@ -1263,6 +1263,17 @@ struct WindowChrome: View {
                 model.refresh()
                 installReturnMonitor()
                 registerCommands()
+                // Startup mode (P19d): honored HERE, at launch, per the pref.
+                switch UserDefaults.standard.string(forKey: "app.startup.v1") ?? "continue" {
+                case "today":
+                    DispatchQueue.main.async { showDesk(.today) }
+                case "workspace":
+                    let fixed = UInt64(
+                        UserDefaults.standard.integer(forKey: "app.startup.workspace.v1"))
+                    chrome.activeWorkspace = fixed == 0 ? nil : fixed
+                default:
+                    break  // continue where I left off — the prefs already did
+                }
                 // Seed the history with the launch location, or the
                 // first Back has nothing to return to.
                 chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: nil))

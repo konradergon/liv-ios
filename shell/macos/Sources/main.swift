@@ -378,8 +378,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     // MARK: the hotkey
 
-    /// ⌃⌥Space, via Carbon — no permissions dialog, works everywhere.
-    /// The binding is one of the budgeted settings; this is its default.
+    /// ⌃⌥Space by default, via Carbon — no permissions dialog, works
+    /// everywhere. The binding is a budgeted setting (P19d): the KeyRecorder
+    /// writes `app.capture.hotkey.v1` and posts `.lotusRebindCapture`; the
+    /// hotkey re-registers LIVE, no relaunch.
     private func registerHotKey() {
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -396,11 +398,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             1, &eventType,
             Unmanaged.passUnretained(self).toOpaque(),
             nil)
+        applyCaptureHotKey()
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("lotus.rebindCapture"), object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyCaptureHotKey()
+        }
+    }
 
+    /// (Re-)register from the pref — the old registration is torn down first
+    /// so a rebind never leaves a ghost chord.
+    private func applyCaptureHotKey() {
+        if let existing = hotKeyRef {
+            UnregisterEventHotKey(existing)
+            hotKeyRef = nil
+        }
+        var keyCode = UInt32(kVK_Space)
+        var modifiers = UInt32(controlKey | optionKey)
+        if let saved = UserDefaults.standard.dictionary(forKey: "app.capture.hotkey.v1"),
+            let code = saved["keyCode"] as? Int,
+            let mods = saved["modifiers"] as? Int
+        {
+            keyCode = UInt32(code)
+            modifiers = UInt32(mods)
+        }
         let hotKeyID = EventHotKeyID(signature: OSType(0x4C4F_5453), id: 1)  // "LOTS"
         RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(controlKey | optionKey),
+            keyCode,
+            modifiers,
             hotKeyID,
             GetEventDispatcherTarget(),
             0,
