@@ -153,7 +153,8 @@ struct ValuePoolPopover: View {
                 PoolEntry(id: "v.\(v.value)", value: v.value, detail: "in vault · \(v.count) · ⏎ add"))
         }
         for option in spec.property.options
-        where needle.isEmpty || option.name.lowercased().contains(needle) {
+        where !option.isHidden
+            && (needle.isEmpty || option.name.lowercased().contains(needle)) {
             guard seen.insert(option.name.lowercased()).inserted else { continue }
             out.append(PoolEntry(id: "s.\(option.name)", value: option.name, detail: "seeded"))
         }
@@ -787,15 +788,42 @@ struct RowMenuPopover: View {
                         Text("vault-wide").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                     })
             }
-            deferredRow(
-                icon: "textformat", label: "Change type",
-                detail: "\(spec.property.kind) ▸",
-                help: "Deferred to the schema pass — a kind change forces a vault-wide re-parse story.")
+            // Un-grayed by P19c's kind-id seam + P19e's retype delta: retype
+            // writes value-kind ONLY (schema-on-read re-renders carriers) and
+            // hide-on-kind mints a real #id reference.
+            Menu {
+                ForEach(PropertyActions.retypeKinds, id: \.self) { kind in
+                    Button(kind + (kind == spec.property.kind ? " ✓" : "")) {
+                        onDone()
+                        PropertyActions.retype(model: model, def: spec.property, to: kind)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "textformat").font(.system(size: 10))
+                    Text("Change type").font(.system(size: 12))
+                    Spacer(minLength: 6)
+                    Text("\(spec.property.kind) ▸").font(.system(size: 10))
+                        .foregroundColor(Theme.mutedFg)
+                }
+                .padding(.horizontal, 10)
+                .frame(minHeight: 26)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("Sets value-kind only — carrier cells are never rewritten (schema-on-read).")
             Divider().padding(.vertical, 2)
-            deferredRow(
-                icon: "eye.slash", label: "Hide on \(entity.kinds.first ?? "kind")",
-                detail: "per kind",
-                help: "Waits for the kind-resolution seam (hide-on-kind references the kind entity).")
+            PopRow(selected: false, action: { hideOnThisKind() }) {
+                AnyView(
+                    HStack(spacing: 8) {
+                        Image(systemName: "eye.slash").font(.system(size: 10))
+                        Text("Hide on \(entity.kinds.first ?? "this kind")").font(.system(size: 12))
+                        Spacer(minLength: 6)
+                        Text("per kind").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                    })
+            }
             PopRow(selected: false, action: { toggleHideWhenEmpty() }) {
                 AnyView(
                     HStack(spacing: 8) {
@@ -847,6 +875,14 @@ struct RowMenuPopover: View {
         .frame(minHeight: 26)
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(help)
+    }
+
+    private func hideOnThisKind() {
+        onDone()
+        guard let kindName = entity.kinds.first,
+            let kind = (model.snap?.kinds ?? []).first(where: { $0.name == kindName })
+        else { return }
+        PropertyActions.hideOnKind(model: model, def: spec.property, kind: kind)
     }
 
     private func editName() {

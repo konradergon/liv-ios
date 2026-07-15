@@ -345,7 +345,7 @@ struct SettingsOverlay: View {
             case .appearance:
                 AppearancePanel()
             case .vocabulary:
-                stub("The definitions editor and the vocabulary shelves — land with 19e/19f. The rename engine underneath is live (try `lotus rename-value` from the CLI).")
+                VocabularyPanel(model: model)
             case .shortcuts:
                 stub("One table, two scopes — property digit-keys travel with the box, command chords stay on this Mac. Lands with 19g.")
             case .capture:
@@ -657,5 +657,400 @@ struct KeyRecorder: View {
         if flags.contains(.command) { out += "⌘" }
         let name = key == " " ? "Space" : key.uppercased()
         return out + name
+    }
+}
+
+// MARK: - Properties & Vocabulary (P19e + P19f)
+
+/// The definitions editor + the shelves — the inspector's MIRROR, not a
+/// second editor: every write is the same cell the row menu writes.
+struct VocabularyPanel: View {
+    @ObservedObject var model: BoxModel
+    /// Which select property's shelves are open.
+    @State private var shelfProperty: UInt64?
+    /// Which kind's status vocabulary is open.
+    @State private var statusKind = "task"
+    /// The count-confirm toast: "Renamed on N — ⌘⌥Z undoes."
+    @State private var toast: String?
+
+    private var properties: [PropertyRow] { model.snap?.properties ?? [] }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                definitionsTable
+                shelves
+                statusTable
+                if let toast {
+                    Text(toast)
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7).fill(Theme.accent.opacity(0.13)))
+                }
+            }
+            .padding(.bottom, 10)
+        }
+    }
+
+    private func flash(_ text: String) {
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            if toast == text { toast = nil }
+        }
+    }
+
+    // MARK: 19e — the definitions table (spine first, customs last)
+
+    private var definitionsTable: some View {
+        let spine = properties.filter { $0.seeded ?? false }
+        let custom = properties.filter { !($0.seeded ?? false) }
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack {
+                Text("PROPERTY DEFINITIONS")
+                    .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg)
+                Spacer()
+                Button("＋ property") {
+                    Dialogs.shared.prompt(
+                        "New property",
+                        message: "Born as text — retype from its row. Schema-on-read: setting a value on any object offers it too.",
+                        placeholder: "name", confirmLabel: "Create"
+                    ) { name in
+                        guard let name = name?.trimmingCharacters(in: .whitespaces).lowercased(),
+                            !name.isEmpty
+                        else { return }
+                        model.addProperty(name: name, kind: "text")
+                    }
+                }
+                .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
+                .foregroundColor(Theme.accent)
+            }
+            ForEach(spine) { def in definitionRow(def, custom: false) }
+            if !custom.isEmpty {
+                Text("CUSTOM")
+                    .font(.system(size: 8.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg.opacity(0.8))
+                    .padding(.top, 6)
+                ForEach(custom) { def in definitionRow(def, custom: true) }
+            }
+        }
+    }
+
+    private func definitionRow(_ def: PropertyRow, custom: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: def.icon ?? "circle.dashed")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                .frame(width: 16)
+            Text(def.name).font(.system(size: 12))
+            Text(def.kind).font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+            if custom {
+                Text("custom · on \(def.carrierCount)")
+                    .font(.system(size: 9)).foregroundColor(Theme.accent.opacity(0.8))
+            } else if def.carrierCount > 0 {
+                Text("on \(def.carrierCount)")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+            }
+            Spacer(minLength: 4)
+            Menu {
+                Button("Rename…") {
+                    PropertyActions.rename(model: model, def: def) {
+                        flash("Renamed — every carrier follows. ⌘⌥Z undoes.")
+                    }
+                }
+                Menu("Change type") {
+                    ForEach(PropertyActions.retypeKinds, id: \.self) { kind in
+                        Button(kind + (kind == def.kind ? " ✓" : "")) {
+                            PropertyActions.retype(model: model, def: def, to: kind)
+                            flash("Retyped to \(kind) — cells untouched, re-read as \(kind).")
+                        }
+                    }
+                }
+                Button("Icon…") { PropertyActions.setIcon(model: model, def: def) }
+                Menu("Hide on kind") {
+                    ForEach(model.snap?.kinds ?? []) { kind in
+                        Button(kind.name) {
+                            PropertyActions.hideOnKind(model: model, def: def, kind: kind)
+                        }
+                    }
+                }
+                Button(def.hidesWhenEmpty ? "Show when empty" : "Hide when empty") {
+                    PropertyActions.toggleHideWhenEmpty(model: model, def: def)
+                }
+                if custom {
+                    Divider()
+                    Button("Delete definition") {
+                        model.trash(def.id)
+                        flash("Deleted — carriers keep their cells (delete only un-indexes).")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                    .frame(width: 20, height: 18).contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.vertical, 1)
+    }
+
+    // MARK: 19f — the shelves (vault · seeded · hidden)
+
+    private var selectProperties: [PropertyRow] {
+        properties.filter { $0.kind == "select" && $0.name != "status" }
+    }
+
+    @ViewBuilder
+    private var shelves: some View {
+        let selects = selectProperties
+        if !selects.isEmpty {
+            let chosen = selects.first { $0.id == shelfProperty } ?? selects[0]
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text("VOCABULARY SHELVES")
+                        .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                        .foregroundColor(Theme.mutedFg)
+                    Picker("", selection: Binding(
+                        get: { chosen.id },
+                        set: { shelfProperty = $0 })
+                    ) {
+                        ForEach(selects) { property in
+                            Text(property.name).tag(property.id)
+                        }
+                    }
+                    .pickerStyle(.menu).fixedSize().controlSize(.small)
+                    Spacer()
+                    Button("＋ option") {
+                        Dialogs.shared.prompt(
+                            "New \(chosen.name) option", placeholder: "name",
+                            confirmLabel: "Add"
+                        ) { name in
+                            guard let name = name?.trimmingCharacters(in: .whitespaces),
+                                !name.isEmpty
+                            else { return }
+                            model.addOption(property: chosen.id, name: name)
+                        }
+                    }
+                    .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(Theme.accent)
+                }
+                shelfRows(chosen)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func shelfRows(_ property: PropertyRow) -> some View {
+        let vault = property.options.filter { ($0.count ?? 0) > 0 && !$0.isHidden }
+        let seeded = property.options.filter { ($0.seeded ?? false) && !$0.isHidden }
+        let hidden = property.options.filter { $0.isHidden }
+        VStack(alignment: .leading, spacing: 4) {
+            if !vault.isEmpty {
+                shelfLine("IN THE VAULT", vault, property: property, dashed: false)
+            }
+            if !seeded.isEmpty {
+                shelfLine("SEEDED — unused, yours to keep or hide", seeded, property: property, dashed: true)
+            }
+            if !hidden.isEmpty {
+                DisclosureGroup {
+                    shelfChips(hidden, property: property, dashed: true, restore: true)
+                } label: {
+                    Text("HIDDEN · \(hidden.count)")
+                        .font(.system(size: 8.5, weight: .bold)).kerning(0.4)
+                        .foregroundColor(Theme.mutedFg.opacity(0.8))
+                }
+                .font(.system(size: 10))
+            }
+            if vault.isEmpty && seeded.isEmpty && hidden.isEmpty {
+                Text("No options yet — ＋ option starts the vocabulary.")
+                    .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+            }
+        }
+    }
+
+    private func shelfLine(
+        _ label: String, _ options: [OptionRow], property: PropertyRow, dashed: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 8.5, weight: .bold)).kerning(0.4)
+                .foregroundColor(Theme.mutedFg.opacity(0.8))
+            shelfChips(options, property: property, dashed: dashed, restore: false)
+        }
+    }
+
+    private func shelfChips(
+        _ options: [OptionRow], property: PropertyRow, dashed: Bool, restore: Bool
+    ) -> some View {
+        // A wrapping row of value chips in their true VALUE_HEX hue; seeded =
+        // dashed + muted until first use (the seed skin).
+        let columns = [GridItem(.adaptive(minimum: 110), spacing: 6)]
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 5) {
+            ForEach(options) { option in
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Color(nsColor: Hues.valueHex(option.name)).opacity(dashed ? 0.45 : 1))
+                        .frame(width: 8, height: 8)
+                    Text(option.name)
+                        .font(.system(size: 11))
+                        .foregroundColor(dashed ? Theme.mutedFg : Theme.foreground.opacity(0.9))
+                        .lineLimit(1)
+                    if let count = option.count, count > 0 {
+                        Text("\(count)").font(.system(size: 9).monospacedDigit())
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                }
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .strokeBorder(
+                            Theme.border,
+                            style: StrokeStyle(lineWidth: 1, dash: dashed ? [3, 3] : [])))
+                .contextMenu {
+                    Button("Rename everywhere…") { renameOption(option, in: property) }
+                    if restore {
+                        Button("Restore") {
+                            model.set(option.id, property: "hidden", value: "false")
+                        }
+                    } else {
+                        Button("Hide") { hideOption(option) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func renameOption(_ option: OptionRow, in property: PropertyRow) {
+        let carried = option.count ?? 0
+        Dialogs.shared.prompt(
+            "Rename \(option.name)",
+            message: "Carried by \(carried) object\(carried == 1 ? "" : "s") — one transaction; a collision merges. ⌘⌥Z undoes.",
+            initial: option.name, confirmLabel: "Rename"
+        ) { name in
+            guard let name = name?.trimmingCharacters(in: .whitespaces),
+                !name.isEmpty, name != option.name
+            else { return }
+            model.renameValue(property: property.name, old: option.name, new: name) { count in
+                if count >= 0 {
+                    flash("Renamed on \(count) object\(count == 1 ? "" : "s") — ⌘⌥Z undoes.")
+                } else {
+                    flash("The rename was refused.")
+                }
+            }
+        }
+    }
+
+    private func hideOption(_ option: OptionRow) {
+        // The hidden property may not exist yet — birth it through the same
+        // add-property door, then set (schema-on-read).
+        if (model.snap?.properties ?? []).first(where: { $0.name == "hidden" }) == nil {
+            model.addProperty(name: "hidden", kind: "bool") { _ in
+                model.set(option.id, property: "hidden", value: "true")
+            }
+        } else {
+            model.set(option.id, property: "hidden", value: "true")
+        }
+    }
+
+    // MARK: 19f — the per-kind status vocabulary
+
+    private var statusTable: some View {
+        let options = statusVocabulary(model, kind: statusKind)
+        let kinds = ["task", "event", "note"]
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("STATUS VOCABULARY")
+                    .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg)
+                Picker("", selection: $statusKind) {
+                    ForEach(kinds, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.menu).fixedSize().controlSize(.small)
+                Spacer()
+                Button("＋ column") {
+                    Dialogs.shared.prompt(
+                        "New \(statusKind) status", placeholder: "name", confirmLabel: "Add"
+                    ) { name in
+                        guard let name = name?.trimmingCharacters(in: .whitespaces),
+                            !name.isEmpty
+                        else { return }
+                        model.addStatusOption(kind: statusKind, name: name)
+                    }
+                }
+                .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
+                .foregroundColor(Theme.accent)
+            }
+            ForEach(options) { option in
+                HStack(spacing: 8) {
+                    StatusDot(option: option, statusName: option.name)
+                    Text(option.name).font(.system(size: 12))
+                    if let count = option.count, count > 0 {
+                        Text("\(count)").font(.system(size: 9).monospacedDigit())
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                    if option.isTerminal {
+                        Text("completes").font(.system(size: 8.5))
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                    Spacer(minLength: 4)
+                    Menu {
+                        Button("Rename everywhere…") {
+                            renameStatus(option)
+                        }
+                        Menu("Recolor") {
+                            ForEach([0, 45, 90, 145, 210, 260, 320], id: \.self) { hue in
+                                Button("hue \(hue)°") {
+                                    model.set(option.id, property: "hue", value: String(hue))
+                                }
+                            }
+                        }
+                        Button("Move up") { reorderStatus(option, in: options, delta: -1) }
+                        Button("Move down") { reorderStatus(option, in: options, delta: 1) }
+                        Divider()
+                        Button("Retire (hide)") { hideOption(option) }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                            .frame(width: 20, height: 18).contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private func renameStatus(_ option: OptionRow) {
+        let carried = option.count ?? 0
+        Dialogs.shared.prompt(
+            "Rename \(option.name)",
+            message: "Carried by \(carried) — boards re-key, one transaction. ⌘⌥Z undoes.",
+            initial: option.name, confirmLabel: "Rename"
+        ) { name in
+            guard let name = name?.trimmingCharacters(in: .whitespaces),
+                !name.isEmpty, name != option.name
+            else { return }
+            model.renameValue(property: "status", old: option.name, new: name) { count in
+                if count >= 0 {
+                    flash("Renamed on \(count) — the board re-keyed. ⌘⌥Z undoes.")
+                }
+            }
+        }
+    }
+
+    private func reorderStatus(_ option: OptionRow, in options: [OptionRow], delta: Int) {
+        guard let at = options.firstIndex(where: { $0.id == option.id }) else { return }
+        let to = at + delta
+        guard options.indices.contains(to) else { return }
+        // The pins grammar: land between neighbors by the float key.
+        let neighbor = options[to].boardOrder
+        let beyond = options.indices.contains(to + delta)
+            ? options[to + delta].boardOrder
+            : neighbor + Double(delta) * 2
+        model.set(option.id, property: "order", value: String((neighbor + beyond) / 2))
     }
 }

@@ -593,6 +593,26 @@ final class BoxModel: ObservableObject {
         act { lotus_check_in_at(self.path, habit, 0) != 0 }
     }
 
+    /// The rename engine (P19b): one grouped transaction across every
+    /// carrier; the callback gets the true count (-1 = refused).
+    func renameValue(
+        property: String, old: String, new: String, done: @escaping (Int64) -> Void = { _ in }
+    ) {
+        let path = self.path
+        boxQueue.async {
+            let count = lotus_rename_value_at(path, property, old, new)
+            DispatchQueue.main.async {
+                done(count)
+                if count >= 0 { self.refresh() }
+            }
+        }
+    }
+
+    /// Mint an option for a select property (idempotent).
+    func addOption(property: UInt64, name: String) {
+        act { lotus_add_option_at(self.path, property, name) != 0 }
+    }
+
     /// One-shot query run (the Saved-view widget) — its own callback, never
     /// the shared palette seam, so a widget refresh can't stomp an open ⌘F.
     func runQuery(_ raw: String, done: @escaping ([UInt64]) -> Void) {
