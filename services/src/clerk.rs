@@ -60,11 +60,37 @@ fn todo_option(store: &Store) -> Option<Id> {
 /// Read every candidate entity, propose, and drop duplicates of anything
 /// pending or declined. `today` is the caller's civil date — the clerk
 /// itself has no clock.
+/// The P19h consent gate: the assist entity's `automation` bool. Absent
+/// (an older box) or true = on; only an explicit false silences the clerk.
+pub fn assist_enabled(store: &Store) -> bool {
+    let Some(automation) = crate::property_id(store, "automation") else {
+        return true;
+    };
+    let state = store
+        .entities()
+        .find(|e| {
+            !e.trashed
+                && matches!(e.get(lotus_core::props::NAME), Some(Value::Text(n)) if n == "assist")
+                && e.get(automation).is_some()
+        })
+        .and_then(|e| match e.get(automation) {
+            Some(Value::Bool(on)) => Some(*on),
+            _ => None,
+        });
+    state != Some(false)
+}
+
 pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
     // `_today` is deliberately unused since the anchor fix: every date the
     // clerk proposes derives from the store alone, so the sweep is a pure
     // function of the box and identical in every process. The clock stays
     // in the signature for future proposers that legitimately need one.
+    // The automation switch (P19h): a vault cell on the assist entity gates
+    // every proposal — off means SILENCE, in every process, by consent that
+    // travels with the box.
+    if !assist_enabled(store) {
+        return Vec::new();
+    }
     let Some(vocabulary) = Vocabulary::find(store) else {
         return Vec::new();
     };

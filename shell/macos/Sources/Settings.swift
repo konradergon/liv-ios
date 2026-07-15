@@ -9,6 +9,7 @@
 
 import AppKit
 import Carbon.HIToolbox
+import Security
 import SwiftUI
 
 // MARK: - the groups + entries
@@ -347,11 +348,11 @@ struct SettingsOverlay: View {
             case .vocabulary:
                 VocabularyPanel(model: model)
             case .shortcuts:
-                stub("One table, two scopes — property digit-keys travel with the box, command chords stay on this Mac. Lands with 19g.")
+                ShortcutsPanel(model: model)
             case .capture:
                 SettingsCapturePanel(model: model, dismiss: dismiss)
             case .assist:
-                stub("The automation switch (a vault cell — the CLI honors it too) and the dormant BYOK Keychain row — land with 19h.")
+                AssistPanel(model: model)
             case .startup:
                 StartupPanel(model: model)
             }
@@ -1052,5 +1053,389 @@ struct VocabularyPanel: View {
             ? options[to + delta].boardOrder
             : neighbor + Double(delta) * 2
         model.set(option.id, property: "order", value: String((neighbor + beyond) / 2))
+    }
+}
+
+// MARK: - Shortcuts (P19g): ONE table, two scopes
+
+struct ShortcutsPanel: View {
+    @ObservedObject var model: BoxModel
+    @AppStorage("app.inspector.hints.v1") private var digitHints = true
+    @State private var recordingId: String?
+    @State private var pendingSteal: (id: String, chord: String)?
+    @State private var monitor: Any?
+    @State private var toast: String?
+    /// Bumped after every keymap write so the table re-reads the registry.
+    @State private var epoch = 0
+
+    /// Digit keys reserved by the inspector's own grammar.
+    static let reservedKeys: Set<String> = ["n", "m", "h", "l", "f", "g", "s", "w"]
+
+    var body: some View {
+        let _ = epoch
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                SettingRow(label: "Digit hints in the inspector", scope: "app") {
+                    Toggle("", isOn: $digitHints).toggleStyle(.switch).controlSize(.mini)
+                        .labelsHidden()
+                }
+                digitSection
+                chordSection
+                if let toast {
+                    Text(toast)
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7).fill(Theme.accent.opacity(0.13)))
+                }
+            }
+            .padding(.bottom, 10)
+        }
+        .onDisappear { stopRecording() }
+    }
+
+    private func flash(_ text: String) {
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if toast == text { toast = nil } }
+    }
+
+    // MARK: property digit keys (vault cells — they travel with the box)
+
+    private var digitSection: some View {
+        let keyed = (model.snap?.properties ?? []).filter { $0.digitKey != nil }
+        let unkeyed = (model.snap?.properties ?? []).filter { $0.digitKey == nil }
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("PROPERTY KEYS")
+                    .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg)
+                Text("vault — they travel with the box")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                Spacer()
+                Menu {
+                    ForEach(unkeyed) { def in
+                        Button(def.name) { assignDigitKey(def) }
+                    }
+                } label: {
+                    Text("＋ assign").font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(Theme.accent)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }
+            ForEach(keyed) { def in
+                HStack(spacing: 8) {
+                    Text(def.name).font(.system(size: 12)).frame(width: 150, alignment: .leading)
+                    Text(def.digitKey ?? "")
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 5)
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border))
+                    Spacer()
+                    Button("Clear") {
+                        model.set(def.id, property: "digit-key", value: "")
+                        flash("Key cleared — one cell, ⌘⌥Z undoes.")
+                    }
+                    .buttonStyle(.plain).font(.system(size: 10))
+                    .foregroundColor(Theme.mutedFg)
+                }
+                .padding(.vertical, 1)
+            }
+            Text("Reserved: N M H L F G S W — the inspector's own grammar.")
+                .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+        }
+    }
+
+    private func assignDigitKey(_ def: PropertyRow) {
+        Dialogs.shared.prompt(
+            "Key for \(def.name)",
+            message: "One letter or digit; it works in the inspector, the palette, and suggestion chips at once. Reserved: N M H L F G S W.",
+            placeholder: "key", confirmLabel: "Assign"
+        ) { raw in
+            guard let key = raw?.trimmingCharacters(in: .whitespaces).lowercased(),
+                key.count == 1
+            else { return }
+            if Self.reservedKeys.contains(key) {
+                flash("\(key.uppercased()) is reserved by the inspector — pick another.")
+                return
+            }
+            if let holder = (model.snap?.properties ?? []).first(where: {
+                $0.digitKey?.lowercased() == key && $0.id != def.id
+            }) {
+                flash("\(key.uppercased()) is on \(holder.name) — clear it there first.")
+                return
+            }
+            model.set(def.id, property: "digit-key", value: key)
+            flash("\(def.name) answers to \(key.uppercased()) — everywhere, one cell.")
+        }
+    }
+
+    // MARK: command chords (app prefs — this Mac only, never the box)
+
+    private var chordSection: some View {
+        let registry = CommandRegistry.shared
+        let commands = registry.allCommands.filter { $0.binding != nil }
+        let grouped = Dictionary(grouping: commands, by: \.category)
+        let conflicted = Set(registry.conflicts().values.flatMap { $0 })
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("COMMAND CHORDS")
+                    .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg)
+                Text("app — this Mac only")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                Spacer()
+                Button("Reset all") {
+                    registry.resetOverrides()
+                    epoch += 1
+                    flash("Every chord back on its default.")
+                }
+                .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
+                .foregroundColor(Theme.accent)
+            }
+            if !conflicted.isEmpty {
+                Text("⚠ Two commands share a chord — insertion order decides until one moves.")
+                    .font(.system(size: 10)).foregroundColor(Color(nsColor: .systemRed).opacity(0.85))
+            }
+            ForEach(grouped.keys.sorted(), id: \.self) { category in
+                Text(category.uppercased())
+                    .font(.system(size: 8.5, weight: .bold)).kerning(0.4)
+                    .foregroundColor(Theme.mutedFg.opacity(0.8))
+                    .padding(.top, 5)
+                ForEach(grouped[category] ?? [], id: \.id) { command in
+                    chordRow(command, conflicted: conflicted.contains(command.id))
+                }
+            }
+        }
+    }
+
+    private func chordRow(_ command: CommandDef, conflicted: Bool) -> some View {
+        let registry = CommandRegistry.shared
+        let locked = CommandRegistry.unstealable.contains(command.id)
+        let chord = registry.effectiveBinding(for: command.id)
+        return HStack(spacing: 8) {
+            Text(command.label).font(.system(size: 12))
+                .frame(width: 190, alignment: .leading)
+                .foregroundColor(conflicted ? Color(nsColor: .systemRed) : Theme.foreground)
+            if locked {
+                Text(chordLabel(chord)).font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.mutedFg)
+                Text("always answers — not rebindable")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+            } else {
+                Button {
+                    recordingId == command.id ? stopRecording() : startRecording(command.id)
+                } label: {
+                    Text(recordingId == command.id
+                        ? (pendingSteal != nil ? "press again to steal" : "press a chord…")
+                        : chordLabel(chord))
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .strokeBorder(
+                                    recordingId == command.id ? Theme.accent : Theme.border))
+                        .foregroundColor(
+                            recordingId == command.id ? Theme.accent : Theme.foreground.opacity(0.85))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if registry.hasOverride(command.id) {
+                    Button("reset") {
+                        registry.setOverride(command.id, nil)
+                        epoch += 1
+                        flash("\(command.label) back on its default.")
+                    }
+                    .buttonStyle(.plain).font(.system(size: 9.5))
+                    .foregroundColor(Theme.mutedFg)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 1)
+    }
+
+    private func chordLabel(_ hotkey: Hotkey?) -> String {
+        guard let hotkey else { return "—" }
+        var out = ""
+        if hotkey.modifiers.contains(.ctrl) { out += "⌃" }
+        if hotkey.modifiers.contains(.alt) { out += "⌥" }
+        if hotkey.modifiers.contains(.shift) { out += "⇧" }
+        if hotkey.modifiers.contains(.mod) { out += "⌘" }
+        return out + (hotkey.key == " " ? "Space" : hotkey.key.uppercased())
+    }
+
+    private func startRecording(_ id: String) {
+        stopRecording()
+        recordingId = id
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {  // Esc cancels — and stays unstealable
+                stopRecording()
+                return nil
+            }
+            var mods: Hotkey.Modifiers = []
+            if event.modifierFlags.contains(.command) { mods.insert(.mod) }
+            if event.modifierFlags.contains(.shift) { mods.insert(.shift) }
+            if event.modifierFlags.contains(.option) { mods.insert(.alt) }
+            if event.modifierFlags.contains(.control) { mods.insert(.ctrl) }
+            guard !mods.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased(),
+                !key.isEmpty
+            else { return nil }
+            apply(chord: Hotkey(modifiers: mods, key: key), to: id)
+            return nil
+        }
+    }
+
+    /// The brick-proof apply: unstealable chords refuse with the reason
+    /// inline; a chord another command holds needs a SECOND identical press
+    /// (press-again-to-steal); everything lands as an app pref, undoable by
+    /// its reset link — never a modal.
+    private func apply(chord: Hotkey, to id: String) {
+        let registry = CommandRegistry.shared
+        let signature = "\(chord.modifiers.rawValue)+\(chord.key)"
+        // Unstealable: ⌘, and ⌘⌥Z always answer.
+        for lockedId in CommandRegistry.unstealable {
+            if let locked = registry.effectiveBinding(for: lockedId),
+                locked.modifiers == chord.modifiers,
+                locked.key.lowercased() == chord.key
+            {
+                flash("That chord opens \(lockedId == "app:open-settings" ? "Settings" : "Undo") — it always answers.")
+                stopRecording()
+                return
+            }
+        }
+        // Held elsewhere → press again to steal.
+        let holder = registry.allCommands.first { other in
+            guard other.id != id, let binding = registry.effectiveBinding(for: other.id) else {
+                return false
+            }
+            return binding.modifiers == chord.modifiers && binding.key.lowercased() == chord.key
+        }
+        if let holder, pendingSteal?.id != id || pendingSteal?.chord != signature {
+            pendingSteal = (id, signature)
+            flash("\(chordLabel(chord)) is on \(holder.label) — press it again to steal.")
+            epoch += 1
+            return
+        }
+        registry.setOverride(id, chord)
+        pendingSteal = nil
+        stopRecording()
+        epoch += 1
+        let label = registry.allCommands.first { $0.id == id }?.label ?? id
+        flash("\(label) → \(chordLabel(chord)) — reset on its row undoes.")
+    }
+
+    private func stopRecording() {
+        recordingId = nil
+        pendingSteal = nil
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+// MARK: - Assist (P19h): the automation switch + BYOK
+
+/// The consent panel. The switch is a VAULT cell (the CLI honors it too);
+/// the key lives in the KEYCHAIN and appears nowhere in the log or prefs.
+/// The amber rulebox is the one amber outside the AI surfaces — it states
+/// the fixed contract those surfaces live under.
+struct AssistPanel: View {
+    @ObservedObject var model: BoxModel
+    @State private var keyDraft = ""
+    @State private var keyStored = AssistPanel.keychainHas()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let assist = model.snap?.assist {
+                SettingRow(label: "Automation (the clerk)", scope: "vault") {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { assist.on },
+                            set: { on in
+                                model.set(
+                                    assist.id, property: "automation",
+                                    value: on ? "true" : "false")
+                            })
+                    )
+                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                }
+                Text(assist.on
+                    ? "The clerk sweeps at every open — deterministic proposers only, one queue, nothing applied without you."
+                    : "Silence. No proposals anywhere — the shell, the CLI, every process honors this cell.")
+                    .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+            }
+            SettingRow(label: "Model key (BYOK)", scope: "app") {
+                HStack(spacing: 8) {
+                    if keyStored {
+                        Text("stored in the Keychain")
+                            .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+                        Button("Clear") {
+                            AssistPanel.keychainClear()
+                            keyStored = false
+                        }
+                        .buttonStyle(.plain).font(.system(size: 11))
+                        .foregroundColor(Theme.accent)
+                    } else {
+                        SecureField("sk-…", text: $keyDraft)
+                            .textFieldStyle(.plain).font(.system(size: 11, design: .monospaced))
+                            .frame(width: 180)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border))
+                        Button("Store") {
+                            guard !keyDraft.isEmpty else { return }
+                            AssistPanel.keychainStore(keyDraft)
+                            keyDraft = ""
+                            keyStored = true
+                        }
+                        .buttonStyle(.plain).font(.system(size: 11))
+                        .foregroundColor(Theme.accent)
+                    }
+                }
+            }
+            Text("Dormant, honestly: nothing reads this key yet. It waits in the Keychain for the fence to open — it appears nowhere in the log or prefs.")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+            // The fixed contract — the one amber outside the AI surfaces.
+            VStack(alignment: .leading, spacing: 3) {
+                Text("✦ THE CONTRACT").font(.system(size: 9, weight: .bold)).kerning(0.5)
+                Text("AI only ever proposes — accepting runs the exact seam a manual edit runs. Amber marks every AI container. Dismissals are remembered by a deterministic id and never re-asked. ⌘Z never expires.")
+                    .font(.system(size: 10.5))
+            }
+            .foregroundColor(Theme.warning)
+            .padding(10)
+            .frame(maxWidth: 460, alignment: .leading)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Theme.warning.opacity(0.55)))
+        }
+    }
+
+    // ---- the Keychain seam (Security.framework via the C API) ----
+
+    private static let service = "com.lotus.byok"
+
+    static func keychainHas() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnData as String: false,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func keychainStore(_ key: String) {
+        keychainClear()
+        let add: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecValueData as String: Data(key.utf8),
+        ]
+        SecItemAdd(add as CFDictionary, nil)
+    }
+
+    static func keychainClear() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }

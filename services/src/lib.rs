@@ -84,6 +84,7 @@ pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_priority(session)?;
     seed_lists(session)?;
     seed_habits(session)?;
+    seed_assist(session)?;
     seed_event_fields(session)?;
     seed_contact_fields(session)?;
     seed_date_roles(session)?;
@@ -498,6 +499,36 @@ fn seed_lists(session: &mut Session) -> Result<(), PersistError> {
         });
     }
     session.commit(commands, "list type", Author::System)?;
+    Ok(())
+}
+
+/// The assist switch (P19h): ONE backstage `assist` entity whose
+/// `automation` bool gates EVERY clerk proposal — a vault cell, so the
+/// consent travels with the box and every door (shell, CLI) inherits it.
+/// Default ON (today's behavior). Self-guarded on the `automation` property.
+fn seed_assist(session: &mut Session) -> Result<(), PersistError> {
+    if property_id(session.store(), "automation").is_some() {
+        return Ok(());
+    }
+    let automation = session.allocate_id();
+    let mut commands = vec![Command::Create { entity: automation }];
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("automation") },
+        Cell { property: props::VALUE_KIND, value: Value::text("bool") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: automation, cell });
+    }
+    let assist = session.allocate_id();
+    commands.push(Command::Create { entity: assist });
+    for cell in [
+        Cell { property: props::NAME, value: Value::text("assist") },
+        Cell { property: props::WORKING, value: Value::Bool(true) },
+        Cell { property: automation, value: Value::Bool(true) },
+    ] {
+        commands.push(Command::AddCell { entity: assist, cell });
+    }
+    session.commit(commands, "assist switch", Author::System)?;
     Ok(())
 }
 

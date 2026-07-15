@@ -140,6 +140,13 @@ struct KindRow {
     name: String,
 }
 
+/// The assist switch (P19h): the consent that gates every clerk proposal.
+#[derive(Serialize)]
+struct AssistRow {
+    id: Id,
+    on: bool,
+}
+
 #[derive(Serialize)]
 struct EntityRow {
     id: Id,
@@ -324,6 +331,9 @@ struct Snapshot {
     widgets: Vec<lotus_services::timeviews::WidgetRow>,
     /// The kind-id seam (P19c). OPTIONAL shell-side.
     kinds: Vec<KindRow>,
+    /// The assist switch (P19h): the entity id (the toggle's write target)
+    /// + its state. OPTIONAL shell-side.
+    assist: Option<AssistRow>,
     /// Every property definition — the inspector's catalog.
     properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
@@ -1029,6 +1039,20 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .collect();
     // Deterministic order — the cache-parity test compares snapshots byte-wise.
     kinds.sort_by_key(|k| k.id);
+    let assist = {
+        let automation = property_id(store, "automation");
+        store
+            .entities()
+            .find(|e| {
+                !e.trashed
+                    && matches!(e.get(props::NAME), Some(Value::Text(n)) if n == "assist")
+                    && automation.map(|p| e.get(p).is_some()) == Some(true)
+            })
+            .map(|e| AssistRow {
+                id: e.id,
+                on: lotus_services::clerk::assist_enabled(store),
+            })
+    };
 
     Snapshot {
         today,
@@ -1045,6 +1069,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         views,
         widgets,
         kinds,
+        assist,
         properties,
         entities,
     }

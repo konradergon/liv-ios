@@ -177,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         main.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "Hide lotus", action: #selector(NSApplication.hide(_:)),
+            withTitle: "Hide Liv", action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h")
         let hideOthers = appMenu.addItem(
             withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)),
@@ -187,8 +187,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)),
             keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        // The brick-proof escape hatch (P19g): a FIXED menu item no keymap
+        // can touch — shortcuts reset even if every chord is scrambled.
+        let resetShortcutsItem = appMenu.addItem(
+            withTitle: "Reset Shortcuts", action: #selector(resetShortcuts), keyEquivalent: "")
+        resetShortcutsItem.target = self
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
-            withTitle: "Quit lotus", action: #selector(NSApplication.terminate(_:)),
+            withTitle: "Quit Liv", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
         appItem.submenu = appMenu
 
@@ -374,6 +380,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             return true
         }
         return false
+    }
+
+    /// P19g: the fixed escape hatch — clears every chord override.
+    @objc private func resetShortcuts() {
+        CommandRegistry.shared.resetOverrides()
     }
 
     // MARK: the hotkey

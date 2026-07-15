@@ -158,6 +158,8 @@ struct Snapshot: Codable {
     let widgets: [BoardWidgetRow]?
     /// The kind-id seam (P19c). OPTIONAL.
     let kinds: [KindRow]?
+    /// The assist switch (P19h). OPTIONAL.
+    let assist: AssistRow?
     let properties: [PropertyRow]
     let entities: [EntityRow]
 }
@@ -235,6 +237,12 @@ struct HabitLine: Codable, Identifiable, Hashable {
 struct KindRow: Codable, Identifiable, Hashable {
     let id: UInt64
     let name: String
+}
+
+/// The assist switch (P19h): the toggle's write target + state.
+struct AssistRow: Codable, Hashable {
+    let id: UInt64
+    let on: Bool
 }
 
 struct PinRow: Codable, Identifiable, Hashable {
@@ -1282,6 +1290,7 @@ struct WindowChrome: View {
             .onAppear {
                 model.refresh()
                 installReturnMonitor()
+                CommandRegistry.shared.loadOverrides()
                 registerCommands()
                 // Startup mode (P19d): honored HERE, at launch, per the pref.
                 switch UserDefaults.standard.string(forKey: "app.startup.v1") ?? "continue" {
