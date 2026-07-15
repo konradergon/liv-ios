@@ -204,7 +204,7 @@ fn seed_status_scoping(session: &mut Session) -> Result<(), PersistError> {
     let done = status.and_then(|s| content::find_option(store, s, "done"));
 
     let mut commands = Vec::new();
-    let mut new_property = |session: &mut Session, commands: &mut Vec<Command>, name: &str, kind: &str| {
+    let new_property = |session: &mut Session, commands: &mut Vec<Command>, name: &str, kind: &str| {
         let id = session.allocate_id();
         commands.push(Command::Create { entity: id });
         for cell in [

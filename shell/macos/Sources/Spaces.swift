@@ -1605,6 +1605,10 @@ struct HomeHubPopover: View {
                     actions.archive(id)
                 }
             }
+            popoverRow("Replay the tour") {
+                dismiss()
+                NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
+            }
         }
         .padding(.vertical, 4)
     }

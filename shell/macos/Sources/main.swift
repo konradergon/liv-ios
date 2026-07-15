@@ -251,7 +251,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // ⌘F searches entities) — the item is gone, not disabled.
         viewItem.submenu = view
 
+        let helpItem = NSMenuItem()
+        main.addItem(helpItem)
+        let help = NSMenu(title: "Help")
+        help.autoenablesItems = false
+        let tour = help.addItem(
+            withTitle: "Replay the Tour", action: #selector(replayTour), keyEquivalent: "")
+        tour.target = self
+        helpItem.submenu = help
+        NSApp.helpMenu = help
+
         NSApp.mainMenu = main
+    }
+
+    @objc private func replayTour() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
     }
 
     @objc private func goHome() {
@@ -276,7 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         capture.target = self
         menu.addItem(NSMenuItem.separator())
         menu.addItem(
-            withTitle: "Quit lotus", action: #selector(NSApplication.terminate(_:)),
+            withTitle: "Quit Liv", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
         statusItem.menu = menu
     }

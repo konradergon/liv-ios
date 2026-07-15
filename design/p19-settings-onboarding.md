@@ -172,3 +172,52 @@
 **Relocated, feature intact:** bp13's modal → the fourth overlay · count-confirm dialogs → pre-commit counts + grouped txn + undo toast · the gazetteer panel → the shelves + ordinary entity renames (the gazetteer is derived) · a24's open-today toggle → the Startup radio · a34's honesty → the Capture & Store sync line · the naming story → the locked convention row · BP-2's welcome dialog → a zero-dialog overlay card.
 
 **Recorded deltas (the delta log for this file, maintained through 19i):** modal→overlay · confirm→count+undo (⌘⌥Z) · retype sets `value-kind` only, never rewrites cells (schema-on-read; safer than Liv) · the kind-id seam is a real wire addition, not zero-Rust · settings answer to the grammar without being entities (live properties folded in at query time) · nothing migrates from prefs to the box (the full fifteen-key audit appended) · chords never travel; digit-keys always do · the unstealable set + Reset-all (beyond the blueprint — brick protection) · seeded-hide = a `hidden` cell (append-only gives "reversible forever" by construction) · startup default Fixed→Continue · Sync & Account nav cut (deviation from a34, honesty relocated) · the vault dialog R1-gated out; the trust beat re-grounded on the append-only log + Export + CLI with the claim intact · tour/banner state = app pref, not per-vault · "the first run asks nothing" amended to "may offer, never require" (topic-picking) · AI tour beats run on the deterministic clerk with frozen, test-pinned strings · amber appears exactly twice in P19: the Assist rulebox and the tour's proposal card · `~/Library/Application Support/lotus/lotus.log` is the store-location truth shown in Settings.
+---
+
+## 7 · As built — the 19i close-out (and the phase's end)
+
+Shipped: `Onboarding.swift` (TourState · the frozen-string mirror · CoachBubble ·
+TourOverlay · SeededBanner), the first-run conjunction on the window's first
+snapshot, resume-at-dot with surface validation (a dead assist queue degrades
+2→3, never sticks), replay via the Help menu **and** the hub popover row, the
+seeded banner atop the Spaces|Vault panel, `LOTUS_BOX_PATH` rehearsal
+(landed 19c). All four first-run quadrants behave: fresh box + fresh prefs →
+tour; a non-empty box marks `done` on first sight and never tours; `done`
+never re-fires; replay is the only re-entry.
+
+**Deltas against §1.10's script, recorded:**
+
+- **The external dependency did not land.** The Keep⇄Composer capture toggle
+  (the P12 gap) never shipped, so the script froze without it — moment ①
+  teaches ⌃⌥Space alone. If the toggle lands, moment ① gains one sentence;
+  nothing else moves.
+- **Moment ① pre-lands the scraps.** The design had the user type the three
+  captures behind a gated "2 captured · 1 to go" Continue. As built, **Start**
+  captures the frozen strings itself (with any picked topic rooms) in ordinary
+  writes, and moment ① explains the hotkey over the live surface. The typing
+  rehearsal bought little and cost a stall point; the strings must be
+  byte-exact anyway (the services test pins them).
+- **Moment ②'s gate is dropped, not broken.** The frozen-strings test
+  guarantees the wand is never dead, and triaging the queue empty IS the
+  moment working — so Continue is always live. An explained-disabled button
+  guarding an impossible state is dead chrome.
+- **Moment ③ folds "find it back" into the vocabulary beat** (⌘F + the
+  one-color law + the seed shelves in one bubble); the finish strip carries
+  the full key litany. Three moments stayed three; none went dead.
+- **Esc-innermost is welcome-card-only.** Moments 1–3 never intercept input
+  (the stronger form of pass-through), so Esc always belongs to the live
+  surface beneath; the scrimmed welcome consumes Esc as skip, and every
+  bubble carries the Skip link. "Second Esc skips" had no honest owner once
+  bubbles stopped owning the keyboard.
+- **The seeded banner lives on the Spaces|Vault panel,** not above the Inbox
+  list — visible from every surface, one home, and it self-retires: it shows
+  only while pristine seeds exist (seeded ∧ unused ∧ unhidden) and never
+  during the tour. Dismissal stays the app pref.
+- **No timers anywhere** — bubbles advance on clicks only; the ≤180ms budget
+  applies to the accept beat it always described, not to choreography.
+
+**Rehearse it:** `LOTUS_BOX_PATH=$(mktemp -d)/tour.log ./shell/macos/build/lotus`
+— then `defaults delete com.lotus.app app.onboarding.v1` between runs (or use
+a fresh `defaults` domain) to re-arm the pref conjunct.
+
+*With 19i the P19 table is fully shipped and the roadmap (P1–P19) closes.*

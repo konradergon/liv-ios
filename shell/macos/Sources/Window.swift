@@ -1148,6 +1148,7 @@ extension Notification.Name {
     static let lotusSaveLayer = Notification.Name("lotus.saveLayer")
     static let lotusVaultGraph = Notification.Name("lotus.vaultGraph")
     static let lotusStartTimer = Notification.Name("lotus.startTimer")
+    static let lotusReplayTour = Notification.Name("lotus.replayTour")
     static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
@@ -1225,6 +1226,9 @@ struct WindowChrome: View {
     @State private var layerToastVisible = false
     /// The vault graph overlay's camera anchor (open-state lives on chrome).
     @State private var vaultGraphFocus: UInt64?
+    /// The tour (P19i): -1 = inactive; 0 = welcome; 1–4 = the dots.
+    @State private var tourDot = -1
+    @State private var tourChecked = false
     @State private var returnMonitor: Any?
     @State private var commandsRegistered = false
     @FocusState private var searchFocused: Bool
@@ -1242,6 +1246,7 @@ struct WindowChrome: View {
             .overlay(searchOverlay)
             .overlay(vaultGraphOverlay)
             .overlay(settingsOverlay)
+            .overlay(tourOverlay)
             .overlay(faultNotice)
             .overlay(DialogHost())
             .overlay(alignment: .bottom) {
@@ -1469,6 +1474,19 @@ struct WindowChrome: View {
     private var leftPanelBody: some View {
         VStack(spacing: 0) {
             leftViewTabs
+            // The after-state's one pointer (P19i): shows only while pristine
+            // seeds exist (seeded, unused, unhidden) and no tour is running —
+            // one dismiss, or the deep-link into Settings -> Vocabulary.
+            if tourDot < 0,
+                model.properties().flatMap(\.options)
+                    .contains(where: { ($0.seeded ?? false) && ($0.count ?? 0) == 0 && !$0.isHidden })
+            {
+                SeededBanner {
+                    UserDefaults.standard.set(
+                        SettingsGroup.vocabulary.rawValue, forKey: "app.settings.lastPanel.v1")
+                    chrome.settingsOpen = true
+                }
+            }
             AppSidebar(
                 model: model, chrome: chrome, lens: $lens, query: $query,
                 selection: $selection, searchFocused: $searchFocused,
@@ -1619,6 +1637,35 @@ struct WindowChrome: View {
                 searchVault: { q in
                     NotificationCenter.default.post(name: .lotusSearchFor, object: q)
                 })
+        }
+    }
+
+    /// The tour (P19i): three live moments + the finish strip.
+    @ViewBuilder
+    private var tourOverlay: some View {
+        if tourDot >= 0 {
+            TourOverlay(
+                model: model, dot: $tourDot, boxPath: model.path,
+                goTidy: {
+                    inboxLens = .tidy
+                    navigate(to: .inbox)
+                },
+                goHome: { showDesk(.today) },
+                finish: {
+                    TourState.save(done: true, dot: 0)
+                    tourDot = -1
+                })
+            .background(
+                Color.clear.onReceive(
+                    NotificationCenter.default.publisher(for: .lotusReplayTour)
+                ) { _ in })
+        } else {
+            Color.clear
+                .frame(width: 0, height: 0)
+                .onReceive(NotificationCenter.default.publisher(for: .lotusReplayTour)) { _ in
+                    TourState.reset()
+                    tourDot = 0
+                }
         }
     }
 
@@ -1857,6 +1904,23 @@ struct WindowChrome: View {
                 }
             }
             .onReceive(model.$snap) { snap in
+                // First-run conjunction (P19i): fresh box + fresh prefs → the
+                // tour; a NON-EMPTY box never tours, regardless of prefs.
+                if !tourChecked, let snap {
+                    tourChecked = true
+                    if TourState.done {
+                        // done — never again
+                    } else if !snap.everything.isEmpty && TourState.dot == 0 {
+                        TourState.save(done: true, dot: 0)
+                    } else {
+                        // Resume at the saved dot, with surface validation:
+                        // the assist moment needs its queue, else degrade on.
+                        var dot = TourState.dot
+                        if dot == 2 && snap.inbox.isEmpty { dot = 3 }
+                        tourDot = dot
+                        if dot == 2 { inboxLens = .tidy; navigate(to: .inbox) }
+                    }
+                }
                 // A workspace can vanish under the active scope (trashed
                 // here or by the CLI): keep the scope resolvable.
                 chrome.reconcileActive(snap?.workspaces ?? [])

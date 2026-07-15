@@ -3,7 +3,7 @@
 //! tail replays to the pre-rename state. The phase's one required verb.
 
 use lotus_core::*;
-use lotus_services::{content, property_id};
+use lotus_services::content;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!("lotus_rename_{name}.log"));
