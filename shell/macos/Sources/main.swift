@@ -24,9 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     /// The box admits one writer, so the shell never holds it: every
     /// capture, snapshot, and triage opens, acts, closes. The CLI stays
     /// usable while the app runs.
+    /// The rehearsal harness (P19c, H6): LOTUS_BOX_PATH points the whole app
+    /// at any box — the onboarding tour is rehearsed on throwaway boxes from
+    /// the shell, end to end, instead of being discovered once at the finish.
     private let boxPath =
-        FileManager.default.homeDirectoryForCurrentUser.path
-        + "/Library/Application Support/lotus/lotus.log"
+        ProcessInfo.processInfo.environment["LOTUS_BOX_PATH"]
+        ?? FileManager.default.homeDirectoryForCurrentUser.path
+            + "/Library/Application Support/lotus/lotus.log"
 
     private lazy var model = BoxModel(path: boxPath)
 

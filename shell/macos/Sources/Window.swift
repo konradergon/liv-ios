@@ -40,8 +40,13 @@ struct OptionRow: Codable, Hashable, Identifiable {
     let hue: Double?
     let completes: Bool?
     let forTypes: [String]?
+    /// The seed layer (P19c) — all Optional per the decoder rule.
+    let count: Int?
+    let seeded: Bool?
+    let hidden: Bool?
     var boardOrder: Double { order ?? 0 }
     var isTerminal: Bool { completes ?? false }
+    var isHidden: Bool { hidden ?? false }
 }
 
 /// A property definition — the inspector's catalog entry. `id` is the
@@ -58,6 +63,8 @@ struct PropertyRow: Codable, Identifiable, Hashable {
     let icon: String?
     let digitKey: String?
     let hideWhenEmpty: Bool?
+    /// Seed-born (P19c) — the shelves' provenance. Optional.
+    let seeded: Bool?
     let hideOnKinds: [String]?
     let coreOnKinds: [String]?
     var carrierCount: Int { usage ?? 0 }
@@ -149,6 +156,8 @@ struct Snapshot: Codable {
     let views: [SavedViewRow]?
     /// The board's widgets, ordered (P18d). OPTIONAL.
     let widgets: [BoardWidgetRow]?
+    /// The kind-id seam (P19c). OPTIONAL.
+    let kinds: [KindRow]?
     let properties: [PropertyRow]
     let entities: [EntityRow]
 }
@@ -222,6 +231,12 @@ struct HabitLine: Codable, Identifiable, Hashable {
 
 /// One Favourites pin (P17g): a backstage entity pointing at an object,
 /// ordered by a float key.
+/// One kind (type) entity (P19c) — hide-on-kind writers mint #id refs.
+struct KindRow: Codable, Identifiable, Hashable {
+    let id: UInt64
+    let name: String
+}
+
 struct PinRow: Codable, Identifiable, Hashable {
     let id: UInt64
     let target: UInt64

@@ -89,6 +89,13 @@ struct OptionRow {
     name: String,
     /// Board/picker order (P11/11d) — 0 when the option predates ordering.
     order: f64,
+    /// Live carriers of this option (the shelves' provenance, P19c).
+    count: usize,
+    /// Seed-born AND still unused — the "seeded" shelf; flips to the vault
+    /// shelf the moment count > 0.
+    seeded: bool,
+    /// The hide convention: a `hidden` bool cell on the option entity.
+    hidden: bool,
     /// The option's dot hue, 0–360, absent when unset.
     hue: Option<f64>,
     /// The terminal state a checkbox writes and a board folds.
@@ -120,6 +127,17 @@ struct PropertyRow {
     hide_on_kinds: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     core_on_kinds: Vec<String>,
+    /// Seed-born (Author::System birthed the definition) — the shelves'
+    /// provenance tag (P19c).
+    seeded: bool,
+}
+
+/// One kind (type) entity on the wire (P19c) — the id seam hide-on-kind /
+/// core-on-kinds writers need to mint #<id> references.
+#[derive(Serialize)]
+struct KindRow {
+    id: Id,
+    name: String,
 }
 
 #[derive(Serialize)]
@@ -304,6 +322,8 @@ struct Snapshot {
     views: Vec<lotus_services::timeviews::ViewRow>,
     /// The board's widgets, float-key ordered (P18d). OPTIONAL.
     widgets: Vec<lotus_services::timeviews::WidgetRow>,
+    /// The kind-id seam (P19c). OPTIONAL shell-side.
+    kinds: Vec<KindRow>,
     /// Every property definition — the inspector's catalog.
     properties: Vec<PropertyRow>,
     entities: Vec<EntityRow>,
@@ -549,9 +569,42 @@ fn cell_target(store: &Store, value: &Value) -> Option<Id> {
 /// plumbing, never something a hand sets on a note, so it is excluded:
 /// offering `working` would let an edit silently hide the entity from
 /// every view.
+/// Every entity BORN by an Author::System transaction — the seed layer's
+/// provenance, derived from the log (stored nowhere, P19c).
+fn seed_born(store: &Store) -> std::collections::HashSet<Id> {
+    let mut born = std::collections::HashSet::new();
+    for tx in store.history() {
+        if !matches!(tx.author, Author::System) {
+            continue;
+        }
+        for command in &tx.commands {
+            if let lotus_core::Command::Create { entity } = command {
+                born.insert(*entity);
+            }
+        }
+    }
+    born
+}
+
+/// Live carriers per select-option id, one global pass (P19c).
+fn option_counts(store: &Store) -> std::collections::HashMap<Id, usize> {
+    let mut counts: std::collections::HashMap<Id, usize> = std::collections::HashMap::new();
+    for entity in store.entities().filter(|e| !e.trashed) {
+        for cell in &entity.cells {
+            if let Value::Select(option) = &cell.value {
+                *counts.entry(store.resolve(*option)).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
 fn build_properties(store: &Store) -> Vec<PropertyRow> {
     let usage: std::collections::HashMap<Id, usize> =
         lotus_services::search::usage_counts(store).into_iter().collect();
+    let born = seed_born(store);
+    let counts = option_counts(store);
+    let hidden_prop = property_id(store, "hidden");
     let icon_prop = property_id(store, "icon");
     let digit_prop = property_id(store, "digit-key");
     let hide_empty_prop = property_id(store, "hide-when-empty");
@@ -598,6 +651,14 @@ fn build_properties(store: &Store) -> Vec<PropertyRow> {
                             id: *id,
                             name: reference_name(store, *id),
                             order: number(*id, order_prop).unwrap_or(0.0),
+                            count: counts.get(id).copied().unwrap_or(0),
+                            seeded: born.contains(id)
+                                && counts.get(id).copied().unwrap_or(0) == 0,
+                            hidden: matches!(
+                                hidden_prop
+                                    .and_then(|p| store.get(*id).and_then(|e| e.get(p))),
+                                Some(Value::Bool(true))
+                            ),
                             hue: number(*id, hue_prop),
                             completes: matches!(
                                 completes_prop
@@ -638,6 +699,7 @@ fn build_properties(store: &Store) -> Vec<PropertyRow> {
                 },
                 hide_on_kinds: kinds_of(e, hide_on_prop),
                 core_on_kinds: kinds_of(e, core_on_prop),
+                seeded: born.contains(&e.id),
             })
         })
         .collect();
@@ -955,6 +1017,18 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     let time_entries = lotus_services::timeviews::time_totals(store, today_ymd);
     let views = lotus_services::timeviews::saved_views(store);
     let widgets = lotus_services::timeviews::board_widgets(store);
+    // The kind-id seam (P19c): every find-able type (an EXPECTED cell is what
+    // makes a type a type — the P9 rule).
+    let mut kinds: Vec<KindRow> = store
+        .entities()
+        .filter(|e| !e.trashed && e.get(props::EXPECTED).is_some())
+        .filter_map(|e| match e.get(props::NAME) {
+            Some(Value::Text(name)) => Some(KindRow { id: e.id, name: name.clone() }),
+            _ => None,
+        })
+        .collect();
+    // Deterministic order — the cache-parity test compares snapshots byte-wise.
+    kinds.sort_by_key(|k| k.id);
 
     Snapshot {
         today,
@@ -970,6 +1044,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         time_entries,
         views,
         widgets,
+        kinds,
         properties,
         entities,
     }
@@ -4766,7 +4841,71 @@ mod tests {
 
         cleanup(&path);
     }
+    #[test]
+    fn seed_layer_and_kind_ids_ride_the_wire() {
+        let (path, c_path) = fresh_box("lotus_ffi_seedlayer.log");
+
+        // The kind-id seam (19c): type entities exposed as an optional key so
+        // hide-on-kind / core-on-kinds writers can pass #<id> references.
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let kinds = snap["kinds"].as_array().unwrap();
+        let task_kind = kinds.iter().find(|k| k["name"] == "task").expect("task kind on the wire");
+        assert!(task_kind["id"].as_u64().unwrap() > 0);
+        assert!(kinds.iter().any(|k| k["name"] == "habit"));
+
+        // The seed layer: a SEEDED, unused status option reads seeded=true,
+        // count=0, hidden=false.
+        let props_arr = snap["properties"].as_array().unwrap();
+        let status = props_arr.iter().find(|p| p["name"] == "status").unwrap();
+        assert_eq!(status["seeded"], true, "the status definition is seed-born");
+        let todo = status["options"].as_array().unwrap().iter()
+            .find(|o| o["name"] == "todo").unwrap().clone();
+        assert_eq!(todo["seeded"], true);
+        assert_eq!(todo["count"], 0);
+        assert_eq!(todo["hidden"], false);
+
+        // Using the seed flips it to the vault shelf: count>0 → seeded=false.
+        let task = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        assert_ne!(task, 0);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let status = snap["properties"].as_array().unwrap().iter()
+            .find(|p| p["name"] == "status").unwrap().clone();
+        let todo = status["options"].as_array().unwrap().iter()
+            .find(|o| o["name"] == "todo").unwrap().clone();
+        assert!(todo["count"].as_u64().unwrap() >= 1);
+        assert_eq!(todo["seeded"], false, "a used seed migrates shelves");
+
+        // The hidden convention: a `hidden` bool cell on the option entity.
+        let hidden_name = CString::new("hidden").unwrap();
+        let bool_kind = CString::new("bool").unwrap();
+        assert_ne!(
+            unsafe {
+                lotus_add_property_at(c_path.as_ptr(), hidden_name.as_ptr(), bool_kind.as_ptr())
+            },
+            0
+        );
+        let option_id = todo["id"].as_u64().unwrap();
+        let yes = CString::new("true").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), option_id, hidden_name.as_ptr(), yes.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let status = snap["properties"].as_array().unwrap().iter()
+            .find(|p| p["name"] == "status").unwrap().clone();
+        let todo = status["options"].as_array().unwrap().iter()
+            .find(|o| o["name"] == "todo").unwrap().clone();
+        assert_eq!(todo["hidden"], true);
+
+        // A user-born property is NOT seeded.
+        let hidden_def = snap["properties"].as_array().unwrap().iter()
+            .find(|p| p["name"] == "hidden").unwrap().clone();
+        assert_eq!(hidden_def["seeded"], false);
+
+        cleanup(&path);
+    }
 }
+
 
 
 

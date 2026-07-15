@@ -381,6 +381,9 @@ func statusVocabulary(_ model: BoxModel, kind: String) -> [OptionRow] {
     guard let status = model.property(named: "status") else { return [] }
     return status.options
         .filter { option in
+            // The hide convention (P19c): a hidden option leaves every
+            // picker and board; the shelves (19f) restore it.
+            guard !option.isHidden else { return false }
             let scoped = option.forTypes ?? []
             return scoped.isEmpty || scoped.contains(kind)
         }

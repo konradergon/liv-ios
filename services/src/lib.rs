@@ -65,6 +65,16 @@ pub fn capture(
 /// any other, authored by the system. Property names live in the box, not
 /// in application code, so views can look them up and the clerk will one
 /// day reuse them as its gazetteer. The first run asks nothing.
+/// The onboarding tour's scripted captures (P19c — FROZEN for 19i, hazard
+/// H5): each string must fire at least one clerk proposer on a fresh seeded
+/// box, so the tour's assist moment can never demo a dead wand. A services
+/// test asserts this on every change; edit these only with that test.
+pub const TOUR_CAPTURES: [&str; 3] = [
+    "Call the dentist tomorrow 10:00",
+    "Renew the passport asap",
+    "Team retro friday 14:00",
+];
+
 pub fn seed_if_fresh(session: &mut Session) -> Result<(), PersistError> {
     seed_bootstrap(session)?;
     seed_starter_library(session)?;
