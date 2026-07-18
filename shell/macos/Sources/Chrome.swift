@@ -64,7 +64,7 @@ enum RightLens: String, CaseIterable {
     var symbol: String {
         switch self {
         case .metadata: return "slider.horizontal.3"
-        case .assist: return "sparkle"
+        case .assist: return "Copilot"
         case .outline: return "list.bullet.indent"
         case .history: return "clock"
         case .graph: return "point.3.connected.trianglepath.dotted"
@@ -74,7 +74,7 @@ enum RightLens: String, CaseIterable {
     var label: String {
         switch self {
         case .metadata: return "Metadata"
-        case .assist: return "Assist"
+        case .assist: return "Copilot"
         case .outline: return "Outline"
         case .history: return "History"
         case .graph: return "Graph"

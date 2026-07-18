@@ -459,6 +459,22 @@ final class BlockMarkerCell: NSTextAttachmentCell {
         NSPoint(x: 0, y: markerFont.descender)
     }
 
+    /// P20c (map [16]): the task BLOCK's checkbox toggles in the text —
+    /// "the note itself is the source". One undo undoes it.
+    override func wantsToTrackMouse() -> Bool {
+        if case .task = kind { return true }
+        return false
+    }
+
+    override func trackMouse(
+        with theEvent: NSEvent, in cellFrame: NSRect, of controlView: NSView?,
+        atCharacterIndex charIndex: Int, untilMouseUp flag: Bool
+    ) -> Bool {
+        guard case .task = kind, let view = controlView as? LotusTextView else { return false }
+        view.toggleTaskBlock(at: charIndex)
+        return true
+    }
+
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
         switch kind {
         case .rule:
@@ -653,6 +669,11 @@ final class LotusTextView: NSTextView {
             toggleMark(.strike)
             return
         }
+        // P20c: the pack's inline-code chord (Ctrl+`); ⌘E stays the alias.
+        if mods == [.control], event.keyCode == 50 {
+            toggleMark(.code)
+            return
+        }
         super.keyDown(with: event)
     }
 
@@ -692,6 +713,50 @@ final class LotusTextView: NSTextView {
         storage.endEditing()
         didChangeText()
         setSelectedRange(sel)
+    }
+
+    /// P20c (map [16]): flip a task block's done bit in the text itself.
+    func toggleTaskBlock(at charIndex: Int) {
+        guard let storage = textStorage, charIndex < storage.length else { return }
+        let range = (string as NSString).paragraphRange(
+            for: NSRange(location: charIndex, length: 0))
+        guard
+            let box = storage.attribute(.lotusBlock, at: range.location, effectiveRange: nil)
+                as? BlockBox,
+            case .task(let depth, let done) = box.block
+        else { return }
+        guard shouldChangeText(in: range, replacementString: nil) else { return }
+        storage.beginEditing()
+        applyBlockAttributes(.task(depth: depth, done: !done), to: range, storage: storage)
+        storage.endEditing()
+        didChangeText()
+    }
+
+    /// P20c — the toolbar's block door: stamp the caret's paragraph.
+    /// Heading cycles body→H1→H2→H3→body; bullet toggles.
+    func toolbarSetBlock(heading: Bool) {
+        guard let storage = textStorage else { return }
+        let range = currentParagraphRange()
+        let current =
+            (storage.length > range.location
+                ? storage.attribute(.lotusBlock, at: range.location, effectiveRange: nil)
+                    as? BlockBox
+                : nil)?.block ?? .body
+        let next: BlockJSON
+        if heading {
+            switch current {
+            case .heading(let n) where n < 3: next = .heading(n + 1)
+            case .heading: next = .body
+            default: next = .heading(1)
+            }
+        } else {
+            if case .bullet = current { next = .body } else { next = .bullet(depth: 0) }
+        }
+        guard shouldChangeText(in: range, replacementString: nil) else { return }
+        storage.beginEditing()
+        applyBlockAttributes(next, to: range, storage: storage)
+        storage.endEditing()
+        didChangeText()
     }
 
     // MARK: block input rules & demotion (markdown as an input convention)
@@ -1195,10 +1260,14 @@ final class EditorModel: ObservableObject {
     /// Gone from the box entirely (merged away, or never there).
     @Published var missing = false
     @Published var loaded = false
+    /// P20c: the caret location — the Outline lens tracks the section
+    /// holding it.
+    @Published var caret = 0
 
     private(set) var base: UInt64 = 0
     private var lastLoadedName = ""
-    private weak var textView: LotusTextView?
+    /// Internal-read (P20c): the toolbar drives marks/blocks through it.
+    private(set) weak var textView: LotusTextView?
     private var idleTimer: Timer?
     private var checkpointTimer: Timer?
     /// Bumped on every keystroke; a save only marks clean if untyped-over.
@@ -1634,6 +1703,9 @@ final class EditorModel: ObservableObject {
 
 struct NoteTextView: NSViewRepresentable {
     @ObservedObject var model: EditorModel
+    /// P20c splits: the preview pane renders read-only — ONE live draft
+    /// ever (the one-draft law); the draft follows focus.
+    var editable: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(model: model)
@@ -1652,7 +1724,8 @@ struct NoteTextView: NSViewRepresentable {
 
         let view = LotusTextView(frame: .zero, textContainer: container)
         view.isRichText = true
-        view.allowsUndo = true
+        view.isEditable = editable
+        view.allowsUndo = editable
         view.usesFontPanel = false
         view.usesFindPanel = false
         view.isAutomaticQuoteSubstitutionEnabled = false
@@ -1690,6 +1763,11 @@ struct NoteTextView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let view = notification.object as? LotusTextView else { return }
+            model.caret = view.selectedRange().location
+        }
+
         let model: EditorModel
         /// Per-editor undo: the window's shared manager would entangle
         /// the draft with every other field in the window.
@@ -1770,33 +1848,27 @@ struct NoteTextView: NSViewRepresentable {
 struct EditorView: View {
     @ObservedObject var model: EditorModel
     @FocusState private var titleFocused: Bool
+    /// P20c: the name wand's pending suggestion (deterministic — the first
+    /// body line; amber per the AI grammar, chips to accept or reject).
+    @State private var nameSuggestion: String?
+    /// The split preview (P20c): a second read-only pane. The draft stays
+    /// singular — it follows focus (the one-draft law, recorded).
+    @State private var previewEntity: UInt64?
+    @State private var previewModel: EditorModel?
+    /// Other open notes the split can adopt — the window feeds this.
+    var splitCandidates: () -> [UInt64] = { [] }
+    /// Focus hand-off: the inspector follows the clicked pane.
+    var onPreviewFocus: (UInt64) -> Void = { _ in }
 
     var body: some View {
-        VStack(spacing: 0) {
-            banner
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                TextField("Untitled", text: $model.title)
-                    .textFieldStyle(.plain)
-                    .font(.title2.weight(.semibold))
-                    .focused($titleFocused)
-                    .onSubmit { model.renameIfNeeded() }
-                    .onExitCommand { model.onCloseRequest() }
-                Spacer()
-                if model.dirty {
-                    Circle()
-                        .fill(Color.secondary.opacity(0.55))
-                        .frame(width: 7, height: 7)
-                        .help("Unsaved changes")
-                }
+        HStack(spacing: 12) {
+            editorPane
+            if let preview = previewModel {
+                SplitPreviewPane(
+                    model: preview,
+                    focus: { onPreviewFocus(preview.id) },
+                    close: { closeSplit() })
             }
-            .frame(maxWidth: LotusTextView.measure - 10)
-            // Modest breathing room — the editor sits under the tab strip + top
-            // band now, not the window top, so the old 44pt clearance was an
-            // empty row.
-            .padding(.top, 16)
-            .padding(.horizontal, 28)
-
-            NoteTextView(model: model)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -1813,6 +1885,266 @@ struct EditorView: View {
             // box.snap still holds the previous snapshot here.
             model.snapshotArrived(snap)
         }
+    }
+
+    private var editorPane: some View {
+        VStack(spacing: 0) {
+            banner
+            toolbar
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                // H1-is-title (P20c): the field IS the document's H1 — 24/700
+                // in the flow; renaming it renames the entity and the tab
+                // follows. (True in-body H1 sync lands with the source pass.)
+                TextField("Untitled", text: $model.title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 24, weight: .bold))
+                    .focused($titleFocused)
+                    .onSubmit { model.renameIfNeeded() }
+                    .onExitCommand { model.onCloseRequest() }
+                nameWand
+                Spacer()
+                if model.dirty {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.55))
+                        .frame(width: 7, height: 7)
+                        .help("Unsaved changes")
+                }
+            }
+            .frame(maxWidth: LotusTextView.measure - 10)
+            .padding(.top, 12)
+            .padding(.horizontal, 28)
+            if let suggestion = nameSuggestion {
+                nameChips(suggestion)
+                    .frame(maxWidth: LotusTextView.measure - 10, alignment: .leading)
+                    .padding(.horizontal, 28)
+            }
+
+            NoteTextView(model: model)
+            editorFooter
+        }
+    }
+
+    // MARK: P20c — the toolbar (overrides the no-toolbar law, mockup nt-etool)
+
+    private var toolbar: some View {
+        HStack(spacing: 2) {
+            markButton("bold", "bold · ⌘B") { model.textView?.toggleMark(.bold) }
+            markButton("italic", "italic · ⌘I") { model.textView?.toggleMark(.italic) }
+            markButton("strikethrough", "strikethrough · ⌘⇧K") {
+                model.textView?.toggleMark(.strike)
+            }
+            markButton("chevron.left.forwardslash.chevron.right", "inline code · ⌃`") {
+                model.textView?.toggleMark(.code)
+            }
+            Rectangle().fill(Theme.border).frame(width: 1, height: 14).padding(.horizontal, 3)
+            markButton("textformat.size", "heading — cycles H1→H2→H3") {
+                model.textView?.toolbarSetBlock(heading: true)
+            }
+            markButton("list.bullet", "bullet list") {
+                model.textView?.toolbarSetBlock(heading: false)
+            }
+            markButton("link", "link — [[ opens the wiki picker") {
+                model.textView?.insertText("[[", replacementRange: NSRange(location: NSNotFound, length: 0))
+            }
+            Spacer(minLength: 8)
+            splitButton
+            aiPill
+            kebab
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 3)
+        .overlay(Divider(), alignment: .bottom)
+    }
+
+    private func markButton(_ symbol: String, _ help: String, _ run: @escaping () -> Void)
+        -> some View
+    {
+        Button(action: run) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 26, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// "✦ AI" — opens the Copilot lens, note-scoped; a pending suggestion
+    /// halos the pill and points into Inbox › Tidy.
+    private var aiPill: some View {
+        let pending = (model.box.snap?.inbox ?? []).filter { $0.entity == model.id }.count
+        return Button {
+            NotificationCenter.default.post(name: .lotusOpenCopilot, object: model.id)
+        } label: {
+            HStack(spacing: 3) {
+                Text("✦").font(.system(size: 10))
+                Text("AI").font(.system(size: 10.5, weight: .semibold))
+            }
+            .foregroundColor(Theme.warning)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(Capsule().fill(Theme.warning.opacity(0.12)))
+            .overlay(
+                Capsule().strokeBorder(
+                    Theme.warning.opacity(pending > 0 ? 0.9 : 0.45),
+                    lineWidth: pending > 0 ? 1.5 : 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(
+            pending > 0
+                ? "one suggestion pending — every mark points into Inbox › Tidy"
+                : "opens the Copilot lens, scoped to this note")
+    }
+
+    private var kebab: some View {
+        Menu {
+            Button("Source mode — lands with the files projection (20j)") {}
+                .disabled(true)
+            Button("Reveal in vault") {
+                NotificationCenter.default.post(name: .lotusRevealInVault, object: model.id)
+            }
+            Button("Export…") {
+                NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+                .frame(width: 22, height: 24).contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("source mode · reveal in vault · export")
+    }
+
+    // MARK: the split (sim: three states, up to 2 panes v0)
+
+    private var splitButton: some View {
+        let candidates = splitCandidates().filter { $0 != model.id }
+        let active = previewModel != nil
+        return Button {
+            if active {
+                closeSplit()
+            } else if let first = candidates.first {
+                openSplit(first)
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "rectangle.split.2x1").font(.system(size: 10.5))
+                Text(active ? "close split" : "+ split").font(.system(size: 10.5))
+            }
+            .foregroundColor(active ? Theme.onAccent : Theme.mutedFg)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(Capsule().fill(active ? Theme.accent : .clear))
+            .overlay(
+                Capsule().strokeBorder(
+                    active ? Theme.accent : Theme.border,
+                    style: StrokeStyle(lineWidth: 1, dash: active ? [] : [3, 3])))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!active && candidates.isEmpty)
+        .opacity(!active && candidates.isEmpty ? 0.45 : 1)
+        .help(
+            active
+                ? "close split"
+                : candidates.isEmpty
+                    ? "split — open a second note first"
+                    : "split — up to 2 panes; ONE inspector follows the focused pane")
+    }
+
+    private func openSplit(_ entity: UInt64) {
+        let preview = EditorModel(box: model.box, id: entity, bornBlank: false)
+        preview.load()
+        previewEntity = entity
+        previewModel = preview
+    }
+
+    private func closeSplit() {
+        previewModel = nil
+        previewEntity = nil
+    }
+
+    // MARK: the name wand (deterministic first-line suggest, amber grammar)
+
+    private var nameWand: some View {
+        Button {
+            let body = model.textView?.string ?? ""
+            let line = body.split(separator: "\n").map(String.init)
+                .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            let trimmed = String(line.prefix(60))
+            guard !trimmed.isEmpty, trimmed != model.title else { return }
+            nameSuggestion = trimmed
+        } label: {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 11))
+                .foregroundColor(nameSuggestion == nil ? Theme.mutedFg.opacity(0.6) : Theme.warning)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("suggest a name — chips to accept or reject")
+    }
+
+    private func nameChips(_ suggestion: String) -> some View {
+        HStack(spacing: 6) {
+            Text("✦").font(.system(size: 9)).foregroundColor(Theme.warning)
+            Button {
+                model.title = suggestion
+                model.renameIfNeeded()
+                nameSuggestion = nil
+            } label: {
+                Text(suggestion).font(.system(size: 11)).lineLimit(1)
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.5)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("accept — writes the name; ⌘⌥Z undoes")
+            Button {
+                nameSuggestion = nil
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 8))
+                    .foregroundColor(Theme.mutedFg).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: the footer bar (path · words · hints)
+
+    private var editorFooter: some View {
+        let words = (model.textView?.string ?? "")
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+        return HStack(spacing: 10) {
+            // Presentational until 20j materializes real files (recorded).
+            Text("Vault/\(model.title.isEmpty ? "Untitled" : model.title).md")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(Theme.mutedFg)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Text("\(words) word\(words == 1 ? "" : "s")")
+                .font(.system(size: 10).monospacedDigit())
+                .foregroundColor(Theme.mutedFg)
+            HStack(spacing: 3) {
+                KbdChip(label: "[[", size: 9)
+                Text("link").font(.system(size: 9.5)).foregroundColor(Theme.mutedFg)
+            }
+            HStack(spacing: 3) {
+                KbdChip(label: "⌃`", size: 9)
+                Text("code").font(.system(size: 9.5)).foregroundColor(Theme.mutedFg)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(Theme.panel)
+        .overlay(Divider(), alignment: .top)
     }
 
     /// One line, system styles, no accent: the banner states a truth and
@@ -1852,6 +2184,48 @@ struct EditorView: View {
         // A quiet inline strip on the bare face — not an opaque dark slab.
         .overlay(Divider(), alignment: .bottom)
     }
+}
+
+// MARK: - the split preview pane (P20c)
+
+/// The second pane: read-only, bordered; click hands the inspector to it.
+/// ONE draft ever — this pane never edits (the one-draft law).
+struct SplitPreviewPane: View {
+    @ObservedObject var model: EditorModel
+    let focus: () -> Void
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text").font(.system(size: 10))
+                    .foregroundColor(Theme.mutedFg)
+                Text(model.title.isEmpty ? "Untitled" : model.title)
+                    .font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                Text("preview — the draft follows focus")
+                    .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                Spacer()
+                Button(action: close) {
+                    Image(systemName: "xmark").font(.system(size: 9))
+                        .foregroundColor(Theme.mutedFg).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("close split")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .overlay(Divider(), alignment: .bottom)
+            NoteTextView(model: model, editable: false)
+        }
+        .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+        .contentShape(Rectangle())
+        .onTapGesture { focus() }
+    }
+}
+
+extension Notification.Name {
+    static let lotusOpenCopilot = Notification.Name("lotus.openCopilot")
+    static let lotusRevealInVault = Notification.Name("lotus.revealInVault")
 }
 
 // MARK: - the outline projection (P17 five-lens panel)

@@ -444,3 +444,35 @@ popover rows carry "N tabs" per workspace. One shared **Toast** landed
 - Slots: mockup layout (in-row) + sim grammar; workspace slots ride the
   Spaces ★ (the ghost menu points there); pinned-filter slots await saved
   views in the palette (20h).
+
+### 20c.1 — the editor pass (as built)
+
+**Shipped.** The per-pane **toolbar** (overrides the no-toolbar law, recorded):
+B · I · S · inline-code (the pack's ⌃` chord landed; ⌘E stays an alias) ·
+heading-cycle H1→H2→H3 · bullet · link ([[ picker) — plus the right cluster:
+**+ split** (three states per the sim: disabled-with-reason · split-with-the-
+first-other-note · solid close-split), the **✦ AI pill** (opens the Copilot
+lens note-scoped; halos when a suggestion is pending, pointing into Tidy),
+and the **kebab** (Source explained-disabled until 20j's projection ·
+Reveal in vault · Export…). **H1-is-title**: the title renders 24/700 in the
+flow with the **name wand** beside it (deterministic first-line suggestion,
+amber chips accept/reject; in-body H1 sync lands with the source pass).
+**Splits at 2 panes**: the second pane is a READ-ONLY preview — one draft
+ever, the draft follows focus (the one-draft law holds; the sim itself never
+shows more than 2); clicking the preview hands the inspector its entity.
+The **footer bar** (mono path — presentational until 20j · live word count ·
+[[/⌃` hints). **Checkbox blocks toggle in the text** (the marker cell
+tracks the mouse; one undo). **Wikilinks navigate** (click opens the target,
+the tab dedups). The **Outline lens** gained mono H-tags and caret-tracked
+active rows. The right rail wears **[Selection | View]** on every surface
+(O10) with the v0 View pane (each surface deepens it in its slice) and the
+assist lens reads **Copilot**.
+
+**Deferred within 20c (recorded):** ghost autocomplete + streamed anything
+(fence-gated on BYOK); active-line marker echo; the embedded view block
+(rides the views pass); named versions (core design — the History lens
+stands as P17f built it); the slash menu (next pass); the daily note's
+civil title (display-map with 20c.2; the core template holds); the empty
+state (unreachable — a desk tab always exists). **20c.2 next**: the tab
+anatomy (content tabs down into the pane row, the global lane becomes true
+containers, locked-tab open-routing) + the Journal/Projects/Recent panel.

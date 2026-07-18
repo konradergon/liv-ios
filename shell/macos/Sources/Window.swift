@@ -1198,6 +1198,41 @@ enum Lens: String, CaseIterable, Identifiable {
 
 // MARK: - the window
 
+/// The View tab (P20c, O10): the surface's own settings as property-style
+/// rows. v0 carries the shared rows; each surface deepens it in its slice
+/// (tasks 20e, library 20f — recorded).
+struct ViewTabPane: View {
+    @ObservedObject var model: BoxModel
+    @ObservedObject var chrome: ChromeModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("VIEW — \(chrome.surface.label.uppercased())")
+                .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                .foregroundColor(Theme.mutedFg)
+            row("Surface", chrome.surface.label)
+            row("Right lens", chrome.rightLens.label)
+            if chrome.surface == .notes {
+                row("Panes", "1 of 2 — + split in the editor toolbar")
+            }
+            Text("The view's own query, grouping and lens rows land with each surface's pass (20e·20f).")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 11.5)).foregroundColor(Theme.text2)
+                .frame(width: 84, alignment: .leading)
+            Text(value).font(.system(size: 11.5)).foregroundColor(Theme.mutedFg)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 /// The one transient toast (P20b) — the sim narrates chrome gestures
 /// (theme cycles, workspace switches, layer merges) through exactly this.
 final class Toast: ObservableObject {
@@ -1340,6 +1375,17 @@ struct WindowChrome: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.goDashboard"))) { _ in
                 navigate(to: .dashboard)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenCopilot)) { note in
+                // The editor's ✦ AI pill (P20c): the Copilot lens, scoped.
+                if let id = note.object as? UInt64 { selection = id }
+                chrome.rightOpen = true
+                chrome.rightLens = .assist
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .lotusRevealInVault)) { _ in
+                chrome.leftOpen = true
+                leftViewRaw = SidebarView.vault.rawValue
+                chrome.persistPanes()
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
                 exportComposer.reset()
@@ -1733,6 +1779,32 @@ struct WindowChrome: View {
 
     /// The lens bar (bp4: active = accent underline; ✦ Assist is amber — the
     /// one AI hue — with a live count pip).
+    /// 0 = Selection · 1 = View (P20c, O10 — the merged-rail ruling on
+    /// every surface).
+    @State private var railTab = 0
+
+    private var railTabsHeader: some View {
+        HStack(spacing: 4) {
+            ForEach([0, 1], id: \.self) { tab in
+                let on = railTab == tab
+                Button { railTab = tab } label: {
+                    Text(tab == 0 ? "Selection" : "View")
+                        .font(.system(size: 11.5, weight: on ? .semibold : .regular))
+                        .foregroundColor(on ? Theme.accent : Theme.mutedFg)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(on ? Theme.accentTint : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 5)
+    }
+
     private var lensBar: some View {
         HStack(spacing: 2) {
             ForEach(RightLens.allCases, id: \.rawValue) { lens in
@@ -2362,14 +2434,22 @@ struct WindowChrome: View {
                 // guarantee, now structural).
                 if chrome.rightOpen && !chrome.focusMode {
                     VStack(spacing: 0) {
+                        // P20c (O10): [Selection | View] over the lenses —
+                        // Selection = the object; View = the surface's own
+                        // settings-as-rows (deepens per surface in 20e/20f).
+                        if !(chrome.surface == .calendar && selection == nil) {
+                            railTabsHeader
+                        }
                         // The five-lens bar (bp4 · P17; Graph waits for P18 —
                         // no dead buttons). Hidden while the calendar's day
                         // panel owns the card.
-                        if !(chrome.surface == .calendar && selection == nil) {
+                        if !(chrome.surface == .calendar && selection == nil) && railTab == 0 {
                             lensBar
                         }
                         Group {
-                            if chrome.surface == .calendar && selection == nil {
+                            if railTab == 1 && !(chrome.surface == .calendar && selection == nil) {
+                                ViewTabPane(model: model, chrome: chrome)
+                            } else if chrome.surface == .calendar && selection == nil {
                                 CalendarDayPanel(
                                     model: model, selection: $selection,
                                     day: chrome.calendarDay,
@@ -2474,7 +2554,16 @@ struct WindowChrome: View {
         switch tabs.active?.kind {
         case .note:
             if let editing = editor {
-                EditorView(model: editing).id(editing.id)
+                EditorView(
+                    model: editing,
+                    splitCandidates: {
+                        tabs.tabs.compactMap { tab in
+                            if case .note(let id) = tab.kind { return id }
+                            return nil
+                        }
+                    },
+                    onPreviewFocus: { id in selection = id })
+                    .id(editing.id)
             } else {
                 // Between flush and the fresh EditorModel: nothing to lose.
                 Color.clear
@@ -3033,7 +3122,9 @@ struct WindowChrome: View {
         if let draft = adopt {
             opened.adopt(draft)
         }
-        opened.onSelect = { target in selection = target }
+        // P20c (map [13]): a wikilink NAVIGATES — click opens the target
+        // (the tab dedups), no longer mere selection.
+        opened.onSelect = { target in openEntityTab(target) }
         opened.onCloseRequest = { closeEditor() }
         editor = opened
         selection = id
@@ -5988,19 +6079,38 @@ struct OutlineLensPane: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
+                        // P20c (map [23]): mono level tags; the active row
+                        // TRACKS the section holding the caret.
+                        let caret = editor?.caret ?? 0
+                        let activeId = entries.last(where: { $0.id <= caret })?.id
                         ForEach(entries) { entry in
+                            let active = entry.id == activeId
                             Button { editor?.reveal(entry.id) } label: {
-                                Text(entry.text)
-                                    .font(.system(
-                                        size: entry.level == 1 ? 12.5 : 12,
-                                        weight: entry.level == 1 ? .semibold : .regular))
-                                    .foregroundColor(Theme.foreground.opacity(0.85))
-                                    .lineLimit(1)
-                                    .padding(.leading, CGFloat(max(0, entry.level - 1)) * 13)
-                                    .padding(.vertical, 4)
-                                    .padding(.horizontal, 10)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
+                                HStack(spacing: 6) {
+                                    Text("H\(entry.level)")
+                                        .font(.system(size: 9.5, design: .monospaced))
+                                        .foregroundColor(active ? Theme.accent : Theme.mutedFg.opacity(0.7))
+                                    Text(entry.text)
+                                        .font(.system(
+                                            size: entry.level == 1 ? 12.5 : 12,
+                                            weight: entry.level == 1 ? .semibold : .regular))
+                                        .foregroundColor(Theme.foreground.opacity(0.85))
+                                        .lineLimit(1)
+                                }
+                                .padding(.leading, CGFloat(max(0, entry.level - 1)) * 13)
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(active ? Theme.accentTint : .clear))
+                                .overlay(alignment: .leading) {
+                                    if active {
+                                        RoundedRectangle(cornerRadius: 1).fill(Theme.accent)
+                                            .frame(width: 2, height: 14).offset(x: 3)
+                                    }
+                                }
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
