@@ -12,6 +12,7 @@ import SwiftUI
 enum Surface: String, CaseIterable {
     case notes
     case capture
+    case comms
     case aiChat = "ai-chat"
     case tasks
     case lists
@@ -28,6 +29,7 @@ enum Surface: String, CaseIterable {
         switch self {
         case .notes: return "Notes"
         case .capture: return "Capture"
+        case .comms: return "Comms"
         case .aiChat: return "Ask"
         case .tasks: return "Tasks"
         case .lists: return "Lists"
@@ -43,6 +45,7 @@ enum Surface: String, CaseIterable {
     var symbol: String {
         switch self {
         case .capture: return "bolt"
+        case .comms: return "bubble.left.and.bubble.right"
         case .notes: return "doc.text"
         case .aiChat: return "bubble.left.and.text.bubble.right"
         case .tasks: return "checkmark.square"
@@ -375,6 +378,7 @@ struct LeftRail: View {
             icon(.library, help: "Library — files, links, lists, views")
             icon(.contacts, help: "Contacts")
             icon(.calendar, help: "Calendar")
+            icon(.comms, help: "Comms — read-only messages, resolved to people")
             icon(.dashboard, help: "Mission Control (⇧⇥)")
             hair()
             // Ask (O5): cited answers — v0 fronts the old chat surface

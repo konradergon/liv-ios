@@ -636,6 +636,18 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Import a message batch (P20g): JSON drops; -1 = refused.
+    func importMessages(_ json: String, done: @escaping (Int64) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            let changed = lotus_import_messages_at(path, json)
+            DispatchQueue.main.async {
+                done(changed)
+                if changed > 0 { self.refresh() }
+            }
+        }
+    }
+
     /// Toggle a kind flag ("hide-on-kind" / "core-on-kind") — additive per
     /// kind; `set` would replace every cell (P19 review).
     func kindFlag(def: UInt64, property: String, kind: UInt64, on: Bool) {
@@ -1317,6 +1329,10 @@ struct WindowChrome: View {
     @State private var libraryPool: String?
     /// The contacts group filter (P20f) — nil = All contacts.
     @State private var contactGroup: String?
+    /// Comms (P20g): the active message list + filter chips.
+    @State private var commsList = "all"
+    @State private var commsFrom: String?
+    @State private var commsSource: String?
     /// The tour (P19i): -1 = inactive; 0 = welcome; 1–4 = the dots.
     @State private var tourDot = -1
     @State private var tourChecked = false
@@ -1645,6 +1661,7 @@ struct WindowChrome: View {
             Button("Tasks") { navigate(to: .tasks) }
             Button("Library") { navigate(to: .library) }
             Button("Dashboard") { navigate(to: .dashboard) }
+            Button("Comms") { navigate(to: .comms) }
             Button("Quick Capture") { navigate(to: .capture) }
             Divider()
             Button("Ask — the answerer is stateless, no tab needed") {
@@ -1934,6 +1951,11 @@ struct WindowChrome: View {
             case .contacts:
                 ContactsNav(
                     model: model, group: $contactGroup, selection: $selection)
+                vaultFooter
+            case .comms:
+                CommsNav(
+                    model: model, list: $commsList,
+                    fromFilter: $commsFrom, sourceFilter: $commsSource)
                 vaultFooter
             case .calendar:
                 CalendarNav(openDaily: {
@@ -2618,6 +2640,11 @@ struct WindowChrome: View {
     private var center: some View {
         Group {
             switch chrome.surface {
+            case .comms:
+                CommsView(
+                    model: model, selection: $selection,
+                    list: $commsList, fromFilter: $commsFrom, sourceFilter: $commsSource,
+                    openPerson: { id in openEntityTab(id) })
             case .capture:
                 CaptureSurface(
                     model: model, selection: $selection,

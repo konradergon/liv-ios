@@ -611,3 +611,40 @@ open-as-note is the door) · Lists surface retirement (the rail section
 now lists them; the surface code stands until the tab-container map
 covers it) · calendar chip hues/drag-editing/quick-create popover /
 week framing (the calendar polish pass).
+
+### 20g — Comms (as built; the BP-15 surface exists)
+
+**The Rust (design-first, failing-test-first — the flagged additions):**
+`services::comms::import_messages` — ONE batch = ONE transaction = one
+undo (type + property births ride the same commit); `external-id`
+(props::EXTERNAL_ID, the P15 key) upserts: byte-identical re-import is a
+literal no-op; a REFRESH updates only the FEED-OWNED cells (from · sent ·
+body · source) and never yours — subjects survive, a cleared `unread` is
+never re-set (unread writes at first ingest only). Senders resolve to
+person entities by exact unique name match — ambiguity resolves to
+nothing, never a guess; unresolved senders keep the feed-owned
+`from-label`. `sent` parses the civil grammar; unparseable stamps drop
+(the shell falls back to created). New verb **`lotus_import_messages_at`**
+(with_box + Committed: Wrote when anything changed / Read on all-skip /
+Failed on persist — cache-parity tested).
+
+**The shell:** the rail item (between Calendar and Dashboard, no badge,
+no chord — the spec assigns none), the ambient surface: message lists as
+live saved-view rows (Unread-from-people-I-know · per-source · All) with
+the contractual no-second-inbox caption; from/source filter chips off
+distinct values; the Fetch-now row ("fetched at open — nothing runs on a
+timer"; the button is the sim's own honest 0-new toast); message rows
+(unread dot · resolving sender chip that OPENS the person · snippet ·
+source chip · relative time); the expanded card (via/sent header ·
+external-id mono chip · feed-owned vs YOURS boxes · body as received);
+reading clears unread as one undoable write; sticky selection; the lock
+line "Liv reads your messages; it never sends them." **v0 ingestion =
+drop a JSON feed file on the surface** — honestly labeled in the empty
+state; live connectors are a later fence-opening. Comms also joined the
+department picker.
+
+**Rulings recorded:** vault-wide ambient (the sim's VAULT_WIDE wins over
+its stray comment) · starter lists are surface chrome v0 (seeding them as
+view entities later) · text-only source chips (no brand logos) · computed
+`related` scoring, the dashboard nudge, Ask citations, and the contact
+page's message rows ride 20h+.

@@ -7,6 +7,7 @@
 //! milestone that needs them.
 
 pub mod clerk;
+pub mod comms;
 pub mod content;
 mod dates;
 pub mod export;

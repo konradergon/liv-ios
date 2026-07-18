@@ -1630,7 +1630,7 @@ pub fn parse_value(store: &Store, property: Id, kind: &str, raw: &str) -> Result
     }
 }
 
-fn parse_civil(raw: &str) -> Option<Value> {
+pub(crate) fn parse_civil(raw: &str) -> Option<Value> {
     // "<start> -> <end>" is a SPAN (P11/11b): each side the base grammar
     // below, the same date_only reading on both (mixed sides refused), and
     // the end strictly after the start — one cell, one fact.

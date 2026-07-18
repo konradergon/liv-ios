@@ -2454,6 +2454,64 @@ pub unsafe extern "C" fn lotus_kind_flag_at(
     })
 }
 
+/// Import a batch of messages (P20g, BP-15): JSON array of
+/// {external_id, from, source, sent?, body}. ONE transaction; external-id
+/// upserts — feed-owned cells refresh, user cells never. Returns
+/// created+updated, -1 on refusal/parse/persist failure.
+///
+/// Additive verb (boundary rule): with_box + Committed, tested, flagged.
+///
+/// # Safety
+/// `path` and `json` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_import_messages_at(
+    path: *const c_char,
+    json: *const c_char,
+) -> i64 {
+    if json.is_null() {
+        return -1;
+    }
+    let Ok(json) = CStr::from_ptr(json).to_str() else {
+        return -1;
+    };
+    #[derive(serde::Deserialize)]
+    struct DropJSON {
+        external_id: String,
+        from: String,
+        source: String,
+        #[serde(default)]
+        sent: Option<String>,
+        body: String,
+    }
+    let Ok(drops) = serde_json::from_str::<Vec<DropJSON>>(json) else {
+        return -1;
+    };
+    let drops: Vec<lotus_services::comms::MessageDrop> = drops
+        .into_iter()
+        .map(|d| lotus_services::comms::MessageDrop {
+            external_id: d.external_id,
+            from: d.from,
+            source: d.source,
+            sent: d.sent,
+            body: d.body,
+        })
+        .collect();
+    with_box(path, -1, move |session| {
+        use lotus_services::content::WriteError;
+        match lotus_services::comms::import_messages(session, &drops) {
+            Ok(outcome) => {
+                let changed = outcome.created + outcome.updated;
+                (
+                    changed as i64,
+                    if changed > 0 { Committed::Wrote } else { Committed::Read },
+                )
+            }
+            Err(WriteError::Refused(_)) => (-1, Committed::Read),
+            Err(_) => (-1, Committed::Failed),
+        }
+    })
+}
+
 /// Log ONE closed time interval (P18d): full civil stamps YYYYMMDDHHMM,
 /// written whole at stop — the running timer is shell state and start
 /// writes nothing. One commit, one undo. Returns the entry id, 0 on failure.
@@ -3622,6 +3680,32 @@ mod tests {
         assert!(snap["inbox"].as_array().unwrap().is_empty(), "the rename must not re-enable");
         assert_eq!(snap["assist"]["on"], false);
         assert_eq!(snap["assist"]["prop"], "autopilot");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn message_import_upserts_and_reimport_reads() {
+        let (path, c_path) = fresh_box("lotus_ffi_comms");
+        let batch = CString::new(
+            r#"[{"external_id":"slack:1","from":"Elin","source":"Slack · #liv-dev","sent":"2026-07-14 09:02","body":"day 1 pairings are up"}]"#,
+        )
+        .unwrap();
+        assert_eq!(unsafe { lotus_import_messages_at(c_path.as_ptr(), batch.as_ptr()) }, 1);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let rows = snap["entities"].as_array().unwrap();
+        assert!(
+            rows.iter().any(|r| r["kinds"]
+                .as_array()
+                .map(|k| k.iter().any(|x| x == "message"))
+                .unwrap_or(false)),
+            "the message rides the row store"
+        );
+        // Byte-identical re-import: 0 changed, and the cache survives
+        // verbatim (Read, never a phantom Wrote).
+        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { lotus_import_messages_at(c_path.as_ptr(), batch.as_ptr()) }, 0);
+        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(before, after);
         cleanup(&path);
     }
 

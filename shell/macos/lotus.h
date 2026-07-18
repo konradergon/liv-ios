@@ -235,6 +235,11 @@ uint64_t lotus_add_option_at(const char *path, uint64_t property, const char *na
 int32_t lotus_kind_flag_at(const char *path, uint64_t def, const char *property,
                            uint64_t kind, int32_t on);
 
+/* Import a batch of messages (P20g): JSON [{external_id, from, source,
+   sent?, body}]. One transaction; external-id upserts feed-owned cells
+   only. Returns created+updated, -1 on failure. */
+int64_t lotus_import_messages_at(const char *path, const char *json);
+
 /* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
    Start writes nothing anywhere - the running timer is shell state. */
 uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,
