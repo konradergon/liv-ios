@@ -42,6 +42,7 @@ struct Hotkey {
         case "ArrowUp": return event.keyCode == 126
         case "Escape": return event.keyCode == 53
         case "Return": return event.keyCode == 36
+        case "Tab": return event.keyCode == 48
         // Function keys type private-use glyphs, so they match by code.
         case "F2": return event.keyCode == 120
         // Digits match by physical key code (layout-safe): on a shifted-
@@ -83,6 +84,7 @@ struct Hotkey {
         case "ArrowDown": out += "↓"
         case "Return": out += "⏎"
         case "Escape": out += "⎋"
+        case "Tab": out += "⇥"
         case " ": out += "Space"
         case "F2": out += "F2"
         default: out += key.uppercased()

@@ -250,7 +250,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         search.target = self  // ⌘F canonical (P13)
         // "Command Palette…" is REFUSED (the constitution's palette ban;
         // ⌘F searches entities) — the item is gone, not disabled.
+        // P20b: View gains the mockup's items. Mission Control's ⇧⇥ is
+        // owned by the CommandRegistry (the ⌘⌥D review rule) — clickable,
+        // no accelerator.
+        view.addItem(NSMenuItem.separator())
+        let mission = view.addItem(
+            withTitle: "Mission Control", action: #selector(goDashboard), keyEquivalent: "")
+        mission.target = self
+        let tourView = view.addItem(
+            withTitle: "✦ Take the Tour", action: #selector(replayTour), keyEquivalent: "")
+        tourView.target = self
         viewItem.submenu = view
+
+        // P20b: the Go menu (the mockup draws one; contents = the sim's
+        // nav verbs). ⌥←/⌥→ live HERE as key equivalents — the inspector's
+        // scoped focus chords consume them first when it owns the keyboard,
+        // and the menu answers everywhere else.
+        let goItem = NSMenuItem()
+        main.addItem(goItem)
+        let go = NSMenu(title: "Go")
+        go.autoenablesItems = false
+        let goHomeItem = go.addItem(
+            withTitle: "Home", action: #selector(goHome), keyEquivalent: "")
+        goHomeItem.target = self
+        let goInboxItem = go.addItem(
+            withTitle: "Inbox", action: #selector(goInbox), keyEquivalent: "")
+        goInboxItem.target = self
+        let goDaily = go.addItem(
+            withTitle: "Daily Note", action: #selector(openDailyNote), keyEquivalent: "")
+        goDaily.target = self
+        go.addItem(NSMenuItem.separator())
+        let back = go.addItem(
+            withTitle: "Back", action: #selector(navBack),
+            keyEquivalent: String(UnicodeScalar(NSLeftArrowFunctionKey)!))
+        back.keyEquivalentModifierMask = [.option]
+        back.target = self
+        let forward = go.addItem(
+            withTitle: "Forward", action: #selector(navForward),
+            keyEquivalent: String(UnicodeScalar(NSRightArrowFunctionKey)!))
+        forward.keyEquivalentModifierMask = [.option]
+        forward.target = self
+        goItem.submenu = go
 
         let helpItem = NSMenuItem()
         main.addItem(helpItem)
@@ -273,6 +313,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     @objc private func openSettings() {
         window?.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: Notification.Name("lotus.openSettings"), object: nil)
+    }
+
+    @objc private func goDashboard() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: Notification.Name("lotus.goDashboard"), object: nil)
+    }
+
+    @objc private func navBack() {
+        NotificationCenter.default.post(name: Notification.Name("lotus.navBack"), object: nil)
+    }
+
+    @objc private func navForward() {
+        NotificationCenter.default.post(name: Notification.Name("lotus.navForward"), object: nil)
     }
 
     @objc private func goHome() {
@@ -435,6 +488,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             forName: Notification.Name("lotus.rebindCapture"), object: nil, queue: .main
         ) { [weak self] _ in
             self?.applyCaptureHotKey()
+        }
+        // P20b: the rail's Capture door fronts the same panel the global
+        // hotkey does — one doorway, two knocks.
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("lotus.toggleCapture"), object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.togglePanel()
         }
     }
 

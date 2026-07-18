@@ -1162,6 +1162,7 @@ extension Notification.Name {
     static let lotusVaultGraph = Notification.Name("lotus.vaultGraph")
     static let lotusStartTimer = Notification.Name("lotus.startTimer")
     static let lotusReplayTour = Notification.Name("lotus.replayTour")
+    static let lotusToggleCapture = Notification.Name("lotus.toggleCapture")
     static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
@@ -1197,10 +1198,26 @@ enum Lens: String, CaseIterable, Identifiable {
 
 // MARK: - the window
 
+/// The one transient toast (P20b) — the sim narrates chrome gestures
+/// (theme cycles, workspace switches, layer merges) through exactly this.
+final class Toast: ObservableObject {
+    static let shared = Toast()
+    @Published var text: String?
+
+    static func show(_ text: String) {
+        shared.text = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            if shared.text == text { shared.text = nil }
+        }
+    }
+}
+
 struct WindowChrome: View {
     @ObservedObject var model: BoxModel
     @StateObject private var chrome = ChromeModel()
     @ObservedObject private var dialogs = Dialogs.shared
+    @ObservedObject private var toast = Toast.shared
+    @ObservedObject private var themeCore = ThemeCore.shared
     @State private var lens: Lens = .today
     @State private var query = ""
     /// The chip-click filter waiting for the palette to open (P11.5c).
@@ -1232,7 +1249,8 @@ struct WindowChrome: View {
     /// Which left-panel view is showing — the Spaces|Vault two-tab pref, now
     /// read by the panel's own segmented control (BP-4 · P17a). Shares the key
     /// the old content-bar SidebarViewToggle wrote, so state carries over.
-    @AppStorage("app.leftView.v1") private var leftViewRaw = SidebarView.tree.rawValue
+    // P20b (O12): Vault first, and Vault is the boot tab.
+    @AppStorage("app.leftView.v1") private var leftViewRaw = SidebarView.vault.rawValue
     /// The pre-restore arrangement (P17i): one-step undo for a layout
     /// restore — pure shell state, cleared when the toast retires.
     @State private var layerStash: (tabs: [WorkspaceTab], activeId: UUID?)?
@@ -1260,6 +1278,20 @@ struct WindowChrome: View {
             .overlay(vaultGraphOverlay)
             .overlay(settingsOverlay)
             .overlay(tourOverlay)
+            .overlay(alignment: .bottom) {
+                if let text = toast.text {
+                    Text(text)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Theme.text2)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(Theme.surface))
+                        .overlay(Capsule().strokeBorder(Theme.border2))
+                        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                        .padding(.bottom, 18)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(faultNotice)
             .overlay(DialogHost())
             .overlay(alignment: .bottom) {
@@ -1299,6 +1331,15 @@ struct WindowChrome: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.openSettings"))) { _ in
                 chrome.settingsOpen = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.navBack"))) { _ in
+                chrome.goBack()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.navForward"))) { _ in
+                chrome.goForward()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.goDashboard"))) { _ in
+                navigate(to: .dashboard)
             }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
                 exportComposer.reset()
@@ -1347,6 +1388,7 @@ struct WindowChrome: View {
         // whole thing so the cards read as floating on one face.
         VStack(spacing: 0) {
             topBand
+            globalTabRow
             body3Pane
         }
         .background(SidebarMaterial().ignoresSafeArea())
@@ -1369,41 +1411,15 @@ struct WindowChrome: View {
                 chrome.leftOpen.toggle()
                 chrome.persistPanes()
             }
-            if !chrome.focusMode {
-                WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
-                    .fixedSize()
-            }
-            // Search sits right of the workspace hub (owner's call) — a quiet
-            // icon, never the blueprint's full-width search-bar-as-a-button.
-            bandButton("magnifyingglass", "Search (⌘O)") { chrome.searchOpen = true }
-            // The note tabs live in the band's middle now (the owner's idea).
-            // The lane fills from just past the search (a small gap keeps it off
-            // the button) all the way to the inspector toggle, so the + is pinned
-            // far right for maximum tab space; the tabs share the lane, shrinking
-            // to fit as more are added.
-            if chrome.surface == .notes {
-                TabStrip(
-                    tabs: tabs, model: model, chrome: chrome,
-                    activate: { tab in activateTab(tab) },
-                    close: { tab in closeTab(tab) },
-                    openNew: { openBlankTab() },
-                    rename: { id in renameEntity(id) })
-                    .frame(maxWidth: .infinity)
-                    .padding(.leading, 12)
-            } else {
-                Spacer(minLength: 0)
-                // The + is a constant of the band, not a Notes privilege: from
-                // any surface it opens a fresh tab (openBlankTab hops to Notes
-                // itself). Same far-right position the tab lane pins it to.
-                bandButton("plus", "New tab (⌘T)") { openBlankTab() }
-            }
-            // The one running timer, visible wherever you are (the review: a
-            // row-started timer had no indicator outside its widget). Ticks
-            // off the pref — zero box IO; click stops (one entry, one undo).
+            Spacer(minLength: 8)
+            // P20b (override O4): the centered Search-or-Ask omni pill — the
+            // mockup's front door, reversing the quiet-magnifier ruling.
+            omniPill
+            Spacer(minLength: 8)
+            // The one running timer, visible wherever you are — the mockup's
+            // title row has no slot for it, so it keeps this home (recorded).
             TimerBandChip(model: model)
-            // The RIGHT panel's toggle — mirrors the left one, in the band, over
-            // the inspector. One grammar for both sides; the calendar's bespoke
-            // edge chevron is gone (it now rides this same chrome.rightOpen).
+            tourPill
             if !chrome.focusMode {
                 bandButton("sidebar.right", "Toggle the inspector") {
                     chrome.rightOpen.toggle()
@@ -1413,6 +1429,281 @@ struct WindowChrome: View {
         }
         .frame(height: Theme.headerBandHeight)
         .padding(.horizontal, 8)
+    }
+
+    /// "Search or ask your vault…" (P20b, O4): one pill, one palette. ⌘K
+    /// is the advertised chord; ⌘O and ⌘F stay as silent aliases.
+    private var omniPill: some View {
+        Button {
+            chrome.searchOpen = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 10.5))
+                    .foregroundColor(Theme.mutedFg)
+                Text("Search or ask your vault…")
+                    .font(.system(size: 11.5)).foregroundColor(Theme.mutedFg)
+                Spacer(minLength: 8)
+                KbdChip(label: "⌘K", size: 9.5)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: 520, minHeight: 28, maxHeight: 28)
+            .background(Capsule().fill(Theme.surface))
+            .overlay(Capsule().strokeBorder(Theme.border))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Search or ask your vault (⌘K)")
+    }
+
+    /// "✦ take the tour" (P20b): the persistent replay pill — the tour's
+    /// finish strip points here.
+    private var tourPill: some View {
+        Button {
+            NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
+        } label: {
+            HStack(spacing: 4) {
+                Text("✦").font(.system(size: 10)).foregroundColor(Theme.warning)
+                Text("take the tour").font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(Theme.mutedFg)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .overlay(
+                Capsule().strokeBorder(
+                    Theme.border2, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Take the tour — replay the three moments")
+    }
+
+    /// The 38px GLOBAL tab row (P20b, mockup .gbar): hub · the tab lane
+    /// (v0 = the workspace's working set; true department containers land
+    /// with 20c's content-tab split) · ⌄ dept picker · slots · layers ·
+    /// undo · history arrows. Ambient tools keep the row, swap the lane
+    /// for the one caption, and hide the slots.
+    private var globalTabRow: some View {
+        HStack(spacing: 6) {
+            if !chrome.focusMode {
+                WorkspaceFooter(model: model, chrome: chrome, actions: workspaceActions)
+                    .fixedSize()
+            }
+            if chrome.surface == .notes {
+                TabStrip(
+                    tabs: tabs, model: model, chrome: chrome,
+                    activate: { tab in activateTab(tab) },
+                    close: { tab in closeTab(tab) },
+                    openNew: { openBlankTab() },
+                    rename: { id in renameEntity(id) })
+                    .frame(maxWidth: .infinity)
+                    .padding(.leading, 4)
+            } else {
+                Text("vault-wide tool — the workspace lens does not apply here")
+                    .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                    .padding(.leading, 10)
+                Spacer(minLength: 0)
+            }
+            deptPickerButton
+            if chrome.surface == .notes {
+                slotsCluster
+            }
+            Rectangle().fill(Theme.border).frame(width: 1, height: 16)
+            layersButton
+            bandButton("arrow.uturn.backward", "Undo (⌘⌥Z)") {
+                CommandRegistry.shared.run("lotus:undo-last-change")
+            }
+            HStack(spacing: 0) {
+                navChevron("chevron.left", enabled: chrome.canNavBack, help: "Back (⌥←)") {
+                    chrome.goBack()
+                }
+                navChevron("chevron.right", enabled: chrome.canNavForward, help: "Forward (⌥→)") {
+                    chrome.goForward()
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 38)
+    }
+
+    /// "New tab — departments only (object kinds live inside)": v0 routes
+    /// each department to its surface; Ask never tabs, Import is a tool
+    /// inside Library. The container model itself deepens in 20c.
+    private var deptPickerButton: some View {
+        Menu {
+            Button("Editor — a blank landing") { openBlankTab() }
+            Button("Tasks") { navigate(to: .tasks) }
+            Button("Library") { navigate(to: .library) }
+            Button("Dashboard") { navigate(to: .dashboard) }
+            Button("Quick Capture") {
+                NotificationCenter.default.post(name: .lotusToggleCapture, object: nil)
+            }
+            Divider()
+            Button("Ask — the answerer is stateless, no tab needed") {
+                chrome.searchOpen = true
+            }
+            Button("Import — a tool inside Library, one batch, one undo") {
+                navigate(to: .library)
+                importOpen = true
+            }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 20, height: 26)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("New tab — departments only (object kinds live inside)")
+    }
+
+    /// The slots (P20b, O13): ◦-pills behind the hairline — Today first
+    /// (opens the daily note), then the pinned objects (⌘⇧B's pins, the ONE
+    /// pin source), then the ghost. Hidden on ambient tools by the caller.
+    private var slotsCluster: some View {
+        HStack(spacing: 4) {
+            slotPill("Today", tint: Theme.red) { showDesk(.today) }
+            ForEach(Array((model.snap?.pins ?? []).prefix(4)), id: \.id) { pin in
+                if let row = model.entity(pin.target) {
+                    slotPill(row.title, tint: Theme.accent) { openEntityTab(pin.target) }
+                }
+            }
+            Menu {
+                Button("Pin the current selection (⌘⇧B)") {
+                    CommandRegistry.shared.run("object:toggle-bookmark")
+                }
+                Button("Star a workspace — Spaces › ★") {
+                    chrome.leftOpen = true
+                    chrome.persistPanes()
+                }
+                Divider()
+                Text("slots — links, workspaces, today, pinned filters")
+            } label: {
+                Text("＋ pin").font(.system(size: 10))
+                    .foregroundColor(Theme.mutedFg.opacity(0.8))
+                    .padding(.horizontal, 7).frame(height: 22)
+                    .overlay(
+                        Capsule().strokeBorder(
+                            Theme.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                    .contentShape(Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.leading, 8)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Theme.border).frame(width: 1, height: 16)
+        }
+    }
+
+    private func slotPill(_ label: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Circle().fill(tint).frame(width: 5, height: 5)
+                Text(label).font(.system(size: 10.5)).lineLimit(1)
+                    .foregroundColor(Theme.text2)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .frame(maxWidth: 110)
+            .background(Capsule().fill(Theme.panel2))
+            .overlay(Capsule().strokeBorder(Theme.border))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+    }
+
+    /// Layers get their own chrome door (P20b, map [9]) — out of the
+    /// workspace popover; restore MERGES, never replaces.
+    private var layersButton: some View {
+        Menu {
+            Button("Save current tabs as a Layer…") { saveLayerFlow() }
+            let layers = model.layers(for: chrome.activeWorkspace ?? 0)
+            if !layers.isEmpty {
+                Divider()
+                ForEach(layers) { layer in
+                    Menu("\(layer.name) · \(layer.members.count) tabs") {
+                        Button("Restore — merge into this workspace") {
+                            mergeRestoreLayer(layer)
+                        }
+                        Button("Rename…") {
+                            Dialogs.shared.prompt(
+                                "Rename layout", placeholder: layer.name,
+                                initial: layer.name, confirmLabel: "Rename"
+                            ) { name in
+                                guard let name = name?.trimmingCharacters(in: .whitespaces),
+                                    !name.isEmpty
+                                else { return }
+                                model.set(layer.id, property: "name", value: name)
+                            }
+                        }
+                        Button("Delete") { model.trash(layer.id) }
+                    }
+                }
+            }
+            Divider()
+            Text("a Layer lists pointers — restore reopens tabs, never rewrites content")
+        } label: {
+            Image(systemName: "square.3.layers.3d")
+                .font(.system(size: 12)).foregroundColor(Theme.mutedFg)
+                .frame(width: 26, height: 26).contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Layers — saved tab setups")
+    }
+
+    /// P20b (map [9], sim layer.restore): restore MERGES the layer's
+    /// non-duplicate tabs into the current set and activates the first
+    /// restored — a Layer lists pointers, nothing is written.
+    private func mergeRestoreLayer(_ layer: LayerRow) {
+        closeEditor { ok in
+            guard ok else { return }
+            if chrome.surface != .notes { chrome.surface = .notes }
+            let held: (WorkspaceTab) -> UInt64? = { tab in
+                switch tab.kind {
+                case .note(let id), .file(let id): return id
+                default: return nil
+                }
+            }
+            let existing = Set(tabs.tabs.compactMap(held))
+            let fresh: [WorkspaceTab] = layer.members.compactMap { id in
+                guard !existing.contains(id), let row = model.entity(id) else { return nil }
+                let isFile = row.cells.contains { $0.kind == "file" }
+                return WorkspaceTab(kind: isFile ? .file(id) : .note(id))
+            }
+            guard let first = fresh.first else {
+                Toast.show("Layer \"\(layer.name)\" — every tab is already open")
+                return
+            }
+            _ = tabs.adopt(tabs.tabs + fresh)
+            if editor != nil {
+                editor?.closed()
+                editor = nil
+            }
+            activateTabAfterAdopt(first)
+            Toast.show(
+                "Layer \"\(layer.name)\" restored — \(fresh.count) tab\(fresh.count == 1 ? "" : "s") merged into this workspace · nothing was written")
+        }
+    }
+
+    private func navChevron(
+        _ symbol: String, enabled: Bool, help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(enabled ? Theme.mutedFg : Theme.mutedFg.opacity(0.3))
+                .frame(width: 24, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
     }
 
     private func bandButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
@@ -1515,8 +1806,46 @@ struct WindowChrome: View {
                 },
                 openEntity: { id in openEntityTab(id) },
                 showDesk: { lensValue in showDesk(lensValue) })
+            vaultFooter
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// "Vault: <name>" (P20b, map [15]) — the store, named, at the panel
+    /// foot. Click = the honest popover: the path, Reveal, and where Move
+    /// lives. Neither artifact defines more (recorded).
+    private var vaultFooter: some View {
+        Menu {
+            Text(model.path)
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting(
+                    [URL(fileURLWithPath: model.path)])
+            }
+            Divider()
+            Text("Move… lives in Settings → Capture & Store")
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder").font(.system(size: 10))
+                    .foregroundColor(Theme.mutedFg)
+                Text("Vault: \(vaultName)")
+                    .font(.system(size: 10.5)).foregroundColor(Theme.text2)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8)).foregroundColor(Theme.mutedFg)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .overlay(Divider(), alignment: .top)
+    }
+
+    private var vaultName: String {
+        let dir = URL(fileURLWithPath: model.path).deletingLastPathComponent()
+        return dir.lastPathComponent.isEmpty ? "lotus" : dir.lastPathComponent
     }
 
     /// The Spaces | Vault two-tab control — a compact segmented pill, in the
@@ -1524,7 +1853,8 @@ struct WindowChrome: View {
     /// not a button buried here); no search box (⌘O owns search).
     private var leftViewTabs: some View {
         HStack(spacing: 5) {
-            ForEach(SidebarView.allCases, id: \.rawValue) { v in
+            // Vault | Spaces — Vault FIRST (P20b, O12: the mockup's order).
+            ForEach([SidebarView.vault, .tree], id: \.rawValue) { v in
                 let on = leftViewRaw == v.rawValue
                 Button { leftViewRaw = v.rawValue } label: {
                     Text(v == .tree ? "Spaces" : "Vault")
@@ -1981,7 +2311,16 @@ struct WindowChrome: View {
                 // its own fixed card — only the Spaces|Vault panel hides with
                 // chrome.leftOpen. Focus mode is the one thing that clears it.
                 if !chrome.focusMode {
-                    LeftRail(chrome: chrome, model: model) { target in navigate(to: target) }
+                    LeftRail(
+                        chrome: chrome, model: model,
+                        select: { target in navigate(to: target) },
+                        capture: {
+                            NotificationCenter.default.post(name: .lotusToggleCapture, object: nil)
+                        },
+                        graph: { chrome.vaultGraphOpen = true },
+                        settings: {
+                            NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
+                        })
                         .background(Theme.panel)
                         .panelCard()
                     if chrome.leftOpen {
@@ -2444,6 +2783,27 @@ struct WindowChrome: View {
             ) {
                 // The interim search field lives in the sidebar, which
                 // focus mode hides: search exits focus first.
+                if chrome.focusMode { chrome.toggleFocus() }
+                NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+            })
+        registry.register(
+            // ⇧⇥ = Mission Control (P20b, O7 — the pack closes the P18
+            // "Hotkey can't express Tab" delta). Suppressed while typing by
+            // the matcher's bare-key rule; ⌘⇧M stays the alias. v0 lands on
+            // the dashboard surface; the overlay entry arrives with 20h.
+            CommandDef(
+                id: "app:mission-control", label: "Mission Control", scope: .global,
+                category: "Navigate", binding: Hotkey(modifiers: [.shift], key: "Tab")
+            ) {
+                navigate(to: .dashboard)
+            })
+        registry.register(
+            // ⌘K — the omni pill's advertised chord (P20b, O4): the ONE
+            // Search-or-Ask door. ⌘F/⌘O remain quiet aliases below.
+            CommandDef(
+                id: "app:omni", label: "Search or ask", scope: .global,
+                category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "k")
+            ) {
                 if chrome.focusMode { chrome.toggleFocus() }
                 NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
             })

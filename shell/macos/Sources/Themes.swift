@@ -146,6 +146,7 @@ final class ThemeCore: ObservableObject {
         let ids = themeSpecs.map(\.id)
         let at = ids.firstIndex(of: spec.id) ?? 0
         apply(ids[(at + 1) % ids.count])
+        Toast.show("Theme: \(spec.label)")
     }
 }
 

@@ -638,6 +638,15 @@ struct WorkspaceActions {
         }
     }
 
+    /// P20b: "double-click the pill → Home" — the home WORKSPACE, through
+    /// the same flush gate.
+    func enterHome() {
+        landed {
+            chrome.activeWorkspace = nil
+            chrome.recordNav(.init(workspace: nil, surface: .notes, selection: nil))
+        }
+    }
+
     func addChild(of id: UInt64, name: String) {
         model.createWorkspace(name: name, parent: id) { _ in }
     }
@@ -1353,6 +1362,11 @@ struct BookmarksPanel: View {
 
 // MARK: - HomeHub popover (§2.7.2)
 
+/// P20b (map [4]): "each workspace keeps its own tabs" — the count aft.
+func workspaceTabCount(_ id: UInt64) -> Int {
+    TabsStore.load(id).tabs.count
+}
+
 struct HomeHubPopover: View {
     @ObservedObject var model: BoxModel
     @ObservedObject var chrome: ChromeModel
@@ -1420,7 +1434,6 @@ struct HomeHubPopover: View {
                     WorkspaceList(model: model, chrome: chrome, actions: actions, dismiss: dismiss)
                 }
                 .frame(maxHeight: 280)
-                layoutsSection
                 Divider()
                 footer
             }
@@ -1429,81 +1442,8 @@ struct HomeHubPopover: View {
         .onChange(of: filter) { highlighted = 0 }
     }
 
-    /// Layouts (bp4 Layers · P17i): this workspace's saved arrangements.
-    /// Click restores (pure shell — the window handles it); save prompts a
-    /// name; rename/delete ride the ordinary set/trash doors.
-    @ViewBuilder
-    private var layoutsSection: some View {
-        let layers = model.layers(for: chrome.activeWorkspace ?? 0)
-        Divider()
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("LAYOUTS")
-                    .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
-                    .foregroundColor(Theme.mutedFg)
-                Spacer()
-                Button {
-                    dismiss()
-                    NotificationCenter.default.post(name: .lotusSaveLayer, object: nil)
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Theme.mutedFg)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Save the current layout")
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 7)
-            .padding(.bottom, layers.isEmpty ? 7 : 3)
-            ForEach(layers) { layer in
-                Button {
-                    dismiss()
-                    NotificationCenter.default.post(name: .lotusRestoreLayer, object: layer)
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "square.3.layers.3d")
-                            .font(.system(size: 10.5))
-                            .foregroundColor(Theme.mutedFg)
-                        Text(layer.name).font(.system(size: 12)).lineLimit(1)
-                        Spacer()
-                        Text("\(layer.members.count)")
-                            .font(.system(size: 10).monospacedDigit())
-                            .foregroundColor(Theme.mutedFg)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Rename…") {
-                        dismiss()
-                        Dialogs.shared.prompt(
-                            "Rename layout", placeholder: layer.name, initial: layer.name,
-                            confirmLabel: "Rename"
-                        ) { name in
-                            guard let name = name?.trimmingCharacters(in: .whitespaces),
-                                !name.isEmpty
-                            else { return }
-                            model.set(layer.id, property: "name", value: name)
-                        }
-                    }
-                    Button("Delete") { model.trash(layer.id) }
-                }
-            }
-            if layers.isEmpty {
-                Text("Save the open tabs + panes as a named layout.")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(Theme.mutedFg.opacity(0.8))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 7)
-            } else {
-                Spacer().frame(height: 5)
-            }
-        }
-    }
+    // P20b (map [9]): Layers left this popover for their own chrome door
+    // in the global tab row — one home, richer verbs (merge-restore).
 
     @ViewBuilder
     private var filteredList: some View {
@@ -1684,6 +1624,12 @@ struct WorkspaceList: View {
                     Text("current")
                         .font(.system(size: 9.5))
                         .foregroundColor(Theme.mutedFg)
+                } else {
+                    // P20b (map [4]): each workspace keeps its own tabs.
+                    let count = workspaceTabCount(row.builtin == "home" ? 0 : row.id)
+                    Text("\(count) tab\(count == 1 ? "" : "s")")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(Theme.mutedFg.opacity(0.8))
                 }
             }
             .padding(.vertical, 4)

@@ -389,3 +389,58 @@ each slice FROM THAT FILE (grep the area), not from memory. One-line index:
 - **[remove/S]** Retire ⌘⇧M-as-surface-nav in favor of the toggle pair
 - *open questions:* (1) Search-or-Ask merge: the headline override says Ctrl+K is ONE combined palette, but the sim ships two overlays (ov-search on Ctrl+K/O, ov-ask on the rail/tab-pi · (2) Suggestion dismiss undoability: the sim routes sugg.dismiss through the undo snapshot (Ctrl+Z revives a dismissed proposal) while its own copy and the as-built  · (3) History chord: sim rail tooltips advertise Alt+←/→ for back/forward, but the as-built deliberately gave Alt+←/→ to inspector panel/doc focus (bp1 badge 32) and  · (4) Capture submit key: the capture surface submits on plain Enter (sim keydown 714) while onboarding step 3 teaches Ctrl+⏎ ('the box refocuses') — one key or both? · (5) Undo depth: the sim caps its snapshot stack at 25; the core's log undo has no such cap — is 25 a contract or a sim artifact? · (6) Layer restore: adopt the sim's merge-with-dedup ('nothing was written') and DROP the as-built stash-undo toast, or keep both (merge + undo of the merge)? · (7) Splits: the copy promises 'up to 4 panes' everywhere but the sim implements exactly 2 — is 2 acceptable for the port milestone with the 4-pane copy kept? · (8) Workspace-scoped area stamping at capture (one transaction incl. area) needs an additive FFI variant of lotus_capture_at or a sanctioned two-write pattern — own
 
+
+---
+
+## 5 · Slice log
+
+### 20b — the chassis (as built)
+
+**Shipped.** The band split: the 40px title row now carries sidebar-toggle ·
+the centered **Search-or-Ask omni pill** (max 520, "Search or ask your
+vault…", ⌘K keycap — O4's reversal of the quiet-magnifier ruling) · the
+timer chip · the **✦ take-the-tour pill** (dashed, replays the tour) ·
+inspector toggle. Below it the new **38px global tab row**: the workspace
+hub (house glyph; single click = switcher, **double-click = the Home
+WORKSPACE** per mockup:5449, superseding bp4 ⑥'s hub-surface reading;
+switch toast) · the tab lane · the **⌄ department picker** ("departments
+only — object kinds live inside"; Ask = "stateless, no tab needed"; Import
+routes into Library) · the **slots cluster** (Today red pill → the daily
+note; the pins as ◦-pills — the ONE ⌘⇧B pin source; "＋ pin" ghost menu) ·
+hairline · the **Layers door** (save / per-layer Restore·Rename·Delete;
+**restore MERGES** non-duplicate tabs per the sim, toast, never replaces —
+the popover's LAYOUTS section removed, one home) · **↶ Undo** · the history
+chevrons (dim at ring ends), moved off the rail. The **rail rebuilt** to
+the mockup's order with contractual tooltips (Notes · Capture · Inbox ·
+Tasks · Library · Contacts · Calendar · Dashboard/"Mission Control (⇧⇥)" ·
+─ · Ask · Vault graph · ⋯ · Theme · Settings), 36pt buttons, accent-soft
+active fill. Chords: **⇧⇥ Mission Control** (the Hotkey matcher learned
+Tab — the P18 delta closes; ⌘⇧M alias stays), **⌘K** advertised (⌘F/⌘O
+quiet aliases). Menus: the **Go menu** (Home · Inbox · Daily Note · Back
+⌥← · Forward ⌥→ — the alt-arrows live as MENU key equivalents so the
+inspector's scoped focus chords consume them first when it owns the
+keyboard); View gains Mission Control + ✦ Take the Tour. The left panel:
+**Vault | Spaces flipped (Vault first, Vault boots)** + the **"Vault: 
+<name>" footer** (path · Reveal · Move-lives-in-Settings popover). Panel
+defaults: right → ~300px-equivalent (23.5%), left ~238 (18.5%). Hub
+popover rows carry "N tabs" per workspace. One shared **Toast** landed
+(theme cycles, workspace switches, layer merges narrate through it).
+
+**Recorded deltas (v0 staging, all deliberate):**
+- Global tabs v0 = the existing working-set lane (Overview ≙ the desk tab);
+  TRUE typed department containers land with 20c's content-tab split, which
+  moves note tabs down into the editor area (mockup --ctabh 36).
+- The Comms rail item joins with 20g; the Ask item fronts the old chat
+  surface until 20h's overlay; the Capture door fronts the ⌃⌥Space panel
+  until 20d's surface (no dead buttons at any point).
+- ⇧⇥ lands on the dashboard SURFACE until 20h's overlay entry.
+- The timer chip keeps its title-row home and the sidebar toggles stay
+  (the mockup's title row is silent about both — feature-complete rule;
+  flagged, not dropped).
+- The JOURNAL/PROJECTS/RECENT panel content belongs to the notes surface
+  and ships with 20c (this slice delivered the flip + footer).
+- The category-locked tab's OPEN-ROUTING affinity (map [7]) rides with
+  20c's container model; the padlock close-guard already exists.
+- Slots: mockup layout (in-row) + sim grammar; workspace slots ride the
+  Spaces ★ (the ghost menu points there); pinned-filter slots await saved
+  views in the palette (20h).

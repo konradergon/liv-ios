@@ -216,8 +216,10 @@ final class ChromeModel: ObservableObject {
             ?? .notes
         let panes = defaults.dictionary(forKey: "app.layout.panes.v4")
         // Persisted clamps: left ∈ [8,55], right ∈ [8,48] (§1.5).
-        leftPct = min(max(panes?["left"] as? Double ?? 18, 8), 55)
-        rightPct = min(max(panes?["right"] as? Double ?? 30, 8), 48)
+        // P20b defaults (map [16]): the spec's px at the reference window —
+        // left ~238, right ~300. Persisted values win, as ever.
+        leftPct = min(max(panes?["left"] as? Double ?? 18.5, 8), 55)
+        rightPct = min(max(panes?["right"] as? Double ?? 23.5, 8), 48)
         leftOpen = defaults.object(forKey: "app.leftPanel.open.v1") as? Bool ?? true
         rightOpen = defaults.object(forKey: "app.rightPanel.open.v1") as? Bool ?? true
         let workspace = UInt64(defaults.integer(forKey: "app.activeWorkspace.v1"))
@@ -352,50 +354,76 @@ struct LeftRail: View {
     @ObservedObject var chrome: ChromeModel
     @ObservedObject var model: BoxModel
     let select: (Surface) -> Void
-
-    private let ambient: [Surface] = [.aiChat, .tasks, .library, .inbox, .contacts, .calendar, .dashboard]
+    /// P20b — the rail's non-surface doors.
+    var capture: () -> Void = {}
+    var graph: () -> Void = {}
+    var settings: () -> Void = {}
 
     var body: some View {
-        VStack(spacing: 5) {
-            HStack(spacing: 0) {
-                chevron("chevron.left", enabled: chrome.canNavBack) { chrome.goBack() }
-                chevron("chevron.right", enabled: chrome.canNavForward) { chrome.goForward() }
-            }
-            .padding(.top, 2)
+        VStack(spacing: 4) {
+            // The mockup's 13-item order (P20b, map [11]); the history
+            // chevrons moved to the global tab row. Comms joins with 20g.
+            icon(.notes, help: "Notes — the daily note is today")
+            action("bolt", help: "Capture — the doorway that asks nothing (⌃⌥Space)", capture)
+            icon(.inbox, help: "Inbox — Route and Tidy")
+            icon(.tasks, help: "Tasks")
+            icon(.library, help: "Library — files, links, lists, views")
+            icon(.contacts, help: "Contacts")
+            icon(.calendar, help: "Calendar")
+            icon(.dashboard, help: "Mission Control (⇧⇥)")
             hair()
-            icon(.notes)          // Notes — alone, primary altitude
-            hair()                // the altitude seam
-            ForEach(ambient, id: \.rawValue) { icon($0) }
+            // Ask (O5): cited answers — v0 fronts the old chat surface
+            // until 20h rebuilds it as the stateless overlay.
+            icon(.aiChat, help: "Ask — cited answers from your own notes")
+            action("point.3.connected.trianglepath.dotted", help: "Vault graph (⌃⇧G)", graph)
             Spacer(minLength: 0)
+            action(
+                "moon", help: "Theme: \(ThemeCore.shared.spec.label) — click cycles"
+            ) { ThemeCore.shared.cycle() }
+            action("gearshape", help: "Settings (⌘,)", settings)
         }
         .padding(.vertical, 7)
         .frame(width: 44)
     }
 
-    private func icon(_ surface: Surface) -> some View {
+    private func icon(_ surface: Surface, help: String) -> some View {
         let active = chrome.surface == surface
         return Button { select(surface) } label: {
             ZStack {
                 Image(systemName: surface.symbol)
                     .font(.system(size: 15))
                     .foregroundColor(active ? Theme.accent : Theme.mutedFg)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 36, height: 36)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(active ? Theme.accent.opacity(0.12) : .clear))
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(active ? Theme.accentTint : .clear))
                 if surface == .inbox { inboxCounts }
             }
-            .frame(width: 34, height: 32)
+            .frame(width: 38, height: 38)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .overlay(alignment: .leading) {
             if active {
                 RoundedRectangle(cornerRadius: 2).fill(Theme.accent)
-                    .frame(width: 3, height: 18).offset(x: -6)
+                    .frame(width: 3, height: 18).offset(x: -4)
             }
         }
-        .help(surface.label)
+        .help(help)
+    }
+
+    private func action(
+        _ symbol: String, help: String, _ run: @escaping () -> Void
+    ) -> some View {
+        Button(action: run) {
+            Image(systemName: symbol)
+                .font(.system(size: 14))
+                .foregroundColor(Theme.mutedFg)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     /// Dual count on the ONE Inbox icon (space-conservative — no extra row):
@@ -421,18 +449,6 @@ struct LeftRail: View {
             .font(.system(size: 8.5, weight: .bold)).foregroundColor(fg)
             .padding(.horizontal, 3).frame(minWidth: 12, minHeight: 12)
             .background(Capsule().fill(bg))
-    }
-
-    private func chevron(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(enabled ? Theme.mutedFg : Theme.mutedFg.opacity(0.3))
-                .frame(width: 20, height: 18)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
     }
 
     private func hair() -> some View {
@@ -477,14 +493,16 @@ struct WorkspaceFooter: View {
         return row.name
     }
 
-    /// bp4 ⑥: single click toggles the switcher popover; a second click
-    /// inside the interval opens the Home hub surface itself.
+    /// P20b (mockup:5449, supersedes the bp4 ⑥ reading): single click
+    /// toggles the switcher; a double-click switches to the HOME WORKSPACE
+    /// — "double-click the pill → Home", not the hub surface.
     private func hubTapped() {
         let now = Date()
         if now.timeIntervalSince(lastHubTap) < NSEvent.doubleClickInterval {
             lastHubTap = .distantPast
             hubOpen = false
-            NotificationCenter.default.post(name: .lotusGoHome, object: nil)
+            actions.enterHome()
+            Toast.show("Workspace: Home — its own tabs restored")
         } else {
             lastHubTap = now
             hubOpen.toggle()
@@ -495,7 +513,7 @@ struct WorkspaceFooter: View {
         HStack(spacing: 8) {
             Button { hubTapped() } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: "square.grid.2x2")
+                    Image(systemName: "house")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.primary)
                     Text(label)
@@ -520,20 +538,10 @@ struct WorkspaceFooter: View {
                     hubOpen = false
                 }
             }
-            appearanceButton
-            headerButton("gearshape", "Settings (⌘,)") {
-                NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
-            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-    }
-
-    private var appearanceButton: some View {
-        // P20a: the sim's theme.cycle — four token swaps, never layout.
-        headerButton("moon", "Theme: \(ThemeCore.shared.spec.label) — click cycles") {
-            ThemeCore.shared.cycle()
-        }
+        // P20b: theme + settings moved to the rail bottom (mockup order).
     }
 }
 
