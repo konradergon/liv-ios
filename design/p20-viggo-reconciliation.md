@@ -576,3 +576,38 @@ halo-ring-instead-of-count (shared RowKit surgery — the Tidy polish
 pass); board tile checkbox/chips + 198px narrowing; the full View-tab
 view-object pane (filters editor — rides the views deepening); typed-task
 accent icons (icon vocabulary undefined); assist-provenance chips (wire).
+
+### 20f — library · contacts · calendar (as built)
+
+**Library** owns its left panel: the pool chip grid (colored dots, LIVE
+vault-wide counts; the inbox chip navigates to Inbox › Route), the
+"a pool = a saved filter — never a folder" law, LISTS (hand-ordered),
+SAVED VIEWS as entities, and the VAULT note pointing at 20j. The center
+pool is **mixed-object** (no longer file-cells-only), scoped by the chip +
+the type-to-filter field; the table became the **NAME / ANCHOR / ST /
+MODIFIED grid**; the **Gallery lens is live** (tinted big-icon tiles,
+never status); "＋ New ▾" replaces the lone Add-file (note · contact ·
+file-by-reference; the other kinds arrive with their kinds); the census
+footer replaces the ShortcutBar. **Contacts** is the three-pane override:
+GROUPS (derived from org/area values v0 — arbitrary saved-query groups
+recorded) + the avatar list with filter·F in the panel; the center is the
+**person page** — breadcrumb (presentational path · saved tick), the
+NEUTRAL-medallion hero card with the fields grid, **MENTIONED IN · N**
+(derived from reference cells, source-tagged, navigates), the body
+preview with the verbatim footnote + open-as-note. **Opening a person
+routes to the page** (map [11]) from every door. New-contact births
+person + name prompt ("a name alone is a complete contact"). **Calendar**
+got its panel (the violet daily-note door + the auto-render law; the
+CALENDARS checklist + Google row are recorded for the sync pass) and the
+mockup's framed **today · daily note** tag replaces the white-number
+circle.
+
+**Recorded (deferred):** view files + the View-pane config editors ·
+real paths/drag-out/drop-import (20j) · import surface conversion +
+watcher + export Move-out (their own pass — the sheets stand) · the IOU
+kind + computed strip (vocabulary + doors first) · @-mention writes
+people (editor pass) · person body as a live editor (the page previews;
+open-as-note is the door) · Lists surface retirement (the rail section
+now lists them; the surface code stands until the tab-container map
+covers it) · calendar chip hues/drag-editing/quick-create popover /
+week framing (the calendar polish pass).

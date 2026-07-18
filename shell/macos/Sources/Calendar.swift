@@ -590,11 +590,17 @@ struct DayCell: View {
                 Button(action: openDaily) {
                     HStack(spacing: 3) {
                         if isToday {
-                            Text("\(Int(key % 100))")
-                                .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                                .foregroundColor(.white)
-                                .frame(width: 20, height: 20)
-                                .background(Circle().fill(Theme.accent))
+                            // P20f (map [3]): the mockup's framed today —
+                            // the accent TAG names the daily note, no
+                            // white-number circle.
+                            HStack(spacing: 3) {
+                                Image(systemName: "pencil").font(.system(size: 8, weight: .semibold))
+                                Text("\(Int(key % 100)) · daily note")
+                                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                            }
+                            .foregroundColor(Theme.accent)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Theme.accentTint))
                         } else {
                             Text("\(Int(key % 100))")
                                 .font(.system(size: 12).monospacedDigit())

@@ -1177,6 +1177,8 @@ extension Notification.Name {
     static let lotusReplayTour = Notification.Name("lotus.replayTour")
     static let lotusToggleCapture = Notification.Name("lotus.toggleCapture")
     static let lotusSaveTaskView = Notification.Name("lotus.saveTaskView")
+    static let lotusNewContact = Notification.Name("lotus.newContact")
+    static let lotusFocusContactFilter = Notification.Name("lotus.focusContactFilter")
     static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
@@ -1311,6 +1313,10 @@ struct WindowChrome: View {
     @State private var taskFocus: TaskFocus = .all
     @State private var taskProject: String?
     @State private var taskSavedView: SavedViewRow?
+    /// The library pool chip (P20f) — nil = All files.
+    @State private var libraryPool: String?
+    /// The contacts group filter (P20f) — nil = All contacts.
+    @State private var contactGroup: String?
     /// The tour (P19i): -1 = inactive; 0 = welcome; 1–4 = the dots.
     @State private var tourDot = -1
     @State private var tourChecked = false
@@ -1912,12 +1918,31 @@ struct WindowChrome: View {
             // P20e: surfaces own their left panel (the mockup's pattern —
             // tasks nav here; library pools, contact groups, calendars
             // follow in 20f). Notes keeps the Vault|Spaces pair.
-            if chrome.surface == .tasks {
+            switch chrome.surface {
+            case .tasks:
                 TasksNav(
                     model: model, focus: $taskFocus, project: $taskProject,
                     savedView: $taskSavedView)
                 vaultFooter
-            } else {
+            case .library:
+                LibraryNav(model: model, pool: $libraryPool, openEntity: { id in openEntityTab(id) },
+                    goInboxRoute: {
+                        inboxLens = .route
+                        navigate(to: .inbox)
+                    })
+                vaultFooter
+            case .contacts:
+                ContactsNav(
+                    model: model, group: $contactGroup, selection: $selection)
+                vaultFooter
+            case .calendar:
+                CalendarNav(openDaily: {
+                    let f = DateFormatter()
+                    f.dateFormat = "yyyyMMdd"
+                    openDailyNote(forDay: Int64(f.string(from: Date())) ?? 0)
+                })
+                vaultFooter
+            default:
                 leftPanelDefault
             }
         }
@@ -2643,7 +2668,8 @@ struct WindowChrome: View {
                 LibraryView(
                     model: model, selection: $selection,
                     addFile: { addFileFlow() },
-                    open: { id in openEntityTab(id) })
+                    open: { id in openEntityTab(id) },
+                    pool: $libraryPool)
             case .contacts:
                 ContactsView(
                     model: model, selection: $selection,
@@ -2864,6 +2890,15 @@ struct WindowChrome: View {
     /// The one open door: a file entity (one carrying a `file` cell) opens
     /// read-only in a file tab; everything else opens in the editor.
     private func openEntityTab(_ id: UInt64) {
+        // P20f (map [11]): a person routes to the Contacts PAGE — the page
+        // is the person's home, not a bare editor tab.
+        if let row = model.entity(id),
+            row.kinds.contains("person") || row.kinds.contains("contact")
+        {
+            selection = id
+            navigate(to: .contacts)
+            return
+        }
         if model.entity(id)?.cells.contains(where: { $0.kind == "file" }) == true {
             openFileTab(id)
         } else {
@@ -3546,99 +3581,204 @@ struct QuickCaptureView: View {
 /// A "New contact" births a person (createNote + setType, the P13 seam).
 /// The groups rail, in-body card block, vCard, and Google sync all defer.
 struct ContactsView: View {
+    // P20f (map [0], override): the list moved to the LEFT panel
+    // (ContactsNav); the center is the PERSON PAGE — breadcrumb, hero
+    // card, mentioned-in, the body preview.
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
     var open: (UInt64) -> Void = { _ in }
 
-    @State private var filter = ""
-    @FocusState private var filterFocused: Bool
-
-    private var people: [EntityRow] {
-        let needle = filter.lowercased()
-        return model.rows(model.snap?.everything ?? [])
-            .filter { $0.kinds.contains("person") && !$0.trashed }
-            .filter { row in
-                needle.isEmpty
-                    || row.title.lowercased().contains(needle)
-                    || row.cells.contains { $0.value.lowercased().contains(needle) }
+    private var person: EntityRow? {
+        selection.flatMap { id in
+            model.entity(id).flatMap { row in
+                row.kinds.contains("person") || row.kinds.contains("contact") ? row : nil
             }
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                LensHeader(
-                    title: "Contacts",
-                    subtitle: people.count == 1 ? "1 contact" : "\(people.count) contacts")
-                Spacer()
-                Button(action: newContact) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "person.badge.plus").font(.system(size: 11))
-                        Text("New contact").font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(Theme.accent)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.accentTint))
+        Group {
+            if let person {
+                ScrollView {
+                    personPage(person)
+                        .frame(maxWidth: 620)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
                 }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 32).padding(.top, 16).padding(.bottom, 8)
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundColor(.secondary)
-                TextField("Filter contacts…", text: $filter)
-                    .textFieldStyle(.plain).font(.system(size: 13))
-                    .focused($filterFocused)
-                    .onSubmit { if let one = people.first, people.count == 1 { open(one.id) } }
-            }
-            .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.08)))
-            .padding(.horizontal, 32).padding(.bottom, 6)
-
-            if people.isEmpty {
-                VStack(spacing: 9) {
+            } else {
+                VStack(spacing: 8) {
                     Image(systemName: "person.2")
                         .font(.system(size: 28)).foregroundColor(Theme.foreground.opacity(0.12))
-                    Text(filter.isEmpty ? "No contacts yet." : "No contact matches “\(filter)”.")
+                    Text("Pick a contact — or ＋ births one.")
                         .font(.system(size: 12.5)).foregroundColor(.secondary)
+                    Text("a name alone is a complete contact")
+                        .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(people) { row in
-                            ObjectRow(
-                                row: row,
-                                selected: selection == row.id,
-                                chipTap: { f in
-                                    NotificationCenter.default.post(name: .lotusSearchFor, object: f)
-                                },
-                                select: { selection = row.id },
-                                openRow: { open(row.id) })
-                        }
-                    }
-                    .padding(.horizontal, 24)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusNewContact)) { _ in
+            model.createNote { newId in
+                guard let newId else { return }
+                model.setType(newId, "person") { _ in
+                    selection = newId
+                    renamePrompt(newId)
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // The middle is the bare face: the window material shows through, so the
-        // side panels are the only cards floating on it (owner's model). The
-        // content (rows, cards, the editor page) carries its own surface.
     }
 
-    /// New contact = a note born as a person (createNote + the P13 setType
-    /// seam), then selected so the inspector opens its empty profile rows.
-    private func newContact() {
-        model.createNote { id in
-            guard let id else { return }
-            model.setType(id, "person") { _ in selection = id }
+    private func renamePrompt(_ id: UInt64) {
+        Dialogs.shared.prompt(
+            "New contact", message: "A name alone is a complete contact.",
+            placeholder: "Name", confirmLabel: "Create"
+        ) { name in
+            guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty
+            else { return }
+            model.set(id, property: "name", value: name)
         }
     }
-}
 
-// MARK: - Inbox
+    private func cell(_ row: EntityRow, _ property: String) -> String? {
+        row.cells.first { $0.property == property && !$0.value.isEmpty }?.value
+    }
+
+    private func personPage(_ row: EntityRow) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // The breadcrumb — the path is presentational until 20j.
+            HStack(spacing: 6) {
+                Image(systemName: "folder").font(.system(size: 9))
+                    .foregroundColor(Theme.mutedFg)
+                Text("in People ·").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                Text("library/contacts/\(slug(row.title)).md")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.mutedFg)
+                Spacer()
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark").font(.system(size: 8))
+                    Text("saved").font(.system(size: 10))
+                }
+                .foregroundColor(Theme.green)
+            }
+            heroCard(row)
+            mentionedIn(row)
+            bodyPreview(row)
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private func heroCard(_ row: EntityRow) -> some View {
+        let initials = row.title.split(separator: " ").prefix(2)
+            .compactMap { $0.first.map(String.init) }.joined()
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                // The medallion is NEUTRAL (panel2) — the hue budget's law.
+                Circle().fill(Theme.panel2)
+                    .frame(width: 54, height: 54)
+                    .overlay(
+                        Text(initials).font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(Theme.text2))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.title).font(.system(size: 18, weight: .bold))
+                    HStack(spacing: 5) {
+                        ForEach(
+                            [cell(row, "role"), cell(row, "org")].compactMap { $0 },
+                            id: \.self
+                        ) { value in
+                            Text(value).font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            let fields: [(String, String?)] = [
+                ("email", cell(row, "email")),
+                ("phone", cell(row, "phone")),
+                ("birthday", cell(row, "birthday")),
+                ("last seen", cell(row, "last-seen") ?? cell(row, "last seen")),
+            ]
+            let present = fields.filter { $0.1 != nil }
+            if !present.isEmpty {
+                LazyVGrid(
+                    columns: [GridItem(.flexible()), GridItem(.flexible())],
+                    alignment: .leading, spacing: 6
+                ) {
+                    ForEach(present, id: \.0) { name, value in
+                        HStack(spacing: 6) {
+                            Text(name).font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                                .frame(width: 56, alignment: .leading)
+                            Text(value ?? "").font(.system(size: 11.5)).lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 11).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Theme.border))
+    }
+
+    /// MENTIONED IN · N (map [8]): every object whose cells reference this
+    /// person — source-tagged, click navigates.
+    private func mentionedIn(_ row: EntityRow) -> some View {
+        let mentions = model.rows(model.snap?.everything ?? []).filter { other in
+            other.id != row.id
+                && other.cells.contains { $0.refTarget == row.id }
+        }
+        return Group {
+            if !mentions.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("MENTIONED IN · \(mentions.count)")
+                        .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                        .foregroundColor(Theme.mutedFg)
+                    ForEach(mentions.prefix(8)) { mention in
+                        Button { open(mention.id) } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: rowKindIcon(mention))
+                                    .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                                    .frame(width: 14)
+                                Text(mention.title.isEmpty ? "Untitled" : mention.title)
+                                    .font(.system(size: 11.5)).lineLimit(1)
+                                Spacer()
+                                Text(mention.kinds.first ?? "note")
+                                    .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func bodyPreview(_ row: EntityRow) -> some View {
+        let content = cell(row, "content") ?? ""
+        return Group {
+            if !content.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Divider()
+                    Text(content).font(.system(size: 12.5))
+                        .foregroundColor(Theme.foreground.opacity(0.9))
+                        .lineLimit(14)
+                    HStack {
+                        Text("the body is a normal note — write anything. properties live only in the panel →")
+                            .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                        Spacer()
+                        Button("open as note") { open(row.id) }
+                            .buttonStyle(.plain).font(.system(size: 10.5))
+                            .foregroundColor(Theme.accent)
+                    }
+                }
+            }
+        }
+    }
+
+    private func slug(_ title: String) -> String {
+        title.lowercased().replacingOccurrences(of: " ", with: "-")
+    }
+}
 
 enum InboxLens: String, CaseIterable, Identifiable {
     case route = "Route"
@@ -5171,11 +5311,335 @@ struct BaseFileView: View {
 /// entity carrying a `file` cell. A list lens, not Liv's multi-mode file
 /// shell; format facets / an image grid are follow-ups. Clicking a file
 /// opens it read-only in a file tab; "+ Add file" is the NSOpenPanel flow.
+/// The Library's left panel (P20f, map [0]): pools = saved filters, all
+/// live — never folders. Counts are vault-wide (the pool copy's law).
+struct LibraryNav: View {
+    @ObservedObject var model: BoxModel
+    @Binding var pool: String?
+    var openEntity: (UInt64) -> Void = { _ in }
+    var goInboxRoute: () -> Void = {}
+
+    static let pools: [(id: String, label: String, dot: Color)] = [
+        ("notes", "notes", Theme.green),
+        ("inbox", "inbox", Theme.yellow),
+        ("word", "word", Theme.accent),
+        ("sheets", "sheets", Theme.green),
+        ("pdf", "pdf", Theme.red),
+        ("images", "images", Theme.purple),
+        ("links", "links", Theme.yellow),
+        ("contacts", "contacts", Theme.accent),
+        ("events", "events", Theme.red),
+    ]
+
+    static func inPool(_ row: EntityRow, _ pool: String, model: BoxModel) -> Bool {
+        let ext = (row.title as NSString).pathExtension.lowercased()
+        switch pool {
+        case "notes": return row.kinds.contains("note")
+        case "inbox": return row.kinds.isEmpty
+        case "word": return ["doc", "docx", "rtf", "pages"].contains(ext)
+        case "sheets": return ["xls", "xlsx", "csv", "numbers"].contains(ext)
+        case "pdf": return ext == "pdf"
+        case "images": return ["png", "jpg", "jpeg", "gif", "heic", "webp"].contains(ext)
+        case "links": return row.kinds.contains("link")
+            || row.cells.contains { $0.property == "url" && !$0.value.isEmpty }
+        case "contacts": return row.kinds.contains("person") || row.kinds.contains("contact")
+        case "events": return row.kinds.contains("event")
+        default: return true
+        }
+    }
+
+    private var all: [EntityRow] { model.rows(model.snap?.everything ?? []) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("Library").font(.system(size: 12.5, weight: .bold))
+                    Text("the pools — saved filters, all live")
+                        .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+                }
+                .padding(.horizontal, 8).padding(.top, 8)
+                Button {
+                    pool = nil
+                } label: {
+                    HStack {
+                        Text("All files").font(.system(size: 11.5, weight: pool == nil ? .semibold : .regular))
+                        Spacer()
+                        Text("\(all.count)").font(.system(size: 10).monospacedDigit())
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(pool == nil ? Theme.accentTint : Theme.panel2))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 5), GridItem(.flexible(), spacing: 5)],
+                    spacing: 5
+                ) {
+                    ForEach(Self.pools, id: \.id) { entry in
+                        let count = all.filter { Self.inPool($0, entry.id, model: model) }.count
+                        Button {
+                            if entry.id == "inbox" {
+                                goInboxRoute()
+                            } else {
+                                pool = pool == entry.id ? nil : entry.id
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Circle().fill(entry.dot).frame(width: 7, height: 7)
+                                Text(entry.label).font(.system(size: 10.5)).lineLimit(1)
+                                Spacer(minLength: 2)
+                                Text("\(count)").font(.system(size: 9.5).monospacedDigit())
+                                    .foregroundColor(Theme.mutedFg)
+                            }
+                            .padding(.horizontal, 7).padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(pool == entry.id ? Theme.accentTint : Theme.panel2))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 6)
+                Text("a pool = a saved filter over one vault — never a folder · counts are live")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                    .padding(.horizontal, 8)
+                let lists = all.filter { $0.kinds.contains("list") }
+                if !lists.isEmpty {
+                    Text("LISTS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.horizontal, 8).padding(.top, 8)
+                    Text("yours — hand-ordered").font(.system(size: 9))
+                        .foregroundColor(Theme.mutedFg.opacity(0.8)).padding(.horizontal, 8)
+                    ForEach(lists) { row in
+                        Button { openEntity(row.id) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "list.bullet").font(.system(size: 10))
+                                    .foregroundColor(Theme.mutedFg)
+                                Text(row.title).font(.system(size: 11.5)).lineLimit(1)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                let views = model.snap?.views ?? []
+                if !views.isEmpty {
+                    Text("SAVED VIEWS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.horizontal, 8).padding(.top, 8)
+                    Text("ordinary entities").font(.system(size: 9))
+                        .foregroundColor(Theme.mutedFg.opacity(0.8)).padding(.horizontal, 8)
+                    ForEach(views) { view in
+                        HStack(spacing: 6) {
+                            Image(systemName: "star").font(.system(size: 10))
+                                .foregroundColor(Theme.mutedFg)
+                            Text(view.name).font(.system(size: 11.5)).lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .help(view.query)
+                    }
+                }
+                Text("VAULT — real folders on disk arrive with the projection (20j)")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.7))
+                    .padding(.horizontal, 8).padding(.top, 10)
+            }
+            .padding(.bottom, 8)
+        }
+    }
+}
+
+/// The Contacts left panel (P20f): GROUPS (saved filters over the one
+/// people pool — derived from org/area values v0, recorded) + the list.
+struct ContactsNav: View {
+    @ObservedObject var model: BoxModel
+    @Binding var group: String?
+    @Binding var selection: UInt64?
+    @State private var filter = ""
+    @FocusState private var filterFocused: Bool
+
+    private var people: [EntityRow] {
+        model.rows(model.snap?.everything ?? [])
+            .filter { $0.kinds.contains("person") || $0.kinds.contains("contact") }
+    }
+
+    private var groups: [String] {
+        var seen: [String] = []
+        for row in people {
+            for cell in row.cells
+            where ["org", "area"].contains(cell.property) && !cell.value.isEmpty {
+                if !seen.contains(cell.value) { seen.append(cell.value) }
+            }
+        }
+        return seen
+    }
+
+    private func inGroup(_ row: EntityRow, _ name: String) -> Bool {
+        row.cells.contains { ["org", "area"].contains($0.property) && $0.value == name }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("GROUPS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                .foregroundColor(Theme.mutedFg)
+                .padding(.horizontal, 8).padding(.top, 8)
+            navRow(icon: "person.2", label: "All contacts", aft: "\(people.count)", active: group == nil) {
+                group = nil
+            }
+            ForEach(groups, id: \.self) { name in
+                let count = people.filter { inGroup($0, name) }.count
+                navRow(
+                    dot: Color(nsColor: Hues.valueHex(name)), label: name,
+                    aft: "\(count)", active: group == name
+                ) { group = group == name ? nil : name }
+            }
+            Text("a group is a saved filter — membership lives in metadata")
+                .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                .padding(.horizontal, 8)
+            Divider().padding(.vertical, 4)
+            HStack(spacing: 6) {
+                Text("Contacts").font(.system(size: 11.5, weight: .bold))
+                Text("\(people.count)").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                Spacer()
+                Button {
+                    NotificationCenter.default.post(name: .lotusNewContact, object: nil)
+                } label: {
+                    Image(systemName: "plus.circle.fill").font(.system(size: 13))
+                        .foregroundColor(Theme.accent).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("new contact — a name alone is a complete contact")
+            }
+            .padding(.horizontal, 8)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 9))
+                    .foregroundColor(Theme.mutedFg)
+                TextField("Filter…", text: $filter)
+                    .textFieldStyle(.plain).font(.system(size: 11))
+                    .focused($filterFocused)
+                KbdChip(label: "F", size: 8.5)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().strokeBorder(Theme.border))
+            .padding(.horizontal, 8)
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(listed) { row in
+                        personRow(row)
+                    }
+                }
+                .padding(.horizontal, 6)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusContactFilter)) { _ in
+            filterFocused = true
+        }
+    }
+
+    private var listed: [EntityRow] {
+        people
+            .filter { group == nil || inGroup($0, group!) }
+            .filter { filter.isEmpty || $0.title.localizedCaseInsensitiveContains(filter) }
+    }
+
+    private func personRow(_ row: EntityRow) -> some View {
+        let initials = row.title.split(separator: " ").prefix(2)
+            .compactMap { $0.first.map(String.init) }.joined()
+        return Button {
+            selection = row.id
+        } label: {
+            HStack(spacing: 7) {
+                Circle().fill(Color(nsColor: Hues.valueHex(row.title)).opacity(0.2))
+                    .frame(width: 21, height: 21)
+                    .overlay(
+                        Text(initials).font(.system(size: 8.5, weight: .semibold))
+                            .foregroundColor(Theme.text2))
+                Text(row.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 4)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selection == row.id ? Theme.accentTint : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func navRow(
+        icon: String? = nil, dot: Color? = nil, label: String, aft: String?,
+        active: Bool, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 10.5))
+                        .foregroundColor(active ? Theme.accent : Theme.mutedFg).frame(width: 14)
+                }
+                if let dot { Circle().fill(dot).frame(width: 7, height: 7).frame(width: 14) }
+                Text(label).font(.system(size: 12, weight: active ? .medium : .regular)).lineLimit(1)
+                Spacer(minLength: 4)
+                if let aft {
+                    Text(aft).font(.system(size: 10).monospacedDigit()).foregroundColor(Theme.mutedFg)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 28)
+            .background(RoundedRectangle(cornerRadius: 7).fill(active ? Theme.accentTint : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The Calendar left panel (P20f): the daily-note door + the auto-render
+/// law. Calendars-as-entities (the checklist + Google row) are recorded
+/// for the sync pass.
+struct CalendarNav: View {
+    var openDaily: () -> Void = {}
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: openDaily) {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil").font(.system(size: 11))
+                    Text("Today's daily note").font(.system(size: 11.5, weight: .semibold))
+                }
+                .foregroundColor(Theme.onAccent)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.accent))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8).padding(.top, 8)
+            Text("Tasks with a due or deadline date and any object with a calendar-role date render automatically — no separate add-to-calendar.")
+                .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                .padding(.horizontal, 10)
+            Text("CALENDARS — named calendars + the Google row arrive with the sync pass (recorded)")
+                .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.7))
+                .padding(.horizontal, 10)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 struct LibraryView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
     let addFile: () -> Void
     let open: (UInt64) -> Void
+    /// P20f: the active pool chip (nil = All files) + the type-to-filter.
+    @Binding var pool: String?
+    @State private var typeFilter = ""
 
     /// The lens over the file pool (bp7 a15, P15d): Table ships; Gallery is a
     /// deferred candidate — 2-slot-ready in the switcher, disabled until image
@@ -5190,10 +5654,19 @@ struct LibraryView: View {
     /// property value, one level. nil = flat.
     @State private var groupBy: String? = nil
 
+    /// P20f (map [1]): the mixed-object pool — every object the pools
+    /// cover, scoped by the active chip; no longer file-cells-only.
     private var files: [EntityRow] {
-        model.rows(model.snap?.everything ?? []).filter {
-            $0.cells.contains { $0.kind == "file" }
-        }
+        model.rows(model.snap?.everything ?? [])
+            .filter { pool == nil || LibraryNav.inPool($0, pool!, model: model) }
+            .filter { typeFilter.isEmpty || $0.title.localizedCaseInsensitiveContains(typeFilter) }
+    }
+
+    private var poolsRepresented: Int {
+        let rows = files
+        return LibraryNav.pools.filter { entry in
+            rows.contains { LibraryNav.inPool($0, entry.id, model: model) }
+        }.count
     }
 
     var body: some View {
@@ -5205,12 +5678,23 @@ struct LibraryView: View {
                     viewsGroup
                     if files.isEmpty {
                         emptyState
+                    } else if lens == .gallery {
+                        galleryLens(files)
                     } else {
                         tableLens(files)
                     }
                 }
             }
-            ShortcutBar(pairs: [("⌃1", "table"), ("↵", "open"), ("⌘⇧I", "import")])
+            // P20f (map [11]): the census footer replaces the ShortcutBar.
+            HStack {
+                Text("\(files.count) object\(files.count == 1 ? "" : "s") · \(poolsRepresented) pool\(poolsRepresented == 1 ? "" : "s") represented")
+                    .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                Spacer()
+                Text("new files → the vault's inbox — real folders with 20j")
+                    .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
+            }
+            .padding(.horizontal, 24).padding(.vertical, 5)
+            .overlay(Divider(), alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // The middle is the bare face: the window material shows through, so the
@@ -5261,10 +5745,38 @@ struct LibraryView: View {
 
     private func header(_ count: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            LensHeader(title: "Library", subtitle: subtitle(count))
+            LensHeader(
+                title: pool.map { "Files — \($0)" } ?? "Files — All pools",
+                subtitle: subtitle(count))
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").font(.system(size: 9))
+                    .foregroundColor(Theme.mutedFg)
+                TextField("Type to filter this view…", text: $typeFilter)
+                    .textFieldStyle(.plain).font(.system(size: 11))
+                    .frame(maxWidth: 180)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().strokeBorder(Theme.border))
             Spacer()
             libraryLensSwitcher
             groupByMenu
+            // P20f (map [6]): +New by kind — replaces the lone Add file.
+            Menu {
+                Button("Note") { NotificationCenter.default.post(name: .lotusNewNote, object: nil) }
+                Button("Contact") {
+                    NotificationCenter.default.post(name: .lotusNewContact, object: nil)
+                }
+                Button("File — by reference…") { addFile() }
+                Divider()
+                Text("word · sheet · link · event · canvas arrive with their kinds")
+            } label: {
+                Text("＋ New").font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.onAccent)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.accent))
+                    .contentShape(Capsule())
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             Button {
                 NotificationCenter.default.post(name: .lotusOpenImport, object: nil)
             } label: {
@@ -5279,10 +5791,6 @@ struct LibraryView: View {
             }
             .buttonStyle(.borderless)
             .help("Export…  ⌘⇧E")
-            Button(action: addFile) {
-                Label("Add file", systemImage: "plus").font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 32)
         .padding(.top, 16)
@@ -5357,18 +5865,109 @@ struct LibraryView: View {
         .padding(.top, 12)
     }
 
+    /// P20f (map [2]): NAME / ANCHOR / ST / MODIFIED — the mockup's grid.
     @ViewBuilder
     private func rows(_ files: [EntityRow]) -> some View {
-        ForEach(files) { row in
-            ObjectRow(
-                row: row,
-                selected: selection == row.id,
-                chipTap: { filter in
-                    NotificationCenter.default.post(name: .lotusSearchFor, object: filter)
-                },
-                select: { selection = row.id },
-                openRow: { open(row.id) })
+        HStack(spacing: 8) {
+            Text("NAME").frame(maxWidth: .infinity, alignment: .leading)
+            Text("ANCHOR").frame(width: 130, alignment: .leading)
+            Text("ST").frame(width: 26)
+            Text("MODIFIED").frame(width: 64, alignment: .trailing)
         }
+        .font(.system(size: 8.5, weight: .bold))
+        .foregroundColor(Theme.mutedFg)
+        .padding(.horizontal, 10).padding(.vertical, 3)
+        ForEach(files) { row in
+            gridRow(row)
+        }
+    }
+
+    private func gridRow(_ row: EntityRow) -> some View {
+        let option = statusVocabulary(model, kind: row.kinds.first ?? "")
+            .first { $0.name == row.status }
+        return Button {
+            selection = row.id
+        } label: {
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: rowKindIcon(row)).font(.system(size: 11))
+                        .foregroundColor(Theme.mutedFg).frame(width: 16)
+                    Text(row.title.isEmpty ? "Untitled" : row.title)
+                        .font(.system(size: 12)).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    if let anchor = anchorChip(for: row) {
+                        ValueChip(text: anchor.text, hue: anchor.hue)
+                    } else {
+                        Text("—").font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.5))
+                    }
+                }
+                .frame(width: 130, alignment: .leading)
+                Group {
+                    if row.status != nil {
+                        StatusDot(option: option, statusName: row.status ?? "")
+                    } else {
+                        Text("")
+                    }
+                }
+                .frame(width: 26)
+                Text(row.created.map { relAge($0) } ?? "—")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(width: 64, alignment: .trailing)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selection == row.id ? Theme.accentTint : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { open(row.id) })
+    }
+
+    private func relAge(_ created: Int64) -> String {
+        let seconds = Int(Date().timeIntervalSince1970) - Int(created)
+        if seconds < 3600 { return "\(max(1, seconds / 60))m" }
+        if seconds < 86400 { return "\(seconds / 3600)h" }
+        if seconds < 604_800 { return "\(seconds / 86400)d" }
+        return "\(seconds / 604_800)w"
+    }
+
+    /// The gallery lens (P20f, map [3]) — tinted big-icon tiles; tiles
+    /// never show status (the sim's law).
+    private func galleryLens(_ files: [EntityRow]) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10
+        ) {
+            ForEach(files) { row in
+                VStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Theme.panel2)
+                        .frame(height: 80)
+                        .overlay(
+                            Image(systemName: rowKindIcon(row))
+                                .font(.system(size: 26))
+                                .foregroundColor(Theme.accent.opacity(0.55)))
+                    Text(row.title.isEmpty ? "Untitled" : row.title)
+                        .font(.system(size: 10.5)).lineLimit(1)
+                    if let created = row.created {
+                        Text(relAge(created)).font(.system(size: 9))
+                            .foregroundColor(Theme.mutedFg)
+                    }
+                }
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(selection == row.id ? Theme.accentTint : Theme.surface))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.border))
+                .contentShape(Rectangle())
+                .onTapGesture { selection = row.id }
+                .simultaneousGesture(TapGesture(count: 2).onEnded { open(row.id) })
+            }
+        }
+        .padding(.horizontal, 32).padding(.top, 12)
     }
 
     private var emptyState: some View {
