@@ -511,3 +511,35 @@ creation (the existing "New tab group" door) now fronts the new container.
 **Recorded:** department tabs beyond Editor containers (Tasks/Library as
 global tabs per the sim) wait until a need shows — the rail is the
 department door; the sim's dept-tag pills ride then.
+
+### 20d — capture + inbox (as built)
+
+**Capture is a first-class surface** (rail item, `Surface.capture`): the
+doorway header (amber zap tile · "the doorway that asks nothing" · ⌃⌥Space
+chip) with the **Keep | Composer toggle** (O8 — the P12 gap closes);
+the take card with violet **Save ⌘⏎**; the honesty under-row ("✦ name it
+later — names DERIVE on save, always editable" + the saves-to readout,
+presentational until 20j); quick chips (All · Today · idea · link ·
+unrouted·N → Inbox › Route); the **Keep-style masonry wall** (4 columns,
+round-robin by estimated height — deterministic) with amber-haloed cards
+when a Tidy suggestion waits. Composer v0: the tall card where a leading
+"# " line becomes the NAME (capture hands back the id via the new
+`captureId` wrapper — one capture txn + one name set; the in-transaction
+namer verb is recorded). Scrap titles **display-derive** from the first
+line (✦ = derived, zero writes — the honest reading of "AI names it on
+save" while capture stays never-classified). **Inbox**: folder-style
+Route·[ / Tidy·] tabs wearing their jump keys; "one cleanup home — halos
+elsewhere point, this lists"; the Route toolbar count line + the
+contractual grammar footer; **the routing card moved to the right panel**
+(1 New note default · 2 Suggest-a-merge fence-explained · will-file-to
+readout · Later·L · Commit·⌘⏎); the rail badge collapsed to the spec's
+grammar (ONE grey Route pip; the amber total lives on the header).
+
+**Recorded (core-needing, deferred):** Suggest-for-all (needs an
+on-demand suggest verb) · the real merge proposer (fence) · the per-cell
+✦assist provenance stamp (wire key) · source-provenance labels beyond
+"quick capture" (wire) · workspace stamping at capture (vocabulary
+ruling) · attach/voice (ingestion seam) · the capture View-pane view-file
+(rides 20h's view entities) · Tidy category regroup + card anatomy (the
+Tidy polish pass; A/R group keys survive keyboard-only per the
+feature-complete rule) · commit-as-task kept per the sim (a later digit).

@@ -11,6 +11,7 @@ import SwiftUI
 
 enum Surface: String, CaseIterable {
     case notes
+    case capture
     case aiChat = "ai-chat"
     case tasks
     case lists
@@ -26,7 +27,8 @@ enum Surface: String, CaseIterable {
     var label: String {
         switch self {
         case .notes: return "Notes"
-        case .aiChat: return "Chats"
+        case .capture: return "Capture"
+        case .aiChat: return "Ask"
         case .tasks: return "Tasks"
         case .lists: return "Lists"
         case .library: return "Library"
@@ -40,6 +42,7 @@ enum Surface: String, CaseIterable {
     /// SF Symbols at Liv's optical roles (§3.5 ACTIVITY_ICONS).
     var symbol: String {
         switch self {
+        case .capture: return "bolt"
         case .notes: return "doc.text"
         case .aiChat: return "bubble.left.and.text.bubble.right"
         case .tasks: return "checkmark.square"
@@ -364,7 +367,7 @@ struct LeftRail: View {
             // The mockup's 13-item order (P20b, map [11]); the history
             // chevrons moved to the global tab row. Comms joins with 20g.
             icon(.notes, help: "Notes — the daily note is today")
-            action("bolt", help: "Capture — the doorway that asks nothing (⌃⌥Space)", capture)
+            icon(.capture, help: "Capture — the doorway that asks nothing (⌃⌥Space)")
             icon(.inbox, help: "Inbox — Route and Tidy")
             icon(.tasks, help: "Tasks")
             icon(.library, help: "Library — files, links, lists, views")
@@ -426,20 +429,14 @@ struct LeftRail: View {
         .help(help)
     }
 
-    /// Dual count on the ONE Inbox icon (space-conservative — no extra row):
-    /// a neutral Route pip (top-right, never blue/lake-green) + an amber Tidy
-    /// pip (bottom-right; amber = the AI hue).
+    /// P20d (map [18], sim badges()): ONE grey pip = scraps waiting in
+    /// Route; the amber total lives on the Inbox header, not the rail.
     private var inboxCounts: some View {
         let route = model.orphans().count
-        let tidy = model.snap?.inbox.count ?? 0
         return ZStack {
             if route > 0 {
                 pip("\(route)", bg: Theme.mutedFg, fg: Color(nsColor: .windowBackgroundColor))
                     .offset(x: 12, y: -9)
-            }
-            if tidy > 0 {
-                pip("\(tidy)", bg: Theme.warning, fg: Color(red: 0.22, green: 0.14, blue: 0))
-                    .offset(x: 12, y: 9)
             }
         }
     }

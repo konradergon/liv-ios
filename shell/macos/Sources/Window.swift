@@ -522,6 +522,19 @@ final class BoxModel: ObservableObject {
         act(done) { lotus_capture_at(self.path, text) != 0 }
     }
 
+    /// P20d: capture handing back the scrap's id (the composer's H1-name
+    /// write needs its target).
+    func captureId(_ text: String, done: @escaping (UInt64?) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            let id = lotus_capture_at(path, text)
+            DispatchQueue.main.async {
+                done(id == 0 ? nil : id)
+                if id != 0 { self.refresh() }
+            }
+        }
+    }
+
     func accept(_ proposal: ProposalRow) {
         act { lotus_accept_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
     }
@@ -1620,9 +1633,7 @@ struct WindowChrome: View {
             Button("Tasks") { navigate(to: .tasks) }
             Button("Library") { navigate(to: .library) }
             Button("Dashboard") { navigate(to: .dashboard) }
-            Button("Quick Capture") {
-                NotificationCenter.default.post(name: .lotusToggleCapture, object: nil)
-            }
+            Button("Quick Capture") { navigate(to: .capture) }
             Divider()
             Button("Ask — the answerer is stateless, no tab needed") {
                 chrome.searchOpen = true
@@ -2480,6 +2491,29 @@ struct WindowChrome: View {
                         if !(chrome.surface == .calendar && selection == nil) {
                             railTabsHeader
                         }
+                        // P20d: the routing card rides ABOVE the lenses
+                        // while Route holds a selected scrap.
+                        if chrome.surface == .inbox, inboxLens == .route,
+                            let target = selection.flatMap({ id in
+                                model.orphans().first { $0.id == id }
+                            })
+                        {
+                            InboxView.RoutingCard(
+                                model: model, target: target,
+                                commit: {
+                                    model.setType(target.id, "note") { ok in
+                                        guard ok else { return }
+                                        let rest = model.orphans().filter { $0.id != target.id }
+                                        selection = rest.first?.id
+                                    }
+                                },
+                                later: {
+                                    let all = model.orphans()
+                                    let at = all.firstIndex { $0.id == target.id } ?? 0
+                                    selection = all.isEmpty
+                                        ? nil : all[(at + 1) % all.count].id
+                                })
+                        }
                         // The five-lens bar (bp4 · P17; Graph waits for P18 —
                         // no dead buttons). Hidden while the calendar's day
                         // panel owns the card.
@@ -2537,6 +2571,13 @@ struct WindowChrome: View {
     private var center: some View {
         Group {
             switch chrome.surface {
+            case .capture:
+                CaptureSurface(
+                    model: model, selection: $selection,
+                    openInbox: {
+                        inboxLens = .route
+                        navigate(to: .inbox)
+                    })
             case .notes:
                 VStack(spacing: 0) {
                     // P20c.2b: the CONTENT tab row (the mockup's 36px
@@ -3733,17 +3774,41 @@ struct InboxView: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Capsule().fill(Theme.warning))
             }
-            Picker("", selection: $lens) {
-                Text("Route · \(orphans.count)").tag(InboxLens.route)
-                Text("Tidy · \(proposals.count)").tag(InboxLens.tidy)
+            // P20d (map [9]): folder-style tabs, each wearing its jump key.
+            HStack(spacing: 2) {
+                folderTab("Route", count: orphans.count, key: "[", on: lens == .route) {
+                    lens = .route
+                }
+                folderTab("Tidy", count: proposals.count, key: "]", on: lens == .tidy) {
+                    lens = .tidy
+                }
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
             Spacer()
-            Text("one cleanup home · cycle [ ]")
+            Text("one cleanup home — halos elsewhere point, this lists")
                 .font(.system(size: 11)).foregroundColor(.secondary)
         }
         .padding(.horizontal, 32).padding(.top, 16).padding(.bottom, 14)
+    }
+
+    private func folderTab(
+        _ label: String, count: Int, key: String, on: Bool, tap: @escaping () -> Void
+    ) -> some View {
+        Button(action: tap) {
+            HStack(spacing: 5) {
+                Text("\(label) · \(count)")
+                    .font(.system(size: 11.5, weight: on ? .semibold : .regular))
+                KbdChip(label: key, size: 8.5)
+            }
+            .foregroundColor(on ? Theme.accent : Theme.mutedFg)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 8, bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0, topTrailingRadius: 8)
+                    .fill(on ? Theme.accentTint : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Route — orphans → a type
@@ -3754,6 +3819,12 @@ struct InboxView: View {
             inboxZero
         } else {
             VStack(spacing: 0) {
+                HStack {
+                    Text("\(orphans.count) unrouted — newest first")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 32).padding(.bottom, 6)
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(orphans) { row in
@@ -3767,56 +3838,104 @@ struct InboxView: View {
                                 openRow: { open(row.id) })
                         }
                     }
-                    .padding(.horizontal, 24).padding(.top, 8)
+                    .padding(.horizontal, 24).padding(.top, 2)
                 }
-                Divider()
-                routeBar
+                // P20d (map [13]): the routing card moved to the RIGHT
+                // panel; the grammar line stays as the surface's footer.
+                Text("↑↓ selects — the right panel routes the selected scrap · L skips it for later, no nag state · committing files it out, badge −1, next scrap auto-selected")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .padding(.horizontal, 32).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(Divider(), alignment: .top)
             }
-        }
-    }
-
-    /// The routing question + commit (a16/a21). "New note" stamps type=note
-    /// so the scrap leaves the orphan set — NO folder move (design §1.2).
-    /// "Suggest a merge" is static (proposer + execution defer to P16, §1.7).
-    /// The routing bar rides the bare face now — no boxed dark fill, and when
-    /// nothing is selected it simply isn't there (the empty box that said
-    /// "Select a capture to route it." was chrome with no job).
-    @ViewBuilder
-    private var routeBar: some View {
-        if let target = selection.flatMap({ id in orphans.first { $0.id == id } }) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Which note should this go in?")
-                    .font(.system(size: 12.5, weight: .semibold))
-                HStack(spacing: 8) {
-                    Button { commit(target) } label: {
-                        Label("New note", systemImage: "1.square")
-                    }
-                    .buttonStyle(.borderedProminent).tint(Theme.accent)
-                    Button { NSSound.beep() } label: {
-                        Label("Suggest a merge", systemImage: "wand.and.stars")
-                    }
-                    .buttonStyle(.bordered)
-                    .help("The merge proposer arrives with the AI pass (P16)")
-                    Spacer()
-                    Button("Later") { advance(after: target) }
-                        .buttonStyle(.bordered)
-                    Button { commit(target) } label: {
-                        Text("Commit").fontWeight(.semibold)
-                    }
-                    .buttonStyle(.borderedProminent).tint(Theme.accent)
-                }
-                Text("Commit stamps the type cell — the scrap leaves the inbox. No file move.")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 32).padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(Divider(), alignment: .top)
         }
     }
 
     private func commit(_ row: EntityRow) {
         model.setType(row.id, "note") { ok in
             if ok { advance(after: row) }
+        }
+    }
+
+    /// P20d (map [13]): the routing card, re-homed in the right panel.
+    /// "New note is the one-click default"; commit stamps the type cell —
+    /// the scrap leaves the inbox (no file move until 20j, recorded).
+    struct RoutingCard: View {
+        @ObservedObject var model: BoxModel
+        let target: EntityRow
+        let commit: () -> Void
+        let later: () -> Void
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Which note should this go in?")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text("routes the selected scrap — new note is the one-click default")
+                    .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                Button(action: commit) {
+                    HStack(spacing: 5) {
+                        KbdChip(label: "1", size: 8.5)
+                        Text("New note").font(.system(size: 11.5, weight: .semibold))
+                    }
+                    .foregroundColor(Theme.accent)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("1", modifiers: [])
+                Button { NSSound.beep() } label: {
+                    HStack(spacing: 5) {
+                        KbdChip(label: "2", size: 8.5)
+                        Image(systemName: "wand.and.stars").font(.system(size: 10))
+                        Text("Suggest a merge").font(.system(size: 11.5))
+                    }
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("the merge proposer arrives with the AI pass — fence-gated")
+                HStack(spacing: 4) {
+                    Text("will file to →").font(.system(size: 9.5))
+                        .foregroundColor(Theme.mutedFg)
+                    Text("library/notes/").font(.system(size: 9.5, design: .monospaced))
+                        .foregroundColor(Theme.text2)
+                }
+                HStack(spacing: 8) {
+                    Button(action: later) {
+                        Text("Later · L").font(.system(size: 11))
+                            .foregroundColor(Theme.mutedFg)
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("l", modifiers: [])
+                    Spacer()
+                    Button(action: commit) {
+                        HStack(spacing: 5) {
+                            Text("Commit").font(.system(size: 11.5, weight: .semibold))
+                            KbdChip(label: "⌘⏎", size: 8.5)
+                        }
+                        .foregroundColor(Theme.onAccent)
+                        .padding(.horizontal, 12).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.accent))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.return, modifiers: .command)
+                }
+                Text("commit stamps the type cell — the scrap leaves the inbox. no file move.")
+                    .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+            }
+            .padding(11)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border))
+            .padding(.horizontal, 8).padding(.top, 8)
         }
     }
 
