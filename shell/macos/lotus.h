@@ -229,6 +229,12 @@ int64_t lotus_rename_value_at(const char *path, const char *property,
    option id, 0 on failure. */
 uint64_t lotus_add_option_at(const char *path, uint64_t property, const char *name);
 
+/* Toggle one kind's reference on a definition's display-attribute property
+   ("hide-on-kind" / "core-on-kind") — additive per kind (P19 review).
+   Returns 1 changed, 0 no-op, -1 refused. */
+int32_t lotus_kind_flag_at(const char *path, uint64_t def, const char *property,
+                           uint64_t kind, int32_t on);
+
 /* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
    Start writes nothing anywhere - the running timer is shell state. */
 uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,

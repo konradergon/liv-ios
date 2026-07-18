@@ -221,3 +221,66 @@ never re-fires; replay is the only re-entry.
 a fresh `defaults` domain) to re-arm the pref conjunct.
 
 *With 19i the P19 table is fully shipped and the roadmap (P1–P19) closes.*
+
+---
+
+## 8 · The P19 review (adversarial pass, applied)
+
+Ten finders over the phase diff (`e19ec9d..HEAD`), one risk dimension each;
+42 findings survived a three-lens adversarial verify (trace · reachability ·
+phase-scope) — 4 high, 17 medium, 21 low. All applied, failing-test-first on
+the Rust side. The highs:
+
+1. **The consent gate keyed on a renameable NAME.** `assist_enabled` looked
+   up the `automation` property by name and defaulted ON when missing — and
+   the definitions table offered Rename on that very row, so renaming it
+   silently resurrected the clerk over a recorded OFF (CLI-reproduced).
+   Now: `clerk::assist_switch` resolves the backstage `assist` entity's
+   sole non-WORKING Bool cell, whatever the property is named; the wire's
+   `assist.prop` carries the current name so the toggle keeps a write
+   target; the seed guards on the entity (a foreign `automation` property
+   no longer starves the switch); plumbing definitions left the definitions
+   table and the settings search.
+2. **Phantom writes on persist failure.** Both new verbs collapsed every
+   error into `Committed::Read`, caching a store one committed transaction
+   ahead of a torn disk — later writes then commit onto the gap and vanish
+   at the next cold replay. Now Refused → Read, Persist → Failed (the house
+   split), and `add_option`'s idempotent hit tags Read, not Wrote.
+
+The rest, grouped: the rename engine refuses ambiguous same-named options
+(per-kind `status` names are DESIGNED to collide) and skips WORKING
+plumbing in text renames; the persisted pending queue reads empty while
+the switch is off ("off means SILENCE" now covers yesterday's queue);
+`add_option` enforces select/status + untrashed. One **new additive verb**
+— `lotus_kind_flag_at` (with_box + Committed, tested, **flagged**) —
+because `set` replaces every cell of a property: hide-on-kind now
+accumulates per kind instead of un-hiding the previous one, and it powers
+the 19e **core star**, which now exists in both surfaces. The keymap got
+its steal-really-unbinds half (an unbound sentinel in `app.keymap.v1`),
+load-time rejection of chords shadowing ⌘,/⌘⌥Z, recorder discipline (no
+shift-only global chords, named keys for arrows/Return/F-keys, reserved
+refusals in both recorders), sanctioned-alias awareness in `conflicts()`
+(the stock map boots warnline-free), digit-key press-again-to-steal, and
+the brick-proof pair now answers OVER overlays — where the rename toasts
+advertise it. The capture hotkey pref self-heals instead of trapping
+`UInt32(_:)` in a launch loop. Settings: plumbing filtered, shelf
+partition by seeded-ness (user-born unused options have a home), retired
+status options gained a Restore door, toasts pin to the panel, Esc closes
+from any focus, facets show themselves and die with the query, stale ⏎
+can no longer hand a visible-results query to the vault, BYOK respects
+the Keychain's answer, definition renames collision-guard through the ONE
+shared door, hidden options left the priority menu, and the app menu
+gained its standard **Settings…** item. The tour: replay works mid-tour
+and closes overlays beneath, the dot no longer advances over a refused
+navigation, a mid-tour pref from another box neither resumes nor blocks
+(`app.onboarding.v1` now records its box), replay says "your vault →"
+instead of "will create →", the assist moment degrades honestly when the
+switch is off, and every "⌘Z never expires" now says **⌘⌥Z**.
+
+**Recorded deltas (v0, deliberate):** the settings ⏎ jump lands a
+breadcrumb pill, not an exact-row flash — rows across six panels carry no
+stable flash identity yet; revisit if the pill proves too quiet. And on a
+box carrying a FOREIGN `automation` property, the seeded switch still
+works (the gate reads the cell, not the name) but name-keyed `set` writes
+remain ambiguous between the two definitions — the entity-based gate makes
+this harmless for consent; noted, not built around.

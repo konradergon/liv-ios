@@ -60,24 +60,35 @@ fn todo_option(store: &Store) -> Option<Id> {
 /// Read every candidate entity, propose, and drop duplicates of anything
 /// pending or declined. `today` is the caller's civil date — the clerk
 /// itself has no clock.
-/// The P19h consent gate: the assist entity's `automation` bool. Absent
-/// (an older box) or true = on; only an explicit false silences the clerk.
-pub fn assist_enabled(store: &Store) -> bool {
-    let Some(automation) = crate::property_id(store, "automation") else {
-        return true;
-    };
-    let state = store
+/// Resolve the assist switch: the backstage `assist` entity and its switch
+/// cell — the sole non-WORKING Bool cell on it, WHATEVER its property is
+/// named today. The P19 review's high: the `automation` definition rides
+/// the ordinary definitions catalog, so a rename (or retype) through an
+/// ordinary door must never move the consent. The cell survives both —
+/// only the definition's display attributes change. Returns
+/// (entity, switch property, on).
+pub fn assist_switch(store: &Store) -> Option<(Id, Id, bool)> {
+    store
         .entities()
         .find(|e| {
             !e.trashed
+                && e.has(lotus_core::props::WORKING, &Value::Bool(true))
                 && matches!(e.get(lotus_core::props::NAME), Some(Value::Text(n)) if n == "assist")
-                && e.get(automation).is_some()
         })
-        .and_then(|e| match e.get(automation) {
-            Some(Value::Bool(on)) => Some(*on),
-            _ => None,
-        });
-    state != Some(false)
+        .and_then(|e| {
+            e.cells.iter().find_map(|c| match &c.value {
+                Value::Bool(on) if c.property != lotus_core::props::WORKING => {
+                    Some((e.id, c.property, *on))
+                }
+                _ => None,
+            })
+        })
+}
+
+/// The P19h consent gate. Absent (an older box) or true = on; only an
+/// explicit false silences the clerk.
+pub fn assist_enabled(store: &Store) -> bool {
+    !matches!(assist_switch(store), Some((_, _, false)))
 }
 
 pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {

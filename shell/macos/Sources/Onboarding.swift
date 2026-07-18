@@ -21,8 +21,13 @@ enum TourState {
     static var dot: Int {
         (UserDefaults.standard.dictionary(forKey: key)?["dot"] as? Int) ?? 0
     }
-    static func save(done: Bool, dot: Int) {
-        UserDefaults.standard.set(["done": done, "dot": dot], forKey: key)
+    /// Which box the dot belongs to — a mid-tour pref from ANOTHER box
+    /// must not resume over this one (P19 review).
+    static var box: String? {
+        UserDefaults.standard.dictionary(forKey: key)?["box"] as? String
+    }
+    static func save(done: Bool, dot: Int, box: String) {
+        UserDefaults.standard.set(["done": done, "dot": dot, "box": box], forKey: key)
     }
     static func reset() {
         UserDefaults.standard.removeObject(forKey: key)
@@ -104,8 +109,12 @@ struct TourOverlay: View {
     /// 0 = welcome · 1 capture · 2 assist · 3 the vault · 4 finish strip.
     @Binding var dot: Int
     let boxPath: String
-    /// The window's seams the tour drives.
-    let goTidy: () -> Void
+    /// Replay shows an existing vault, not a promise to create one.
+    let fresh: Bool
+    /// The window's seams the tour drives. goTidy reports back: navigation
+    /// can be REFUSED (an editor flush declined) and the dot must not
+    /// advance over a surface that never changed (P19 review).
+    let goTidy: (@escaping () -> Void) -> Void
     let goHome: () -> Void
     let finish: () -> Void
 
@@ -141,7 +150,7 @@ struct TourOverlay: View {
                     .font(.system(size: 12.5))
                 // The trust beat: the one-file truth, before anything exists.
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("will create → \(boxPath)")
+                    Text("\(fresh ? "will create" : "your vault") → \(boxPath)")
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundColor(Theme.mutedFg)
                         .lineLimit(1).truncationMode(.middle)
@@ -230,7 +239,7 @@ struct TourOverlay: View {
 
     private func advance(to next: Int) {
         dot = next
-        TourState.save(done: false, dot: next)
+        TourState.save(done: false, dot: next, box: boxPath)
     }
 
     // MARK: the moments
@@ -241,10 +250,17 @@ struct TourOverlay: View {
         case 1:
             CoachBubble(
                 dot: 1, total: 3, title: "Words in, nothing lost",
-                text: "⌃⌥Space captures from anywhere — one field, Esc closes, it asks nothing. Three scraps just landed for you. Everything is appended to the one file; ⌘Z never expires.",
+                text: "⌃⌥Space captures from anywhere — one field, Esc closes, it asks nothing. Three scraps just landed for you. Everything is appended to the one file; ⌘⌥Z never expires.",
                 onContinue: {
-                    goTidy()
-                    advance(to: 2)
+                    // The switch may be OFF (a replay after opting out):
+                    // never demo a dead wand — the vocabulary moment is next
+                    // (P19 review). Consent is never flipped for a demo.
+                    if model.snap?.assist?.on == false {
+                        goHome()
+                        advance(to: 3)
+                    } else {
+                        goTidy { advance(to: 2) }
+                    }
                 },
                 onSkip: finish)
         case 2:

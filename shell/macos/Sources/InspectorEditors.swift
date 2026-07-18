@@ -815,14 +815,36 @@ struct RowMenuPopover: View {
             .menuIndicator(.hidden)
             .help("Sets value-kind only — carrier cells are never rewritten (schema-on-read).")
             Divider().padding(.vertical, 2)
-            PopRow(selected: false, action: { hideOnThisKind() }) {
-                AnyView(
-                    HStack(spacing: 8) {
-                        Image(systemName: "eye.slash").font(.system(size: 10))
-                        Text("Hide on \(entity.kinds.first ?? "this kind")").font(.system(size: 12))
-                        Spacer(minLength: 6)
-                        Text("per kind").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
-                    })
+            if let kindName = entity.kinds.first {
+                PopRow(selected: false, action: { hideOnThisKind() }) {
+                    AnyView(
+                        HStack(spacing: 8) {
+                            Image(systemName: "eye.slash").font(.system(size: 10))
+                            Text(((spec.property.hideOnKinds ?? []).contains(kindName)
+                                ? "Shown again on " : "Hide on ") + kindName)
+                                .font(.system(size: 12))
+                            Spacer(minLength: 6)
+                            Text("per kind").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                        })
+                }
+                PopRow(selected: false, action: { toggleCoreOnThisKind() }) {
+                    AnyView(
+                        HStack(spacing: 8) {
+                            Image(systemName: (spec.property.coreOnKinds ?? []).contains(kindName)
+                                ? "star.fill" : "star")
+                                .font(.system(size: 10))
+                            Text("Core on \(kindName)").font(.system(size: 12))
+                            Spacer(minLength: 6)
+                            Text("always shown").font(.system(size: 10))
+                                .foregroundColor(Theme.mutedFg)
+                        })
+                }
+            } else {
+                // An explained refusal, not a silent no-op (P19 review):
+                // kind-scoped rows need a kind to scope to.
+                deferredRow(
+                    icon: "eye.slash", label: "Hide / core per kind", detail: "no kind",
+                    help: "This object carries no kind — stamp a type first; per-kind visibility hangs off it.")
             }
             PopRow(selected: false, action: { toggleHideWhenEmpty() }) {
                 AnyView(
@@ -885,18 +907,20 @@ struct RowMenuPopover: View {
         PropertyActions.hideOnKind(model: model, def: spec.property, kind: kind)
     }
 
+    private func toggleCoreOnThisKind() {
+        onDone()
+        guard let kindName = entity.kinds.first,
+            let kind = (model.snap?.kinds ?? []).first(where: { $0.name == kindName })
+        else { return }
+        PropertyActions.toggleCoreOnKind(model: model, def: spec.property, kind: kind)
+    }
+
     private func editName() {
         onDone()
-        Dialogs.shared.prompt(
-            "Rename property",
-            message: "One property, vault-wide — every object using it follows.",
-            initial: spec.property.name, confirmLabel: "Rename"
-        ) { name in
-            guard let name = name?.trimmingCharacters(in: .whitespaces).lowercased(),
-                !name.isEmpty, name != spec.property.name
-            else { return }
-            model.set(spec.property.id, property: "name", value: name)
-        }
+        // The ONE rename door (shared components law): the collision guard
+        // lives in PropertyActions — two definitions of one name would
+        // corrupt every name-keyed write (P19 review).
+        PropertyActions.rename(model: model, def: spec.property)
     }
 
     private func toggleHideWhenEmpty() {

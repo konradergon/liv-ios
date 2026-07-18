@@ -505,9 +505,12 @@ fn seed_lists(session: &mut Session) -> Result<(), PersistError> {
 /// The assist switch (P19h): ONE backstage `assist` entity whose
 /// `automation` bool gates EVERY clerk proposal — a vault cell, so the
 /// consent travels with the box and every door (shell, CLI) inherits it.
-/// Default ON (today's behavior). Self-guarded on the `automation` property.
+/// Default ON (today's behavior). Self-guarded on the assist ENTITY, never
+/// the property name — a pre-P19 box can carry a foreign `automation`
+/// property (imports mint arbitrary frontmatter keys) and must still get
+/// its switch (the P19 review).
 fn seed_assist(session: &mut Session) -> Result<(), PersistError> {
-    if property_id(session.store(), "automation").is_some() {
+    if clerk::assist_switch(session.store()).is_some() {
         return Ok(());
     }
     let automation = session.allocate_id();

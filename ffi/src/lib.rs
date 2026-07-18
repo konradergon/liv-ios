@@ -145,6 +145,9 @@ struct KindRow {
 struct AssistRow {
     id: Id,
     on: bool,
+    /// The switch property's CURRENT name — the toggle's write target even
+    /// after the definition is renamed (the P19 review; decode Optional).
+    prop: String,
 }
 
 #[derive(Serialize)]
@@ -916,7 +919,13 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     };
 
     let mut seen: Vec<Id> = Vec::new();
-    let inbox = store
+    // The consent gate covers the READ too (P19 review): the sweep goes
+    // quiet when the switch is off, but the .pending sidecar persists —
+    // yesterday's queue must not keep proposing over a recorded opt-out.
+    let inbox = if !lotus_services::clerk::assist_enabled(store) {
+        Vec::new()
+    } else {
+        store
         .pending()
         .iter()
         .filter_map(|p| {
@@ -944,7 +953,8 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                 commands: proposal_commands(store, p),
             })
         })
-        .collect();
+        .collect()
+    };
 
     let properties = build_properties(store);
 
@@ -1039,20 +1049,9 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .collect();
     // Deterministic order — the cache-parity test compares snapshots byte-wise.
     kinds.sort_by_key(|k| k.id);
-    let assist = {
-        let automation = property_id(store, "automation");
-        store
-            .entities()
-            .find(|e| {
-                !e.trashed
-                    && matches!(e.get(props::NAME), Some(Value::Text(n)) if n == "assist")
-                    && automation.map(|p| e.get(p).is_some()) == Some(true)
-            })
-            .map(|e| AssistRow {
-                id: e.id,
-                on: lotus_services::clerk::assist_enabled(store),
-            })
-    };
+    let assist = lotus_services::clerk::assist_switch(store).map(|(entity, prop, on)| {
+        AssistRow { id: entity, on, prop: reference_name(store, prop) }
+    });
 
     Snapshot {
         today,
@@ -2377,9 +2376,16 @@ pub unsafe extern "C" fn lotus_rename_value_at(
         return -1;
     };
     with_box(path, -1, move |session| {
+        use lotus_services::content::WriteError;
         match lotus_services::content::rename_value(session, property, old, new) {
             Ok(count) => (count as i64, Committed::Wrote),
-            Err(_) => (-1, Committed::Read),
+            // A refusal never touched the store: the cache survives (Read).
+            // A persist failure leaves the MEMORY store one committed txn
+            // ahead of the disk — caching that serves a phantom rename and
+            // commits later writes onto a torn tail (the P19 review's high):
+            // Failed evicts.
+            Err(WriteError::Refused(_)) => (-1, Committed::Read),
+            Err(_) => (-1, Committed::Failed),
         }
     })
 }
@@ -2403,9 +2409,47 @@ pub unsafe extern "C" fn lotus_add_option_at(
         return 0;
     };
     with_box(path, 0, move |session| {
+        use lotus_services::content::WriteError;
         match lotus_services::content::add_option(session, property, name) {
-            Ok(id) => (id, Committed::Wrote),
-            Err(_) => (0, Committed::Read),
+            // The idempotent hit committed nothing — Read, or every re-add
+            // triggers a needless re-sweep (the create-or-return pattern).
+            Ok((id, created)) => (id, if created { Committed::Wrote } else { Committed::Read }),
+            Err(WriteError::Refused(_)) => (0, Committed::Read),
+            Err(_) => (0, Committed::Failed),
+        }
+    })
+}
+
+/// Toggle one kind's reference cell on a definition's display-attribute
+/// property ("hide-on-kind" / "core-on-kind") — additive PER KIND (P19
+/// review: `set` replaces every cell, un-hiding the other kinds). Returns
+/// 1 changed, 0 no-op, -1 refused.
+///
+/// Additive verb (boundary rule): with_box + Committed, tested, flagged.
+///
+/// # Safety
+/// `path` and `property` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_kind_flag_at(
+    path: *const c_char,
+    def: u64,
+    property: *const c_char,
+    kind: u64,
+    on: i32,
+) -> i32 {
+    if property.is_null() {
+        return -1;
+    }
+    let Ok(property) = CStr::from_ptr(property).to_str() else {
+        return -1;
+    };
+    with_box(path, -1, move |session| {
+        use lotus_services::content::WriteError;
+        match lotus_services::content::toggle_kind_ref(session, def, property, kind, on != 0) {
+            Ok(true) => (1, Committed::Wrote),
+            Ok(false) => (0, Committed::Read),
+            Err(WriteError::Refused(_)) => (-1, Committed::Read),
+            Err(_) => (-1, Committed::Failed),
         }
     })
 }
@@ -3528,6 +3572,56 @@ mod tests {
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
         unsafe { lotus_string_free(raw) };
         assert_eq!(task_offer.as_array().unwrap().len(), 3);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn assist_off_silences_the_persisted_queue_and_prop_follows_a_rename() {
+        // P19 review: (1) the .pending sidecar outlives the sweep — the
+        // snapshot's inbox must go quiet the moment the switch is off;
+        // (2) assist.prop carries the switch property's CURRENT name so the
+        // toggle keeps a write target after an ordinary definition rename.
+        let (path, c_path) = fresh_box("lotus_ffi_assist_gate");
+        let text = CString::new("kickoff friday").unwrap();
+        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(
+            !snap["inbox"].as_array().unwrap().is_empty(),
+            "the frozen-string-shaped capture should propose"
+        );
+        let assist = snap["assist"]["id"].as_u64().unwrap();
+        assert_eq!(snap["assist"]["prop"], "automation");
+
+        // OFF: the queue reads empty even though .pending persists.
+        let prop = CString::new("automation").unwrap();
+        let off = CString::new("false").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), assist, prop.as_ptr(), off.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["inbox"].as_array().unwrap().is_empty(), "off means SILENCE");
+        assert_eq!(snap["assist"]["on"], false);
+
+        // Rename the automation DEFINITION through the ordinary door: the
+        // gate holds and the row advertises the new write target.
+        let def = snap["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "automation")
+            .and_then(|p| p["id"].as_u64())
+            .expect("the automation definition rides the catalog");
+        let name_prop = CString::new("name").unwrap();
+        let new_name = CString::new("autopilot").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), def, name_prop.as_ptr(), new_name.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert!(snap["inbox"].as_array().unwrap().is_empty(), "the rename must not re-enable");
+        assert_eq!(snap["assist"]["on"], false);
+        assert_eq!(snap["assist"]["prop"], "autopilot");
         cleanup(&path);
     }
 

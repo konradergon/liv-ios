@@ -176,6 +176,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
+        let settingsItem = appMenu.addItem(
+            withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
             withTitle: "Hide Liv", action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h")
@@ -267,6 +271,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     @objc private func replayTour() {
         window?.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
+    }
+
+    @objc private func openSettings() {
+        window?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: Notification.Name("lotus.openSettings"), object: nil)
     }
 
     @objc private func goHome() {
@@ -441,21 +450,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
         var keyCode = UInt32(kVK_Space)
         var modifiers = UInt32(controlKey | optionKey)
-        if let saved = UserDefaults.standard.dictionary(forKey: "app.capture.hotkey.v1"),
-            let code = saved["keyCode"] as? Int,
-            let mods = saved["modifiers"] as? Int
-        {
-            keyCode = UInt32(code)
-            modifiers = UInt32(mods)
+        if let saved = UserDefaults.standard.dictionary(forKey: "app.capture.hotkey.v1") {
+            // Total validation, the keymap's own rule (P19 review): a
+            // negative/oversized value would TRAP in UInt32(_:) — a launch
+            // crash loop. A corrupted pref self-heals to the default.
+            if let code = saved["keyCode"] as? Int,
+                let mods = saved["modifiers"] as? Int,
+                let validCode = UInt32(exactly: code),
+                let validMods = UInt32(exactly: mods)
+            {
+                keyCode = validCode
+                modifiers = validMods
+            } else {
+                NSLog("lotus: app.capture.hotkey.v1 malformed — back on ⌃⌥Space")
+                UserDefaults.standard.removeObject(forKey: "app.capture.hotkey.v1")
+            }
         }
         let hotKeyID = EventHotKeyID(signature: OSType(0x4C4F_5453), id: 1)  // "LOTS"
-        RegisterEventHotKey(
+        let status = RegisterEventHotKey(
             keyCode,
             modifiers,
             hotKeyID,
             GetEventDispatcherTarget(),
             0,
             &hotKeyRef)
+        if status != noErr && keyCode != UInt32(kVK_Space) {
+            // The saved chord can't register (stale key code from another
+            // keyboard, say) — fall back rather than launch capture-less.
+            NSLog("lotus: capture hotkey rejected (\(status)) — back on ⌃⌥Space")
+            UserDefaults.standard.removeObject(forKey: "app.capture.hotkey.v1")
+            RegisterEventHotKey(
+                UInt32(kVK_Space), UInt32(controlKey | optionKey), hotKeyID,
+                GetEventDispatcherTarget(), 0, &hotKeyRef)
+        }
     }
 }
 

@@ -76,6 +76,21 @@ let settingsEntries: [SettingEntry] = [
         vaultScoped: false, kind: "radio", keywords: "startup launch open today continue workspace"),
 ]
 
+/// Backstage plumbing definitions (display attributes, the consent switch):
+/// real cells, but never user vocabulary — the definitions table and the
+/// settings search must not offer Rename/Retype on the machinery the
+/// renames themselves run on (the P19 review). The assist switch property
+/// is matched by its CURRENT name via `snap.assist?.prop`.
+let plumbingProperties: Set<String> = [
+    "order", "hue", "completes", "for-type", "icon", "digit-key", "hidden",
+    "hide-when-empty", "hide-on-kind", "core-on-kind", "default-status",
+    "parent", "automation",
+]
+
+func isPlumbing(_ name: String, model: BoxModel) -> Bool {
+    plumbingProperties.contains(name) || model.snap?.assist?.prop == name
+}
+
 // MARK: - the overlay
 
 struct SettingsOverlay: View {
@@ -123,7 +138,7 @@ struct SettingsOverlay: View {
         }
         // The live pool: property definitions ARE objects — searched as such.
         for property in model.snap?.properties ?? []
-        where property.name.lowercased().contains(needle) {
+        where property.name.lowercased().contains(needle) && !isPlumbing(property.name, model: model) {
             out.append(
                 Hit(
                     id: "prop.\(property.id)", label: property.name,
@@ -161,6 +176,10 @@ struct SettingsOverlay: View {
                     .strokeBorder(Theme.border))
             .shadow(color: .black.opacity(0.4), radius: 30, y: 10)
             .padding(30)
+            // Focus can wander off the search field (a toggle, a secure
+            // field): Esc anywhere inside the card still closes (P19
+            // review) — recorders consume their own Esc while recording.
+            .onExitCommand { dismiss() }
         }
         .onAppear { searchFocused = true }
     }
@@ -180,9 +199,18 @@ struct SettingsOverlay: View {
                         .onSubmit { jump() }
                         .onExitCommand {
                             // Esc layers: the dropdown clears first, then the
-                            // overlay closes.
-                            if query.isEmpty { dismiss() } else { query = "" }
+                            // overlay closes. Facets die with the query — a
+                            // silent leftover filter empties later searches
+                            // (the P19 review).
+                            if query.isEmpty {
+                                dismiss()
+                            } else {
+                                query = ""
+                                facetInclude = []
+                                facetExclude = []
+                            }
                         }
+                        .onChange(of: query) { highlighted = 0 }
                         .onKeyPress(.downArrow) {
                             highlighted = min(highlighted + 1, max(0, hits.count - 1))
                             return .handled
@@ -262,9 +290,25 @@ struct SettingsOverlay: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    Text("1–6 filter by group · ⏎ jump")
-                        .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
-                        .padding(.horizontal, 11).padding(.vertical, 4)
+                    HStack(spacing: 5) {
+                        Text("1–6 filter by group · ⏎ jump")
+                            .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+                        if !facetInclude.isEmpty || !facetExclude.isEmpty {
+                            ForEach(SettingsGroup.allCases, id: \.rawValue) { group in
+                                if facetInclude.contains(group) {
+                                    Text("+" + group.label).font(.system(size: 9))
+                                        .foregroundColor(Theme.accent)
+                                } else if facetExclude.contains(group) {
+                                    Text("−" + group.label).font(.system(size: 9))
+                                        .foregroundColor(Theme.mutedFg)
+                                        .strikethrough()
+                                }
+                            }
+                            Text("· Esc clears").font(.system(size: 9))
+                                .foregroundColor(Theme.mutedFg.opacity(0.8))
+                        }
+                    }
+                    .padding(.horizontal, 11).padding(.vertical, 4)
                 }
             }
             .frame(width: 400)
@@ -289,6 +333,9 @@ struct SettingsOverlay: View {
 
     private func jump() {
         let ordered = hits
+        // The highlight can outlive a shrinking result list — clamp, never
+        // hand a visible-results ⏎ to the vault (the P19 review).
+        let highlighted = min(self.highlighted, ordered.count - 1)
         guard ordered.indices.contains(highlighted) else {
             // 0 results: hand the query to the vault's one engine.
             if !query.isEmpty {
@@ -621,7 +668,21 @@ struct KeyRecorder: View {
             if event.modifierFlags.contains(.option) { carbon |= optionKey }
             if event.modifierFlags.contains(.command) { carbon |= cmdKey }
             if event.modifierFlags.contains(.shift) { carbon |= shiftKey }
-            guard carbon != 0 else { return nil }  // a bare key can't be global
+            // Shift alone is not a chord: a ⇧-only GLOBAL hotkey eats
+            // capital letters in every app on the Mac (the P19 review).
+            let strong = event.modifierFlags.intersection([.control, .option, .command])
+            guard carbon != 0, !strong.isEmpty else {
+                refuse("add ⌃, ⌥ or ⌘ — shift alone would eat capitals")
+                return nil
+            }
+            // The brick-proof pair stays reachable system-wide too.
+            let chars = event.charactersIgnoringModifiers ?? ""
+            if (strong == [.command] && chars == ",")
+                || (strong == [.command, .option] && chars.lowercased() == "z")
+            {
+                refuse("that chord is reserved — it always answers in Liv")
+                return nil
+            }
             let label = KeyRecorder.chord(
                 flags: event.modifierFlags, key: event.charactersIgnoringModifiers ?? "?")
             UserDefaults.standard.set(
@@ -643,6 +704,15 @@ struct KeyRecorder: View {
             NSEvent.removeMonitor(monitor)
         }
         monitor = nil
+    }
+
+    /// An explained refusal in the recorder's own slot — never a beep-only.
+    private func refuse(_ why: String) {
+        stop()
+        display = why
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            if display == why { display = KeyRecorder.currentDisplay() }
+        }
     }
 
     static func currentDisplay() -> String {
@@ -682,15 +752,22 @@ struct VocabularyPanel: View {
                 definitionsTable
                 shelves
                 statusTable
-                if let toast {
-                    Text(toast)
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7).fill(Theme.accent.opacity(0.13)))
-                }
             }
             .padding(.bottom, 10)
+        }
+        // Pinned to the visible panel — a toast at the scroll tail is
+        // off-screen exactly when the renamed row was near the top (P19
+        // review).
+        .overlay(alignment: .bottom) {
+            if let toast {
+                Text(toast)
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7).fill(Theme.panel))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.accent.opacity(0.4)))
+            }
         }
     }
 
@@ -704,8 +781,9 @@ struct VocabularyPanel: View {
     // MARK: 19e — the definitions table (spine first, customs last)
 
     private var definitionsTable: some View {
-        let spine = properties.filter { $0.seeded ?? false }
-        let custom = properties.filter { !($0.seeded ?? false) }
+        let visible = properties.filter { !isPlumbing($0.name, model: model) }
+        let spine = visible.filter { $0.seeded ?? false }
+        let custom = visible.filter { !($0.seeded ?? false) }
         return VStack(alignment: .leading, spacing: 1) {
             HStack {
                 Text("PROPERTY DEFINITIONS")
@@ -770,8 +848,17 @@ struct VocabularyPanel: View {
                 Button("Icon…") { PropertyActions.setIcon(model: model, def: def) }
                 Menu("Hide on kind") {
                     ForEach(model.snap?.kinds ?? []) { kind in
-                        Button(kind.name) {
+                        Button(kind.name + ((def.hideOnKinds ?? []).contains(kind.name) ? " ✓" : "")) {
                             PropertyActions.hideOnKind(model: model, def: def, kind: kind)
+                        }
+                    }
+                }
+                Menu("Core on kind") {
+                    // The 19e core star: pinned to the kind's panel, shown
+                    // even when empty.
+                    ForEach(model.snap?.kinds ?? []) { kind in
+                        Button(kind.name + ((def.coreOnKinds ?? []).contains(kind.name) ? " ★" : "")) {
+                            PropertyActions.toggleCoreOnKind(model: model, def: def, kind: kind)
                         }
                     }
                 }
@@ -844,7 +931,11 @@ struct VocabularyPanel: View {
 
     @ViewBuilder
     private func shelfRows(_ property: PropertyRow) -> some View {
-        let vault = property.options.filter { ($0.count ?? 0) > 0 && !$0.isHidden }
+        // The partition is seeded-ness, not usage: a user-born option with
+        // zero carriers is still the user's vocabulary and must land on a
+        // shelf, or "+ option" looks dead (the P19 review). `seeded` is
+        // already seeded-AND-unused on the wire.
+        let vault = property.options.filter { !($0.seeded ?? false) && !$0.isHidden }
         let seeded = property.options.filter { ($0.seeded ?? false) && !$0.isHidden }
         let hidden = property.options.filter { $0.isHidden }
         VStack(alignment: .leading, spacing: 4) {
@@ -937,7 +1028,7 @@ struct VocabularyPanel: View {
                 if count >= 0 {
                     flash("Renamed on \(count) object\(count == 1 ? "" : "s") — ⌘⌥Z undoes.")
                 } else {
-                    flash("The rename was refused.")
+                    flash("The rename didn't commit — refused, or the box is busy. Try again.")
                 }
             }
         }
@@ -983,6 +1074,13 @@ struct VocabularyPanel: View {
                 .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
                 .foregroundColor(Theme.accent)
             }
+            statusRows(options)
+            retiredRows
+        }
+    }
+
+    @ViewBuilder
+    private func statusRows(_ options: [OptionRow]) -> some View {
             ForEach(options) { option in
                 HStack(spacing: 8) {
                     StatusDot(option: option, statusName: option.name)
@@ -1022,6 +1120,38 @@ struct VocabularyPanel: View {
                 }
                 .padding(.vertical, 1)
             }
+    }
+
+    /// Retire is reversible or it isn't retire (P19 review): the hidden
+    /// status options stay reachable here, mirroring the shelves' Hidden.
+    @ViewBuilder
+    private var retiredRows: some View {
+        let retired = (model.property(named: "status")?.options ?? []).filter { option in
+            guard option.isHidden else { return false }
+            let scoped = option.forTypes ?? []
+            return scoped.isEmpty || scoped.contains(statusKind)
+        }
+        if !retired.isEmpty {
+            DisclosureGroup {
+                ForEach(retired) { option in
+                    HStack(spacing: 8) {
+                        Text(option.name).font(.system(size: 11.5))
+                            .foregroundColor(Theme.mutedFg)
+                        Spacer(minLength: 4)
+                        Button("Restore") {
+                            model.set(option.id, property: "hidden", value: "false")
+                        }
+                        .buttonStyle(.plain).font(.system(size: 10))
+                        .foregroundColor(Theme.accent)
+                    }
+                    .padding(.vertical, 1)
+                }
+            } label: {
+                Text("RETIRED · \(retired.count)")
+                    .font(.system(size: 8.5, weight: .bold)).kerning(0.4)
+                    .foregroundColor(Theme.mutedFg.opacity(0.8))
+            }
+            .font(.system(size: 10))
         }
     }
 
@@ -1038,6 +1168,8 @@ struct VocabularyPanel: View {
             model.renameValue(property: "status", old: option.name, new: name) { count in
                 if count >= 0 {
                     flash("Renamed on \(count) — the board re-keyed. ⌘⌥Z undoes.")
+                } else {
+                    flash("The rename didn't commit — refused, or the box is busy. Try again.")
                 }
             }
         }
@@ -1063,6 +1195,9 @@ struct ShortcutsPanel: View {
     @AppStorage("app.inspector.hints.v1") private var digitHints = true
     @State private var recordingId: String?
     @State private var pendingSteal: (id: String, chord: String)?
+    /// The digit-key steal handshake: assign the same key to the same
+    /// definition twice and it moves (press-again-to-steal, prompt-shaped).
+    @State private var pendingDigitSteal: (def: UInt64, key: String)?
     @State private var monitor: Any?
     @State private var toast: String?
     /// Bumped after every keymap write so the table re-reads the registry.
@@ -1081,15 +1216,18 @@ struct ShortcutsPanel: View {
                 }
                 digitSection
                 chordSection
-                if let toast {
-                    Text(toast)
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 9).padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7).fill(Theme.accent.opacity(0.13)))
-                }
             }
             .padding(.bottom, 10)
+        }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                Text(toast)
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.panel))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.accent.opacity(0.4)))
+            }
         }
         .onDisappear { stopRecording() }
     }
@@ -1160,9 +1298,20 @@ struct ShortcutsPanel: View {
             if let holder = (model.snap?.properties ?? []).first(where: {
                 $0.digitKey?.lowercased() == key && $0.id != def.id
             }) {
-                flash("\(key.uppercased()) is on \(holder.name) — clear it there first.")
+                // Press-again-to-steal, the chord table's grammar (P19
+                // review): the same assignment repeated moves the key.
+                if pendingDigitSteal?.def == def.id && pendingDigitSteal?.key == key {
+                    pendingDigitSteal = nil
+                    model.set(holder.id, property: "digit-key", value: "")
+                    model.set(def.id, property: "digit-key", value: key)
+                    flash("\(key.uppercased()) moved from \(holder.name) to \(def.name) — two cells, ⌘⌥Z twice undoes.")
+                } else {
+                    pendingDigitSteal = (def.id, key)
+                    flash("\(key.uppercased()) is on \(holder.name) — assign it again to steal.")
+                }
                 return
             }
+            pendingDigitSteal = nil
             model.set(def.id, property: "digit-key", value: key)
             flash("\(def.name) answers to \(key.uppercased()) — everywhere, one cell.")
         }
@@ -1254,13 +1403,7 @@ struct ShortcutsPanel: View {
     }
 
     private func chordLabel(_ hotkey: Hotkey?) -> String {
-        guard let hotkey else { return "—" }
-        var out = ""
-        if hotkey.modifiers.contains(.ctrl) { out += "⌃" }
-        if hotkey.modifiers.contains(.alt) { out += "⌥" }
-        if hotkey.modifiers.contains(.shift) { out += "⇧" }
-        if hotkey.modifiers.contains(.mod) { out += "⌘" }
-        return out + (hotkey.key == " " ? "Space" : hotkey.key.uppercased())
+        hotkey?.label ?? "—"
     }
 
     private func startRecording(_ id: String) {
@@ -1276,9 +1419,29 @@ struct ShortcutsPanel: View {
             if event.modifierFlags.contains(.shift) { mods.insert(.shift) }
             if event.modifierFlags.contains(.option) { mods.insert(.alt) }
             if event.modifierFlags.contains(.control) { mods.insert(.ctrl) }
-            guard !mods.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased(),
-                !key.isEmpty
-            else { return nil }
+            guard !mods.isEmpty else { return nil }
+            // Speak the matcher's language (P19 review): function keys type
+            // private-use glyphs and control keys type control characters —
+            // stored raw they render garbled AND never collide with the
+            // named defaults, so conflicts() misses real double-bindings.
+            let named: [UInt16: String] = [
+                123: "ArrowLeft", 124: "ArrowRight", 125: "ArrowDown", 126: "ArrowUp",
+                36: "Return", 49: " ", 120: "F2",
+                50: "`", 39: "'", 43: ",", 47: ".", 33: "[", 30: "]",
+            ]
+            let key: String
+            if let name = named[event.keyCode] {
+                key = name
+            } else if let chars = event.charactersIgnoringModifiers?.lowercased(),
+                let scalar = chars.unicodeScalars.first, chars.count == 1,
+                scalar.value >= 0x20, !(0xF700...0xF8FF).contains(scalar.value)
+            {
+                key = chars
+            } else {
+                flash("That key can't be a chord here — letters, digits, punctuation, arrows, Return, Space, F2.")
+                stopRecording()
+                return nil
+            }
             apply(chord: Hotkey(modifiers: mods, key: key), to: id)
             return nil
         }
@@ -1316,11 +1479,20 @@ struct ShortcutsPanel: View {
             return
         }
         registry.setOverride(id, chord)
+        if let holder {
+            // The loser really lets go (P19 review): otherwise the chord
+            // still fires whichever command registered first.
+            registry.setUnbound(holder.id)
+        }
         pendingSteal = nil
         stopRecording()
         epoch += 1
         let label = registry.allCommands.first { $0.id == id }?.label ?? id
-        flash("\(label) → \(chordLabel(chord)) — reset on its row undoes.")
+        if let holder {
+            flash("\(label) → \(chordLabel(chord)) — stolen from \(holder.label), now unbound; reset restores either.")
+        } else {
+            flash("\(label) → \(chordLabel(chord)) — reset on its row undoes.")
+        }
     }
 
     private func stopRecording() {
@@ -1341,6 +1513,7 @@ struct AssistPanel: View {
     @ObservedObject var model: BoxModel
     @State private var keyDraft = ""
     @State private var keyStored = AssistPanel.keychainHas()
+    @State private var keyError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1351,8 +1524,11 @@ struct AssistPanel: View {
                         isOn: Binding(
                             get: { assist.on },
                             set: { on in
+                                // The wire carries the switch property's
+                                // CURRENT name — the write target survives a
+                                // definition rename (P19 review).
                                 model.set(
-                                    assist.id, property: "automation",
+                                    assist.id, property: assist.prop ?? "automation",
                                     value: on ? "true" : "false")
                             })
                     )
@@ -1382,12 +1558,24 @@ struct AssistPanel: View {
                             .background(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border))
                         Button("Store") {
                             guard !keyDraft.isEmpty else { return }
-                            AssistPanel.keychainStore(keyDraft)
-                            keyDraft = ""
-                            keyStored = true
+                            // SecItemAdd can refuse (locked keychain, say):
+                            // the draft survives and the row says so — never
+                            // an optimistic "stored" over a lost key (P19
+                            // review).
+                            if AssistPanel.keychainStore(keyDraft) {
+                                keyDraft = ""
+                                keyStored = true
+                                keyError = nil
+                            } else {
+                                keyError = "The Keychain refused — the key was NOT stored."
+                            }
                         }
                         .buttonStyle(.plain).font(.system(size: 11))
                         .foregroundColor(Theme.accent)
+                        if let keyError {
+                            Text(keyError).font(.system(size: 10))
+                                .foregroundColor(Color(nsColor: .systemRed).opacity(0.85))
+                        }
                     }
                 }
             }
@@ -1396,7 +1584,7 @@ struct AssistPanel: View {
             // The fixed contract — the one amber outside the AI surfaces.
             VStack(alignment: .leading, spacing: 3) {
                 Text("✦ THE CONTRACT").font(.system(size: 9, weight: .bold)).kerning(0.5)
-                Text("AI only ever proposes — accepting runs the exact seam a manual edit runs. Amber marks every AI container. Dismissals are remembered by a deterministic id and never re-asked. ⌘Z never expires.")
+                Text("AI only ever proposes — accepting runs the exact seam a manual edit runs. Amber marks every AI container. Dismissals are remembered by a deterministic id and never re-asked. ⌘⌥Z never expires.")
                     .font(.system(size: 10.5))
             }
             .foregroundColor(Theme.warning)
@@ -1421,14 +1609,15 @@ struct AssistPanel: View {
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    static func keychainStore(_ key: String) {
+    @discardableResult
+    static func keychainStore(_ key: String) -> Bool {
         keychainClear()
         let add: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecValueData as String: Data(key.utf8),
         ]
-        SecItemAdd(add as CFDictionary, nil)
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
     static func keychainClear() {

@@ -133,10 +133,26 @@ final class CommandRegistry {
     /// map (defaults win + one log line) — a corrupted pref can never brick
     /// keyboard access.
     private var overrides: [String: Hotkey] = [:]
+    /// Commands whose chord was STOLEN (P19 review): the loser must really
+    /// let go, or the winner fires only when insertion order favors it.
+    /// Persisted in the same map as {mods: 0, key: ""}.
+    private var unbound: Set<String> = []
 
     /// The chords no override may touch: settings and undo must always
     /// answer (Esc is not a command; menus are AppKit's).
     static let unstealable: Set<String> = ["app:open-settings", "lotus:undo-last-change"]
+    /// Their fixed chords, known before any command registers — load-time
+    /// validation rejects overrides that would shadow them (P19 review).
+    static let unstealableChords: [Hotkey] = [
+        Hotkey(modifiers: [.mod], key: ","),
+        Hotkey(modifiers: [.mod, .alt], key: "z"),
+    ]
+    /// Deliberate alias pairs in the stock map — same chord on purpose,
+    /// disambiguated by enabled(): never a conflict to warn about.
+    static let sanctionedAliases: [Set<String>] = [
+        ["tab:new", "workspace:new-tab"],
+        ["inspector:close", "app:exit-focus"],
+    ]
 
     func register(_ command: CommandDef) {
         if commands[command.id] == nil {
@@ -155,16 +171,20 @@ final class CommandRegistry {
 
     /// The default with the override applied — what actually fires.
     func effectiveBinding(for id: String) -> Hotkey? {
-        overrides[id] ?? commands[id]?.binding
+        if unbound.contains(id) { return nil }
+        return overrides[id] ?? commands[id]?.binding
     }
 
-    func hasOverride(_ id: String) -> Bool { overrides[id] != nil }
+    func hasOverride(_ id: String) -> Bool {
+        overrides[id] != nil || unbound.contains(id)
+    }
 
     /// Every registered command, insertion order — the editor's table.
     var allCommands: [CommandDef] { order.compactMap { commands[$0] } }
 
     func setOverride(_ id: String, _ hotkey: Hotkey?) {
         guard !Self.unstealable.contains(id) else { return }
+        unbound.remove(id)
         if let hotkey {
             overrides[id] = hotkey
         } else {
@@ -173,38 +193,71 @@ final class CommandRegistry {
         persistOverrides()
     }
 
+    /// Unbind a command outright — the steal flow's other half (P19
+    /// review): the stolen-from chord must go silent, not linger to shadow.
+    func setUnbound(_ id: String) {
+        guard !Self.unstealable.contains(id) else { return }
+        overrides.removeValue(forKey: id)
+        unbound.insert(id)
+        persistOverrides()
+    }
+
     func resetOverrides() {
         overrides = [:]
+        unbound = []
         UserDefaults.standard.removeObject(forKey: "app.keymap.v1")
     }
 
     private func persistOverrides() {
-        let raw = overrides.mapValues { hotkey in
+        var raw = overrides.mapValues { hotkey in
             ["mods": hotkey.modifiers.rawValue, "key": hotkey.key] as [String: Any]
+        }
+        for id in unbound {
+            raw[id] = ["mods": 0, "key": ""]
         }
         UserDefaults.standard.set(raw, forKey: "app.keymap.v1")
     }
 
     func loadOverrides() {
         overrides = [:]
+        unbound = []
+        func discard() {
+            // Total validation: one bad entry discards the whole map.
+            NSLog("lotus: app.keymap.v1 malformed — booting on default shortcuts")
+            overrides = [:]
+            unbound = []
+            UserDefaults.standard.removeObject(forKey: "app.keymap.v1")
+        }
         guard let raw = UserDefaults.standard.dictionary(forKey: "app.keymap.v1") else { return }
         var parsed: [String: Hotkey] = [:]
+        var parsedUnbound: Set<String> = []
         for (id, value) in raw {
             guard let dict = value as? [String: Any],
                 let mods = dict["mods"] as? Int,
                 let key = dict["key"] as? String,
-                !key.isEmpty,
                 !Self.unstealable.contains(id)
             else {
-                // Total validation: one bad entry discards the whole map.
-                NSLog("lotus: app.keymap.v1 malformed — booting on default shortcuts")
-                overrides = [:]
-                UserDefaults.standard.removeObject(forKey: "app.keymap.v1")
-                return
+                return discard()
             }
-            parsed[id] = Hotkey(modifiers: Hotkey.Modifiers(rawValue: mods), key: key)
+            if key.isEmpty {
+                // The unbound sentinel — a stolen-from command let go.
+                guard mods == 0 else { return discard() }
+                parsedUnbound.insert(id)
+                continue
+            }
+            let hotkey = Hotkey(modifiers: Hotkey.Modifiers(rawValue: mods), key: key)
+            // A persisted entry must never shadow the brick-proof pair
+            // either (P19 review) — the recorder refuses these live, so a
+            // matching entry can only be hand-edited or corrupt.
+            if Self.unstealableChords.contains(where: {
+                $0.modifiers == hotkey.modifiers && $0.key == hotkey.key.lowercased()
+            }) {
+                return discard()
+            }
+            parsed[id] = hotkey
         }
         overrides = parsed
+        unbound = parsedUnbound
     }
 
     /// The pure conflict function (P19g): every effective chord that two
@@ -216,7 +269,13 @@ final class CommandRegistry {
             let chord = "\(binding.modifiers.rawValue)+\(binding.key.lowercased())"
             byChord[chord, default: []].append(id)
         }
-        return byChord.filter { $0.value.count > 1 }
+        return byChord.filter { entry in
+            guard entry.value.count > 1 else { return false }
+            // A group entirely inside one sanctioned alias set is design,
+            // not conflict — the stock map must not boot with a warnline.
+            let members = Set(entry.value)
+            return !Self.sanctionedAliases.contains { members.isSubset(of: $0) }
+        }
     }
 
     func pushCaptureScope(allowing ids: Set<String>) {
@@ -264,6 +323,19 @@ final class CommandRegistry {
             // its own field and monitor handle typing / arrows / Enter /
             // Escape; no global command may fire behind it.
             if self.overlayActive() {
+                // The brick-proof pair still answers over any overlay (P19
+                // review: rename toasts in Settings advertise the undo chord
+                // — it must work right there). Both are modifier chords no
+                // overlay text field could be typing.
+                for id in Self.unstealable {
+                    guard let command = self.commands[id],
+                        let binding = self.effectiveBinding(for: id),
+                        binding.matches(event),
+                        command.enabled()
+                    else { continue }
+                    command.action()
+                    return nil
+                }
                 return event
             }
             for id in self.order {

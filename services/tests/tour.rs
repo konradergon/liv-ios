@@ -88,3 +88,110 @@ fn the_automation_switch_gates_every_proposal() {
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
 }
+
+#[test]
+fn renaming_the_automation_definition_keeps_the_gate() {
+    // The P19 review's high: the automation DEFINITION rides the ordinary
+    // definitions catalog, so an ordinary rename must not resurrect the
+    // clerk over a recorded OFF (consent keys on the entity, not the name).
+    let path = std::env::temp_dir().join("lotus_assist_rename.log");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+    let mut session = Session::open(&path).unwrap();
+    lotus_services::seed_if_fresh(&mut session).unwrap();
+
+    let store = session.store();
+    let automation_def = lotus_services::property_id(store, "automation").unwrap();
+    let assist = store
+        .entities()
+        .find(|e| {
+            matches!(e.get(props::NAME), Some(Value::Text(n)) if n == "assist")
+                && e.get(automation_def).is_some()
+        })
+        .map(|e| e.id)
+        .unwrap();
+
+    lotus_services::content::set_property(&mut session, assist, "automation", "false").unwrap();
+    lotus_services::capture(&mut session, "kickoff friday", DateTime::at(2026, 7, 15, 9, 0))
+        .unwrap();
+    assert!(clerk::sweep(session.store(), DateTime::at(2026, 7, 15, 9, 0)).is_empty());
+
+    // Rename the definition through the ordinary door — the exact write the
+    // shell's Rename… menu performs.
+    session
+        .commit(
+            vec![
+                Command::RemoveCell {
+                    entity: automation_def,
+                    cell: Cell { property: props::NAME, value: Value::text("automation") },
+                },
+                Command::AddCell {
+                    entity: automation_def,
+                    cell: Cell { property: props::NAME, value: Value::text("autopilot") },
+                },
+            ],
+            "rename definition",
+            Author::User,
+        )
+        .unwrap();
+    assert!(
+        !clerk::assist_enabled(session.store()),
+        "renaming the automation definition re-enabled the clerk over an explicit OFF"
+    );
+    assert!(clerk::sweep(session.store(), DateTime::at(2026, 7, 15, 9, 0)).is_empty());
+
+    // Retype has the same shape: the declared kind changes, the Bool cell
+    // on the assist entity does not — the gate must keep reading it.
+    session
+        .commit(
+            vec![
+                Command::RemoveCell {
+                    entity: automation_def,
+                    cell: Cell { property: props::VALUE_KIND, value: Value::text("bool") },
+                },
+                Command::AddCell {
+                    entity: automation_def,
+                    cell: Cell { property: props::VALUE_KIND, value: Value::text("text") },
+                },
+            ],
+            "retype definition",
+            Author::User,
+        )
+        .unwrap();
+    assert!(!clerk::assist_enabled(session.store()));
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+}
+
+#[test]
+fn a_foreign_automation_property_does_not_starve_the_switch() {
+    // A pre-P19 box can carry a user property named `automation` (imports
+    // mint arbitrary frontmatter keys) — the seed must still ship the
+    // switch: the guard keys on the assist ENTITY, never the name.
+    let path = std::env::temp_dir().join("lotus_assist_foreign.log");
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+    let mut session = Session::open(&path).unwrap();
+    lotus_services::content::birth_property(&mut session, "automation", "text").unwrap();
+    lotus_services::seed_if_fresh(&mut session).unwrap();
+
+    let store = session.store();
+    let assists = store
+        .entities()
+        .filter(|e| {
+            !e.trashed
+                && e.has(props::WORKING, &Value::Bool(true))
+                && matches!(e.get(props::NAME), Some(Value::Text(n)) if n == "assist")
+        })
+        .count();
+    assert_eq!(assists, 1, "the foreign automation property starved the assist switch");
+    assert!(clerk::assist_enabled(store), "default ON");
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.declined", path.display()));
+    let _ = std::fs::remove_file(format!("{}.pending", path.display()));
+}

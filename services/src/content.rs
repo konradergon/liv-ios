@@ -761,18 +761,34 @@ pub fn trash_workspace(session: &mut Session, id: Id) -> Result<(), ContentError
 /// Mint an option entity for a select/status property (the shelves' ghost
 /// "+ option", P19): NAME + WORKING + an OPTIONS reference on the property,
 /// one commit. Idempotent — an existing option of that name is returned.
-pub fn add_option(session: &mut Session, property: Id, name: &str) -> Result<Id, WriteError> {
+/// Returns `(id, created)` — `created` is false on the idempotent hit, so
+/// the FFI can tag Read (nothing committed) instead of a phantom Wrote.
+pub fn add_option(
+    session: &mut Session,
+    property: Id,
+    name: &str,
+) -> Result<(Id, bool), WriteError> {
     let store = session.store();
     let property = store.resolve(property);
-    store
+    let def = store
         .get(property)
         .ok_or_else(|| WriteError::Refused(format!("no property #{property}")))?;
+    // `get` answers for trashed entities too (the standing gotcha) — a
+    // retired definition takes no new vocabulary.
+    if def.trashed {
+        return Err(WriteError::Refused("that property is trashed".into()));
+    }
+    // Kind discipline: options belong to select/status properties only.
+    match def.get(props::VALUE_KIND) {
+        Some(Value::Text(kind)) if kind == "select" || kind == "status" => {}
+        _ => return Err(WriteError::Refused("only a select property takes options".into())),
+    }
     let name = name.trim();
     if name.is_empty() {
         return Err(WriteError::Refused("an option needs a name".into()));
     }
     if let Some(existing) = find_option(store, property, name) {
-        return Ok(existing);
+        return Ok((existing, false));
     }
     let id = session.allocate_id();
     let commands = vec![
@@ -793,7 +809,51 @@ pub fn add_option(session: &mut Session, property: Id, name: &str) -> Result<Id,
     session
         .commit(commands, "new option", Author::User)
         .map_err(|e| WriteError::Persist(e.to_string()))?;
-    Ok(id)
+    Ok((id, true))
+}
+
+/// Toggle one KIND reference on a definition's display-attribute property
+/// ("hide-on-kind" / "core-on-kind") — additive PER KIND: `set_property`
+/// replaces every cell of a property, so hiding on a second kind through it
+/// silently un-hid the first (the P19 review). One commit; idempotent
+/// no-ops commit nothing. Returns whether anything changed.
+pub fn toggle_kind_ref(
+    session: &mut Session,
+    def: Id,
+    prop_name: &str,
+    kind: Id,
+    on: bool,
+) -> Result<bool, WriteError> {
+    let store = session.store();
+    let def = store.resolve(def);
+    let entity = store
+        .get(def)
+        .filter(|e| !e.trashed)
+        .ok_or_else(|| WriteError::Refused(format!("no definition #{def}")))?;
+    let property = property_id(store, prop_name)
+        .ok_or_else(|| WriteError::Refused(format!("no property named {prop_name}")))?;
+    match store.get(property).and_then(|p| p.get(props::VALUE_KIND)) {
+        Some(Value::Text(k)) if k == "reference" => {}
+        _ => return Err(WriteError::Refused("kind flags live on reference properties".into())),
+    }
+    let kind = store.resolve(kind);
+    if store.get(kind).filter(|e| !e.trashed).is_none() {
+        return Err(WriteError::Refused(format!("no kind #{kind}")));
+    }
+    let present = entity.has(property, &Value::Reference(kind));
+    if present == on {
+        return Ok(false);
+    }
+    let cell = Cell { property, value: Value::Reference(kind) };
+    let command = if on {
+        Command::AddCell { entity: def, cell }
+    } else {
+        Command::RemoveCell { entity: def, cell }
+    };
+    session
+        .commit(vec![command], format!("{prop_name} flag"), Author::User)
+        .map_err(|e| WriteError::Persist(e.to_string()))?;
+    Ok(true)
 }
 
 /// Rename one VALUE everywhere it is carried — ONE grouped transaction, one
@@ -830,7 +890,14 @@ pub fn rename_value(
     match kind.as_str() {
         "text" => {
             let mut rewrites = Vec::new();
-            for entity in store.entities().filter(|e| !e.trashed) {
+            // WORKING entities are name-keyed plumbing (options, types,
+            // definitions) — a vocabulary rename rewrites CARRIERS only,
+            // or `rename_value("name", …)` corrupts the lookups themselves
+            // (the P19 review).
+            for entity in store
+                .entities()
+                .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+            {
                 for cell in entity.cells.iter().filter(|c| c.property == property) {
                     if matches!(&cell.value, Value::Text(t) if t == old) {
                         rewrites.push(entity.id);
@@ -855,6 +922,37 @@ pub fn rename_value(
                 .collect();
         }
         "select" | "status" => {
+            // Same-named options across kinds are the DESIGNED state of
+            // `status` (for-type scoping, no cross-kind dedup) — a rename
+            // keyed only by name cannot pick one, so it refuses, never
+            // guesses (the P19 review).
+            let count_named = |name: &str| -> usize {
+                let wanted = name.to_lowercase();
+                store
+                    .get(property)
+                    .map(|p| {
+                        p.all(props::OPTIONS)
+                            .filter(|v| match v {
+                                Value::Reference(t) => matches!(
+                                    store.get(*t).and_then(|o| o.get(props::NAME)),
+                                    Some(Value::Text(n)) if n.to_lowercase() == wanted
+                                ),
+                                _ => false,
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0)
+            };
+            if count_named(old) > 1 {
+                return Err(WriteError::Refused(format!(
+                    "two kinds share an option named {old} — this rename is ambiguous"
+                )));
+            }
+            if count_named(new) > 1 {
+                return Err(WriteError::Refused(format!(
+                    "two kinds share an option named {new} — this merge is ambiguous"
+                )));
+            }
             let option = find_option(store, property, old).ok_or_else(|| {
                 WriteError::Refused(format!("no option named {old}"))
             })?;

@@ -243,6 +243,8 @@ struct KindRow: Codable, Identifiable, Hashable {
 struct AssistRow: Codable, Hashable {
     let id: UInt64
     let on: Bool
+    /// The switch property's CURRENT name (P19 review) — Optional per H1.
+    let prop: String?
 }
 
 struct PinRow: Codable, Identifiable, Hashable {
@@ -614,6 +616,12 @@ final class BoxModel: ObservableObject {
                 if count >= 0 { self.refresh() }
             }
         }
+    }
+
+    /// Toggle a kind flag ("hide-on-kind" / "core-on-kind") — additive per
+    /// kind; `set` would replace every cell (P19 review).
+    func kindFlag(def: UInt64, property: String, kind: UInt64, on: Bool) {
+        act { lotus_kind_flag_at(self.path, def, property, kind, on ? 1 : 0) >= 0 }
     }
 
     /// Mint an option for a select property (idempotent).
@@ -1284,6 +1292,9 @@ struct WindowChrome: View {
                 importFunnel.reset()  // fresh each open — no re-import of committed items
                 importOpen = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.openSettings"))) { _ in
+                chrome.settingsOpen = true
+            }
             .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
                 exportComposer.reset()
                 exportOpen = true
@@ -1578,15 +1589,19 @@ struct WindowChrome: View {
     /// its view unmounts — a refused flush cancels the switch, exactly
     /// like a lens change. Re-selecting the active surface is a no-op,
     /// not a history entry.
-    private func navigate(to target: Surface) {
-        guard target != chrome.surface else { return }
+    private func navigate(to target: Surface, then: @escaping () -> Void = {}) {
+        guard target != chrome.surface else {
+            then()
+            return
+        }
         closeEditor { ok in
-            guard ok else { return }
+            guard ok else { return }  // refused: the caller's `then` never runs
             chrome.surface = target
             // The old surface's selection must not follow (a selected WIDGET
             // id fed the inspector on Tasks — the review's finding).
             selection = nil
             chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: target, selection: nil))
+            then()
         }
     }
 
@@ -1641,31 +1656,34 @@ struct WindowChrome: View {
     }
 
     /// The tour (P19i): three live moments + the finish strip.
-    @ViewBuilder
     private var tourOverlay: some View {
-        if tourDot >= 0 {
-            TourOverlay(
-                model: model, dot: $tourDot, boxPath: model.path,
-                goTidy: {
-                    inboxLens = .tidy
-                    navigate(to: .inbox)
-                },
-                goHome: { showDesk(.today) },
-                finish: {
-                    TourState.save(done: true, dot: 0)
-                    tourDot = -1
-                })
-            .background(
-                Color.clear.onReceive(
-                    NotificationCenter.default.publisher(for: .lotusReplayTour)
-                ) { _ in })
-        } else {
-            Color.clear
-                .frame(width: 0, height: 0)
-                .onReceive(NotificationCenter.default.publisher(for: .lotusReplayTour)) { _ in
-                    TourState.reset()
-                    tourDot = 0
-                }
+        Group {
+            if tourDot >= 0 {
+                TourOverlay(
+                    model: model, dot: $tourDot, boxPath: model.path,
+                    fresh: model.snap?.everything.isEmpty ?? true,
+                    goTidy: { then in
+                        inboxLens = .tidy
+                        navigate(to: .inbox, then: then)
+                    },
+                    goHome: { showDesk(.today) },
+                    finish: {
+                        TourState.save(done: true, dot: 0, box: model.path)
+                        tourDot = -1
+                    })
+            }
+        }
+        // ONE receiver, alive whatever the dot (P19 review: the split
+        // version made replay a silent no-op mid-tour). Replay also clears
+        // any overlay beneath — a welcome scrim over Settings invites an
+        // Esc that means "close Settings" but reads as "skip the tour".
+        .onReceive(NotificationCenter.default.publisher(for: .lotusReplayTour)) { _ in
+            chrome.settingsOpen = false
+            chrome.switcherOpen = false
+            chrome.searchOpen = false
+            chrome.vaultGraphOpen = false
+            TourState.reset()
+            tourDot = 0
         }
     }
 
@@ -1908,14 +1926,18 @@ struct WindowChrome: View {
                 // tour; a NON-EMPTY box never tours, regardless of prefs.
                 if !tourChecked, let snap {
                     tourChecked = true
+                    // A mid-tour dot belongs to ITS box (P19 review): a
+                    // pref carried from another box neither resumes here
+                    // nor blocks a fresh box's welcome.
+                    let saved = TourState.box == model.path ? TourState.dot : 0
                     if TourState.done {
                         // done — never again
-                    } else if !snap.everything.isEmpty && TourState.dot == 0 {
-                        TourState.save(done: true, dot: 0)
+                    } else if !snap.everything.isEmpty && saved == 0 {
+                        TourState.save(done: true, dot: 0, box: model.path)
                     } else {
                         // Resume at the saved dot, with surface validation:
                         // the assist moment needs its queue, else degrade on.
-                        var dot = TourState.dot
+                        var dot = saved
                         if dot == 2 && snap.inbox.isEmpty { dot = 3 }
                         tourDot = dot
                         if dot == 2 { inboxLens = .tidy; navigate(to: .inbox) }
@@ -3329,7 +3351,7 @@ struct InboxView: View {
                         groupBlock(group)
                     }
                 }
-                Text("Accept is one undo — ⌘Z never expires. Dismiss is remembered by a deterministic id: never re-asked, and not reversed by ⌘Z.")
+                Text("Accept is one undo — ⌘⌥Z never expires. Dismiss is remembered by a deterministic id: never re-asked, and not reversed by ⌘⌥Z.")
                     .font(.system(size: 11)).foregroundColor(Color.secondary.opacity(0.8))
                     .padding(.top, 2)
             }
@@ -5155,7 +5177,9 @@ struct TasksView: View {
         if let prop = model.property(named: "priority") {
             let current = row.cells.first { $0.property == "priority" }?.value ?? ""
             Menu {
-                ForEach(prop.options) { option in
+                // Hidden options leave every picker (the 19f hide
+                // convention — the P19 review found this one still offering).
+                ForEach(prop.options.filter { !$0.isHidden }) { option in
                     Button(option.name.capitalized) {
                         model.set(row.id, property: "priority", value: option.name)
                     }
