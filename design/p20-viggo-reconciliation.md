@@ -492,3 +492,22 @@ editor's title field keeps ISO (it IS the name — the civil face is chrome,
 recorded). **Still open in 20c:** the tab anatomy — content tabs down into
 the pane row, the global lane as true typed containers, locked-tab
 open-routing — the phase's one remaining stateful rework, next chunk.
+
+### 20c.2b — the tab anatomy (as built; 20c closes)
+
+The two-level anatomy landed. The **global row shows CONTAINERS**: an
+Overview pill (the ungrouped set incl. the desk) + one pill per tab group,
+active = canvas-fused (the mockup's melt), padlock when the group carries
+locked members ("only its content opens here"). The **content tabs moved
+down** into the notes center as the 36px row — the whole lane carried
+(clamped widths, +N overflow, width freeze, ⌘⇧T, group bands). The
+container follows the selection; a new tab lands in the ACTIVE container;
+a **locked container refuses foreign opens** and routes them to Overview
+(v0 of the open-affinity — true content-category matching recorded as
+future); a container whose last member closes falls home to Overview; the
+close-neighbor pick stays inside the visible container; the active
+container persists per workspace (v1 sets decode unchanged). Group
+creation (the existing "New tab group" door) now fronts the new container.
+**Recorded:** department tabs beyond Editor containers (Tasks/Library as
+global tabs per the sim) wait until a need shows — the rail is the
+department door; the sim's dept-tag pills ride then.

@@ -1535,14 +1535,17 @@ struct WindowChrome: View {
                     .fixedSize()
             }
             if chrome.surface == .notes {
-                TabStrip(
-                    tabs: tabs, model: model, chrome: chrome,
-                    activate: { tab in activateTab(tab) },
-                    close: { tab in closeTab(tab) },
-                    openNew: { openBlankTab() },
-                    rename: { id in renameEntity(id) })
-                    .frame(maxWidth: .infinity)
-                    .padding(.leading, 4)
+                // P20c.2b: the mockup's two-level anatomy — the global row
+                // shows CONTAINERS (Overview + one pill per tab group); the
+                // content tabs moved down into the notes center.
+                HStack(spacing: 2) {
+                    containerPill(nil, label: "Overview")
+                    ForEach(tabs.groups, id: \.self) { group in
+                        containerPill(group, label: group)
+                    }
+                }
+                .padding(.leading, 4)
+                Spacer(minLength: 0)
             } else {
                 Text("vault-wide tool — the workspace lens does not apply here")
                     .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
@@ -1569,6 +1572,43 @@ struct WindowChrome: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 38)
+    }
+
+    /// One global container pill (P20c.2b): active = canvas fill melting
+    /// into the body below (the mockup's fused tab); a group whose members
+    /// are locked wears the padlock — "only its content opens here".
+    private func containerPill(_ name: String?, label: String) -> some View {
+        let on = tabs.container == name
+        let locked = name.map { g in tabs.tabs.contains { $0.group == g && $0.isLocked } } ?? false
+        return Button {
+            tabs.setContainer(name)
+            syncEditorToActiveTab()
+        } label: {
+            HStack(spacing: 4) {
+                if locked {
+                    Image(systemName: "lock.fill").font(.system(size: 8.5))
+                        .foregroundColor(on ? Theme.text2 : Theme.mutedFg)
+                }
+                Text(label)
+                    .font(.system(size: 12, weight: on ? .semibold : .regular))
+                    .foregroundColor(on ? Theme.foreground : Theme.mutedFg)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .frame(maxWidth: 150)
+            .background(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 9, bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0, topTrailingRadius: 9)
+                    .fill(on ? Theme.canvas : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(
+            locked
+                ? "category-locked container — only \(label) content opens here"
+                : "container — its own content tabs below")
     }
 
     /// "New tab — departments only (object kinds live inside)": v0 routes
@@ -2498,7 +2538,21 @@ struct WindowChrome: View {
         Group {
             switch chrome.surface {
             case .notes:
-                notesBody
+                VStack(spacing: 0) {
+                    // P20c.2b: the CONTENT tab row (the mockup's 36px
+                    // nt-ctabs) — the active container's tabs, all the lane
+                    // mechanics carried (overflow, freeze, ⌘⇧T, groups).
+                    TabStrip(
+                        tabs: tabs, model: model, chrome: chrome,
+                        activate: { tab in activateTab(tab) },
+                        close: { tab in closeTab(tab) },
+                        openNew: { openBlankTab() },
+                        rename: { id in renameEntity(id) })
+                        .frame(height: 36)
+                        .padding(.horizontal, 6)
+                        .overlay(Divider(), alignment: .bottom)
+                    notesBody
+                }
             case .tasks:
                 TasksView(
                     model: model, selection: $selection,

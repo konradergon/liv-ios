@@ -48,6 +48,9 @@ enum TabsStore {
     struct Saved: Codable {
         var tabs: [WorkspaceTab]
         var activeId: UUID?
+        /// P20c.2b: the active CONTAINER (nil = Overview). Optional so
+        /// v1-persisted sets decode unchanged.
+        var container: String? = nil
     }
 
     static func load(_ workspace: UInt64) -> Saved {
@@ -72,12 +75,34 @@ enum TabsStore {
 final class TabsModel: ObservableObject {
     @Published private(set) var tabs: [WorkspaceTab] = []
     @Published private(set) var activeId: UUID?
+    /// P20c.2b — the mockup's two-level anatomy: the GLOBAL row shows
+    /// containers (Overview = the ungrouped set incl. the desk; one per
+    /// tab group), the content row shows the active container's tabs.
+    @Published private(set) var container: String? = nil
     /// Recently-closed ring (bp4 ▾ / ⌘⇧T) — session-only shell state,
     /// newest last, capped small.
     @Published private(set) var closed: [WorkspaceTab] = []
     private var workspace: UInt64 = 0
 
     var active: WorkspaceTab? { tabs.first { $0.id == activeId } }
+
+    /// The active container's tabs — what the content row shows.
+    var visibleTabs: [WorkspaceTab] { tabs.filter { $0.group == container } }
+
+    /// Switch container; the selection follows into it (a container is
+    /// never empty: groups exist through members, Overview mints a blank).
+    func setContainer(_ name: String?) {
+        guard name != container else { return }
+        container = name
+        if let first = visibleTabs.first, !visibleTabs.contains(where: { $0.id == activeId }) {
+            activeId = first.id
+        } else if visibleTabs.isEmpty {
+            let blank = WorkspaceTab(kind: .blank, group: name)
+            tabs.append(blank)
+            activeId = blank.id
+        }
+        persist()
+    }
 
     /// Load a workspace's set. Idempotent for the same workspace, so
     /// snapshot-driven re-renders never reset the tabs.
@@ -87,15 +112,19 @@ final class TabsModel: ObservableObject {
         let saved = TabsStore.load(workspace)
         tabs = saved.tabs
         activeId = saved.activeId ?? saved.tabs.first?.id
+        container = saved.container
     }
 
     private func persist() {
-        TabsStore.save(workspace, .init(tabs: tabs, activeId: activeId))
+        TabsStore.save(workspace, .init(tabs: tabs, activeId: activeId, container: container))
     }
 
     func setActive(_ id: UUID) {
-        guard tabs.contains(where: { $0.id == id }) else { return }
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
         activeId = id
+        // The container follows the selection (activating a grouped tab
+        // fronts its container).
+        container = tab.group
         persist()
     }
 
@@ -105,7 +134,14 @@ final class TabsModel: ObservableObject {
         if let existing = tabs.first(where: { $0.kind == .note(entity) }) {
             return existing
         }
-        let tab = WorkspaceTab(kind: .note(entity))
+        // P20c.2b: a new tab lands in the ACTIVE container — unless it is
+        // category-locked (a locked container takes no foreign opens; the
+        // open routes to Overview instead — v0 of the map [7] affinity).
+        let locked = container.map { g in
+            tabs.contains { $0.group == g && $0.isLocked }
+        } ?? false
+        let tab = WorkspaceTab(kind: .note(entity), group: locked ? nil : container)
+        if locked { container = nil }
         tabs.append(tab)
         persist()
         return tab
@@ -153,6 +189,17 @@ final class TabsModel: ObservableObject {
     /// Close a tab; return the id to activate next (right neighbour then
     /// left, browser standard). Closing the last tab mints a fresh desk.
     @discardableResult
+    /// A container whose last member closed vanishes — fall home to
+    /// Overview and keep the selection inside the visible set (P20c.2b).
+    private func reconcileContainer() {
+        if let current = container, !groups.contains(current) {
+            container = nil
+        }
+        if !visibleTabs.contains(where: { $0.id == activeId }) {
+            activeId = visibleTabs.first?.id ?? tabs.first?.id
+        }
+    }
+
     func close(_ id: UUID) -> UUID? {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return activeId }
         // A locked tab refuses close — unlock first (bp4 category-lock).
@@ -166,6 +213,7 @@ final class TabsModel: ObservableObject {
         default: break
         }
         tabs.remove(at: i)
+        reconcileContainer()
         if tabs.isEmpty {
             let desk = WorkspaceTab(kind: .desk)
             tabs = [desk]
@@ -174,7 +222,12 @@ final class TabsModel: ObservableObject {
             return wasActive ? desk.id : activeId
         }
         if wasActive {
-            let next = tabs[min(i, tabs.count - 1)].id
+            // The neighbor pick stays INSIDE the visible container; a
+            // cross-container index neighbor would flip the strip (P20c.2b).
+            let neighbor = tabs[min(i, tabs.count - 1)]
+            let next = neighbor.group == container
+                ? neighbor.id
+                : (visibleTabs.first?.id ?? neighbor.id)
             activeId = next
             persist()
             return next
@@ -204,6 +257,12 @@ final class TabsModel: ObservableObject {
     }
 
     // ---- the 17e muscle: groups · lock · reopen ----
+
+    func setGroupFollowingContainer(_ id: UUID, _ group: String?) {
+        setGroup(id, group)
+        if id == activeId { container = group }
+        persist()
+    }
 
     func setGroup(_ id: UUID, _ group: String?) {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
@@ -311,7 +370,7 @@ struct TabStrip: View {
 
     var body: some View {
         GeometryReader { geo in
-            let all = tabs.tabs
+            let all = tabs.visibleTabs
             let lane = max(0, geo.size.width - Self.plusWidth - Self.gap)
             // How many MIN-width pills fit (leave room for the +N chip when
             // some don't).
@@ -351,7 +410,7 @@ struct TabStrip: View {
                             if case .note(let id) = tab.kind { rename(id) }
                         },
                         existingGroups: tabs.groups,
-                        setGroup: { name in tabs.setGroup(tab.id, name) },
+                        setGroup: { name in tabs.setGroupFollowingContainer(tab.id, name) },
                         newGroup: {
                             Dialogs.shared.prompt(
                                 "New tab group", placeholder: "Name", confirmLabel: "Group"
@@ -359,7 +418,7 @@ struct TabStrip: View {
                                 guard let name = name?.trimmingCharacters(in: .whitespaces),
                                     !name.isEmpty
                                 else { return }
-                                tabs.setGroup(tab.id, name)
+                                tabs.setGroupFollowingContainer(tab.id, name)
                             }
                         },
                         toggleLock: { tabs.toggleLock(tab.id) },
