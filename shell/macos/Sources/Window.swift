@@ -11,10 +11,15 @@ import SwiftUI
 // MARK: - theme
 
 enum Theme {
-    /// The accent. Decided in interface.md 0.2: lake green.
-    static let accent = Color(red: 47 / 255, green: 125 / 255, blue: 107 / 255)
-    static let accentDeep = Color(red: 39 / 255, green: 100 / 255, blue: 86 / 255)
-    static let accentTint = Color(red: 47 / 255, green: 125 / 255, blue: 107 / 255).opacity(0.12)
+    /// The accent (P20a, override O1): the Viggo pack's brand violet —
+    /// #6F5BE6 light / #8B7BF0 dark, per the active theme. Lake green
+    /// survives only as brand-light's GREEN semantic token.
+    static var accent: Color { themeToken { $0.accent } }
+    static var accentDeep: Color {
+        themeToken { $0.accent.blended(withFraction: 0.18, of: .black) ?? $0.accent }
+    }
+    /// The selection fill — the pack's --accent-soft, a real token now.
+    static var accentTint: Color { themeToken { $0.accentSoft } }
 }
 
 // MARK: - snapshot rows (mirror ffi/src/lib.rs, decoded from snake_case)

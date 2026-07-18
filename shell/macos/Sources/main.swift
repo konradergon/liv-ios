@@ -35,12 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private lazy var model = BoxModel(path: boxPath)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // The rail's light/dark toggle persists an appearance override.
-        switch UserDefaults.standard.string(forKey: "app.appearance") {
-        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
-        case "light": NSApp.appearance = NSAppearance(named: .aqua)
-        default: break
-        }
+        // The theme engine (P20a): apply the persisted theme — migrating
+        // the P19 light/dark pref on first boot — before any window draws.
+        ThemeCore.shared.boot()
         buildMenu()
         makeStatusItem()
         makePanel()

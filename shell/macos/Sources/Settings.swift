@@ -513,32 +513,75 @@ struct LockedRow: View {
 // MARK: - Appearance (P19d)
 
 struct AppearancePanel: View {
-    @AppStorage("app.appearance") private var appearance = "system"
+    // P20a: four named themes as token swaps (the mockup pane's cards,
+    // direct-select; the rail button stays the cycler) + the Shape flavor.
+    @ObservedObject private var themes = ThemeCore.shared
+    @AppStorage("app.shape.v1") private var shape = "standard"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            SettingRow(label: "Appearance", scope: "app") {
-                Picker("", selection: $appearance) {
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                    Text("System").tag("system")
+        VStack(alignment: .leading, spacing: 8) {
+            Text("skin, shape and type — everything here is a token swap. no layout, no behavior changes.")
+                .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+            HStack(spacing: 8) {
+                ForEach(themeSpecs, id: \.id) { spec in
+                    themeCard(spec)
+                }
+            }
+            SettingRow(label: "Shape flavor", scope: "app") {
+                Picker("", selection: $shape) {
+                    Text("Standard").tag("standard")
+                    Text("Soft · 12").tag("soft")
+                    Text("Sharp · 4").tag("sharp")
                 }
                 .pickerStyle(.segmented).fixedSize().controlSize(.small)
-                .onChange(of: appearance) {
-                    switch appearance {
-                    case "light": NSApp.appearance = NSAppearance(named: .aqua)
-                    case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
-                    default: NSApp.appearance = nil  // follow the system
-                    }
+                .onChange(of: shape) {
+                    // Republish so every surface picks the radius up now —
+                    // "changes apply instantly" is the law of this overlay.
+                    themes.apply(themes.spec.id)
                 }
             }
             LockedRow(
                 label: "Accent",
-                caption: "Lake green means selection and today; amber means AI. The palette is the product.")
-            Text("Reading mode and glyph strength are deferred — display-only knobs land when a surface earns them.")
+                caption: "The accent means selection; amber means AI — in every theme. The palette is the product.")
+            Text("The brand faces (Hanken Grotesk · Fraunces) light up when their fonts are present; reading mode and glyph strength arrive with the editor pass (P20c).")
                 .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
-                .padding(.top, 6)
+                .padding(.top, 4)
         }
+    }
+
+    private func themeCard(_ spec: ThemeSpec) -> some View {
+        let on = themes.spec.id == spec.id
+        return Button {
+            themes.apply(spec.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                // The swatch: chrome | canvas | surface bands + accent dot.
+                HStack(spacing: 0) {
+                    Rectangle().fill(Color(nsColor: spec.chrome))
+                    Rectangle().fill(Color(nsColor: spec.canvas))
+                    Rectangle().fill(Color(nsColor: spec.surface))
+                }
+                .frame(width: 92, height: 34)
+                .overlay(alignment: .bottomTrailing) {
+                    Circle().fill(Color(nsColor: spec.accent))
+                        .frame(width: 10, height: 10).padding(4)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
+                Text(spec.label)
+                    .font(.system(size: 10.5, weight: on ? .semibold : .regular))
+                    .foregroundColor(on ? Theme.accent : Theme.mutedFg)
+            }
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(on ? Theme.accentTint : .clear))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(on ? Theme.accent.opacity(0.6) : Theme.border))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

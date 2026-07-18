@@ -21,10 +21,10 @@ func rowKindIcon(_ row: EntityRow) -> String {
 
 // MARK: - ValueChip — THE chip
 
-/// The one chip recipe (bp7:150-160): pill, scheme-aware mixes from
-/// Hues.swift's frozen constants. `hue: nil` is the `.neutral` variant —
-/// the escape hatch dates/recurrence/tier are REQUIRED to use (the color
-/// budget: hue always means metadata value).
+/// The one chip recipe (P20a, O2): NEUTRAL body in every theme — panel2
+/// fill, text2 ink, hairline border, pill — and the value's color appears
+/// ONLY as the small leading dot from the semantic set. `hue: nil` stays
+/// the dot-less variant dates/recurrence/tier are REQUIRED to use.
 struct ValueChip: View {
     let text: String
     var hue: NSColor? = nil
@@ -34,12 +34,15 @@ struct ValueChip: View {
     var help: String? = nil
 
     var body: some View {
-        let ink: Color = hue.map { Hues.chipInk($0) } ?? Color(nsColor: .secondaryLabelColor)
-        let bg: Color = hue.map { Hues.chipBackground($0) } ?? Color.secondary.opacity(0.10)
-        let border: Color = hue.map { Hues.chipBorder($0) } ?? Color.secondary.opacity(0.30)
+        let ink: Color = Theme.text2
+        let bg: Color = Theme.panel2
+        let border: Color = Theme.border
+        // The hue argument becomes the dot (O2) unless the caller drew its
+        // own; the neutral classes pass nil and stay dot-less.
+        let lead: Color? = dot ?? hue.map { h in Color(nsColor: h) }
         let label = HStack(spacing: 4) {
-            if let dot {
-                Circle().fill(dot).frame(width: 7, height: 7)
+            if let lead {
+                Circle().fill(lead).frame(width: 6, height: 6)
             }
             if let icon {
                 Image(systemName: icon).font(.system(size: 9.5))

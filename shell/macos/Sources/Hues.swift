@@ -1,4 +1,15 @@
-// lotus — VALUE_HEX (P11.5b, ruling R3): one hash, one table, FROZEN.
+// lotus — value color (P20a, override O2 — supersedes R3's VALUE_HEX).
+//
+// The Viggo pack retires hashed per-value hues: chips render NEUTRAL
+// (panel2 fill · text2 ink · border · pill) and the ONLY value color is a
+// small dot drawn from the theme's closed SEMANTIC set (purple / green /
+// yellow / red / accent). The FNV hash survives as the stable assignment
+// ("SSK is the same dot on every surface"), now mod the semantic set; the
+// per-option `hue` cell survives quantized to the nearest semantic token.
+// The old header follows for the record — R3 is formally superseded by the
+// owner's 2026-07-18 override directive (design/p20 §1 O2).
+//
+// — was: VALUE_HEX (P11.5b, ruling R3): one hash, one table, FROZEN.
 //
 // Every metadata VALUE everywhere — chips, facets, graph nodes, tree dots —
 // derives its hue from the same function, so "SSK is sky-blue" holds across
@@ -54,9 +65,20 @@ enum Hues {
         Int(hash(display) % 9)
     }
 
-    /// THE function: a display string's hue.
+    /// The closed semantic set, in a fixed rotation order (O2). Reads the
+    /// LIVE spec so dots re-tint with the theme.
+    private static var semanticSet: [NSColor] {
+        let spec = ThemeCore.shared.spec
+        return [spec.purple, spec.green, spec.yellow, spec.red, spec.accent]
+    }
+
+    /// THE function: a display string's dot color — stable per string
+    /// (FNV), drawn from the semantic set, never a hashed raw hue (O2).
     static func valueHex(_ display: String) -> NSColor {
-        seed[index(display)]
+        NSColor(name: nil) { _ in
+            let set = semanticSet
+            return set[Int(hash(display) % UInt64(set.count))]
+        }
     }
 
     // ---- the chip mixes (frozen constants beside the hues, design §4.1) ----
@@ -67,40 +89,40 @@ enum Hues {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 
+    // O2: the chip BODY is neutral in every theme — panel2 fill, text2
+    // ink, hairline border. The hue argument feeds only the leading dot.
     static func chipBackground(_ hue: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            hue.withAlphaComponent(isDark(appearance) ? 0.16 : 0.12)
-        })
+        themeToken { $0.panel2 }
     }
 
     static func chipBorder(_ hue: NSColor) -> Color {
-        Color(nsColor: hue.withAlphaComponent(0.32))
+        themeToken { $0.border }
     }
 
     static func chipInk(_ hue: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let fraction = isDark(appearance) ? 0.55 : 0.62
-            let ink = NSColor.labelColor.resolved(for: appearance)
-            return hue.usingColorSpace(.sRGB)?
-                .blended(withFraction: 1 - fraction, of: ink) ?? hue
-        })
+        themeToken { $0.text2 }
     }
 
     /// A status option's dot color: the option's `hue` cell in DEGREES,
-    /// rendered at a fixed saturation/brightness pair per scheme — NEVER
-    /// VALUE_HEX (design §5.3). nil = the neutral dot.
+    /// QUANTIZED to the nearest semantic token (P20a — the closed palette;
+    /// the cell survives as the user's pick among the set, so the P19f
+    /// recolor menu still means something). nil = the neutral dot.
     static func degrees(_ deg: Double) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let dark = isDark(appearance)
-            return NSColor(
-                // Positive modulo — a negative cell value must land inside
-                // the wheel, not below it (NSColor clamps, killing the hue).
-                hue: CGFloat(
-                    (deg.truncatingRemainder(dividingBy: 360) + 360)
-                        .truncatingRemainder(dividingBy: 360) / 360),
-                saturation: dark ? 0.45 : 0.55,
-                brightness: dark ? 0.75 : 0.62,
-                alpha: 1)
+        Color(nsColor: NSColor(name: nil) { _ in
+            let wheel = (deg.truncatingRemainder(dividingBy: 360) + 360)
+                .truncatingRemainder(dividingBy: 360)
+            let spec = ThemeCore.shared.spec
+            // The set's canonical wheel positions: purple 270 · green 150 ·
+            // yellow 40 · red 5 · accent(violet) 250.
+            let stops: [(Double, NSColor)] = [
+                (5, spec.red), (40, spec.yellow), (150, spec.green),
+                (250, spec.accent), (270, spec.purple),
+            ]
+            let nearest = stops.min(by: {
+                min(abs($0.0 - wheel), 360 - abs($0.0 - wheel))
+                    < min(abs($1.0 - wheel), 360 - abs($1.0 - wheel))
+            })
+            return nearest?.1 ?? spec.purple
         })
     }
 

@@ -7,40 +7,59 @@ import AppKit
 import SwiftUI
 
 extension Theme {
-    // MARK: §3.1 token vocabulary (Google-skin reference values, re-hued)
+    // MARK: the token vocabulary (P20a — app-mockup.tokens.css, four themes)
+    //
+    // Every color routes through themeToken (Themes.swift): resolved
+    // against the CURRENT ThemeSpec at draw time. The legacy names below
+    // keep every P1–P19 call site compiling — mapped onto the new
+    // vocabulary; new work should prefer the new names.
 
-    /// One dynamic color, light/dark, from the reference table.
-    private static func dyn(_ light: String, _ dark: String) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-            return NSColor(hex: hex)
-        })
-    }
+    // The new vocabulary.
+    static var chrome: Color { themeToken { $0.chrome } }
+    static var canvas: Color { themeToken { $0.canvas } }
+    static var surface: Color { themeToken { $0.surface } }
+    static var panel2: Color { themeToken { $0.panel2 } }
+    static var text2: Color { themeToken { $0.text2 } }
+    static var muted: Color { themeToken { $0.muted } }
+    static var border2: Color { themeToken { $0.border2 } }
+    static var hover: Color { themeToken { $0.hover } }
+    static var accentSoft: Color { themeToken { $0.accentSoft } }
+    static var onAccent: Color { themeToken { $0.onAccent } }
+    static var green: Color { themeToken { $0.green } }
+    static var red: Color { themeToken { $0.red } }
+    static var yellow: Color { themeToken { $0.yellow } }
+    static var purple: Color { themeToken { $0.purple } }
+    static var onYellow: Color { Color(nsColor: onYellowInk) }
 
-    /// The accent: lake green, both modes (Liv's --primary slot).
-    static let primary = accent
-    static let background = dyn("#ffffff", "#1f1f1f")
-    static let foreground = dyn("#202124", "#e8eaed")
-    static let surface1 = dyn("#ffffff", "#2d2e30")
-    static let surface2 = dyn("#f1f3f4", "#1b1b1b")
-    static let popover = dyn("#ffffff", "#292a2d")
+    // The legacy names (P1–P19 call sites), mapped.
+    static var primary: Color { accent }
+    static var background: Color { canvas }
+    static var foreground: Color { themeToken { $0.text } }
+    static var surface1: Color { surface }
+    static var surface2: Color { panel2 }
+    static var popover: Color { surface }
     /// Sidebar / activity bar / title bar chrome.
-    static let panel = dyn("#f1f3f4", "#1b1b1b")
-    static let secondary = dyn("#e6e8ea", "#42474c")
-    // A touch more contrast, both modes: secondary text darker (light) / lighter
-    // (dark), hairlines more defined — the grid + dividers read faint otherwise.
-    static let mutedFg = dyn("#4d5155", "#b1b7bd")
-    static let border = dyn("#c2c6cc", "#51565c")
-    static let destructive = dyn("#d93025", "#f28b82")
+    static var panel: Color { themeToken { $0.panel } }
+    static var secondary: Color { panel2 }
+    static var mutedFg: Color { themeToken { $0.text3 } }
+    static var border: Color { themeToken { $0.border } }
+    static var destructive: Color { red }
     /// Amber: reserved app-wide for AI presence (badges, rings, cards).
-    static let warning = dyn("#e37400", "#fdd663")
+    static var warning: Color { yellow }
 
-    // MARK: §3.3 radii ("google" shape: --radius 8, controls pill)
+    // MARK: radii — the theme's token, shifted by the Shape flavor pref
 
-    static let radiusSm: CGFloat = 4
-    static let radiusMd: CGFloat = 6
-    static let radius: CGFloat = 8
-    static let radiusXl: CGFloat = 12
+    /// Standard = the theme's own radius · Soft = 12 · Sharp = 4.
+    static var radius: CGFloat {
+        switch UserDefaults.standard.string(forKey: "app.shape.v1") {
+        case "soft": return 12
+        case "sharp": return 4
+        default: return ThemeCore.shared.spec.radius
+        }
+    }
+    static var radiusSm: CGFloat { max(3, radius - 4) }
+    static var radiusMd: CGFloat { max(4, radius - 2) }
+    static var radiusXl: CGFloat { radius + 4 }
 
     // MARK: §3.4 motion
 

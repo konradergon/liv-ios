@@ -530,15 +530,10 @@ struct WorkspaceFooter: View {
     }
 
     private var appearanceButton: some View {
-        headerButton(darkMode ? "sun.max" : "moon", "Toggle appearance") {
-            let next = darkMode ? NSAppearance(named: .aqua) : NSAppearance(named: .darkAqua)
-            NSApp.appearance = next
-            UserDefaults.standard.set(darkMode ? "dark" : "light", forKey: "app.appearance")
+        // P20a: the sim's theme.cycle — four token swaps, never layout.
+        headerButton("moon", "Theme: \(ThemeCore.shared.spec.label) — click cycles") {
+            ThemeCore.shared.cycle()
         }
-    }
-
-    private var darkMode: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 }
 
