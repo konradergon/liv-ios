@@ -62,7 +62,9 @@ enum Surface: String, CaseIterable {
 /// note; History = the content-version projection. The local Graph lens waits
 /// for P18 (no dead buttons).
 enum RightLens: String, CaseIterable {
-    case metadata, assist, outline, history, graph
+    // P20e (map [20]): Copilot LAST — Metadata · Outline · History · Graph
+    // · Copilot. Raw values persist, so saved prefs decode unchanged.
+    case metadata, outline, history, graph, assist
 
     var symbol: String {
         switch self {

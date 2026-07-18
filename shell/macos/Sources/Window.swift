@@ -1176,6 +1176,7 @@ extension Notification.Name {
     static let lotusStartTimer = Notification.Name("lotus.startTimer")
     static let lotusReplayTour = Notification.Name("lotus.replayTour")
     static let lotusToggleCapture = Notification.Name("lotus.toggleCapture")
+    static let lotusSaveTaskView = Notification.Name("lotus.saveTaskView")
     static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
 }
 
@@ -1305,6 +1306,11 @@ struct WindowChrome: View {
     @State private var layerToastVisible = false
     /// The vault graph overlay's camera anchor (open-state lives on chrome).
     @State private var vaultGraphFocus: UInt64?
+    /// The tasks surface's pool scope (P20e) — lifted here so TasksNav
+    /// (the left panel) and TasksView share it.
+    @State private var taskFocus: TaskFocus = .all
+    @State private var taskProject: String?
+    @State private var taskSavedView: SavedViewRow?
     /// The tour (P19i): -1 = inactive; 0 = welcome; 1–4 = the dots.
     @State private var tourDot = -1
     @State private var tourChecked = false
@@ -1903,6 +1909,23 @@ struct WindowChrome: View {
     /// navigation, no footer.
     private var leftPanelBody: some View {
         VStack(spacing: 0) {
+            // P20e: surfaces own their left panel (the mockup's pattern —
+            // tasks nav here; library pools, contact groups, calendars
+            // follow in 20f). Notes keeps the Vault|Spaces pair.
+            if chrome.surface == .tasks {
+                TasksNav(
+                    model: model, focus: $taskFocus, project: $taskProject,
+                    savedView: $taskSavedView)
+                vaultFooter
+            } else {
+                leftPanelDefault
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var leftPanelDefault: some View {
+        VStack(spacing: 0) {
             leftViewTabs
             // The after-state's one pointer (P19i): shows only while pristine
             // seeds exist (seeded, unused, unhidden) and no tour is running —
@@ -1931,7 +1954,6 @@ struct WindowChrome: View {
                 showDesk: { lensValue in showDesk(lensValue) })
             vaultFooter
         }
-        .frame(maxWidth: .infinity)
     }
 
     /// "Vault: <name>" (P20b, map [15]) — the store, named, at the panel
@@ -2597,7 +2619,9 @@ struct WindowChrome: View {
             case .tasks:
                 TasksView(
                     model: model, selection: $selection,
-                    open: { id in openEntityTab(id) })
+                    open: { id in openEntityTab(id) },
+                    focus: $taskFocus, project: $taskProject,
+                    savedView: $taskSavedView)
             case .lists:
                 ListsSurface(
                     model: model, selection: $selection,
@@ -5367,6 +5391,154 @@ struct LibraryView: View {
 
 /// The Tasks surface (P8): a cross-workspace list of every task (type=task),
 /// grouped by status (todo / doing / done) in seeded order, due-ascending
+/// The FOCUS presets (P20e, mockup s-tasks): four scopes over the one pool.
+enum TaskFocus: String, CaseIterable {
+    case today = "Today"
+    case upcoming = "Upcoming"
+    case untriaged = "Untriaged"
+    case all = "All tasks"
+
+    var symbol: String {
+        switch self {
+        case .today: return "sun.max"
+        case .upcoming: return "calendar"
+        case .untriaged: return "circle.dashed"
+        case .all: return "checkmark.square"
+        }
+    }
+}
+
+/// The tasks surface's own left panel (P20e, map [0-2]): FOCUS presets with
+/// live counts · PROJECTS as a click-to-filter · SAVED VIEWS + ＋ view.
+struct TasksNav: View {
+    @ObservedObject var model: BoxModel
+    @Binding var focus: TaskFocus
+    @Binding var project: String?
+    @Binding var savedView: SavedViewRow?
+
+    private var allTasks: [EntityRow] {
+        model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
+    }
+
+    private func count(_ f: TaskFocus) -> Int {
+        allTasks.filter { TasksView.fits($0, focus: f, model: model) }.count
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("TASKS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                        .foregroundColor(Theme.mutedFg)
+                    Spacer()
+                    Button {
+                        NotificationCenter.default.post(name: .lotusSaveTaskView, object: nil)
+                    } label: {
+                        Text("＋ view").font(.system(size: 10, weight: .medium))
+                            .foregroundColor(Theme.accent).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("new saved view — the current pool, kept")
+                }
+                .padding(.horizontal, 8).padding(.top, 8)
+                ForEach(TaskFocus.allCases, id: \.rawValue) { f in
+                    navRow(
+                        icon: f.symbol, label: f.rawValue, aft: "\(count(f))",
+                        active: focus == f && savedView == nil,
+                        help: f == .untriaged
+                            ? "no date, no project — waiting for a decision" : f.rawValue
+                    ) {
+                        savedView = nil
+                        focus = f
+                    }
+                }
+                Text("PROJECTS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                    .foregroundColor(Theme.mutedFg)
+                    .padding(.horizontal, 8).padding(.top, 10)
+                let names = projectNames
+                if names.isEmpty {
+                    Text("tasks carry no projects yet")
+                        .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                        .padding(.horizontal, 8)
+                }
+                ForEach(names, id: \.self) { name in
+                    let openCount = allTasks.filter { row in
+                        row.cells.contains { $0.property == "project" && $0.value == name }
+                            && !(TasksView.terminalNames(model).contains(row.status ?? ""))
+                    }.count
+                    navRow(
+                        dot: Color(nsColor: Hues.valueHex(name)), label: name,
+                        aft: "\(openCount)", active: project == name,
+                        help: "click filters the pool — click again clears"
+                    ) {
+                        project = project == name ? nil : name
+                    }
+                }
+                let views = model.snap?.views ?? []
+                if !views.isEmpty {
+                    Text("SAVED VIEWS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                        .foregroundColor(Theme.mutedFg)
+                        .padding(.horizontal, 8).padding(.top, 10)
+                    ForEach(views) { view in
+                        navRow(
+                            icon: "star", label: view.name, aft: nil,
+                            active: savedView?.id == view.id,
+                            help: view.query
+                        ) {
+                            savedView = savedView?.id == view.id ? nil : view
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 6).padding(.bottom, 8)
+        }
+    }
+
+    private var projectNames: [String] {
+        var seen: [String] = []
+        for row in allTasks {
+            for cell in row.cells where cell.property == "project" && !cell.value.isEmpty {
+                if !seen.contains(cell.value) { seen.append(cell.value) }
+            }
+        }
+        return seen
+    }
+
+    private func navRow(
+        icon: String? = nil, dot: Color? = nil, label: String, aft: String?,
+        active: Bool, help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 10.5))
+                        .foregroundColor(active ? Theme.accent : Theme.mutedFg)
+                        .frame(width: 14)
+                }
+                if let dot {
+                    Circle().fill(dot).frame(width: 7, height: 7).frame(width: 14)
+                }
+                Text(label)
+                    .font(.system(size: 12, weight: active ? .medium : .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let aft {
+                    Text(aft).font(.system(size: 10).monospacedDigit())
+                        .foregroundColor(Theme.mutedFg)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(active ? Theme.accentTint : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
 /// within a group. Quick-add creates a task (typed, born todo). The working
 /// checkbox and filters arrive in 8b; the board is a deferred candidate.
 struct TasksView: View {
@@ -5375,7 +5547,11 @@ struct TasksView: View {
     let open: (UInt64) -> Void
 
     @State private var draft = ""
-    @State private var filter: TaskFilter = .open
+    @Binding var focus: TaskFocus
+    @Binding var project: String?
+    @Binding var savedView: SavedViewRow?
+    /// The saved view's resolved pool ids (runQuery, refreshed on pick).
+    @State private var savedIds: [UInt64] = []
     /// The lens over the ONE task pool (bp6 a6, P14a): List | Board |
     /// Schedule | Cards — ephemeral shell state, NOT a persisted view-object
     /// (D3). Only the grouping key + layout change; the pool is shared.
@@ -5385,9 +5561,10 @@ struct TasksView: View {
     @State private var expandedDone: Set<String> = []
     /// The column currently under a drag (accent-tinted while hovered).
     @State private var dropTarget: String? = nil
+    /// The schedule grid's fortnight pager (P20e).
+    @State private var scheduleOffset = 0
     @FocusState private var addFocused: Bool
 
-    enum TaskFilter: String, CaseIterable { case all = "All", open = "Open", done = "Done" }
     enum TaskLens: String, CaseIterable {
         case list = "List", board = "Board", schedule = "Schedule", cards = "Cards"
         var symbol: String {
@@ -5401,41 +5578,91 @@ struct TasksView: View {
     }
 
     /// The ungated task pool — everything → tasks. The BOARD renders THIS
-    /// (its columns carry status, so the Open/Done gate would empty the Done
+    /// (its columns carry status, so a focus gate would empty the Done
     /// columns and vanish a card dragged to Done — the review's high).
     private var allTasks: [EntityRow] {
         model.rows(model.snap?.everything ?? []).filter { $0.kinds.contains("task") }
     }
 
-    /// The list/schedule/cards pool: allTasks → the All/Open/Done gate.
-    /// Done-ness follows the option's `completes` (the vocabulary-aware law).
-    private var tasks: [EntityRow] {
-        let terminal = Set(
-            statusVocabulary(model, kind: "task").filter(\.isTerminal).map(\.name)
-        ).union(["done"])
-        switch filter {
-        case .all: return allTasks
-        case .open: return allTasks.filter { !terminal.contains($0.status ?? "") }
-        case .done: return allTasks.filter { terminal.contains($0.status ?? "") }
+    static func terminalNames(_ model: BoxModel) -> Set<String> {
+        Set(statusVocabulary(model, kind: "task").filter(\.isTerminal).map(\.name))
+            .union(["done"])
+    }
+
+    /// One FOCUS gate (P20e): today = planned-or-due today (overdue rides
+    /// along) · upcoming = dated ahead · untriaged = no date AND no project
+    /// (the plan role deepens this when it lands — recorded) · all.
+    static func fits(_ row: EntityRow, focus: TaskFocus, model: BoxModel) -> Bool {
+        let terminal = terminalNames(model)
+        let isDone = terminal.contains(row.status ?? "")
+        switch focus {
+        case .all:
+            return true
+        case .today:
+            guard let due = row.due else { return false }
+            let end = Calendar.current.startOfDay(for: Date()).addingTimeInterval(86400)
+            return !isDone && Double(due) < end.timeIntervalSince1970
+        case .upcoming:
+            guard let due = row.due else { return false }
+            let end = Calendar.current.startOfDay(for: Date()).addingTimeInterval(86400)
+            return !isDone && Double(due) >= end.timeIntervalSince1970
+        case .untriaged:
+            return !isDone && row.due == nil
+                && !row.cells.contains { $0.property == "project" && !$0.value.isEmpty }
         }
+    }
+
+    /// The list/schedule/cards pool: allTasks → focus → project → saved view.
+    private var tasks: [EntityRow] {
+        var pool = allTasks
+        if let savedView {
+            let ids = Set(savedIds)
+            pool = pool.filter { ids.contains($0.id) }
+            _ = savedView
+        } else {
+            pool = pool.filter { Self.fits($0, focus: focus, model: model) }
+        }
+        if let project {
+            pool = pool.filter { row in
+                row.cells.contains { $0.property == "project" && $0.value == project }
+            }
+        }
+        return pool
     }
 
     var body: some View {
         let tasks = self.tasks
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                // P20e (map [3]): the title IS the pool — the saved view's
+                // name, the focus preset, or the default arrangement.
                 LensHeader(
-                    title: "Tasks",
+                    title: savedView?.name
+                        ?? (focus == .all ? "All tasks — by status" : focus.rawValue),
                     subtitle: lens == .board
                         ? (allTasks.count == 1 ? "1 task" : "\(allTasks.count) tasks")
                         : (tasks.count == 1 ? "1 task" : "\(tasks.count) tasks"))
+                if let project {
+                    Button {
+                        self.project = nil
+                    } label: {
+                        HStack(spacing: 4) {
+                            Circle().fill(Color(nsColor: Hues.valueHex(project)))
+                                .frame(width: 6, height: 6)
+                            Text(project).font(.system(size: 10.5))
+                            Image(systemName: "xmark").font(.system(size: 7))
+                        }
+                        .foregroundColor(Theme.text2)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Capsule().fill(Theme.panel2))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("project filter — click clears")
+                }
                 Spacer()
                 agentsButton
                 lensSwitcher
-                // The Board's columns carry status, so the Open/Done gate is
-                // a list-lens concern; it stays hidden on (and unused by) the
-                // board — which renders the ungated pool.
-                if lens != .board { filterSegments }
             }
             .padding(.horizontal, 32)
             .padding(.top, 16)
@@ -5458,6 +5685,29 @@ struct TasksView: View {
                 : [("⌃1–4", "lens"), ("↑↓", "move"), ("⏎", "open"), ("N", "new")])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: savedView?.id) {
+            if let savedView {
+                model.runQuery(savedView.query) { ids in savedIds = ids }
+            } else {
+                savedIds = []
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lotusSaveTaskView)) { _ in
+            // ＋ view (map [2]): keep the current pool as a saved view — an
+            // ordinary entity, the P18 seam.
+            Dialogs.shared.prompt(
+                "New saved view",
+                message: "Keeps the current pool as a view — an ordinary entity, editable in its View tab.",
+                placeholder: "name", confirmLabel: "Save"
+            ) { name in
+                guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty
+                else { return }
+                var query = "is:task"
+                if let project { query += " project:\(project)" }
+                model.saveView(name: name, query: query)
+            }
+        }
+
         // The middle is the bare face: the window material shows through, so the
         // side panels are the only cards floating on it (owner's model). The
         // content (rows, cards, the editor page) carries its own surface.
@@ -5487,8 +5737,42 @@ struct TasksView: View {
                             .filter { $0.status == option.name }
                             .sorted { dueKey($0) < dueKey($1) }
                         if !group.isEmpty {
-                            SectionLabel(text: option.name).padding(.top, 14)
-                            ForEach(group) { taskRow($0, option: option) }
+                            // P20e (map [5]): ring dot + count; terminal
+                            // groups fold — the view stays about live work.
+                            let folded = option.isTerminal
+                                && !expandedDone.contains(option.name)
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .strokeBorder(
+                                        option.hue.map { Hues.degrees($0) } ?? Theme.mutedFg,
+                                        lineWidth: 2)
+                                    .frame(width: 8, height: 8)
+                                Text("\(option.name.capitalized) · \(group.count)")
+                                    .font(.system(size: 10.5, weight: .bold))
+                                    .foregroundColor(Theme.mutedFg)
+                                if option.isTerminal {
+                                    Button {
+                                        if folded {
+                                            expandedDone.insert(option.name)
+                                        } else {
+                                            expandedDone.remove(option.name)
+                                        }
+                                    } label: {
+                                        Text(folded
+                                            ? "folded — the view stays about live work"
+                                            : "fold")
+                                            .font(.system(size: 9.5))
+                                            .foregroundColor(Theme.mutedFg.opacity(0.8))
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                Spacer()
+                            }
+                            .padding(.top, 14)
+                            if !folded {
+                                ForEach(group) { taskRow($0, option: option) }
+                            }
                         }
                     }
                     // A status whose option left the vocabulary still shows —
@@ -5536,41 +5820,16 @@ struct TasksView: View {
                         title: name, statusName: name, option: nil,
                         cards: tasks.filter { $0.status == name }.sorted { dueKey($0) < dueKey($1) })
                 }
-                addColumn
+                // P20e (map [11]): the "+ New status" column left the board —
+                // the vocabulary editor owns the columns now (Settings →
+                // Vocabulary re-keys the board instantly). The "no status"
+                // column stays: the one board door for unsetting (recorded).
             }
             .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 20)
             .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 
-    /// The trailing "+ New status" column (bp6 a8) — adds a status OPTION
-    /// entity to the task vocabulary via the landed lotus_add_status_option
-    /// seam (hue −1: the vocabulary editor assigns hues, P19). Rename /
-    /// reorder / retire the option happen on its entity in the inspector.
-    private var addColumn: some View {
-        Button {
-            Dialogs.shared.prompt(
-                "New status", message: "Adds a column to the task board.",
-                placeholder: "e.g. blocked", confirmLabel: "Add"
-            ) { name in
-                let trimmed = (name ?? "").trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty else { return }
-                model.addStatusOption(kind: "task", name: trimmed)
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus").font(.system(size: 11))
-                Text("New status").font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(.secondary)
-            .frame(width: 150, alignment: .leading)
-            .padding(9)
-            .background(RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.secondary.opacity(0.25),
-                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-        }
-        .buttonStyle(.plain)
-    }
 
     @ViewBuilder
     private func boardColumn(
@@ -5660,25 +5919,175 @@ struct TasksView: View {
     /// The Schedule lens (bp6 a16): the same task rows re-bucketed by `due`
     /// into Overdue / Today / This week / Later (client-side). Rows are
     /// ObjectRow; drag-to-set-due is deferred (the calendar owns the drag).
+    /// P20e (map [12], override of bp6 a16): the two-week Mon–Sun grid
+    /// replaces the bucket list. Only dated tasks render here — lookup
+    /// roles never do; the plan role deepens this when it lands (recorded:
+    /// today the one date is `due`). Drag a pill onto a day to date it.
     private func scheduleLens(_ tasks: [EntityRow]) -> some View {
-        let buckets = ["Overdue", "Today", "This week", "Later", "No date"]
-        let grouped = Dictionary(grouping: tasks) { scheduleBucket($0).name }
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let weekday = (cal.component(.weekday, from: today) + 5) % 7  // Mon = 0
+        let monday = cal.date(byAdding: .day, value: -weekday + scheduleOffset * 14, to: today)!
+        let days: [Date] = (0..<14).map { cal.date(byAdding: .day, value: $0, to: monday)! }
+        let rangeLabel: String = {
+            let f = DateFormatter()
+            f.setLocalizedDateFormatFromTemplate("dMMM")
+            let g = DateFormatter()
+            g.setLocalizedDateFormatFromTemplate("dMMMyyyy")
+            return "\(f.string(from: days[0])) – \(g.string(from: days[13]))"
+        }()
+        let unscheduled = tasks.filter {
+            $0.due == nil && !Self.terminalNames(model).contains($0.status ?? "")
+        }
         return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                quickAdd
-                ForEach(buckets, id: \.self) { name in
-                    if let group = grouped[name], !group.isEmpty {
-                        SectionLabel(text: name).padding(.top, 14)
-                        ForEach(group.sorted { dueKey($0) < dueKey($1) }) { row in
-                            taskRow(row, option: statusOptionFor(row))
-                        }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Button { scheduleOffset -= 1 } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.mutedFg).frame(width: 22, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Button { scheduleOffset += 1 } label: {
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.mutedFg).frame(width: 22, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Text(rangeLabel).font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Text("only dated tasks render here — lookup roles (valid-until, occurred) never do")
+                        .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                }
+                let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"], id: \.self) {
+                        Text($0).font(.system(size: 8.5, weight: .bold)).kerning(0.4)
+                            .foregroundColor(Theme.mutedFg)
+                            .frame(maxWidth: .infinity)
+                    }
+                    ForEach(days, id: \.self) { day in
+                        scheduleDay(day, today: today, tasks: tasks)
                     }
                 }
-                if tasks.isEmpty { emptyState }
+                if !unscheduled.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("UNSCHEDULED · \(unscheduled.count)")
+                            .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                            .foregroundColor(Theme.mutedFg)
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 150), spacing: 5)],
+                            alignment: .leading, spacing: 5
+                        ) {
+                            ForEach(unscheduled) { row in
+                                schedulePill(row)
+                                    .onDrag {
+                                        NSItemProvider(object: "task:\(row.id)" as NSString)
+                                    }
+                            }
+                        }
+                        Text("drag onto a day → sets the date")
+                            .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .strokeBorder(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                }
             }
             .padding(.horizontal, 32)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func scheduleDay(_ day: Date, today: Date, tasks: [EntityRow]) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDate(day, inSameDayAs: today)
+        let dayTasks = tasks.filter { row in
+            guard let due = row.due else { return false }
+            return cal.isDate(Date(timeIntervalSince1970: Double(due)), inSameDayAs: day)
+        }
+        let iso: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: day)
+        }()
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 3) {
+                Text("\(cal.component(.day, from: day))")
+                    .font(.system(size: 10, weight: isToday ? .bold : .regular))
+                    .foregroundColor(isToday ? Theme.accent : Theme.mutedFg)
+                if isToday {
+                    Text("· today").font(.system(size: 8.5)).foregroundColor(Theme.accent)
+                }
+                Spacer(minLength: 0)
+            }
+            ForEach(dayTasks.prefix(3)) { row in
+                schedulePill(row)
+                    .onDrag { NSItemProvider(object: "task:\(row.id)" as NSString) }
+            }
+            if dayTasks.count > 3 {
+                Text("+\(dayTasks.count - 3)").font(.system(size: 8.5))
+                    .foregroundColor(Theme.mutedFg)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(5)
+        .frame(minHeight: 74, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.surface))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(isToday ? Theme.accent.opacity(0.7) : Theme.border))
+        .onDrop(of: [.plainText], isTargeted: nil) { providers in
+            providers.first?.loadObject(ofClass: NSString.self) { object, _ in
+                guard let text = object as? String, text.hasPrefix("task:"),
+                    let id = UInt64(text.dropFirst(5))
+                else { return }
+                DispatchQueue.main.async {
+                    model.set(id, property: "due", value: iso)
+                    Toast.show("Dated — the task lands on \(iso). ⌘⌥Z undoes.")
+                }
+            }
+            return true
+        }
+    }
+
+    private func schedulePill(_ row: EntityRow) -> some View {
+        let option = statusOptionFor(row)
+        return HStack(spacing: 4) {
+            Circle()
+                .strokeBorder(option?.hue.map { Hues.degrees($0) } ?? Theme.mutedFg, lineWidth: 1.5)
+                .frame(width: 6, height: 6)
+            Text(row.title).font(.system(size: 9.5)).lineLimit(1)
+        }
+        .padding(.horizontal, 5).padding(.vertical, 2)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Theme.panel2))
+        .contentShape(Rectangle())
+        .onTapGesture { selection = row.id }
+    }
+
+    private func cardChips(_ row: EntityRow) -> [Anchor] {
+        var chips = [anchorChip(for: row)].compactMap { $0 }
+        for cell in row.cells where cell.property == "people" && !cell.value.isEmpty {
+            if !chips.contains(where: { $0.text == cell.value }) {
+                chips.append(Anchor(
+                    text: cell.value, hue: Hues.valueHex(cell.value),
+                    filter: searchQualifier("people", cell.value)))
+            }
+        }
+        if let due = row.due {
+            let f = DateFormatter()
+            f.setLocalizedDateFormatFromTemplate("EEEdMMM")
+            let overdue = Double(due) < Date().timeIntervalSince1970
+                && !Self.terminalNames(model).contains(row.status ?? "")
+            // Dates are a never-hue class (the color budget): no dot.
+            chips.append(Anchor(
+                text: f.string(from: Date(timeIntervalSince1970: Double(due)))
+                    + (overdue ? " · overdue" : ""),
+                hue: nil, filter: nil))
+        }
+        return chips
     }
 
     /// The Cards lens (bp6 a15): an ObjectCard gallery — description clamp,
@@ -5693,7 +6102,9 @@ struct TasksView: View {
                         ObjectCard(
                             row: row,
                             descriptionText: row.cells.first { $0.property == "description" }?.value ?? "",
-                            chips: [anchorChip(for: row)].compactMap { $0 })
+                            // P20e (map [14]): anchor + people + the date chip
+                            // — the component's own ≤3+overflow budget rules.
+                            chips: cardChips(row))
                         .background(RoundedRectangle(cornerRadius: 8)
                             .fill(selection == row.id ? Theme.accentTint : Color.clear))
                         .contentShape(Rectangle())
@@ -5733,22 +6144,30 @@ struct TasksView: View {
     /// The lens switcher tabs (bp6 a6) — List | Board | Schedule | Cards.
     /// The AI Agents frame (bp6) — inert; the task copilot's proposals enter
     /// the ONE inbox in the P16 pass, never a second mutation door here.
+    /// P20e (map [4]): the amber pill — "N of these I could do". Counts
+    /// pending proposals; hidden at 0 and while the switch is off (the
+    /// snapshot's queue already empties when consent is off).
+    @ViewBuilder
     private var agentsButton: some View {
-        let count = model.snap?.inbox.count ?? 0
-        return Button {
-            NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "wand.and.stars").font(.system(size: 10.5))
-                Text(count > 0 ? "Agents · \(count)" : "Agents").font(.system(size: 12, weight: .medium))
+        let pending = (model.snap?.inbox ?? []).count
+        if pending > 0 {
+            Button {
+                NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("✦").font(.system(size: 10))
+                    Text("\(pending) of these I could do")
+                        .font(.system(size: 10.5, weight: .medium))
+                }
+                .foregroundColor(Theme.warning)
+                .padding(.horizontal, 9).padding(.vertical, 3)
+                .background(Capsule().fill(Theme.warning.opacity(0.12)))
+                .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.5)))
+                .contentShape(Capsule())
             }
-            .foregroundColor(Theme.warning)
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .overlay(Capsule().strokeBorder(Theme.warning.opacity(0.4), lineWidth: 1))
-            .contentShape(Capsule())
+            .buttonStyle(.plain)
+            .help("\(pending) suggestions wait in Inbox › Tidy — nothing runs before you approve")
         }
-        .buttonStyle(.plain)
-        .help("The clerk’s suggestions — review in the one inbox (Inbox › Tidy)")
     }
 
     // Icon-only so four lenses fit beside the header controls even with the
@@ -5835,25 +6254,6 @@ struct TasksView: View {
         }
     }
 
-    private var filterSegments: some View {
-        HStack(spacing: 0) {
-            ForEach(TaskFilter.allCases, id: \.self) { option in
-                Button { filter = option } label: {
-                    Text(option.rawValue)
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .foregroundColor(filter == option ? Theme.accent : .secondary)
-                        .background(filter == option ? Theme.accent.opacity(0.12) : .clear)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.1), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-    }
 
     private var quickAdd: some View {
         HStack(spacing: 10) {
@@ -5876,19 +6276,18 @@ struct TasksView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "checkmark.square")
-                .font(.system(size: 30))
-                .foregroundColor(Theme.foreground.opacity(0.12))
-            Text("No tasks yet.")
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
-            Text("Add one above — it lands in Todo.")
-                .font(.system(size: 11.5))
-                .foregroundColor(Theme.mutedFg)
+        // P20e (map [21]): per-focus copy, the sim's own words.
+        let copy: String
+        switch focus {
+        case .today: copy = "nothing planned or due today — the day is clear"
+        case .upcoming: copy = "no deadlines ahead of today"
+        case .untriaged: copy = "everything has a date or a project"
+        case .all: copy = "no tasks in this workspace yet"
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        return Text(copy)
+            .font(.system(size: 12.5)).foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 40)
     }
 
     /// Create the task (born nameless + todo), then set its title — two

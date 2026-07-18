@@ -543,3 +543,36 @@ ruling) · attach/voice (ingestion seam) · the capture View-pane view-file
 (rides 20h's view entities) · Tidy category regroup + card anatomy (the
 Tidy polish pass; A/R group keys survive keyboard-only per the
 feature-complete rule) · commit-as-task kept per the sim (a later digit).
+
+### 20e — the tasks surface (as built)
+
+The surface owns its **left panel** now (the mockup's per-surface pattern —
+the seam every 20f panel reuses): **FOCUS** presets with live counts
+(Today · Upcoming · Untriaged "no date, no project — waiting for a
+decision" · All), **PROJECTS** as dot-rows filtering the pool (click again
+clears; the toolbar wears the ✕ chip), **SAVED VIEWS** from the P18 view
+entities (click = the view's query IS the pool; **＋ view** keeps the
+current pool as a new one). The toolbar title IS the pool ("All tasks — by
+status", the focus label, or the view's name); the Agents pill became the
+amber **"✦ N of these I could do"** (pending proposals; hidden at 0 —
+consent-gating rides the queue, which empties when the switch is off).
+List sections wear **ring-dot + count** and terminal groups **fold** —
+"folded — the view stays about live work". The **Schedule lens is the
+two-week Mon–Sun grid** (override of bp6 a16; pager + range label, today
+ring, status-dot pills, +N per-day overflow) with the **UNSCHEDULED tray**
+— dragging a pill onto a day writes the date (⌘⌥Z undoes; the plan role
+deepens this when it lands — today the one date is `due`, recorded).
+Cards carry the multi-chip row (anchor + people + red-overdue date) under
+the component's own ≤3+N budget. The board lost its "+ New status" column
+(the vocabulary editor owns columns; the "no status" column STAYS — the
+one board door for unsetting, recorded). Copilot moved LAST in the lens
+bar. Per-focus empty states carry the sim's copy. The old All/Open/Done
+segments died (FOCUS + the fold supersede); quick-add SURVIVES per the
+feature-complete rule (the mockup omits it — recorded).
+
+**Recorded (deferred):** plan/deadline dual chips + the role-typed date
+rows (the plan role is a vocabulary+wire change); row hover ↗✦⋯ and the
+halo-ring-instead-of-count (shared RowKit surgery — the Tidy polish
+pass); board tile checkbox/chips + 198px narrowing; the full View-tab
+view-object pane (filters editor — rides the views deepening); typed-task
+accent icons (icon vocabulary undefined); assist-provenance chips (wire).
