@@ -459,7 +459,9 @@ struct TabStrip: View {
         case .blank:
             return "New tab"
         case .note(let id):
-            return model.entity(id)?.title ?? "#\(id)"
+            let raw = model.entity(id)?.title ?? "#\(id)"
+            // P20c.2: daily notes wear their civil face in the chrome.
+            return civilDailyTitle(raw) ?? raw
         case .file(let id):
             return model.entity(id)?.title ?? "#\(id)"
         }

@@ -476,3 +476,19 @@ civil title (display-map with 20c.2; the core template holds); the empty
 state (unreachable — a desk tab always exists). **20c.2 next**: the tab
 anatomy (content tabs down into the pane row, the global lane becomes true
 containers, locked-tab open-routing) + the Journal/Projects/Recent panel.
+
+### 20c.2a — the panel content (as built)
+
+The Vault pane became the mockup's note-nav: **JOURNAL** (today first —
+civil-faced "Tuesday 14 July", accent-soft, opens the Today desk; recent
+dailies below), **PROJECTS** (the workspace tree as dot-rows, children as
+"sub", click enters through the flush gate), **RECENT** (latest titled
+objects, task rows badged; sorted by creation — the wire carries no
+modified stamp, recorded). The file-by-format pools yielded to the Library
+surface (20f). The Spaces pane: "Favourites" reads **Pinned**, and the
+interim desk rows died (JOURNAL's today + the rail's Capture door
+supersede them). Daily notes wear their civil face in tab titles; the
+editor's title field keeps ISO (it IS the name — the civil face is chrome,
+recorded). **Still open in 20c:** the tab anatomy — content tabs down into
+the pane row, the global lane as true typed containers, locked-tab
+open-routing — the phase's one remaining stateful rework, next chunk.

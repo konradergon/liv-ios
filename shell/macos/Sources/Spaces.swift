@@ -198,12 +198,190 @@ struct AppSidebar: View {
                     willNavigate: willNavigate, showDesk: showDesk,
                     openEntity: openEntity)
             case .vault:
-                VaultTree(model: model, filter: $filter, openEntity: openEntity)
+                // P20c.2 (map [1]): the Vault pane is the Journal/Projects/
+                // Recent note-nav now; the file-by-format pools yielded to
+                // the Library surface (20f — recorded).
+                VaultNav(
+                    model: model, chrome: chrome, filter: $filter,
+                    willNavigate: willNavigate, openEntity: openEntity,
+                    showDesk: showDesk)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+}
+
+// MARK: - the Vault nav (P20c.2, mockup s-notes): Journal · Projects · Recent
+
+/// Civil display for a daily note's ISO name — "Tuesday 14 July".
+func civilDailyTitle(_ iso: String) -> String? {
+    let parts = iso.split(separator: "-")
+    guard parts.count == 3, let y = Int(parts[0]), let m = Int(parts[1]),
+        let d = Int(parts[2]), iso.count == 10
+    else { return nil }
+    var comps = DateComponents()
+    comps.year = y
+    comps.month = m
+    comps.day = d
+    guard let date = Calendar.current.date(from: comps) else { return nil }
+    let f = DateFormatter()
+    f.setLocalizedDateFormatFromTemplate("EEEEdMMMM")
+    return f.string(from: date)
+}
+
+struct VaultNav: View {
+    @ObservedObject var model: BoxModel
+    @ObservedObject var chrome: ChromeModel
+    @Binding var filter: String
+    var willNavigate: (@escaping () -> Void) -> Void = { $0() }
+    var openEntity: (UInt64) -> Void = { _ in }
+    var showDesk: (Lens) -> Void = { _ in }
+
+    private var everything: [EntityRow] {
+        (model.snap?.everything ?? []).compactMap { model.entity($0) }
+    }
+    private var todayISO: String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+
+    private func isDaily(_ row: EntityRow) -> Bool {
+        civilDailyTitle(row.title) != nil
+    }
+
+    private func matches(_ title: String) -> Bool {
+        filter.isEmpty || title.localizedCaseInsensitiveContains(filter)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 10))
+                    .foregroundColor(Theme.mutedFg)
+                TextField("Filter…", text: $filter)
+                    .textFieldStyle(.plain).font(.system(size: 11.5))
+            }
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border))
+            .padding(.horizontal, 8).padding(.vertical, 6)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    journalSection
+                    projectsSection
+                    recentSection
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
+    private func header(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+            .foregroundColor(Theme.mutedFg)
+            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 2)
+    }
+
+    @ViewBuilder
+    private var journalSection: some View {
+        let dailies = everything
+            .filter { isDaily($0) && !$0.trashed && matches($0.title) }
+            .sorted { $0.title > $1.title }
+            .prefix(7)
+        header("JOURNAL")
+        // Today first, born or not — the day starts in the daily note.
+        navRow(
+            icon: "calendar", label: civilDailyTitle(todayISO) ?? todayISO,
+            aft: "today", active: true
+        ) { showDesk(.today) }
+        ForEach(Array(dailies.filter { $0.title != todayISO }), id: \.id) { row in
+            navRow(
+                icon: "calendar", label: civilDailyTitle(row.title) ?? row.title,
+                aft: nil, active: false
+            ) { openEntity(row.id) }
+        }
+    }
+
+    @ViewBuilder
+    private var projectsSection: some View {
+        let tree = WorkspaceTree(model.snap?.workspaces ?? [])
+        header("PROJECTS")
+        ForEach(tree.spaces.filter { matches($0.name) }, id: \.id) { row in
+            projectRow(row, sub: false)
+            ForEach(tree.kids(of: row.id).filter { matches($0.name) }, id: \.id) { kid in
+                projectRow(kid, sub: true)
+            }
+        }
+    }
+
+    private func projectRow(_ row: WorkspaceRow, sub: Bool) -> some View {
+        navRow(
+            dot: Color(nsColor: Hues.valueHex(row.name)),
+            label: row.name, aft: sub ? "sub" : nil,
+            active: chrome.activeWorkspace == row.id, indent: sub
+        ) {
+            willNavigate {
+                chrome.activeWorkspace = row.id
+                chrome.recordNav(.init(workspace: row.id, surface: .notes, selection: nil))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var recentSection: some View {
+        // Sorted by creation (the wire carries no modified stamp — recorded).
+        let recent = everything
+            .filter { !isDaily($0) && !$0.trashed && matches($0.title) && !$0.title.isEmpty }
+            .sorted { ($0.created ?? 0) > ($1.created ?? 0) }
+            .prefix(6)
+        header("RECENT")
+        ForEach(Array(recent), id: \.id) { row in
+            let isTask = row.kinds.contains("task") || row.status != nil
+            navRow(
+                icon: isTask ? "bolt" : "doc.text",
+                label: row.title,
+                aft: isTask ? "task" : nil, active: false
+            ) { openEntity(row.id) }
+        }
+    }
+
+    private func navRow(
+        icon: String? = nil, dot: Color? = nil, label: String, aft: String?,
+        active: Bool, indent: Bool = false, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 10.5))
+                        .foregroundColor(active ? Theme.accent : Theme.mutedFg)
+                        .frame(width: 14)
+                }
+                if let dot {
+                    Circle().fill(dot).frame(width: 8, height: 8).frame(width: 14)
+                }
+                Text(label)
+                    .font(.system(size: 12, weight: active ? .medium : .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let aft {
+                    Text(aft).font(.system(size: 9.5))
+                        .foregroundColor(active ? Theme.accent : Theme.mutedFg.opacity(0.8))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 29)
+            .padding(.leading, indent ? 12 : 0)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(active ? Theme.accentTint : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 // MARK: - the Vault tree (BP-4 · P17)
@@ -361,15 +539,16 @@ struct SpacesTree: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    // Interim desk rows until tabs land (P3).
-                    deskGroup
+                    // P20c.2: the interim desk rows are gone — JOURNAL's
+                    // today row and the rail's Capture door supersede them
+                    // (mockup s-notes draws neither here).
                     // ONE pin source (BP-4 · P17g): favourite workspaces AND
                     // pinned objects share this section. A pin is a small
                     // backstage entity (target + order) — the inspector's 🔖,
                     // ⌘⇧B, and this list all read/write the same pins; drag
                     // reorders by the float key.
                     if !tree.favourites.isEmpty || !pinRows.isEmpty {
-                        groupHeader("Favourites")
+                        groupHeader("Pinned")
                         ForEach(tree.favourites, id: \.id) { row in
                             if matches(row) {
                                 WorkspaceLeaf(row: row, tree: tree, actions: actions)
