@@ -636,6 +636,31 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// The vault seams (P20j.5) — status/sync ride the box queue; the
+    /// shell surfaces them in 20j.6.
+    func vaultSync(done: @escaping (String?) -> Void = { _ in }) {
+        let path = self.path
+        boxQueue.async {
+            let raw = lotus_vault_sync_at(path)
+            let json = raw.map { String(cString: $0) }
+            if let raw { lotus_string_free(raw) }
+            DispatchQueue.main.async {
+                done(json)
+                self.refresh()
+            }
+        }
+    }
+
+    func vaultStatus(done: @escaping (String?) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            let raw = lotus_vault_status_at(path)
+            let json = raw.map { String(cString: $0) }
+            if let raw { lotus_string_free(raw) }
+            DispatchQueue.main.async { done(json) }
+        }
+    }
+
     /// Import a message batch (P20g): JSON drops; -1 = refused.
     func importMessages(_ json: String, done: @escaping (Int64) -> Void) {
         let path = self.path

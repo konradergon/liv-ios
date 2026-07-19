@@ -823,3 +823,32 @@ conflicted sibling surfaces by name. (The regression test retries around
 parallel tests' cache clears — the guard's proof is the cache entry, and
 the test suite's own `clear_cache_for_tests` races it; the mechanism is
 deterministic in production where nothing clears the cache.)
+
+### 20j.5 — the verbs + the continuous projection (as built)
+
+**Every Wrote commit in a vault box now materializes**: `with_box` gained
+the projection hook — the PLAN computes while the store is in hand (pure
+CPU + one small manifest read; within the lock law), the file IO runs
+AFTER checkin under the projector lock, and a projection failure never
+fails the commit. **Vault discovery is by the `.liv` ancestor**
+(`<root>/.liv/box/<log>` → vault mode; anything else = legacy, projection
+off — every existing harness and LOTUS_BOX_PATH flow untouched, pinned by
+the legacy-status test). Three flagged additive verbs (lotus.h): 
+**`lotus_vault_status_at`** (cheap: mode/root/file count),
+**`lotus_vault_sync_at`** (scan → tier-A ingest as ONE "vault-edit" txn →
+adopt → re-project; returns edited/created/surfaced; the 20j.3 adopt-
+before-plan pin is honored so hand-born files rename, never duplicate),
+**`lotus_vault_rebuild_at`** (plan from an EMPTY manifest — every file
+rewrites even if the manifest lies). The **CLI** gained `lotus vault
+status|sync|rebuild` over the same seams (projector-lock honoring); the
+shell gained the BoxModel wrappers (`vaultSync`/`vaultStatus` — the UI
+rides 20j.6). FFI-pinned: the commit hook materializes a routed note;
+sync ingests an outside edit exactly once (echo-proof second sync);
+rebuild restores a torched `library/`; legacy stays legacy. Smoke-tested
+end-to-end through the CLI on a scratch vault.
+
+**Recorded:** the sync scan's file reads run inside the box hold v0 (the
+store cannot yet snapshot out; sync is launch/user-triggered) · the
+commit hook's full plan-per-commit is the optimization point (touched-id
+threading later) · scrap `add` from the CLI stays box-only until routed —
+correct per the materialize-on-route delta.

@@ -245,6 +245,15 @@ int64_t lotus_import_messages_at(const char *path, const char *json);
    Read-and-clear. Free with lotus_string_free. */
 char *lotus_vault_alerts_at(const char *path);
 
+/* The vault verbs (P20j.5). status: {"mode","root","files"} — cheap, no
+   scan. sync: one scan -> tier-A ingest (ONE undoable txn) -> re-project;
+   {"edited","created","surfaced"}. rebuild: full re-materialize from an
+   empty manifest; returns the file count. Free strings with
+   lotus_string_free. */
+char *lotus_vault_status_at(const char *path);
+char *lotus_vault_sync_at(const char *path);
+int64_t lotus_vault_rebuild_at(const char *path);
+
 /* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
    Start writes nothing anywhere - the running timer is shell state. */
 uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,

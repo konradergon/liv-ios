@@ -595,7 +595,26 @@ unsafe fn with_box<T>(
         return busy;
     };
     let (value, committed) = f(&mut session);
+    // P20j.5 — the continuous projection: every Wrote commit in a VAULT
+    // box materializes. The PLAN computes here (pure CPU + one small
+    // manifest read) while the store is still in hand; the file IO runs
+    // AFTER checkin under the projector lock — never the box lock — and
+    // a projection failure never fails the commit (surfaced by sync).
+    let planned = if matches!(committed, Committed::Wrote) {
+        lotus_services::projection::vault_root_of(&key).map(|root| {
+            let io = lotus_services::projection::RealVaultIo::new(&root);
+            let manifest = lotus_services::projection::load_manifest(&io);
+            let (ops, next) =
+                lotus_services::projection::plan_projection(session.store(), &manifest);
+            (root, ops, next)
+        })
+    } else {
+        None
+    };
     checkin(key, session, committed);
+    if let Some((root, ops, next)) = planned {
+        let _ = lotus_services::projection::apply_locked(&root, &ops, &next);
+    }
     value
 }
 
@@ -2503,6 +2522,109 @@ pub unsafe extern "C" fn lotus_kind_flag_at(
     })
 }
 
+/// The vault's status (P20j.5): {"mode":"vault"|"legacy","root":…,
+/// "files":N}. Cheap — no scan. Additive verb, flagged.
+///
+/// # Safety
+/// Free the returned string with `lotus_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_vault_status_at(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(p) = CStr::from_ptr(path).to_str() else {
+        return std::ptr::null_mut();
+    };
+    let box_path = std::path::Path::new(p);
+    let json = match lotus_services::projection::vault_root_of(box_path) {
+        None => serde_json::json!({ "mode": "legacy" }),
+        Some(root) => {
+            let io = lotus_services::projection::RealVaultIo::new(&root);
+            let manifest = lotus_services::projection::load_manifest(&io);
+            serde_json::json!({
+                "mode": "vault",
+                "root": root.display().to_string(),
+                "files": manifest.rows.len(),
+            })
+        }
+    };
+    CString::new(json.to_string()).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
+/// One vault sync (P20j.5): scan → tier-A ingest as ONE "vault-edit"
+/// transaction → adopt → re-project. Returns
+/// {"edited":N,"created":N,"surfaced":N} or null on busy/legacy.
+/// The scan's file reads run inside the box hold v0 (recorded — the
+/// store cannot yet be snapshotted out); sync is launch/user-triggered.
+///
+/// # Safety
+/// Free the returned string with `lotus_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_vault_sync_at(path: *const c_char) -> *mut c_char {
+    let Some((mut session, key)) = open_box(path) else {
+        return std::ptr::null_mut();
+    };
+    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+        checkin(key, session, Committed::Read);
+        return CString::new(r#"{"mode":"legacy"}"#)
+            .map(CString::into_raw)
+            .unwrap_or(std::ptr::null_mut());
+    };
+    let io = lotus_services::projection::RealVaultIo::new(&root);
+    let mut manifest = lotus_services::projection::load_manifest(&io);
+    let findings =
+        lotus_services::projection::scan(&io, session.store(), &manifest);
+    let outcome = match lotus_services::projection::ingest(
+        &mut session,
+        &io,
+        &manifest,
+        &findings,
+    ) {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            checkin(key, session, Committed::Failed);
+            return std::ptr::null_mut();
+        }
+    };
+    // Adopted hand-born paths fold in BEFORE planning, so the projector
+    // renames them to canonical instead of duplicating (20j.3's pin).
+    lotus_services::projection::adopt_into(&mut manifest, &outcome.adopted);
+    let (ops, next) =
+        lotus_services::projection::plan_projection(session.store(), &manifest);
+    let changed = outcome.edited + outcome.created > 0;
+    checkin(key, session, if changed { Committed::Wrote } else { Committed::Read });
+    let _ = lotus_services::projection::apply_locked(&root, &ops, &next);
+    let json = serde_json::json!({
+        "edited": outcome.edited,
+        "created": outcome.created,
+        "surfaced": outcome.surfaced,
+    });
+    CString::new(json.to_string()).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
+/// Full re-materialization (P20j.5): plan from an EMPTY manifest so every
+/// file rewrites even if the manifest lies. Returns the file count, -1 on
+/// busy/legacy/failure.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_vault_rebuild_at(path: *const c_char) -> i64 {
+    let Some((session, key)) = open_box(path) else {
+        return -1;
+    };
+    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+        checkin(key, session, Committed::Read);
+        return -1;
+    };
+    let (ops, next) = lotus_services::projection::plan_projection(
+        session.store(),
+        &lotus_services::projection::Manifest::default(),
+    );
+    checkin(key, session, Committed::Read);
+    match lotus_services::projection::apply_locked(&root, &ops, &next) {
+        Ok(()) => next.rows.len() as i64,
+        Err(_) => -1,
+    }
+}
+
 /// Drain the vault's self-defense notices (P20j.4): a JSON array of
 /// strings — length regression, in-place replacement, conflicted-copy
 /// siblings. Read-and-clear; empty array when quiet. Additive verb
@@ -3771,6 +3893,106 @@ mod tests {
         assert_eq!(snap["assist"]["on"], false);
         assert_eq!(snap["assist"]["prop"], "autopilot");
         cleanup(&path);
+    }
+
+    fn fresh_vault(name: &str) -> (std::path::PathBuf, std::path::PathBuf, CString) {
+        // A VAULT-shaped box: <root>/.liv/box/box.log (design §6).
+        let root = std::env::temp_dir().join(format!("lotus_vault_{name}"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".liv/box")).unwrap();
+        let path = root.join(".liv/box/box.log");
+        let c_path = CString::new(path.to_str().unwrap()).unwrap();
+        (root, path, c_path)
+    }
+
+    #[test]
+    fn every_wrote_commit_materializes_in_a_vault_box() {
+        let (root, _path, c_path) = fresh_vault("continuous");
+        let text = CString::new("projected thought").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        assert_ne!(id, 0);
+        // Route it so it projects (scraps are box-only until typed).
+        let note = CString::new("note").unwrap();
+        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) }, 1);
+        let name_prop = CString::new("name").unwrap();
+        let name = CString::new("Projected thought").unwrap();
+        assert_eq!(
+            unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) },
+            1
+        );
+        assert!(
+            root.join("library/notes/projected-thought.md").exists(),
+            "the commit hook materialized the file"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vault_sync_ingests_an_external_edit_once() {
+        let (root, _path, c_path) = fresh_vault("sync");
+        let text = CString::new("sync target").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let note = CString::new("note").unwrap();
+        unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
+        let name_prop = CString::new("name").unwrap();
+        let name = CString::new("Sync target").unwrap();
+        unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
+        let file = root.join("library/notes/sync-target.md");
+        assert!(file.exists());
+
+        // The user edits the file outside Liv.
+        let mut bytes = std::fs::read(&file).unwrap();
+        bytes.extend_from_slice(b"an outside line");
+        std::fs::write(&file, bytes).unwrap();
+
+        let raw = unsafe { lotus_vault_sync_at(c_path.as_ptr()) };
+        let sync: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(sync["edited"], 1, "{sync}");
+
+        // Echo-proof: a second sync is silent.
+        let raw = unsafe { lotus_vault_sync_at(c_path.as_ptr()) };
+        let again: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(again["edited"], 0, "{again}");
+        assert_eq!(again["created"], 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vault_status_and_rebuild() {
+        let (root, _path, c_path) = fresh_vault("rebuild");
+        let text = CString::new("rebuild me").unwrap();
+        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let note = CString::new("note").unwrap();
+        unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
+        let name_prop = CString::new("name").unwrap();
+        let name = CString::new("Rebuild me").unwrap();
+        unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
+
+        let raw = unsafe { lotus_vault_status_at(c_path.as_ptr()) };
+        let status: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(status["mode"], "vault", "{status}");
+        assert!(status["files"].as_u64().unwrap() >= 1);
+
+        // Torch the projection; rebuild returns it.
+        std::fs::remove_dir_all(root.join("library")).unwrap();
+        assert!(unsafe { lotus_vault_rebuild_at(c_path.as_ptr()) } >= 1);
+        assert!(root.join("library/notes/rebuild-me.md").exists());
+
+        // A LEGACY box reports legacy and never projects.
+        let (lp, lc) = fresh_box("lotus_ffi_legacy_status");
+        let raw = unsafe { lotus_vault_status_at(lc.as_ptr()) };
+        let status: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(status["mode"], "legacy");
+        cleanup(&lp);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

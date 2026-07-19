@@ -584,3 +584,41 @@ pub fn project_locked(root: &std::path::Path, store: &Store) -> io::Result<Manif
     apply_projection(&mut io, &ops, &next)?;
     Ok(next)
 }
+
+
+// ---- P20j.5: vault discovery + the split lock-phase helpers ----
+
+/// The vault root, discovered by the `.liv` ancestor of the box path
+/// (design §6): `<root>/.liv/box/<log>` → root. Anything else = legacy
+/// mode — projection off, every existing harness untouched.
+pub fn vault_root_of(box_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let box_dir = box_path.parent()?;
+    if box_dir.file_name()? != "box" {
+        return None;
+    }
+    let liv = box_dir.parent()?;
+    if liv.file_name()? != ".liv" {
+        return None;
+    }
+    liv.parent().map(|p| p.to_path_buf())
+}
+
+/// Apply a PRE-COMPUTED plan under the projector lock (the post-checkin
+/// half: the plan was computed while the box lock was held — pure CPU +
+/// one manifest read — and the file IO happens here, box lock released).
+/// A stale plan is harmless: every op is disk-verified and the next
+/// commit re-plans (kill-shots A/C).
+pub fn apply_locked(
+    root: &std::path::Path,
+    ops: &[FsOp],
+    next: &Manifest,
+) -> io::Result<()> {
+    std::fs::create_dir_all(root.join(".liv"))?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(root.join(".liv/projector.lock"))?;
+    lock.lock()?;
+    let mut io = RealVaultIo::new(root);
+    apply_projection(&mut io, ops, next)
+}

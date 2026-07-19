@@ -73,6 +73,9 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             history(&session);
             Ok(())
         }
+        // P20j.5 — the vault door from the CLI: the same services seams
+        // the shell drives, honoring the projector lock.
+        Some((&"vault", sub)) => vault(&mut session, &log_path, sub),
         Some((&"habit", rest)) if !rest.is_empty() => habit_add(&mut session, rest),
         Some((&"checkin", rest)) if !rest.is_empty() => checkin(&mut session, rest),
         Some((&"habits", _)) => {
@@ -571,4 +574,54 @@ fn rename_value(session: &mut Session, rest: &[&str]) -> Result<(), String> {
         .map_err(|e| format!("{e:?}"))?;
     println!("renamed {old} -> {new} on {count} carriers (one undo restores)");
     Ok(())
+}
+
+
+/// `lotus vault status|sync|rebuild` (P20j.5): the projection from the
+/// CLI. Legacy boxes (no `.liv/box/` ancestor) report and refuse — the
+/// projection never turns itself on.
+fn vault(session: &mut Session, log_path: &str, sub: &[&str]) -> Result<(), String> {
+    use lotus_services::projection as proj;
+    let Some(root) = proj::vault_root_of(std::path::Path::new(log_path)) else {
+        println!("legacy box — no vault (the box is not at <root>/.liv/box/)");
+        return Ok(());
+    };
+    match sub.first() {
+        None | Some(&"status") => {
+            let io = proj::RealVaultIo::new(&root);
+            let manifest = proj::load_manifest(&io);
+            println!("vault: {}", root.display());
+            println!("files: {}", manifest.rows.len());
+            let findings = proj::scan(&io, session.store(), &manifest);
+            if findings.is_empty() {
+                println!("in sync — nothing diverges");
+            } else {
+                println!("{} finding(s) — run `lotus vault sync`", findings.len());
+            }
+            Ok(())
+        }
+        Some(&"sync") => {
+            let io = proj::RealVaultIo::new(&root);
+            let mut manifest = proj::load_manifest(&io);
+            let findings = proj::scan(&io, session.store(), &manifest);
+            let outcome = proj::ingest(session, &io, &manifest, &findings)
+                .map_err(|e| format!("{e:?}"))?;
+            proj::adopt_into(&mut manifest, &outcome.adopted);
+            let (ops, next) = proj::plan_projection(session.store(), &manifest);
+            proj::apply_locked(&root, &ops, &next).map_err(|e| e.to_string())?;
+            println!(
+                "synced — {} edited · {} created · {} surfaced (cards wait in the app)",
+                outcome.edited, outcome.created, outcome.surfaced
+            );
+            Ok(())
+        }
+        Some(&"rebuild") => {
+            let (ops, next) =
+                proj::plan_projection(session.store(), &proj::Manifest::default());
+            proj::apply_locked(&root, &ops, &next).map_err(|e| e.to_string())?;
+            println!("rebuilt — {} file(s) materialized from the log", next.rows.len());
+            Ok(())
+        }
+        Some(other) => Err(format!("unknown vault subcommand: {other}")),
+    }
 }
