@@ -713,3 +713,38 @@ own pass, entangled with 20j's folder story · the per-kind Properties
 matrix · the AI page's Plan section + aggressiveness knob (fence/CORE) ·
 the digit-facet search grammar retired with the overlay (recorded in
 P19's doc; the surface search is filter + palette-handoff).
+
+### 20j.1 — the projection's pure layer (as built)
+
+`services/src/vault.rs`: the **vault slugger** (the pack's breadcrumb is
+the spec — `Steven Åkesson` → `steven-akesson`; Latin fold, single-hyphen
+collapse, 200-byte clamp, Windows-reserved suffixing, dot-refusal,
+`untitled-<id>` fallback), **deterministic case-insensitive collision
+suffixing** (id order keeps the bare stem), **pool classification**
+(daily beats note; binaries by extension; unrouted scraps/messages/
+unknown binaries box-only — recorded), **H1-is-title rendering** (no
+`title:` key; `type:` leads the frontmatter) with `parse_vault_note`
+recovering name/frontmatter/body, and `expected_files(store)` — the pure
+fixpoint the 20j.2 planner converges to.
+
+**The gate earned its keep.** The render∘parse fixpoint property test
+caught FIVE real codec instabilities in the P15 markdown layer, each now
+fixed in `markdown.rs`: (1) adjacent same-mark runs mis-lexed (`` `a``b` ``
+became one code span with literal backticks; `~~a~~~~b~~` a four-tilde
+run) — the renderer now MERGES identical-mark neighbors and normalizes
+code-run marks; (2) marks emit through a nesting STACK so a shared mark
+never closes+reopens at a boundary; (3) a TIGHT list item's paragraph
+suppression outlived the item and glued the next paragraph onto it —
+suppression now dies with `End(Item)`; (4) orphan list depths and
+under-indented children flattened on reparse — depths clamp to the chain
+and indentation is the cumulative parent marker width (task children
+column = 2: the `[ ]` is content); (5) whitespace inside emphasis
+delimiters fails flanking — boundary ws hoists out of marked runs.
+**The honest contract, recorded:** distinct marker families (`**`/`_`/
+`~~`, strike innermost) make REALISTIC (space-bounded) documents strictly
+byte-stable; adversarial no-space compounds hit CommonMark's flanking
+algebra (an outer closer preceded by an inner marker's punctuation cannot
+close in ANY order) and instead **converge in one round trip** — which is
+what the projector's echo suppression actually requires; the one-step
+settle + occasional mark-to-literal degradation is the codec's recorded
+lossy edge. Both properties are pinned by 200-case generative tests.

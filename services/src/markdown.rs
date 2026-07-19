@@ -79,6 +79,11 @@ pub fn parse_markdown(raw: &str) -> RichText {
             // A block of raw HTML starts its own paragraph (it is not inline).
             Event::Start(Tag::HtmlBlock) => spans.push(Span::Break(Block::Body)),
             Event::Start(Tag::List(start)) => list_stack.push(start),
+            // A TIGHT item emits no Paragraph events, so its suppression
+            // must die with the item — or the NEXT paragraph's break gets
+            // swallowed and its text glues onto the item (the P20j.1
+            // fixpoint gate's catch).
+            Event::End(TagEnd::Item) => suppress_para = false,
             Event::End(TagEnd::List(_)) => {
                 list_stack.pop();
             }
@@ -137,10 +142,16 @@ pub fn parse_markdown(raw: &str) -> RichText {
 /// `RichText` → markdown for export (D7). Marks become `**`/`*`/`` ` ``/`~~`;
 /// blocks their line prefixes; a `Ref` its target's name as `[[Name]]`.
 pub fn render_markdown(text: &RichText, name_of: &dyn Fn(Id) -> String) -> String {
-    // Group the span stream into (block, inline-markdown) pairs.
-    let mut blocks: Vec<(Block, String)> = Vec::new();
+    // Group the span stream into (block, inline-run) pairs. Runs stay
+    // structured until the whole paragraph is known: the canonical inline
+    // renderer needs the neighborhood (P20j.1 — the fixpoint gate).
+    enum Run {
+        Text(TextSpan),
+        Ref(Id),
+    }
+    let mut blocks: Vec<(Block, Vec<Run>)> = Vec::new();
     let mut cur_block = Block::Body;
-    let mut cur = String::new();
+    let mut cur: Vec<Run> = Vec::new();
     let mut started = false;
     for span in &text.spans {
         match span {
@@ -153,11 +164,11 @@ pub fn render_markdown(text: &RichText, name_of: &dyn Fn(Id) -> String) -> Strin
             }
             Span::Text(ts) => {
                 started = true;
-                cur.push_str(&render_marks(ts));
+                cur.push(Run::Text(ts.clone()));
             }
             Span::Ref(id) => {
                 started = true;
-                cur.push_str(&format!("[[{}]]", name_of(*id)));
+                cur.push(Run::Ref(*id));
             }
         }
     }
@@ -165,11 +176,147 @@ pub fn render_markdown(text: &RichText, name_of: &dyn Fn(Id) -> String) -> Strin
         blocks.push((cur_block, cur));
     }
 
+    // The canonical inline form (the render∘parse fixpoint, P20j.1):
+    // (1) adjacent text runs with IDENTICAL marks merge — two abutting code
+    // spans would otherwise lex as one span with literal backticks, two
+    // abutting strikes as a four-tilde run; (2) marks emit through a
+    // nesting STACK (strike ⊃ bold ⊃ italic), so a mark shared by
+    // neighbors never closes and reopens at the boundary — no ~~~~, ever.
+    let render_inline = |runs: &[Run]| -> String {
+        // Merge pass.
+        let mut merged: Vec<Run> = Vec::new();
+        for run in runs {
+            // CODE renders literally — other bits on a code run are
+            // unrenderable, so they normalize away (parse reality: a code
+            // span comes back as code-only; normalizing here IS the
+            // fixpoint).
+            let normalized = |ts: &TextSpan| -> TextSpan {
+                if ts.marks.0 & Marks::CODE != 0 {
+                    TextSpan { text: ts.text.clone(), marks: Marks(Marks::CODE) }
+                } else {
+                    ts.clone()
+                }
+            };
+            match (merged.last_mut(), run) {
+                (Some(Run::Text(last)), Run::Text(ts))
+                    if last.marks == normalized(ts).marks =>
+                {
+                    last.text.push_str(&ts.text);
+                }
+                (_, Run::Text(ts)) => merged.push(Run::Text(normalized(ts))),
+                (_, Run::Ref(id)) => merged.push(Run::Ref(*id)),
+            }
+        }
+        // Whitespace hoist: emphasis cannot wrap boundary whitespace
+        // (a delimiter next to a space fails flanking) — leading/trailing
+        // ws moves OUT of marked runs as plain runs, preserving bytes.
+        let mut hoisted: Vec<Run> = Vec::new();
+        for run in merged {
+            match run {
+                Run::Text(ts)
+                    if ts.marks.0 != 0
+                        && ts.marks.0 & Marks::CODE == 0
+                        && (ts.text.starts_with(' ') || ts.text.ends_with(' ')) =>
+                {
+                    let core_start = ts.text.len() - ts.text.trim_start().len();
+                    let core_end = ts.text.trim_end().len();
+                    if core_start > 0 {
+                        hoisted.push(Run::Text(TextSpan {
+                            text: ts.text[..core_start].to_string(),
+                            marks: Marks(0),
+                        }));
+                    }
+                    if core_end > core_start {
+                        hoisted.push(Run::Text(TextSpan {
+                            text: ts.text[core_start..core_end].to_string(),
+                            marks: ts.marks,
+                        }));
+                    }
+                    if core_end < ts.text.len() {
+                        hoisted.push(Run::Text(TextSpan {
+                            text: ts.text[core_end..].to_string(),
+                            marks: Marks(0),
+                        }));
+                    }
+                }
+                other => hoisted.push(other),
+            }
+        }
+        let merged = hoisted;
+
+        // Stack pass.
+        // Distinct marker families — underscore italic can never fuse
+        // with ** into an ambiguous ***; the price is the intraword
+        // underscore rule: a no-space italic adjacency parses literal
+        // (byte-STABLE, marks lost — the codec's one recorded lossy case).
+        // Strike INNERMOST: a ~~ delimiter is then always word-flanked,
+        // so GFM's flanking rules pair it deterministically — a closing
+        // ~~ after punctuation ( **~~ ) fails right-flanking and re-pairs
+        // as an opener, the exact instability the gate caught.
+        const ORDER: [(u8, &str); 3] =
+            [(Marks::BOLD, "**"), (Marks::ITALIC, "_"), (Marks::STRIKE, "~~")];
+        let mut out = String::new();
+        let mut active: Vec<(u8, &str)> = Vec::new();
+        let close_to = |out: &mut String, active: &mut Vec<(u8, &str)>, keep: usize| {
+            while active.len() > keep {
+                let (_, marker) = active.pop().unwrap();
+                out.push_str(marker);
+            }
+        };
+        for run in &merged {
+            match run {
+                Run::Ref(id) => {
+                    close_to(&mut out, &mut active, 0);
+                    out.push_str(&format!("[[{}]]", name_of(*id)));
+                }
+                Run::Text(ts) if ts.text.is_empty() => {}
+                Run::Text(ts) if ts.marks.0 & Marks::CODE != 0 => {
+                    // Inline code is literal and closes everything; a
+                    // backtick inside widens the fence.
+                    close_to(&mut out, &mut active, 0);
+                    if ts.text.contains('`') {
+                        out.push_str(&format!("`` {} ``", ts.text));
+                    } else {
+                        out.push_str(&format!("`{}`", ts.text));
+                    }
+                }
+                Run::Text(ts) => {
+                    let want: Vec<(u8, &str)> = ORDER
+                        .iter()
+                        .filter(|(bit, _)| ts.marks.0 & bit != 0)
+                        .copied()
+                        .collect();
+                    let common = active
+                        .iter()
+                        .zip(want.iter())
+                        .take_while(|(a, w)| a == w)
+                        .count();
+                    close_to(&mut out, &mut active, common);
+                    for entry in &want[common..] {
+                        out.push_str(entry.1);
+                        active.push(*entry);
+                    }
+                    out.push_str(&ts.text);
+                }
+            }
+        }
+        close_to(&mut out, &mut active, 0);
+        out
+    };
+    let blocks: Vec<(Block, String)> =
+        blocks.into_iter().map(|(b, runs)| (b, render_inline(&runs))).collect();
+
     // Consecutive Code blocks are one fence; every other block is a line.
+    // List depths canonicalize against the CHAIN (P20j.1): an orphan depth
+    // clamps to parent+1, and indentation is the cumulative parent marker
+    // width ("- "=2, "1. "=3, "- [x] "=6) — anything shallower flattens on
+    // reparse, anything orphaned is unrepresentable in markdown at all.
     let mut out: Vec<String> = Vec::new();
+    let mut chain: Vec<usize> = Vec::new(); // parent content-column widths
     let mut i = 0;
     while i < blocks.len() {
         if let (Block::Code { lang }, _) = (&blocks[i].0, ()) {
+            chain.clear();
             let lang = lang.clone().unwrap_or_default();
             let mut lines = Vec::new();
             while i < blocks.len() {
@@ -183,7 +330,42 @@ pub fn render_markdown(text: &RichText, name_of: &dyn Fn(Id) -> String) -> Strin
             out.push(format!("```{}\n{}\n```", lang, lines.join("\n")));
             continue;
         }
-        out.push(render_block(&blocks[i].0, &blocks[i].1));
+        let (block, inline) = (&blocks[i].0, &blocks[i].1);
+        let marker_width = |b: &Block| -> usize {
+            match b {
+                Block::Bullet { .. } => 2,
+                Block::Ordered { .. } => 3,
+                // The [ ] is CONTENT per the tasklist ext — the item's
+                // child column is the "- " width, and 6 would tip a
+                // child into indented-code territory.
+                Block::Task { .. } => 2,
+                _ => 0,
+            }
+        };
+        let depth_of = |b: &Block| -> Option<u8> {
+            match b {
+                Block::Bullet { depth } | Block::Ordered { depth }
+                | Block::Task { depth, .. } => Some(*depth),
+                _ => None,
+            }
+        };
+        match depth_of(block) {
+            Some(want) => {
+                let eff = (want as usize).min(chain.len());
+                chain.truncate(eff);
+                let indent: usize = chain.iter().sum();
+                out.push(format!(
+                    "{}{}",
+                    " ".repeat(indent),
+                    render_block(block, inline)
+                ));
+                chain.push(marker_width(block));
+            }
+            None => {
+                chain.clear();
+                out.push(render_block(block, inline));
+            }
+        }
         i += 1;
     }
     out.join("\n\n")
@@ -194,43 +376,17 @@ fn render_block(block: &Block, inline: &str) -> String {
         Block::Body => inline.to_string(),
         Block::Heading(n) => format!("{} {}", "#".repeat((*n).clamp(1, 6) as usize), inline),
         Block::Quote => format!("> {inline}"),
-        Block::Bullet { depth } => format!("{}- {inline}", "  ".repeat(*depth as usize)),
-        Block::Ordered { depth } => format!("{}1. {inline}", "  ".repeat(*depth as usize)),
-        Block::Task { depth, done } => format!(
-            "{}- [{}] {inline}",
-            "  ".repeat(*depth as usize),
-            if *done { "x" } else { " " }
-        ),
+        Block::Bullet { .. } => format!("- {inline}"),
+        Block::Ordered { .. } => format!("1. {inline}"),
+        Block::Task { done, .. } => {
+            format!("- [{}] {inline}", if *done { "x" } else { " " })
+        }
         Block::Code { .. } => inline.to_string(), // handled by the fence grouping
         Block::Callout { .. } => format!("> {inline}"),
         Block::Rule => "---".to_string(),
     }
 }
 
-fn render_marks(ts: &TextSpan) -> String {
-    if ts.text.is_empty() {
-        return String::new();
-    }
-    let m = ts.marks.0;
-    if m & Marks::CODE != 0 {
-        return format!("`{}`", ts.text); // inline code is literal — no nested marks
-    }
-    let mut open = String::new();
-    let mut close = String::new();
-    if m & Marks::STRIKE != 0 {
-        open.push_str("~~");
-        close.insert_str(0, "~~");
-    }
-    if m & Marks::BOLD != 0 {
-        open.push_str("**");
-        close.insert_str(0, "**");
-    }
-    if m & Marks::ITALIC != 0 {
-        open.push('*');
-        close.insert_str(0, "*");
-    }
-    format!("{open}{}{close}", ts.text)
-}
 
 /// Split a leading `---` YAML frontmatter block off the body (D7). Flat scalars
 /// and simple lists only. No frontmatter → `(empty, whole input)`.

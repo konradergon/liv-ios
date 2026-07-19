@@ -8,6 +8,7 @@
 
 pub mod clerk;
 pub mod comms;
+pub mod vault;
 pub mod content;
 mod dates;
 pub mod export;
