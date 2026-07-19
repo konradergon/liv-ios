@@ -95,6 +95,9 @@ struct EntityRow: Codable, Identifiable, Hashable {
     /// Fingerprint of the stored content, 0 when none — the editor reads
     /// "did my base move?" off every snapshot for free.
     let contentPrint: UInt64
+    /// The projected vault path (P20j.6) — `library/<pool>/<slug>`, absent
+    /// for box-only entities and in legacy mode. Optional per the H1 law.
+    let vaultPath: String?
     let cells: [CellRow]
 }
 
@@ -633,6 +636,47 @@ final class BoxModel: ObservableObject {
                 done(count)
                 if count >= 0 { self.refresh() }
             }
+        }
+    }
+
+    /// P20j.6 — the vault root by containment (mirrors Rust `vault_root_of`:
+    /// `<root>/.liv/box/<log>` → root). nil = legacy mode, projection off.
+    var vaultRoot: String? {
+        let box = URL(fileURLWithPath: path)
+        let boxDir = box.deletingLastPathComponent()
+        guard boxDir.lastPathComponent == "box" else { return nil }
+        let liv = boxDir.deletingLastPathComponent()
+        guard liv.lastPathComponent == ".liv" else { return nil }
+        return liv.deletingLastPathComponent().path
+    }
+
+    var inVault: Bool { vaultRoot != nil }
+
+    /// The vault's display name: the folder that IS the vault (its root in
+    /// vault mode, else the box's directory — the legacy honesty).
+    var vaultDisplayName: String {
+        if let root = vaultRoot {
+            let name = URL(fileURLWithPath: root).lastPathComponent
+            return name.isEmpty ? "lotus" : name
+        }
+        let dir = URL(fileURLWithPath: path).deletingLastPathComponent()
+        return dir.lastPathComponent.isEmpty ? "lotus" : dir.lastPathComponent
+    }
+
+    /// The absolute on-disk file for a projected entity, if it materializes.
+    func vaultFile(_ row: EntityRow) -> URL? {
+        guard let root = vaultRoot, let rel = row.vaultPath else { return nil }
+        return URL(fileURLWithPath: root).appendingPathComponent(rel)
+    }
+
+    /// Reveal an entity's real file in Finder (vault mode) — else the box.
+    func revealInFinder(_ id: UInt64) {
+        if let row = entity(id), let file = vaultFile(row),
+            FileManager.default.fileExists(atPath: file.path)
+        {
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
     }
 
@@ -1448,7 +1492,12 @@ struct WindowChrome: View {
                 chrome.rightOpen = true
                 chrome.rightLens = .assist
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusRevealInVault)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .lotusRevealInVault)) { note in
+                // P20j.6: in vault mode, reveal the REAL file in Finder;
+                // always surface the Vault tab too.
+                if let id = note.object as? UInt64, model.inVault {
+                    model.revealInFinder(id)
+                }
                 chrome.leftOpen = true
                 leftViewRaw = SidebarView.vault.rawValue
                 chrome.persistPanes()
@@ -2035,19 +2084,25 @@ struct WindowChrome: View {
     /// foot. Click = the honest popover: the path, Reveal, and where Move
     /// lives. Neither artifact defines more (recorded).
     private var vaultFooter: some View {
-        Menu {
-            Text(model.path)
-            Button("Reveal in Finder") {
+        // P20j.6: the vault folder in vault mode (Reveal opens the real
+        // folder-of-markdown), the box file in legacy mode — honestly.
+        let revealTarget = model.vaultRoot ?? model.path
+        return Menu {
+            Text(model.inVault ? revealTarget : model.path)
+            Button(model.inVault ? "Reveal the vault folder" : "Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting(
-                    [URL(fileURLWithPath: model.path)])
+                    [URL(fileURLWithPath: revealTarget)])
+            }
+            if model.inVault {
+                Text("that folder IS the database — markdown + files")
             }
             Divider()
-            Text("Move… lives in Settings → Capture & Store")
+            Text("Move… lives in Settings → General")
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "folder").font(.system(size: 10))
                     .foregroundColor(Theme.mutedFg)
-                Text("Vault: \(vaultName)")
+                Text("Vault: \(model.vaultDisplayName)")
                     .font(.system(size: 10.5)).foregroundColor(Theme.text2)
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -2061,11 +2116,6 @@ struct WindowChrome: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .overlay(Divider(), alignment: .top)
-    }
-
-    private var vaultName: String {
-        let dir = URL(fileURLWithPath: model.path).deletingLastPathComponent()
-        return dir.lastPathComponent.isEmpty ? "lotus" : dir.lastPathComponent
     }
 
     /// The Spaces | Vault two-tab control — a compact segmented pill, in the
@@ -3741,9 +3791,16 @@ struct ContactsView: View {
                 Image(systemName: "folder").font(.system(size: 9))
                     .foregroundColor(Theme.mutedFg)
                 Text("in People ·").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
-                Text("library/contacts/\(slug(row.title)).md")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(Theme.mutedFg)
+                Button {
+                    NotificationCenter.default.post(name: .lotusRevealInVault, object: row.id)
+                } label: {
+                    Text(row.vaultPath ?? "library/contacts/\(slug(row.title)).md")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(model.inVault ? Theme.accent : Theme.mutedFg)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(model.inVault ? "reveal the file in Finder" : "the projected path (real files: vault mode)")
                 Spacer()
                 HStack(spacing: 3) {
                     Image(systemName: "checkmark").font(.system(size: 8))
@@ -5661,7 +5718,9 @@ struct LibraryNav: View {
                         .help(view.query)
                     }
                 }
-                Text("VAULT — real folders on disk arrive with the projection (20j)")
+                Text(model.inVault
+                    ? "VAULT — \(model.vaultDisplayName)/ is a real folder on disk"
+                    : "VAULT — real folders on disk arrive in vault mode")
                     .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.7))
                     .padding(.horizontal, 8).padding(.top, 10)
             }
@@ -5903,7 +5962,9 @@ struct LibraryView: View {
                 Text("\(files.count) object\(files.count == 1 ? "" : "s") · \(poolsRepresented) pool\(poolsRepresented == 1 ? "" : "s") represented")
                     .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                 Spacer()
-                Text("new files → the vault's inbox — real folders with 20j")
+                Text(model.inVault
+                    ? "new files → \(model.vaultDisplayName)/library/ — real folders on disk"
+                    : "new files → the vault's inbox — real folders in vault mode")
                     .font(.system(size: 10)).foregroundColor(Theme.mutedFg.opacity(0.8))
             }
             .padding(.horizontal, 24).padding(.vertical, 5)

@@ -2000,9 +2000,9 @@ struct EditorView: View {
 
     private var kebab: some View {
         Menu {
-            Button("Source mode — lands with the files projection (20j)") {}
+            Button("Source mode — lands with a later projection slice") {}
                 .disabled(true)
-            Button("Reveal in vault") {
+            Button(model.box.inVault ? "Reveal in Finder" : "Reveal in vault") {
                 NotificationCenter.default.post(name: .lotusRevealInVault, object: model.id)
             }
             Button("Export…") {
@@ -2122,12 +2122,22 @@ struct EditorView: View {
     private var editorFooter: some View {
         let words = (model.textView?.string ?? "")
             .split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+        // P20j.6: the real projected path in vault mode; click reveals the
+        // file in Finder. Legacy mode keeps the honest placeholder.
+        let projected = model.box.entity(model.id)?.vaultPath
+        let shown = projected ?? "Vault/\(model.title.isEmpty ? "Untitled" : model.title).md"
         return HStack(spacing: 10) {
-            // Presentational until 20j materializes real files (recorded).
-            Text("Vault/\(model.title.isEmpty ? "Untitled" : model.title).md")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(Theme.mutedFg)
-                .lineLimit(1).truncationMode(.middle)
+            Button {
+                NotificationCenter.default.post(name: .lotusRevealInVault, object: model.id)
+            } label: {
+                Text(shown)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(model.box.inVault ? Theme.accent : Theme.mutedFg)
+                    .lineLimit(1).truncationMode(.middle)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(model.box.inVault ? "reveal the file in Finder" : "the projected path")
             Spacer()
             Text("\(words) word\(words == 1 ? "" : "s")")
                 .font(.system(size: 10).monospacedDigit())

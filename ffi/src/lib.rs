@@ -177,6 +177,11 @@ struct EntityRow {
     /// Fingerprint of the stored content value, 0 when none — the editor
     /// learns from every snapshot whether its base moved, for free.
     content_print: u64,
+    /// The entity's projected vault path (P20j.6) — `library/<pool>/<slug>`,
+    /// exactly what materializes on disk, or absent for box-only entities.
+    /// The shell shows it only in vault mode; Reveal opens root+this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vault_path: Option<String>,
     cells: Vec<CellRow>,
 }
 
@@ -872,6 +877,13 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                 .map(|e| e.id),
         );
     }
+    // P20j.6: the projected path per entity (a pure store function — the
+    // same expected_files the materializer plans from), joined by id.
+    let vault_paths: std::collections::HashMap<Id, String> =
+        lotus_services::vault::expected_files(store)
+            .into_iter()
+            .map(|f| (f.id, f.rel_path))
+            .collect();
     let entities = projected
         .iter()
         .filter_map(|id| store.get(*id))
@@ -920,6 +932,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                 content_print: lotus_services::content::content_fingerprint(
                     entity.get(props::CONTENT),
                 ),
+                vault_path: vault_paths.get(&entity.id).cloned(),
                 cells: entity
                     .cells
                     .iter()
@@ -3959,6 +3972,38 @@ mod tests {
         assert_eq!(again["edited"], 0, "{again}");
         assert_eq!(again["created"], 0);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_snapshot_carries_the_projected_path() {
+        // P20j.6: the fidelity flip's wire contract — a routed note's real
+        // vault path rides the snapshot; a box-only scrap carries none.
+        let (path, c_path) = fresh_box("lotus_ffi_vaultpath");
+        let scrap = unsafe {
+            lotus_capture_at(c_path.as_ptr(), CString::new("loose").unwrap().as_ptr())
+        };
+        let note = CString::new("note").unwrap();
+        unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, note.as_ptr()) };
+        let name_prop = CString::new("name").unwrap();
+        let name = CString::new("Steven Åkesson").unwrap();
+        unsafe { lotus_set_at(c_path.as_ptr(), scrap, name_prop.as_ptr(), name.as_ptr()) };
+
+        // A second, still-unrouted scrap.
+        let orphan = unsafe {
+            lotus_capture_at(c_path.as_ptr(), CString::new("still loose").unwrap().as_ptr())
+        };
+
+        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let rows = snap["entities"].as_array().unwrap();
+        let routed = rows.iter().find(|r| r["id"].as_u64() == Some(scrap)).unwrap();
+        assert_eq!(
+            routed["vault_path"].as_str(),
+            Some("library/notes/steven-akesson.md"),
+            "the diacritic-folded projected path rides the wire"
+        );
+        let loose = rows.iter().find(|r| r["id"].as_u64() == Some(orphan)).unwrap();
+        assert!(loose.get("vault_path").is_none(), "a box-only scrap carries no path");
+        cleanup(&path);
     }
 
     #[test]

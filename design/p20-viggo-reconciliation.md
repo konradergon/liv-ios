@@ -852,3 +852,33 @@ store cannot yet snapshot out; sync is launch/user-triggered) · the
 commit hook's full plan-per-commit is the optimization point (touched-id
 threading later) · scrap `add` from the CLI stays box-only until routed —
 correct per the materialize-on-route delta.
+
+### 20j.6 — the fidelity flip (as built; the pack's paths stop being props)
+
+The projected path became a **wire field** — `EntityRow.vault_path`
+(`library/<pool>/<slug>`, the exact `expected_files` output joined by id;
+`skip_serializing_if none` so box-only entities and legacy boxes add
+nothing; cache-parity intact). The shell gained **vault-mode by
+containment** in Swift (`BoxModel.vaultRoot`/`inVault`/`vaultDisplayName`
+mirroring Rust `vault_root_of`) and a real **`revealInFinder(id)`** that
+opens the entity's actual file. Every presentational site from 20b–20i
+**flipped, gated on vault mode**: the contacts breadcrumb is the real
+monospace path and CLICKS to reveal the file; the editor footer path is
+real + click-reveals + the kebab's "Reveal in Finder"; `Vault: <name>`
+names the real folder and its menu reveals the folder-of-markdown with
+the "that folder IS the database" line; the library footer + VAULT note
+name the real root; the capture saves-to help tells the truth (a scrap
+waits in the box; routing writes the file); and Settings → General's
+Store-location row shows the pack's verbatim copy ("one plain folder of
+markdown and files — that folder IS the database…") over the real root,
+with Reveal opening it. **Legacy mode keeps every honest placeholder** —
+each flip is `model.inVault ? real : placeholder`, so `LOTUS_BOX_PATH`
+and any non-vault box read exactly as before. Wire contract pinned: a
+routed `Steven Åkesson` snapshots as `library/notes/steven-akesson.md`
+(the diacritic fold proving the full chain), an unrouted scrap carries
+none.
+
+**Recorded:** the tour's folder step, the Move… flow, and existing-folder
+adoption ride 20j.9 (the pack promises them but they need the migration
+work) · in-editor source-mode still deferred (its own later slice) ·
+drag-row-out-as-file and drop-to-import ride 20j.8.

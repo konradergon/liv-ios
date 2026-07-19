@@ -1472,17 +1472,19 @@ struct GeneralPanel: View {
                         .strokeBorder(Theme.accent.opacity(0.45)))
             generalRow(
                 "Store location", tag: "1 OF 3",
-                sub: "one store on this Mac — that file is the vault. moving it (Move…) is its own recorded design; the folder-of-markdown presentation arrives with the projection (20j).",
+                sub: model.inVault
+                    ? "one plain folder of markdown and files — that folder IS the database. a cloud-synced local folder works too. moving the store moves your files; nothing else changes."
+                    : "one store on this Mac — that file is the vault. the folder-of-markdown presentation turns on when the store lives at a vault root (…/.liv/box/).",
                 trailing: AnyView(
                     HStack(spacing: 6) {
-                        Text(model.path)
+                        Text(model.inVault ? (model.vaultRoot ?? model.path) : model.path)
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(Theme.mutedFg)
                             .lineLimit(1).truncationMode(.middle)
                             .frame(maxWidth: 240)
                         Button("Reveal") {
                             NSWorkspace.shared.activateFileViewerSelecting(
-                                [URL(fileURLWithPath: model.path)])
+                                [URL(fileURLWithPath: model.inVault ? (model.vaultRoot ?? model.path) : model.path)])
                         }
                         .buttonStyle(.plain).font(.system(size: 10.5))
                         .foregroundColor(Theme.accent)

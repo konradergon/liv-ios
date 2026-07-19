@@ -138,7 +138,9 @@ struct CaptureSurface: View {
             .foregroundColor(Theme.text2)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(Capsule().fill(Theme.panel2))
-            .help("the vault path — real files arrive with the projection (20j)")
+            .help(model.inVault
+                ? "a scrap waits in the box; routing it writes the real file into library/notes/"
+                : "the vault path — real files arrive in vault mode")
         }
         .frame(maxWidth: 640)
     }
