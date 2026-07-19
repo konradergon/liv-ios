@@ -748,3 +748,26 @@ close in ANY order) and instead **converge in one round trip** — which is
 what the projector's echo suppression actually requires; the one-step
 settle + occasional mark-to-literal degradation is the codec's recorded
 lossy edge. Both properties are pinned by 200-case generative tests.
+
+### 20j.2 — the materializer + manifest (as built; kill-shot A green)
+
+`services/src/projection.rs`: the **pure planner** (`plan_projection`:
+expected(store) diffed against the manifest → FsOps + the post-apply
+manifest, deterministic, no IO) and the **applier** over the `VaultIo`
+trait — every op verified against the CURRENT disk before acting (a
+rename whose source is gone but target exists is complete work, not an
+error), the **manifest written LAST** and only on full success. The
+manifest (`.liv/index.json`) is a CACHE: absent or corrupt → empty →
+heal (test-pinned). Trash parks files at `.trash/<original-rel-path>`
+with `trash_from` remembered — **undo over the log IS undo on disk**
+(rename→undo and trash→undo round-trips test-pinned). **KILL-SHOT A is
+green**: the fuse-injected crash matrix aborts the apply after EVERY op
+count (including at the manifest write) across create and rename
+histories, then reconverges to files == expected(store) with zero loss,
+zero duplicates, zero strays.
+
+**Recorded:** digest = SHA-256 (the P15 librarian's own hash — the
+design doc said blake3; corrected) · v0 projects the MARKDOWN class only
+(binary byte-copies ride 20j.8) · stray files under a LOST manifest
+after a rename wait for 20j.3's disk-scan reconcile (the manifest-cache
+heal covers content; the orphan sweep is the scan's first job).
