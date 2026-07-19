@@ -111,7 +111,7 @@ pub fn import_messages(
         })
         .collect();
 
-    let mut birth_property =
+    let birth_property =
         |session: &mut Session, commands: &mut Vec<Command>, name: &str, kind: &str| -> Id {
             let id = session.allocate_id();
             for cell in [

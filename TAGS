@@ -1,23 +1,4 @@
 
-/Users/k/src/lotus/cli/src/main.rs,383
-fn main(14,563
-fn default_log_path(24,898
-fn dispatch(31,1101
-fn name(84,3082
-fn civil_today(114,4029
-fn today(121,4297
-fn inbox(188,6452
-fn subject_of(215,7381
-fn resolve_target(227,7888
-fn accept(260,8989
-fn reject(268,9277
-fn add(277,9668
-fn list(303,10552
-fn parse_constraint(362,12408
-fn property_by_name(384,13146
-fn print_table(388,13320
-fn history(430,14558
-
 /Users/k/src/lotus/core/src/command.rs,138
 pub enum Author 11,448
 pub enum Command 22,832
@@ -32,85 +13,6 @@ pub struct Entity 15,417
     pub fn get(32,777
     pub fn all(40,1006
     pub fn has(47,1206
-
-/Users/k/src/lotus/core/src/persist.rs,555
-struct Header 26,1042
-pub enum PersistError 31,1098
-    fn fmt(48,1772
-    fn from(65,2482
-    fn from(71,2596
-struct FileLog 79,2842
-    fn append(84,2893
-pub struct Session 104,3836
-    pub fn open(120,4493
-    pub fn store(206,7923
-    pub fn commit(210,7986
-    pub fn undo(222,8299
-    pub fn redo(229,8502
-    pub fn merge(236,8705
-    pub fn accept(249,9039
-    pub fn propose(259,9452
-    pub fn reject(265,9698
-    pub fn allocate_id(282,10437
-    fn ensure_healthy(286,10519
-    fn persist_last(297,10913
-fn parse(315,11547
-
-/Users/k/src/lotus/core/src/store.rs,766
-pub struct Backlink 10,312
-pub enum StoreError 16,418
-    fn fmt(30,756
-pub struct Store 40,1059
-    pub fn new(66,2016
-    pub fn replay(81,2654
-    pub fn allocate_id(111,3899
-    pub fn resolve(119,4137
-    pub fn get(132,4515
-    pub fn entities(139,4808
-    pub fn backlinks(145,5041
-    pub fn modified(163,5716
-    pub fn history(177,6149
-    pub fn pending(182,6294
-    pub fn declined(187,6437
-    pub fn commit(199,6904
-    pub fn undo(213,7361
-    pub fn redo(228,7845
-    pub fn propose(243,8354
-    pub fn accept(249,8579
-    pub fn reject(266,9228
-    pub fn merge(281,9899
-    fn append_inverse(330,11362
-    fn commit_with(337,11719
-    fn unapply(374,12950
-    fn apply(386,13295
-    fn entity(480,16897
-fn now(492,17241
-
-/Users/k/src/lotus/core/src/value.rs,300
-pub enum Span 11,319
-pub struct RichText 18,463
-    pub fn targets(23,530
-pub struct FileRef 33,847
-    fn eq(41,1054
-pub struct DateTime 52,1502
-    pub fn date(59,1645
-    pub fn at(66,1824
-    fn pack(73,2034
-pub enum Value 87,2636
-    pub fn text(101,2900
-    pub fn targets(106,3053
-
-/Users/k/src/lotus/core/tests/persistence.rs,372
-fn cell(7,240
-fn temp_path(12,392
-fn log_roundtrips_state(19,572
-fn header_carries_version(59,1832
-fn undo_survives_restart(72,2186
-fn torn_tail_is_tolerated(115,3511
-fn the_box_admits_one_writer(152,4673
-fn a_tail_torn_at_the_newline_is_dropped(171,5239
-fn a_torn_sidecar_heals_and_later_refusals_survive(209,6627
-fn merge_and_redirect_survive_restart(252,7994
 
 /Users/k/src/lotus/core/tests/worked_examples.rs,664
 fn cell(6,145
@@ -130,56 +32,6 @@ fn multi_valued_properties_are_repeated_cells(415,13613
 fn redirects_chase_transitively(452,15018
 fn modification_time_is_derived_not_stored(475,15665
 
-/Users/k/src/lotus/ffi/src/lib.rs,36
-    fn the_seam_roundtrips(66,1965
-
-/Users/k/src/lotus/services/src/clerk.rs,403
-struct Vocabulary 19,824
-    fn find(25,895
-pub fn sweep(36,1263
-fn decline_key(86,3356
-fn gazetteer(96,3718
-fn plain_content(119,4359
-fn propose_dates(138,5001
-fn propose_mentions(166,5804
-fn parts(203,6965
-fn leap(208,7125
-fn days_in_month(212,7215
-fn add_days(227,7507
-fn weekday(244,7887
-fn first_date(259,8407
-fn iso_date(288,9487
-fn show_date(306,10135
-fn contains_word(312,10324
-
-/Users/k/src/lotus/services/src/lib.rs,369
-pub fn capture(22,776
-pub fn seed_if_fresh(58,1916
-fn seed_bootstrap(63,2057
-fn seed_starter_library(124,4493
-pub struct Query 202,7455
-pub struct Constraint 213,7857
-pub enum Op 219,7981
-pub struct Sort 239,8768
-pub fn run(248,9096
-fn satisfies(281,10320
-pub fn property_id(295,10981
-fn compare_values(316,11733
-fn plain(330,12388
-fn kind_rank(340,12626
-
-/Users/k/src/lotus/services/tests/clerk.rs,431
-fn boxed(7,147
-fn capture(16,529
-fn friday_means_this_friday(27,792
-fn tomorrow_and_iso_dates_parse(51,1723
-fn known_names_are_noticed_whole_words_only(67,2376
-fn a_decline_is_remembered_across_restarts(104,3576
-fn relative_dates_anchor_to_capture_not_to_the_sweep(130,4434
-fn a_decline_outlives_value_drift(156,5398
-fn an_old_box_gains_the_starter_library_on_open(179,6145
-fn the_sweep_never_duplicates_pending(210,7333
-
 /Users/k/src/lotus/services/tests/query.rs,320
 fn cell(10,261
 fn fixture(16,439
@@ -190,21 +42,6 @@ fn sort_by_date_missing_last(131,3951
 fn multi_valued_matches_on_any_cell(160,4670
 fn a_query_is_data_it_serializes(194,5564
 
-/Users/k/src/lotus/shell/macos/lotus.h,22
-#define LOTUS_H5,146
-
-/Users/k/src/lotus/views/src/lib.rs,243
-pub enum Density 14,571
-pub struct Config 23,812
-pub struct Rendered 31,1043
-pub struct Row 37,1156
-pub fn render(43,1252
-pub fn summary(83,2540
-fn property_name(97,2985
-fn display(107,3373
-fn reference(138,4606
-fn truncate(148,4904
-
 /Users/k/src/lotus/views/tests/render.rs,216
 fn cell(9,216
 fn fixture(13,294
@@ -212,5 +49,860 @@ fn table_draws_properties_as_columns(53,1634
 fn list_density_summarizes(75,2293
 fn broken_references_render_broken(116,3556
 fn renderer_keys_on_properties_never_on_type(135,4139
+
+/Users/k/src/lotus/views/src/lib.rs,247
+pub enum Density 14,571
+pub struct Config 23,812
+pub struct Rendered 31,1043
+pub struct Row 37,1156
+pub fn render(43,1252
+pub fn summary(83,2540
+fn property_name(97,2985
+pub fn display(108,3471
+fn reference(159,5739
+fn truncate(169,6037
+
+/Users/k/src/lotus/shell/macos/lotus.h,22
+#define LOTUS_H7,292
+
+/Users/k/src/lotus/services/tests/clerk.rs,1179
+fn boxed(7,147
+fn capture(17,602
+fn cleanup(21,743
+fn task_note(29,1109
+fn from(62,2157
+fn typed(67,2389
+fn dedupe_proposes_a_merge_for_same_type_and_name(91,3181
+fn dedupe_is_exact_not_fuzzy(113,4131
+fn dedupe_never_copies_tier_or_private(122,4428
+fn a_declined_dedupe_is_not_re_asked(144,5123
+fn priority_word_proposes_the_matching_option(158,5623
+fn priority_is_quiet_without_a_trigger_word(178,6498
+fn promotion_promotes_an_untyped_checkbox(188,6823
+fn promotion_is_quiet_when_already_typed(206,7436
+fn a_declined_promotion_is_not_re_asked(215,7749
+fn the_sweep_never_proposes_tier_or_private(228,8223
+fn friday_means_this_friday(255,9069
+fn tomorrow_and_iso_dates_parse(280,10082
+fn known_names_are_noticed_whole_words_only(297,10808
+fn a_decline_is_remembered_across_restarts(335,12081
+fn relative_dates_anchor_to_capture_not_to_the_sweep(362,13021
+fn a_decline_outlives_value_drift(389,14058
+fn an_old_box_gains_the_starter_library_on_open(413,14887
+fn the_sweep_never_duplicates_pending(446,16221
+fn alike_proposals_share_a_group_key(466,16914
+fn accept_group_is_one_transaction_one_undo(483,17531
+fn severing_leaves_a_member_pending(506,18494
+
+/Users/k/src/lotus/services/src/lib.rs,1100
+pub fn capture(35,990
+pub fn seed_if_fresh(81,2563
+fn seed_daily_note(117,4377
+fn seed_display_attributes(154,5901
+fn seed_status_scoping(197,8003
+pub struct StatusOption 306,12993
+pub fn status_options_for(322,13680
+fn seed_date_roles(383,16131
+pub fn calendar_set(413,17632
+fn seed_contact_fields(428,18563
+fn seed_event_fields(455,19693
+fn seed_lists(479,20793
+fn seed_assist(515,22367
+fn seed_habits(546,23776
+fn seed_priority(607,26583
+fn seed_files(645,28272
+fn seed_links(669,29348
+fn seed_workspaces(707,31089
+fn seed_recurrence(769,33735
+pub struct TodaySections 792,34750
+pub fn today_sections(797,34833
+fn seed_bootstrap(851,36417
+fn seed_starter_library(912,38853
+pub struct Query 990,41815
+pub struct Constraint 1001,42217
+pub enum Op 1007,42341
+pub struct Sort 1027,43128
+pub fn run(1036,43456
+fn satisfies(1069,44680
+pub fn property_id(1083,45341
+fn compare_values(1104,46093
+fn plain(1125,47192
+fn kind_rank(1135,47464
+    fn seed_links_is_additive_and_idempotent(1156,48059
+    fn the_scoping_seed_targets_the_starter_type_never_a_decoy(1183,49446
+
+/Users/k/src/lotus/services/src/clerk.rs,718
+struct Vocabulary 25,1129
+    fn find(35,1299
+fn todo_option(49,1838
+pub fn assist_switch(70,2878
+pub fn assist_enabled(90,3594
+pub fn sweep(94,3701
+pub enum Facet 178,7521
+pub struct GroupKey 185,7628
+pub struct Group 192,7799
+pub fn group_key(199,8016
+pub fn groups(222,8822
+pub fn accept_group(248,9985
+fn decline_key(281,11175
+fn gazetteer(308,12383
+fn plain_content(331,13024
+fn propose_dates(350,13688
+fn propose_mentions(378,14499
+fn propose_priority(414,15699
+fn propose_promotion(452,17010
+fn propose_dedupe(486,18485
+fn identity_key(551,20971
+fn first_block_is_task(574,21774
+fn first_date(590,22324
+fn iso_date(628,23669
+pub fn contains_word(650,24590
+pub fn starts_word(674,25531
+
+/Users/k/src/lotus/ffi/src/lib.rs,5175
+struct CellRow 72,2388
+struct OptionRow 87,2935
+struct PropertyRow 111,3832
+struct KindRow 138,4846
+struct AssistRow 145,4992
+struct EntityRow 154,5232
+struct OccurrenceRow 184,6382
+struct ProposalRow 190,6461
+struct ProposalCommand 209,7240
+fn fingerprint(223,7786
+fn proposal_commands(228,8000
+fn command_kind(262,9449
+struct WorkspaceRow 273,9674
+struct PinRow 290,10218
+struct LayerRow 300,10517
+struct Snapshot 309,10667
+struct Cached 357,13061
+fn cache(380,14110
+fn clear_cache_for_tests(387,14397
+fn sidecar_lens(396,14752
+fn checkin(475,17801
+fn cache_store(503,19060
+enum Committed 523,19832
+fn civil_today(553,21009
+fn property_kind(559,21174
+fn cell_target(571,21745
+fn seed_born(587,22513
+fn option_counts(603,22995
+fn build_properties(615,23432
+fn build_snapshot(727,28469
+fn build_snapshot_windowed(742,29086
+fn last_day_of_month(1077,43276
+fn reference_name(1086,43520
+struct SearchResult 1145,46055
+fn build_search(1153,46305
+fn file_text(1261,50969
+struct ContentDoc 1453,57550
+struct ContentVersionRow 1639,64243
+fn civil_text(1913,75061
+    struct DropJSON 2478,95944
+    fn the_seam_roundtrips(2704,103471
+    fn snapshot_and_triage_roundtrip(2731,104789
+    fn fresh_box(2773,107000
+    fn cleanup(2784,107526
+    fn a_cache_hit_matches_a_full_open(2802,108116
+    fn an_external_append_is_picked_up(2820,109068
+    fn two_creates_do_not_reuse_an_id(2840,110081
+    fn a_locked_box_is_not_served_from_cache(2857,110919
+    fn a_sidecar_change_without_a_log_change_invalidates(2876,111806
+    fn seed_series(2903,113043
+    fn the_default_snapshot_is_the_current_month_window(2929,114023
+    fn a_future_window_steers_the_occurrence_engine(2950,114998
+    fn a_week_window_straddling_a_month_boundary_spans_both_sides(2974,115969
+    fn the_occurrence_window_is_capped_at_a_year(2999,117033
+    fn create_event_lands_typed_and_dued_on_the_asked_day(3016,117730
+    fn a_cell_ref_target_resolves_through_redirects(3043,118853
+    fn add_property_births_one_definition_vault_wide(3097,120887
+    fn open_daily_note_is_get_or_create_per_date_and_workspace(3180,124380
+    fn set_type_stamps_a_named_type_onto_an_orphan_scrap(3264,128695
+    fn contact_profile_fields_are_seeded_additively(3313,131246
+    fn seed_series_on(3348,132648
+    fn a_due_only_box_positions_by_due(3374,133654
+    fn a_calendar_role_date_enters_dated_and_fills_due(3396,134599
+    fn an_entity_with_both_date_and_due_positions_once_by_set_precedence(3420,135704
+    fn a_span_fills_due_end_and_a_plain_date_leaves_it_absent(3453,137168
+    fn a_date_anchored_series_reaches_the_windowed_snapshot(3474,138290
+    fn an_external_append_of_a_dated_entity_is_seen_by_the_union(3497,139230
+    fn distinct_values_is_a_read(3521,140362
+    fn the_catalog_carries_usage_and_attributes(3548,141714
+    fn the_option_offer_seam_is_a_read(3587,143300
+    fn add_status_option_is_tagged_wrote(3609,144300
+    fn assist_off_silences_the_persisted_queue_and_prop_follows_a_rename(3637,145668
+    fn message_import_upserts_and_reimport_reads(3687,148098
+    fn a_refused_add_option_leaves_the_cache_verbatim(3713,149327
+    fn build_properties_option_offer_stays_backward_compatible(3733,150183
+    fn a_locked_box_refuses_every_new_p11_seam(3758,151327
+    fn a_span_write_is_tagged_wrote_and_a_bad_span_is_refused(3788,152553
+    fn a_span_displays_as_its_own_parseable_text(3839,154702
+    fn a_lookup_role_only_entity_stays_off_dated(3888,156758
+    fn a_second_span_write_rides_the_bumped_header(3915,158046
+    fn role_cycle_round_trips_through_the_cache(3946,159447
+    fn a_refused_cycle_is_tagged_read_and_leaves_the_cache_verbatim(3983,161056
+    fn setting_location_on_an_event_round_trips(4002,161913
+    fn a_torn_tail_is_repaired_then_cached(4033,163120
+    fn content_seam_roundtrips(4053,164141
+    fn editing_content_retracts_stale_proposals(4152,168163
+    fn accept_group_commits_a_group_as_one_transaction(4195,169934
+    fn legacy_text_content_reads_as_one_span(4249,172242
+    fn workspace_tree_roundtrips(4291,173701
+    fn set_at_and_create_note(4368,177074
+    fn content_history_is_the_log(4421,179032
+    fn undo_does_not_mint_a_phantom_history_version(4467,181079
+    fn marks_and_blocks_round_trip_through_the_seam(4495,182320
+    fn the_catalog_offers_user_properties_not_schema_plumbing(4548,184478
+    fn search_ranks_hits_and_facets_through_the_seam(4583,185850
+    fn add_file_by_reference_through_the_seam(4618,187474
+    fn import_batch_through_the_seam(4646,188816
+    fn export_through_the_seam(4687,190486
+    fn create_task_through_the_seam(4731,192340
+    fn list_membership_through_the_seam(4749,193087
+    fn a_nul_byte_in_extracted_text_survives_the_seam(4786,195096
+    fn pins_roundtrip_backstage_and_tolerate_dangling_targets(4808,196261
+    fn layers_roundtrip_and_drop_dangling_members(4851,198341
+    fn habits_roundtrip_through_the_snapshot(4903,200597
+    fn time_views_widgets_roundtrip_the_snapshot(4949,202763
+    fn rename_value_roundtrips_and_refuses_wrong_kinds(5003,205263
+    fn seed_layer_and_kind_ids_ride_the_wire(5048,206989
+
+/Users/k/src/lotus/core/tests/persistence.rs,414
+fn cell(7,240
+fn temp_path(12,392
+fn log_roundtrips_state(21,713
+fn header_carries_version(61,1973
+fn undo_survives_restart(78,2633
+fn torn_tail_is_tolerated(121,3958
+fn the_box_admits_one_writer(158,5120
+fn a_tail_torn_at_the_newline_is_dropped(177,5686
+fn the_queue_survives_a_restart(215,7074
+fn a_torn_sidecar_heals_and_later_refusals_survive(247,8071
+fn merge_and_redirect_survive_restart(290,9456
+
+/Users/k/src/lotus/core/src/value.rs,828
+pub struct Marks(15,564
+    pub fn is_empty(23,767
+pub struct TextSpan 38,1405
+    pub fn plain(44,1490
+    fn from(50,1650
+    fn from(56,1760
+    fn serialize<S: 62,1869
+    fn deserialize<D: 75,2327
+        enum Repr 79,2543
+pub enum Block 100,3347
+pub enum Span 119,4035
+    pub fn text(129,4328
+pub struct RichText 136,4518
+    pub fn targets(143,4731
+pub struct FileRef 153,5065
+    fn eq(161,5272
+pub struct DateTime 172,5720
+    pub fn date(188,6387
+    pub fn at(196,6589
+    pub fn span(206,6978
+    fn pack(213,7158
+pub enum Value 227,7749
+    fn eq(247,8454
+    pub fn text(263,9094
+    pub fn targets(268,9247
+    fn unmarked_text_is_the_bare_string(284,9669
+    fn marked_text_round_trips(295,10109
+    fn blocks_round_trip(308,10596
+    fn marks_have_one_canonical_encoding(331,11528
+
+/Users/k/src/lotus/core/src/store.rs,826
+pub struct Backlink 10,312
+pub enum StoreError 16,418
+    fn fmt(30,756
+pub struct Store 40,1059
+    pub fn new(66,2016
+    pub fn replay(81,2654
+    pub fn allocate_id(111,3899
+    pub fn resolve(119,4137
+    pub fn get(132,4515
+    pub fn entities(139,4808
+    pub fn backlinks(145,5041
+    pub fn modified(163,5716
+    pub fn recency(181,6450
+    pub fn history(192,6802
+    pub fn pending(197,6947
+    pub fn declined(202,7090
+    pub fn commit(214,7557
+    pub fn undo(228,8014
+    pub fn redo(243,8498
+    pub fn propose(258,9007
+    pub fn accept(264,9232
+    pub fn reject(281,9881
+    pub fn retract(293,10431
+    pub fn merge(306,10999
+    fn append_inverse(355,12462
+    fn commit_with(362,12819
+    fn unapply(399,14050
+    fn apply(411,14395
+    fn entity(505,17997
+fn now(517,18341
+
+/Users/k/src/lotus/core/src/persist.rs,859
+struct Header 37,1629
+pub enum PersistError 42,1685
+    fn fmt(59,2359
+    fn from(76,3069
+    fn from(82,3183
+struct FileLog 90,3429
+    fn append(95,3480
+pub struct Session 115,4423
+    pub fn open(141,5675
+    pub fn open_on(168,6905
+    fn persist_pending(267,10940
+    pub fn store(291,11747
+    pub fn from_cached(299,12128
+    pub fn header_version(318,12901
+    pub fn into_store(324,13137
+    pub fn log_file_meta(332,13466
+    pub fn commit(336,13573
+    pub fn undo(348,13886
+    pub fn redo(355,14089
+    pub fn merge(362,14292
+    pub fn accept(375,14626
+    pub fn propose(387,15118
+    pub fn reject(394,15423
+    pub fn retract(410,16036
+    pub fn allocate_id(418,16423
+    fn ensure_healthy(422,16505
+    fn persist_last(433,16899
+    fn upgrade_header(470,18474
+fn tx_carries_span(495,19574
+fn parse(508,20141
+
+/Users/k/src/lotus/cli/src/main.rs,514
+fn main(14,563
+fn default_log_path(24,898
+fn dispatch(31,1101
+fn name(97,3807
+fn civil_today(127,4754
+fn today(135,5098
+fn set(163,6022
+fn inbox(182,6884
+fn subject_of(209,7813
+fn resolve_target(221,8320
+fn accept(254,9421
+fn reject(262,9709
+fn add(271,10100
+fn list(297,11012
+fn parse_constraint(356,12868
+fn property_by_name(378,13606
+fn print_table(382,13780
+fn history(424,15018
+fn habit_add(448,15778
+fn checkin(480,16778
+fn habits(495,17474
+fn time(523,18567
+fn rename_value(563,20145
+
+/Users/k/src/lotus/services/tests/vault.rs,376
+fn boxed(12,489
+fn cleanup(22,944
+fn the_slug_table(29,1179
+fn collision_suffixing_is_deterministic_and_case_insensitive(55,2349
+fn pools_classify_and_scraps_stay_box_only(81,3292
+fn h1_is_the_title_and_round_trips(116,4899
+fn generated_document(140,6147
+fn realistic_documents_render_byte_stable(173,7345
+fn adversarial_documents_converge_in_one_round_trip(187,7997
+
+/Users/k/src/lotus/services/tests/tour.rs,240
+fn every_frozen_tour_capture_fires_a_proposer(9,273
+fn the_automation_switch_gates_every_proposal(36,1493
+fn renaming_the_automation_definition_keeps_the_gate(93,4051
+fn a_foreign_automation_property_does_not_starve_the_switch(170,7195
+
+/Users/k/src/lotus/services/tests/timeviews.rs,236
+fn boxed(8,295
+fn cleanup(18,754
+fn capture(24,981
+fn time_entries_log_whole_intervals_and_totals_tolerate_overlap(29,1131
+fn saved_views_round_trip_name_and_query(82,3237
+fn widgets_are_small_entities_born_in_one_commit(105,4082
+
+/Users/k/src/lotus/services/tests/tasks.rs,262
+fn fresh(8,294
+fn cleanup(18,659
+fn named(24,790
+fn type_of(32,1043
+fn priority_is_seeded_alongside_due_and_is_idempotent(44,1367
+fn create_task_is_a_typed_todo_with_no_priority_or_due(81,2658
+fn priority_is_offered_not_expected_by_the_task_type(106,3717
+
+/Users/k/src/lotus/services/tests/status.rs,688
+fn fresh(11,517
+fn cleanup(21,883
+fn status_scoping_seeds_idempotent_and_lands_on_a_box_that_already_has_due(28,1022
+fn the_existing_todo_doing_done_become_task_scoped(49,1843
+fn an_option_carries_board_order_and_hue_and_they_round_trip(63,2381
+fn done_is_marked_completes(79,3065
+fn status_options_are_scoped_per_kind_by_for_type(91,3490
+fn a_kind_with_no_status_options_offers_none(107,4227
+fn an_unscoped_option_is_offered_everywhere(117,4567
+fn the_entry_default_is_a_cell_on_the_type_and_user_editable(154,5959
+fn create_task_still_births_status_select_todo(174,6758
+fn no_status_is_always_valid(187,7357
+fn pre_existing_status_select_cells_survive_the_scoping(200,7936
+
+/Users/k/src/lotus/services/tests/spans.rs,358
+fn fresh(10,402
+fn cleanup(20,768
+fn due_of(26,899
+fn a_span_parses_start_and_optional_end(35,1114
+fn a_span_edit_round_trips_start_and_end_across_reopen(57,2117
+fn span_editing_is_one_command_one_undo(74,2832
+fn a_span_matches_at_most_queries_by_its_start(93,3636
+fn a_timed_span_still_joins_today(110,4626
+fn cycling_a_span_keeps_its_end(122,5206
+
+/Users/k/src/lotus/services/tests/search.rs,1026
+fn c(9,319
+fn def(14,461
+fn work(22,913
+fn live(29,1235
+fn add(34,1429
+struct Fx 38,1576
+fn fixture(62,2282
+fn ids(164,6170
+fn ranking_name_beats_cell_beats_content(170,6359
+fn free_text_terms_are_anded(186,7035
+fn a_wiki_link_is_found_by_the_target_name(193,7211
+fn gates_exclude_working_trashed_and_archived(203,7548
+fn type_qualifier_resolves_a_reference_by_name(216,8177
+fn reference_resolution_is_deterministic_on_a_name_collision(231,8693
+fn status_qualifier_resolves_a_select_option(246,9292
+fn date_less_than_is_at_most(257,9647
+fn a_typo_qualifier_demotes_to_free_text(270,10071
+fn a_facet_count_is_the_hypothetical_result_size(281,10503
+fn a_facet_shows_siblings_and_marks_the_active_value(306,11441
+fn facet_properties_finds_type_and_select_props(319,11998
+fn a_quoted_qualifier_value_keeps_its_spaces(332,12477
+fn a_leading_minus_excludes_a_qualifier(370,14468
+fn include_and_exclude_coexist(389,15414
+fn a_facet_marks_an_excluded_value(403,16146
+fn empty_query_sorts_by_recency(417,16842
+
+/Users/k/src/lotus/services/tests/rename.rs,534
+fn boxed(8,270
+fn cleanup(18,726
+fn capture(24,953
+fn text_value(28,1095
+fn text_rename_rewrites_every_carrier_in_one_transaction(36,1284
+fn select_rename_renames_the_option_and_merge_repoints_carriers(66,2433
+fn kind_discipline_refuses_dates_and_references(107,4443
+fn a_torn_tail_replays_to_the_pre_rename_state(120,5126
+fn ambiguous_same_named_options_refuse_to_rename(144,6072
+fn text_rename_skips_backstage_plumbing(200,8251
+fn add_option_enforces_kind_discipline(228,9574
+fn kind_flags_accumulate_per_kind(244,10253
+
+/Users/k/src/lotus/services/tests/recurrence.rs,1033
+fn boxed(8,248
+fn clean(18,703
+fn series(25,992
+fn weekly_expands_on_the_anchors_weekday(54,1993
+fn daily_starts_at_the_anchor_never_before(82,2935
+fn monthly_clamps_to_short_months(98,3387
+fn an_exception_suppresses_exactly_one_date(115,3859
+fn the_window_is_the_horizon_capped_at_a_year(168,5771
+fn a_series_occurring_today_joins_today(184,6222
+fn nonsense_rules_recur_never(203,7022
+fn series_on(222,7676
+fn recurrence_expands_on_a_non_event_dated_entity(251,8703
+fn a_date_anchored_series_uses_the_date_not_due(271,9496
+fn a_rule_on_a_lookup_only_entity_is_inert(302,10652
+fn an_exception_on_a_date_anchored_series_suppresses_exactly_one_date(332,11722
+fn occurrences_stay_virtual_for_any_anchor(373,13298
+fn the_year_horizon_cap_holds_regardless_of_anchor(387,13781
+fn a_due_anchored_series_is_unchanged_by_generalization(400,14202
+fn a_date_anchored_series_occurring_today_joins_today(420,15004
+fn an_exception_survives_the_series_anchor_flip(434,15775
+fn an_exception_survives_its_own_row_cycle(481,17737
+
+/Users/k/src/lotus/services/tests/reconcile.rs,567
+fn boxed(14,645
+fn cleanup(24,1098
+struct MemIo 31,1344
+    fn write_atomic(36,1425
+    fn rename(40,1587
+    fn read(48,1898
+    fn exists(54,2122
+    fn list(57,2207
+fn note(62,2345
+fn project(70,2631
+fn log_len(77,2878
+fn kill_shot_b_own_writes_never_reingest_100x(82,2991
+fn a_clean_external_edit_ingests_as_one_undoable_txn(106,3802
+fn a_conflict_never_auto_applies(152,5608
+fn a_disk_deletion_never_deletes_the_entity(184,7053
+fn a_mass_change_burst_downgrades_to_one_card(205,7863
+fn a_new_markdown_file_ingests_and_settles_canonical(236,8964
+
+/Users/k/src/lotus/services/tests/projection.rs,508
+fn boxed(13,562
+fn cleanup(23,1016
+struct MemIo 33,1439
+    fn burn(40,1549
+    fn write_atomic(55,1933
+    fn rename(60,2117
+    fn read(69,2450
+    fn exists(75,2674
+    fn list(78,2759
+fn assert_converged(85,2999
+fn project(108,3809
+fn materialize_writes_expected_files_and_the_manifest(116,4077
+fn rename_moves_the_file_and_undo_moves_it_back(137,5026
+fn trash_round_trips_through_dot_trash(162,6057
+fn kill_shot_a_the_crash_matrix_converges(190,7129
+fn a_corrupt_manifest_heals(254,9968
+
+/Users/k/src/lotus/services/tests/pins.rs,222
+fn boxed(8,295
+fn cleanup(18,749
+fn capture(24,976
+fn pin_births_a_backstage_entity_with_target_and_order(29,1126
+fn pinning_twice_is_idempotent_and_orders_stack(52,2166
+fn unpin_trashes_the_pin_for_a_target(76,3124
+
+/Users/k/src/lotus/services/tests/numbers.rs,69
+fn fresh(8,291
+fn the_number_seam_refuses_non_finite_values(19,666
+
+/Users/k/src/lotus/services/tests/lists.rs,321
+fn fresh(8,258
+fn cleanup(18,623
+fn named(24,754
+fn type_of(31,927
+fn members(41,1198
+fn the_list_type_is_seeded_alongside_due_and_is_idempotent(55,1517
+fn create_list_is_named_typed_and_empty(76,2260
+fn membership_is_tagging_ordered_deduped_and_never_deletes(91,2899
+fn a_list_cannot_be_its_own_member(122,4537
+
+/Users/k/src/lotus/services/tests/layers.rs,165
+fn boxed(9,351
+fn cleanup(19,807
+fn capture(25,1034
+fn layer_births_backstage_with_ordered_members_in_one_commit(30,1185
+fn layer_scopes_to_a_workspace(74,2715
+
+/Users/k/src/lotus/services/tests/habits.rs,286
+fn boxed(8,306
+fn cleanup(18,762
+fn at(24,989
+fn habit_is_front_of_house_and_check_in_is_backstage_and_idempotent(29,1124
+fn stats_compute_streaks_points_and_the_chain(69,2902
+fn a_trashed_habit_never_panics_the_projection(129,5635
+fn open_seed_open_births_one_type_set(148,6383
+
+/Users/k/src/lotus/services/tests/files.rs,544
+fn fresh_session(9,378
+fn cleanup(19,751
+fn add_file_references_the_bytes_without_moving_them(27,957
+fn a_one_byte_edit_changes_the_hash(59,2193
+fn an_unreadable_path_is_an_error_not_a_phantom_entity(74,2817
+fn a_file_cell_is_never_hand_typed(84,3239
+fn extraction_is_a_rebuildable_cache_off_the_log(94,3666
+fn same_bytes_different_format_do_not_share_a_cache_entry(134,5528
+fn a_file_is_found_by_a_word_only_in_its_extracted_text(167,6979
+fn resync_reports_unchanged_changed_and_broken(199,8424
+fn seed_files_is_idempotent(228,9760
+
+/Users/k/src/lotus/services/tests/events.rs,270
+fn fresh(9,379
+fn cleanup(19,745
+fn named(25,876
+fn create_event_is_typed_dued_and_minimal(33,1057
+fn an_all_day_event_keeps_the_date_only_bit(64,2385
+fn event_fields_seed_alongside_due_and_are_idempotent(78,2942
+fn the_event_type_still_expects_only_due(104,3986
+
+/Users/k/src/lotus/services/tests/dateroles.rs,548
+fn fresh(11,534
+fn cleanup(21,900
+fn datetime_of(27,1031
+fn the_four_date_roles_seed_beside_due_and_are_idempotent(35,1220
+fn the_calendar_positioning_set_is_date_and_due_only(66,2525
+fn a_lookup_role_date_is_filter_only_never_positioned(78,3004
+fn an_entity_may_carry_several_date_rows_at_once(98,4029
+fn space_cycles_the_role_as_one_transaction_moving_the_value(115,4840
+fn role_cycling_is_lossless_round_trip(136,5774
+fn cycling_refuses_when_the_target_role_is_occupied(156,6685
+fn cycling_refuses_on_a_multi_valued_date_row(186,8003
+
+/Users/k/src/lotus/services/tests/comms.rs,266
+fn boxed(11,466
+fn cleanup(21,921
+fn drop_a(27,1148
+fn messages(37,1451
+fn one_batch_is_one_transaction_and_one_undo(46,1729
+fn reimport_is_a_no_op_and_refresh_updates_only_feed_owned(71,2596
+fn senders_resolve_to_person_entities_when_a_name_matches(110,4418
+
+/Users/k/src/lotus/services/tests/attributes.rs,478
+fn fresh(10,396
+fn cleanup(20,762
+fn display_attributes_seed_idempotent_and_land_on_an_old_box(27,901
+fn a_property_definition_carries_display_attributes_across_reopen(57,1986
+fn hide_on_kind_is_per_kind(80,3032
+fn usage_count_counts_live_entities_carrying_a_property(99,3869
+fn usage_count_of_an_unused_property_is_zero(125,4930
+fn distinct_values_lists_each_value_once_with_counts_deterministically(139,5378
+fn a_status_options_usage_count_drives_the_picker(162,6279
+
+/Users/k/src/lotus/services/src/vault.rs,338
+pub enum VaultClass 17,828
+pub struct VaultFile 25,1030
+fn fold(39,1539
+pub fn vault_slug(66,2472
+fn type_name(104,3585
+fn binary_pool(114,3894
+pub fn pool_of(130,4588
+fn fm_escape(161,5667
+pub fn render_vault_entity(167,5896
+pub struct ParsedVaultNote 226,7764
+pub fn parse_vault_note(234,8045
+pub fn expected_files(259,9030
+
+/Users/k/src/lotus/services/src/timeviews.rs,286
+pub struct TimeTotal 13,452
+pub struct TimeEntryRow 21,627
+pub struct TimeSummary 30,807
+pub struct ViewRow 36,938
+pub struct WidgetRow 43,1058
+fn day_number(57,1446
+fn civil_minutes(66,1681
+pub fn time_totals(72,1913
+pub fn saved_views(134,4240
+pub fn board_widgets(160,5084
+
+/Users/k/src/lotus/services/src/search.rs,695
+pub struct Hit 22,999
+pub enum MatchField 30,1186
+pub struct SearchQuery 42,1580
+pub struct FacetValue 53,2023
+pub struct Facet 67,2589
+pub fn parse(83,3341
+pub fn search<F: 167,6848
+pub fn facet(220,8704
+pub fn facet_properties(260,10261
+pub fn usage_counts(288,11304
+pub fn distinct_values(324,12820
+fn candidate_values(365,14679
+fn property_name(378,15061
+struct Searchable 389,15539
+fn searchable(395,15620
+fn score_term(427,16893
+fn tokenize(452,18012
+fn split_qualifier(473,18536
+fn equals_constraint(484,18905
+fn not_equals_constraint(494,19438
+fn at_most_constraint(502,19831
+fn qualifier_value(508,20075
+fn property_kind(517,20451
+fn resolve_reference(530,21097
+
+/Users/k/src/lotus/services/src/recurrence.rs,185
+pub struct Occurrence 29,1424
+enum Rule 35,1536
+fn parse(48,1960
+pub fn occurrences(71,2709
+pub fn occurrences_anchored(86,3626
+fn occurs_on(136,5353
+fn exception_dates(159,6446
+
+/Users/k/src/lotus/services/src/projection.rs,549
+    fn write_atomic(27,1227
+    fn rename(28,1302
+    fn read(29,1368
+    fn exists(30,1422
+    fn list(32,1532
+pub struct ManifestRow 36,1643
+pub struct Manifest 45,1848
+pub fn load_manifest(52,2072
+pub fn digest(59,2281
+pub enum FsOp 67,2509
+fn trash_path(75,2763
+pub fn plan_projection(84,3197
+pub fn apply_projection(165,6330
+pub enum ReconcileFinding 205,7681
+pub fn scan(225,8669
+pub struct IngestOutcome 328,12586
+pub struct AdoptedFile 341,13104
+pub fn adopt_into(348,13269
+fn pool_type(359,13548
+pub fn ingest(377,14286
+
+/Users/k/src/lotus/services/src/markdown.rs,793
+pub fn parse_markdown(20,1227
+pub fn render_markdown(144,6988
+    enum Run 148,7289
+fn render_block(374,16559
+pub fn split_frontmatter(393,17390
+fn unquote(447,19209
+pub fn resolve_wikilinks(481,20470
+fn split_wikilinks(520,21945
+    fn no_names(561,23280
+    fn text_at(565,23344
+    fn headings_and_inline_marks(573,23588
+    fn bullets_carry_depth(602,24816
+    fn task_items_record_done(611,25147
+    fn round_trips_the_covered_subset(620,25522
+    fn frontmatter_scalars_and_lists(629,25894
+    fn no_frontmatter_returns_whole_body(646,26441
+    fn html_block_never_puts_a_newline_in_a_text_span(653,26675
+    fn code_block_has_no_trailing_empty_line(663,27011
+    fn wikilink_inside_inline_code_stays_code(679,27781
+    fn wikilinks_resolve_or_stay_literal(687,28235
+
+/Users/k/src/lotus/services/src/import.rs,887
+pub enum ImportItem 24,1066
+pub struct ImportDefaults 45,1967
+pub fn commit_batch(52,2216
+    struct Planned<'a> 66,2806
+fn add(223,9139
+fn item_name(228,9376
+fn note_name(241,9883
+fn frontmatter_cell(264,10997
+fn external_id_exists(294,12111
+fn file_hash_exists(309,12480
+fn entity_by_name(325,12962
+    fn session(345,13377
+    fn now(354,13711
+    fn tempfile(358,13781
+    fn ext_count(366,14082
+    fn one_transaction_one_undo(379,14421
+    fn re_import_is_a_no_op(395,15099
+    fn file_is_referenced_not_copied(410,15721
+    fn link_title_survives(434,16678
+    fn note_gets_frontmatter_cells_and_rich_body(451,17203
+    fn defaults_stamp_every_entity_and_empty_stamps_nothing(486,18815
+    fn duplicate_files_in_one_batch_import_once(518,19981
+    fn frontmatter_never_overwrites_core_plumbing(535,20524
+    fn wikilinks_resolve_across_the_batch(563,21837
+
+/Users/k/src/lotus/services/src/habits.rs,168
+pub struct HabitLine 14,483
+pub struct CheckInDay 27,893
+pub struct HabitsSummary 36,1068
+fn day_ordinal(55,1865
+fn day_before(64,2101
+pub fn habit_stats(80,2486
+
+/Users/k/src/lotus/services/src/files.rs,201
+pub fn hash_file(23,928
+pub fn add_file(42,1630
+pub enum Resync 99,3455
+pub fn resync_file(114,4176
+pub fn cache_dir(151,5501
+pub fn extracted_text(164,6073
+fn extract(188,7158
+fn hex(199,7536
+
+/Users/k/src/lotus/services/src/export.rs,933
+pub enum ExportKind 18,741
+pub struct ExportFile 23,810
+pub struct ExportTree 31,1087
+pub fn export_plan(38,1328
+pub fn export_write(92,3728
+fn render_entity(114,4442
+fn file_ref(162,6282
+fn prop_name(171,6596
+fn fm_key(183,7000
+fn fm_value(200,7636
+fn sanitize(215,8105
+fn sanitize_stem(230,8598
+fn unique(242,8983
+    fn session(269,9765
+    fn dest(278,10099
+    fn now(284,10277
+    fn writes_a_file_per_entity_and_leaves_the_store_untouched(289,10359
+    fn groups_by_two_levels_and_clamps_a_third(313,11315
+    fn file_entity_bytes_are_copied_verbatim_and_source_untouched(336,12218
+    fn native_note_exports_frontmatter_and_a_round_trippable_body(359,13152
+    fn colliding_names_disambiguate(382,14099
+    fn case_only_names_do_not_clobber_on_a_case_insensitive_fs(404,14992
+    fn frontmatter_escaping_neutralizes_injection(428,16129
+    fn multi_valued_property_exports_as_repeated_lines(440,16783
+
+/Users/k/src/lotus/services/src/content.rs,1361
+pub fn fnv(19,807
+pub fn content_fingerprint(31,1205
+pub fn content_spans(41,1577
+pub enum ContentError 50,1846
+pub fn set_content(63,2362
+pub struct ContentVersion 144,5172
+pub fn content_history(155,5517
+fn daily_template(200,7467
+pub fn get_or_create_daily_note(224,8491
+pub fn create_note(297,11496
+pub fn find_option(318,12374
+pub fn create_task(338,13241
+pub fn create_event(386,15467
+pub fn add_status_option(423,16880
+pub enum WriteError 487,19425
+pub fn birth_property(501,20116
+pub fn cycle_date_role(541,22077
+pub fn create_list(590,24313
+pub fn add_cell(622,25546
+pub fn remove_cell(646,26652
+fn resolve_cell(668,27340
+pub fn create_workspace(688,28131
+pub fn trash_workspace(747,30330
+pub fn add_option(766,31170
+pub fn toggle_kind_ref(820,33293
+pub fn rename_value(866,35173
+fn live_pin(1035,42238
+pub fn create_pin(1051,43022
+pub fn remove_pin(1127,45825
+pub fn create_layer(1145,46636
+pub fn create_habit(1200,48720
+fn check_in_on(1233,49826
+pub fn check_in(1248,50585
+fn push_property_birth(1292,52007
+fn push_type_birth(1312,52650
+pub fn log_time(1329,53446
+pub fn create_view(1369,55105
+pub fn add_widget(1403,56450
+pub fn unset_property(1471,59013
+pub fn find_type(1496,59913
+pub fn set_property(1512,60583
+pub fn set_type(1552,62079
+pub fn parse_value(1577,63244
+fn parse_civil_single(1648,66277
+
+/Users/k/src/lotus/services/src/comms.rs,185
+pub struct MessageDrop 15,726
+pub struct ImportOutcome 25,1008
+fn resolve_person(33,1258
+fn find_by_external_id<'a>(48,1756
+pub fn import_messages(54,1970
+    struct Plan 76,2942
+
+/Users/k/src/lotus/core/tests/versioning.rs,231
+fn boxed(12,557
+fn cleanup(19,786
+fn header_line(25,917
+fn add_date(29,1050
+fn a_span_free_box_keeps_the_v1_header(48,1517
+fn the_first_span_write_bumps_the_header_to_2(58,1835
+fn an_undo_of_a_span_add_still_replays(78,2665
+
+/Users/k/src/lotus/core/tests/spans.rs,155
+fn an_old_log_datetime_deserializes_with_no_end(8,229
+fn a_zero_length_span_equals_a_plain_date(25,996
+fn spans_sort_by_start_among_plain_dates(46,1853
+
+/Users/k/src/lotus/core/tests/nan_cell_repro.rs,81
+fn a_nan_cell_is_removable(11,425
+fn zero_and_negative_zero_stay_equal(46,1249
+
+/Users/k/src/lotus/services/src/dates.rs,0
 
 /Users/k/src/lotus/core/src/lib.rs,0

@@ -377,6 +377,19 @@ struct Cached {
 
 static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
 
+/// P20j.4 — the log's self-defense notices (design §4): length
+/// regression / same-length replacement / a conflicted-copy sibling.
+/// Deduped by message; drained by `lotus_vault_alerts_at`.
+static VAULT_ALERTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+fn vault_alert(message: String) {
+    let alerts = VAULT_ALERTS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut alerts = alerts.lock().unwrap();
+    if !alerts.contains(&message) {
+        alerts.push(message);
+    }
+}
+
 fn cache() -> &'static Mutex<HashMap<PathBuf, Cached>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -436,6 +449,42 @@ unsafe fn open_box(raw_path: *const c_char) -> Option<(Session, PathBuf)> {
     let cur_inode = meta.ino();
     let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let (cur_decl, cur_pend) = sidecar_lens(&key);
+
+    // P20j.4 — the log defends itself (design §4): a SHORTER log than the
+    // cache last proved, or a same-length different-inode file, means
+    // something replaced the append-only source (a sync client, usually).
+    // Never a silent adoption: the fast path refuses (the miss below does
+    // a full honest replay of what is there) and a notice is surfaced.
+    {
+        let map = cache().lock().unwrap();
+        if let Some(cached) = map.get(&key) {
+            if cur_len < cached.log_len {
+                vault_alert(format!(
+                    "the log at {} SHRANK ({} → {} bytes) — a sync client may have replaced it with an older copy; opened by full replay, nothing adopted silently",
+                    key.display(), cached.log_len, cur_len));
+            } else if cur_inode != cached.inode && cur_len == cached.log_len {
+                vault_alert(format!(
+                    "the log at {} was REPLACED in place (same length, new file) — opened by full replay",
+                    key.display()));
+            }
+        }
+    }
+    // A conflicted-copy sibling (cloud sync's fork fingerprint) raises a
+    // notice every open until the user resolves it.
+    if let (Some(dir), Some(stem)) = (path.parent(), path.file_stem()) {
+        let stem = stem.to_string_lossy().to_lowercase();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name.contains(&stem) && name.contains("conflict") {
+                    vault_alert(format!(
+                        "a conflicted copy of the log at {} exists beside it ({}) — resolve it before trusting sync",
+                        key.display(),
+                        entry.file_name().to_string_lossy()));
+                }
+            }
+        }
+    }
 
     // Fast path: the cached store is still the log's whole consequence.
     {
@@ -2454,6 +2503,47 @@ pub unsafe extern "C" fn lotus_kind_flag_at(
     })
 }
 
+/// Drain the vault's self-defense notices (P20j.4): a JSON array of
+/// strings — length regression, in-place replacement, conflicted-copy
+/// siblings. Read-and-clear; empty array when quiet. Additive verb
+/// (boundary rule), flagged.
+///
+/// # Safety
+/// The returned string must be freed with `lotus_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_vault_alerts_at(path: *const c_char) -> *mut c_char {
+    // Path-scoped drain: every alert message embeds its box path, so one
+    // box's reader never swallows another's notices (also what keeps the
+    // parallel test processes honest).
+    let wanted = if path.is_null() {
+        None
+    } else {
+        CStr::from_ptr(path)
+            .to_str()
+            .ok()
+            .map(|p| {
+                std::fs::canonicalize(p)
+                    .map(|c| c.display().to_string())
+                    .unwrap_or_else(|_| p.to_string())
+            })
+    };
+    let drained: Vec<String> = {
+        let alerts = VAULT_ALERTS.get_or_init(|| Mutex::new(Vec::new()));
+        let mut alerts = alerts.lock().unwrap();
+        match &wanted {
+            None => std::mem::take(&mut *alerts),
+            Some(needle) => {
+                let (mine, rest): (Vec<String>, Vec<String>) =
+                    alerts.drain(..).partition(|a| a.contains(needle.as_str()));
+                *alerts = rest;
+                mine
+            }
+        }
+    };
+    let json = serde_json::to_string(&drained).unwrap_or_else(|_| "[]".into());
+    CString::new(json).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
 /// Import a batch of messages (P20g, BP-15): JSON array of
 /// {external_id, from, source, sent?, body}. ONE transaction; external-id
 /// upserts — feed-owned cells refresh, user cells never. Returns
@@ -3680,6 +3770,69 @@ mod tests {
         assert!(snap["inbox"].as_array().unwrap().is_empty(), "the rename must not re-enable");
         assert_eq!(snap["assist"]["on"], false);
         assert_eq!(snap["assist"]["prop"], "autopilot");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_shrunken_log_raises_an_alert_and_replays_honestly() {
+        // P20j.4: sync-down of an OLDER log copy = length regression. The
+        // fast path refuses (miss), the shorter log replays honestly, and
+        // the notice is drained exactly once.
+        let (path, c_path) = fresh_box("lotus_ffi_regress");
+        let text = CString::new("first thought").unwrap();
+        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
+        let older = std::fs::read(&path).unwrap();
+        let text2 = CString::new("second thought").unwrap();
+        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text2.as_ptr()) }, 0);
+        let newer = std::fs::read(&path).unwrap();
+
+        // The guard's proof is the CACHE entry; parallel tests may call
+        // clear_cache_for_tests between our warm and the shrink, so the
+        // scenario retries — the mechanism itself is deterministic.
+        let mut surfaced = false;
+        for _attempt in 0..10 {
+            std::fs::write(&path, &newer).unwrap();
+            unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm
+            // The "sync client" replaces the log with the older copy.
+            std::fs::write(&path, &older).unwrap();
+            unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+            let raw = unsafe { lotus_vault_alerts_at(c_path.as_ptr()) };
+            let alerts: Vec<String> =
+                serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() })
+                    .unwrap();
+            unsafe { lotus_string_free(raw) };
+            if alerts.iter().any(|a| a.contains("SHRANK")) {
+                surfaced = true;
+                break;
+            }
+        }
+        assert!(surfaced, "the regression was surfaced within the retries");
+        // Drained: a second read is quiet.
+        let raw = unsafe { lotus_vault_alerts_at(c_path.as_ptr()) };
+        let again: Vec<String> =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert!(again.is_empty());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_conflicted_copy_sibling_raises_an_alert() {
+        let (path, c_path) = fresh_box("lotus_ffi_confl");
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+        let sibling = path.with_file_name("box (conflicted copy 2026-07-19).log");
+        std::fs::write(&sibling, b"whatever a sync client left").unwrap();
+        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+
+        let raw = unsafe { lotus_vault_alerts_at(c_path.as_ptr()) };
+        let alerts: Vec<String> =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert!(
+            alerts.iter().any(|a| a.contains("conflicted copy")),
+            "the sibling was surfaced: {alerts:?}"
+        );
+        let _ = std::fs::remove_file(&sibling);
         cleanup(&path);
     }
 

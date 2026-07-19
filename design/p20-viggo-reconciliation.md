@@ -799,3 +799,27 @@ the second scan+ingest cycle is pinned silent.
 pool births type as plain notes v0 · the conflict/missing/mass cards'
 shell UI rides the verb slice (20j.5) with the editor's keep-mine/
 take-theirs grammar.
+
+### 20j.4 — the projector lock + log self-defense (as built; kill-shot C green)
+
+**The two-process race is serialized**: `projection::project_locked`
+takes a blocking flock on `.liv/projector.lock` across load→plan→apply
+only — IO-only, never the box lock, released on drop — and
+**`RealVaultIo`** landed (rooted; tmp+fsync+rename through `.liv/tmp/`;
+recursive list). **KILL-SHOT C is green**: two threads racing ten
+projection rounds each over one real directory converge — every expected
+file byte-exact, the manifest never torn, a fresh plan empty.
+
+**The log defends itself** (design §4) in the FFI open path: a SHORTER
+log than the cache last proved (a sync client replacing the append-only
+source with an older copy) or a same-length different-inode swap refuses
+the fast path — the miss replays honestly, nothing adopted silently —
+and surfaces a notice; a **conflicted-copy sibling** of the log raises
+its own notice on every open until resolved. Notices drain through the
+new flagged verb **`lotus_vault_alerts_at`** (path-scoped read-and-clear
+— one box's reader never swallows another's; in lotus.h). Test-pinned:
+the synced-down-older-log scenario surfaces SHRANK and drains once; the
+conflicted sibling surfaces by name. (The regression test retries around
+parallel tests' cache clears — the guard's proof is the cache entry, and
+the test suite's own `clear_cache_for_tests` races it; the mechanism is
+deterministic in production where nothing clears the cache.)

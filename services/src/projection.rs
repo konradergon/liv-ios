@@ -485,3 +485,102 @@ pub fn ingest(
     }
     Ok(IngestOutcome { edited, created, surfaced, adopted })
 }
+
+
+// ---- P20j.4: the real vault IO + the projector lock ----
+
+/// The production `VaultIo`: rooted at the vault folder; every write is
+/// tmp (+ fsync) + rename inside `.liv/tmp/`, parents created on demand.
+pub struct RealVaultIo {
+    root: std::path::PathBuf,
+}
+
+impl RealVaultIo {
+    pub fn new(root: &std::path::Path) -> Self {
+        Self { root: root.to_path_buf() }
+    }
+
+    fn abs(&self, rel: &str) -> std::path::PathBuf {
+        self.root.join(rel)
+    }
+}
+
+impl VaultIo for RealVaultIo {
+    fn write_atomic(&mut self, rel: &str, bytes: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+        let target = self.abs(rel);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp_dir = self.root.join(".liv/tmp");
+        std::fs::create_dir_all(&tmp_dir)?;
+        let tmp = tmp_dir.join(format!(
+            "w-{}-{}",
+            std::process::id(),
+            digest(rel.as_bytes()).chars().take(12).collect::<String>()
+        ));
+        {
+            let mut file = std::fs::File::create(&tmp)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+        }
+        std::fs::rename(&tmp, &target)
+    }
+
+    fn rename(&mut self, from: &str, to: &str) -> io::Result<()> {
+        let target = self.abs(to);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(self.abs(from), target)
+    }
+
+    fn read(&self, rel: &str) -> io::Result<Vec<u8>> {
+        std::fs::read(self.abs(rel))
+    }
+
+    fn exists(&self, rel: &str) -> bool {
+        self.abs(rel).exists()
+    }
+
+    fn list(&self, prefix: &str) -> Vec<String> {
+        fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, root, out);
+                } else if let Ok(rel) = path.strip_prefix(root) {
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.root.join(prefix), &self.root, &mut out);
+        // walk from the prefix dir but paths must stay root-relative:
+        // handle a FILE prefix too.
+        if out.is_empty() && self.abs(prefix).is_file() {
+            out.push(prefix.to_string());
+        }
+        out
+    }
+}
+
+/// One full projection under the PROJECTOR lock (design §3): a blocking
+/// flock on `.liv/projector.lock`, held across load→plan→apply only —
+/// IO-only, never the box lock, released on drop. Serializes the app and
+/// the CLI reconciling after their box commits (kill-shot C).
+pub fn project_locked(root: &std::path::Path, store: &Store) -> io::Result<Manifest> {
+    std::fs::create_dir_all(root.join(".liv"))?;
+    let lock_path = root.join(".liv/projector.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock_path)?;
+    lock.lock()?; // blocking; released when `lock` drops
+    let mut io = RealVaultIo::new(root);
+    let manifest = load_manifest(&io);
+    let (ops, next) = plan_projection(store, &manifest);
+    apply_projection(&mut io, &ops, &next)?;
+    Ok(next)
+}

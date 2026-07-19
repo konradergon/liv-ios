@@ -240,6 +240,11 @@ int32_t lotus_kind_flag_at(const char *path, uint64_t def, const char *property,
    only. Returns created+updated, -1 on failure. */
 int64_t lotus_import_messages_at(const char *path, const char *json);
 
+/* Drain the vault's self-defense notices (P20j.4): JSON array of strings
+   (length regression / in-place replacement / conflicted-copy siblings).
+   Read-and-clear. Free with lotus_string_free. */
+char *lotus_vault_alerts_at(const char *path);
+
 /* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
    Start writes nothing anywhere - the running timer is shell state. */
 uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,
