@@ -1353,6 +1353,7 @@ struct WindowChrome: View {
             .overlay(searchOverlay)
             .overlay(vaultGraphOverlay)
             .overlay(settingsOverlay)
+            .overlay(missionControlOverlay)
             .overlay(tourOverlay)
             .overlay(alignment: .bottom) {
                 if let text = toast.text {
@@ -1457,7 +1458,7 @@ struct WindowChrome: View {
                 chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: nil))
                 // An open palette (workspace switcher or search) owns the
                 // keyboard, so global hotkeys don't fire behind it.
-                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen || chrome.settingsOpen }
+                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen || chrome.settingsOpen || chrome.missionControlOpen }
                 // A stored left+right that fit an old Notes layout must
                 // not launch a tool surface into a negative center.
                 chrome.reconcilePanes()
@@ -2214,6 +2215,47 @@ struct WindowChrome: View {
         }
     }
 
+    /// Mission Control (P20h, O7): ⇧⇥ floats the SAME board over the live
+    /// app — survey and launch, never work; Esc or ⇧⇥ again drops back.
+    @ViewBuilder
+    private var missionControlOverlay: some View {
+        if chrome.missionControlOpen {
+            ZStack(alignment: .topTrailing) {
+                Theme.canvas.opacity(0.94).ignoresSafeArea()
+                    .onTapGesture { chrome.missionControlOpen = false }
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("MISSION CONTROL")
+                            .font(.system(size: 10, weight: .bold)).kerning(1)
+                            .foregroundColor(Theme.accent)
+                        Spacer()
+                        Button {
+                            chrome.missionControlOpen = false
+                        } label: {
+                            Image(systemName: "xmark").font(.system(size: 11))
+                                .foregroundColor(Theme.mutedFg)
+                                .frame(width: 26, height: 26).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("close (⇧⇥ / Esc)")
+                    }
+                    .padding(.horizontal, 26).padding(.top, 16)
+                    DashboardView(
+                        model: model, chrome: chrome, selection: $selection,
+                        open: { id in
+                            chrome.missionControlOpen = false
+                            openEntityTab(id)
+                        },
+                        navigate: { target in
+                            chrome.missionControlOpen = false
+                            navigate(to: target)
+                        })
+                }
+            }
+            .onExitCommand { chrome.missionControlOpen = false }
+        }
+    }
+
     /// The vault graph (P18c): summon/glance/jump/Esc — no tab consumed.
     @ViewBuilder
     private var vaultGraphOverlay: some View {
@@ -2512,7 +2554,8 @@ struct WindowChrome: View {
                         graph: { chrome.vaultGraphOpen = true },
                         settings: {
                             NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
-                        })
+                        },
+                        ask: { chrome.searchOpen = true })
                         .background(Theme.panel)
                         .panelCard()
                     if chrome.leftOpen {
@@ -3065,7 +3108,9 @@ struct WindowChrome: View {
                 id: "app:mission-control", label: "Mission Control", scope: .global,
                 category: "Navigate", binding: Hotkey(modifiers: [.shift], key: "Tab")
             ) {
-                navigate(to: .dashboard)
+                // P20h (map [0]): the OVERLAY host — the same board engine
+                // floated over the live app; the rail surface stays.
+                chrome.missionControlOpen.toggle()
             })
         registry.register(
             // ⌘K — the omni pill's advertised chord (P20b, O4): the ONE
@@ -4698,6 +4743,119 @@ struct SearchPopup: View {
     private var isEmptyQuery: Bool { searchTokens(query).isEmpty }
 
     /// The MatchField per hit (Name/Cell/Content) — Context mode shows it.
+    /// The Ask anatomy (P20h): AUTO tool-log · the fenced answer strip ·
+    /// the amber Tidy pointer when a cited object has a pending proposal.
+    @ViewBuilder
+    private func askSection(_ rows: [EntityRow]) -> some View {
+        let cited = Array(rows.prefix(4))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("✦ Ask").font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.warning.opacity(0.12)))
+                Text("stateless — each question starts from zero · close it and it's gone")
+                    .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg)
+                Spacer()
+                Text("asks your vault, not the web").font(.system(size: 9.5))
+                    .foregroundColor(Theme.mutedFg.opacity(0.8))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                logRow("search_vault(\"\(query.trimmingCharacters(in: .whitespaces)))\")",
+                    result: "\(rows.count) hit\(rows.count == 1 ? "" : "s")")
+                ForEach(cited.prefix(2)) { row in
+                    let words = (row.cells.first { $0.property == "content" }?.value ?? "")
+                        .split(whereSeparator: { $0.isWhitespace }).count
+                    logRow("read_note(\"\(row.title.isEmpty ? "Untitled" : row.title)\")",
+                        result: "\(words) word\(words == 1 ? "" : "s")")
+                }
+                Text("reads run silently and are always logged — no write ever hides in an AUTO row")
+                    .font(.system(size: 8.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.panel))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("✦ ANSWER").font(.system(size: 8.5, weight: .bold)).kerning(0.4)
+                    Text("cites \(cited.count) object\(cited.count == 1 ? "" : "s")")
+                        .font(.system(size: 8.5))
+                }
+                .foregroundColor(Theme.warning)
+                Text("The answerer is fence-gated: a model key (Settings → AI) and the automation switch open it. The reads above are real — the citations below are your vault's own answer today.")
+                    .font(.system(size: 11)).foregroundColor(Theme.foreground.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+                if !cited.isEmpty {
+                    Text("CITED — CLICK OPENS THE OBJECT")
+                        .font(.system(size: 8, weight: .bold)).kerning(0.4)
+                        .foregroundColor(Theme.mutedFg)
+                    ForEach(Array(cited.enumerated()), id: \.element.id) { index, row in
+                        Button {
+                            open(row.id)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 8.5, weight: .bold).monospacedDigit())
+                                    .foregroundColor(Theme.accent)
+                                    .frame(width: 14, height: 14)
+                                    .background(Circle().fill(Theme.accentTint))
+                                Text(row.title.isEmpty ? "Untitled" : row.title)
+                                    .font(.system(size: 11.5)).lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(row.kinds.first ?? "note")
+                                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+                            }
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Theme.warning.opacity(0.5)))
+            if let waiting = cited.first(where: { row in
+                (model.snap?.inbox ?? []).contains { $0.entity == row.id }
+            }) {
+                Button {
+                    dismiss()
+                    NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+                } label: {
+                    HStack(spacing: 5) {
+                        Text("✦").font(.system(size: 9))
+                        Text("a suggestion for \(waiting.title.isEmpty ? "this" : waiting.title) waits — review in Inbox › Tidy")
+                            .font(.system(size: 10.5))
+                        Text("REVIEW").font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Capsule().strokeBorder(Theme.warning.opacity(0.6)))
+                    }
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.warning.opacity(0.08)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14).padding(.bottom, 6)
+    }
+
+    private func logRow(_ call: String, result: String) -> some View {
+        HStack(spacing: 6) {
+            Text(call).font(.system(size: 9.5, design: .monospaced))
+                .foregroundColor(Theme.text2).lineLimit(1)
+            Text("→ \(result)").font(.system(size: 9.5, design: .monospaced))
+                .foregroundColor(Theme.mutedFg)
+            Text("AUTO").font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(Theme.green)
+            Spacer(minLength: 0)
+        }
+    }
+
     private var fieldFor: [UInt64: String] {
         Dictionary(model.searchResult.hits.map { ($0.id, $0.field) },
                    uniquingKeysWith: { first, _ in first })
@@ -4751,7 +4909,7 @@ struct SearchPopup: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
-                    TextField("Search or jump to anything…", text: $query)
+                    TextField("Search or ask your vault…", text: $query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 15))
                         .focused($fieldFocused)
@@ -4789,6 +4947,15 @@ struct SearchPopup: View {
                     .background(Capsule().fill(Theme.accentTint))
                 }
                 .padding(.horizontal, 14).padding(.bottom, 4)
+
+                // P20h (O5): the ASK half of the one door — a question mark
+                // turns the palette into Ask. The reads are REAL (the log
+                // rows carry live counts); the answer strip states the fence
+                // honestly until BYOK + consent open it; the citations are
+                // the vault's own answer, click opens.
+                if query.trimmingCharacters(in: .whitespaces).hasSuffix("?") {
+                    askSection(rows)
+                }
 
                 if !model.searchResult.facets.isEmpty {
                     Divider()

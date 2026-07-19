@@ -648,3 +648,36 @@ its stray comment) · starter lists are surface chrome v0 (seeding them as
 view entities later) · text-only source chips (no brand logos) · computed
 `related` scoring, the dashboard nudge, Ask citations, and the contact
 page's message rows ride 20h+.
+
+### 20h — Mission Control + Ask (as built)
+
+**Mission Control** (O7, map [0] — the pack overrides the 07-14
+never-an-overlay ruling): **⇧⇥ floats the SAME board engine** over the
+live app (canvas veil, × / Esc / ⇧⇥ drop back; opening anything closes
+the overlay first) — two hosts, one engine; the rail surface stays. The
+registry aligned to the new catalog: **Tasks-summary and Time left the
+gallery** (their renderers survive for existing boxes; the timer chip is
+independent and stays), **Suggestions / By kind / Resume joined** —
+Suggestions runs the REAL accept/dismiss seams with the dormant-copy
+consent line; By kind is the vault census; Resume is vault-wide on
+purpose (the sim's words). **Pinned re-aims at tier = 1** (map [15]
+reverses the P17g re-aim; the pins shelf keeps the chrome slots).
+
+**Ask** (O5): the palette IS the one Search-or-Ask door — the field says
+so, and a trailing "?" turns it into Ask: the **AUTO tool-log with real
+counts** (search_vault → live hits · read_note → live word counts ·
+"no write ever hides in an AUTO row"), the **fence-stated answer strip**
+("the answerer is fence-gated: a model key + the automation switch open
+it — the citations below are your vault's own answer today"; no fake
+streaming, ever), the numbered **CITED list** (click opens), and the
+amber **REVIEW pointer** into Inbox › Tidy when a cited object has a
+pending proposal. The rail's Ask item became the palette door with the
+amber pending-pip (consent-gated for free); the old Chats surface left
+the rail (code stands until the dept map covers it — recorded).
+
+**Recorded (deferred):** overlay view pills (Today/Guidance/Review —
+multiple boards need view entities) · the streamed Project-summary
+widget, What-next AI rows, the habit-migration banner (fence/model) ·
+the widget Selection/View config panes (view entities) · the 6-column
+span grid + card chrome polish · Settings AI-page rename + tier field +
+provenance stamps (wire) · the catalog registry adoption (its own pass).

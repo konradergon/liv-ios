@@ -210,6 +210,9 @@ final class ChromeModel: ObservableObject {
     @Published var vaultGraphOpen = false
     /// Settings (P19a) — the fourth overlay carve-out; same gate rule.
     @Published var settingsOpen = false
+    /// Mission Control (P20h, O7): the ⇧⇥ overlay — the SAME board
+    /// engine floated over the live app; the rail surface stays.
+    @Published var missionControlOpen = false
     /// The centered search palette (⌘F / the magnifier). Search is a popup,
     /// not the list lens in place — the owner's call after seeing it live.
     @Published var searchOpen = false
@@ -381,9 +384,9 @@ struct LeftRail: View {
             icon(.comms, help: "Comms — read-only messages, resolved to people")
             icon(.dashboard, help: "Mission Control (⇧⇥)")
             hair()
-            // Ask (O5): cited answers — v0 fronts the old chat surface
-            // until 20h rebuilds it as the stateless overlay.
-            icon(.aiChat, help: "Ask — cited answers from your own notes")
+            // Ask (O5/P20h): the stateless palette door — never a surface,
+            // never a tab. Amber pip = pending assist proposals.
+            askButton
             action("point.3.connected.trianglepath.dotted", help: "Vault graph (⌃⇧G)", graph)
             Spacer(minLength: 0)
             action(
@@ -419,6 +422,28 @@ struct LeftRail: View {
             }
         }
         .help(help)
+    }
+
+    var ask: () -> Void = {}
+
+    private var askButton: some View {
+        let pending = model.snap?.inbox.count ?? 0
+        return Button(action: ask) {
+            ZStack {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 14))
+                    .foregroundColor(Theme.mutedFg)
+                    .frame(width: 36, height: 36)
+                if pending > 0 {
+                    pip("\(pending)", bg: Theme.warning, fg: Theme.onYellow)
+                        .offset(x: 12, y: -9)
+                }
+            }
+            .frame(width: 38, height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Ask — cited answers from your own notes (⌘K)")
     }
 
     private func action(

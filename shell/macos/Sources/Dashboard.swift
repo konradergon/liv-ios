@@ -26,20 +26,23 @@ let widgetRegistry: [WidgetSpec] = [
         kind: "agenda", title: "Agenda · today",
         reads: "reads → today's events + dated objects + the daily note", defaultSpan: 2),
     WidgetSpec(
-        kind: "tasks", title: "Tasks summary",
-        reads: "reads → the task pool, counts by status", defaultSpan: 2),
+        kind: "pinned", title: "Pinned · tier 1",
+        reads: "reads → filter: tier = 1", defaultSpan: 1),
     WidgetSpec(
-        kind: "pinned", title: "Pinned",
-        reads: "reads → the Favourites shelf (pins)", defaultSpan: 1),
+        kind: "suggestions", title: "Suggestions",
+        reads: "reads → the assist queue — pending proposals", defaultSpan: 2),
+    WidgetSpec(
+        kind: "bykind", title: "By kind",
+        reads: "reads → the vault census, one bar per kind", defaultSpan: 2),
+    WidgetSpec(
+        kind: "resume", title: "Resume",
+        reads: "reads → recent objects, vault-wide on purpose", defaultSpan: 2),
     WidgetSpec(
         kind: "metric", title: "Metric chart",
         reads: "reads → a collection's cadence over 30 days", defaultSpan: 2),
     WidgetSpec(
         kind: "view", title: "Saved view",
         reads: "reads → any saved view, rendered as a card", defaultSpan: 2),
-    WidgetSpec(
-        kind: "time", title: "Time tracking",
-        reads: "reads → time entries · hosts the one timer", defaultSpan: 3),
     WidgetSpec(
         kind: "whatnext", title: "What next",
         reads: "reads → overdue + due-today tasks, deterministic only", defaultSpan: 2),
@@ -291,6 +294,12 @@ struct DashboardView: View {
             TimeCardBody(model: model, open: open)
         case "whatnext":
             WhatNextBody(model: model, open: open)
+        case "suggestions":
+            suggestionsBody
+        case "bykind":
+            byKindBody
+        case "resume":
+            resumeBody
         default:
             // A kind from a newer box/CLI this build doesn't render yet —
             // honest, quiet, never a crash.
@@ -334,12 +343,16 @@ struct DashboardView: View {
         }
     }
 
-    /// Pinned (bp8's tier-1, re-aimed at the P17g shelf — the recorded delta).
+    /// Pinned · tier 1 (P20h map [15] — the pack REVERSES the P17g
+    /// re-aim: back to bp8's tier-1 filter; the pins shelf keeps the
+    /// chrome slots).
     private var pinnedBody: some View {
-        let pins = (model.snap?.pins ?? []).compactMap { model.entity($0.target) }
+        let pins = model.rows(model.snap?.everything ?? []).filter { row in
+            row.cells.contains { $0.property == "tier" && $0.value == "1" }
+        }
         return VStack(alignment: .leading, spacing: 2) {
             if pins.isEmpty {
-                Text("Nothing pinned. 🔖 or ⌘⇧B pins anything here.")
+                Text("Nothing at tier 1 — set tier on anything to pin it here.")
                     .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
             }
             ForEach(pins.prefix(6), id: \.id) { row in
@@ -358,6 +371,105 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    /// Suggestions (P20h, sim): the assist queue as a card — accept runs
+    /// the REAL accept seam; dismiss is remembered by id. Dormant copy
+    /// rides the consent switch (the queue empties when off).
+    private var suggestionsBody: some View {
+        let pending = model.snap?.inbox ?? []
+        return VStack(alignment: .leading, spacing: 3) {
+            if pending.isEmpty {
+                Text(model.snap?.assist?.on == false
+                    ? "the automation switch is off — nothing suggests"
+                    : "The queue is clear — nothing waits.")
+                    .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
+            }
+            ForEach(pending.prefix(4), id: \.fingerprint) { proposal in
+                HStack(spacing: 6) {
+                    Text("✦").font(.system(size: 9)).foregroundColor(Theme.warning)
+                    Text(proposal.reason).font(.system(size: 11)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("Accept →") { model.accept(proposal) }
+                        .buttonStyle(.plain).font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.accent)
+                    Button {
+                        model.reject(proposal)
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 8))
+                            .foregroundColor(Theme.mutedFg).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 2)
+            }
+            if !pending.isEmpty {
+                Text("accept applies one small write · dismiss is remembered by id")
+                    .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+            }
+        }
+    }
+
+    /// By kind (P20h, sim): the vault census — one bar per kind.
+    private var byKindBody: some View {
+        let rows = model.rows(model.snap?.everything ?? [])
+        var counts: [(String, Int)] = []
+        var tally: [String: Int] = [:]
+        for row in rows {
+            let kind = row.kinds.first ?? "scrap"
+            tally[kind, default: 0] += 1
+        }
+        counts = tally.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
+        let top = counts.first?.1 ?? 1
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(counts.prefix(8), id: \.0) { kind, count in
+                HStack(spacing: 6) {
+                    Text(kind).font(.system(size: 10.5)).foregroundColor(Theme.text2)
+                        .frame(width: 64, alignment: .leading)
+                    GeometryReader { geo in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(nsColor: Hues.valueHex(kind)).opacity(0.75))
+                            .frame(
+                                width: max(4, geo.size.width * CGFloat(count) / CGFloat(top)),
+                                height: 7)
+                            .frame(maxHeight: .infinity, alignment: .center)
+                    }
+                    Text("\(count)").font(.system(size: 10).monospacedDigit())
+                        .foregroundColor(Theme.mutedFg)
+                        .frame(width: 30, alignment: .trailing)
+                }
+                .frame(height: 14)
+            }
+        }
+    }
+
+    /// Resume (P20h, sim): recent objects — "vault-wide — resume ignores
+    /// the workspace lens on purpose".
+    private var resumeBody: some View {
+        let recent = model.rows(model.snap?.everything ?? [])
+            .filter { !$0.title.isEmpty }
+            .sorted { ($0.created ?? 0) > ($1.created ?? 0) }
+            .prefix(6)
+        return VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(recent), id: \.id) { row in
+                Button { open(row.id) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: rowKindIcon(row))
+                            .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+                            .frame(width: 14)
+                        Text(row.title).font(.system(size: 11.5)).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(row.kinds.first ?? "note")
+                            .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Text("vault-wide — resume ignores the workspace lens on purpose")
+                .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
         }
     }
 
