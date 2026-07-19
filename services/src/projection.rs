@@ -28,6 +28,8 @@ pub trait VaultIo {
     fn rename(&mut self, from: &str, to: &str) -> io::Result<()>;
     fn read(&self, rel: &str) -> io::Result<Vec<u8>>;
     fn exists(&self, rel: &str) -> bool;
+    /// Every path under the prefix — the scan's eyes (read-only).
+    fn list(&self, prefix: &str) -> Vec<String>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -190,4 +192,296 @@ pub fn apply_projection(
     }
     let bytes = serde_json::to_vec(next).map_err(io::Error::other)?;
     io.write_atomic(MANIFEST_PATH, &bytes)
+}
+
+
+// ---- P20j.3: the reconcile decision table + ingest (design §4) ----
+
+/// A sync-client-shaped burst: more than this many changed files in one
+/// scan downgrades everything to ONE card — never auto-applied.
+pub const MASS_CHANGE_THRESHOLD: usize = 25;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReconcileFinding {
+    /// Rule 2 — a clean external edit (box unmoved since the sync point):
+    /// the ingest candidate.
+    Edited { id: Id, path: String },
+    /// A markdown file the manifest has never seen — born outside.
+    NewFile { path: String },
+    /// Rule 3 — both sides moved. Surfaced, never merged.
+    Conflict { id: Id, path: String },
+    /// Rule 4 — the file left the disk. Surfaced; the entity NEVER dies.
+    Missing { id: Id, path: String },
+    /// A byte-identical copy of an expected file at a stray path (a lost
+    /// manifest after a rename) — the projector parks it.
+    OrphanCopy { path: String },
+    /// Rule 4 — the sync-client fingerprint. One card, nothing applies.
+    MassChange { count: usize },
+}
+
+/// The scan: read-only. Rule 1 is FIRST and content-addressed — a file
+/// whose bytes equal render(store) is ours, whatever the timestamps say;
+/// the projector's own writes are structurally incapable of re-ingesting.
+pub fn scan(io: &dyn VaultIo, store: &Store, manifest: &Manifest) -> Vec<ReconcileFinding> {
+    let expected = expected_files(store);
+    let expected_by_id: HashMap<Id, &crate::vault::VaultFile> =
+        expected.iter().map(|f| (f.id, f)).collect();
+    let expected_digests: HashMap<String, &str> = expected
+        .iter()
+        .filter_map(|f| f.content.as_deref().map(|c| (digest(c.as_bytes()), f.rel_path.as_str())))
+        .collect();
+
+    let mut findings: Vec<ReconcileFinding> = Vec::new();
+    let mut known_paths: HashMap<&str, ()> = HashMap::new();
+
+    for row in &manifest.rows {
+        known_paths.insert(row.path.as_str(), ());
+        if row.trash_from.is_some() {
+            continue; // parked — the projector owns it
+        }
+        let on_disk = io.read(&row.path).ok();
+        let expected_now = expected_by_id
+            .get(&row.id)
+            .and_then(|f| f.content.as_deref());
+        match on_disk {
+            None => {
+                // Rule 4: the file left the disk. If the entity no longer
+                // projects either, the projector will reconcile silently;
+                // a LIVE entity's missing file is a card.
+                if expected_now.is_some() {
+                    findings.push(ReconcileFinding::Missing {
+                        id: row.id,
+                        path: row.path.clone(),
+                    });
+                }
+            }
+            Some(bytes) => {
+                let file_digest = digest(&bytes);
+                if file_digest == row.digest {
+                    continue; // untouched since the sync point
+                }
+                // Rule 1: content-addressed clean — the file already IS
+                // what the store renders (our own write racing a stale
+                // manifest). The projector refreshes the row; no finding.
+                if let Some(now) = expected_now {
+                    if digest(now.as_bytes()) == file_digest {
+                        continue;
+                    }
+                }
+                // Box moved since the sync point?
+                let box_moved = expected_now
+                    .map(|now| digest(now.as_bytes()) != row.digest)
+                    .unwrap_or(true);
+                if box_moved {
+                    findings.push(ReconcileFinding::Conflict {
+                        id: row.id,
+                        path: row.path.clone(),
+                    });
+                } else {
+                    findings.push(ReconcileFinding::Edited {
+                        id: row.id,
+                        path: row.path.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Unknown markdown under library/: content-addressed orphan detection
+    // first (a stray copy of our own bytes), else a hand-born file.
+    for path in io.list("library/") {
+        if known_paths.contains_key(path.as_str()) || !path.ends_with(".md") {
+            continue;
+        }
+        match io.read(&path) {
+            Ok(bytes) => {
+                let d = digest(&bytes);
+                if expected_digests.contains_key(d.as_str()) {
+                    findings.push(ReconcileFinding::OrphanCopy { path });
+                } else {
+                    findings.push(ReconcileFinding::NewFile { path });
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    // Rule 4's burst fingerprint: too much at once = one card, applied
+    // never.
+    let changeful = findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f,
+                ReconcileFinding::Edited { .. }
+                    | ReconcileFinding::NewFile { .. }
+                    | ReconcileFinding::Missing { .. }
+            )
+        })
+        .count();
+    if changeful > MASS_CHANGE_THRESHOLD {
+        return vec![ReconcileFinding::MassChange { count: changeful }];
+    }
+    findings
+}
+
+pub struct IngestOutcome {
+    pub edited: usize,
+    pub created: usize,
+    /// Findings the ingest deliberately left for the shell's cards.
+    pub surfaced: usize,
+    /// Newly-born entities and the hand-made paths they were born FROM —
+    /// the caller seeds manifest rows with these before the next plan, so
+    /// the projector RENAMES the hand path to canonical instead of
+    /// re-ingesting it as another new file (the duplicate factory).
+    pub adopted: Vec<AdoptedFile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdoptedFile {
+    pub id: Id,
+    pub path: String,
+    pub digest: String,
+}
+
+/// Fold adopted births into a manifest so the next plan owns their paths.
+pub fn adopt_into(manifest: &mut Manifest, adopted: &[AdoptedFile]) {
+    for a in adopted {
+        manifest.rows.push(ManifestRow {
+            path: a.path.clone(),
+            id: a.id,
+            digest: a.digest.clone(),
+            trash_from: None,
+        });
+    }
+}
+
+fn pool_type(path: &str) -> Option<&'static str> {
+    let pool = path.strip_prefix("library/")?.split('/').next()?;
+    match pool {
+        "notes" | "daily" => Some("note"),
+        "contacts" => Some("person"),
+        "events" => Some("event"),
+        "tasks" => Some("task"),
+        "links" => Some("link"),
+        _ => None,
+    }
+}
+
+/// Tier-A ingest: ONE batched transaction for every clean edit and new
+/// file — announced by the caller, undone by one ⌘⌥Z, labeled
+/// "vault-edit". Conflict/Missing/Mass findings are counted and LEFT for
+/// the shell — never merged, never auto-applied. v0 ingests NAME + BODY
+/// (the shell's own editor writes exactly those); frontmatter-cell edits
+/// are a recorded deepening.
+pub fn ingest(
+    session: &mut Session,
+    io: &dyn VaultIo,
+    _manifest: &Manifest,
+    findings: &[ReconcileFinding],
+) -> Result<IngestOutcome, crate::content::WriteError> {
+    let mut commands: Vec<Command> = Vec::new();
+    let mut edited = 0;
+    let mut created = 0;
+    let mut surfaced = 0;
+    let mut adopted: Vec<AdoptedFile> = Vec::new();
+
+    for finding in findings {
+        match finding {
+            ReconcileFinding::Edited { id, path } => {
+                let Ok(bytes) = io.read(path) else { continue };
+                let Ok(raw) = String::from_utf8(bytes) else { continue };
+                let parsed = crate::vault::parse_vault_note(&raw);
+                let store = session.store();
+                let Some(entity) = store.get(*id) else { continue };
+                // Name follows the H1 (H1 wins — the recorded rule).
+                if let Some(new_name) = &parsed.name {
+                    if let Some(Value::Text(old)) = entity.get(props::NAME) {
+                        if old != new_name {
+                            commands.push(Command::RemoveCell {
+                                entity: *id,
+                                cell: Cell {
+                                    property: props::NAME,
+                                    value: Value::text(old.clone()),
+                                },
+                            });
+                            commands.push(Command::AddCell {
+                                entity: *id,
+                                cell: Cell {
+                                    property: props::NAME,
+                                    value: Value::text(new_name.clone()),
+                                },
+                            });
+                        }
+                    }
+                }
+                let new_content = Value::RichText(parsed.body);
+                if entity.get(props::CONTENT) != Some(&new_content) {
+                    for old in entity.all(props::CONTENT) {
+                        commands.push(Command::RemoveCell {
+                            entity: *id,
+                            cell: Cell { property: props::CONTENT, value: old.clone() },
+                        });
+                    }
+                    commands.push(Command::AddCell {
+                        entity: *id,
+                        cell: Cell { property: props::CONTENT, value: new_content },
+                    });
+                }
+                edited += 1;
+            }
+            ReconcileFinding::NewFile { path } => {
+                let Ok(bytes) = io.read(path) else { continue };
+                let Ok(raw) = String::from_utf8(bytes) else { continue };
+                let parsed = crate::vault::parse_vault_note(&raw);
+                let id = session.allocate_id();
+                commands.push(Command::Create { entity: id });
+                if let Some(kind) = pool_type(path) {
+                    if let Some(ty) = crate::content::find_type(session.store(), kind) {
+                        commands.push(Command::AddCell {
+                            entity: id,
+                            cell: Cell { property: props::TYPE, value: Value::Reference(ty) },
+                        });
+                    }
+                }
+                let name = parsed.name.unwrap_or_else(|| {
+                    path.rsplit('/')
+                        .next()
+                        .unwrap_or("untitled")
+                        .trim_end_matches(".md")
+                        .to_string()
+                });
+                commands.push(Command::AddCell {
+                    entity: id,
+                    cell: Cell { property: props::NAME, value: Value::text(name) },
+                });
+                if !parsed.body.spans.is_empty() {
+                    commands.push(Command::AddCell {
+                        entity: id,
+                        cell: Cell {
+                            property: props::CONTENT,
+                            value: Value::RichText(parsed.body),
+                        },
+                    });
+                }
+                adopted.push(AdoptedFile {
+                    id,
+                    path: path.clone(),
+                    digest: digest(raw.as_bytes()),
+                });
+                created += 1;
+            }
+            ReconcileFinding::Conflict { .. }
+            | ReconcileFinding::Missing { .. }
+            | ReconcileFinding::OrphanCopy { .. }
+            | ReconcileFinding::MassChange { .. } => surfaced += 1,
+        }
+    }
+
+    if !commands.is_empty() {
+        session
+            .commit(commands, "vault-edit", Author::User)
+            .map_err(|e| crate::content::WriteError::Persist(e.to_string()))?;
+    }
+    Ok(IngestOutcome { edited, created, surfaced, adopted })
 }

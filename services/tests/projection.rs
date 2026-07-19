@@ -75,6 +75,9 @@ impl VaultIo for MemIo {
     fn exists(&self, rel: &str) -> bool {
         self.files.contains_key(rel)
     }
+    fn list(&self, prefix: &str) -> Vec<String> {
+        self.files.keys().filter(|k| k.starts_with(prefix)).cloned().collect()
+    }
 }
 
 /// Everything under library/ must equal expected_files exactly — no loss,

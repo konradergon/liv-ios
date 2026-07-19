@@ -771,3 +771,31 @@ design doc said blake3; corrected) · v0 projects the MARKDOWN class only
 (binary byte-copies ride 20j.8) · stray files under a LOST manifest
 after a rename wait for 20j.3's disk-scan reconcile (the manifest-cache
 heal covers content; the orphan sweep is the scan's first job).
+
+### 20j.3 — reconcile + ingest + echo suppression (as built; kill-shot B green)
+
+The **scan** (read-only, `VaultIo::list` joins the trait) implements the
+decision table in the design's order: rule 1 is **content-addressed
+clean** — a file whose bytes equal render(store) is ours whatever the
+timestamps say, so the projector's own writes are structurally incapable
+of re-ingesting (**kill-shot B: 100 sync cycles, zero commits, the log
+byte-identical — green**). A clean external edit (box unmoved since the
+manifest's sync point) becomes `Edited`; both-sides-moved becomes
+`Conflict` — **surfaced, never merged** (pinned: zero log growth); a
+missing file becomes `Missing` — **the entity never dies** (pinned); a
+burst beyond 25 changed files collapses to ONE `MassChange` card (the
+sync-client fingerprint — pinned at 30 files, nothing applied); a stray
+byte-copy of an expected file reports `OrphanCopy` for the projector.
+The **ingest** batches every tier-A finding into **ONE `vault-edit`
+transaction** (`Author::User`, one ⌘⌥Z — pinned): the H1 wins the name,
+the body replaces content; a hand-born file under a pool folder births a
+typed entity. **The duplicate factory is structurally closed**: ingest
+returns the adopted (id, path, digest) triples, `adopt_into` folds them
+into the manifest, and the next plan RENAMES the hand path to canonical —
+the second scan+ingest cycle is pinned silent.
+
+**Recorded:** frontmatter-cell edits on ingest are a later deepening
+(v0 = name + body, exactly what the shell's own editor writes) · daily-
+pool births type as plain notes v0 · the conflict/missing/mass cards'
+shell UI rides the verb slice (20j.5) with the editor's keep-mine/
+take-theirs grammar.
