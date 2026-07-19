@@ -223,6 +223,27 @@ pub enum ReconcileFinding {
 /// whose bytes equal render(store) is ours, whatever the timestamps say;
 /// the projector's own writes are structurally incapable of re-ingesting.
 pub fn scan(io: &dyn VaultIo, store: &Store, manifest: &Manifest) -> Vec<ReconcileFinding> {
+    let findings = scan_inner(io, store, manifest);
+    let changeful = findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f,
+                ReconcileFinding::Edited { .. }
+                    | ReconcileFinding::NewFile { .. }
+                    | ReconcileFinding::Missing { .. }
+            )
+        })
+        .count();
+    if changeful > MASS_CHANGE_THRESHOLD {
+        return vec![ReconcileFinding::MassChange { count: changeful }];
+    }
+    findings
+}
+
+/// The scan body without the burst collapse — `scan` wraps it, `scan_all`
+/// exposes it.
+fn scan_inner(io: &dyn VaultIo, store: &Store, manifest: &Manifest) -> Vec<ReconcileFinding> {
     let expected = expected_files(store);
     let expected_by_id: HashMap<Id, &crate::vault::VaultFile> =
         expected.iter().map(|f| (f.id, f)).collect();
@@ -306,22 +327,6 @@ pub fn scan(io: &dyn VaultIo, store: &Store, manifest: &Manifest) -> Vec<Reconci
         }
     }
 
-    // Rule 4's burst fingerprint: too much at once = one card, applied
-    // never.
-    let changeful = findings
-        .iter()
-        .filter(|f| {
-            matches!(
-                f,
-                ReconcileFinding::Edited { .. }
-                    | ReconcileFinding::NewFile { .. }
-                    | ReconcileFinding::Missing { .. }
-            )
-        })
-        .count();
-    if changeful > MASS_CHANGE_THRESHOLD {
-        return vec![ReconcileFinding::MassChange { count: changeful }];
-    }
     findings
 }
 
@@ -486,6 +491,74 @@ pub fn ingest(
     Ok(IngestOutcome { edited, created, surfaced, adopted })
 }
 
+
+// ---- P20j.7: expand a mass burst + the resolution verdicts ----
+
+/// The scan WITHOUT the mass-change collapse — the shell's "review these
+/// individually" door on a burst card. Same rules, every finding shown.
+pub fn scan_all(io: &dyn VaultIo, store: &Store, manifest: &Manifest) -> Vec<ReconcileFinding> {
+    match scan(io, store, manifest).as_slice() {
+        [ReconcileFinding::MassChange { .. }] => {
+            // Re-run with the threshold lifted: temporarily raise the bar
+            // by scanning against an EMPTY-of-mass path — simplest is to
+            // reproduce scan's body sans the final collapse. We call the
+            // internal helper.
+            scan_inner(io, store, manifest)
+        }
+        _ => scan(io, store, manifest),
+    }
+}
+
+/// Take the DISK version of a conflicting (or any) file: ingest it as an
+/// Edited finding — ONE undoable "vault-edit" txn, exactly the clean-edit
+/// path, chosen deliberately by the user.
+pub fn resolve_take_disk(
+    session: &mut Session,
+    io: &dyn VaultIo,
+    id: Id,
+    rel_path: &str,
+) -> Result<(), crate::content::WriteError> {
+    let finding = ReconcileFinding::Edited { id, path: rel_path.to_string() };
+    ingest(session, io, &Manifest::default(), &[finding]).map(|_| ())
+}
+
+/// Keep the APP version: rewrite the file from the store and refresh the
+/// manifest row, so the divergence settles with no box write.
+pub fn resolve_keep_app(io: &mut dyn VaultIo, store: &Store, id: Id) -> io::Result<()> {
+    let expected = expected_files(store);
+    let Some(file) = expected.iter().find(|f| f.id == id) else {
+        return Ok(()); // no longer projects — nothing to keep
+    };
+    let Some(content) = &file.content else { return Ok(()) };
+    io.write_atomic(&file.rel_path, content.as_bytes())?;
+    // Refresh only this row in the manifest (a scan is then clean).
+    let mut manifest = load_manifest(io);
+    let want = digest(content.as_bytes());
+    if let Some(row) = manifest.rows.iter_mut().find(|r| r.id == id) {
+        row.path = file.rel_path.clone();
+        row.digest = want;
+        row.trash_from = None;
+    } else {
+        manifest.rows.push(ManifestRow {
+            path: file.rel_path.clone(),
+            id,
+            digest: want,
+            trash_from: None,
+        });
+    }
+    let bytes = serde_json::to_vec(&manifest).map_err(io::Error::other)?;
+    io.write_atomic(MANIFEST_PATH, &bytes)
+}
+
+/// Trash the entity (a Missing-file verdict, or any): the ordinary box
+/// trash — the next projection parks the file in `.trash/`, never a hard
+/// delete (deletion never cascades).
+pub fn resolve_trash(session: &mut Session, id: Id) -> Result<(), crate::content::WriteError> {
+    session
+        .commit(vec![Command::Trash { entity: id }], "vault-resolve trash", Author::User)
+        .map(|_| ())
+        .map_err(|e| crate::content::WriteError::Persist(e.to_string()))
+}
 
 // ---- P20j.4: the real vault IO + the projector lock ----
 

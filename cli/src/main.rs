@@ -69,6 +69,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         Some((&"reject", target)) => reject(&mut session, target),
         Some((&"name", rest)) => name(&mut session, rest),
         Some((&"set", rest)) => set(&mut session, rest),
+        Some((&"route", rest)) => route(&mut session, rest),
         Some((&"history", _)) => {
             history(&session);
             Ok(())
@@ -163,6 +164,26 @@ fn today(session: &Session) {
 
 /// Set one property to one value — the shared parser and replace-the-cell
 /// semantics live in services; the window's inspector uses the same door.
+/// `lotus route ID TYPE` — stamp a scrap's type by NAME (set_property
+/// can't: TYPE is a reference and wants "#id", but type entities are
+/// backstage plumbing). The FFI shell has lotus_set_type_at; the CLI
+/// gets its own door so a captured scrap can be routed to a projectable
+/// kind (note/task/person/…).
+fn route(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (id_arg, type_words) = rest.split_first().ok_or("usage: lotus route ID TYPE")?;
+    let id: Id = id_arg
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| format!("not an entity id: {id_arg}"))?;
+    let type_name = type_words.join(" ");
+    if type_name.is_empty() {
+        return Err("usage: lotus route ID TYPE".into());
+    }
+    lotus_services::content::set_type(session, id, &type_name).map_err(|e| format!("{e:?}"))?;
+    println!("#{id} → {type_name}");
+    Ok(())
+}
+
 fn set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
     let (id_arg, rest) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
     let (prop_name, words) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;

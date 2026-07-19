@@ -279,3 +279,96 @@ fn a_new_markdown_file_ingests_and_settles_canonical() {
     assert!(findings2.is_empty(), "second cycle must be silent, got {findings2:?}");
     cleanup(&path);
 }
+
+// ---- P20j.7: expanding a mass burst + the resolution verdicts ----
+
+#[test]
+fn scan_all_expands_a_mass_burst_into_individual_findings() {
+    let (mut session, path) = boxed("expand");
+    let mut ids = Vec::new();
+    for i in 0..30 {
+        ids.push(note(&mut session, &format!("Bulk {i}")));
+    }
+    let mut io = MemIo::default();
+    project(&mut io, session.store());
+    for rel in io.files.keys().filter(|k| k.starts_with("library/")).cloned().collect::<Vec<_>>() {
+        let mut bytes = io.read(&rel).unwrap();
+        bytes.extend_from_slice(b"noise");
+        io.write_atomic(&rel, &bytes).unwrap();
+    }
+    let manifest = projection::load_manifest(&io);
+    // scan() collapses to one card; scan_all() shows every one.
+    assert!(matches!(
+        projection::scan(&io, session.store(), &manifest).as_slice(),
+        [ReconcileFinding::MassChange { .. }]
+    ));
+    let all = projection::scan_all(&io, session.store(), &manifest);
+    assert_eq!(all.len(), 30);
+    assert!(all.iter().all(|f| matches!(f, ReconcileFinding::Edited { .. })));
+    cleanup(&path);
+}
+
+#[test]
+fn resolve_take_disk_ingests_the_conflicting_file() {
+    let (mut session, path) = boxed("takedisk");
+    let id = note(&mut session, "Contested");
+    let mut io = MemIo::default();
+    project(&mut io, session.store());
+    // Both sides move (a conflict).
+    let spans = lotus_services::markdown::parse_markdown("app version").spans;
+    let base = content::content_fingerprint(session.store().get(id).unwrap().get(props::CONTENT));
+    content::set_content(&mut session, id, spans, base).unwrap();
+    let rel = "library/notes/contested.md";
+    io.write_atomic(rel, b"# Contested\n\ndisk version wins\n").unwrap();
+
+    let manifest = projection::load_manifest(&io);
+    projection::resolve_take_disk(&mut session, &io, id, rel).unwrap();
+    let store = session.store();
+    let content_prop = lotus_services::property_id(store, "content").unwrap();
+    let body = match store.get(id).unwrap().get(content_prop) {
+        Some(Value::RichText(r)) => lotus_services::markdown::render_markdown(r, &|_| String::new()),
+        _ => String::new(),
+    };
+    assert!(body.contains("disk version wins"), "{body}");
+    let _ = manifest;
+    cleanup(&path);
+}
+
+#[test]
+fn resolve_keep_app_rewrites_the_file_from_the_store() {
+    let (mut session, path) = boxed("keepapp");
+    let id = note(&mut session, "Canonical");
+    let mut io = MemIo::default();
+    project(&mut io, session.store());
+    let rel = "library/notes/canonical.md";
+    // The disk is vandalized.
+    io.write_atomic(rel, b"garbage the sync client left").unwrap();
+
+    let manifest = projection::load_manifest(&io);
+    projection::resolve_keep_app(&mut io, session.store(), id).unwrap();
+    let bytes = io.read(rel).unwrap();
+    let expected = lotus_services::vault::render_vault_entity(session.store(), id).unwrap();
+    assert_eq!(bytes, expected.as_bytes(), "the store's version is back on disk");
+    // And a scan is now clean (the manifest row was refreshed).
+    let refreshed = projection::load_manifest(&io);
+    let findings = projection::scan(&io, session.store(), &refreshed);
+    assert!(findings.is_empty(), "keep-app settled the divergence, got {findings:?}");
+    let _ = manifest;
+    cleanup(&path);
+}
+
+#[test]
+fn resolve_trash_removes_the_entity_and_parks_the_file() {
+    let (mut session, path) = boxed("resolvetrash");
+    let id = note(&mut session, "Doomed");
+    let mut io = MemIo::default();
+    project(&mut io, session.store());
+
+    projection::resolve_trash(&mut session, id).unwrap();
+    assert!(session.store().get(id).unwrap().trashed);
+    // Re-projecting parks the file (never a hard delete).
+    project(&mut io, session.store());
+    assert!(!io.exists("library/notes/doomed.md"));
+    assert!(io.exists(".trash/library/notes/doomed.md"));
+    cleanup(&path);
+}

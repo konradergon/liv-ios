@@ -882,3 +882,37 @@ none.
 adoption ride 20j.9 (the pack promises them but they need the migration
 work) · in-editor source-mode still deferred (its own later slice) ·
 drag-row-out-as-file and drop-to-import ride 20j.8.
+
+### 20j.7 — the watcher + the divergence UI (as built)
+
+**The read-only FSEvents watcher** (`Vault.swift`): starts in vault mode
+only (idempotent, on the first snapshot), watches the vault root with
+FSEvents (0.8s coalescing latency), **excludes `/.liv/`** (our own
+writes), and on any other change schedules ONE debounced sync via a
+cancel-and-reschedule work item — a burst of 10 or 10 000 events fires
+exactly one scan once quiet. It NEVER writes: it calls the same
+`vaultSync` verb the user does, and sync is echo-proof (kill-shot B), so
+no write loop is constructible. Scan-at-open stays canonical (the start
+surfaces pre-existing divergence immediately).
+
+**The divergence UI**: two new flagged verbs — `lotus_vault_findings_at`
+(read-only scan → JSON `[{kind,id?,path?,count?}]`; `all=1` expands a
+mass burst) and `lotus_vault_resolve_at` (verdict `take-disk` | `keep-app`
+| `trash`) — over three Rust resolvers (test-pinned: take-disk ingests
+the disk version as one undoable txn; keep-app rewrites the file from the
+store and settles the scan; trash removes the entity and the next
+projection parks the file). The **`DivergenceBanner`** (amber, atop the
+body, shown only when residue exists) carries the verdicts: conflicts get
+Keep-mine/Take-disk, a missing file Restore/Trash, a mass burst
+"Review individually". Clean edits auto-ingest and never reach the banner
+— it is the you-decide residue. **CLI**: a new `lotus route ID TYPE`
+(closes a real gap — the CLI couldn't type a scrap by name) let the whole
+loop be smoke-tested end-to-end: route → rebuild materializes → hand-edit
+→ status shows the finding → sync ingests it (1 edited). FFI-pinned: the
+conflict findings→resolve round-trip settles to an empty scan.
+
+**Recorded:** the watcher's storm→1-scan guarantee is structural (the
+shell has no test harness; the safety property — no write loop — is the
+Rust-pinned echo-proofness) · keep-both (import the disk copy as a new
+entity) deferred to the import slice (20j.8) · conflicts route through the
+banner v0, not yet the editor's inline keep-mine/take-theirs card.

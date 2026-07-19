@@ -2638,6 +2638,116 @@ pub unsafe extern "C" fn lotus_vault_rebuild_at(path: *const c_char) -> i64 {
     }
 }
 
+/// The vault's current divergence findings (P20j.7): a read-only scan,
+/// JSON `[{kind, id?, path?, count?}]` — kind ∈ conflict|missing|newfile|
+/// masschange|orphan|edited. `all=1` expands a mass burst. No ingest, no
+/// write. Additive verb, flagged.
+///
+/// # Safety
+/// Free the returned string with `lotus_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_vault_findings_at(
+    path: *const c_char,
+    all: i32,
+) -> *mut c_char {
+    let Some((session, key)) = open_box(path) else {
+        return CString::new("[]").map(CString::into_raw).unwrap_or(std::ptr::null_mut());
+    };
+    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+        checkin(key, session, Committed::Read);
+        return CString::new("[]").map(CString::into_raw).unwrap_or(std::ptr::null_mut());
+    };
+    let io = lotus_services::projection::RealVaultIo::new(&root);
+    let manifest = lotus_services::projection::load_manifest(&io);
+    let findings = if all != 0 {
+        lotus_services::projection::scan_all(&io, session.store(), &manifest)
+    } else {
+        lotus_services::projection::scan(&io, session.store(), &manifest)
+    };
+    checkin(key, session, Committed::Read);
+
+    use lotus_services::projection::ReconcileFinding as F;
+    let arr: Vec<serde_json::Value> = findings
+        .iter()
+        .map(|f| match f {
+            F::Edited { id, path } => serde_json::json!({ "kind": "edited", "id": id, "path": path }),
+            F::NewFile { path } => serde_json::json!({ "kind": "newfile", "path": path }),
+            F::Conflict { id, path } => serde_json::json!({ "kind": "conflict", "id": id, "path": path }),
+            F::Missing { id, path } => serde_json::json!({ "kind": "missing", "id": id, "path": path }),
+            F::OrphanCopy { path } => serde_json::json!({ "kind": "orphan", "path": path }),
+            F::MassChange { count } => serde_json::json!({ "kind": "masschange", "count": count }),
+        })
+        .collect();
+    let json = serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into());
+    CString::new(json).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
+}
+
+/// Resolve one divergence (P20j.7): `verdict` ∈ "take-disk" | "keep-app" |
+/// "trash". take-disk/trash commit ONE undoable txn; keep-app rewrites the
+/// file from the store (no box write). All re-project under the lock.
+/// Returns 1 on success, 0 on failure/busy. Additive verb, flagged.
+///
+/// # Safety
+/// `path`, `rel_path`, and `verdict` must be valid NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn lotus_vault_resolve_at(
+    path: *const c_char,
+    id: u64,
+    rel_path: *const c_char,
+    verdict: *const c_char,
+) -> i32 {
+    if rel_path.is_null() || verdict.is_null() {
+        return 0;
+    }
+    let (Ok(rel), Ok(verdict)) =
+        (CStr::from_ptr(rel_path).to_str(), CStr::from_ptr(verdict).to_str())
+    else {
+        return 0;
+    };
+    let Some((mut session, key)) = open_box(path) else {
+        return 0;
+    };
+    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+        checkin(key, session, Committed::Read);
+        return 0;
+    };
+    use lotus_services::projection as proj;
+    let (ok, committed): (bool, Committed) = match verdict {
+        "take-disk" => {
+            let io = proj::RealVaultIo::new(&root);
+            match proj::resolve_take_disk(&mut session, &io, id, rel) {
+                Ok(()) => (true, Committed::Wrote),
+                Err(_) => (false, Committed::Failed),
+            }
+        }
+        "trash" => match proj::resolve_trash(&mut session, id) {
+            Ok(()) => (true, Committed::Wrote),
+            Err(_) => (false, Committed::Failed),
+        },
+        "keep-app" => {
+            // No box write: do the file IO under the projector lock, tag
+            // Read so the cache stays.
+            let mut io = proj::RealVaultIo::new(&root);
+            (proj::resolve_keep_app(&mut io, session.store(), id).is_ok(), Committed::Read)
+        }
+        _ => (false, Committed::Read),
+    };
+    // Re-project the box's current truth (parks trashed files, canonicalizes
+    // an ingested take-disk). keep-app already wrote its one file.
+    let planned = if matches!(committed, Committed::Wrote) {
+        let io = proj::RealVaultIo::new(&root);
+        let manifest = proj::load_manifest(&io);
+        Some(proj::plan_projection(session.store(), &manifest))
+    } else {
+        None
+    };
+    checkin(key, session, committed);
+    if let Some((ops, next)) = planned {
+        let _ = proj::apply_locked(&root, &ops, &next);
+    }
+    if ok { 1 } else { 0 }
+}
+
 /// Drain the vault's self-defense notices (P20j.4): a JSON array of
 /// strings — length regression, in-place replacement, conflicted-copy
 /// siblings. Read-and-clear; empty array when quiet. Additive verb
@@ -3971,6 +4081,58 @@ mod tests {
         unsafe { lotus_string_free(raw) };
         assert_eq!(again["edited"], 0, "{again}");
         assert_eq!(again["created"], 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn vault_findings_and_resolve_settle_a_conflict() {
+        let (root, _path, c_path) = fresh_vault("diverge");
+        let id = unsafe {
+            lotus_capture_at(c_path.as_ptr(), CString::new("target").unwrap().as_ptr())
+        };
+        let note = CString::new("note").unwrap();
+        unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
+        let name_prop = CString::new("name").unwrap();
+        let name = CString::new("Contested").unwrap();
+        unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
+        let file = root.join("library/notes/contested.md");
+        assert!(file.exists());
+
+        // A GENUINE conflict = the box moved since the manifest's sync
+        // point AND the disk moved too. The continuous hook keeps the
+        // manifest current, so we simulate an OFFLINE box change by staling
+        // the manifest's stored digest (as if a CLI committed while this
+        // reader was down), then move the disk independently.
+        let manifest_path = root.join(".liv/index.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        for row in manifest["rows"].as_array_mut().unwrap() {
+            if row["id"].as_u64() == Some(id) {
+                row["digest"] = serde_json::json!("staleaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            }
+        }
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        std::fs::write(&file, b"# Contested\n\ndisk moved independently\n").unwrap();
+
+        let raw = unsafe { lotus_vault_findings_at(c_path.as_ptr(), 0) };
+        let findings: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(findings[0]["kind"], "conflict", "{findings}");
+
+        // Resolve: take the disk version.
+        let rel = CString::new("library/notes/contested.md").unwrap();
+        let verdict = CString::new("take-disk").unwrap();
+        assert_eq!(
+            unsafe { lotus_vault_resolve_at(c_path.as_ptr(), id, rel.as_ptr(), verdict.as_ptr()) },
+            1
+        );
+        // Settled: a fresh findings scan is empty.
+        let raw = unsafe { lotus_vault_findings_at(c_path.as_ptr(), 0) };
+        let after: serde_json::Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
+        unsafe { lotus_string_free(raw) };
+        assert_eq!(after.as_array().unwrap().len(), 0, "resolved: {after}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -254,6 +254,14 @@ char *lotus_vault_status_at(const char *path);
 char *lotus_vault_sync_at(const char *path);
 int64_t lotus_vault_rebuild_at(const char *path);
 
+/* Divergence findings + resolution (P20j.7). findings: read-only scan,
+   JSON [{kind,id?,path?,count?}]; all=1 expands a mass burst. resolve:
+   verdict "take-disk"|"keep-app"|"trash"; returns 1/0. Free the findings
+   string with lotus_string_free. */
+char *lotus_vault_findings_at(const char *path, int32_t all);
+int32_t lotus_vault_resolve_at(const char *path, uint64_t id,
+                               const char *rel_path, const char *verdict);
+
 /* Log one closed time interval (P18d): full civil stamps YYYYMMDDHHMM.
    Start writes nothing anywhere - the running timer is shell state. */
 uint64_t lotus_log_time_at(const char *path, uint64_t target, int64_t start_civil,

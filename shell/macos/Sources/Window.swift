@@ -349,6 +349,13 @@ final class BoxModel: ObservableObject {
     /// the whole box on every render (the review's finding).
     private var orphanCache: [EntityRow]?
     @Published var boxBusy = false
+    /// P20j.7 — the vault's unresolved divergences (conflict/missing/mass),
+    /// surfaced as the window's divergence banner. Clean edits auto-ingest
+    /// and never land here; this is the "you decide" residue.
+    @Published var vaultFindings: [VaultFinding] = []
+    /// The FSEvents watcher — read-only: it only schedules a debounced
+    /// sync (kill-shot B proves sync is echo-safe, so it can never loop).
+    private var vaultWatcher: VaultWatcher?
 
     /// id -> row, rebuilt once when a snapshot lands. entity()/rows() are hit
     /// per-row on every surface render; a linear scan made them O(n²), which
@@ -703,6 +710,50 @@ final class BoxModel: ObservableObject {
             if let raw { lotus_string_free(raw) }
             DispatchQueue.main.async { done(json) }
         }
+    }
+
+    /// P20j.7 — refresh the divergence findings (read-only). `all` expands
+    /// a mass burst into its individual rows.
+    func refreshVaultFindings(all: Bool = false) {
+        guard inVault else {
+            if !vaultFindings.isEmpty { vaultFindings = [] }
+            return
+        }
+        let path = self.path
+        boxQueue.async {
+            let raw = lotus_vault_findings_at(path, all ? 1 : 0)
+            let json = raw.map { String(cString: $0) } ?? "[]"
+            if let raw { lotus_string_free(raw) }
+            let decoded = (try? JSONDecoder().decode([VaultFinding].self, from: Data(json.utf8))) ?? []
+            DispatchQueue.main.async { self.vaultFindings = decoded }
+        }
+    }
+
+    /// Resolve one divergence, then re-sync + refresh.
+    func vaultResolve(id: UInt64, path rel: String, verdict: String) {
+        let path = self.path
+        boxQueue.async {
+            _ = lotus_vault_resolve_at(path, id, rel, verdict)
+            DispatchQueue.main.async {
+                self.refresh()
+                self.refreshVaultFindings()
+            }
+        }
+    }
+
+    /// Start the read-only watcher (vault mode only) — idempotent. On a
+    /// filesystem change outside `.liv/`, it debounces one sync, which
+    /// auto-ingests clean edits and leaves the residue in vaultFindings.
+    func startVaultWatcher() {
+        guard inVault, vaultWatcher == nil, let root = vaultRoot else { return }
+        let watcher = VaultWatcher(root: root) { [weak self] in
+            guard let self else { return }
+            self.vaultSync { _ in self.refreshVaultFindings() }
+        }
+        watcher.start()
+        vaultWatcher = watcher
+        // Scan-at-open is canonical: surface any pre-existing divergence now.
+        refreshVaultFindings()
     }
 
     /// Import a message batch (P20g): JSON drops; -1 = refused.
@@ -1550,6 +1601,7 @@ struct WindowChrome: View {
         VStack(spacing: 0) {
             topBand
             globalTabRow
+            DivergenceBanner(model: model)
             body3Pane
         }
         .background(SidebarMaterial().ignoresSafeArea())
@@ -2557,6 +2609,10 @@ struct WindowChrome: View {
                 }
             }
             .onReceive(model.$snap) { snap in
+                // P20j.7: start the read-only watcher once (vault mode only;
+                // idempotent) — scan-at-open surfaces any pre-existing
+                // divergence immediately.
+                model.startVaultWatcher()
                 // First-run conjunction (P19i): fresh box + fresh prefs → the
                 // tour; a NON-EMPTY box never tours, regardless of prefs.
                 if !tourChecked, let snap {
