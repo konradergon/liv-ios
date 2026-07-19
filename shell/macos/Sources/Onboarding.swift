@@ -269,7 +269,7 @@ struct TourOverlay: View {
                 // No gate needed: the frozen-strings test guarantees the wand
                 // is never dead here, and triaging the queue empty IS the
                 // moment working (the surface is fully live).
-                text: "It read your scraps and proposed dates and priorities — amber, in one queue, applied never. a accepts · r declines; a dismissal is remembered and never re-asked.",
+                text: "on — assist may point (quiet ✦ marks) and propose. It writes only when you accept, and every suggestion waits in one queue: Inbox › Tidy. Off = fully manual, nothing suggests.",
                 onContinue: {
                     goHome()
                     advance(to: 3)
@@ -286,7 +286,7 @@ struct TourOverlay: View {
             // The finish strip.
             VStack(alignment: .leading, spacing: 5) {
                 Text("You're in.").font(.system(size: 13, weight: .bold))
-                Text("⌃⌥Space capture · ⌘F find · ⌘, settings · ⌃⇧G the map · replay from Help → Tour")
+                Text("⌃⌥Space capture · ⌘K search or ask · ⌘, settings · ⌃⇧G the map · replay: the ✦ pill in the title bar")
                     .font(.system(size: 11)).foregroundColor(Theme.mutedFg)
                 HStack {
                     Spacer()

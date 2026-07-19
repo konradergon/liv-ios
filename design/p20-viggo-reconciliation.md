@@ -681,3 +681,35 @@ widget, What-next AI rows, the habit-migration banner (fence/model) ·
 the widget Selection/View config panes (view entities) · the 6-column
 span grid + card chrome polish · Settings AI-page rename + tier field +
 provenance stamps (wire) · the catalog registry adoption (its own pass).
+
+### 20i — Settings as a surface + the tour copy refresh (as built)
+
+**Settings is a rail SURFACE now** (O9 — the P19 fourth-overlay carve-out
+retires; the struct is excised, not just unmounted). The left panel:
+search with the grammar hint ("0 results never dead-ends: ⏎ hands the
+query to the palette" — it really does) + the six OPTIONS with icons and
+scope aft tags — **General ·3 settings· / Appearance / Properties (vault)
+/ Vocabulary (vault) / Shortcuts / AI**. The center: the pane in a
+max-880 column + the no-Save footbar. **The General page** carries the
+exactly-three frame verbatim (Store location w/ path + Reveal · What it
+looks like → Appearance w/ the live theme label · Whether the assist
+layer runs → AI w/ the live ✦ on/off chip), with Startup and the capture
+convention keeping quiet homes below (the mockup's nav drops both pages —
+recorded keeps; the hotkey recorder moved to Shortcuts' top). Properties
+and Vocabulary split along the mockup's line (one panel, gated sections).
+The AI page wears the mockup's framing sentence ("nothing here changes
+WHAT the AI may do — that contract is fixed"). ⌘,, the rail gear, every
+receiver, and the seeded banner's deep link all navigate to the surface.
+**The tour**: the finish strip points at the ✦ title-bar pill ("replay:
+the ✦ pill in the title bar" — Help stays an alias) and the assist moment
+carries the new consent copy ("assist may point — quiet ✦ marks — and
+propose… Off = fully manual, nothing suggests").
+
+**Recorded (deferred):** the FULL 5-step tour rebuild (map [16]–[21]:
+folder vault + Change… + existing-folder mode, vocabulary-seeding topic
+chips, the three new contractual capture strings w/ simulated send, the
+inline-inbox aha with degrade states, the two-gate consent step) — its
+own pass, entangled with 20j's folder story · the per-kind Properties
+matrix · the AI page's Plan section + aggressiveness knob (fence/CORE) ·
+the digit-facet search grammar retired with the overlay (recorded in
+P19's doc; the surface search is filter + palette-handoff).

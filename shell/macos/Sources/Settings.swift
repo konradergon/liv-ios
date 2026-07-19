@@ -15,72 +15,46 @@ import SwiftUI
 // MARK: - the groups + entries
 
 enum SettingsGroup: String, CaseIterable {
-    case appearance, vocabulary, shortcuts, capture, assist, startup
+    // P20i (O9): the mockup's six-group nav. `capture`/`startup` folded
+    // into General (recorded); raw values persist for saved prefs.
+    case general, appearance, properties, vocabulary, shortcuts, assist
 
     var label: String {
         switch self {
+        case .general: return "General"
         case .appearance: return "Appearance"
-        case .vocabulary: return "Properties & Vocabulary"
+        case .properties: return "Properties"
+        case .vocabulary: return "Vocabulary"
         case .shortcuts: return "Shortcuts"
-        case .capture: return "Capture & Store"
-        case .assist: return "Assist"
-        case .startup: return "Startup"
+        case .assist: return "AI"
+        }
+    }
+
+    var scopeTag: String {
+        switch self {
+        case .general: return "3 settings"
+        case .properties, .vocabulary: return "vault"
+        default: return "app"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "slider.horizontal.3"
+        case .appearance: return "paintbrush"
+        case .properties: return "tablecells"
+        case .vocabulary: return "tag"
+        case .shortcuts: return "keyboard"
+        case .assist: return "sparkle"
         }
     }
 }
 
-/// One searchable entry — a static description of a knob (the knob itself
-/// lives in its panel; the entry is how the grammar finds it).
-struct SettingEntry: Identifiable {
-    let id: String
-    let label: String
-    let group: SettingsGroup
-    /// vault = a cell in the box (travels); app = this Mac's pref.
-    let vaultScoped: Bool
-    let kind: String
-    let keywords: String
-
-    var scopeTag: String { vaultScoped ? "vault" : "app" }
-}
-
-let settingsEntries: [SettingEntry] = [
-    SettingEntry(
-        id: "appearance.theme", label: "Appearance", group: .appearance,
-        vaultScoped: false, kind: "segmented", keywords: "light dark system theme"),
-    SettingEntry(
-        id: "shortcuts.hints", label: "Digit hints in the inspector", group: .shortcuts,
-        vaultScoped: false, kind: "toggle", keywords: "digit keys hints inspector"),
-    SettingEntry(
-        id: "shortcuts.map", label: "Shortcut map", group: .shortcuts,
-        vaultScoped: false, kind: "table", keywords: "keys bindings chords digit rebind"),
-    SettingEntry(
-        id: "capture.hotkey", label: "Capture hotkey", group: .capture,
-        vaultScoped: false, kind: "key", keywords: "capture global hotkey jot"),
-    SettingEntry(
-        id: "capture.store", label: "Store location", group: .capture,
-        vaultScoped: false, kind: "path", keywords: "box file location log reveal export"),
-    SettingEntry(
-        id: "vocabulary.properties", label: "Property definitions", group: .vocabulary,
-        vaultScoped: true, kind: "table", keywords: "properties rename retype schema definitions"),
-    SettingEntry(
-        id: "vocabulary.shelves", label: "Vocabulary shelves", group: .vocabulary,
-        vaultScoped: true, kind: "shelves", keywords: "values options seeds status priority rename"),
-    SettingEntry(
-        id: "assist.automation", label: "Automation (the clerk)", group: .assist,
-        vaultScoped: true, kind: "toggle", keywords: "assist clerk proposals ai automation"),
-    SettingEntry(
-        id: "assist.byok", label: "Model key (BYOK)", group: .assist,
-        vaultScoped: false, kind: "keychain", keywords: "api key model keychain byok"),
-    SettingEntry(
-        id: "startup.mode", label: "On launch", group: .startup,
-        vaultScoped: false, kind: "radio", keywords: "startup launch open today continue workspace"),
-]
-
 /// Backstage plumbing definitions (display attributes, the consent switch):
-/// real cells, but never user vocabulary — the definitions table and the
-/// settings search must not offer Rename/Retype on the machinery the
-/// renames themselves run on (the P19 review). The assist switch property
-/// is matched by its CURRENT name via `snap.assist?.prop`.
+/// real cells, but never user vocabulary — the definitions table must not
+/// offer Rename/Retype on the machinery the renames themselves run on
+/// (the P19 review). The assist switch property is matched by its CURRENT
+/// name via `snap.assist?.prop`.
 let plumbingProperties: Set<String> = [
     "order", "hue", "completes", "for-type", "icon", "digit-key", "hidden",
     "hide-when-empty", "hide-on-kind", "core-on-kind", "default-status",
@@ -91,363 +65,10 @@ func isPlumbing(_ name: String, model: BoxModel) -> Bool {
     plumbingProperties.contains(name) || model.snap?.assist?.prop == name
 }
 
-// MARK: - the overlay
-
-struct SettingsOverlay: View {
-    @ObservedObject var model: BoxModel
-    let dismiss: () -> Void
-    let searchVault: (String) -> Void
-
-    @AppStorage("app.settings.lastPanel.v1") private var lastPanelRaw =
-        SettingsGroup.appearance.rawValue
-    @State private var query = ""
-    @State private var highlighted = 0
-    /// Tri-state group facets while searching (digits 1–6): nil = off.
-    @State private var facetInclude: Set<SettingsGroup> = []
-    @State private var facetExclude: Set<SettingsGroup> = []
-    /// The row to flash after a ⏎ jump (~1.6s accent-soft).
-    @State private var flashed: String?
-    @FocusState private var searchFocused: Bool
-
-    private var panel: SettingsGroup {
-        SettingsGroup(rawValue: lastPanelRaw) ?? .appearance
-    }
-
-    /// One result: a static entry, or a LIVE property definition.
-    struct Hit: Identifiable {
-        let id: String
-        let label: String
-        let group: SettingsGroup
-        let scopeTag: String
-        let kind: String
-        let current: String
-    }
-
-    private var hits: [Hit] {
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return [] }
-        var out: [Hit] = []
-        for entry in settingsEntries
-        where entry.label.lowercased().contains(needle)
-            || entry.keywords.contains(needle)
-        {
-            out.append(
-                Hit(
-                    id: entry.id, label: entry.label, group: entry.group,
-                    scopeTag: entry.scopeTag, kind: entry.kind, current: ""))
-        }
-        // The live pool: property definitions ARE objects — searched as such.
-        for property in model.snap?.properties ?? []
-        where property.name.lowercased().contains(needle) && !isPlumbing(property.name, model: model) {
-            out.append(
-                Hit(
-                    id: "prop.\(property.id)", label: property.name,
-                    group: .vocabulary, scopeTag: "vault",
-                    kind: property.kind, current: ""))
-        }
-        return out.filter { hit in
-            if facetExclude.contains(hit.group) { return false }
-            if !facetInclude.isEmpty { return facetInclude.contains(hit.group) }
-            return true
-        }
-    }
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.55)
-                .ignoresSafeArea()
-                .onTapGesture { dismiss() }
-            VStack(spacing: 0) {
-                header
-                Divider()
-                HStack(spacing: 0) {
-                    nav
-                    panelBody
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
-                Divider()
-                footbar
-            }
-            .frame(maxWidth: 880, maxHeight: 520)
-            .background(Theme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.border))
-            .shadow(color: .black.opacity(0.4), radius: 30, y: 10)
-            .padding(30)
-            // Focus can wander off the search field (a toggle, a secure
-            // field): Esc anywhere inside the card still closes (P19
-            // review) — recorders consume their own Esc while recording.
-            .onExitCommand { dismiss() }
-        }
-        .onAppear { searchFocused = true }
-    }
-
-    // MARK: header — the search IS the front door
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Text("⚙ Settings").font(.system(size: 13, weight: .bold))
-            ZStack(alignment: .topLeading) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 10))
-                        .foregroundColor(Theme.mutedFg)
-                    TextField("Search settings…", text: $query)
-                        .textFieldStyle(.plain).font(.system(size: 12))
-                        .focused($searchFocused)
-                        .onSubmit { jump() }
-                        .onExitCommand {
-                            // Esc layers: the dropdown clears first, then the
-                            // overlay closes. Facets die with the query — a
-                            // silent leftover filter empties later searches
-                            // (the P19 review).
-                            if query.isEmpty {
-                                dismiss()
-                            } else {
-                                query = ""
-                                facetInclude = []
-                                facetExclude = []
-                            }
-                        }
-                        .onChange(of: query) { highlighted = 0 }
-                        .onKeyPress(.downArrow) {
-                            highlighted = min(highlighted + 1, max(0, hits.count - 1))
-                            return .handled
-                        }
-                        .onKeyPress(.upArrow) {
-                            highlighted = max(highlighted - 1, 0)
-                            return .handled
-                        }
-                        .onKeyPress { press in
-                            // Digits 1–6 cycle group facets include→exclude→off.
-                            guard !query.isEmpty,
-                                let digit = Int(press.characters),
-                                (1...SettingsGroup.allCases.count).contains(digit)
-                            else { return .ignored }
-                            let group = SettingsGroup.allCases[digit - 1]
-                            if facetInclude.contains(group) {
-                                facetInclude.remove(group)
-                                facetExclude.insert(group)
-                            } else if facetExclude.contains(group) {
-                                facetExclude.remove(group)
-                            } else {
-                                facetInclude.insert(group)
-                            }
-                            return .handled
-                        }
-                }
-                .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(Theme.accent.opacity(searchFocused ? 0.55 : 0.25)))
-            }
-            .frame(maxWidth: 330)
-            Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 11))
-                    .foregroundColor(Theme.mutedFg).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 14).padding(.vertical, 9)
-        .overlay(alignment: .topLeading) { dropdown.offset(x: 92, y: 38) }
-        .zIndex(2)
-    }
-
-    @ViewBuilder
-    private var dropdown: some View {
-        if !query.trimmingCharacters(in: .whitespaces).isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                if hits.isEmpty {
-                    HStack(spacing: 6) {
-                        Text("No settings match.").font(.system(size: 11.5))
-                            .foregroundColor(Theme.mutedFg)
-                        Text("⏎ search the vault instead")
-                            .font(.system(size: 10.5)).foregroundColor(Theme.accent)
-                    }
-                    .padding(10)
-                } else {
-                    ForEach(Array(hits.enumerated()), id: \.element.id) { index, hit in
-                        Button {
-                            highlighted = index
-                            jump()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text(hit.label).font(.system(size: 12, weight: .semibold))
-                                scopeChip(hit.scopeTag)
-                                Text(hit.group.label).font(.system(size: 9.5))
-                                    .foregroundColor(Theme.mutedFg)
-                                Text(hit.kind).font(.system(size: 9.5))
-                                    .foregroundColor(Theme.mutedFg.opacity(0.7))
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 11).padding(.vertical, 5)
-                            .background(
-                                index == highlighted
-                                    ? Theme.accent.opacity(0.12) : .clear)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    HStack(spacing: 5) {
-                        Text("1–6 filter by group · ⏎ jump")
-                            .font(.system(size: 9)).foregroundColor(Theme.mutedFg)
-                        if !facetInclude.isEmpty || !facetExclude.isEmpty {
-                            ForEach(SettingsGroup.allCases, id: \.rawValue) { group in
-                                if facetInclude.contains(group) {
-                                    Text("+" + group.label).font(.system(size: 9))
-                                        .foregroundColor(Theme.accent)
-                                } else if facetExclude.contains(group) {
-                                    Text("−" + group.label).font(.system(size: 9))
-                                        .foregroundColor(Theme.mutedFg)
-                                        .strikethrough()
-                                }
-                            }
-                            Text("· Esc clears").font(.system(size: 9))
-                                .foregroundColor(Theme.mutedFg.opacity(0.8))
-                        }
-                    }
-                    .padding(.horizontal, 11).padding(.vertical, 4)
-                }
-            }
-            .frame(width: 400)
-            .background(Theme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.border))
-            .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
-        }
-    }
-
-    private func scopeChip(_ tag: String) -> some View {
-        Text(tag)
-            .font(.system(size: 8.5)).kerning(0.3)
-            .padding(.horizontal, 5)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(
-                        tag == "vault"
-                            ? Theme.accent.opacity(0.5) : Theme.border))
-            .foregroundColor(tag == "vault" ? Theme.accent : Theme.mutedFg)
-    }
-
-    private func jump() {
-        let ordered = hits
-        // The highlight can outlive a shrinking result list — clamp, never
-        // hand a visible-results ⏎ to the vault (the P19 review).
-        let highlighted = min(self.highlighted, ordered.count - 1)
-        guard ordered.indices.contains(highlighted) else {
-            // 0 results: hand the query to the vault's one engine.
-            if !query.isEmpty {
-                let handoff = query
-                dismiss()
-                searchVault(handoff)
-            }
-            return
-        }
-        let hit = ordered[highlighted]
-        lastPanelRaw = hit.group.rawValue
-        flashed = hit.id
-        query = ""
-        facetInclude = []
-        facetExclude = []
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            if flashed == hit.id { flashed = nil }
-        }
-    }
-
-    // MARK: nav + panels (19a: real headers, stub bodies)
-
-    private var nav: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(SettingsGroup.allCases, id: \.rawValue) { group in
-                Button {
-                    lastPanelRaw = group.rawValue
-                } label: {
-                    Text(group.label)
-                        .font(.system(size: 12, weight: panel == group ? .semibold : .regular))
-                        .foregroundColor(panel == group ? Theme.accent : Theme.mutedFg)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(panel == group ? Theme.accent.opacity(0.13) : .clear))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(8)
-        .frame(width: 186)
-        .overlay(Divider(), alignment: .trailing)
-    }
-
-    @ViewBuilder
-    private var panelBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(panel.label.uppercased())
-                .font(.system(size: 10, weight: .bold)).kerning(0.6)
-                .foregroundColor(Theme.mutedFg)
-            switch panel {
-            case .appearance:
-                AppearancePanel()
-            case .vocabulary:
-                VocabularyPanel(model: model)
-            case .shortcuts:
-                ShortcutsPanel(model: model)
-            case .capture:
-                SettingsCapturePanel(model: model, dismiss: dismiss)
-            case .assist:
-                AssistPanel(model: model)
-            case .startup:
-                StartupPanel(model: model)
-            }
-            if let flashed, flashed.hasPrefix("prop.") || hitGroup(flashed) == panel {
-                Text("→ \(flashLabel(flashed))")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7).fill(Theme.accent.opacity(0.13)))
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-    }
-
-    private func hitGroup(_ id: String) -> SettingsGroup? {
-        settingsEntries.first { $0.id == id }?.group
-    }
-
-    private func flashLabel(_ id: String) -> String {
-        if id.hasPrefix("prop."),
-            let pid = UInt64(id.dropFirst(5)),
-            let property = (model.snap?.properties ?? []).first(where: { $0.id == pid })
-        {
-            return property.name
-        }
-        return settingsEntries.first { $0.id == id }?.label ?? id
-    }
-
-    private func stub(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11.5)).foregroundColor(Theme.mutedFg)
-            .frame(maxWidth: 460, alignment: .leading)
-    }
-
-    private var footbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 3) { Text("⌘,").keycap(); Text("open").quiet() }
-            HStack(spacing: 3) { Text("Esc").keycap(); Text("close").quiet() }
-            HStack(spacing: 3) { Text("↑↓").keycap(); Text("pick").quiet() }
-            HStack(spacing: 3) { Text("⏎").keycap(); Text("jump").quiet() }
-            Spacer()
-            Text("changes apply instantly — there is no Save button")
-                .font(.system(size: 10)).foregroundColor(Theme.mutedFg)
-        }
-        .padding(.horizontal, 14).padding(.vertical, 6)
-    }
-}
+// P20i (O9): the P19 SettingsOverlay retired — Settings is a SURFACE
+// (SettingsNav + SettingsSurfaceView below). The overlay's digit-facet
+// search grammar is recorded in the P19 doc; the surface search hands
+// misses to the palette instead.
 
 extension Text {
     fileprivate func keycap() -> some View {
@@ -779,6 +400,10 @@ struct KeyRecorder: View {
 /// The definitions editor + the shelves — the inspector's MIRROR, not a
 /// second editor: every write is the same cell the row menu writes.
 struct VocabularyPanel: View {
+    /// P20i: the mockup splits Properties (definitions) from Vocabulary
+    /// (shelves + status); one panel, gated sections.
+    enum Show { case all, definitions, vocabulary }
+    var show: Show = .all
     @ObservedObject var model: BoxModel
     /// Which select property's shelves are open.
     @State private var shelfProperty: UInt64?
@@ -792,9 +417,11 @@ struct VocabularyPanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                definitionsTable
-                shelves
-                statusTable
+                if show != .vocabulary { definitionsTable }
+                if show != .definitions {
+                    shelves
+                    statusTable
+                }
             }
             .padding(.bottom, 10)
         }
@@ -1669,5 +1296,249 @@ struct AssistPanel: View {
             kSecAttrService as String: service,
         ]
         SecItemDelete(query as CFDictionary)
+    }
+}
+
+
+// MARK: - Settings as a SURFACE (P20i, O9 — the overlay retires)
+
+/// The left panel: search (the grammar hint; 0 results hand the query to
+/// the palette) + the six OPTIONS with icons and scope aft tags.
+struct SettingsNav: View {
+    @ObservedObject var model: BoxModel
+    @AppStorage("app.settings.lastPanel.v1") private var lastPanelRaw =
+        SettingsGroup.general.rawValue
+    @State private var query = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 9))
+                    .foregroundColor(Theme.mutedFg)
+                TextField("search settings…", text: $query)
+                    .textFieldStyle(.plain).font(.system(size: 11))
+                    .onSubmit {
+                        // 0 results never dead-ends: ⏎ hands the query to
+                        // the palette.
+                        if hits.isEmpty, !query.isEmpty {
+                            NotificationCenter.default.post(
+                                name: .lotusSearchFor, object: query)
+                            query = ""
+                        } else if let first = hits.first {
+                            lastPanelRaw = first.rawValue
+                            query = ""
+                        }
+                    }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().strokeBorder(Theme.border))
+            .padding(.horizontal, 8).padding(.top, 8)
+            Text("entries carry group · scope · kind — the same grammar as vault search. 0 results never dead-ends: ⏎ hands the query to the palette.")
+                .font(.system(size: 9)).foregroundColor(Theme.mutedFg.opacity(0.8))
+                .padding(.horizontal, 10)
+            Text("OPTIONS").font(.system(size: 9.5, weight: .bold)).kerning(0.5)
+                .foregroundColor(Theme.mutedFg)
+                .padding(.horizontal, 10).padding(.top, 6)
+            ForEach(shown, id: \.rawValue) { group in
+                let on = lastPanelRaw == group.rawValue
+                Button {
+                    lastPanelRaw = group.rawValue
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: group.icon).font(.system(size: 10.5))
+                            .foregroundColor(on ? Theme.accent : Theme.mutedFg)
+                            .frame(width: 15)
+                        Text(group.label)
+                            .font(.system(size: 12, weight: on ? .medium : .regular))
+                        Spacer(minLength: 4)
+                        Text(group.scopeTag)
+                            .font(.system(size: 8.5)).kerning(0.3)
+                            .foregroundColor(
+                                group.scopeTag == "vault" ? Theme.accent : Theme.mutedFg)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(on ? Theme.accentTint : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var hits: [SettingsGroup] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return SettingsGroup.allCases }
+        return SettingsGroup.allCases.filter { $0.label.lowercased().contains(needle) }
+    }
+
+    private var shown: [SettingsGroup] { hits }
+}
+
+/// The center: the active group's pane in a max-880 column + the footbar.
+struct SettingsSurfaceView: View {
+    @ObservedObject var model: BoxModel
+    @AppStorage("app.settings.lastPanel.v1") private var lastPanelRaw =
+        SettingsGroup.general.rawValue
+
+    private var group: SettingsGroup {
+        SettingsGroup(rawValue: lastPanelRaw) ?? .general
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text(group.label).font(.system(size: 16, weight: .bold))
+                        Text(group.scopeTag)
+                            .font(.system(size: 9)).kerning(0.3)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    group.scopeTag == "vault"
+                                        ? Theme.accent.opacity(0.5) : Theme.border))
+                            .foregroundColor(
+                                group.scopeTag == "vault" ? Theme.accent : Theme.mutedFg)
+                    }
+                    switch group {
+                    case .general:
+                        GeneralPanel(model: model, jump: { lastPanelRaw = $0.rawValue })
+                    case .appearance:
+                        AppearancePanel()
+                    case .properties:
+                        VocabularyPanel(show: .definitions, model: model)
+                    case .vocabulary:
+                        VocabularyPanel(show: .vocabulary, model: model)
+                    case .shortcuts:
+                        VStack(alignment: .leading, spacing: 8) {
+                            SettingRow(label: "Capture hotkey", scope: "app") {
+                                KeyRecorder()
+                            }
+                            ShortcutsPanel(model: model)
+                        }
+                    case .assist:
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("the one switch, who pays for the model, and how loud the suggestions are. nothing here changes WHAT the AI may do — that contract is fixed.")
+                                .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+                            AssistPanel(model: model)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
+                .frame(maxWidth: 880, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
+            HStack(spacing: 10) {
+                HStack(spacing: 3) { KbdChip(label: "⌘,", size: 9); footText("open settings") }
+                HStack(spacing: 3) { KbdChip(label: "type", size: 9); footText("filters everything") }
+                HStack(spacing: 3) { KbdChip(label: "⏎", size: 9); footText("jump to the exact row") }
+                Spacer()
+                footText("changes apply instantly — there is no Save button")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 6)
+            .overlay(Divider(), alignment: .top)
+        }
+    }
+
+    private func footText(_ text: String) -> some View {
+        Text(text).font(.system(size: 10)).foregroundColor(Theme.mutedFg)
+    }
+}
+
+/// General (P20i map [3]): the honest page — exactly three user settings;
+/// everything else in here is vocabulary and display. Startup + the
+/// capture convention keep quiet homes below (recorded keeps).
+struct GeneralPanel: View {
+    @ObservedObject var model: BoxModel
+    var jump: (SettingsGroup) -> Void = { _ in }
+    @ObservedObject private var themes = ThemeCore.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("the honest page. Liv keeps very few real settings — the rest of this surface tunes display, density and vocabulary.")
+                .font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+            Text("exactly three user settings: where the store lives · what it looks like · whether the assist layer runs. everything else in here is vocabulary and display — a setting never forks behavior.")
+                .font(.system(size: 11, weight: .medium))
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Theme.accent.opacity(0.45)))
+            generalRow(
+                "Store location", tag: "1 OF 3",
+                sub: "one store on this Mac — that file is the vault. moving it (Move…) is its own recorded design; the folder-of-markdown presentation arrives with the projection (20j).",
+                trailing: AnyView(
+                    HStack(spacing: 6) {
+                        Text(model.path)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(Theme.mutedFg)
+                            .lineLimit(1).truncationMode(.middle)
+                            .frame(maxWidth: 240)
+                        Button("Reveal") {
+                            NSWorkspace.shared.activateFileViewerSelecting(
+                                [URL(fileURLWithPath: model.path)])
+                        }
+                        .buttonStyle(.plain).font(.system(size: 10.5))
+                        .foregroundColor(Theme.accent)
+                    }))
+            generalRow(
+                "What it looks like", tag: "2 OF 3",
+                sub: "theme, shape, type — a token swap, never a layout or behavior change",
+                trailing: AnyView(
+                    Button("\(themes.spec.label) ›") { jump(.appearance) }
+                        .buttonStyle(.plain).font(.system(size: 11))
+                        .foregroundColor(Theme.accent)))
+            generalRow(
+                "Whether the assist layer runs", tag: "3 OF 3",
+                sub: "the automation switch — the consent boundary. it lives on the AI page, next to who pays for the model.",
+                trailing: AnyView(
+                    Button {
+                        jump(.assist)
+                    } label: {
+                        Text(model.snap?.assist?.on == false ? "off ›" : "✦ on ›")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundColor(
+                                model.snap?.assist?.on == false ? Theme.mutedFg : Theme.warning)
+                            .padding(.horizontal, 8).padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(
+                                    model.snap?.assist?.on == false
+                                        ? Theme.panel2 : Theme.warning.opacity(0.12)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)))
+            Divider().padding(.vertical, 4)
+            StartupPanel(model: model)
+            LockedRow(
+                label: "Capture behavior",
+                caption: "One field, from anywhere; Esc closes; it asks nothing else.")
+            Text("scope tags on every row · vault rows travel with the store · app rows stay on this machine.")
+                .font(.system(size: 9.5)).foregroundColor(Theme.mutedFg.opacity(0.8))
+        }
+    }
+
+    private func generalRow(
+        _ label: String, tag: String, sub: String, trailing: AnyView
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Text(label).font(.system(size: 12.5, weight: .semibold))
+                Text(tag).font(.system(size: 8, weight: .bold)).kerning(0.4)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.panel2))
+                    .foregroundColor(Theme.mutedFg)
+                Spacer()
+                trailing
+            }
+            Text(sub).font(.system(size: 10.5)).foregroundColor(Theme.mutedFg)
+        }
+        .padding(.vertical, 6)
+        .overlay(Divider(), alignment: .bottom)
     }
 }

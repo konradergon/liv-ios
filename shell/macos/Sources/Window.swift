@@ -1352,7 +1352,6 @@ struct WindowChrome: View {
             .overlay(switcherOverlay)
             .overlay(searchOverlay)
             .overlay(vaultGraphOverlay)
-            .overlay(settingsOverlay)
             .overlay(missionControlOverlay)
             .overlay(tourOverlay)
             .overlay(alignment: .bottom) {
@@ -1407,7 +1406,7 @@ struct WindowChrome: View {
                 importOpen = true
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.openSettings"))) { _ in
-                chrome.settingsOpen = true
+                navigate(to: .settings)
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.navBack"))) { _ in
                 chrome.goBack()
@@ -1458,7 +1457,7 @@ struct WindowChrome: View {
                 chrome.recordNav(.init(workspace: chrome.activeWorkspace, surface: chrome.surface, selection: nil))
                 // An open palette (workspace switcher or search) owns the
                 // keyboard, so global hotkeys don't fire behind it.
-                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen || chrome.settingsOpen || chrome.missionControlOpen }
+                CommandRegistry.shared.overlayActive = { chrome.switcherOpen || chrome.searchOpen || chrome.vaultGraphOpen || chrome.missionControlOpen }
                 // A stored left+right that fit an old Notes layout must
                 // not launch a tool surface into a negative center.
                 chrome.reconcilePanes()
@@ -1953,6 +1952,9 @@ struct WindowChrome: View {
                 ContactsNav(
                     model: model, group: $contactGroup, selection: $selection)
                 vaultFooter
+            case .settings:
+                SettingsNav(model: model)
+                vaultFooter
             case .comms:
                 CommsNav(
                     model: model, list: $commsList,
@@ -1985,7 +1987,7 @@ struct WindowChrome: View {
                 SeededBanner {
                     UserDefaults.standard.set(
                         SettingsGroup.vocabulary.rawValue, forKey: "app.settings.lastPanel.v1")
-                    chrome.settingsOpen = true
+                    navigate(to: .settings)
                 }
             }
             AppSidebar(
@@ -2170,18 +2172,7 @@ struct WindowChrome: View {
         TimerPref.save(target: target, started: Date())
     }
 
-    /// Settings (P19a): the fourth palette — ⌘, or the hub gear.
-    @ViewBuilder
-    private var settingsOverlay: some View {
-        if chrome.settingsOpen {
-            SettingsOverlay(
-                model: model,
-                dismiss: { chrome.settingsOpen = false },
-                searchVault: { q in
-                    NotificationCenter.default.post(name: .lotusSearchFor, object: q)
-                })
-        }
-    }
+    // P20i (O9): the Settings overlay retired — the surface owns it.
 
     /// The tour (P19i): three live moments + the finish strip.
     private var tourOverlay: some View {
@@ -2683,6 +2674,8 @@ struct WindowChrome: View {
     private var center: some View {
         Group {
             switch chrome.surface {
+            case .settings:
+                SettingsSurfaceView(model: model)
             case .comms:
                 CommsView(
                     model: model, selection: $selection,
@@ -3262,7 +3255,8 @@ struct WindowChrome: View {
                 id: "app:open-settings", label: "Settings", scope: .global,
                 category: "App", binding: Hotkey(modifiers: [.mod], key: ",")
             ) {
-                chrome.settingsOpen = true
+                // P20i (O9): Settings is a SURFACE — the overlay retired.
+                navigate(to: .settings)
             })
         registry.register(
             CommandDef(
