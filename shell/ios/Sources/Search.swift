@@ -1,0 +1,218 @@
+// liv iOS — Search (design/ios.md §6): the global full-screen overlay the
+// chrome presents while desk.searchShown. A pill bar over liv_search_at —
+// the DSL parses in Rust, never here; the shell sends the raw query (150ms
+// debounce) and renders the ranked ids from the snapshot index, grouped by
+// first kind — task → event → note → file, then the rest alphabetical,
+// untyped scraps last. Rank order survives inside each group. A result
+// opens as a Desk tab and the overlay closes itself; Cancel is the
+// overlay's own close affordance (self-contained — the chrome only flips
+// the flag).
+
+import SwiftUI
+
+struct SearchView: View {
+    @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var desk: DeskModel
+    @State private var query = ""
+    @State private var hits: [UInt64] = []
+    /// Monotonic ticket: a stale debounce or a stale result must drop.
+    @State private var seq = 0
+    @FocusState private var focused: Bool
+
+    private var trimmed: String {
+        query.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var groups: [(kind: String, ids: [UInt64])] {
+        var order: [String] = []
+        var byKind: [String: [UInt64]] = [:]
+        for id in hits {
+            guard let row = box.entity(id) else { continue }
+            let kind = row.kinds?.first ?? ""
+            if byKind[kind] == nil { order.append(kind) }
+            byKind[kind, default: []].append(id)
+        }
+        return order
+            .sorted { SearchView.rank($0) < SearchView.rank($1) }
+            .map { (kind: $0, ids: byKind[$0] ?? []) }
+    }
+
+    private static func rank(_ kind: String) -> (Int, String) {
+        switch kind {
+        case "task": return (0, "")
+        case "event": return (1, "")
+        case "note": return (2, "")
+        case "file": return (3, "")
+        case "": return (5, "")
+        default: return (4, kind)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                pill
+                Button {
+                    desk.searchShown = false
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(LivTheme.accent)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close search")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            if trimmed.isEmpty {
+                ScrollView {
+                    EmptyHint("Search the box.").padding(.top, 40)
+                }
+            } else if hits.isEmpty {
+                ScrollView {
+                    EmptyHint("No matches.").padding(.top, 40)
+                }
+            } else {
+                List {
+                    ForEach(groups, id: \.kind) { group in
+                        Section {
+                            ForEach(group.ids, id: \.self) { id in
+                                if let row = box.entity(id) {
+                                    Button {
+                                        open(id)
+                                    } label: {
+                                        SearchHitRow(row: row)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparatorTint(LivTheme.border)
+                                    .listRowInsets(
+                                        EdgeInsets(
+                                            top: 0, leading: 16, bottom: 0,
+                                            trailing: 16
+                                        )
+                                    )
+                                }
+                            }
+                        } header: {
+                            SectionLabel(
+                                group.kind.isEmpty ? "scraps" : group.kind,
+                                trailing: "\(group.ids.count)"
+                            )
+                            .textCase(nil)
+                            .padding(.horizontal, 16)
+                        }
+                        .listSectionSeparator(.hidden, edges: .top)
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(LivTheme.canvas.ignoresSafeArea())
+        .onAppear {
+            box.refresh()  // hits render off the entity index
+            DispatchQueue.main.async { focused = true }
+        }
+        .onChange(of: query) { _, _ in kick(debounce: true) }
+    }
+
+    /// The one exit that carries a result: land at the desk, drop the veil.
+    private func open(_ id: UInt64) {
+        desk.open(id)
+        desk.searchShown = false
+    }
+
+    private var pill: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(LivTheme.text3)
+            TextField("Search the box", text: $query)
+                .font(.system(size: 13))
+                .foregroundStyle(LivTheme.text)
+                .focused($focused)
+                .submitLabel(.search)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit { kick(debounce: false) }
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(LivTheme.muted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(Capsule().fill(LivTheme.panel2))
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+    }
+
+    private func kick(debounce: Bool) {
+        seq += 1
+        let ticket = seq
+        let q = trimmed
+        guard !q.isEmpty else {
+            hits = []
+            return
+        }
+        if debounce {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                fire(ticket, q)
+            }
+        } else {
+            fire(ticket, q)
+        }
+    }
+
+    /// @State reads pierce the struct copy, so the ticket checks see the
+    /// CURRENT seq, not the captured one — stale debounces and stale
+    /// results both drop.
+    private func fire(_ ticket: Int, _ q: String) {
+        guard ticket == seq else { return }
+        box.search(q) { ids in
+            guard ticket == seq else { return }
+            hits = ids
+        }
+    }
+}
+
+// MARK: - one hit row: title + the positioning date, nothing louder
+
+private struct SearchHitRow: View {
+    let row: EntityRow
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(row.title ?? "#\(row.id)")
+                .font(.system(size: 13))
+                .foregroundStyle(LivTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if let due = row.due {
+                Text(dueLabel(due))
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
+            }
+        }
+        .frame(minHeight: 42)
+    }
+
+    private func dueLabel(_ due: Int64) -> String {
+        let day = Civil.day(of: due)
+        if day == Civil.todayDay() {
+            let t = Civil.timeString(due)
+            return t.isEmpty ? "today" : t
+        }
+        return Civil.dayLabel(day)
+    }
+}
