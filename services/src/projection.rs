@@ -13,7 +13,7 @@
 //! corrected here, recorded in the slice log).
 
 use crate::vault::{expected_files, VaultClass};
-use lotus_core::*;
+use liv_core::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

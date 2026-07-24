@@ -3,12 +3,12 @@
 //! service. Definitions are entities, so an attribute is ordinary data on a
 //! property-definition entity — no core change anywhere here.
 
-use lotus_core::*;
-use lotus_services::content;
-use lotus_services::{property_id, search, seed_if_fresh};
+use liv_core::*;
+use liv_services::content;
+use liv_services::{property_id, search, seed_if_fresh};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_at_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_at_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");

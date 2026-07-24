@@ -5,18 +5,18 @@
 //! (plus injected disk-full) and demands reconvergence to
 //! files == expected(store) with zero loss and zero duplicates.
 
-use lotus_core::*;
-use lotus_services::content;
-use lotus_services::projection::{self, Manifest, VaultIo};
+use liv_core::*;
+use liv_services::content;
+use liv_services::projection::{self, Manifest, VaultIo};
 use std::collections::BTreeMap;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_proj_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_proj_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -83,7 +83,7 @@ impl VaultIo for MemIo {
 /// Everything under library/ must equal expected_files exactly — no loss,
 /// no dupes, no strays.
 fn assert_converged(io: &MemIo, store: &Store) {
-    let expected = lotus_services::vault::expected_files(store);
+    let expected = liv_services::vault::expected_files(store);
     for file in &expected {
         if let Some(content) = &file.content {
             let on_disk = io.files.get(&file.rel_path);

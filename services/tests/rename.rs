@@ -2,16 +2,16 @@
 //! transaction, one undo, merge-on-collision, kind discipline, and a torn
 //! tail replays to the pre-rename state. The phase's one required verb.
 
-use lotus_core::*;
-use lotus_services::content;
+use liv_core::*;
+use liv_services::content;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_rename_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_rename_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -22,7 +22,7 @@ fn cleanup(path: &std::path::Path) {
 }
 
 fn capture(session: &mut Session, text: &str) -> Id {
-    lotus_services::capture(session, text, DateTime::at(2026, 7, 15, 9, 0)).unwrap()
+    liv_services::capture(session, text, DateTime::at(2026, 7, 15, 9, 0)).unwrap()
 }
 
 fn text_value(store: &Store, id: Id, prop: Id) -> Option<String> {
@@ -207,9 +207,9 @@ fn text_rename_skips_backstage_plumbing() {
     let store = session.store();
     // The seeded `todo` STATUS OPTION kept its name — status resolution
     // (todo_option, default-status) survives.
-    let status = lotus_services::property_id(store, "status").unwrap();
+    let status = liv_services::property_id(store, "status").unwrap();
     assert!(
-        lotus_services::content::find_option(store, status, "todo").is_some(),
+        liv_services::content::find_option(store, status, "todo").is_some(),
         "the rename rewrote the seeded todo option's name"
     );
     // The workspace is WORKING plumbing too (excluded from Everything) and
@@ -267,7 +267,7 @@ fn kind_flags_accumulate_per_kind() {
         .map(|e| e.id)
         .unwrap();
 
-    let hide_prop = lotus_services::property_id(session.store(), "hide-on-kind").unwrap();
+    let hide_prop = liv_services::property_id(session.store(), "hide-on-kind").unwrap();
     let refs = |session: &Session| -> usize {
         session
             .store()

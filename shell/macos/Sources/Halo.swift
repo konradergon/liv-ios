@@ -1,5 +1,5 @@
-// lotus — AI presence (P16). Amber (Theme.warning) is the ONE AI hue; lake-green
-// stays for selection + today. The bp10 halo→card grammar, collapsed to lotus's
+// liv — AI presence (P16). Amber (Theme.warning) is the ONE AI hue; lake-green
+// stays for selection + today. The bp10 halo→card grammar, collapsed to liv's
 // substrate: the card in the one queue + an in-place ✦ badge/wand. Every AI
 // container is amber-framed; nothing else in the app uses this framing.
 

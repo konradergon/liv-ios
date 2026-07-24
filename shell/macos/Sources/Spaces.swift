@@ -1,4 +1,4 @@
-// lotus — P2 of the Liv port: workspaces and the left sidebar
+// liv — P2 of the Liv port: workspaces and the left sidebar
 // (liv-ui-map.md §2.2, §2.4, §2.7). One entity kind carries what Liv
 // split across Workspace records and a TreeNode store: a workspace may
 // reference a parent workspace, and the tree is that. Everything here
@@ -1131,7 +1131,7 @@ func loadWorkspaceDrop(_ info: DropInfo, _ handle: @escaping (UInt64) -> Void) -
 /// The Spaces / Boards group headers are drop targets that re-root the
 /// dropped node to the top level (§2.2.2): dropping onto Spaces promotes
 /// a flat workspace to a standalone space; dropping onto Boards pulls a
-/// tree node back to top level. In lotus the Spaces/Boards split is
+/// tree node back to top level. In liv the Spaces/Boards split is
 /// derived from live children, so both are one gesture: unset parent.
 struct HeaderReroot: DropDelegate {
     @Binding var active: Bool
@@ -1726,7 +1726,7 @@ struct HomeHubPopover: View {
             }
             popoverRow("Replay the tour") {
                 dismiss()
-                NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
+                NotificationCenter.default.post(name: .livReplayTour, object: nil)
             }
         }
         .padding(.vertical, 4)

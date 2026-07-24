@@ -1,4 +1,4 @@
-// lotus — P3 of the Liv port: the unified tab strip (liv-ui-map.md §2.3).
+// liv — P3 of the Liv port: the unified tab strip (liv-ui-map.md §2.3).
 // The working set of a workspace, as the Notes content's top bar (not a
 // chrome row — the Claude-style chrome put the strip here). Tabs are
 // shell state, per workspace, persisted in UserDefaults — never entities

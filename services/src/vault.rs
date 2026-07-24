@@ -10,7 +10,7 @@
 
 use crate::markdown::{parse_markdown, render_markdown, split_frontmatter};
 use crate::property_id;
-use lotus_core::*;
+use liv_core::*;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,7 +188,7 @@ pub fn render_vault_entity(store: &Store, id: Id) -> Option<String> {
             _ => format!("p{prop}"),
         };
         for value in entity.all(prop) {
-            fm.push((key.clone(), lotus_views::display(store, value)));
+            fm.push((key.clone(), liv_views::display(store, value)));
         }
     }
     if let Some(kind) = type_name(store, entity) {
@@ -212,7 +212,7 @@ pub fn render_vault_entity(store: &Store, id: Id) -> Option<String> {
                 store
                     .get(target)
                     .and_then(|e| e.get(props::NAME))
-                    .map(|v| lotus_views::display(store, v))
+                    .map(|v| liv_views::display(store, v))
                     .unwrap_or_else(|| format!("#{target}"))
             });
             out.push_str(&body);

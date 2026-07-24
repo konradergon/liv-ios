@@ -1,4 +1,4 @@
-// lotus — Settings (P19a, bp13): the FOURTH overlay carve-out. A centered
+// liv — Settings (P19a, bp13): the FOURTH overlay carve-out. A centered
 // card over the scrim in the search-palette anatomy — header (search focused
 // on open) · six-group nav · panel · the shared footbar. Changes apply
 // instantly; NO SAVE BUTTON EXISTS. Every entry answers to the one search
@@ -282,7 +282,7 @@ struct SettingsCapturePanel: View {
                     .foregroundColor(Theme.accent)
                     Button("Export…") {
                         dismiss()
-                        NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+                        NotificationCenter.default.post(name: .livOpenExport, object: nil)
                     }
                     .buttonStyle(.plain).font(.system(size: 11))
                     .foregroundColor(Theme.accent)
@@ -297,7 +297,7 @@ struct SettingsCapturePanel: View {
 
 /// The KeyRecorder (P19d, proven here first — 19g's table reuses it): click,
 /// press a chord, done. Esc cancels; a modifier is required; the capture
-/// hotkey re-registers LIVE via .lotusRebindCapture.
+/// hotkey re-registers LIVE via .livRebindCapture.
 struct KeyRecorder: View {
     @State private var recording = false
     @State private var monitor: Any?
@@ -355,7 +355,7 @@ struct KeyRecorder: View {
                     "display": label,
                 ], forKey: "app.capture.hotkey.v1")
             NotificationCenter.default.post(
-                name: Notification.Name("lotus.rebindCapture"), object: nil)
+                name: Notification.Name("liv.rebindCapture"), object: nil)
             display = label
             stop()
             return nil
@@ -1268,7 +1268,7 @@ struct AssistPanel: View {
 
     // ---- the Keychain seam (Security.framework via the C API) ----
 
-    private static let service = "com.lotus.byok"
+    private static let service = "com.liv.byok"
 
     static func keychainHas() -> Bool {
         let query: [String: Any] = [
@@ -1322,7 +1322,7 @@ struct SettingsNav: View {
                         // the palette.
                         if hits.isEmpty, !query.isEmpty {
                             NotificationCenter.default.post(
-                                name: .lotusSearchFor, object: query)
+                                name: .livSearchFor, object: query)
                             query = ""
                         } else if let first = hits.first {
                             lastPanelRaw = first.rawValue

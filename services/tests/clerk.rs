@@ -1,21 +1,21 @@
 //! Clerk v0: dates in text, mentions of known names, and the promise that
 //! nothing asks again.
 
-use lotus_core::*;
-use lotus_services::clerk;
+use liv_core::*;
+use liv_services::clerk;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_clerk_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_clerk_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
 fn capture(session: &mut Session, text: &str) -> Id {
-    lotus_services::capture(session, text, DateTime::at(2026, 7, 6, 9, 0)).unwrap()
+    liv_services::capture(session, text, DateTime::at(2026, 7, 6, 9, 0)).unwrap()
 }
 
 fn cleanup(path: &std::path::Path) {
@@ -65,7 +65,7 @@ fn from(proposals: &[Proposal], proposer: &str) -> Option<Proposal> {
 
 /// A typed, named entity (+ optional extra cells) for the dedupe tests.
 fn typed(session: &mut Session, type_name: &str, name: &str, extra: Vec<Cell>) -> Id {
-    let ty = lotus_services::content::find_type(session.store(), type_name);
+    let ty = liv_services::content::find_type(session.store(), type_name);
     let id = session.allocate_id();
     let mut cmds = vec![Command::Create { entity: id }];
     if let Some(ty) = ty {
@@ -90,7 +90,7 @@ fn typed(session: &mut Session, type_name: &str, name: &str, extra: Vec<Cell>) -
 #[test]
 fn dedupe_proposes_a_merge_for_same_type_and_name() {
     let (mut session, path) = boxed("dedupe_prop");
-    let due = lotus_services::property_id(session.store(), "due").unwrap();
+    let due = liv_services::property_id(session.store(), "due").unwrap();
     let older = typed(&mut session, "note", "Meeting notes", vec![]);
     let newer = typed(
         &mut session,
@@ -165,8 +165,8 @@ fn priority_word_proposes_the_matching_option() {
 
     session.propose(p.clone()).unwrap();
     session.accept(0).unwrap();
-    let priority = lotus_services::property_id(session.store(), "priority").unwrap();
-    let high = lotus_services::content::find_option(session.store(), priority, "high").unwrap();
+    let priority = liv_services::property_id(session.store(), "priority").unwrap();
+    let high = liv_services::content::find_option(session.store(), priority, "high").unwrap();
     assert_eq!(session.store().get(scrap).unwrap().get(priority), Some(&Value::Select(high)));
 
     // Once set, the proposer stays quiet.
@@ -194,7 +194,7 @@ fn promotion_promotes_an_untyped_checkbox() {
 
     session.propose(p.clone()).unwrap();
     session.accept(0).unwrap();
-    let ty = lotus_services::content::find_type(session.store(), "task").unwrap();
+    let ty = liv_services::content::find_type(session.store(), "task").unwrap();
     assert!(
         session.store().get(note).unwrap().has(props::TYPE, &Value::Reference(ty)),
         "the note became a task"
@@ -230,7 +230,7 @@ fn the_sweep_never_proposes_tier_or_private() {
     capture(&mut session, "URGENT call anna friday");
     task_note(&mut session, "urgent thing");
     let private = props::PRIVATE;
-    let tier = lotus_services::property_id(session.store(), "tier");
+    let tier = liv_services::property_id(session.store(), "tier");
     for p in clerk::sweep(session.store(), MONDAY) {
         for c in &p.commands {
             if let Command::AddCell { cell, .. } = c {
@@ -265,7 +265,7 @@ fn friday_means_this_friday() {
     // Accepting lands the due cell on the scrap, authored by the clerk.
     session.propose(p.clone()).unwrap();
     session.accept(0).unwrap();
-    let due = lotus_services::property_id(session.store(), "due").unwrap();
+    let due = liv_services::property_id(session.store(), "due").unwrap();
     assert!(session.store().get(scrap).unwrap().get(due).is_some());
 
     // Once due exists, the dates proposer stays quiet.
@@ -362,7 +362,7 @@ fn a_decline_is_remembered_across_restarts() {
 fn relative_dates_anchor_to_capture_not_to_the_sweep() {
     let (mut session, path) = boxed("anchor");
     // Captured Monday; triaged days later.
-    let scrap = lotus_services::capture(
+    let scrap = liv_services::capture(
         &mut session,
         "pay rent tomorrow",
         DateTime::at(2026, 7, 6, 21, 0),
@@ -411,7 +411,7 @@ fn a_decline_outlives_value_drift() {
 
 #[test]
 fn an_old_box_gains_the_starter_library_on_open() {
-    let path = std::env::temp_dir().join("lotus_clerk_upgrade.log");
+    let path = std::env::temp_dir().join("liv_clerk_upgrade.log");
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
@@ -427,13 +427,13 @@ fn an_old_box_gains_the_starter_library_on_open() {
                 Author::User,
             )
             .unwrap();
-        assert!(lotus_services::property_id(session.store(), "due").is_none());
+        assert!(liv_services::property_id(session.store(), "due").is_none());
     }
 
     // Opening it through the seed path upgrades it, additively.
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
-    assert!(lotus_services::property_id(session.store(), "due").is_some());
+    liv_services::seed_if_fresh(&mut session).unwrap();
+    assert!(liv_services::property_id(session.store(), "due").is_some());
     capture(&mut session, "dentist friday");
     assert_eq!(clerk::sweep(session.store(), MONDAY).len(), 1);
 
@@ -490,7 +490,7 @@ fn accept_group_is_one_transaction_one_undo() {
     assert_eq!(session.store().pending().len(), 2);
 
     clerk::accept_group(&mut session, &[0, 1]).unwrap();
-    let due = lotus_services::property_id(session.store(), "due").unwrap();
+    let due = liv_services::property_id(session.store(), "due").unwrap();
     assert!(session.store().get(a).unwrap().get(due).is_some());
     assert!(session.store().get(b).unwrap().get(due).is_some());
     assert!(session.store().pending().is_empty(), "both drained");

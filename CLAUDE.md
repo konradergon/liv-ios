@@ -1,12 +1,16 @@
-# Liv — project guide (codename: lotus)
+# Liv — project guide
 
-> **Naming:** the product is **Liv**. The codebase keeps **`lotus`** as its
-> internal codename — every crate, path, the `lotus_*` FFI symbol prefix, the
-> bundle id, and the box file (`~/lotus/lotus.log`) stay `lotus`; do **not**
-> rename code identifiers. Only *user-facing* strings (window title, About,
-> installer, docs prose) and the WinUI app's display name say "Liv". (The *old*
-> Tauri app in the separate `friend-fixes` repo is also called Liv — unrelated to
-> this codebase; don't confuse the two.)
+> **Naming:** the product and the code are both **Liv** — crates (`liv-core`,
+> `liv-ffi`, …), the `liv_*` FFI symbol prefix, `shell/macos/liv.h`, and the
+> box file (`…/Application Support/liv/liv.log`). The old codename **`lotus`**
+> was renamed away (2026-07-22); it survives in exactly two frozen places, on
+> purpose: (1) codename-era boxes carry the on-disk header key `lotus_log` and
+> legacy box paths — the core reads both and preserves the key on in-place
+> upgrades (see `core/src/persist.rs` + `core/tests/versioning.rs`); (2) the
+> historical spec/design docs (`design/p*.md`, `interface.md`, `feature-map.md`,
+> …) still say `lotus_*` — read them as `liv_*`. Do not reintroduce `lotus`
+> into code. (The *old* Tauri app in the separate `friend-fixes` repo is also
+> called Liv — unrelated to this codebase; don't confuse the two.)
 
 A native productivity app on a clean, append-only Rust core. It is a from-scratch
 rewrite of an older Tauri/web app ("Liv", kept for reference in a **separate**
@@ -19,10 +23,11 @@ shell over the same Rust FFI.
 core/       Rust — the append-only log, entities = property→value cells, commands
 services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
 views/      Rust — value display + rendering helpers (cross-platform)
-ffi/        Rust — the ONE C ABI (36 `lotus_*` fns); staticlib + cdylib + rlib
+ffi/        Rust — the ONE C ABI (55 `liv_*` fns); staticlib + cdylib + rlib
 cli/        Rust — a headless CLI over the same core (handy for inspecting a box)
-shell/macos/   Swift/SwiftUI — the macOS shell; links the ffi staticlib via lotus.h
-shell/windows/ (TO BUILD) — WinUI 3 / C#; P/Invokes the ffi cdylib (lotus_ffi.dll)
+shell/macos/   Swift/SwiftUI — the macOS shell; links the ffi staticlib via liv.h
+shell/ios/     Swift/SwiftUI — the iPhone capture satellite (see design/ios.md)
+shell/windows/ (TO BUILD) — WinUI 3 / C#; P/Invokes the ffi cdylib (liv_ffi.dll)
 ```
 
 Everything above `ffi/` is **platform-agnostic Rust and already works on
@@ -39,7 +44,7 @@ one source of truth, respect these zones:
 |---|---|
 | `shell/windows/**` | **OWN it** — create, edit freely. This is the port. |
 | `core/ **`, `services/**`, `views/**` | **READ ONLY.** Never change core behavior. |
-| `ffi/**`, `shell/macos/lotus.h` | **READ.** The C ABI is the contract. Adding a *new* `lotus_*` verb is allowed ONLY if the Windows UI genuinely needs one that doesn't exist — and it must be **purely additive** (never change an existing signature or its meaning), mirror the `with_box` + `Committed` pattern, ship with a test, and be flagged to the owner in the PR. Prefer reusing an existing verb. |
+| `ffi/**`, `shell/macos/liv.h` | **READ.** The C ABI is the contract. Adding a *new* `liv_*` verb is allowed ONLY if the Windows UI genuinely needs one that doesn't exist — and it must be **purely additive** (never change an existing signature or its meaning), mirror the `with_box` + `Committed` pattern, ship with a test, and be flagged to the owner in the PR. Prefer reusing an existing verb. |
 | `shell/macos/**` | **DO NOT TOUCH.** The SwiftUI shell is another person's platform. |
 | `design/**`, `*.md` specs | **READ** for the behavioral spec (see below). Don't rewrite them. |
 | everything outside this repo | **NEVER.** Stay in this working tree. |
@@ -52,11 +57,11 @@ settled and reviewed; the Windows shell must match it, not reshape it.
 
 Port *behavior and layout*, don't invent them. In priority order:
 1. `interface.md` — the constitution/laws (what the app is and refuses to be).
-2. `feature-map.md` — every feature and its lotus reconciliation.
+2. `feature-map.md` — every feature and its Liv reconciliation.
 3. `liv-ui-map.md` — the original UI, surface by surface.
 4. `design/p*.md` — the per-phase design docs (what shipped and why).
 5. `shell/macos/Sources/*.swift` — the reference shell. The Windows shell should
-   reproduce each surface 1:1 (layout, density, behavior), in the **lotus
+   reproduce each surface 1:1 (layout, density, behavior), in the **Liv
    palette** (lake-green accent `#2f7d6b`, never blue/violet).
 
 See `design/windows-port.md` for the WinUI 3 architecture + a surface-by-surface
@@ -64,22 +69,22 @@ port map.
 
 ## The FFI contract (how a shell talks to the core)
 
-- **Mutations**: call a `lotus_*_at(box_path, …)` verb. Each opens the box, runs
+- **Mutations**: call a `liv_*_at(box_path, …)` verb. Each opens the box, runs
   one transaction, checks in. Returns an id / count / status. Never hold the box
   lock across long IO.
-- **Reads**: `lotus_snapshot_at` (or `lotus_snapshot_window_at` for the calendar)
+- **Reads**: `liv_snapshot_at` (or `liv_snapshot_window_at` for the calendar)
   returns a JSON `Snapshot` — decode it into your native models. Every wire field
   the shell adds must be **optional** in the decoder, or one missing key drops
   the whole snapshot (a real, recurring bug — see the macOS `applySnapshot`).
-- Strings cross as UTF-8 C strings; free returned strings with `lotus_string_free`.
-- The full verb list + shapes live in `ffi/src/lib.rs` and `shell/macos/lotus.h`.
+- Strings cross as UTF-8 C strings; free returned strings with `liv_string_free`.
+- The full verb list + shapes live in `ffi/src/lib.rs` and `shell/macos/liv.h`.
 
 ## Build & test
 
 ```
 cargo test                        # the whole Rust workspace (run before every PR)
-cargo build --release -p lotus-ffi  # produces the ffi lib (staticlib + cdylib)
-./target/release/lotus --log <box> list --all   # inspect a box from the CLI
+cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
+./target/release/liv --log <box> list --all   # inspect a box from the CLI
 ```
 macOS shell: `shell/macos/build.sh`. Windows shell: see `design/windows-port.md`.
 Do not commit unless the owner asks. Branch off `main`; keep Windows work on a

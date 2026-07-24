@@ -9,8 +9,8 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
-use lotus_core::{props, Entity, Id, Store, Value};
-use lotus_views::display;
+use liv_core::{props, Entity, Id, Store, Value};
+use liv_views::display;
 
 use crate::clerk::{contains_word, starts_word};
 use crate::content::parse_value;

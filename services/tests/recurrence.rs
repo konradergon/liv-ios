@@ -1,17 +1,17 @@
 //! Worked example 2, tested: one series, few exceptions, no duplication —
 //! and the horizon decision, which is the window, capped at a year.
 
-use lotus_core::*;
-use lotus_services::recurrence::occurrences;
-use lotus_services::today_sections;
+use liv_core::*;
+use liv_services::recurrence::occurrences;
+use liv_services::today_sections;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_recur_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_recur_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -24,8 +24,8 @@ fn clean(path: &std::path::Path) {
 /// A series: one entity with a name, a due anchor, and a rule.
 fn series(session: &mut Session, name: &str, due: DateTime, rule: &str) -> Id {
     let id = session.allocate_id();
-    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
-    let recur_prop = lotus_services::property_id(session.store(), "recurrence").unwrap();
+    let due_prop = liv_services::property_id(session.store(), "due").unwrap();
+    let recur_prop = liv_services::property_id(session.store(), "recurrence").unwrap();
     session
         .commit(
             vec![
@@ -119,8 +119,8 @@ fn an_exception_suppresses_exactly_one_date() {
     // Worked example 2: editing one occurrence materializes an exception
     // entity referencing the series, carrying that date as its own due.
     let exception = session.allocate_id();
-    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
-    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    let due_prop = liv_services::property_id(session.store(), "due").unwrap();
+    let exc_prop = liv_services::property_id(session.store(), "exception-of").unwrap();
     session
         .commit(
             vec![
@@ -221,8 +221,8 @@ fn nonsense_rules_recur_never() {
 /// of `series` (which stays due-anchored, pinning the pre-P11 world).
 fn series_on(session: &mut Session, name: &str, prop: &str, anchor: DateTime, rule: &str) -> Id {
     let id = session.allocate_id();
-    let anchor_prop = lotus_services::property_id(session.store(), prop).unwrap();
-    let recur_prop = lotus_services::property_id(session.store(), "recurrence").unwrap();
+    let anchor_prop = liv_services::property_id(session.store(), prop).unwrap();
+    let recur_prop = liv_services::property_id(session.store(), "recurrence").unwrap();
     session
         .commit(
             vec![
@@ -273,7 +273,7 @@ fn a_date_anchored_series_uses_the_date_not_due() {
     // — the calendar role is the anchor precedence (calendar_set order).
     let (mut session, path) = boxed("gen_precedence");
     let id = series_on(&mut session, "both", "date", DateTime::date(2026, 7, 7), "every week");
-    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
+    let due_prop = liv_services::property_id(session.store(), "due").unwrap();
     session
         .commit(
             vec![Command::AddCell {
@@ -313,8 +313,8 @@ fn a_rule_on_a_lookup_only_entity_is_inert() {
     );
     assert!(july.iter().all(|o| o.series != id), "inert on the default expansion");
 
-    let occurred = lotus_services::property_id(session.store(), "occurred").unwrap();
-    let asked = lotus_services::recurrence::occurrences_anchored(
+    let occurred = liv_services::property_id(session.store(), "occurred").unwrap();
+    let asked = liv_services::recurrence::occurrences_anchored(
         session.store(),
         DateTime::date(2026, 7, 1),
         DateTime::date(2026, 7, 31),
@@ -335,8 +335,8 @@ fn an_exception_on_a_date_anchored_series_suppresses_exactly_one_date() {
     let (mut session, path) = boxed("gen_exception");
     let ritual = series_on(&mut session, "ritual", "date", DateTime::date(2026, 7, 7), "every week");
     let exception = session.allocate_id();
-    let date_prop = lotus_services::property_id(session.store(), "date").unwrap();
-    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    let date_prop = liv_services::property_id(session.store(), "date").unwrap();
+    let exc_prop = liv_services::property_id(session.store(), "exception-of").unwrap();
     session
         .commit(
             vec![
@@ -405,11 +405,11 @@ fn a_due_anchored_series_is_unchanged_by_generalization() {
     series(&mut session, "standup", DateTime::date(2026, 7, 7), "every week");
     let store = session.store();
     let default = occurrences(store, DateTime::date(2026, 7, 1), DateTime::date(2026, 7, 31));
-    let anchored = lotus_services::recurrence::occurrences_anchored(
+    let anchored = liv_services::recurrence::occurrences_anchored(
         store,
         DateTime::date(2026, 7, 1),
         DateTime::date(2026, 7, 31),
-        &lotus_services::calendar_set(store),
+        &liv_services::calendar_set(store),
     );
     assert_eq!(default, anchored);
     assert_eq!(default.len(), 4);
@@ -440,8 +440,8 @@ fn an_exception_survives_the_series_anchor_flip() {
     let (mut session, path) = boxed("flip");
     let standup = series(&mut session, "standup", DateTime::date(2026, 7, 7), "every week");
     let exception = session.allocate_id();
-    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
-    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    let due_prop = liv_services::property_id(session.store(), "due").unwrap();
+    let exc_prop = liv_services::property_id(session.store(), "exception-of").unwrap();
     session
         .commit(
             vec![
@@ -464,7 +464,7 @@ fn an_exception_survives_the_series_anchor_flip() {
         .unwrap();
 
     // Flip the series' anchor: a `date` cell lands beside `due` (date wins).
-    lotus_services::content::set_property(&mut session, standup, "date", "2026-07-07").unwrap();
+    liv_services::content::set_property(&mut session, standup, "date", "2026-07-07").unwrap();
 
     let july = occurrences(
         session.store(),
@@ -484,8 +484,8 @@ fn an_exception_survives_its_own_row_cycle() {
     let (mut session, path) = boxed("excycle");
     let standup = series(&mut session, "standup", DateTime::date(2026, 7, 7), "every week");
     let exception = session.allocate_id();
-    let due_prop = lotus_services::property_id(session.store(), "due").unwrap();
-    let exc_prop = lotus_services::property_id(session.store(), "exception-of").unwrap();
+    let due_prop = liv_services::property_id(session.store(), "due").unwrap();
+    let exc_prop = liv_services::property_id(session.store(), "exception-of").unwrap();
     session
         .commit(
             vec![
@@ -508,7 +508,7 @@ fn an_exception_survives_its_own_row_cycle() {
         .unwrap();
 
     // due → date on the exception's row.
-    lotus_services::content::cycle_date_role(&mut session, exception, due_prop).unwrap();
+    liv_services::content::cycle_date_role(&mut session, exception, due_prop).unwrap();
 
     let july = occurrences(
         session.store(),

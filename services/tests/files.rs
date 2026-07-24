@@ -1,13 +1,13 @@
 //! P7/7a — the librarian: a file is added by reference (path + a byte hash),
 //! never moved or copied; its bytes stay exactly where they are.
 
-use lotus_core::*;
-use lotus_services::{content, files, property_id, search, seed_if_fresh};
+use liv_core::*;
+use liv_services::{content, files, property_id, search, seed_if_fresh};
 
 /// Each test gets its OWN directory so its cache (a sibling of the box) is
 /// isolated — parallel tests must not share `temp/cache`.
 fn fresh_session(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_t_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_t_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");
@@ -25,8 +25,8 @@ fn cleanup(path: &std::path::Path) {
 
 #[test]
 fn add_file_references_the_bytes_without_moving_them() {
-    let (boxpath, mut session) = fresh_session("lotus_files_add.log");
-    let doc = std::env::temp_dir().join("lotus_files_sample.md");
+    let (boxpath, mut session) = fresh_session("liv_files_add.log");
+    let doc = std::env::temp_dir().join("liv_files_sample.md");
     std::fs::write(&doc, b"the quarterly report is late").unwrap();
     let docpath = doc.to_str().unwrap();
 
@@ -35,7 +35,7 @@ fn add_file_references_the_bytes_without_moving_them() {
 
     let store = session.store();
     let e = store.get(id).unwrap();
-    assert_eq!(e.get(props::NAME), Some(&Value::text("lotus_files_sample.md")));
+    assert_eq!(e.get(props::NAME), Some(&Value::text("liv_files_sample.md")));
 
     let file_prop = property_id(store, "file").unwrap();
     match e.get(file_prop) {
@@ -57,8 +57,8 @@ fn add_file_references_the_bytes_without_moving_them() {
 
 #[test]
 fn a_one_byte_edit_changes_the_hash() {
-    let a = std::env::temp_dir().join("lotus_files_h1.txt");
-    let b = std::env::temp_dir().join("lotus_files_h2.txt");
+    let a = std::env::temp_dir().join("liv_files_h1.txt");
+    let b = std::env::temp_dir().join("liv_files_h2.txt");
     std::fs::write(&a, b"alpha").unwrap();
     std::fs::write(&b, b"alphb").unwrap();
     let ha = files::hash_file(a.to_str().unwrap()).unwrap();
@@ -72,7 +72,7 @@ fn a_one_byte_edit_changes_the_hash() {
 
 #[test]
 fn an_unreadable_path_is_an_error_not_a_phantom_entity() {
-    let (boxpath, mut session) = fresh_session("lotus_files_missing.log");
+    let (boxpath, mut session) = fresh_session("liv_files_missing.log");
     let before = session.store().entities().count();
     let r = files::add_file(&mut session, "/no/such/file.pdf", DateTime::date(2026, 7, 7));
     assert!(r.is_err());
@@ -82,7 +82,7 @@ fn an_unreadable_path_is_an_error_not_a_phantom_entity() {
 
 #[test]
 fn a_file_cell_is_never_hand_typed() {
-    let (boxpath, mut session) = fresh_session("lotus_files_settype.log");
+    let (boxpath, mut session) = fresh_session("liv_files_settype.log");
     let note = content::create_note(&mut session, DateTime::date(2026, 7, 7)).unwrap();
     // set through the string seam is refused — a file is added by reference.
     let r = content::set_property(&mut session, note, "file", "/Users/k/report.pdf");
@@ -92,8 +92,8 @@ fn a_file_cell_is_never_hand_typed() {
 
 #[test]
 fn extraction_is_a_rebuildable_cache_off_the_log() {
-    let (boxpath, mut session) = fresh_session("lotus_files_extract.log");
-    let doc = std::env::temp_dir().join("lotus_files_extract.md");
+    let (boxpath, mut session) = fresh_session("liv_files_extract.log");
+    let doc = std::env::temp_dir().join("liv_files_extract.md");
     std::fs::write(&doc, b"the quarterly telescope budget").unwrap();
     let id = files::add_file(&mut session, doc.to_str().unwrap(), DateTime::date(2026, 7, 7)).unwrap();
 
@@ -116,7 +116,7 @@ fn extraction_is_a_rebuildable_cache_off_the_log() {
 
     // A deferred format (pdf) extracts to empty for now (the 7d stub) — a
     // distinct file so it's a cache miss, not the md hit above.
-    let doc2 = std::env::temp_dir().join("lotus_files_extract2.bin");
+    let doc2 = std::env::temp_dir().join("liv_files_extract2.bin");
     std::fs::write(&doc2, b"%PDF-1.4 not really parsed yet").unwrap();
     let file2 = FileRef {
         path: doc2.to_str().unwrap().to_string(),
@@ -132,12 +132,12 @@ fn extraction_is_a_rebuildable_cache_off_the_log() {
 
 #[test]
 fn same_bytes_different_format_do_not_share_a_cache_entry() {
-    let (boxpath, _session) = fresh_session("lotus_files_collide.log");
+    let (boxpath, _session) = fresh_session("liv_files_collide.log");
     let cache = files::cache_dir(boxpath.to_str().unwrap());
 
     // Two byte-identical files with different extensions → the same hash.
-    let md = std::env::temp_dir().join("lotus_files_x.md");
-    let dat = std::env::temp_dir().join("lotus_files_x.dat");
+    let md = std::env::temp_dir().join("liv_files_x.md");
+    let dat = std::env::temp_dir().join("liv_files_x.dat");
     std::fs::write(&md, b"budget notes").unwrap();
     std::fs::write(&dat, b"budget notes").unwrap();
     let file_md = FileRef {
@@ -165,8 +165,8 @@ fn same_bytes_different_format_do_not_share_a_cache_entry() {
 
 #[test]
 fn a_file_is_found_by_a_word_only_in_its_extracted_text() {
-    let (boxpath, mut session) = fresh_session("lotus_files_findtext.log");
-    let doc = std::env::temp_dir().join("lotus_files_findtext.md");
+    let (boxpath, mut session) = fresh_session("liv_files_findtext.log");
+    let doc = std::env::temp_dir().join("liv_files_findtext.md");
     std::fs::write(&doc, b"minutes about the telescope procurement").unwrap();
     let id = files::add_file(&mut session, doc.to_str().unwrap(), DateTime::date(2026, 7, 7)).unwrap();
 
@@ -197,8 +197,8 @@ fn a_file_is_found_by_a_word_only_in_its_extracted_text() {
 
 #[test]
 fn resync_reports_unchanged_changed_and_broken() {
-    let (boxpath, mut session) = fresh_session("lotus_files_resync.log");
-    let doc = std::env::temp_dir().join("lotus_files_resync.txt");
+    let (boxpath, mut session) = fresh_session("liv_files_resync.log");
+    let doc = std::env::temp_dir().join("liv_files_resync.txt");
     std::fs::write(&doc, b"version one").unwrap();
     let path = doc.to_str().unwrap().to_string();
     let id = files::add_file(&mut session, &path, DateTime::date(2026, 7, 7)).unwrap();
@@ -226,7 +226,7 @@ fn resync_reports_unchanged_changed_and_broken() {
 
 #[test]
 fn seed_files_is_idempotent() {
-    let (boxpath, mut session) = fresh_session("lotus_files_seed.log");
+    let (boxpath, mut session) = fresh_session("liv_files_seed.log");
     let file_prop = property_id(session.store(), "file").unwrap();
     // Re-running the seed (as every open does) must not duplicate it.
     seed_if_fresh(&mut session).unwrap();

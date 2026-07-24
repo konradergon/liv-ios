@@ -1,4 +1,4 @@
-// lotus — the BP-7 V2 chip-forward row kit (P11.5c, design §4). One chip
+// liv — the BP-7 V2 chip-forward row kit (P11.5c, design §4). One chip
 // recipe, one row budget, one anchor precedence — the density budget is
 // CODE, not convention: what a tile may never show is a parameter that does
 // not exist. Chips are colorful always-on (hue always means metadata value);
@@ -291,7 +291,7 @@ struct ObjectRow: View {
             // The timer's row door (P18h): start writes NOTHING — the pref
             // flips; the widget's strip picks it up on its next tick.
             Button("Start timer") {
-                NotificationCenter.default.post(name: .lotusStartTimer, object: row.id)
+                NotificationCenter.default.post(name: .livStartTimer, object: row.id)
             }
             Button("Open") { openRow() }
         }

@@ -4,12 +4,12 @@
 //! `hue`, and a `completes` done-marker. The entry default is a cell on the
 //! type. No kind is forced a status — absence stays always-valid.
 
-use lotus_core::*;
-use lotus_services::content::{self, find_type};
-use lotus_services::{property_id, search, seed_if_fresh, status_options_for};
+use liv_core::*;
+use liv_services::content::{self, find_type};
+use liv_services::{property_id, search, seed_if_fresh, status_options_for};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_st_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_st_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");

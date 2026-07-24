@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use lotus_core::{
+use liv_core::{
     props, Author, Block, Cell, Command, DateTime, Entity, Id, PersistError, Proposal, RichText,
     Session, Span, Store, Value, NONE,
 };
@@ -72,12 +72,12 @@ pub fn assist_switch(store: &Store) -> Option<(Id, Id, bool)> {
         .entities()
         .find(|e| {
             !e.trashed
-                && e.has(lotus_core::props::WORKING, &Value::Bool(true))
-                && matches!(e.get(lotus_core::props::NAME), Some(Value::Text(n)) if n == "assist")
+                && e.has(liv_core::props::WORKING, &Value::Bool(true))
+                && matches!(e.get(liv_core::props::NAME), Some(Value::Text(n)) if n == "assist")
         })
         .and_then(|e| {
             e.cells.iter().find_map(|c| match &c.value {
-                Value::Bool(on) if c.property != lotus_core::props::WORKING => {
+                Value::Bool(on) if c.property != liv_core::props::WORKING => {
                     Some((e.id, c.property, *on))
                 }
                 _ => None,

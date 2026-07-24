@@ -1,4 +1,4 @@
-// lotus — the vault graph overlay (P18c, bp12 Scene A). The second
+// liv — the vault graph overlay (P18c, bp12 Scene A). The second
 // interface-0.5 carve-out (owner call #4): summon (⌃⇧G) / glance / jump /
 // Esc — it consumes no tab and the shell behind is untouched. A navigator
 // only: click a value → the one filter engine; click an object → open it.

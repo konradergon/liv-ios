@@ -1,4 +1,4 @@
-// lotus — the ONE property-action set (P19e): the settings definitions table
+// liv — the ONE property-action set (P19e): the settings definitions table
 // and the inspector's row menu are two doors onto these same writers. Every
 // write is an ordinary cell on the DEFINITION entity — vault-wide by
 // construction (carriers key on the definition id, never on the name).

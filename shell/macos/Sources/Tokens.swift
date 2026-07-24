@@ -1,4 +1,4 @@
-// lotus — the visual system of the Liv port (liv-ui-map.md §3).
+// liv — the visual system of the Liv port (liv-ui-map.md §3).
 // One intended divergence from Liv: every accent is lake green.
 // Semantic tokens only; no per-component palettes. Elevation is tonal —
 // chrome darkest, page lighter, cards lightest; shadows only for floaters.

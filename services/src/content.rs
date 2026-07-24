@@ -6,7 +6,7 @@
 //! Also home to the one value parser (moved from the CLI so every shell
 //! parses "friday 10:00" the same way) and the birth of a note.
 
-use lotus_core::{
+use liv_core::{
     props, Author, Block, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session,
     Span, Store, Value,
 };

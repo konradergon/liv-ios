@@ -3,7 +3,7 @@
 //! tolerate overlapping entries (single-active is a SHELL invariant, not a
 //! core law); a trashed target's entries go dark, never a panic.
 
-use lotus_core::{props, Id, Store, Value};
+use liv_core::{props, Id, Store, Value};
 use serde::Serialize;
 
 use crate::content::find_type;

@@ -7,10 +7,10 @@
 //! that never writes a span keeps its v1 header — old binaries keep
 //! working there.
 
-use lotus_core::*;
+use liv_core::*;
 
 fn boxed(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("lotus_ver_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_ver_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("box.log")
@@ -50,7 +50,7 @@ fn a_span_free_box_keeps_the_v1_header() {
     let mut session = Session::open(&path).unwrap();
     add_date(&mut session, DateTime::date(2026, 7, 11));
     drop(session);
-    assert_eq!(header_line(&path), r#"{"lotus_log":1}"#, "plain dates never bump");
+    assert_eq!(header_line(&path), r#"{"liv_log":1}"#, "plain dates never bump");
     cleanup(&path);
 }
 
@@ -58,11 +58,11 @@ fn a_span_free_box_keeps_the_v1_header() {
 fn the_first_span_write_bumps_the_header_to_2() {
     let path = boxed("bump");
     let mut session = Session::open(&path).unwrap();
-    assert_eq!(header_line(&path), r#"{"lotus_log":1}"#, "born at 1");
+    assert_eq!(header_line(&path), r#"{"liv_log":1}"#, "born at 1");
 
     let span = DateTime::span(DateTime::date(2026, 7, 11), DateTime::date(2026, 7, 13).civil);
     let e = add_date(&mut session, span);
-    assert_eq!(header_line(&path), r#"{"lotus_log":2}"#, "the span fences the box");
+    assert_eq!(header_line(&path), r#"{"liv_log":2}"#, "the span fences the box");
     drop(session);
 
     // The bumped box reopens fine in THIS binary, span intact.
@@ -91,5 +91,39 @@ fn an_undo_of_a_span_add_still_replays() {
         session.store().get(e).unwrap().cells.is_empty(),
         "the span add was undone and the log replays"
     );
+    cleanup(&path);
+}
+
+#[test]
+fn a_codename_era_box_opens_and_upgrades_with_its_own_key() {
+    // Boxes born before the product rename carry the frozen legacy header
+    // key `lotus_log`. They must open unchanged, and the in-place version
+    // bump must preserve THAT key — writing `liv_log` (2 bytes shorter)
+    // over the line would shear the header.
+    let path = boxed("legacy");
+    let mut session = Session::open(&path).unwrap();
+    let e = add_date(&mut session, DateTime::date(2026, 7, 11));
+    drop(session);
+
+    // Rewrite the modern header as its codename-era spelling, preserving
+    // every transaction line after it — a faithful old box.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let legacy = text.replacen(r#"{"liv_log":1}"#, r#"{"lotus_log":1}"#, 1);
+    assert_ne!(text, legacy, "the fixture must actually rewrite the header");
+    std::fs::write(&path, legacy).unwrap();
+
+    // Opens and replays — the entity written under the old header is there.
+    let mut session = Session::open(&path).unwrap();
+    assert!(session.store().get(e).is_some(), "legacy box replays");
+
+    // The first span bumps 1 → 2 in place — still under the legacy key.
+    let span = DateTime::span(DateTime::date(2026, 7, 11), DateTime::date(2026, 7, 13).civil);
+    add_date(&mut session, span);
+    drop(session);
+    assert_eq!(header_line(&path), r#"{"lotus_log":2}"#, "the legacy key survives the bump");
+
+    // And the upgraded legacy box still opens.
+    let session = Session::open(&path).unwrap();
+    drop(session);
     cleanup(&path);
 }

@@ -4,12 +4,12 @@
 //! filterable facts that never render as appointments. Space-cycling a role
 //! is one lossless transaction moving the value between properties.
 
-use lotus_core::*;
-use lotus_services::content::{self, WriteError};
-use lotus_services::{calendar_set, property_id, search, seed_if_fresh, today_sections};
+use liv_core::*;
+use liv_services::content::{self, WriteError};
+use liv_services::{calendar_set, property_id, search, seed_if_fresh, today_sections};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_dr_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_dr_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");

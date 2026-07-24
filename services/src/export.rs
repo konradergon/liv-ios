@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use lotus_core::{props, Id, Store, Value};
+use liv_core::{props, Id, Store, Value};
 
 use crate::markdown::render_markdown;
 
@@ -50,7 +50,7 @@ pub fn export_plan(store: &Store, ids: &[Id], group_by: &[Id]) -> ExportTree {
         let mut dir = PathBuf::new();
         for &prop in group_by.iter().take(2) {
             let seg = match entity.get(prop) {
-                Some(v) => sanitize(&lotus_views::display(store, v)),
+                Some(v) => sanitize(&liv_views::display(store, v)),
                 None => "ungrouped".to_string(),
             };
             dir.push(seg);
@@ -60,7 +60,7 @@ pub fn export_plan(store: &Store, ids: &[Id], group_by: &[Id]) -> ExportTree {
         // native entity rendered to markdown.
         let name = entity
             .get(props::NAME)
-            .map(|v| lotus_views::display(store, v))
+            .map(|v| liv_views::display(store, v))
             .unwrap_or_default();
         let (stem, ext, kind) = match file_ref(entity) {
             Some(path) => {
@@ -120,7 +120,7 @@ fn render_entity(store: &Store, id: Id) -> String {
     // values are escaped so no newline/colon/`---` can corrupt the block.
     let mut fm: Vec<(String, String)> = Vec::new();
     if let Some(v) = entity.get(props::NAME) {
-        fm.push(("title".to_string(), lotus_views::display(store, v)));
+        fm.push(("title".to_string(), liv_views::display(store, v)));
     }
     let mut seen: HashSet<Id> = HashSet::new();
     for cell in &entity.cells {
@@ -133,7 +133,7 @@ fn render_entity(store: &Store, id: Id) -> String {
         }
         let key = prop_name(store, prop);
         for v in entity.all(prop) {
-            fm.push((key.clone(), lotus_views::display(store, v)));
+            fm.push((key.clone(), liv_views::display(store, v)));
         }
     }
 
@@ -150,7 +150,7 @@ fn render_entity(store: &Store, id: Id) -> String {
             store
                 .get(target)
                 .and_then(|e| e.get(props::NAME))
-                .map(|v| lotus_views::display(store, v))
+                .map(|v| liv_views::display(store, v))
                 .unwrap_or_else(|| format!("#{target}"))
         });
         out.push_str(&body);
@@ -159,7 +159,7 @@ fn render_entity(store: &Store, id: Id) -> String {
 }
 
 /// The referenced file path of a file entity (a `File`-valued cell), if any.
-fn file_ref(entity: &lotus_core::Entity) -> Option<String> {
+fn file_ref(entity: &liv_core::Entity) -> Option<String> {
     entity.cells.iter().find_map(|c| match &c.value {
         Value::File(fr) => Some(fr.path.clone()),
         _ => None,
@@ -236,7 +236,7 @@ fn sanitize_stem(stem: &str, id: Id) -> String {
     }
 }
 
-/// A path unique within this export — names are not unique in lotus, so a
+/// A path unique within this export — names are not unique in liv, so a
 /// collision disambiguates with " (2)", " (3)", … before the extension. The
 /// used-set is keyed case-insensitively (see `export_plan`).
 fn unique(used: &mut HashSet<String>, dir: &Path, stem: &str, ext: &str) -> PathBuf {
@@ -264,10 +264,10 @@ mod tests {
     use super::*;
     use crate::import::{commit_batch, ImportDefaults, ImportItem};
     use crate::{property_id, seed_if_fresh};
-    use lotus_core::{DateTime, Session};
+    use liv_core::{DateTime, Session};
 
     fn session(name: &str) -> Session {
-        let dir = std::env::temp_dir().join(format!("lotus_export_{name}"));
+        let dir = std::env::temp_dir().join(format!("liv_export_{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut s = Session::open(dir.join("box.log")).unwrap();
@@ -276,7 +276,7 @@ mod tests {
     }
 
     fn dest(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("lotus_export_out_{name}"));
+        let d = std::env::temp_dir().join(format!("liv_export_out_{name}"));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn file_entity_bytes_are_copied_verbatim_and_source_untouched() {
         let mut s = session("filecopy");
-        let src_dir = std::env::temp_dir().join("lotus_export_src");
+        let src_dir = std::env::temp_dir().join("liv_export_src");
         std::fs::create_dir_all(&src_dir).unwrap();
         let src = src_dir.join("report.pdf");
         std::fs::write(&src, b"the real bytes").unwrap();
@@ -375,13 +375,13 @@ mod tests {
         // The body parses back to a heading + a bold run.
         let after = md.split("---\n\n").nth(1).unwrap_or(&md);
         let rt = crate::markdown::parse_markdown(after);
-        assert!(rt.spans.iter().any(|sp| matches!(sp, lotus_core::Span::Break(lotus_core::Block::Heading(1)))));
+        assert!(rt.spans.iter().any(|sp| matches!(sp, liv_core::Span::Break(liv_core::Block::Heading(1)))));
     }
 
     #[test]
     fn colliding_names_disambiguate() {
         let mut s = session("collide");
-        // Two notes with the SAME title (names are not unique in lotus).
+        // Two notes with the SAME title (names are not unique in liv).
         let ids = commit_batch(
             &mut s,
             &[

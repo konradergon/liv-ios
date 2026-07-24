@@ -1,14 +1,14 @@
 [package]
-name = "lotus-services"
+name = "liv-services"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "lotus_services"
+name = "liv_services"
 
 [dependencies]
-lotus-core = { path = "../core" }
-lotus-views = { path = "../views" }
+liv-core = { path = "../core" }
+liv-views = { path = "../views" }
 # Markdown import: CommonMark → the span model. A parser must be vetted, not
 # hand-rolled (the same call as sha2 above); no html/getopts/simd needed.
 pulldown-cmark = { version = "0.13", default-features = false }

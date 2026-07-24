@@ -4,7 +4,7 @@
 //! so the CLI stays usable while the agent sits in the menu bar.
 //!
 //! The clerk is not run here: pending proposals are re-derived by the
-//! sweep at every open, so the next `lotus inbox` sees exactly what this
+//! sweep at every open, so the next `liv inbox` sees exactly what this
 //! capture deserved.
 
 use std::ffi::{c_char, CStr, CString};
@@ -17,8 +17,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use lotus_core::{props, Author, DateTime, Entity, Id, Session, Store, Value};
-use lotus_services::{clerk, files, property_id, run, search, Constraint, Op, Query};
+use liv_core::{props, Author, DateTime, Entity, Id, Session, Store, Value};
+use liv_services::{clerk, files, property_id, run, search, Constraint, Op, Query};
 
 /// Capture one scrap into the box at `path`, creating and seeding the box
 /// if it is fresh. Returns the new entity's id, or 0 on failure — 0 is
@@ -28,7 +28,7 @@ use lotus_services::{clerk, files, property_id, run, search, Constraint, Op, Que
 /// # Safety
 /// `path` and `text` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_capture_at(path: *const c_char, text: *const c_char) -> u64 {
+pub unsafe extern "C" fn liv_capture_at(path: *const c_char, text: *const c_char) -> u64 {
     if path.is_null() || text.is_null() {
         return 0;
     }
@@ -49,7 +49,7 @@ pub unsafe extern "C" fn lotus_capture_at(path: *const c_char, text: *const c_ch
     let Ok(mut session) = Session::open(path) else {
         return 0;
     };
-    if lotus_services::seed_if_fresh(&mut session).is_err() {
+    if liv_services::seed_if_fresh(&mut session).is_err() {
         return 0;
     }
 
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn lotus_capture_at(path: *const c_char, text: *const c_ch
         now.hour(),
         now.minute(),
     );
-    lotus_services::capture(&mut session, text, created).unwrap_or(0)
+    liv_services::capture(&mut session, text, created).unwrap_or(0)
 }
 
 // ---- the window's read: one JSON snapshot ----
@@ -225,13 +225,13 @@ struct ProposalCommand {
 
 /// FNV-1a over the serialized commands — deterministic across processes,
 /// because the sweep is deterministic.
-fn fingerprint(proposal: &lotus_core::Proposal) -> u64 {
-    lotus_services::content::fnv(&serde_json::to_vec(&proposal.commands).unwrap_or_default())
+fn fingerprint(proposal: &liv_core::Proposal) -> u64 {
+    liv_services::content::fnv(&serde_json::to_vec(&proposal.commands).unwrap_or_default())
 }
 
 /// A proposal's commands rendered for the diff card (P16).
-fn proposal_commands(store: &Store, proposal: &lotus_core::Proposal) -> Vec<ProposalCommand> {
-    use lotus_core::Command;
+fn proposal_commands(store: &Store, proposal: &liv_core::Proposal) -> Vec<ProposalCommand> {
+    use liv_core::Command;
     proposal
         .commands
         .iter()
@@ -239,14 +239,14 @@ fn proposal_commands(store: &Store, proposal: &lotus_core::Proposal) -> Vec<Prop
             Command::AddCell { cell, .. } => ProposalCommand {
                 kind: "add".into(),
                 property: Some(reference_name(store, cell.property)),
-                value: Some(lotus_views::display(store, &cell.value)),
+                value: Some(liv_views::display(store, &cell.value)),
                 value_kind: property_kind(store, cell.property),
                 ref_target: cell_target(store, &cell.value),
             },
             Command::RemoveCell { cell, .. } => ProposalCommand {
                 kind: "remove".into(),
                 property: Some(reference_name(store, cell.property)),
-                value: Some(lotus_views::display(store, &cell.value)),
+                value: Some(liv_views::display(store, &cell.value)),
                 value_kind: property_kind(store, cell.property),
                 ref_target: cell_target(store, &cell.value),
             },
@@ -330,13 +330,13 @@ struct Snapshot {
     layers: Vec<LayerRow>,
     /// The habit card (P18b): lines + streaks + the 84-day chain, computed
     /// on read (D13). OPTIONAL shell-side.
-    habits: lotus_services::habits::HabitsSummary,
+    habits: liv_services::habits::HabitsSummary,
     /// Time totals + the 7-day window's entries (P18d). OPTIONAL shell-side.
-    time_entries: lotus_services::timeviews::TimeSummary,
+    time_entries: liv_services::timeviews::TimeSummary,
     /// Saved views — the one filter engine's bookmarks (P18d). OPTIONAL.
-    views: Vec<lotus_services::timeviews::ViewRow>,
+    views: Vec<liv_services::timeviews::ViewRow>,
     /// The board's widgets, float-key ordered (P18d). OPTIONAL.
-    widgets: Vec<lotus_services::timeviews::WidgetRow>,
+    widgets: Vec<liv_services::timeviews::WidgetRow>,
     /// The kind-id seam (P19c). OPTIONAL shell-side.
     kinds: Vec<KindRow>,
     /// The assist switch (P19h): the entity id (the toggle's write target)
@@ -384,7 +384,7 @@ static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
 
 /// P20j.4 — the log's self-defense notices (design §4): length
 /// regression / same-length replacement / a conflicted-copy sibling.
-/// Deduped by message; drained by `lotus_vault_alerts_at`.
+/// Deduped by message; drained by `liv_vault_alerts_at`.
 static VAULT_ALERTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 fn vault_alert(message: String) {
@@ -512,7 +512,7 @@ unsafe fn open_box(raw_path: *const c_char) -> Option<(Session, PathBuf)> {
     // Slow path: replay the log on the handle we already locked, then the
     // idempotent seed and the deterministic sweep (only ever here, §1.4).
     let mut session = Session::open_on(file, path).ok()?;
-    lotus_services::seed_if_fresh(&mut session).ok()?;
+    liv_services::seed_if_fresh(&mut session).ok()?;
     let today = civil_today();
     for proposal in clerk::sweep(session.store(), today) {
         if session.propose(proposal).is_err() {
@@ -606,11 +606,11 @@ unsafe fn with_box<T>(
     // AFTER checkin under the projector lock — never the box lock — and
     // a projection failure never fails the commit (surfaced by sync).
     let planned = if matches!(committed, Committed::Wrote) {
-        lotus_services::projection::vault_root_of(&key).map(|root| {
-            let io = lotus_services::projection::RealVaultIo::new(&root);
-            let manifest = lotus_services::projection::load_manifest(&io);
+        liv_services::projection::vault_root_of(&key).map(|root| {
+            let io = liv_services::projection::RealVaultIo::new(&root);
+            let manifest = liv_services::projection::load_manifest(&io);
             let (ops, next) =
-                lotus_services::projection::plan_projection(session.store(), &manifest);
+                liv_services::projection::plan_projection(session.store(), &manifest);
             (root, ops, next)
         })
     } else {
@@ -618,7 +618,7 @@ unsafe fn with_box<T>(
     };
     checkin(key, session, committed);
     if let Some((root, ops, next)) = planned {
-        let _ = lotus_services::projection::apply_locked(&root, &ops, &next);
+        let _ = liv_services::projection::apply_locked(&root, &ops, &next);
     }
     value
 }
@@ -664,7 +664,7 @@ fn seed_born(store: &Store) -> std::collections::HashSet<Id> {
             continue;
         }
         for command in &tx.commands {
-            if let lotus_core::Command::Create { entity } = command {
+            if let liv_core::Command::Create { entity } = command {
                 born.insert(*entity);
             }
         }
@@ -687,7 +687,7 @@ fn option_counts(store: &Store) -> std::collections::HashMap<Id, usize> {
 
 fn build_properties(store: &Store) -> Vec<PropertyRow> {
     let usage: std::collections::HashMap<Id, usize> =
-        lotus_services::search::usage_counts(store).into_iter().collect();
+        liv_services::search::usage_counts(store).into_iter().collect();
     let born = seed_born(store);
     let counts = option_counts(store);
     let hidden_prop = property_id(store, "hidden");
@@ -794,7 +794,7 @@ fn build_properties(store: &Store) -> Vec<PropertyRow> {
 }
 
 /// The default snapshot: the current civil month's occurrence window. A thin
-/// wrapper so `lotus_snapshot_at` is byte-identical to before — every existing
+/// wrapper so `liv_snapshot_at` is byte-identical to before — every existing
 /// caller keeps working. The calendar asks for other windows through
 /// `build_snapshot_windowed`.
 fn build_snapshot(store: &Store) -> Snapshot {
@@ -819,7 +819,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
 
     let everything = run(store, &Query::default());
 
-    let sections = lotus_services::today_sections(store, civil_today());
+    let sections = liv_services::today_sections(store, civil_today());
     let (today, unstructured) = (sections.due, sections.unstructured);
 
     // The calendar's plain dates (P11/11f): everything with a cell on ANY
@@ -827,7 +827,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     // occurrences instead. Per-role queries, merged, deduped, sorted by
     // positioning date then id. Lookup-role-only entities stay out
     // structurally — their absence from the set IS the off-calendar rule.
-    let positioning = lotus_services::calendar_set(store);
+    let positioning = liv_services::calendar_set(store);
     let positioning_date = |id: Id| -> i64 {
         positioning
             .iter()
@@ -859,7 +859,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     };
 
     // The caller's window is the horizon the calendar asks for.
-    let occurrences = lotus_services::recurrence::occurrences(store, from, to)
+    let occurrences = liv_services::recurrence::occurrences(store, from, to)
         .into_iter()
         .map(|o| OccurrenceRow { series: o.series, civil: o.date.civil })
         .collect();
@@ -869,7 +869,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     // shell's id→row index; every surface iterates the ID LISTS
     // (everything/dated/…), so a backstage row here leaks nowhere.
     let mut projected: Vec<Id> = everything.clone();
-    if let Some(widget_type) = lotus_services::content::find_type(store, "widget") {
+    if let Some(widget_type) = liv_services::content::find_type(store, "widget") {
         projected.extend(
             store
                 .entities()
@@ -880,7 +880,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     // P20j.6: the projected path per entity (a pure store function — the
     // same expected_files the materializer plans from), joined by id.
     let vault_paths: std::collections::HashMap<Id, String> =
-        lotus_services::vault::expected_files(store)
+        liv_services::vault::expected_files(store)
             .into_iter()
             .map(|f| (f.id, f.rel_path))
             .collect();
@@ -903,7 +903,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
             };
             EntityRow {
                 id: entity.id,
-                title: lotus_views::summary(store, entity),
+                title: liv_views::summary(store, entity),
                 kinds: entity
                     .all(props::TYPE)
                     .filter_map(|v| match v {
@@ -916,7 +916,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                 positioned_by,
                 due_date_only,
                 status: status_prop.and_then(|p| {
-                    entity.get(p).map(|v| lotus_views::display(store, v))
+                    entity.get(p).map(|v| liv_views::display(store, v))
                 }),
                 created: match entity.get(props::CREATED) {
                     Some(Value::DateTime(d)) => Some(d.civil),
@@ -929,7 +929,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                 archived: archived_prop
                     .map(|p| entity.has(p, &Value::Bool(true)))
                     .unwrap_or(false),
-                content_print: lotus_services::content::content_fingerprint(
+                content_print: liv_services::content::content_fingerprint(
                     entity.get(props::CONTENT),
                 ),
                 vault_path: vault_paths.get(&entity.id).cloned(),
@@ -940,7 +940,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                         property_id: cell.property,
                         property: reference_name(store, cell.property),
                         kind: property_kind(store, cell.property).unwrap_or_default(),
-                        value: lotus_views::display(store, &cell.value),
+                        value: liv_views::display(store, &cell.value),
                         ref_target: cell_target(store, &cell.value),
                     })
                     .collect(),
@@ -949,16 +949,16 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .collect();
 
     // The workspace tree: type by name, then every untrashed carrier.
-    let workspaces = match lotus_services::content::find_type(store, "workspace") {
+    let workspaces = match liv_services::content::find_type(store, "workspace") {
         None => Vec::new(),
         Some(workspace_type) => {
-            let text = |entity: &lotus_core::Entity, prop: Option<Id>| -> Option<String> {
+            let text = |entity: &liv_core::Entity, prop: Option<Id>| -> Option<String> {
                 match prop.and_then(|p| entity.get(p)) {
                     Some(Value::Text(t)) => Some(t.clone()),
                     _ => None,
                 }
             };
-            let flag = |entity: &lotus_core::Entity, prop: Option<Id>| -> bool {
+            let flag = |entity: &liv_core::Entity, prop: Option<Id>| -> bool {
                 matches!(prop.and_then(|p| entity.get(p)), Some(Value::Bool(true)))
             };
             let emoji_prop = property_id(store, "emoji");
@@ -1003,7 +1003,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     // The consent gate covers the READ too (P19 review): the sweep goes
     // quiet when the switch is off, but the .pending sidecar persists —
     // yesterday's queue must not keep proposing over a recorded opt-out.
-    let inbox = if !lotus_services::clerk::assist_enabled(store) {
+    let inbox = if !liv_services::clerk::assist_enabled(store) {
         Vec::new()
     } else {
         store
@@ -1011,12 +1011,12 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .iter()
         .filter_map(|p| {
             let entity = match p.commands.first() {
-                Some(lotus_core::Command::AddCell { entity, .. })
-                | Some(lotus_core::Command::Create { entity })
-                | Some(lotus_core::Command::Trash { entity })
-                | Some(lotus_core::Command::Restore { entity })
-                | Some(lotus_core::Command::RemoveCell { entity, .. })
-                | Some(lotus_core::Command::Redirect { entity, .. }) => *entity,
+                Some(liv_core::Command::AddCell { entity, .. })
+                | Some(liv_core::Command::Create { entity })
+                | Some(liv_core::Command::Trash { entity })
+                | Some(liv_core::Command::Restore { entity })
+                | Some(liv_core::Command::RemoveCell { entity, .. })
+                | Some(liv_core::Command::Redirect { entity, .. }) => *entity,
                 None => return None,
             };
             seen.push(entity);
@@ -1043,7 +1043,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     // target is trashed/missing drops out of the ROW set (dangling tolerated),
     // never out of the log.
     let pins = match (
-        lotus_services::content::find_type(store, "pin"),
+        liv_services::content::find_type(store, "pin"),
         property_id(store, "target"),
         property_id(store, "order"),
     ) {
@@ -1076,7 +1076,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
     // Layout layers (P17i): named, workspace-scoped, ordered members; a
     // trashed member drops from the row, never the row from the snapshot.
     let layers = match (
-        lotus_services::content::find_type(store, "layer"),
+        liv_services::content::find_type(store, "layer"),
         property_id(store, "related"),
     ) {
         (Some(layer_type), Some(related)) => {
@@ -1114,10 +1114,10 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
 
     let now = Local::now();
     let today_ymd = (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64;
-    let habits = lotus_services::habits::habit_stats(store, today_ymd);
-    let time_entries = lotus_services::timeviews::time_totals(store, today_ymd);
-    let views = lotus_services::timeviews::saved_views(store);
-    let widgets = lotus_services::timeviews::board_widgets(store);
+    let habits = liv_services::habits::habit_stats(store, today_ymd);
+    let time_entries = liv_services::timeviews::time_totals(store, today_ymd);
+    let views = liv_services::timeviews::saved_views(store);
+    let widgets = liv_services::timeviews::board_widgets(store);
     // The kind-id seam (P19c): every find-able type (an EXPECTED cell is what
     // makes a type a type — the P9 rule).
     let mut kinds: Vec<KindRow> = store
@@ -1130,7 +1130,7 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
         .collect();
     // Deterministic order — the cache-parity test compares snapshots byte-wise.
     kinds.sort_by_key(|k| k.id);
-    let assist = lotus_services::clerk::assist_switch(store).map(|(entity, prop, on)| {
+    let assist = liv_services::clerk::assist_switch(store).map(|(entity, prop, on)| {
         AssistRow { id: entity, on, prop: reference_name(store, prop) }
     });
 
@@ -1172,13 +1172,13 @@ fn reference_name(store: &Store, id: Id) -> String {
 }
 
 /// Everything the window renders, as one JSON document.
-/// Returns a malloc'd string — free it with `lotus_string_free`.
+/// Returns a malloc'd string — free it with `liv_string_free`.
 /// Null on failure (including the box being open elsewhere).
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_snapshot(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn liv_snapshot(path: *const c_char) -> *mut c_char {
     with_box(path, std::ptr::null_mut(), |session| {
         let snapshot = build_snapshot(session.store());
         let out = match serde_json::to_string(&snapshot).ok().and_then(|s| CString::new(s).ok()) {
@@ -1195,12 +1195,12 @@ pub unsafe extern "C" fn lotus_snapshot(path: *const c_char) -> *mut c_char {
 /// (civil `YYYYMMDDHHMM`) instead of the current month — so a calendar
 /// navigated to another month, or a week crossing a month edge, sees its
 /// occurrences. The engine caps the window at a year. Same JSON shape as
-/// `lotus_snapshot`. Null on failure; free with `lotus_string_free`.
+/// `liv_snapshot`. Null on failure; free with `liv_string_free`.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_snapshot_window_at(
+pub unsafe extern "C" fn liv_snapshot_window_at(
     path: *const c_char,
     from_civil: i64,
     to_civil: i64,
@@ -1264,13 +1264,13 @@ fn build_search(store: &Store, raw: &str, cache_dir: &Path) -> SearchResult {
 }
 
 /// Search the box: parse the raw DSL, rank the hits, count the facets.
-/// Returns a malloc'd JSON string — free it with `lotus_string_free`.
+/// Returns a malloc'd JSON string — free it with `liv_string_free`.
 /// Null on failure (including the box being open elsewhere).
 ///
 /// # Safety
 /// `path` and `raw_query` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_search_at(
+pub unsafe extern "C" fn liv_search_at(
     path: *const c_char,
     raw_query: *const c_char,
 ) -> *mut c_char {
@@ -1301,7 +1301,7 @@ pub unsafe extern "C" fn lotus_search_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_resync_file_at(path: *const c_char, id: u64) -> i32 {
+pub unsafe extern "C" fn liv_resync_file_at(path: *const c_char, id: u64) -> i32 {
     with_box(path, 0, |session| match files::resync_file(session, id) {
         Ok(files::Resync::Changed(_)) => (1, Committed::Wrote),
         Ok(files::Resync::Unchanged) => (0, Committed::Read),
@@ -1313,12 +1313,12 @@ pub unsafe extern "C" fn lotus_resync_file_at(path: *const c_char, id: u64) -> i
 /// A file entity's extracted plain text (rung 2), from the hash-keyed cache
 /// (extracting on a miss). Empty when the file has no extractable text, is a
 /// broken reference, or is not a file entity. A malloc'd string — free with
-/// `lotus_string_free`; NULL only when the box is unavailable.
+/// `liv_string_free`; NULL only when the box is unavailable.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_extracted_text_at(path: *const c_char, id: u64) -> *mut c_char {
+pub unsafe extern "C" fn liv_extracted_text_at(path: *const c_char, id: u64) -> *mut c_char {
     let Ok(path_str) = CStr::from_ptr(path).to_str() else {
         return std::ptr::null_mut();
     };
@@ -1361,9 +1361,9 @@ fn file_text(store: &Store, cache_dir: &Path, id: u64) -> String {
 }
 
 /// # Safety
-/// `s` must be a pointer returned by `lotus_snapshot`, freed at most once.
+/// `s` must be a pointer returned by `liv_snapshot`, freed at most once.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_string_free(s: *mut c_char) {
+pub unsafe extern "C" fn liv_string_free(s: *mut c_char) {
     if !s.is_null() {
         drop(CString::from_raw(s));
     }
@@ -1383,7 +1383,7 @@ unsafe fn triage(
             .iter()
             .enumerate()
             .filter(|(_, p)| match p.commands.first() {
-                Some(lotus_core::Command::AddCell { entity: e, .. }) => *e == entity,
+                Some(liv_core::Command::AddCell { entity: e, .. }) => *e == entity,
                 _ => false,
             })
             .map(|(i, _)| i)
@@ -1415,7 +1415,7 @@ unsafe fn triage(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_accept_at(
+pub unsafe extern "C" fn liv_accept_at(
     path: *const c_char,
     entity: u64,
     ordinal: u32,
@@ -1431,7 +1431,7 @@ pub unsafe extern "C" fn lotus_accept_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_reject_at(
+pub unsafe extern "C" fn liv_reject_at(
     path: *const c_char,
     entity: u64,
     ordinal: u32,
@@ -1450,7 +1450,7 @@ pub unsafe extern "C" fn lotus_reject_at(
 /// # Safety
 /// `path` and `fingerprints_json` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_accept_group_at(
+pub unsafe extern "C" fn liv_accept_group_at(
     path: *const c_char,
     fingerprints_json: *const c_char,
 ) -> i32 {
@@ -1476,7 +1476,7 @@ pub unsafe extern "C" fn lotus_accept_group_at(
         let Some(indices) = indices else {
             return (0, Committed::Read);
         };
-        match lotus_services::clerk::accept_group(session, &indices) {
+        match liv_services::clerk::accept_group(session, &indices) {
             Ok(_) => (1, Committed::Wrote),
             Err(_) => (0, Committed::Failed),
         }
@@ -1490,7 +1490,7 @@ pub unsafe extern "C" fn lotus_accept_group_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_undo_at(path: *const c_char) -> i32 {
+pub unsafe extern "C" fn liv_undo_at(path: *const c_char) -> i32 {
     with_box(path, 0, |session| {
         let ok = session.undo(Author::User).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
@@ -1504,7 +1504,7 @@ pub unsafe extern "C" fn lotus_undo_at(path: *const c_char) -> i32 {
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_probe(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn liv_probe(path: *const c_char) -> *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
     }
@@ -1516,9 +1516,9 @@ pub unsafe extern "C" fn lotus_probe(path: *const c_char) -> *mut c_char {
         Err(e) => e,
     };
     let code = match &error {
-        lotus_core::PersistError::Locked => "locked",
-        lotus_core::PersistError::Corrupt(_) => "corrupt",
-        lotus_core::PersistError::UnsupportedVersion(_) => "version",
+        liv_core::PersistError::Locked => "locked",
+        liv_core::PersistError::Corrupt(_) => "corrupt",
+        liv_core::PersistError::UnsupportedVersion(_) => "version",
         _ => "io",
     };
     let json = serde_json::json!({ "code": code, "message": error.to_string() });
@@ -1541,7 +1541,7 @@ struct ContentDoc {
     /// Identity of the stored content value; a save must present it back.
     fingerprint: u64,
     /// The log's own serde encoding of Span, verbatim.
-    spans: Vec<lotus_core::Span>,
+    spans: Vec<liv_core::Span>,
 }
 
 /// One entity's content, fresh from the box. Legacy plain-text content
@@ -1549,12 +1549,12 @@ struct ContentDoc {
 /// value). Redirects resolve before reading. A box that opened fine but
 /// holds no such entity answers `{"missing":true,…}`; null means only
 /// that the box itself is unavailable (probe to learn why).
-/// Free with `lotus_string_free`.
+/// Free with `liv_string_free`.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut c_char {
+pub unsafe extern "C" fn liv_content_at(path: *const c_char, id: u64) -> *mut c_char {
     with_box(path, std::ptr::null_mut(), |session| {
         let store = session.store();
         let resolved = store.resolve(id);
@@ -1567,10 +1567,10 @@ pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut 
                 },
                 trashed: entity.trashed,
                 missing: false,
-                fingerprint: lotus_services::content::content_fingerprint(
+                fingerprint: liv_services::content::content_fingerprint(
                     entity.get(props::CONTENT),
                 ),
-                spans: lotus_services::content::content_spans(entity),
+                spans: liv_services::content::content_spans(entity),
             },
             None => ContentDoc {
                 id: resolved,
@@ -1599,7 +1599,7 @@ pub unsafe extern "C" fn lotus_content_at(path: *const c_char, id: u64) -> *mut 
 /// `path` and `spans_json` must be valid NUL-terminated UTF-8 strings;
 /// `fresh_fingerprint` must be null or valid for one u64 write.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_set_content_at(
+pub unsafe extern "C" fn liv_set_content_at(
     path: *const c_char,
     id: u64,
     spans_json: *const c_char,
@@ -1612,11 +1612,11 @@ pub unsafe extern "C" fn lotus_set_content_at(
     let Ok(json) = CStr::from_ptr(spans_json).to_str() else {
         return 0;
     };
-    let Ok(spans) = serde_json::from_str::<Vec<lotus_core::Span>>(json) else {
+    let Ok(spans) = serde_json::from_str::<Vec<liv_core::Span>>(json) else {
         return 0;
     };
     with_box(path, 0, move |session| {
-        match lotus_services::content::set_content(session, id, spans, base_fingerprint) {
+        match liv_services::content::set_content(session, id, spans, base_fingerprint) {
             Ok(fresh) => {
                 if !fresh_fingerprint.is_null() {
                     unsafe { *fresh_fingerprint = fresh };
@@ -1624,7 +1624,7 @@ pub unsafe extern "C" fn lotus_set_content_at(
                 (1, Committed::Wrote)
             }
             // A stale save refused before it touched the store — cache stays valid.
-            Err(lotus_services::content::ContentError::Stale) => (-1, Committed::Read),
+            Err(liv_services::content::ContentError::Stale) => (-1, Committed::Read),
             Err(_) => (0, Committed::Failed),
         }
     })
@@ -1638,7 +1638,7 @@ pub unsafe extern "C" fn lotus_set_content_at(
 /// # Safety
 /// `path`, `property` and `value` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_set_at(
+pub unsafe extern "C" fn liv_set_at(
     path: *const c_char,
     id: u64,
     property: *const c_char,
@@ -1654,14 +1654,14 @@ pub unsafe extern "C" fn lotus_set_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        let ok = lotus_services::content::set_property(session, id, property, value).is_ok();
+        let ok = liv_services::content::set_property(session, id, property, value).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
 /// Add ONE cell to a (multi-valued) property — list membership adds a
-/// member as ("related", "#<member-id>"). Unlike lotus_set_at (replace all
-/// cells of the property) and lotus_unset_at (remove all), this touches
+/// member as ("related", "#<member-id>"). Unlike liv_set_at (replace all
+/// cells of the property) and liv_unset_at (remove all), this touches
 /// exactly one cell; adding a value already present is a no-op that still
 /// returns 1. Value parsed by the property's kind. 1 ok, 0 on
 /// busy/parse/no-entity.
@@ -1669,7 +1669,7 @@ pub unsafe extern "C" fn lotus_set_at(
 /// # Safety
 /// `path`, `property`, `value` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_add_cell_at(
+pub unsafe extern "C" fn liv_add_cell_at(
     path: *const c_char,
     id: u64,
     property: *const c_char,
@@ -1684,7 +1684,7 @@ pub unsafe extern "C" fn lotus_add_cell_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        let ok = lotus_services::content::add_cell(session, id, property, value).is_ok();
+        let ok = liv_services::content::add_cell(session, id, property, value).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -1696,7 +1696,7 @@ pub unsafe extern "C" fn lotus_add_cell_at(
 /// # Safety
 /// `path`, `property`, `value` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_remove_cell_at(
+pub unsafe extern "C" fn liv_remove_cell_at(
     path: *const c_char,
     id: u64,
     property: *const c_char,
@@ -1711,7 +1711,7 @@ pub unsafe extern "C" fn lotus_remove_cell_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        let ok = lotus_services::content::remove_cell(session, id, property, value).is_ok();
+        let ok = liv_services::content::remove_cell(session, id, property, value).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -1722,22 +1722,22 @@ struct ContentVersionRow {
     time: i64,
     author: String,
     label: String,
-    spans: Vec<lotus_core::Span>,
+    spans: Vec<liv_core::Span>,
 }
 
 /// Every past version of an entity's content, NEWEST first, as one JSON
 /// array: [{"seq","time","author","label","spans"}]. The log is the
 /// history — no reconstruction; each entry is a whole content value, and
-/// restoring one is an ordinary `lotus_set_content_at` of its spans.
-/// Null when the box is unavailable. Free with `lotus_string_free`.
+/// restoring one is an ordinary `liv_set_content_at` of its spans.
+/// Null when the box is unavailable. Free with `liv_string_free`.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_content_history_at(path: *const c_char, id: u64) -> *mut c_char {
+pub unsafe extern "C" fn liv_content_history_at(path: *const c_char, id: u64) -> *mut c_char {
     with_box(path, std::ptr::null_mut(), |session| {
         let mut versions: Vec<ContentVersionRow> =
-            lotus_services::content::content_history(session.store(), id)
+            liv_services::content::content_history(session.store(), id)
                 .into_iter()
                 .map(|v| ContentVersionRow {
                     seq: v.seq,
@@ -1766,11 +1766,11 @@ pub unsafe extern "C" fn lotus_content_history_at(path: *const c_char, id: u64) 
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
+pub unsafe extern "C" fn liv_create_note_at(path: *const c_char) -> u64 {
     with_box(path, 0, |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::content::create_note(session, created).unwrap_or(0);
+        let id = liv_services::content::create_note(session, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -1784,7 +1784,7 @@ pub unsafe extern "C" fn lotus_create_note_at(path: *const c_char) -> u64 {
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_open_daily_note_at(
+pub unsafe extern "C" fn liv_open_daily_note_at(
     path: *const c_char,
     date_civil: i64,
     workspace: u64,
@@ -1795,7 +1795,7 @@ pub unsafe extern "C" fn lotus_open_daily_note_at(
     with_box(path, 0, move |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        match lotus_services::content::get_or_create_daily_note(session, day, ws, created) {
+        match liv_services::content::get_or_create_daily_note(session, day, ws, created) {
             Ok((id, created)) => (id, if created { Committed::Wrote } else { Committed::Read }),
             Err(_) => (0, Committed::Failed),
         }
@@ -1809,7 +1809,7 @@ pub unsafe extern "C" fn lotus_open_daily_note_at(
 /// # Safety
 /// `path` and `type_name` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_set_type_at(
+pub unsafe extern "C" fn liv_set_type_at(
     path: *const c_char,
     id: u64,
     type_name: *const c_char,
@@ -1821,10 +1821,10 @@ pub unsafe extern "C" fn lotus_set_type_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        match lotus_services::content::set_type(session, id, type_name) {
+        match liv_services::content::set_type(session, id, type_name) {
             Ok(()) => (1, Committed::Wrote),
-            Err(lotus_services::content::WriteError::Refused(_)) => (0, Committed::Read),
-            Err(lotus_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
+            Err(liv_services::content::WriteError::Refused(_)) => (0, Committed::Read),
+            Err(liv_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
         }
     })
 }
@@ -1836,11 +1836,11 @@ pub unsafe extern "C" fn lotus_set_type_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
+pub unsafe extern "C" fn liv_create_task_at(path: *const c_char) -> u64 {
     with_box(path, 0, |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::content::create_task(session, created).unwrap_or(0);
+        let id = liv_services::content::create_task(session, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -1849,12 +1849,12 @@ pub unsafe extern "C" fn lotus_create_task_at(path: *const c_char) -> u64 {
 /// with usage counts, JSON [{value, count}] in deterministic order (count
 /// desc, then display). Values render through views::display, so a span
 /// reads "start -> end" and a select reads its option's name. Null on
-/// busy/unknown property. Free with `lotus_string_free`.
+/// busy/unknown property. Free with `liv_string_free`.
 ///
 /// # Safety
 /// `path` and `property` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_distinct_values_at(
+pub unsafe extern "C" fn liv_distinct_values_at(
     path: *const c_char,
     property: *const c_char,
 ) -> *mut c_char {
@@ -1869,11 +1869,11 @@ pub unsafe extern "C" fn lotus_distinct_values_at(
         let Some(prop) = property_id(store, prop_name) else {
             return (std::ptr::null_mut(), Committed::Read);
         };
-        let rows: Vec<serde_json::Value> = lotus_services::search::distinct_values(store, prop)
+        let rows: Vec<serde_json::Value> = liv_services::search::distinct_values(store, prop)
             .into_iter()
             .map(|(value, count)| {
                 serde_json::json!({
-                    "value": lotus_views::display(store, &value),
+                    "value": liv_views::display(store, &value),
                     "count": count,
                 })
             })
@@ -1889,12 +1889,12 @@ pub unsafe extern "C" fn lotus_distinct_values_at(
 /// The status vocabulary OFFERED to a kind (P11/11d), sorted by board
 /// order: JSON [{id,name,order,hue,completes}]. Options with no carriers
 /// are included — an empty board column keeps its header. Null on
-/// busy/unknown kind. Free with `lotus_string_free`.
+/// busy/unknown kind. Free with `liv_string_free`.
 ///
 /// # Safety
 /// `path` and `kind` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_status_options_at(
+pub unsafe extern "C" fn liv_status_options_at(
     path: *const c_char,
     kind: *const c_char,
 ) -> *mut c_char {
@@ -1905,11 +1905,11 @@ pub unsafe extern "C" fn lotus_status_options_at(
         return std::ptr::null_mut();
     };
     with_box(path, std::ptr::null_mut(), |session| {
-        let Some(kind_id) = lotus_services::content::find_type(session.store(), kind_name)
+        let Some(kind_id) = liv_services::content::find_type(session.store(), kind_name)
         else {
             return (std::ptr::null_mut(), Committed::Read);
         };
-        let options = lotus_services::status_options_for(session.store(), kind_id);
+        let options = liv_services::status_options_for(session.store(), kind_id);
         let out = match serde_json::to_string(&options).ok().and_then(|s| CString::new(s).ok()) {
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),
@@ -1925,7 +1925,7 @@ pub unsafe extern "C" fn lotus_status_options_at(
 /// # Safety
 /// `path`, `kind`, and `name` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_add_status_option_at(
+pub unsafe extern "C" fn liv_add_status_option_at(
     path: *const c_char,
     kind: *const c_char,
     name: *const c_char,
@@ -1940,18 +1940,18 @@ pub unsafe extern "C" fn lotus_add_status_option_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        let Some(kind_id) = lotus_services::content::find_type(session.store(), kind_name)
+        let Some(kind_id) = liv_services::content::find_type(session.store(), kind_name)
         else {
             // No such kind: nothing touched, the cached store stays valid.
             return (0, Committed::Read);
         };
         let hue = (hue >= 0.0).then_some(hue);
-        match lotus_services::content::add_status_option(session, kind_id, option_name, hue) {
+        match liv_services::content::add_status_option(session, kind_id, option_name, hue) {
             Ok(id) => (id, Committed::Wrote),
             // A refusal never touched the store — the cache stays valid;
             // only a real persist failure evicts (the review's finding).
-            Err(lotus_services::content::WriteError::Refused(_)) => (0, Committed::Read),
-            Err(lotus_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
+            Err(liv_services::content::WriteError::Refused(_)) => (0, Committed::Read),
+            Err(liv_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
         }
     })
 }
@@ -1965,7 +1965,7 @@ pub unsafe extern "C" fn lotus_add_status_option_at(
 /// # Safety
 /// `path`, `name`, and `kind` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_add_property_at(
+pub unsafe extern "C" fn liv_add_property_at(
     path: *const c_char,
     name: *const c_char,
     kind: *const c_char,
@@ -1978,11 +1978,11 @@ pub unsafe extern "C" fn lotus_add_property_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        match lotus_services::content::birth_property(session, name, kind) {
+        match liv_services::content::birth_property(session, name, kind) {
             Ok(id) => (id, Committed::Wrote),
             // A refusal never touched the store — the cache stays valid.
-            Err(lotus_services::content::WriteError::Refused(_)) => (0, Committed::Read),
-            Err(lotus_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
+            Err(liv_services::content::WriteError::Refused(_)) => (0, Committed::Read),
+            Err(liv_services::content::WriteError::Persist(_)) => (0, Committed::Failed),
         }
     })
 }
@@ -2009,7 +2009,7 @@ fn civil_text(civil: i64, date_only: bool) -> String {
 /// # Safety
 /// `path` and `property` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_set_span_at(
+pub unsafe extern "C" fn liv_set_span_at(
     path: *const c_char,
     id: u64,
     property: *const c_char,
@@ -2037,7 +2037,7 @@ pub unsafe extern "C" fn lotus_set_span_at(
         format!("{} -> {}", civil_text(start, date_only), civil_text(end, date_only))
     };
     with_box(path, 0, move |session| {
-        let ok = lotus_services::content::set_property(session, id, prop_name, &raw).is_ok();
+        let ok = liv_services::content::set_property(session, id, prop_name, &raw).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2045,14 +2045,14 @@ pub unsafe extern "C" fn lotus_set_span_at(
 /// Space-cycles a date row's role (P11/11a): one transaction moving the
 /// value — civil + date_only intact — from `property` to the next role in
 /// the ring due → date → valid-until → occurred → purchased-on → due.
-/// Returns the NEW property name (malloc'd — free with `lotus_string_free`),
+/// Returns the NEW property name (malloc'd — free with `liv_string_free`),
 /// or NULL on busy/refusal. A refusal never touched the store, so the cached
 /// snapshot stays valid (`Read`); only a real write re-sweeps (`Wrote`).
 ///
 /// # Safety
 /// `path` and `property` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_cycle_date_role_at(
+pub unsafe extern "C" fn liv_cycle_date_role_at(
     path: *const c_char,
     id: u64,
     property: *const c_char,
@@ -2067,7 +2067,7 @@ pub unsafe extern "C" fn lotus_cycle_date_role_at(
         let Some(prop) = property_id(session.store(), prop_name) else {
             return (std::ptr::null_mut(), Committed::Read);
         };
-        match lotus_services::content::cycle_date_role(session, id, prop) {
+        match liv_services::content::cycle_date_role(session, id, prop) {
             Ok(next) => {
                 let name = match session.store().get(next).and_then(|p| p.get(props::NAME)) {
                     Some(Value::Text(n)) => n.clone(),
@@ -2080,10 +2080,10 @@ pub unsafe extern "C" fn lotus_cycle_date_role_at(
                     Err(_) => (std::ptr::null_mut(), Committed::Wrote),
                 }
             }
-            Err(lotus_services::content::WriteError::Refused(_)) => {
+            Err(liv_services::content::WriteError::Refused(_)) => {
                 (std::ptr::null_mut(), Committed::Read)
             }
-            Err(lotus_services::content::WriteError::Persist(_)) => {
+            Err(liv_services::content::WriteError::Persist(_)) => {
                 (std::ptr::null_mut(), Committed::Failed)
             }
         }
@@ -2098,7 +2098,7 @@ pub unsafe extern "C" fn lotus_cycle_date_role_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_event_at(
+pub unsafe extern "C" fn liv_create_event_at(
     path: *const c_char,
     due_civil: i64,
     date_only: i32,
@@ -2113,7 +2113,7 @@ pub unsafe extern "C" fn lotus_create_event_at(
         };
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::content::create_event(session, due, created).unwrap_or(0);
+        let id = liv_services::content::create_event(session, due, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2124,7 +2124,7 @@ pub unsafe extern "C" fn lotus_create_event_at(
 /// # Safety
 /// `path` and `name` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_list_at(
+pub unsafe extern "C" fn liv_create_list_at(
     path: *const c_char,
     name: *const c_char,
 ) -> u64 {
@@ -2137,7 +2137,7 @@ pub unsafe extern "C" fn lotus_create_list_at(
     with_box(path, 0, move |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::content::create_list(session, name, created).unwrap_or(0);
+        let id = liv_services::content::create_list(session, name, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2150,7 +2150,7 @@ pub unsafe extern "C" fn lotus_create_list_at(
 /// # Safety
 /// `path` and `file_path` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_add_file_at(
+pub unsafe extern "C" fn liv_add_file_at(
     path: *const c_char,
     file_path: *const c_char,
 ) -> u64 {
@@ -2163,7 +2163,7 @@ pub unsafe extern "C" fn lotus_add_file_at(
     with_box(path, 0, move |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::files::add_file(session, file_path, created).unwrap_or(0);
+        let id = liv_services::files::add_file(session, file_path, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2177,7 +2177,7 @@ pub unsafe extern "C" fn lotus_add_file_at(
 /// # Safety
 /// `path`, `items_json`, `stamps_json` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_import_batch_at(
+pub unsafe extern "C" fn liv_import_batch_at(
     path: *const c_char,
     items_json: *const c_char,
     stamps_json: *const c_char,
@@ -2188,7 +2188,7 @@ pub unsafe extern "C" fn lotus_import_batch_at(
     let Ok(items_str) = CStr::from_ptr(items_json).to_str() else {
         return -1;
     };
-    let Ok(items) = serde_json::from_str::<Vec<lotus_services::import::ImportItem>>(items_str) else {
+    let Ok(items) = serde_json::from_str::<Vec<liv_services::import::ImportItem>>(items_str) else {
         return -1;
     };
     // A non-null but malformed stamps_json is an error, not silently empty —
@@ -2205,12 +2205,12 @@ pub unsafe extern "C" fn lotus_import_batch_at(
             Err(_) => return -1,
         }
     };
-    let defaults = lotus_services::import::ImportDefaults { stamps };
+    let defaults = liv_services::import::ImportDefaults { stamps };
 
     with_box(path, -1, move |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        match lotus_services::import::commit_batch(session, &items, created, &defaults) {
+        match liv_services::import::commit_batch(session, &items, created, &defaults) {
             Ok(ids) => {
                 let n = ids.len() as i64;
                 (n, if ids.is_empty() { Committed::Read } else { Committed::Wrote })
@@ -2228,7 +2228,7 @@ pub unsafe extern "C" fn lotus_import_batch_at(
 /// # Safety
 /// `path`, `ids_json`, `group_props_json`, `dest` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_export_at(
+pub unsafe extern "C" fn liv_export_at(
     path: *const c_char,
     ids_json: *const c_char,
     group_props_json: *const c_char,
@@ -2262,14 +2262,14 @@ pub unsafe extern "C" fn lotus_export_at(
     // multi-GB byte copy (the P15c review's finding).
     let plan = with_box(path, None, move |session| {
         (
-            Some(lotus_services::export::export_plan(session.store(), &ids, &groups)),
+            Some(liv_services::export::export_plan(session.store(), &ids, &groups)),
             Committed::Read,
         )
     });
     let Some(plan) = plan else {
         return -1; // box busy
     };
-    match lotus_services::export::export_write(&plan, std::path::Path::new(dest_str)) {
+    match liv_services::export::export_write(&plan, std::path::Path::new(dest_str)) {
         Ok(n) => n as i64,
         Err(_) => -1,
     }
@@ -2282,7 +2282,7 @@ pub unsafe extern "C" fn lotus_export_at(
 /// # Safety
 /// `path` and `name` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_workspace_at(
+pub unsafe extern "C" fn liv_create_workspace_at(
     path: *const c_char,
     name: *const c_char,
     parent: u64,
@@ -2301,7 +2301,7 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let parent = (parent != 0).then_some(parent);
-        let id = lotus_services::content::create_workspace(session, name, parent, created).unwrap_or(0);
+        let id = liv_services::content::create_workspace(session, name, parent, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2313,9 +2313,9 @@ pub unsafe extern "C" fn lotus_create_workspace_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) -> i32 {
+pub unsafe extern "C" fn liv_trash_workspace_at(path: *const c_char, id: u64) -> i32 {
     with_box(path, 0, |session| {
-        let ok = lotus_services::content::trash_workspace(session, id).is_ok();
+        let ok = liv_services::content::trash_workspace(session, id).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2331,11 +2331,11 @@ pub unsafe extern "C" fn lotus_trash_workspace_at(path: *const c_char, id: u64) 
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_pin_at(path: *const c_char, target: u64) -> u64 {
+pub unsafe extern "C" fn liv_pin_at(path: *const c_char, target: u64) -> u64 {
     with_box(path, 0, |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::content::create_pin(session, target, created).unwrap_or(0);
+        let id = liv_services::content::create_pin(session, target, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2346,9 +2346,9 @@ pub unsafe extern "C" fn lotus_pin_at(path: *const c_char, target: u64) -> u64 {
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_unpin_at(path: *const c_char, target: u64) -> i32 {
+pub unsafe extern "C" fn liv_unpin_at(path: *const c_char, target: u64) -> i32 {
     with_box(path, 0, |session| {
-        match lotus_services::content::remove_pin(session, target) {
+        match liv_services::content::remove_pin(session, target) {
             Ok(true) => (1, Committed::Wrote),
             Ok(false) => (0, Committed::Read),
             Err(_) => (0, Committed::Failed),
@@ -2367,7 +2367,7 @@ pub unsafe extern "C" fn lotus_unpin_at(path: *const c_char, target: u64) -> i32
 /// `path` and `name` must be valid NUL-terminated UTF-8; `cadence` may be
 /// null or valid UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_habit_at(
+pub unsafe extern "C" fn liv_create_habit_at(
     path: *const c_char,
     name: *const c_char,
     points: f64,
@@ -2395,7 +2395,7 @@ pub unsafe extern "C" fn lotus_create_habit_at(
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let points = (points > 0.0).then_some(points);
-        let id = lotus_services::content::create_habit(
+        let id = liv_services::content::create_habit(
             session,
             name,
             points,
@@ -2409,13 +2409,13 @@ pub unsafe extern "C" fn lotus_create_habit_at(
 
 /// Check a habit in on a civil day (YYYYMMDD; 0 = today). One backstage
 /// record, one commit, one undo; idempotent per (habit, day) so the checkbox
-/// toggle is safe. Uncheck = lotus_trash_at on the returned row. Returns the
+/// toggle is safe. Uncheck = liv_trash_at on the returned row. Returns the
 /// check-in id, 0 on failure.
 ///
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_check_in_at(path: *const c_char, habit: u64, day: i64) -> u64 {
+pub unsafe extern "C" fn liv_check_in_at(path: *const c_char, habit: u64, day: i64) -> u64 {
     with_box(path, 0, move |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
@@ -2424,7 +2424,7 @@ pub unsafe extern "C" fn lotus_check_in_at(path: *const c_char, habit: u64, day:
         } else {
             (now.year() as i64) * 10_000 + (now.month() as i64) * 100 + now.day() as i64
         };
-        let id = lotus_services::content::check_in(session, habit, day, created).unwrap_or(0);
+        let id = liv_services::content::check_in(session, habit, day, created).unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -2440,7 +2440,7 @@ pub unsafe extern "C" fn lotus_check_in_at(path: *const c_char, habit: u64, day:
 /// # Safety
 /// `path`, `property`, `old`, and `new` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_rename_value_at(
+pub unsafe extern "C" fn liv_rename_value_at(
     path: *const c_char,
     property: *const c_char,
     old: *const c_char,
@@ -2457,8 +2457,8 @@ pub unsafe extern "C" fn lotus_rename_value_at(
         return -1;
     };
     with_box(path, -1, move |session| {
-        use lotus_services::content::WriteError;
-        match lotus_services::content::rename_value(session, property, old, new) {
+        use liv_services::content::WriteError;
+        match liv_services::content::rename_value(session, property, old, new) {
             Ok(count) => (count as i64, Committed::Wrote),
             // A refusal never touched the store: the cache survives (Read).
             // A persist failure leaves the MEMORY store one committed txn
@@ -2478,7 +2478,7 @@ pub unsafe extern "C" fn lotus_rename_value_at(
 /// # Safety
 /// `path` and `name` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_add_option_at(
+pub unsafe extern "C" fn liv_add_option_at(
     path: *const c_char,
     property: u64,
     name: *const c_char,
@@ -2490,8 +2490,8 @@ pub unsafe extern "C" fn lotus_add_option_at(
         return 0;
     };
     with_box(path, 0, move |session| {
-        use lotus_services::content::WriteError;
-        match lotus_services::content::add_option(session, property, name) {
+        use liv_services::content::WriteError;
+        match liv_services::content::add_option(session, property, name) {
             // The idempotent hit committed nothing — Read, or every re-add
             // triggers a needless re-sweep (the create-or-return pattern).
             Ok((id, created)) => (id, if created { Committed::Wrote } else { Committed::Read }),
@@ -2511,7 +2511,7 @@ pub unsafe extern "C" fn lotus_add_option_at(
 /// # Safety
 /// `path` and `property` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_kind_flag_at(
+pub unsafe extern "C" fn liv_kind_flag_at(
     path: *const c_char,
     def: u64,
     property: *const c_char,
@@ -2525,8 +2525,8 @@ pub unsafe extern "C" fn lotus_kind_flag_at(
         return -1;
     };
     with_box(path, -1, move |session| {
-        use lotus_services::content::WriteError;
-        match lotus_services::content::toggle_kind_ref(session, def, property, kind, on != 0) {
+        use liv_services::content::WriteError;
+        match liv_services::content::toggle_kind_ref(session, def, property, kind, on != 0) {
             Ok(true) => (1, Committed::Wrote),
             Ok(false) => (0, Committed::Read),
             Err(WriteError::Refused(_)) => (-1, Committed::Read),
@@ -2539,9 +2539,9 @@ pub unsafe extern "C" fn lotus_kind_flag_at(
 /// "files":N}. Cheap — no scan. Additive verb, flagged.
 ///
 /// # Safety
-/// Free the returned string with `lotus_string_free`.
+/// Free the returned string with `liv_string_free`.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_vault_status_at(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn liv_vault_status_at(path: *const c_char) -> *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
     }
@@ -2549,11 +2549,11 @@ pub unsafe extern "C" fn lotus_vault_status_at(path: *const c_char) -> *mut c_ch
         return std::ptr::null_mut();
     };
     let box_path = std::path::Path::new(p);
-    let json = match lotus_services::projection::vault_root_of(box_path) {
+    let json = match liv_services::projection::vault_root_of(box_path) {
         None => serde_json::json!({ "mode": "legacy" }),
         Some(root) => {
-            let io = lotus_services::projection::RealVaultIo::new(&root);
-            let manifest = lotus_services::projection::load_manifest(&io);
+            let io = liv_services::projection::RealVaultIo::new(&root);
+            let manifest = liv_services::projection::load_manifest(&io);
             serde_json::json!({
                 "mode": "vault",
                 "root": root.display().to_string(),
@@ -2571,23 +2571,23 @@ pub unsafe extern "C" fn lotus_vault_status_at(path: *const c_char) -> *mut c_ch
 /// store cannot yet be snapshotted out); sync is launch/user-triggered.
 ///
 /// # Safety
-/// Free the returned string with `lotus_string_free`.
+/// Free the returned string with `liv_string_free`.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_vault_sync_at(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn liv_vault_sync_at(path: *const c_char) -> *mut c_char {
     let Some((mut session, key)) = open_box(path) else {
         return std::ptr::null_mut();
     };
-    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+    let Some(root) = liv_services::projection::vault_root_of(&key) else {
         checkin(key, session, Committed::Read);
         return CString::new(r#"{"mode":"legacy"}"#)
             .map(CString::into_raw)
             .unwrap_or(std::ptr::null_mut());
     };
-    let io = lotus_services::projection::RealVaultIo::new(&root);
-    let mut manifest = lotus_services::projection::load_manifest(&io);
+    let io = liv_services::projection::RealVaultIo::new(&root);
+    let mut manifest = liv_services::projection::load_manifest(&io);
     let findings =
-        lotus_services::projection::scan(&io, session.store(), &manifest);
-    let outcome = match lotus_services::projection::ingest(
+        liv_services::projection::scan(&io, session.store(), &manifest);
+    let outcome = match liv_services::projection::ingest(
         &mut session,
         &io,
         &manifest,
@@ -2601,12 +2601,12 @@ pub unsafe extern "C" fn lotus_vault_sync_at(path: *const c_char) -> *mut c_char
     };
     // Adopted hand-born paths fold in BEFORE planning, so the projector
     // renames them to canonical instead of duplicating (20j.3's pin).
-    lotus_services::projection::adopt_into(&mut manifest, &outcome.adopted);
+    liv_services::projection::adopt_into(&mut manifest, &outcome.adopted);
     let (ops, next) =
-        lotus_services::projection::plan_projection(session.store(), &manifest);
+        liv_services::projection::plan_projection(session.store(), &manifest);
     let changed = outcome.edited + outcome.created > 0;
     checkin(key, session, if changed { Committed::Wrote } else { Committed::Read });
-    let _ = lotus_services::projection::apply_locked(&root, &ops, &next);
+    let _ = liv_services::projection::apply_locked(&root, &ops, &next);
     let json = serde_json::json!({
         "edited": outcome.edited,
         "created": outcome.created,
@@ -2619,20 +2619,20 @@ pub unsafe extern "C" fn lotus_vault_sync_at(path: *const c_char) -> *mut c_char
 /// file rewrites even if the manifest lies. Returns the file count, -1 on
 /// busy/legacy/failure.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_vault_rebuild_at(path: *const c_char) -> i64 {
+pub unsafe extern "C" fn liv_vault_rebuild_at(path: *const c_char) -> i64 {
     let Some((session, key)) = open_box(path) else {
         return -1;
     };
-    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+    let Some(root) = liv_services::projection::vault_root_of(&key) else {
         checkin(key, session, Committed::Read);
         return -1;
     };
-    let (ops, next) = lotus_services::projection::plan_projection(
+    let (ops, next) = liv_services::projection::plan_projection(
         session.store(),
-        &lotus_services::projection::Manifest::default(),
+        &liv_services::projection::Manifest::default(),
     );
     checkin(key, session, Committed::Read);
-    match lotus_services::projection::apply_locked(&root, &ops, &next) {
+    match liv_services::projection::apply_locked(&root, &ops, &next) {
         Ok(()) => next.rows.len() as i64,
         Err(_) => -1,
     }
@@ -2644,29 +2644,29 @@ pub unsafe extern "C" fn lotus_vault_rebuild_at(path: *const c_char) -> i64 {
 /// write. Additive verb, flagged.
 ///
 /// # Safety
-/// Free the returned string with `lotus_string_free`.
+/// Free the returned string with `liv_string_free`.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_vault_findings_at(
+pub unsafe extern "C" fn liv_vault_findings_at(
     path: *const c_char,
     all: i32,
 ) -> *mut c_char {
     let Some((session, key)) = open_box(path) else {
         return CString::new("[]").map(CString::into_raw).unwrap_or(std::ptr::null_mut());
     };
-    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+    let Some(root) = liv_services::projection::vault_root_of(&key) else {
         checkin(key, session, Committed::Read);
         return CString::new("[]").map(CString::into_raw).unwrap_or(std::ptr::null_mut());
     };
-    let io = lotus_services::projection::RealVaultIo::new(&root);
-    let manifest = lotus_services::projection::load_manifest(&io);
+    let io = liv_services::projection::RealVaultIo::new(&root);
+    let manifest = liv_services::projection::load_manifest(&io);
     let findings = if all != 0 {
-        lotus_services::projection::scan_all(&io, session.store(), &manifest)
+        liv_services::projection::scan_all(&io, session.store(), &manifest)
     } else {
-        lotus_services::projection::scan(&io, session.store(), &manifest)
+        liv_services::projection::scan(&io, session.store(), &manifest)
     };
     checkin(key, session, Committed::Read);
 
-    use lotus_services::projection::ReconcileFinding as F;
+    use liv_services::projection::ReconcileFinding as F;
     let arr: Vec<serde_json::Value> = findings
         .iter()
         .map(|f| match f {
@@ -2690,7 +2690,7 @@ pub unsafe extern "C" fn lotus_vault_findings_at(
 /// # Safety
 /// `path`, `rel_path`, and `verdict` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_vault_resolve_at(
+pub unsafe extern "C" fn liv_vault_resolve_at(
     path: *const c_char,
     id: u64,
     rel_path: *const c_char,
@@ -2707,11 +2707,11 @@ pub unsafe extern "C" fn lotus_vault_resolve_at(
     let Some((mut session, key)) = open_box(path) else {
         return 0;
     };
-    let Some(root) = lotus_services::projection::vault_root_of(&key) else {
+    let Some(root) = liv_services::projection::vault_root_of(&key) else {
         checkin(key, session, Committed::Read);
         return 0;
     };
-    use lotus_services::projection as proj;
+    use liv_services::projection as proj;
     let (ok, committed): (bool, Committed) = match verdict {
         "take-disk" => {
             let io = proj::RealVaultIo::new(&root);
@@ -2754,9 +2754,9 @@ pub unsafe extern "C" fn lotus_vault_resolve_at(
 /// (boundary rule), flagged.
 ///
 /// # Safety
-/// The returned string must be freed with `lotus_string_free`.
+/// The returned string must be freed with `liv_string_free`.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_vault_alerts_at(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn liv_vault_alerts_at(path: *const c_char) -> *mut c_char {
     // Path-scoped drain: every alert message embeds its box path, so one
     // box's reader never swallows another's notices (also what keeps the
     // parallel test processes honest).
@@ -2799,7 +2799,7 @@ pub unsafe extern "C" fn lotus_vault_alerts_at(path: *const c_char) -> *mut c_ch
 /// # Safety
 /// `path` and `json` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_import_messages_at(
+pub unsafe extern "C" fn liv_import_messages_at(
     path: *const c_char,
     json: *const c_char,
 ) -> i64 {
@@ -2821,9 +2821,9 @@ pub unsafe extern "C" fn lotus_import_messages_at(
     let Ok(drops) = serde_json::from_str::<Vec<DropJSON>>(json) else {
         return -1;
     };
-    let drops: Vec<lotus_services::comms::MessageDrop> = drops
+    let drops: Vec<liv_services::comms::MessageDrop> = drops
         .into_iter()
-        .map(|d| lotus_services::comms::MessageDrop {
+        .map(|d| liv_services::comms::MessageDrop {
             external_id: d.external_id,
             from: d.from,
             source: d.source,
@@ -2832,8 +2832,8 @@ pub unsafe extern "C" fn lotus_import_messages_at(
         })
         .collect();
     with_box(path, -1, move |session| {
-        use lotus_services::content::WriteError;
-        match lotus_services::comms::import_messages(session, &drops) {
+        use liv_services::content::WriteError;
+        match liv_services::comms::import_messages(session, &drops) {
             Ok(outcome) => {
                 let changed = outcome.created + outcome.updated;
                 (
@@ -2856,7 +2856,7 @@ pub unsafe extern "C" fn lotus_import_messages_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_log_time_at(
+pub unsafe extern "C" fn liv_log_time_at(
     path: *const c_char,
     target: u64,
     start_civil: i64,
@@ -2875,7 +2875,7 @@ pub unsafe extern "C" fn lotus_log_time_at(
         )
     };
     with_box(path, 0, move |session| {
-        let id = lotus_services::content::log_time(session, target, to_dt(start_civil), to_dt(end_civil))
+        let id = liv_services::content::log_time(session, target, to_dt(start_civil), to_dt(end_civil))
             .unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
@@ -2887,7 +2887,7 @@ pub unsafe extern "C" fn lotus_log_time_at(
 /// # Safety
 /// `path`, `name`, and `query` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_create_view_at(
+pub unsafe extern "C" fn liv_create_view_at(
     path: *const c_char,
     name: *const c_char,
     query: *const c_char,
@@ -2906,7 +2906,7 @@ pub unsafe extern "C" fn lotus_create_view_at(
     with_box(path, 0, move |session| {
         let now = Local::now();
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
-        let id = lotus_services::content::create_view(session, name, query.trim(), created)
+        let id = liv_services::content::create_view(session, name, query.trim(), created)
             .unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
@@ -2915,13 +2915,13 @@ pub unsafe extern "C" fn lotus_create_view_at(
 /// Add a board widget (P18d): kind + workspace scope (0 = Home) + span
 /// (columns; <= 0 for the default). One commit — on a fresh box the widget
 /// types are born in the SAME transaction, so one undo removes everything.
-/// Config edits ride lotus_set_at; removal rides lotus_trash_at. Returns
+/// Config edits ride liv_set_at; removal rides liv_trash_at. Returns
 /// the widget id, 0 on failure. Additive verb, tested, flagged.
 ///
 /// # Safety
 /// `path` and `kind` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_widget_add_at(
+pub unsafe extern "C" fn liv_widget_add_at(
     path: *const c_char,
     kind: *const c_char,
     workspace: u64,
@@ -2942,7 +2942,7 @@ pub unsafe extern "C" fn lotus_widget_add_at(
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let workspace = (workspace != 0).then_some(workspace);
         let span = (span > 0.0).then_some(span);
-        let id = lotus_services::content::add_widget(session, kind, workspace, span, created)
+        let id = liv_services::content::add_widget(session, kind, workspace, span, created)
             .unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
@@ -2951,7 +2951,7 @@ pub unsafe extern "C" fn lotus_widget_add_at(
 /// Save a layout layer (P17i): one transaction — name + workspace scope
 /// (0 = Home) + the ordered member ids (`members_json` = `[u64,…]`, the
 /// open tabs). Returns the layer id, 0 on failure. Restore has NO verb
-/// (pure shell); rename/delete ride lotus_set_at / lotus_trash_at.
+/// (pure shell); rename/delete ride liv_set_at / liv_trash_at.
 ///
 /// Additive verb (boundary rule): with_box + Committed, shipped with a
 /// round-trip test, flagged in the PR.
@@ -2959,7 +2959,7 @@ pub unsafe extern "C" fn lotus_widget_add_at(
 /// # Safety
 /// `path`, `name`, and `members_json` must be valid NUL-terminated UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_layer_save_at(
+pub unsafe extern "C" fn liv_layer_save_at(
     path: *const c_char,
     name: *const c_char,
     workspace: u64,
@@ -2986,7 +2986,7 @@ pub unsafe extern "C" fn lotus_layer_save_at(
         let created = DateTime::at(now.year(), now.month(), now.day(), now.hour(), now.minute());
         let workspace = (workspace != 0).then_some(workspace);
         let id =
-            lotus_services::content::create_layer(session, name, workspace, &members, created)
+            liv_services::content::create_layer(session, name, workspace, &members, created)
                 .unwrap_or(0);
         (id, if id != 0 { Committed::Wrote } else { Committed::Failed })
     })
@@ -2998,21 +2998,21 @@ pub unsafe extern "C" fn lotus_layer_save_at(
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_trash_at(path: *const c_char, id: u64) -> i32 {
+pub unsafe extern "C" fn liv_trash_at(path: *const c_char, id: u64) -> i32 {
     with_box(path, 0, |session| {
-        let ok = lotus_services::content::trash_workspace(session, id).is_ok();
+        let ok = liv_services::content::trash_workspace(session, id).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
 
-/// Remove every cell of one property — the inverse of lotus_set_at's
+/// Remove every cell of one property — the inverse of liv_set_at's
 /// replace. A property the entity does not carry is success, not an
 /// error. Returns 1 on success, 0 on busy/no entity/no property.
 ///
 /// # Safety
 /// `path` and `property` must be valid NUL-terminated UTF-8 strings.
 #[no_mangle]
-pub unsafe extern "C" fn lotus_unset_at(
+pub unsafe extern "C" fn liv_unset_at(
     path: *const c_char,
     id: u64,
     property: *const c_char,
@@ -3024,7 +3024,7 @@ pub unsafe extern "C" fn lotus_unset_at(
         return 0;
     };
     with_box(path, 0, |session| {
-        let ok = lotus_services::content::unset_property(session, id, property).is_ok();
+        let ok = liv_services::content::unset_property(session, id, property).is_ok();
         (ok as i32, if ok { Committed::Wrote } else { Committed::Failed })
     })
 }
@@ -3032,31 +3032,31 @@ pub unsafe extern "C" fn lotus_unset_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lotus_core::{Cell, Command};
+    use liv_core::{Cell, Command};
     use std::ffi::CString;
 
     #[test]
     fn the_seam_roundtrips() {
-        let path = std::env::temp_dir().join("lotus_ffi_roundtrip.log");
+        let path = std::env::temp_dir().join("liv_ffi_roundtrip.log");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
         let _ = std::fs::remove_file(format!("{}.pending", path.display()));
         let c_path = CString::new(path.to_str().unwrap()).unwrap();
 
         let text = CString::new("Call Anna Friday").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         assert_ne!(id, 0);
 
         // Whitespace is not a thought.
         let blank = CString::new("   ").unwrap();
-        assert_eq!(unsafe { lotus_capture_at(c_path.as_ptr(), blank.as_ptr()) }, 0);
+        assert_eq!(unsafe { liv_capture_at(c_path.as_ptr(), blank.as_ptr()) }, 0);
 
         // The session closed behind the capture: the box is free again,
         // and what the shell wrote, the rest of the system reads.
         let session = Session::open(&path).unwrap();
         let entity = session.store().get(id).unwrap();
-        assert!(entity.get(lotus_core::props::CONTENT).is_some());
-        assert!(entity.get(lotus_core::props::CREATED).is_some());
+        assert!(entity.get(liv_core::props::CONTENT).is_some());
+        assert!(entity.get(liv_core::props::CREATED).is_some());
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
         let _ = std::fs::remove_file(format!("{}.pending", path.display()));
@@ -3064,21 +3064,21 @@ mod tests {
 
     #[test]
     fn snapshot_and_triage_roundtrip() {
-        let path = std::env::temp_dir().join("lotus_ffi_snapshot.log");
+        let path = std::env::temp_dir().join("liv_ffi_snapshot.log");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}.declined", path.display()));
         let _ = std::fs::remove_file(format!("{}.pending", path.display()));
         let c_path = CString::new(path.to_str().unwrap()).unwrap();
 
         let text = CString::new("kickoff friday").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         assert_ne!(id, 0);
 
         // The snapshot shows the scrap unstructured and the clerk's proposal.
-        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        let raw = unsafe { liv_snapshot(c_path.as_ptr()) };
         assert!(!raw.is_null());
         let json = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         let snap: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(snap["unstructured"][0], id);
         assert_eq!(snap["inbox"][0]["entity"], id);
@@ -3087,13 +3087,13 @@ mod tests {
 
         // A stale or wrong fingerprint is refused: consent is to a
         // proposal, never to a position.
-        assert_eq!(unsafe { lotus_accept_at(c_path.as_ptr(), id, 1, print ^ 1) }, 0);
+        assert_eq!(unsafe { liv_accept_at(c_path.as_ptr(), id, 1, print ^ 1) }, 0);
 
         // Accepting through the seam lands the due cell...
-        assert_eq!(unsafe { lotus_accept_at(c_path.as_ptr(), id, 1, print) }, 1);
-        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        assert_eq!(unsafe { liv_accept_at(c_path.as_ptr(), id, 1, print) }, 1);
+        let raw = unsafe { liv_snapshot(c_path.as_ptr()) };
         let json = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         let snap: serde_json::Value = serde_json::from_str(&json).unwrap();
         // ...so the scrap moves from unstructured to today/dated...
         assert_eq!(snap["dated"][0], id);
@@ -3108,7 +3108,7 @@ mod tests {
     fn fresh_box(name: &str) -> (std::path::PathBuf, CString) {
         // A per-box directory so the extraction cache (a sibling of the box)
         // is isolated per test — parallel tests must not share one cache.
-        let dir = std::env::temp_dir().join(format!("lotus_box_{name}"));
+        let dir = std::env::temp_dir().join(format!("liv_box_{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("box.log");
@@ -3127,7 +3127,7 @@ mod tests {
     unsafe fn read_json(raw: *mut c_char) -> serde_json::Value {
         assert!(!raw.is_null());
         let json = CStr::from_ptr(raw).to_str().unwrap().to_string();
-        lotus_string_free(raw);
+        liv_string_free(raw);
         serde_json::from_str(&json).unwrap()
     }
 
@@ -3135,37 +3135,37 @@ mod tests {
 
     #[test]
     fn a_cache_hit_matches_a_full_open() {
-        let (path, c_path) = fresh_box("lotus_ffi_cache_equiv.log");
-        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("kickoff friday").unwrap().as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_cache_equiv.log");
+        unsafe { liv_capture_at(c_path.as_ptr(), CString::new("kickoff friday").unwrap().as_ptr()) };
 
         // First snapshot: a full open (miss) that populates the cache.
-        let first = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let first = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         // Second snapshot: served from the cache (a hit) — the SAME answer.
-        let hit = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let hit = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(first, hit, "a cache hit must not change the answer");
         // Clear the cache: a forced full replay agrees too — the cache never
         // diverges from the log's own consequence.
         clear_cache_for_tests();
-        let full = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let full = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(first, full, "the cache never diverges from a full replay");
         cleanup(&path);
     }
 
     #[test]
     fn an_external_append_is_picked_up() {
-        let (path, c_path) = fresh_box("lotus_ffi_external.log");
+        let (path, c_path) = fresh_box("liv_ffi_external.log");
         // Seed + cache via an FFI snapshot.
-        unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
 
         // A second writer (the CLI stand-in) appends a note directly, then drops
         // — releasing the lock. The FFI cache still holds the pre-append store.
         let external_id = {
             let mut session = Session::open(&path).unwrap();
-            lotus_services::content::create_note(&mut session, DateTime::at(2026, 7, 8, 9, 0)).unwrap()
+            liv_services::content::create_note(&mut session, DateTime::at(2026, 7, 8, 9, 0)).unwrap()
         };
         // The next FFI snapshot must SEE the external note — the grown log length
         // forces a full re-open, not a stale cache hit.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let seen = snap["entities"].as_array().unwrap().iter().any(|e| e["id"] == external_id);
         assert!(seen, "an external append must invalidate the cache");
         cleanup(&path);
@@ -3173,11 +3173,11 @@ mod tests {
 
     #[test]
     fn two_creates_do_not_reuse_an_id() {
-        let (path, c_path) = fresh_box("lotus_ffi_ids.log");
+        let (path, c_path) = fresh_box("liv_ffi_ids.log");
         // The second create is a cache HIT (the first's commit grew the log, and
         // check-in cached that length); next_id must ride the cached store.
-        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
-        let b = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let a = unsafe { liv_create_note_at(c_path.as_ptr()) };
+        let b = unsafe { liv_create_note_at(c_path.as_ptr()) };
         assert_ne!(a, 0);
         assert_ne!(b, 0);
         assert_ne!(a, b, "consecutive creates through the cache must mint distinct ids");
@@ -3190,29 +3190,29 @@ mod tests {
 
     #[test]
     fn a_locked_box_is_not_served_from_cache() {
-        let (path, c_path) = fresh_box("lotus_ffi_locked.log");
+        let (path, c_path) = fresh_box("liv_ffi_locked.log");
         // Warm the cache.
-        unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         // Hold the box open elsewhere (grabs the exclusive lock).
         let guard = Session::open(&path).unwrap();
         // Even with a warm cache, a snapshot must refuse (null), never serve a
         // stale cached answer while another writer holds the box (Guard 5).
-        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        let raw = unsafe { liv_snapshot(c_path.as_ptr()) };
         assert!(raw.is_null(), "a locked box yields null, never a cached snapshot");
         drop(guard);
         // Lock released: the next snapshot succeeds again.
-        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        let raw = unsafe { liv_snapshot(c_path.as_ptr()) };
         assert!(!raw.is_null());
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         cleanup(&path);
     }
 
     #[test]
     fn a_sidecar_change_without_a_log_change_invalidates() {
-        let (path, c_path) = fresh_box("lotus_ffi_sidecar.log");
-        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("kickoff friday").unwrap().as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_sidecar.log");
+        unsafe { liv_capture_at(c_path.as_ptr(), CString::new("kickoff friday").unwrap().as_ptr()) };
         // Snapshot proposes friday and caches (inbox has one).
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(snap["inbox"].as_array().unwrap().len(), 1);
 
         // Externally decline it: rewrites .declined + .pending WITHOUT touching
@@ -3223,7 +3223,7 @@ mod tests {
         }
         // The next FFI snapshot must reflect the decline — the sidecar length
         // changed even though the log length did not (Guard 2).
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(
             snap["inbox"].as_array().unwrap().len(),
             0,
@@ -3237,7 +3237,7 @@ mod tests {
     /// A weekly/daily/… series set up directly, as the CLI would.
     fn seed_series(path: &std::path::Path, due: DateTime, rule: &str) {
         let mut session = Session::open(path).unwrap();
-        lotus_services::seed_if_fresh(&mut session).unwrap();
+        liv_services::seed_if_fresh(&mut session).unwrap();
         let id = session.allocate_id();
         let due_prop = property_id(session.store(), "due").unwrap();
         let recur = property_id(session.store(), "recurrence").unwrap();
@@ -3263,11 +3263,11 @@ mod tests {
     #[test]
     fn the_default_snapshot_is_the_current_month_window() {
         // The load-bearing regression guard: the windowed refactor must leave
-        // lotus_snapshot byte-identical — it is exactly the current civil
+        // liv_snapshot byte-identical — it is exactly the current civil
         // month's window.
-        let (path, c_path) = fresh_box("lotus_ffi_win_default.log");
-        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("hello").unwrap().as_ptr()) };
-        let full = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let (path, c_path) = fresh_box("liv_ffi_win_default.log");
+        unsafe { liv_capture_at(c_path.as_ptr(), CString::new("hello").unwrap().as_ptr()) };
+        let full = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let now = Local::now();
         let from = DateTime::date(now.year(), now.month(), 1).civil;
         let to = DateTime::date(
@@ -3276,19 +3276,19 @@ mod tests {
             last_day_of_month(now.year(), now.month()),
         )
         .civil;
-        let windowed = unsafe { read_json(lotus_snapshot_window_at(c_path.as_ptr(), from, to)) };
+        let windowed = unsafe { read_json(liv_snapshot_window_at(c_path.as_ptr(), from, to)) };
         assert_eq!(full, windowed, "the default snapshot IS the current-month window");
         cleanup(&path);
     }
 
     #[test]
     fn a_future_window_steers_the_occurrence_engine() {
-        let (path, c_path) = fresh_box("lotus_ffi_win_future.log");
+        let (path, c_path) = fresh_box("liv_ffi_win_future.log");
         // A weekly series anchored 2026-07-07 (a Tuesday); the window decides
         // which of its Tuesdays the snapshot expands.
         seed_series(&path, DateTime::date(2026, 7, 7), "every week");
         let snap = unsafe {
-            read_json(lotus_snapshot_window_at(
+            read_json(liv_snapshot_window_at(
                 c_path.as_ptr(),
                 DateTime::date(2026, 8, 1).civil,
                 DateTime::date(2026, 8, 31).civil,
@@ -3310,10 +3310,10 @@ mod tests {
         // The week grid's window is [Mon, Sun], which can cross a month edge —
         // it must expand occurrences on BOTH sides (proving the window, not a
         // fixed month, feeds it). A weekly Tuesday series over Jul 28 .. Aug 4.
-        let (path, c_path) = fresh_box("lotus_ffi_win_straddle.log");
+        let (path, c_path) = fresh_box("liv_ffi_win_straddle.log");
         seed_series(&path, DateTime::date(2026, 7, 7), "every week");
         let snap = unsafe {
-            read_json(lotus_snapshot_window_at(
+            read_json(liv_snapshot_window_at(
                 c_path.as_ptr(),
                 DateTime::date(2026, 7, 28).civil,
                 DateTime::date(2026, 8, 4).civil,
@@ -3332,11 +3332,11 @@ mod tests {
 
     #[test]
     fn the_occurrence_window_is_capped_at_a_year() {
-        let (path, c_path) = fresh_box("lotus_ffi_win_cap.log");
+        let (path, c_path) = fresh_box("liv_ffi_win_cap.log");
         seed_series(&path, DateTime::date(2026, 1, 1), "every day");
         // Ask for three years; the engine caps at 366 days from `from`.
         let snap = unsafe {
-            read_json(lotus_snapshot_window_at(
+            read_json(liv_snapshot_window_at(
                 c_path.as_ptr(),
                 DateTime::date(2026, 1, 1).civil,
                 DateTime::date(2029, 1, 1).civil,
@@ -3349,12 +3349,12 @@ mod tests {
 
     #[test]
     fn create_event_lands_typed_and_dued_on_the_asked_day() {
-        let (path, c_path) = fresh_box("lotus_ffi_event.log");
+        let (path, c_path) = fresh_box("liv_ffi_event.log");
         let due_civil = DateTime::at(2026, 7, 9, 9, 0).civil;
-        let id = unsafe { lotus_create_event_at(c_path.as_ptr(), due_civil, 0) };
+        let id = unsafe { liv_create_event_at(c_path.as_ptr(), due_civil, 0) };
         assert_ne!(id, 0);
         let snap = unsafe {
-            read_json(lotus_snapshot_window_at(
+            read_json(liv_snapshot_window_at(
                 c_path.as_ptr(),
                 DateTime::date(2026, 7, 1).civil,
                 DateTime::date(2026, 7, 31).civil,
@@ -3380,23 +3380,23 @@ mod tests {
         // finding): after a merge, a cell still storing the LOSER id must
         // serialize its ref_target as the SURVIVOR — the shell's backlink
         // index and pickers key on it.
-        let (path, c_path) = fresh_box("lotus_ffi_redirect.log");
+        let (path, c_path) = fresh_box("liv_ffi_redirect.log");
         let (survivor, loser, event) = {
             let mut session = Session::open(&path).unwrap();
-            lotus_services::seed_if_fresh(&mut session).unwrap();
+            liv_services::seed_if_fresh(&mut session).unwrap();
             let survivor =
-                lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+                liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
                     .unwrap();
             let loser =
-                lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+                liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
                     .unwrap();
-            let event = lotus_services::content::create_event(
+            let event = liv_services::content::create_event(
                 &mut session,
                 DateTime::date(2026, 7, 12),
                 DateTime::date(2026, 7, 10),
             )
             .unwrap();
-            lotus_services::content::set_property(
+            liv_services::content::set_property(
                 &mut session,
                 event,
                 "attendees",
@@ -3407,7 +3407,7 @@ mod tests {
             (survivor, loser, event)
         };
         let _ = loser;
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let cell = snap["entities"]
             .as_array()
             .unwrap()
@@ -3435,11 +3435,11 @@ mod tests {
         // refuses (content.rs: "no property named ..."). This test ran
         // FIRST (the design's contingent-exception clause): the seam
         // births the definition; everything after is the ordinary set.
-        let (path, c_path) = fresh_box("lotus_ffi_add_property.log");
+        let (path, c_path) = fresh_box("liv_ffi_add_property.log");
         let note = {
             let mut session = Session::open(&path).unwrap();
-            lotus_services::seed_if_fresh(&mut session).unwrap();
-            lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+            liv_services::seed_if_fresh(&mut session).unwrap();
+            liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
                 .unwrap()
         };
         let c_grade = CString::new("grade").unwrap();
@@ -3447,22 +3447,22 @@ mod tests {
         let c_value = CString::new("12").unwrap();
         // The refusal the seam compensates for, pinned:
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), note, c_grade.as_ptr(), c_value.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), note, c_grade.as_ptr(), c_value.as_ptr()) },
             0,
             "set on an unknown property name refuses"
         );
         // Birth: one definition, vault-wide; the id comes back for the
         // shell to reveal the row.
         let born = unsafe {
-            lotus_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_number.as_ptr())
+            liv_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_number.as_ptr())
         };
         assert_ne!(born, 0);
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), note, c_grade.as_ptr(), c_value.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), note, c_grade.as_ptr(), c_value.as_ptr()) },
             1,
             "the born property accepts its first value"
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let prop = snap["properties"]
             .as_array()
             .unwrap()
@@ -3489,7 +3489,7 @@ mod tests {
         // One name, one definition — a re-add refuses, other kind or not.
         let c_text = CString::new("text").unwrap();
         assert_eq!(
-            unsafe { lotus_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_text.as_ptr()) },
+            unsafe { liv_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_text.as_ptr()) },
             0
         );
         // Garbage refused: empty name, unknown kind, an existing/reserved name.
@@ -3497,15 +3497,15 @@ mod tests {
         let c_widget = CString::new("widget").unwrap();
         let c_name = CString::new("name").unwrap();
         assert_eq!(
-            unsafe { lotus_add_property_at(c_path.as_ptr(), c_empty.as_ptr(), c_text.as_ptr()) },
+            unsafe { liv_add_property_at(c_path.as_ptr(), c_empty.as_ptr(), c_text.as_ptr()) },
             0
         );
         assert_eq!(
-            unsafe { lotus_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_widget.as_ptr()) },
+            unsafe { liv_add_property_at(c_path.as_ptr(), c_grade.as_ptr(), c_widget.as_ptr()) },
             0
         );
         assert_eq!(
-            unsafe { lotus_add_property_at(c_path.as_ptr(), c_name.as_ptr(), c_text.as_ptr()) },
+            unsafe { liv_add_property_at(c_path.as_ptr(), c_name.as_ptr(), c_text.as_ptr()) },
             0
         );
         cleanup(&path);
@@ -3518,14 +3518,14 @@ mod tests {
         // find and the conditional create run in ONE session so two entry
         // points can never double-create — and per-workspace (D3): the same
         // date in two workspaces is two notes.
-        let (path, c_path) = fresh_box("lotus_ffi_daily.log");
+        let (path, c_path) = fresh_box("liv_ffi_daily.log");
         // Two stand-in workspace targets (any entity id serves as a reference).
         let (ws_a, ws_b) = {
             let mut session = Session::open(&path).unwrap();
-            lotus_services::seed_if_fresh(&mut session).unwrap();
-            let a = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 1))
+            liv_services::seed_if_fresh(&mut session).unwrap();
+            let a = liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 1))
                 .unwrap();
-            let b = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 1))
+            let b = liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 1))
                 .unwrap();
             (a, b)
         };
@@ -3533,38 +3533,38 @@ mod tests {
         let jul12 = DateTime::date(2026, 7, 12).civil;
 
         // Idempotent: twice on one (date, workspace) is ONE note.
-        let first = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, ws_a) };
+        let first = unsafe { liv_open_daily_note_at(c_path.as_ptr(), jul11, ws_a) };
         assert_ne!(first, 0);
-        let again = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, ws_a) };
+        let again = unsafe { liv_open_daily_note_at(c_path.as_ptr(), jul11, ws_a) };
         assert_eq!(first, again, "the same day+workspace resolves to one note");
 
         // A different date is a different note.
-        let other_day = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul12, ws_a) };
+        let other_day = unsafe { liv_open_daily_note_at(c_path.as_ptr(), jul12, ws_a) };
         assert_ne!(other_day, first);
 
         // Per-workspace (D3): the same date in another workspace is another note.
-        let other_ws = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, ws_b) };
+        let other_ws = unsafe { liv_open_daily_note_at(c_path.as_ptr(), jul11, ws_b) };
         assert_ne!(other_ws, first, "each workspace has its own today");
 
         // Time in the civil is normalized away — an afternoon call finds the
         // morning's note.
         let afternoon = DateTime::at(2026, 7, 11, 15, 30).civil;
-        let same = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), afternoon, ws_a) };
+        let same = unsafe { liv_open_daily_note_at(c_path.as_ptr(), afternoon, ws_a) };
         assert_eq!(same, first, "the seam keys on the day, not the minute");
 
         // The global (workspace 0 = None) bucket is SELF-CONSISTENT and
         // ISOLATED from workspace buckets (the review's high): two None opens
         // on one day are one note, and that note is neither `first` nor
         // `other_ws` (which are workspace-scoped).
-        let global1 = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, 0) };
-        let global2 = unsafe { lotus_open_daily_note_at(c_path.as_ptr(), jul11, 0) };
+        let global1 = unsafe { liv_open_daily_note_at(c_path.as_ptr(), jul11, 0) };
+        let global2 = unsafe { liv_open_daily_note_at(c_path.as_ptr(), jul11, 0) };
         assert_ne!(global1, 0);
         assert_eq!(global1, global2, "None is self-consistent, not double-created");
         assert_ne!(global1, first, "None never adopts a workspace-scoped note");
         assert_ne!(global1, other_ws, "None never adopts a workspace-scoped note");
 
         // Exactly two daily notes on Jul 11 (one per workspace), one on Jul 12.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let entities = snap["entities"].as_array().unwrap();
         let dailies: Vec<_> = entities
             .iter()
@@ -3602,15 +3602,15 @@ mod tests {
         // orphan set. set_property can't (reference needs #id) and types are
         // working plumbing off the snapshot, so this is the seam that closes
         // the gap (the design's "stamp type" assumption verified false).
-        let (path, c_path) = fresh_box("lotus_ffi_set_type.log");
+        let (path, c_path) = fresh_box("liv_ffi_set_type.log");
         let scrap = unsafe {
             let c_text = CString::new("Steven owes me 300 kr").unwrap();
-            lotus_capture_at(c_path.as_ptr(), c_text.as_ptr())
+            liv_capture_at(c_path.as_ptr(), c_text.as_ptr())
         };
         assert_ne!(scrap, 0);
 
         // Before: the scrap is a content-only orphan (no kinds).
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let scrap_before = before["entities"].as_array().unwrap()
             .iter().find(|e| e["id"] == scrap).unwrap();
         assert!(scrap_before["kinds"].as_array().unwrap().is_empty(), "starts typeless");
@@ -3618,10 +3618,10 @@ mod tests {
 
         // Stamp type = note.
         let c_note = CString::new("note").unwrap();
-        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, c_note.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_set_type_at(c_path.as_ptr(), scrap, c_note.as_ptr()) }, 1);
 
         // After: it is a note; it left the orphan set.
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let scrap_after = after["entities"].as_array().unwrap()
             .iter().find(|e| e["id"] == scrap).unwrap();
         assert!(
@@ -3631,8 +3631,8 @@ mod tests {
 
         // Re-stamping a different type REPLACES (one type, not two).
         let c_task = CString::new("task").unwrap();
-        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, c_task.as_ptr()) }, 1);
-        let retyped = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_set_type_at(c_path.as_ptr(), scrap, c_task.as_ptr()) }, 1);
+        let retyped = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let kinds = retyped["entities"].as_array().unwrap()
             .iter().find(|e| e["id"] == scrap).unwrap()["kinds"].as_array().unwrap().clone();
         assert_eq!(kinds.len(), 1, "one type, replaced not appended");
@@ -3640,7 +3640,7 @@ mod tests {
 
         // An unknown type name is refused; nothing changes.
         let c_bogus = CString::new("nonesuch").unwrap();
-        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, c_bogus.as_ptr()) }, 0);
+        assert_eq!(unsafe { liv_set_type_at(c_path.as_ptr(), scrap, c_bogus.as_ptr()) }, 0);
         cleanup(&path);
     }
 
@@ -3649,12 +3649,12 @@ mod tests {
         // P14-CT (failing-test-first): a fresh box seeds the contact profile
         // fields role/org/email/phone (all text), and an older box gains them
         // on open — the seed_event_fields additive pattern.
-        let (path, c_path) = fresh_box("lotus_ffi_contacts.log");
+        let (path, c_path) = fresh_box("liv_ffi_contacts.log");
         {
             let mut session = Session::open(&path).unwrap();
-            lotus_services::seed_if_fresh(&mut session).unwrap();
+            liv_services::seed_if_fresh(&mut session).unwrap();
         }
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let props: std::collections::HashMap<String, String> = snap["properties"]
             .as_array()
             .unwrap()
@@ -3682,7 +3682,7 @@ mod tests {
     /// directly as the CLI would.
     fn seed_series_on(path: &std::path::Path, prop: &str, anchor: DateTime, rule: &str) {
         let mut session = Session::open(path).unwrap();
-        lotus_services::seed_if_fresh(&mut session).unwrap();
+        liv_services::seed_if_fresh(&mut session).unwrap();
         let id = session.allocate_id();
         let anchor_prop = property_id(session.store(), prop).unwrap();
         let recur = property_id(session.store(), "recurrence").unwrap();
@@ -3710,11 +3710,11 @@ mod tests {
         // The compat pin: on a box with no calendar-role cells, every dated
         // row positions by `due` with no span end — the shipped world,
         // byte-identical modulo the additive fields.
-        let (path, c_path) = fresh_box("lotus_ffi_rebase_compat.log");
+        let (path, c_path) = fresh_box("liv_ffi_rebase_compat.log");
         let id = unsafe {
-            lotus_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 11, 9, 0).civil, 0)
+            liv_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 11, 9, 0).civil, 0)
         };
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["entities"]
             .as_array()
             .unwrap()
@@ -3731,13 +3731,13 @@ mod tests {
     fn a_calendar_role_date_enters_dated_and_fills_due() {
         // The re-base itself: an entity carrying only a calendar-role `date`
         // fills the very field the shipped CalendarView already buckets by.
-        let (path, c_path) = fresh_box("lotus_ffi_rebase_date.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_rebase_date.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let date = CString::new("date").unwrap();
         let when = CString::new("2026-07-12").unwrap();
-        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), id, date.as_ptr(), when.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), id, date.as_ptr(), when.as_ptr()) }, 1);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["entities"]
             .as_array()
             .unwrap()
@@ -3755,17 +3755,17 @@ mod tests {
     fn an_entity_with_both_date_and_due_positions_once_by_set_precedence() {
         // ONE order rules both the recurrence anchor and the rendered row
         // (design §2.2: date before due) — and the union never doubles a row.
-        let (path, c_path) = fresh_box("lotus_ffi_rebase_both.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_rebase_both.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let due = CString::new("due").unwrap();
         let date = CString::new("date").unwrap();
         let friday = CString::new("2026-07-10").unwrap();
         let tuesday = CString::new("2026-07-07").unwrap();
         unsafe {
-            assert_eq!(lotus_set_at(c_path.as_ptr(), id, due.as_ptr(), friday.as_ptr()), 1);
-            assert_eq!(lotus_set_at(c_path.as_ptr(), id, date.as_ptr(), tuesday.as_ptr()), 1);
+            assert_eq!(liv_set_at(c_path.as_ptr(), id, due.as_ptr(), friday.as_ptr()), 1);
+            assert_eq!(liv_set_at(c_path.as_ptr(), id, date.as_ptr(), tuesday.as_ptr()), 1);
         }
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let appearances = snap["dated"]
             .as_array()
             .unwrap()
@@ -3786,17 +3786,17 @@ mod tests {
 
     #[test]
     fn a_span_fills_due_end_and_a_plain_date_leaves_it_absent() {
-        let (path, c_path) = fresh_box("lotus_ffi_rebase_span.log");
-        let spanned = unsafe { lotus_create_note_at(c_path.as_ptr()) };
-        let plain = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_rebase_span.log");
+        let spanned = unsafe { liv_create_note_at(c_path.as_ptr()) };
+        let plain = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let due = CString::new("due").unwrap();
         let start = DateTime::date(2026, 7, 11).civil;
         let end = DateTime::date(2026, 7, 13).civil;
         unsafe {
-            assert_eq!(lotus_set_span_at(c_path.as_ptr(), spanned, due.as_ptr(), start, end, 1), 1);
-            assert_eq!(lotus_set_span_at(c_path.as_ptr(), plain, due.as_ptr(), start, 0, 1), 1);
+            assert_eq!(liv_set_span_at(c_path.as_ptr(), spanned, due.as_ptr(), start, end, 1), 1);
+            assert_eq!(liv_set_span_at(c_path.as_ptr(), plain, due.as_ptr(), start, 0, 1), 1);
         }
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let rows = snap["entities"].as_array().unwrap();
         let spanned_row = rows.iter().find(|e| e["id"] == spanned).unwrap();
         let plain_row = rows.iter().find(|e| e["id"] == plain).unwrap();
@@ -3809,10 +3809,10 @@ mod tests {
     fn a_date_anchored_series_reaches_the_windowed_snapshot() {
         // P10's window-steer test, re-run for the generalized anchor: a
         // weekly series on `date` (not due) fills a FUTURE month's window.
-        let (path, c_path) = fresh_box("lotus_ffi_rebase_series.log");
+        let (path, c_path) = fresh_box("liv_ffi_rebase_series.log");
         seed_series_on(&path, "date", DateTime::date(2026, 7, 7), "every week");
         let snap = unsafe {
-            read_json(lotus_snapshot_window_at(
+            read_json(liv_snapshot_window_at(
                 c_path.as_ptr(),
                 DateTime::date(2026, 8, 1).civil,
                 DateTime::date(2026, 8, 31).civil,
@@ -3833,16 +3833,16 @@ mod tests {
         // The cache battery's representative: an external writer adds a
         // date-role entity; the grown log forces a full re-open and the NEW
         // union path serves it — never a stale dated list.
-        let (path, c_path) = fresh_box("lotus_ffi_rebase_external.log");
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm
+        let (path, c_path) = fresh_box("liv_ffi_rebase_external.log");
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) }; // warm
         let external = {
             let mut session = Session::open(&path).unwrap();
-            let id = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
+            let id = liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 10))
                 .unwrap();
-            lotus_services::content::set_property(&mut session, id, "date", "2026-07-12").unwrap();
+            liv_services::content::set_property(&mut session, id, "date", "2026-07-12").unwrap();
             id
         };
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(
             snap["dated"].as_array().unwrap().iter().any(|d| d.as_u64() == Some(external)),
             "the external date-role entity is positioned"
@@ -3854,41 +3854,41 @@ mod tests {
 
     #[test]
     fn distinct_values_is_a_read() {
-        let (path, c_path) = fresh_box("lotus_ffi_distinct.log");
-        let a = unsafe { lotus_create_task_at(c_path.as_ptr()) };
-        let _b = unsafe { lotus_create_task_at(c_path.as_ptr()) };
-        let _c = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_distinct.log");
+        let a = unsafe { liv_create_task_at(c_path.as_ptr()) };
+        let _b = unsafe { liv_create_task_at(c_path.as_ptr()) };
+        let _c = unsafe { liv_create_task_at(c_path.as_ptr()) };
         let status = CString::new("status").unwrap();
         let done = CString::new("done").unwrap();
-        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), a, status.as_ptr(), done.as_ptr()) }, 1);
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), a, status.as_ptr(), done.as_ptr()) }, 1);
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
 
-        let raw = unsafe { lotus_distinct_values_at(c_path.as_ptr(), status.as_ptr()) };
+        let raw = unsafe { liv_distinct_values_at(c_path.as_ptr(), status.as_ptr()) };
         assert!(!raw.is_null());
         let pool: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         let rows = pool.as_array().unwrap();
         assert_eq!(rows.len(), 2, "todo and done");
         assert_eq!(rows[0]["value"], "todo", "count desc: two todos outrank one done");
         assert_eq!(rows[0]["count"], 2);
         assert_eq!(rows[1]["value"], "done");
 
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after, "a read leaves the cached snapshot verbatim");
         cleanup(&path);
     }
 
     #[test]
     fn the_catalog_carries_usage_and_attributes() {
-        let (path, c_path) = fresh_box("lotus_ffi_attrs.log");
-        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_attrs.log");
+        let a = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let due = CString::new("due").unwrap();
         let when = CString::new("2026-07-11").unwrap();
-        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), a, due.as_ptr(), when.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), a, due.as_ptr(), when.as_ptr()) }, 1);
 
         // Set an icon ON the due definition through the ordinary seam.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let due_row = snap["properties"]
             .as_array()
             .unwrap()
@@ -3902,10 +3902,10 @@ mod tests {
         let icon = CString::new("icon").unwrap();
         let glyph = CString::new("i-flag").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), due_id, icon.as_ptr(), glyph.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), due_id, icon.as_ptr(), glyph.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let due_row = snap["properties"]
             .as_array()
             .unwrap()
@@ -3920,50 +3920,50 @@ mod tests {
 
     #[test]
     fn the_option_offer_seam_is_a_read() {
-        let (path, c_path) = fresh_box("lotus_ffi_offer.log");
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let (path, c_path) = fresh_box("liv_ffi_offer.log");
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
 
         let task = CString::new("task").unwrap();
-        let raw = unsafe { lotus_status_options_at(c_path.as_ptr(), task.as_ptr()) };
+        let raw = unsafe { liv_status_options_at(c_path.as_ptr(), task.as_ptr()) };
         assert!(!raw.is_null());
         let offer: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         let names: Vec<&str> =
             offer.as_array().unwrap().iter().map(|o| o["name"].as_str().unwrap()).collect();
         assert_eq!(names, vec!["todo", "doing", "done"], "board order");
         assert_eq!(offer[2]["completes"], true, "done completes");
 
         // A read leaves the cached snapshot verbatim.
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after);
         cleanup(&path);
     }
 
     #[test]
     fn add_status_option_is_tagged_wrote() {
-        let (path, c_path) = fresh_box("lotus_ffi_addopt.log");
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm
+        let (path, c_path) = fresh_box("liv_ffi_addopt.log");
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) }; // warm
         let project = CString::new("project").unwrap();
         let name = CString::new("active").unwrap();
         let id = unsafe {
-            lotus_add_status_option_at(c_path.as_ptr(), project.as_ptr(), name.as_ptr(), -1.0)
+            liv_add_status_option_at(c_path.as_ptr(), project.as_ptr(), name.as_ptr(), -1.0)
         };
         assert_ne!(id, 0);
 
         // The Wrote contract: the very next offer (a cache hit) carries it…
-        let raw = unsafe { lotus_status_options_at(c_path.as_ptr(), project.as_ptr()) };
+        let raw = unsafe { liv_status_options_at(c_path.as_ptr(), project.as_ptr()) };
         let offer: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert!(offer.as_array().unwrap().iter().any(|o| o["name"] == "active"));
 
         // …and the task offer is untouched (per-kind scoping).
         let task = CString::new("task").unwrap();
-        let raw = unsafe { lotus_status_options_at(c_path.as_ptr(), task.as_ptr()) };
+        let raw = unsafe { liv_status_options_at(c_path.as_ptr(), task.as_ptr()) };
         let task_offer: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(task_offer.as_array().unwrap().len(), 3);
         cleanup(&path);
     }
@@ -3974,10 +3974,10 @@ mod tests {
         // snapshot's inbox must go quiet the moment the switch is off;
         // (2) assist.prop carries the switch property's CURRENT name so the
         // toggle keeps a write target after an ordinary definition rename.
-        let (path, c_path) = fresh_box("lotus_ffi_assist_gate");
+        let (path, c_path) = fresh_box("liv_ffi_assist_gate");
         let text = CString::new("kickoff friday").unwrap();
-        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_ne!(unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(
             !snap["inbox"].as_array().unwrap().is_empty(),
             "the frozen-string-shaped capture should propose"
@@ -3989,10 +3989,10 @@ mod tests {
         let prop = CString::new("automation").unwrap();
         let off = CString::new("false").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), assist, prop.as_ptr(), off.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), assist, prop.as_ptr(), off.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["inbox"].as_array().unwrap().is_empty(), "off means SILENCE");
         assert_eq!(snap["assist"]["on"], false);
 
@@ -4008,10 +4008,10 @@ mod tests {
         let name_prop = CString::new("name").unwrap();
         let new_name = CString::new("autopilot").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), def, name_prop.as_ptr(), new_name.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), def, name_prop.as_ptr(), new_name.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["inbox"].as_array().unwrap().is_empty(), "the rename must not re-enable");
         assert_eq!(snap["assist"]["on"], false);
         assert_eq!(snap["assist"]["prop"], "autopilot");
@@ -4020,7 +4020,7 @@ mod tests {
 
     fn fresh_vault(name: &str) -> (std::path::PathBuf, std::path::PathBuf, CString) {
         // A VAULT-shaped box: <root>/.liv/box/box.log (design §6).
-        let root = std::env::temp_dir().join(format!("lotus_vault_{name}"));
+        let root = std::env::temp_dir().join(format!("liv_vault_{name}"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".liv/box")).unwrap();
         let path = root.join(".liv/box/box.log");
@@ -4032,15 +4032,15 @@ mod tests {
     fn every_wrote_commit_materializes_in_a_vault_box() {
         let (root, _path, c_path) = fresh_vault("continuous");
         let text = CString::new("projected thought").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         assert_ne!(id, 0);
         // Route it so it projects (scraps are box-only until typed).
         let note = CString::new("note").unwrap();
-        assert_eq!(unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_set_type_at(c_path.as_ptr(), id, note.as_ptr()) }, 1);
         let name_prop = CString::new("name").unwrap();
         let name = CString::new("Projected thought").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) },
             1
         );
         assert!(
@@ -4054,12 +4054,12 @@ mod tests {
     fn vault_sync_ingests_an_external_edit_once() {
         let (root, _path, c_path) = fresh_vault("sync");
         let text = CString::new("sync target").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         let note = CString::new("note").unwrap();
-        unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
+        unsafe { liv_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
         let name_prop = CString::new("name").unwrap();
         let name = CString::new("Sync target").unwrap();
-        unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
+        unsafe { liv_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
         let file = root.join("library/notes/sync-target.md");
         assert!(file.exists());
 
@@ -4068,17 +4068,17 @@ mod tests {
         bytes.extend_from_slice(b"an outside line");
         std::fs::write(&file, bytes).unwrap();
 
-        let raw = unsafe { lotus_vault_sync_at(c_path.as_ptr()) };
+        let raw = unsafe { liv_vault_sync_at(c_path.as_ptr()) };
         let sync: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(sync["edited"], 1, "{sync}");
 
         // Echo-proof: a second sync is silent.
-        let raw = unsafe { lotus_vault_sync_at(c_path.as_ptr()) };
+        let raw = unsafe { liv_vault_sync_at(c_path.as_ptr()) };
         let again: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(again["edited"], 0, "{again}");
         assert_eq!(again["created"], 0);
         let _ = std::fs::remove_dir_all(&root);
@@ -4088,13 +4088,13 @@ mod tests {
     fn vault_findings_and_resolve_settle_a_conflict() {
         let (root, _path, c_path) = fresh_vault("diverge");
         let id = unsafe {
-            lotus_capture_at(c_path.as_ptr(), CString::new("target").unwrap().as_ptr())
+            liv_capture_at(c_path.as_ptr(), CString::new("target").unwrap().as_ptr())
         };
         let note = CString::new("note").unwrap();
-        unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
+        unsafe { liv_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
         let name_prop = CString::new("name").unwrap();
         let name = CString::new("Contested").unwrap();
-        unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
+        unsafe { liv_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
         let file = root.join("library/notes/contested.md");
         assert!(file.exists());
 
@@ -4114,24 +4114,24 @@ mod tests {
         std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         std::fs::write(&file, b"# Contested\n\ndisk moved independently\n").unwrap();
 
-        let raw = unsafe { lotus_vault_findings_at(c_path.as_ptr(), 0) };
+        let raw = unsafe { liv_vault_findings_at(c_path.as_ptr(), 0) };
         let findings: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(findings[0]["kind"], "conflict", "{findings}");
 
         // Resolve: take the disk version.
         let rel = CString::new("library/notes/contested.md").unwrap();
         let verdict = CString::new("take-disk").unwrap();
         assert_eq!(
-            unsafe { lotus_vault_resolve_at(c_path.as_ptr(), id, rel.as_ptr(), verdict.as_ptr()) },
+            unsafe { liv_vault_resolve_at(c_path.as_ptr(), id, rel.as_ptr(), verdict.as_ptr()) },
             1
         );
         // Settled: a fresh findings scan is empty.
-        let raw = unsafe { lotus_vault_findings_at(c_path.as_ptr(), 0) };
+        let raw = unsafe { liv_vault_findings_at(c_path.as_ptr(), 0) };
         let after: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(after.as_array().unwrap().len(), 0, "resolved: {after}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -4140,22 +4140,22 @@ mod tests {
     fn the_snapshot_carries_the_projected_path() {
         // P20j.6: the fidelity flip's wire contract — a routed note's real
         // vault path rides the snapshot; a box-only scrap carries none.
-        let (path, c_path) = fresh_box("lotus_ffi_vaultpath");
+        let (path, c_path) = fresh_box("liv_ffi_vaultpath");
         let scrap = unsafe {
-            lotus_capture_at(c_path.as_ptr(), CString::new("loose").unwrap().as_ptr())
+            liv_capture_at(c_path.as_ptr(), CString::new("loose").unwrap().as_ptr())
         };
         let note = CString::new("note").unwrap();
-        unsafe { lotus_set_type_at(c_path.as_ptr(), scrap, note.as_ptr()) };
+        unsafe { liv_set_type_at(c_path.as_ptr(), scrap, note.as_ptr()) };
         let name_prop = CString::new("name").unwrap();
         let name = CString::new("Steven Åkesson").unwrap();
-        unsafe { lotus_set_at(c_path.as_ptr(), scrap, name_prop.as_ptr(), name.as_ptr()) };
+        unsafe { liv_set_at(c_path.as_ptr(), scrap, name_prop.as_ptr(), name.as_ptr()) };
 
         // A second, still-unrouted scrap.
         let orphan = unsafe {
-            lotus_capture_at(c_path.as_ptr(), CString::new("still loose").unwrap().as_ptr())
+            liv_capture_at(c_path.as_ptr(), CString::new("still loose").unwrap().as_ptr())
         };
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let rows = snap["entities"].as_array().unwrap();
         let routed = rows.iter().find(|r| r["id"].as_u64() == Some(scrap)).unwrap();
         assert_eq!(
@@ -4172,31 +4172,31 @@ mod tests {
     fn vault_status_and_rebuild() {
         let (root, _path, c_path) = fresh_vault("rebuild");
         let text = CString::new("rebuild me").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         let note = CString::new("note").unwrap();
-        unsafe { lotus_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
+        unsafe { liv_set_type_at(c_path.as_ptr(), id, note.as_ptr()) };
         let name_prop = CString::new("name").unwrap();
         let name = CString::new("Rebuild me").unwrap();
-        unsafe { lotus_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
+        unsafe { liv_set_at(c_path.as_ptr(), id, name_prop.as_ptr(), name.as_ptr()) };
 
-        let raw = unsafe { lotus_vault_status_at(c_path.as_ptr()) };
+        let raw = unsafe { liv_vault_status_at(c_path.as_ptr()) };
         let status: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(status["mode"], "vault", "{status}");
         assert!(status["files"].as_u64().unwrap() >= 1);
 
         // Torch the projection; rebuild returns it.
         std::fs::remove_dir_all(root.join("library")).unwrap();
-        assert!(unsafe { lotus_vault_rebuild_at(c_path.as_ptr()) } >= 1);
+        assert!(unsafe { liv_vault_rebuild_at(c_path.as_ptr()) } >= 1);
         assert!(root.join("library/notes/rebuild-me.md").exists());
 
         // A LEGACY box reports legacy and never projects.
-        let (lp, lc) = fresh_box("lotus_ffi_legacy_status");
-        let raw = unsafe { lotus_vault_status_at(lc.as_ptr()) };
+        let (lp, lc) = fresh_box("liv_ffi_legacy_status");
+        let raw = unsafe { liv_vault_status_at(lc.as_ptr()) };
         let status: serde_json::Value =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(status["mode"], "legacy");
         cleanup(&lp);
         let _ = std::fs::remove_dir_all(&root);
@@ -4207,12 +4207,12 @@ mod tests {
         // P20j.4: sync-down of an OLDER log copy = length regression. The
         // fast path refuses (miss), the shorter log replays honestly, and
         // the notice is drained exactly once.
-        let (path, c_path) = fresh_box("lotus_ffi_regress");
+        let (path, c_path) = fresh_box("liv_ffi_regress");
         let text = CString::new("first thought").unwrap();
-        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
+        assert_ne!(unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
         let older = std::fs::read(&path).unwrap();
         let text2 = CString::new("second thought").unwrap();
-        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text2.as_ptr()) }, 0);
+        assert_ne!(unsafe { liv_capture_at(c_path.as_ptr(), text2.as_ptr()) }, 0);
         let newer = std::fs::read(&path).unwrap();
 
         // The guard's proof is the CACHE entry; parallel tests may call
@@ -4221,15 +4221,15 @@ mod tests {
         let mut surfaced = false;
         for _attempt in 0..10 {
             std::fs::write(&path, &newer).unwrap();
-            unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm
+            unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) }; // warm
             // The "sync client" replaces the log with the older copy.
             std::fs::write(&path, &older).unwrap();
-            unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
-            let raw = unsafe { lotus_vault_alerts_at(c_path.as_ptr()) };
+            unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) };
+            let raw = unsafe { liv_vault_alerts_at(c_path.as_ptr()) };
             let alerts: Vec<String> =
                 serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() })
                     .unwrap();
-            unsafe { lotus_string_free(raw) };
+            unsafe { liv_string_free(raw) };
             if alerts.iter().any(|a| a.contains("SHRANK")) {
                 surfaced = true;
                 break;
@@ -4237,26 +4237,26 @@ mod tests {
         }
         assert!(surfaced, "the regression was surfaced within the retries");
         // Drained: a second read is quiet.
-        let raw = unsafe { lotus_vault_alerts_at(c_path.as_ptr()) };
+        let raw = unsafe { liv_vault_alerts_at(c_path.as_ptr()) };
         let again: Vec<String> =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert!(again.is_empty());
         cleanup(&path);
     }
 
     #[test]
     fn a_conflicted_copy_sibling_raises_an_alert() {
-        let (path, c_path) = fresh_box("lotus_ffi_confl");
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+        let (path, c_path) = fresh_box("liv_ffi_confl");
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) };
         let sibling = path.with_file_name("box (conflicted copy 2026-07-19).log");
         std::fs::write(&sibling, b"whatever a sync client left").unwrap();
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) };
 
-        let raw = unsafe { lotus_vault_alerts_at(c_path.as_ptr()) };
+        let raw = unsafe { liv_vault_alerts_at(c_path.as_ptr()) };
         let alerts: Vec<String> =
             serde_json::from_str(unsafe { CStr::from_ptr(raw).to_str().unwrap() }).unwrap();
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert!(
             alerts.iter().any(|a| a.contains("conflicted copy")),
             "the sibling was surfaced: {alerts:?}"
@@ -4267,13 +4267,13 @@ mod tests {
 
     #[test]
     fn message_import_upserts_and_reimport_reads() {
-        let (path, c_path) = fresh_box("lotus_ffi_comms");
+        let (path, c_path) = fresh_box("liv_ffi_comms");
         let batch = CString::new(
             r#"[{"external_id":"slack:1","from":"Elin","source":"Slack · #liv-dev","sent":"2026-07-14 09:02","body":"day 1 pairings are up"}]"#,
         )
         .unwrap();
-        assert_eq!(unsafe { lotus_import_messages_at(c_path.as_ptr(), batch.as_ptr()) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_import_messages_at(c_path.as_ptr(), batch.as_ptr()) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let rows = snap["entities"].as_array().unwrap();
         assert!(
             rows.iter().any(|r| r["kinds"]
@@ -4284,9 +4284,9 @@ mod tests {
         );
         // Byte-identical re-import: 0 changed, and the cache survives
         // verbatim (Read, never a phantom Wrote).
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
-        assert_eq!(unsafe { lotus_import_messages_at(c_path.as_ptr(), batch.as_ptr()) }, 0);
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_import_messages_at(c_path.as_ptr(), batch.as_ptr()) }, 0);
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after);
         cleanup(&path);
     }
@@ -4296,17 +4296,17 @@ mod tests {
         // The review's over-eviction finding: an empty name is a pure
         // refusal — the store is untouched, so the cached snapshot must
         // survive (Read), never be evicted into a full replay (Failed).
-        let (path, c_path) = fresh_box("lotus_ffi_addopt_refused.log");
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let (path, c_path) = fresh_box("liv_ffi_addopt_refused.log");
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let task = CString::new("task").unwrap();
         let blank = CString::new("   ").unwrap();
         assert_eq!(
             unsafe {
-                lotus_add_status_option_at(c_path.as_ptr(), task.as_ptr(), blank.as_ptr(), -1.0)
+                liv_add_status_option_at(c_path.as_ptr(), task.as_ptr(), blank.as_ptr(), -1.0)
             },
             0
         );
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after);
         cleanup(&path);
     }
@@ -4314,8 +4314,8 @@ mod tests {
     #[test]
     fn build_properties_option_offer_stays_backward_compatible() {
         // The flat catalog list: no drops, no duplicates, additive fields only.
-        let (path, c_path) = fresh_box("lotus_ffi_catalog.log");
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let (path, c_path) = fresh_box("liv_ffi_catalog.log");
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let status = snap["properties"]
             .as_array()
             .unwrap()
@@ -4340,23 +4340,23 @@ mod tests {
     fn a_locked_box_refuses_every_new_p11_seam() {
         // Guard 5 across the phase's seams: a held lock means busy — never a
         // stale answer, never a write.
-        let (path, c_path) = fresh_box("lotus_ffi_p11_locked.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm the cache
+        let (path, c_path) = fresh_box("liv_ffi_p11_locked.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) }; // warm the cache
         let guard = Session::open(&path).unwrap();
 
         let due = CString::new("due").unwrap();
         let task = CString::new("task").unwrap();
         let name = CString::new("x").unwrap();
         unsafe {
-            assert!(lotus_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()).is_null());
+            assert!(liv_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()).is_null());
             assert_eq!(
-                lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), 202607110000, 202607130000, 1),
+                liv_set_span_at(c_path.as_ptr(), id, due.as_ptr(), 202607110000, 202607130000, 1),
                 0
             );
-            assert!(lotus_status_options_at(c_path.as_ptr(), task.as_ptr()).is_null());
+            assert!(liv_status_options_at(c_path.as_ptr(), task.as_ptr()).is_null());
             assert_eq!(
-                lotus_add_status_option_at(c_path.as_ptr(), task.as_ptr(), name.as_ptr(), -1.0),
+                liv_add_status_option_at(c_path.as_ptr(), task.as_ptr(), name.as_ptr(), -1.0),
                 0
             );
         }
@@ -4368,10 +4368,10 @@ mod tests {
 
     #[test]
     fn a_span_write_is_tagged_wrote_and_a_bad_span_is_refused() {
-        let (path, c_path) = fresh_box("lotus_ffi_span.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_span.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
         assert_ne!(id, 0);
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) }; // warm the cache
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) }; // warm the cache
         let due = CString::new("due").unwrap();
 
         // A real span writes (the Wrote contract: the very next snapshot —
@@ -4379,10 +4379,10 @@ mod tests {
         let start = DateTime::date(2026, 7, 11).civil;
         let end = DateTime::date(2026, 7, 13).civil;
         assert_eq!(
-            unsafe { lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), start, end, 1) },
+            unsafe { liv_set_span_at(c_path.as_ptr(), id, due.as_ptr(), start, end, 1) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["entities"]
             .as_array()
             .unwrap()
@@ -4407,12 +4407,12 @@ mod tests {
 
         // A backwards span is refused before the box is opened: no write,
         // and the cached snapshot stays exactly what it was.
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(
-            unsafe { lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), end, start, 1) },
+            unsafe { liv_set_span_at(c_path.as_ptr(), id, due.as_ptr(), end, start, 1) },
             0
         );
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after);
         cleanup(&path);
     }
@@ -4423,17 +4423,17 @@ mod tests {
         // never learned spans, so a text write-back silently destroyed the
         // end). The snapshot's cell text IS the parseable span form — writing
         // it back through the ordinary set seam is a lossless no-op.
-        let (path, c_path) = fresh_box("lotus_ffi_span_display.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_span_display.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let due = CString::new("due").unwrap();
         let start = DateTime::date(2026, 7, 11).civil;
         let end = DateTime::date(2026, 7, 13).civil;
         assert_eq!(
-            unsafe { lotus_set_span_at(c_path.as_ptr(), id, due.as_ptr(), start, end, 1) },
+            unsafe { liv_set_span_at(c_path.as_ptr(), id, due.as_ptr(), start, end, 1) },
             1
         );
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let text = snap["entities"]
             .as_array()
             .unwrap()
@@ -4452,7 +4452,7 @@ mod tests {
 
         // Round-trip: the displayed text re-parses to the identical value.
         let raw = CString::new(text).unwrap();
-        assert_eq!(unsafe { lotus_set_at(c_path.as_ptr(), id, due.as_ptr(), raw.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), id, due.as_ptr(), raw.as_ptr()) }, 1);
         clear_cache_for_tests();
         let session = Session::open(&path).unwrap();
         let due_prop = property_id(session.store(), "due").unwrap();
@@ -4472,15 +4472,15 @@ mod tests {
         // services-level version as vacuous): an entity whose only date is a
         // lookup role carries the cell, yet never enters the snapshot's
         // `dated` — the calendar surface.
-        let (path, c_path) = fresh_box("lotus_ffi_lookup.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_lookup.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let occurred = CString::new("occurred").unwrap();
         let when = CString::new("2026-07-09").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), id, occurred.as_ptr(), when.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), id, occurred.as_ptr(), when.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["entities"].as_array().unwrap().iter().find(|e| e["id"] == id).unwrap();
         assert!(
             row["cells"].as_array().unwrap().iter().any(|c| c["property"] == "occurred"),
@@ -4498,15 +4498,15 @@ mod tests {
         // The version fence through the CACHE: the first span bumps the
         // header to 2; the cached session must carry that fact, so the
         // second span write doesn't try to bump again (and the box reopens).
-        let (path, c_path) = fresh_box("lotus_ffi_span_ver.log");
-        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
-        let b = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_span_ver.log");
+        let a = unsafe { liv_create_note_at(c_path.as_ptr()) };
+        let b = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let due = CString::new("due").unwrap();
         let date = CString::new("date").unwrap();
         let s1 = DateTime::date(2026, 7, 11).civil;
         let e1 = DateTime::date(2026, 7, 13).civil;
-        assert_eq!(unsafe { lotus_set_span_at(c_path.as_ptr(), a, due.as_ptr(), s1, e1, 1) }, 1);
-        assert_eq!(unsafe { lotus_set_span_at(c_path.as_ptr(), b, date.as_ptr(), s1, e1, 1) }, 1);
+        assert_eq!(unsafe { liv_set_span_at(c_path.as_ptr(), a, due.as_ptr(), s1, e1, 1) }, 1);
+        assert_eq!(unsafe { liv_set_span_at(c_path.as_ptr(), b, date.as_ptr(), s1, e1, 1) }, 1);
 
         let header = std::fs::read_to_string(&path)
             .unwrap()
@@ -4514,11 +4514,11 @@ mod tests {
             .next()
             .unwrap()
             .to_string();
-        assert_eq!(header, r#"{"lotus_log":2}"#);
+        assert_eq!(header, r#"{"liv_log":2}"#);
         clear_cache_for_tests();
-        let raw = unsafe { lotus_snapshot(c_path.as_ptr()) };
+        let raw = unsafe { liv_snapshot(c_path.as_ptr()) };
         assert!(!raw.is_null(), "the bumped box reopens from scratch");
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         cleanup(&path);
     }
 
@@ -4526,22 +4526,22 @@ mod tests {
 
     #[test]
     fn role_cycle_round_trips_through_the_cache() {
-        let (path, c_path) = fresh_box("lotus_ffi_cycle.log");
+        let (path, c_path) = fresh_box("liv_ffi_cycle.log");
         let id = unsafe {
-            lotus_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 11, 9, 0).civil, 0)
+            liv_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 11, 9, 0).civil, 0)
         };
         assert_ne!(id, 0);
         // Warm the cache, then cycle due -> date on the HIT path.
-        unsafe { lotus_string_free(lotus_snapshot(c_path.as_ptr())) };
+        unsafe { liv_string_free(liv_snapshot(c_path.as_ptr())) };
         let due = CString::new("due").unwrap();
-        let raw = unsafe { lotus_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()) };
+        let raw = unsafe { liv_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()) };
         assert!(!raw.is_null(), "the cycle succeeds");
         let next = unsafe { CStr::from_ptr(raw).to_str().unwrap().to_string() };
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert_eq!(next, "date", "due cycles to date");
 
         // The Wrote contract: the very next snapshot (a cache hit) sees it.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let cells = snap["entities"]
             .as_array()
             .unwrap()
@@ -4556,26 +4556,26 @@ mod tests {
 
         // And a from-scratch replay agrees — the cache never diverges.
         clear_cache_for_tests();
-        let full = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let full = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(snap, full);
         cleanup(&path);
     }
 
     #[test]
     fn a_refused_cycle_is_tagged_read_and_leaves_the_cache_verbatim() {
-        let (path, c_path) = fresh_box("lotus_ffi_cycle_refused.log");
-        let id = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_cycle_refused.log");
+        let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
         assert_ne!(id, 0);
-        let before = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let before = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
 
         // No due cell on the note: the cycle is refused, nothing written.
         let due = CString::new("due").unwrap();
-        let raw = unsafe { lotus_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()) };
+        let raw = unsafe { liv_cycle_date_role_at(c_path.as_ptr(), id, due.as_ptr()) };
         assert!(raw.is_null(), "the cycle is refused");
 
         // The refusal never touched the store: the next snapshot — still the
         // cached one — is identical.
-        let after = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(before, after);
         cleanup(&path);
     }
@@ -4584,18 +4584,18 @@ mod tests {
     fn setting_location_on_an_event_round_trips() {
         // 10b: `location` is seeded (offered, not expected); set it on an event
         // through the ordinary set seam and it shows in the snapshot's cells.
-        let (path, c_path) = fresh_box("lotus_ffi_location.log");
+        let (path, c_path) = fresh_box("liv_ffi_location.log");
         let id = unsafe {
-            lotus_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 9, 9, 0).civil, 0)
+            liv_create_event_at(c_path.as_ptr(), DateTime::at(2026, 7, 9, 9, 0).civil, 0)
         };
         assert_ne!(id, 0);
         let loc = CString::new("location").unwrap();
         let val = CString::new("Room 4").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), id, loc.as_ptr(), val.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), id, loc.as_ptr(), val.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let e = snap["entities"]
             .as_array()
             .unwrap()
@@ -4613,8 +4613,8 @@ mod tests {
 
     #[test]
     fn a_torn_tail_is_repaired_then_cached() {
-        let (path, c_path) = fresh_box("lotus_ffi_torn.log");
-        unsafe { lotus_capture_at(c_path.as_ptr(), CString::new("real note").unwrap().as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_torn.log");
+        unsafe { liv_capture_at(c_path.as_ptr(), CString::new("real note").unwrap().as_ptr()) };
         // Append a torn (newline-less) trailing record straight to the file.
         {
             use std::io::Write as _;
@@ -4624,8 +4624,8 @@ mod tests {
         // First FFI open repairs (drops the torn record, lowering the length) and
         // caches the REPAIRED length; the second hits cleanly and agrees — the
         // torn record never leaks into either answer (Guard 1).
-        let first = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
-        let second = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let first = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+        let second = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(first, second);
         assert_eq!(first["entities"].as_array().unwrap().len(), 1);
         cleanup(&path);
@@ -4633,14 +4633,14 @@ mod tests {
 
     #[test]
     fn content_seam_roundtrips() {
-        let (path, c_path) = fresh_box("lotus_ffi_content.log");
+        let (path, c_path) = fresh_box("liv_ffi_content.log");
 
         let text = CString::new("plain thought").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         assert_ne!(id, 0);
 
         // The read: capture's RichText comes back verbatim, name null.
-        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        let doc = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         assert_eq!(doc["id"], id);
         assert_eq!(doc["name"], serde_json::Value::Null);
         assert_eq!(doc["trashed"], false);
@@ -4649,7 +4649,7 @@ mod tests {
         assert_ne!(base, 0);
 
         // The snapshot's content_print is the same identity, for free.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["entities"]
             .as_array()
             .unwrap()
@@ -4662,7 +4662,7 @@ mod tests {
         let spans = CString::new(r#"[{"Text":"rewritten"}]"#).unwrap();
         let mut fresh: u64 = 0;
         let saved = unsafe {
-            lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
+            liv_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
         };
         assert_eq!(saved, 1);
         assert_ne!(fresh, base);
@@ -4676,12 +4676,12 @@ mod tests {
         drop(session);
         let drifted = CString::new(r#"[{"Text":"drifted"}]"#).unwrap();
         let stale = unsafe {
-            lotus_set_content_at(c_path.as_ptr(), id, drifted.as_ptr(), base, &mut fresh)
+            liv_set_content_at(c_path.as_ptr(), id, drifted.as_ptr(), base, &mut fresh)
         };
         assert_eq!(stale, -1);
         // Unchanged spans against the fresh base: success, no transaction.
         let unchanged = unsafe {
-            lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), fresh, std::ptr::null_mut())
+            liv_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), fresh, std::ptr::null_mut())
         };
         assert_eq!(unchanged, 1);
         let session = Session::open(&path).unwrap();
@@ -4700,7 +4700,7 @@ mod tests {
         let bad = CString::new(r#"[{"Ref":999999}]"#).unwrap();
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, bad.as_ptr(), fresh, std::ptr::null_mut())
+                liv_set_content_at(c_path.as_ptr(), id, bad.as_ptr(), fresh, std::ptr::null_mut())
             },
             0
         );
@@ -4710,20 +4710,20 @@ mod tests {
         let mut cleared: u64 = 1;
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, empty.as_ptr(), fresh, &mut cleared)
+                liv_set_content_at(c_path.as_ptr(), id, empty.as_ptr(), fresh, &mut cleared)
             },
             1
         );
         assert_eq!(cleared, 0);
 
         // Undo restores the prior content in one step.
-        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
-        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(unsafe { liv_undo_at(c_path.as_ptr()) }, 1);
+        let doc = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         assert_eq!(doc["spans"], serde_json::json!([{"Text": "rewritten"}]));
 
         // No such entity: the box answers "missing", never null — null is
         // reserved for a box that would not open at all.
-        let gone = unsafe { read_json(lotus_content_at(c_path.as_ptr(), 999_999)) };
+        let gone = unsafe { read_json(liv_content_at(c_path.as_ptr(), 999_999)) };
         assert_eq!(gone["missing"], true);
         assert_eq!(gone["fingerprint"], 0);
 
@@ -4732,12 +4732,12 @@ mod tests {
 
     #[test]
     fn editing_content_retracts_stale_proposals() {
-        let (path, c_path) = fresh_box("lotus_ffi_retract.log");
+        let (path, c_path) = fresh_box("liv_ffi_retract.log");
 
         // The clerk proposes due=friday from the captured words.
         let text = CString::new("kickoff friday").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let inbox = snap["inbox"].as_array().unwrap();
         assert_eq!(inbox.len(), 1);
         assert!(inbox[0]["reason"].as_str().unwrap().contains("friday"));
@@ -4756,11 +4756,11 @@ mod tests {
         let spans = CString::new(r#"[{"Text":"kickoff thursday"}]"#).unwrap();
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, std::ptr::null_mut())
+                liv_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, std::ptr::null_mut())
             },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let inbox = snap["inbox"].as_array().unwrap();
         assert_eq!(inbox.len(), 1);
         assert!(inbox[0]["reason"].as_str().unwrap().contains("thursday"));
@@ -4775,13 +4775,13 @@ mod tests {
 
     #[test]
     fn accept_group_commits_a_group_as_one_transaction() {
-        let (path, c_path) = fresh_box("lotus_ffi_group.log");
+        let (path, c_path) = fresh_box("liv_ffi_group.log");
         let a = CString::new("kickoff friday").unwrap();
         let b = CString::new("review monday").unwrap();
-        let ida = unsafe { lotus_capture_at(c_path.as_ptr(), a.as_ptr()) };
-        let idb = unsafe { lotus_capture_at(c_path.as_ptr(), b.as_ptr()) };
+        let ida = unsafe { liv_capture_at(c_path.as_ptr(), a.as_ptr()) };
+        let idb = unsafe { liv_capture_at(c_path.as_ptr(), b.as_ptr()) };
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let inbox = snap["inbox"].as_array().unwrap();
         assert_eq!(inbox.len(), 2);
         // P16c: each proposal carries structured commands for the diff card.
@@ -4791,12 +4791,12 @@ mod tests {
         let fps: Vec<u64> = inbox.iter().map(|p| p["fingerprint"].as_u64().unwrap()).collect();
         let fps_json = CString::new(serde_json::to_string(&fps).unwrap()).unwrap();
         assert_eq!(
-            unsafe { lotus_accept_group_at(c_path.as_ptr(), fps_json.as_ptr()) },
+            unsafe { liv_accept_group_at(c_path.as_ptr(), fps_json.as_ptr()) },
             1
         );
 
         // Both scraps got a due; the queue drained.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["inbox"].as_array().unwrap().is_empty());
         let has_due = |snap: &serde_json::Value, id: u64| {
             snap["entities"]
@@ -4813,14 +4813,14 @@ mod tests {
         assert!(has_due(&snap, ida) && has_due(&snap, idb));
 
         // ONE undo reverts BOTH — the group committed as one transaction.
-        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_undo_at(c_path.as_ptr()) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(!has_due(&snap, ida) && !has_due(&snap, idb), "one undo reverted the whole group");
 
         // A stale fingerprint refuses the whole group, untouched.
         let stale = CString::new("[123456789]").unwrap();
         assert_eq!(
-            unsafe { lotus_accept_group_at(c_path.as_ptr(), stale.as_ptr()) },
+            unsafe { liv_accept_group_at(c_path.as_ptr(), stale.as_ptr()) },
             0
         );
 
@@ -4829,18 +4829,18 @@ mod tests {
 
     #[test]
     fn legacy_text_content_reads_as_one_span() {
-        let (path, c_path) = fresh_box("lotus_ffi_legacy.log");
+        let (path, c_path) = fresh_box("liv_ffi_legacy.log");
 
         let mut session = Session::open(&path).unwrap();
         let id = session.allocate_id();
         session
             .commit(
                 vec![
-                    lotus_core::Command::Create { entity: id },
-                    lotus_core::Command::AddCell {
+                    liv_core::Command::Create { entity: id },
+                    liv_core::Command::AddCell {
                         entity: id,
-                        cell: lotus_core::Cell {
-                            property: lotus_core::props::CONTENT,
+                        cell: liv_core::Cell {
+                            property: liv_core::props::CONTENT,
                             value: Value::text("old plain text"),
                         },
                     },
@@ -4851,7 +4851,7 @@ mod tests {
             .unwrap();
         drop(session);
 
-        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        let doc = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         assert_eq!(doc["spans"], serde_json::json!([{"Text": "old plain text"}]));
         let base = doc["fingerprint"].as_u64().unwrap();
         assert_ne!(base, 0);
@@ -4861,7 +4861,7 @@ mod tests {
         let spans = CString::new(r#"[{"Text":"upgraded"}]"#).unwrap();
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, std::ptr::null_mut())
+                liv_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, std::ptr::null_mut())
             },
             1
         );
@@ -4871,11 +4871,11 @@ mod tests {
 
     #[test]
     fn workspace_tree_roundtrips() {
-        let (path, c_path) = fresh_box("lotus_ffi_workspace.log");
+        let (path, c_path) = fresh_box("liv_ffi_workspace.log");
 
         // The seed ships Home; a snapshot shows it, favourite by shell
         // convention (builtin), top-level.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let spaces = snap["workspaces"].as_array().unwrap();
         assert_eq!(spaces.len(), 1);
         assert_eq!(spaces[0]["name"], "Home");
@@ -4884,14 +4884,14 @@ mod tests {
 
         // A new area, then a child project under it.
         let name = CString::new("Work").unwrap();
-        let area = unsafe { lotus_create_workspace_at(c_path.as_ptr(), name.as_ptr(), 0) };
+        let area = unsafe { liv_create_workspace_at(c_path.as_ptr(), name.as_ptr(), 0) };
         assert_ne!(area, 0);
-        let child_name = CString::new("Lotus port").unwrap();
+        let child_name = CString::new("Liv port").unwrap();
         let child =
-            unsafe { lotus_create_workspace_at(c_path.as_ptr(), child_name.as_ptr(), area) };
+            unsafe { liv_create_workspace_at(c_path.as_ptr(), child_name.as_ptr(), area) };
         assert_ne!(child, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let spaces = snap["workspaces"].as_array().unwrap();
         assert_eq!(spaces.len(), 3);
         let child_row = spaces.iter().find(|w| w["id"] == child).unwrap();
@@ -4906,10 +4906,10 @@ mod tests {
         let favorite = CString::new("favorite").unwrap();
         let yes = CString::new("true").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), area, favorite.as_ptr(), yes.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), area, favorite.as_ptr(), yes.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["workspaces"]
             .as_array()
             .unwrap()
@@ -4920,7 +4920,7 @@ mod tests {
         assert_eq!(row["favorite"], true);
         let parent_prop = CString::new("parent").unwrap();
         assert_eq!(
-            unsafe { lotus_unset_at(c_path.as_ptr(), child, parent_prop.as_ptr()) },
+            unsafe { liv_unset_at(c_path.as_ptr(), child, parent_prop.as_ptr()) },
             1
         );
 
@@ -4930,17 +4930,17 @@ mod tests {
         let up = CString::new("parent").unwrap();
         let area_arg = CString::new(format!("{area}")).unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), child, up.as_ptr(), area_arg.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), child, up.as_ptr(), area_arg.as_ptr()) },
             1
         );
-        assert_eq!(unsafe { lotus_trash_workspace_at(c_path.as_ptr(), area) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_trash_workspace_at(c_path.as_ptr(), area) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let after = snap["workspaces"].as_array().unwrap();
         assert_eq!(after.len(), 2); // Home + the surviving child
         assert!(after.iter().any(|w| w["id"] == child));
         assert!(!after.iter().any(|w| w["id"] == area));
-        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_undo_at(c_path.as_ptr()) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(snap["workspaces"].as_array().unwrap().len(), 3);
 
         cleanup(&path);
@@ -4948,21 +4948,21 @@ mod tests {
 
     #[test]
     fn set_at_and_create_note() {
-        let (path, c_path) = fresh_box("lotus_ffi_set.log");
+        let (path, c_path) = fresh_box("liv_ffi_set.log");
 
         // Birth: one transaction, typed note, created — then rename.
-        let note = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let note = unsafe { liv_create_note_at(c_path.as_ptr()) };
         assert_ne!(note, 0);
         let prop = CString::new("name").unwrap();
         let value = CString::new("meeting notes").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), note, prop.as_ptr(), value.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), note, prop.as_ptr(), value.as_ptr()) },
             1
         );
-        let doc = unsafe { read_json(lotus_content_at(c_path.as_ptr(), note)) };
+        let doc = unsafe { read_json(liv_content_at(c_path.as_ptr(), note)) };
         assert_eq!(doc["name"], "meeting notes");
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let row = snap["entities"]
             .as_array()
             .unwrap()
@@ -4975,24 +4975,24 @@ mod tests {
         let status = CString::new("status").unwrap();
         let done = CString::new("done").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), note, status.as_ptr(), done.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), note, status.as_ptr(), done.as_ptr()) },
             1
         );
         // A date, parsed by the declared kind.
         let due = CString::new("due").unwrap();
         let day = CString::new("2026-07-08").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), note, due.as_ptr(), day.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), note, due.as_ptr(), day.as_ptr()) },
             1
         );
         // Unknown property, unknown entity: refused.
         let nope = CString::new("frobnicate").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), note, nope.as_ptr(), done.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), note, nope.as_ptr(), done.as_ptr()) },
             0
         );
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), 999_999, status.as_ptr(), done.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), 999_999, status.as_ptr(), done.as_ptr()) },
             0
         );
 
@@ -5001,11 +5001,11 @@ mod tests {
 
     #[test]
     fn content_history_is_the_log() {
-        let (path, c_path) = fresh_box("lotus_ffi_history.log");
+        let (path, c_path) = fresh_box("liv_ffi_history.log");
 
         let text = CString::new("first").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
-        let base = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) }["fingerprint"]
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let base = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) }["fingerprint"]
             .as_u64()
             .unwrap();
 
@@ -5013,12 +5013,12 @@ mod tests {
         let v2 = CString::new(r#"[{"Text":"second"}]"#).unwrap();
         let mut fresh: u64 = 0;
         assert_eq!(
-            unsafe { lotus_set_content_at(c_path.as_ptr(), id, v2.as_ptr(), base, &mut fresh) },
+            unsafe { liv_set_content_at(c_path.as_ptr(), id, v2.as_ptr(), base, &mut fresh) },
             1
         );
 
         // History has both, newest first, each a whole content value.
-        let hist = unsafe { read_json(lotus_content_history_at(c_path.as_ptr(), id)) };
+        let hist = unsafe { read_json(liv_content_history_at(c_path.as_ptr(), id)) };
         let versions = hist.as_array().unwrap();
         assert_eq!(versions.len(), 2);
         assert_eq!(versions[0]["spans"], serde_json::json!([{"Text": "second"}]));
@@ -5027,19 +5027,19 @@ mod tests {
 
         // Restore = an ordinary set_content of the old spans (re-read the
         // fresh base first, the way the shell does).
-        let re = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        let re = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         let now = re["fingerprint"].as_u64().unwrap();
         let restore = CString::new(r#"[{"Text":"first"}]"#).unwrap();
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, restore.as_ptr(), now, std::ptr::null_mut())
+                liv_set_content_at(c_path.as_ptr(), id, restore.as_ptr(), now, std::ptr::null_mut())
             },
             1
         );
-        let back = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        let back = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         assert_eq!(back["spans"], serde_json::json!([{"Text": "first"}]));
         // The restore is a NEW version, appended — the log is never rewritten.
-        let hist = unsafe { read_json(lotus_content_history_at(c_path.as_ptr(), id)) };
+        let hist = unsafe { read_json(liv_content_history_at(c_path.as_ptr(), id)) };
         assert_eq!(hist.as_array().unwrap().len(), 3);
 
         cleanup(&path);
@@ -5047,27 +5047,27 @@ mod tests {
 
     #[test]
     fn undo_does_not_mint_a_phantom_history_version() {
-        let (path, c_path) = fresh_box("lotus_ffi_hist_undo.log");
+        let (path, c_path) = fresh_box("liv_ffi_hist_undo.log");
 
         let text = CString::new("first").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
-        let base = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) }["fingerprint"]
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let base = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) }["fingerprint"]
             .as_u64()
             .unwrap();
         let v2 = CString::new(r#"[{"Text":"second"}]"#).unwrap();
         let mut fresh: u64 = 0;
         assert_eq!(
-            unsafe { lotus_set_content_at(c_path.as_ptr(), id, v2.as_ptr(), base, &mut fresh) },
+            unsafe { liv_set_content_at(c_path.as_ptr(), id, v2.as_ptr(), base, &mut fresh) },
             1
         );
 
         // Undo the edit — the content reverts to "first" via an appended
         // inverse transaction. History must still show only the two
         // forward edits, not a third phantom "first".
-        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
-        let back = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        assert_eq!(unsafe { liv_undo_at(c_path.as_ptr()) }, 1);
+        let back = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         assert_eq!(back["spans"], serde_json::json!([{"Text": "first"}]));
-        let hist = unsafe { read_json(lotus_content_history_at(c_path.as_ptr(), id)) };
+        let hist = unsafe { read_json(liv_content_history_at(c_path.as_ptr(), id)) };
         assert_eq!(hist.as_array().unwrap().len(), 2);
 
         cleanup(&path);
@@ -5075,11 +5075,11 @@ mod tests {
 
     #[test]
     fn marks_and_blocks_round_trip_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_p4.log");
+        let (path, c_path) = fresh_box("liv_ffi_p4.log");
 
         let text = CString::new("start").unwrap();
-        let id = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
-        let base = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) }["fingerprint"]
+        let id = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let base = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) }["fingerprint"]
             .as_u64()
             .unwrap();
 
@@ -5098,14 +5098,14 @@ mod tests {
         let mut fresh: u64 = 0;
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
+                liv_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), base, &mut fresh)
             },
             1
         );
         assert_ne!(fresh, base);
 
         // The read comes back with the marks and blocks intact.
-        let got = unsafe { read_json(lotus_content_at(c_path.as_ptr(), id)) };
+        let got = unsafe { read_json(liv_content_at(c_path.as_ptr(), id)) };
         assert_eq!(got["spans"][0], serde_json::json!({"Break": {"Heading": 1}}));
         assert_eq!(got["spans"][4], serde_json::json!({"Text": {"text": "this", "marks": 5}}));
         assert_eq!(got["spans"][5], serde_json::json!({"Break": {"Task": {"depth": 0, "done": false}}}));
@@ -5115,7 +5115,7 @@ mod tests {
         // a conflict — the marks-and-blocks encoding is canonical.
         assert_eq!(
             unsafe {
-                lotus_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), fresh, std::ptr::null_mut())
+                liv_set_content_at(c_path.as_ptr(), id, spans.as_ptr(), fresh, std::ptr::null_mut())
             },
             1
         );
@@ -5128,11 +5128,11 @@ mod tests {
 
     #[test]
     fn the_catalog_offers_user_properties_not_schema_plumbing() {
-        let (path, c_path) = fresh_box("lotus_ffi_catalog.log");
+        let (path, c_path) = fresh_box("liv_ffi_catalog.log");
         let text = CString::new("a note").unwrap();
-        assert_ne!(unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
+        assert_ne!(unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) }, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let names: Vec<String> = snap["properties"]
             .as_array()
             .unwrap()
@@ -5163,18 +5163,18 @@ mod tests {
 
     #[test]
     fn search_ranks_hits_and_facets_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_search.log");
+        let (path, c_path) = fresh_box("liv_ffi_search.log");
         let a = unsafe {
-            lotus_capture_at(c_path.as_ptr(), CString::new("call anna about the report").unwrap().as_ptr())
+            liv_capture_at(c_path.as_ptr(), CString::new("call anna about the report").unwrap().as_ptr())
         };
         let b = unsafe {
-            lotus_capture_at(c_path.as_ptr(), CString::new("buy groceries").unwrap().as_ptr())
+            liv_capture_at(c_path.as_ptr(), CString::new("buy groceries").unwrap().as_ptr())
         };
         assert_ne!(a, 0);
         assert_ne!(b, 0);
 
         let raw = CString::new("report").unwrap();
-        let json = unsafe { read_json(lotus_search_at(c_path.as_ptr(), raw.as_ptr())) };
+        let json = unsafe { read_json(liv_search_at(c_path.as_ptr(), raw.as_ptr())) };
 
         let hits = json["hits"].as_array().unwrap();
         let ids: Vec<u64> = hits.iter().map(|h| h["id"].as_u64().unwrap()).collect();
@@ -5188,7 +5188,7 @@ mod tests {
 
         // A blank query with no free text is a valid search (recent order).
         let blank = CString::new("").unwrap();
-        let all = unsafe { read_json(lotus_search_at(c_path.as_ptr(), blank.as_ptr())) };
+        let all = unsafe { read_json(liv_search_at(c_path.as_ptr(), blank.as_ptr())) };
         let all_ids: Vec<u64> = all["hits"].as_array().unwrap().iter()
             .map(|h| h["id"].as_u64().unwrap()).collect();
         assert!(all_ids.contains(&a) && all_ids.contains(&b));
@@ -5198,19 +5198,19 @@ mod tests {
 
     #[test]
     fn add_file_by_reference_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_addfile.log");
-        let doc = std::env::temp_dir().join("lotus_ffi_sample.txt");
+        let (path, c_path) = fresh_box("liv_ffi_addfile.log");
+        let doc = std::env::temp_dir().join("liv_ffi_sample.txt");
         std::fs::write(&doc, b"hello from a referenced file").unwrap();
         let doc_c = CString::new(doc.to_str().unwrap()).unwrap();
 
-        let id = unsafe { lotus_add_file_at(c_path.as_ptr(), doc_c.as_ptr()) };
+        let id = unsafe { liv_add_file_at(c_path.as_ptr(), doc_c.as_ptr()) };
         assert_ne!(id, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let entity = snap["entities"].as_array().unwrap().iter()
             .find(|e| e["id"].as_u64() == Some(id)).unwrap();
         // name = filename, a file-kind cell rendering the path, format = txt
-        assert_eq!(entity["title"], "lotus_ffi_sample.txt");
+        assert_eq!(entity["title"], "liv_ffi_sample.txt");
         let cells = entity["cells"].as_array().unwrap();
         let file_cell = cells.iter().find(|c| c["kind"] == "file").unwrap();
         assert_eq!(file_cell["value"], doc.to_str().unwrap());
@@ -5218,7 +5218,7 @@ mod tests {
 
         // A bad path adds nothing and returns 0.
         let bad = CString::new("/no/such/file.pdf").unwrap();
-        assert_eq!(unsafe { lotus_add_file_at(c_path.as_ptr(), bad.as_ptr()) }, 0);
+        assert_eq!(unsafe { liv_add_file_at(c_path.as_ptr(), bad.as_ptr()) }, 0);
 
         let _ = std::fs::remove_file(&doc);
         cleanup(&path);
@@ -5226,7 +5226,7 @@ mod tests {
 
     #[test]
     fn import_batch_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_import.log");
+        let (path, c_path) = fresh_box("liv_ffi_import.log");
         let items = r#"[
             {"kind":"link","url":"https://a.example","title":"Alpha"},
             {"kind":"link","url":"https://b.example","title":null},
@@ -5235,12 +5235,12 @@ mod tests {
         let items_c = CString::new(items).unwrap();
         let stamps_c = CString::new("[]").unwrap();
         let n = unsafe {
-            lotus_import_batch_at(c_path.as_ptr(), items_c.as_ptr(), stamps_c.as_ptr())
+            liv_import_batch_at(c_path.as_ptr(), items_c.as_ptr(), stamps_c.as_ptr())
         };
         assert_eq!(n, 3);
 
         // The titled link shows its title; the batch really landed.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let entities = snap["entities"].as_array().unwrap();
         assert!(entities.iter().any(|e| e["title"] == "Alpha"), "titled link not found");
 
@@ -5251,14 +5251,14 @@ mod tests {
         ]"#;
         let items2_c = CString::new(items2).unwrap();
         let n2 = unsafe {
-            lotus_import_batch_at(c_path.as_ptr(), items2_c.as_ptr(), stamps_c.as_ptr())
+            liv_import_batch_at(c_path.as_ptr(), items2_c.as_ptr(), stamps_c.as_ptr())
         };
         assert_eq!(n2, 0, "re-import should be a no-op");
 
         // A malformed items json returns -1, writes nothing.
         let bad = CString::new("not json").unwrap();
         assert_eq!(
-            unsafe { lotus_import_batch_at(c_path.as_ptr(), bad.as_ptr(), stamps_c.as_ptr()) },
+            unsafe { liv_import_batch_at(c_path.as_ptr(), bad.as_ptr(), stamps_c.as_ptr()) },
             -1
         );
 
@@ -5267,7 +5267,7 @@ mod tests {
 
     #[test]
     fn export_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_export.log");
+        let (path, c_path) = fresh_box("liv_ffi_export.log");
         // Import two notes, then read their ids from the snapshot.
         let items = r#"[
             {"kind":"note","frontmatter":[["title","One"]],"body":"first","source_id":"/1"},
@@ -5276,23 +5276,23 @@ mod tests {
         let items_c = CString::new(items).unwrap();
         let stamps_c = CString::new("[]").unwrap();
         assert_eq!(
-            unsafe { lotus_import_batch_at(c_path.as_ptr(), items_c.as_ptr(), stamps_c.as_ptr()) },
+            unsafe { liv_import_batch_at(c_path.as_ptr(), items_c.as_ptr(), stamps_c.as_ptr()) },
             2
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let ids: Vec<u64> = snap["entities"].as_array().unwrap().iter()
             .filter(|e| e["title"] == "One" || e["title"] == "Two")
             .map(|e| e["id"].as_u64().unwrap())
             .collect();
         assert_eq!(ids.len(), 2);
 
-        let out = std::env::temp_dir().join("lotus_ffi_export_out");
+        let out = std::env::temp_dir().join("liv_ffi_export_out");
         let _ = std::fs::remove_dir_all(&out);
         let ids_c = CString::new(serde_json::to_string(&ids).unwrap()).unwrap();
         let groups_c = CString::new("[]").unwrap();
         let dest_c = CString::new(out.to_str().unwrap()).unwrap();
         let n = unsafe {
-            lotus_export_at(c_path.as_ptr(), ids_c.as_ptr(), groups_c.as_ptr(), dest_c.as_ptr())
+            liv_export_at(c_path.as_ptr(), ids_c.as_ptr(), groups_c.as_ptr(), dest_c.as_ptr())
         };
         assert_eq!(n, 2);
         assert!(out.join("One.md").exists());
@@ -5301,7 +5301,7 @@ mod tests {
         // Bad ids json → -1.
         let bad = CString::new("nope").unwrap();
         assert_eq!(
-            unsafe { lotus_export_at(c_path.as_ptr(), bad.as_ptr(), groups_c.as_ptr(), dest_c.as_ptr()) },
+            unsafe { liv_export_at(c_path.as_ptr(), bad.as_ptr(), groups_c.as_ptr(), dest_c.as_ptr()) },
             -1
         );
 
@@ -5311,11 +5311,11 @@ mod tests {
 
     #[test]
     fn create_task_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_task.log");
-        let id = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        let (path, c_path) = fresh_box("liv_ffi_task.log");
+        let id = unsafe { liv_create_task_at(c_path.as_ptr()) };
         assert_ne!(id, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let e = snap["entities"].as_array().unwrap().iter()
             .find(|e| e["id"].as_u64() == Some(id)).unwrap();
         // A typed, todo task: kinds carries "task", status renders "todo".
@@ -5329,20 +5329,20 @@ mod tests {
 
     #[test]
     fn list_membership_through_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_list.log");
+        let (path, c_path) = fresh_box("liv_ffi_list.log");
         let name = CString::new("Reading queue").unwrap();
-        let list = unsafe { lotus_create_list_at(c_path.as_ptr(), name.as_ptr()) };
+        let list = unsafe { liv_create_list_at(c_path.as_ptr(), name.as_ptr()) };
         assert_ne!(list, 0);
-        let a = unsafe { lotus_create_note_at(c_path.as_ptr()) };
-        let b = unsafe { lotus_create_note_at(c_path.as_ptr()) };
+        let a = unsafe { liv_create_note_at(c_path.as_ptr()) };
+        let b = unsafe { liv_create_note_at(c_path.as_ptr()) };
         let related = CString::new("related").unwrap();
         let a_ref = CString::new(format!("#{a}")).unwrap();
         let b_ref = CString::new(format!("#{b}")).unwrap();
 
         // Add a, then b; a duplicate add is a no-op that still returns 1.
-        assert_eq!(unsafe { lotus_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
-        assert_eq!(unsafe { lotus_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), b_ref.as_ptr()) }, 1);
-        assert_eq!(unsafe { lotus_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), b_ref.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_add_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
 
         let members = |snap: &serde_json::Value| -> Vec<u64> {
             snap["entities"].as_array().unwrap().iter()
@@ -5350,12 +5350,12 @@ mod tests {
                 .iter().filter(|c| c["property"] == "related")
                 .filter_map(|c| c["ref_target"].as_u64()).collect()
         };
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(members(&snap), vec![a, b], "insertion order, not doubled");
 
         // Remove a — b remains, and a (the note) survives.
-        assert_eq!(unsafe { lotus_remove_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
-        let snap2 = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_remove_cell_at(c_path.as_ptr(), list, related.as_ptr(), a_ref.as_ptr()) }, 1);
+        let snap2 = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert_eq!(members(&snap2), vec![b]);
         assert!(
             snap2["entities"].as_array().unwrap().iter().any(|e| e["id"].as_u64() == Some(a)),
@@ -5366,20 +5366,20 @@ mod tests {
 
     #[test]
     fn a_nul_byte_in_extracted_text_survives_the_seam() {
-        let (path, c_path) = fresh_box("lotus_ffi_nul.log");
+        let (path, c_path) = fresh_box("liv_ffi_nul.log");
         // A text-format file with an embedded NUL (a null-padded log).
-        let doc = std::env::temp_dir().join("lotus_ffi_nul.log");
+        let doc = std::env::temp_dir().join("liv_ffi_nul.log");
         std::fs::write(&doc, b"before\0after the null").unwrap();
         let doc_c = CString::new(doc.to_str().unwrap()).unwrap();
-        let id = unsafe { lotus_add_file_at(c_path.as_ptr(), doc_c.as_ptr()) };
+        let id = unsafe { liv_add_file_at(c_path.as_ptr(), doc_c.as_ptr()) };
         assert_ne!(id, 0);
 
         // The preview must not silently vanish — the NUL is scrubbed at the
         // seam, so a non-null string comes back with the words intact.
-        let raw = unsafe { lotus_extracted_text_at(c_path.as_ptr(), id) };
+        let raw = unsafe { liv_extracted_text_at(c_path.as_ptr(), id) };
         assert!(!raw.is_null(), "the NUL must not blank the preview");
         let text = unsafe { CStr::from_ptr(raw).to_str().unwrap().to_string() };
-        unsafe { lotus_string_free(raw) };
+        unsafe { liv_string_free(raw) };
         assert!(text.contains("before") && text.contains("after the null"));
 
         let _ = std::fs::remove_file(&doc);
@@ -5388,22 +5388,22 @@ mod tests {
     }
     #[test]
     fn pins_roundtrip_backstage_and_tolerate_dangling_targets() {
-        let (path, c_path) = fresh_box("lotus_ffi_pins.log");
+        let (path, c_path) = fresh_box("liv_ffi_pins.log");
 
         let text = CString::new("pin me").unwrap();
-        let note = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let note = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
         assert_ne!(note, 0);
         let other_text = CString::new("me too").unwrap();
-        let other = unsafe { lotus_capture_at(c_path.as_ptr(), other_text.as_ptr()) };
+        let other = unsafe { liv_capture_at(c_path.as_ptr(), other_text.as_ptr()) };
 
         // Pin both; pinning is idempotent.
-        let pin = unsafe { lotus_pin_at(c_path.as_ptr(), note) };
+        let pin = unsafe { liv_pin_at(c_path.as_ptr(), note) };
         assert_ne!(pin, 0);
-        assert_eq!(unsafe { lotus_pin_at(c_path.as_ptr(), note) }, pin);
-        let pin_other = unsafe { lotus_pin_at(c_path.as_ptr(), other) };
+        assert_eq!(unsafe { liv_pin_at(c_path.as_ptr(), note) }, pin);
+        let pin_other = unsafe { liv_pin_at(c_path.as_ptr(), other) };
         assert_ne!(pin_other, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let pins = snap["pins"].as_array().unwrap();
         assert_eq!(pins.len(), 2);
         // Ordered by the float key: first pinned first.
@@ -5415,36 +5415,36 @@ mod tests {
 
         // A dangling target (trashed under the pin) drops the ROW, never
         // the snapshot.
-        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), other) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), other) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let pins = snap["pins"].as_array().unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0]["target"], note);
 
         // Unpin by target; a second unpin is a quiet no-op.
-        assert_eq!(unsafe { lotus_unpin_at(c_path.as_ptr(), note) }, 1);
-        assert_eq!(unsafe { lotus_unpin_at(c_path.as_ptr(), note) }, 0);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_unpin_at(c_path.as_ptr(), note) }, 1);
+        assert_eq!(unsafe { liv_unpin_at(c_path.as_ptr(), note) }, 0);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["pins"].as_array().unwrap().is_empty());
 
         cleanup(&path);
     }
     #[test]
     fn layers_roundtrip_and_drop_dangling_members() {
-        let (path, c_path) = fresh_box("lotus_ffi_layers.log");
+        let (path, c_path) = fresh_box("liv_ffi_layers.log");
 
         let a_text = CString::new("alpha").unwrap();
-        let a = unsafe { lotus_capture_at(c_path.as_ptr(), a_text.as_ptr()) };
+        let a = unsafe { liv_capture_at(c_path.as_ptr(), a_text.as_ptr()) };
         let b_text = CString::new("beta").unwrap();
-        let b = unsafe { lotus_capture_at(c_path.as_ptr(), b_text.as_ptr()) };
+        let b = unsafe { liv_capture_at(c_path.as_ptr(), b_text.as_ptr()) };
 
         let name = CString::new("Writing set").unwrap();
         let members = CString::new(format!("[{b},{a}]")).unwrap();
         let layer =
-            unsafe { lotus_layer_save_at(c_path.as_ptr(), name.as_ptr(), 0, members.as_ptr()) };
+            unsafe { liv_layer_save_at(c_path.as_ptr(), name.as_ptr(), 0, members.as_ptr()) };
         assert_ne!(layer, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let layers = snap["layers"].as_array().unwrap();
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0]["id"], layer);
@@ -5462,8 +5462,8 @@ mod tests {
 
         // A dangling member (trashed under the layer) drops from the ROW,
         // not the snapshot; the layer survives with the live remainder.
-        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), b) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), b) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let layers = snap["layers"].as_array().unwrap();
         assert_eq!(layers.len(), 1);
         let members: Vec<u64> = layers[0]["members"]
@@ -5475,33 +5475,33 @@ mod tests {
         assert_eq!(members, vec![a]);
 
         // Delete rides the ordinary trash door.
-        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), layer) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), layer) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["layers"].as_array().unwrap().is_empty());
 
         cleanup(&path);
     }
     #[test]
     fn habits_roundtrip_through_the_snapshot() {
-        let (path, c_path) = fresh_box("lotus_ffi_habits.log");
+        let (path, c_path) = fresh_box("liv_ffi_habits.log");
 
         let name = CString::new("Climb").unwrap();
         let cadence = CString::new("3\u{d7}/wk").unwrap();
         let habit =
-            unsafe { lotus_create_habit_at(c_path.as_ptr(), name.as_ptr(), 2.0, cadence.as_ptr()) };
+            unsafe { liv_create_habit_at(c_path.as_ptr(), name.as_ptr(), 2.0, cadence.as_ptr()) };
         assert_ne!(habit, 0);
         let other_name = CString::new("Mobility").unwrap();
         let other = unsafe {
-            lotus_create_habit_at(c_path.as_ptr(), other_name.as_ptr(), 0.0, std::ptr::null())
+            liv_create_habit_at(c_path.as_ptr(), other_name.as_ptr(), 0.0, std::ptr::null())
         };
         assert_ne!(other, 0);
 
         // Check in TODAY (0 = today, the shell's path) — idempotent.
-        let row = unsafe { lotus_check_in_at(c_path.as_ptr(), habit, 0) };
+        let row = unsafe { liv_check_in_at(c_path.as_ptr(), habit, 0) };
         assert_ne!(row, 0);
-        assert_eq!(unsafe { lotus_check_in_at(c_path.as_ptr(), habit, 0) }, row);
+        assert_eq!(unsafe { liv_check_in_at(c_path.as_ptr(), habit, 0) }, row);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let section = &snap["habits"];
         let lines = section["habits"].as_array().unwrap();
         assert_eq!(lines.len(), 2);
@@ -5520,8 +5520,8 @@ mod tests {
         assert!(!snap["everything"].as_array().unwrap().iter().any(|id| *id == row));
 
         // Uncheck rides the ordinary trash door.
-        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), row) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), row) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["habits"]["habits"][0]["today_check_in"].is_null());
         assert_eq!(snap["habits"]["streak"], 0);
 
@@ -5529,29 +5529,31 @@ mod tests {
     }
     #[test]
     fn time_views_widgets_roundtrip_the_snapshot() {
-        let (path, c_path) = fresh_box("lotus_ffi_timeviews.log");
+        let (path, c_path) = fresh_box("liv_ffi_timeviews.log");
 
         let text = CString::new("thesis work").unwrap();
-        let project = unsafe { lotus_capture_at(c_path.as_ptr(), text.as_ptr()) };
+        let project = unsafe { liv_capture_at(c_path.as_ptr(), text.as_ptr()) };
 
-        // A closed interval: full civil stamps (YYYYMMDDHHMM).
-        let entry = unsafe {
-            lotus_log_time_at(c_path.as_ptr(), project, 202607140900, 202607141030)
-        };
+        // A closed interval: full civil stamps (YYYYMMDDHHMM), anchored to
+        // today so the entry always sits inside the rolling 7-day window
+        // (a fixed date rots out of the window as the calendar advances).
+        let day = civil_today().civil / 10_000;
+        let entry =
+            unsafe { liv_log_time_at(c_path.as_ptr(), project, day * 10_000 + 900, day * 10_000 + 1030) };
         assert_ne!(entry, 0);
 
         let view_name = CString::new("Open tasks").unwrap();
         let query = CString::new("is:task status!=done").unwrap();
         let view = unsafe {
-            lotus_create_view_at(c_path.as_ptr(), view_name.as_ptr(), query.as_ptr())
+            liv_create_view_at(c_path.as_ptr(), view_name.as_ptr(), query.as_ptr())
         };
         assert_ne!(view, 0);
 
         let kind = CString::new("habits").unwrap();
-        let widget = unsafe { lotus_widget_add_at(c_path.as_ptr(), kind.as_ptr(), 0, 3.0) };
+        let widget = unsafe { liv_widget_add_at(c_path.as_ptr(), kind.as_ptr(), 0, 3.0) };
         assert_ne!(widget, 0);
 
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         // Time: totals + entries in the 7-day window.
         let time = &snap["time_entries"];
         assert_eq!(time["totals"][0]["target"], project);
@@ -5575,43 +5577,43 @@ mod tests {
         assert!(snap["entities"].as_array().unwrap().iter().any(|e| e["id"] == widget));
 
         // Removal rides the ordinary trash door.
-        assert_eq!(unsafe { lotus_trash_at(c_path.as_ptr(), widget) }, 1);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), widget) }, 1);
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         assert!(snap["widgets"].as_array().unwrap().is_empty());
 
         cleanup(&path);
     }
     #[test]
     fn rename_value_roundtrips_and_refuses_wrong_kinds() {
-        let (path, c_path) = fresh_box("lotus_ffi_rename.log");
+        let (path, c_path) = fresh_box("liv_ffi_rename.log");
 
         let a_text = CString::new("carrier one").unwrap();
-        let a = unsafe { lotus_capture_at(c_path.as_ptr(), a_text.as_ptr()) };
+        let a = unsafe { liv_capture_at(c_path.as_ptr(), a_text.as_ptr()) };
         let b_text = CString::new("carrier two").unwrap();
-        let b = unsafe { lotus_capture_at(c_path.as_ptr(), b_text.as_ptr()) };
+        let b = unsafe { liv_capture_at(c_path.as_ptr(), b_text.as_ptr()) };
 
         // Birth a text property through the existing add-property door, set
         // both carriers, rename across them.
         let tag = CString::new("tag").unwrap();
         let kind = CString::new("text").unwrap();
-        let prop = unsafe { lotus_add_property_at(c_path.as_ptr(), tag.as_ptr(), kind.as_ptr()) };
+        let prop = unsafe { liv_add_property_at(c_path.as_ptr(), tag.as_ptr(), kind.as_ptr()) };
         assert_ne!(prop, 0);
         let old = CString::new("draft").unwrap();
         for id in [a, b] {
             assert_eq!(
-                unsafe { lotus_set_at(c_path.as_ptr(), id, tag.as_ptr(), old.as_ptr()) },
+                unsafe { liv_set_at(c_path.as_ptr(), id, tag.as_ptr(), old.as_ptr()) },
                 1
             );
         }
         let new = CString::new("sketch").unwrap();
         assert_eq!(
             unsafe {
-                lotus_rename_value_at(c_path.as_ptr(), tag.as_ptr(), old.as_ptr(), new.as_ptr())
+                liv_rename_value_at(c_path.as_ptr(), tag.as_ptr(), old.as_ptr(), new.as_ptr())
             },
             2
         );
         // One undo restores both.
-        assert_eq!(unsafe { lotus_undo_at(c_path.as_ptr()) }, 1);
+        assert_eq!(unsafe { liv_undo_at(c_path.as_ptr()) }, 1);
 
         // Kind discipline: a datetime property refuses.
         let due = CString::new("due").unwrap();
@@ -5619,7 +5621,7 @@ mod tests {
         let y = CString::new("y").unwrap();
         assert_eq!(
             unsafe {
-                lotus_rename_value_at(c_path.as_ptr(), due.as_ptr(), x.as_ptr(), y.as_ptr())
+                liv_rename_value_at(c_path.as_ptr(), due.as_ptr(), x.as_ptr(), y.as_ptr())
             },
             -1
         );
@@ -5628,11 +5630,11 @@ mod tests {
     }
     #[test]
     fn seed_layer_and_kind_ids_ride_the_wire() {
-        let (path, c_path) = fresh_box("lotus_ffi_seedlayer.log");
+        let (path, c_path) = fresh_box("liv_ffi_seedlayer.log");
 
         // The kind-id seam (19c): type entities exposed as an optional key so
         // hide-on-kind / core-on-kinds writers can pass #<id> references.
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let kinds = snap["kinds"].as_array().unwrap();
         let task_kind = kinds.iter().find(|k| k["name"] == "task").expect("task kind on the wire");
         assert!(task_kind["id"].as_u64().unwrap() > 0);
@@ -5650,9 +5652,9 @@ mod tests {
         assert_eq!(todo["hidden"], false);
 
         // Using the seed flips it to the vault shelf: count>0 → seeded=false.
-        let task = unsafe { lotus_create_task_at(c_path.as_ptr()) };
+        let task = unsafe { liv_create_task_at(c_path.as_ptr()) };
         assert_ne!(task, 0);
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let status = snap["properties"].as_array().unwrap().iter()
             .find(|p| p["name"] == "status").unwrap().clone();
         let todo = status["options"].as_array().unwrap().iter()
@@ -5665,17 +5667,17 @@ mod tests {
         let bool_kind = CString::new("bool").unwrap();
         assert_ne!(
             unsafe {
-                lotus_add_property_at(c_path.as_ptr(), hidden_name.as_ptr(), bool_kind.as_ptr())
+                liv_add_property_at(c_path.as_ptr(), hidden_name.as_ptr(), bool_kind.as_ptr())
             },
             0
         );
         let option_id = todo["id"].as_u64().unwrap();
         let yes = CString::new("true").unwrap();
         assert_eq!(
-            unsafe { lotus_set_at(c_path.as_ptr(), option_id, hidden_name.as_ptr(), yes.as_ptr()) },
+            unsafe { liv_set_at(c_path.as_ptr(), option_id, hidden_name.as_ptr(), yes.as_ptr()) },
             1
         );
-        let snap = unsafe { read_json(lotus_snapshot(c_path.as_ptr())) };
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
         let status = snap["properties"].as_array().unwrap().iter()
             .find(|p| p["name"] == "status").unwrap().clone();
         let todo = status["options"].as_array().unwrap().iter()

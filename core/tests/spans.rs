@@ -2,7 +2,7 @@
 //! value. One cell, one fact, one drag target; absent on every value written
 //! before P11, so old logs replay unchanged.
 
-use lotus_core::*;
+use liv_core::*;
 
 #[test]
 fn an_old_log_datetime_deserializes_with_no_end() {

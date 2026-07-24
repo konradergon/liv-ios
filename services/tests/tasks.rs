@@ -2,11 +2,11 @@
 //! lands even on a box that already has `due`, and `create_task` — a typed,
 //! already-`todo` birth distinct from an untyped capture.
 
-use lotus_core::*;
-use lotus_services::{content, property_id, seed_if_fresh};
+use liv_core::*;
+use liv_services::{content, property_id, seed_if_fresh};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_t_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_t_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");

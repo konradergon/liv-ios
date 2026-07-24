@@ -5,7 +5,7 @@
 //! (and the services seam refuses non-finite numbers at parse), so every
 //! cell that is in the log stays removable.
 
-use lotus_core::*;
+use liv_core::*;
 
 #[test]
 fn a_nan_cell_is_removable() {

@@ -1,8 +1,8 @@
-// lotus — the anchored editors (P11.5g, design §2.4). All four are one
+// liv — the anchored editors (P11.5g, design §2.4). All four are one
 // popover shape: anchored to the focused row, preferred edge toward the
 // content pane, a filter field where the law asks for one, then a result
 // list. ⏎ picks, Ctrl+⏎ creates, Esc closes. Writes ride the existing
-// seams only — plus lotus_add_property_at, the one exception the failing
+// seams only — plus liv_add_property_at, the one exception the failing
 // test forced (the core refuses set on unknown names).
 
 import AppKit
@@ -304,7 +304,7 @@ struct ValuePoolPopover: View {
 /// Cap `status · digits pick`; the kind's vocabulary in board order, each
 /// with its digit, its hue dot, its name. A pick is ONE set — replacing,
 /// so a future board column moves on the same write. `New option… Ctrl+⏎`
-/// rides lotus_add_status_option_at (hue −1: the vocabulary editor is a
+/// rides liv_add_status_option_at (hue −1: the vocabulary editor is a
 /// board-pass feature).
 struct StatusPickerPopover: View {
     @ObservedObject var model: BoxModel
@@ -418,8 +418,8 @@ struct StatusPickerPopover: View {
 // MARK: - the date editor (badge 23, entry 695)
 
 /// Role ring + span + repeat. Space (or a click on the ring) cycles via
-/// lotus_cycle_date_role_at — the value MOVES to the next role's row, so
-/// the pane's focus follows it. Span writes ride lotus_set_span_at; end 0
+/// liv_cycle_date_role_at — the value MOVES to the next role's row, so
+/// the pane's focus follows it. Span writes ride liv_set_span_at; end 0
 /// collapses to a plain date; end ≤ start is refused before the box opens
 /// (shake, no toast). Repeat displays and writes the recurrence property
 /// the P11 engine already reads.
@@ -526,7 +526,7 @@ struct DateEditorPopover: View {
                 }
             } else if let value = spec.cells.first?.value {
                 // The cell serializes a span as ASCII "start -> end"
-                // (lotus_views::display); splitting on the display arrow
+                // (liv_views::display); splitting on the display arrow
                 // U+2192 left the whole string in `start`, and save() then
                 // refused the 3-token parse (the review's high).
                 let parts = value.components(separatedBy: " -> ")
@@ -595,7 +595,7 @@ struct DateEditorPopover: View {
 /// `name · kind · on N objects`. Picking an existing property reveals its
 /// row with the editor open. The create leg (Ctrl+⏎) asks for the first
 /// value, infers the kind from it (number → date → bool → text), and
-/// births the definition through lotus_add_property_at — the seam the
+/// births the definition through liv_add_property_at — the seam the
 /// failing test forced.
 struct AddPropertyPopover: View {
     @ObservedObject var model: BoxModel

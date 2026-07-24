@@ -1,4 +1,4 @@
-// lotus — the V3 inspector's placement law (P11.5f, design §2.5 + §3.2).
+// liv — the V3 inspector's placement law (P11.5f, design §2.5 + §3.2).
 // Pure: (kind, catalog, this entity's cells, resolved digit keys) → which
 // rows render where. No SwiftUI, no model — the executed law check compiles
 // this file against stub rows.

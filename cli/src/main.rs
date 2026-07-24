@@ -1,4 +1,4 @@
-//! lotus — a stand-in shell for milestone 3.
+//! liv — a stand-in shell for milestone 3.
 //!
 //! A real shell (window, hotkey, popup) arrives with milestone 4, where the
 //! platform decision bites. Until then this binary is the thinnest possible
@@ -7,14 +7,14 @@
 
 use chrono::{Datelike, Local, Timelike};
 
-use lotus_core::{props, Author, DateTime, Id, Session, Value};
-use lotus_services::{Constraint, Op, Query, Sort};
-use lotus_views::{render, Config, Density, Rendered};
+use liv_core::{props, Author, DateTime, Id, Session, Value};
+use liv_services::{Constraint, Op, Query, Sort};
+use liv_views::{render, Config, Density, Rendered};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Err(message) = dispatch(&args) {
-        eprintln!("lotus: {message}");
+        eprintln!("liv: {message}");
         std::process::exit(1);
     }
 }
@@ -23,8 +23,17 @@ fn main() {
 /// The store's location is one of the budgeted settings; --log overrides.
 fn default_log_path() -> String {
     match std::env::var("HOME") {
-        Ok(home) => format!("{home}/Library/Application Support/lotus/lotus.log"),
-        Err(_) => "lotus.log".to_string(),
+        Ok(home) => {
+            let path = format!("{home}/Library/Application Support/liv/liv.log");
+            // Boxes born before the product rename stay where they are: fall
+            // back to the codename-era location while the new one doesn't exist.
+            let legacy = format!("{home}/Library/Application Support/lotus/lotus.log");
+            if !std::path::Path::new(&path).exists() && std::path::Path::new(&legacy).exists() {
+                return legacy;
+            }
+            path
+        }
+        Err(_) => "liv.log".to_string(),
     }
 }
 
@@ -46,11 +55,11 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let mut session = Session::open(&log_path).map_err(|e| e.to_string())?;
-    lotus_services::seed_if_fresh(&mut session).map_err(|e| e.to_string())?;
+    liv_services::seed_if_fresh(&mut session).map_err(|e| e.to_string())?;
 
     // The clerk sweeps at every open; duplicates of anything pending or
     // declined never reach the queue.
-    for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
+    for proposal in liv_services::clerk::sweep(session.store(), civil_today()) {
         session.propose(proposal).map_err(|e| e.to_string())?;
     }
 
@@ -85,7 +94,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         }
         Some((&"time", rest)) => time(&mut session, rest),
         Some((&"rename-value", rest)) => rename_value(&mut session, rest),
-        _ => Err("usage: lotus [--log FILE] [today] | add TEXT... | \
+        _ => Err("usage: liv [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
                   inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
                   set ID PROP VALUE... | history | \
@@ -99,7 +108,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
 /// Name an entity: one cell, front of house. Names feed the gazetteer,
 /// so the mentions proposer has something to notice.
 fn name(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, words) = rest.split_first().ok_or("usage: lotus name ID TEXT...")?;
+    let (id_arg, words) = rest.split_first().ok_or("usage: liv name ID TEXT...")?;
     let id: Id = id_arg
         .trim_start_matches('#')
         .parse()
@@ -108,14 +117,14 @@ fn name(session: &mut Session, rest: &[&str]) -> Result<(), String> {
         return Err(format!("no entity #{id}"));
     }
     if words.is_empty() {
-        return Err("usage: lotus name ID TEXT...".into());
+        return Err("usage: liv name ID TEXT...".into());
     }
     let text = words.join(" ");
     session
         .commit(
-            vec![lotus_core::Command::AddCell {
+            vec![liv_core::Command::AddCell {
                 entity: id,
-                cell: lotus_core::Cell {
+                cell: liv_core::Cell {
                     property: props::NAME,
                     value: Value::text(&text),
                 },
@@ -143,7 +152,7 @@ fn today(session: &Session) {
         columns: vec![],
     };
 
-    let sections = lotus_services::today_sections(store, civil_today());
+    let sections = liv_services::today_sections(store, civil_today());
     if !sections.due.is_empty() {
         println!("due through today:");
         print_table(&render(store, &sections.due, &list_config));
@@ -157,45 +166,45 @@ fn today(session: &Session) {
 
     match store.pending().len() {
         0 => {}
-        1 => println!("1 proposal waiting — lotus inbox"),
-        n => println!("{n} proposals waiting — lotus inbox"),
+        1 => println!("1 proposal waiting — liv inbox"),
+        n => println!("{n} proposals waiting — liv inbox"),
     }
 }
 
 /// Set one property to one value — the shared parser and replace-the-cell
 /// semantics live in services; the window's inspector uses the same door.
-/// `lotus route ID TYPE` — stamp a scrap's type by NAME (set_property
+/// `liv route ID TYPE` — stamp a scrap's type by NAME (set_property
 /// can't: TYPE is a reference and wants "#id", but type entities are
-/// backstage plumbing). The FFI shell has lotus_set_type_at; the CLI
+/// backstage plumbing). The FFI shell has liv_set_type_at; the CLI
 /// gets its own door so a captured scrap can be routed to a projectable
 /// kind (note/task/person/…).
 fn route(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, type_words) = rest.split_first().ok_or("usage: lotus route ID TYPE")?;
+    let (id_arg, type_words) = rest.split_first().ok_or("usage: liv route ID TYPE")?;
     let id: Id = id_arg
         .trim_start_matches('#')
         .parse()
         .map_err(|_| format!("not an entity id: {id_arg}"))?;
     let type_name = type_words.join(" ");
     if type_name.is_empty() {
-        return Err("usage: lotus route ID TYPE".into());
+        return Err("usage: liv route ID TYPE".into());
     }
-    lotus_services::content::set_type(session, id, &type_name).map_err(|e| format!("{e:?}"))?;
+    liv_services::content::set_type(session, id, &type_name).map_err(|e| format!("{e:?}"))?;
     println!("#{id} → {type_name}");
     Ok(())
 }
 
 fn set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, rest) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
-    let (prop_name, words) = rest.split_first().ok_or("usage: lotus set ID PROP VALUE...")?;
+    let (id_arg, rest) = rest.split_first().ok_or("usage: liv set ID PROP VALUE...")?;
+    let (prop_name, words) = rest.split_first().ok_or("usage: liv set ID PROP VALUE...")?;
     let id: Id = id_arg
         .trim_start_matches('#')
         .parse()
         .map_err(|_| format!("not an entity id: {id_arg}"))?;
     if words.is_empty() {
-        return Err("usage: lotus set ID PROP VALUE...".into());
+        return Err("usage: liv set ID PROP VALUE...".into());
     }
     let raw = words.join(" ");
-    lotus_services::content::set_property(session, id, prop_name, &raw)?;
+    liv_services::content::set_property(session, id, prop_name, &raw)?;
     println!("#{id} {prop_name} = {raw}");
     Ok(())
 }
@@ -227,17 +236,17 @@ fn inbox(session: &Session) {
         };
         println!("{key:<10} {}  ({author})", proposal.reason);
     }
-    println!("\nlotus accept ID | lotus reject ID   (add K when an id lists twice)");
+    println!("\nliv accept ID | liv reject ID   (add K when an id lists twice)");
 }
 
-fn subject_of(proposal: &lotus_core::Proposal) -> Option<Id> {
+fn subject_of(proposal: &liv_core::Proposal) -> Option<Id> {
     proposal.commands.first().map(|c| match c {
-        lotus_core::Command::Create { entity }
-        | lotus_core::Command::Trash { entity }
-        | lotus_core::Command::Restore { entity }
-        | lotus_core::Command::AddCell { entity, .. }
-        | lotus_core::Command::RemoveCell { entity, .. }
-        | lotus_core::Command::Redirect { entity, .. } => *entity,
+        liv_core::Command::Create { entity }
+        | liv_core::Command::Trash { entity }
+        | liv_core::Command::Restore { entity }
+        | liv_core::Command::AddCell { entity, .. }
+        | liv_core::Command::RemoveCell { entity, .. }
+        | liv_core::Command::Redirect { entity, .. } => *entity,
     })
 }
 
@@ -245,7 +254,7 @@ fn subject_of(proposal: &lotus_core::Proposal) -> Option<Id> {
 fn resolve_target(session: &Session, args: &[&str]) -> Result<usize, String> {
     let id_arg = args
         .first()
-        .ok_or("which one? lotus inbox shows the ids")?;
+        .ok_or("which one? liv inbox shows the ids")?;
     let id: Id = id_arg
         .trim_start_matches('#')
         .parse()
@@ -259,7 +268,7 @@ fn resolve_target(session: &Session, args: &[&str]) -> Result<usize, String> {
         .map(|(i, _)| i)
         .collect();
     match (matching.len(), args.get(1)) {
-        (0, _) => Err(format!("no proposal for #{id} — lotus inbox")),
+        (0, _) => Err(format!("no proposal for #{id} — liv inbox")),
         (1, _) => Ok(matching[0]),
         (n, Some(k)) => {
             let k: usize = k.parse().map_err(|_| format!("not a number: {k}"))?;
@@ -270,7 +279,7 @@ fn resolve_target(session: &Session, args: &[&str]) -> Result<usize, String> {
             }
         }
         (n, None) => Err(format!(
-            "#{id} has {n} proposals — lotus inbox, then accept/reject {id} K"
+            "#{id} has {n} proposals — liv inbox, then accept/reject {id} K"
         )),
     }
 }
@@ -301,19 +310,19 @@ fn add(session: &mut Session, text: &str) -> Result<(), String> {
         now.hour(),
         now.minute(),
     );
-    let scrap = lotus_services::capture(session, text, created).map_err(|e| e.to_string())?;
+    let scrap = liv_services::capture(session, text, created).map_err(|e| e.to_string())?;
     println!("#{scrap}");
 
     // The clerk runs behind the write; whatever it noticed shows at once.
     let already = session.store().pending().len();
-    for proposal in lotus_services::clerk::sweep(session.store(), civil_today()) {
+    for proposal in liv_services::clerk::sweep(session.store(), civil_today()) {
         session.propose(proposal).map_err(|e| e.to_string())?;
     }
     for proposal in session.store().pending().iter().skip(already) {
         let subject = subject_of(proposal)
             .map(|id| format!("{id}"))
             .unwrap_or_default();
-        println!("clerk: {}  (lotus accept {subject})", proposal.reason);
+        println!("clerk: {}  (liv accept {subject})", proposal.reason);
     }
     Ok(())
 }
@@ -360,7 +369,7 @@ fn list(session: &Session, flags: &[&str]) -> Result<(), String> {
         sort.descending = descending;
     }
 
-    let results = lotus_services::run(store, &query);
+    let results = liv_services::run(store, &query);
     let config = if columns.is_empty() {
         Config {
             density: Density::List,
@@ -377,7 +386,7 @@ fn list(session: &Session, flags: &[&str]) -> Result<(), String> {
 }
 
 /// P=V, P!=V, or P? — the v0 operators, spelled flat.
-fn parse_constraint(store: &lotus_core::Store, raw: &str) -> Result<Constraint, String> {
+fn parse_constraint(store: &liv_core::Store, raw: &str) -> Result<Constraint, String> {
     if let Some(name) = raw.strip_suffix('?') {
         return Ok(Constraint {
             property: property_by_name(store, name)?,
@@ -399,8 +408,8 @@ fn parse_constraint(store: &lotus_core::Store, raw: &str) -> Result<Constraint, 
     Err(format!("cannot parse constraint {raw}"))
 }
 
-fn property_by_name(store: &lotus_core::Store, name: &str) -> Result<Id, String> {
-    lotus_services::property_id(store, name).ok_or(format!("no property named {name}"))
+fn property_by_name(store: &liv_core::Store, name: &str) -> Result<Id, String> {
+    liv_services::property_id(store, name).ok_or(format!("no property named {name}"))
 }
 
 fn print_table(rendered: &Rendered) {
@@ -468,7 +477,7 @@ fn history(session: &Session) {
     }
 }
 
-/// P18b: birth a habit (front of house). `lotus habit Climb --points 2`.
+/// P18b: birth a habit (front of house). `liv habit Climb --points 2`.
 fn habit_add(session: &mut Session, rest: &[&str]) -> Result<(), String> {
     let mut points: Option<f64> = None;
     let mut cadence: Option<String> = None;
@@ -486,9 +495,9 @@ fn habit_add(session: &mut Session, rest: &[&str]) -> Result<(), String> {
         }
     }
     if words.is_empty() {
-        return Err("usage: lotus habit NAME... [--points N] [--cadence TEXT]".into());
+        return Err("usage: liv habit NAME... [--points N] [--cadence TEXT]".into());
     }
-    let id = lotus_services::content::create_habit(
+    let id = liv_services::content::create_habit(
         session,
         &words.join(" "),
         points,
@@ -502,14 +511,14 @@ fn habit_add(session: &mut Session, rest: &[&str]) -> Result<(), String> {
 
 /// P18b: check a habit in (today, or a given civil day) — idempotent.
 fn checkin(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, day_arg) = rest.split_first().ok_or("usage: lotus checkin HABIT-ID [DAY]")?;
+    let (id_arg, day_arg) = rest.split_first().ok_or("usage: liv checkin HABIT-ID [DAY]")?;
     let habit: Id =
         id_arg.trim_start_matches('#').parse().map_err(|_| "HABIT-ID must be a number")?;
     let day: i64 = match day_arg.first() {
         Some(d) => d.parse().map_err(|_| "DAY must be YYYYMMDD")?,
         None => civil_today().civil / 10_000,
     };
-    let row = lotus_services::content::check_in(session, habit, day, civil_today())
+    let row = liv_services::content::check_in(session, habit, day, civil_today())
         .map_err(|e| e.to_string())?;
     println!("checked in #{row} ({day})");
     Ok(())
@@ -518,9 +527,9 @@ fn checkin(session: &mut Session, rest: &[&str]) -> Result<(), String> {
 /// P18b: the habit card, in text — the same projection every shell reads.
 fn habits(session: &Session) {
     let today = civil_today().civil / 10_000;
-    let stats = lotus_services::habits::habit_stats(session.store(), today);
+    let stats = liv_services::habits::habit_stats(session.store(), today);
     if stats.habits.is_empty() {
-        println!("no habits yet — lotus habit NAME [--points N]");
+        println!("no habits yet — liv habit NAME [--points N]");
         return;
     }
     for line in &stats.habits {
@@ -541,13 +550,13 @@ fn habits(session: &Session) {
     println!("chain [{chain}]");
 }
 
-/// P18d: log a closed interval (`lotus time ID 202607140900 202607141030`),
+/// P18d: log a closed interval (`liv time ID 202607140900 202607141030`),
 /// or with no args print the week's totals — the same projection the shell
 /// reads.
 fn time(session: &mut Session, rest: &[&str]) -> Result<(), String> {
     if rest.is_empty() {
         let today = civil_today().civil / 10_000;
-        let summary = lotus_services::timeviews::time_totals(session.store(), today);
+        let summary = liv_services::timeviews::time_totals(session.store(), today);
         if summary.totals.is_empty() {
             println!("no time logged this week");
             return Ok(());
@@ -565,7 +574,7 @@ fn time(session: &mut Session, rest: &[&str]) -> Result<(), String> {
             s.parse::<i64>().map_err(|_| "START must be YYYYMMDDHHMM")?,
             e.parse::<i64>().map_err(|_| "END must be YYYYMMDDHHMM")?,
         ),
-        _ => return Err("usage: lotus time TARGET-ID START END".into()),
+        _ => return Err("usage: liv time TARGET-ID START END".into()),
     };
     let to_dt = |civil: i64| {
         DateTime::at(
@@ -576,33 +585,33 @@ fn time(session: &mut Session, rest: &[&str]) -> Result<(), String> {
             (civil % 100) as u32,
         )
     };
-    let id = lotus_services::content::log_time(session, target, to_dt(start), to_dt(end))
+    let id = liv_services::content::log_time(session, target, to_dt(start), to_dt(end))
         .map_err(|e| e.to_string())?;
     println!("logged #{id}");
     Ok(())
 }
 
-/// P19b: `lotus rename-value subject uni university` — one transaction,
+/// P19b: `liv rename-value subject uni university` — one transaction,
 /// the true carrier count, one undo.
 fn rename_value(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (prop, rest) = rest.split_first().ok_or("usage: lotus rename-value PROP OLD NEW...")?;
-    let (old, new_words) = rest.split_first().ok_or("usage: lotus rename-value PROP OLD NEW...")?;
+    let (prop, rest) = rest.split_first().ok_or("usage: liv rename-value PROP OLD NEW...")?;
+    let (old, new_words) = rest.split_first().ok_or("usage: liv rename-value PROP OLD NEW...")?;
     if new_words.is_empty() {
-        return Err("usage: lotus rename-value PROP OLD NEW...".into());
+        return Err("usage: liv rename-value PROP OLD NEW...".into());
     }
     let new = new_words.join(" ");
-    let count = lotus_services::content::rename_value(session, prop, old, &new)
+    let count = liv_services::content::rename_value(session, prop, old, &new)
         .map_err(|e| format!("{e:?}"))?;
     println!("renamed {old} -> {new} on {count} carriers (one undo restores)");
     Ok(())
 }
 
 
-/// `lotus vault status|sync|rebuild` (P20j.5): the projection from the
+/// `liv vault status|sync|rebuild` (P20j.5): the projection from the
 /// CLI. Legacy boxes (no `.liv/box/` ancestor) report and refuse — the
 /// projection never turns itself on.
 fn vault(session: &mut Session, log_path: &str, sub: &[&str]) -> Result<(), String> {
-    use lotus_services::projection as proj;
+    use liv_services::projection as proj;
     let Some(root) = proj::vault_root_of(std::path::Path::new(log_path)) else {
         println!("legacy box — no vault (the box is not at <root>/.liv/box/)");
         return Ok(());
@@ -617,7 +626,7 @@ fn vault(session: &mut Session, log_path: &str, sub: &[&str]) -> Result<(), Stri
             if findings.is_empty() {
                 println!("in sync — nothing diverges");
             } else {
-                println!("{} finding(s) — run `lotus vault sync`", findings.len());
+                println!("{} finding(s) — run `liv vault sync`", findings.len());
             }
             Ok(())
         }

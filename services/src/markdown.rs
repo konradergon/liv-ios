@@ -11,7 +11,7 @@
 //!   - YAML frontmatter is parsed flat (`key: value` + simple `[a, b]` / `- x`
 //!     lists); nested YAML defers.
 
-use lotus_core::{Block, Id, Marks, RichText, Span, TextSpan};
+use liv_core::{Block, Id, Marks, RichText, Span, TextSpan};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 /// CommonMark → the span model. Blocks become `Break`s that TYPE the paragraph

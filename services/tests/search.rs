@@ -2,9 +2,9 @@
 //! ranking scores name over cell over content, and the gates keep plumbing
 //! (working, trashed, archived) out of the results.
 
-use lotus_core::*;
-use lotus_services::search::{self, MatchField};
-use lotus_services::{run, Constraint, Op};
+use liv_core::*;
+use liv_services::search::{self, MatchField};
+use liv_services::{run, Constraint, Op};
 
 fn c(property: Id, value: Value) -> Cell {
     Cell { property, value }
@@ -333,19 +333,19 @@ fn a_quoted_qualifier_value_keeps_its_spaces() {
     // The chip-click contract: clicking the "Anna Karlsson" chip filters on
     // exactly that person. Without quoting the DSL split her in half — the
     // review's live-reproduced high.
-    let dir = std::env::temp_dir().join("lotus_search_quoted");
+    let dir = std::env::temp_dir().join("liv_search_quoted");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
 
-    let anna = lotus_services::content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
-    lotus_services::content::set_property(&mut session, anna, "name", "Anna Karlsson").unwrap();
-    let event = lotus_services::content::create_event(
+    let anna = liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    liv_services::content::set_property(&mut session, anna, "name", "Anna Karlsson").unwrap();
+    let event = liv_services::content::create_event(
         &mut session, DateTime::date(2026, 7, 12), DateTime::date(2026, 7, 10)).unwrap();
-    lotus_services::content::set_property(&mut session, event, "attendees", &format!("#{anna}")).unwrap();
-    let other = lotus_services::content::create_event(
+    liv_services::content::set_property(&mut session, event, "attendees", &format!("#{anna}")).unwrap();
+    let other = liv_services::content::create_event(
         &mut session, DateTime::date(2026, 7, 13), DateTime::date(2026, 7, 10)).unwrap();
 
     let store = session.store();
@@ -355,7 +355,7 @@ fn a_quoted_qualifier_value_keeps_its_spaces() {
     assert!(!hits.iter().any(|h| h.id == other), "and it filters, not free-texts");
 
     // A quoted TEXT value works through the same door.
-    lotus_services::content::set_property(&mut session, event, "location", "Room 4 East").unwrap();
+    liv_services::content::set_property(&mut session, event, "location", "Room 4 East").unwrap();
     let store = session.store();
     let sq = search::parse(store, "location:\"Room 4 East\"");
     let hits = search::search(store, &sq, 200, |_| String::new());

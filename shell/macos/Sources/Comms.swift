@@ -1,4 +1,4 @@
-// lotus — Comms (P20g, BP-15 · override O6): read-only messages, resolved
+// liv — Comms (P20g, BP-15 · override O6): read-only messages, resolved
 // to people. Message lists ARE saved views (no folders, no second inbox);
 // fetch runs at open and on the button only — nothing runs on a timer;
 // every message carries an external-id, so re-import is a no-op. v0

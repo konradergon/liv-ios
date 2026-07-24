@@ -35,7 +35,12 @@ const SPAN_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct Header {
-    lotus_log: u32,
+    /// The on-disk version key. Boxes born before the product rename carry
+    /// the frozen legacy key `lotus_log`; parse accepts both, fresh boxes
+    /// are born `liv_log`, and `upgrade_header` preserves whichever key the
+    /// box already has (the rewrite must be byte-length-stable in place).
+    #[serde(alias = "lotus_log")]
+    liv_log: u32,
 }
 
 #[derive(Debug)]
@@ -180,7 +185,7 @@ impl Session {
             // Born at the OLDEST format its (empty) content needs — older
             // binaries keep working until a newer-format value lands and
             // bumps the header (persist_last).
-            let header = serde_json::to_string(&Header { lotus_log: CREATED_VERSION })
+            let header = serde_json::to_string(&Header { liv_log: CREATED_VERSION })
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             file.write_all(header.as_bytes())?;
             file.write_all(b"\n")?;
@@ -468,18 +473,32 @@ impl Session {
     /// construction (single-digit versions), one small synced write through
     /// a second non-append handle (an O_APPEND handle cannot write at 0).
     fn upgrade_header(&mut self, to: u32) -> Result<(), PersistError> {
-        use std::io::{Seek as _, SeekFrom};
-        let old = serde_json::to_string(&Header { lotus_log: self.header_version })
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let new = serde_json::to_string(&Header { lotus_log: to })
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        let mut file = OpenOptions::new().read(true).write(true).open(&self.log_path)?;
+        // Preserve whatever key the box was born with: `liv_log` for fresh
+        // boxes, the frozen `lotus_log` for codename-era boxes. Writing the
+        // other key would change the header's byte length and shear the line.
+        let mut head = [0u8; 32];
+        let n = file.read(&mut head)?;
+        let key = if head[..n].starts_with(b"{\"lotus_log\":") {
+            "lotus_log"
+        } else {
+            "liv_log"
+        };
+        let old = format!("{{\"{key}\":{}}}", self.header_version);
+        let new = format!("{{\"{key}\":{to}}}");
         if old.len() != new.len() {
             return Err(PersistError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "header versions must rewrite length-stable",
             )));
         }
-        let mut file = OpenOptions::new().write(true).open(&self.log_path)?;
+        if !head[..n].starts_with(old.as_bytes()) {
+            return Err(PersistError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "header on disk does not match the version being upgraded",
+            )));
+        }
         file.seek(SeekFrom::Start(0))?;
         file.write_all(new.as_bytes())?;
         file.flush()?;
@@ -515,8 +534,8 @@ fn parse(bytes: &[u8]) -> Result<(Vec<Transaction>, u64, u32), PersistError> {
         .ok_or_else(|| PersistError::Corrupt("empty log".into()))?;
     let header: Header = serde_json::from_str(header_line.trim_end())
         .map_err(|e| PersistError::Corrupt(format!("bad header: {e}")))?;
-    if header.lotus_log > LOG_VERSION {
-        return Err(PersistError::UnsupportedVersion(header.lotus_log));
+    if header.liv_log > LOG_VERSION {
+        return Err(PersistError::UnsupportedVersion(header.liv_log));
     }
 
     let mut good_len = header_line.len() as u64;
@@ -548,5 +567,5 @@ fn parse(bytes: &[u8]) -> Result<(Vec<Transaction>, u64, u32), PersistError> {
             }
         }
     }
-    Ok((transactions, good_len, header.lotus_log))
+    Ok((transactions, good_len, header.liv_log))
 }

@@ -1,20 +1,20 @@
 [package]
-name = "lotus-ffi"
+name = "liv-ffi"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "lotus_ffi"
-# staticlib: the macOS SwiftUI shell links it directly (shell/macos/lotus.h).
+name = "liv_ffi"
+# staticlib: the macOS SwiftUI shell links it directly (shell/macos/liv.h).
 # cdylib: a Windows DLL for the WinUI 3 shell to P/Invoke (shell/windows).
 # rlib: the crate's own Rust tests. All three from the one C ABI — the seam is
 # identical for every platform shell.
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-lotus-core = { path = "../core" }
-lotus-services = { path = "../services" }
-lotus-views = { path = "../views" }
+liv-core = { path = "../core" }
+liv-services = { path = "../services" }
+liv-views = { path = "../views" }
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

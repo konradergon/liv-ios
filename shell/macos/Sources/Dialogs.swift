@@ -1,4 +1,4 @@
-// lotus — DialogHost (liv-ui-map.md §2.26): the ONE themed replacement
+// liv — DialogHost (liv-ui-map.md §2.26): the ONE themed replacement
 // for prompt / confirm / alert, mounted once at the top of the z-stack.
 // Enter accepts, Escape cancels, scrim-mousedown cancels. Every prompt
 // and confirm in the spec routes through here.

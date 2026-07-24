@@ -1,4 +1,4 @@
-// lotus — value color (P20a, override O2 — supersedes R3's VALUE_HEX).
+// liv — value color (P20a, override O2 — supersedes R3's VALUE_HEX).
 //
 // The Viggo pack retires hashed per-value hues: chips render NEUTRAL
 // (panel2 fill · text2 ink · border · pill) and the ONLY value color is a
@@ -49,7 +49,7 @@ enum Hues {
     ]
 
     /// FNV-1a 64 over the NFC-normalized UTF-8 bytes. No case folding, no
-    /// trimming — the input IS the display string (lotus_views::display)
+    /// trimming — the input IS the display string (liv_views::display)
     /// exactly as it appears in CellRow.value / distinct values / option
     /// names, so every surface agrees by construction.
     static func hash(_ display: String) -> UInt64 {

@@ -1,4 +1,4 @@
-// lotus — the Capture surface (P20d, mockup s-capture): the doorway that
+// liv — the Capture surface (P20d, mockup s-capture): the doorway that
 // asks nothing, now a first-class rail surface. Keep = the take card over a
 // masonry wall of scraps; Composer = the same door, full width, where a
 // leading "# " line becomes the name. The pool is vault-wide by design —
@@ -33,7 +33,7 @@ struct CaptureSurface: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .livFocusCapture)) { _ in
             draftFocused = true
         }
     }

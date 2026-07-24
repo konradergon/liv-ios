@@ -5,9 +5,12 @@
 # (build.sh writes it) but out of git; it bloated history at ~7MB per commit.
 /shell/macos/build/
 
-# Local Liv reference material — never part of the lotus repo
+# Local Liv reference material — never part of the liv repo
 /Programming the productivity app/
 
 # editor droppings
 \#*\#
 .#*
+
+# The iOS shell build artifact — same rule as the macOS one.
+/shell/ios/build/

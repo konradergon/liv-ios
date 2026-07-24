@@ -1,9 +1,9 @@
-// lotus — the Calendar surface (P10), laid out EXACTLY as Liv's calendar
+// liv — the Calendar surface (P10), laid out EXACTLY as Liv's calendar
 // (CalendarExtension.tsx): a left rail carrying the mini-month navigator and
 // the "My calendars" kind checklist, a top bar (title · Month/Week/Day/Agenda ·
 // ‹ Today › · + Event), the mode's body, and the day panel as a fixed right
 // column. The layout is Liv's, 1:1; the rendering is native and the palette is
-// lotus's — the accent's calendar jobs are today, the active mode, and + Event.
+// liv's — the accent's calendar jobs are today, the active mode, and + Event.
 
 import AppKit
 import SwiftUI

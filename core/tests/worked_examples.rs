@@ -1,7 +1,7 @@
 //! The entity model is only as good as its worst case.
 //! These tests are the constitution's worked examples, executable.
 
-use lotus_core::*;
+use liv_core::*;
 
 fn cell(property: Id, value: Value) -> Cell {
     Cell { property, value }

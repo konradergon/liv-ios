@@ -4,17 +4,17 @@
 //! never yours (subjects, a cleared unread). Senders resolve to person
 //! entities when a name matches; unresolved senders stay feed-owned text.
 
-use lotus_core::*;
-use lotus_services::comms::{self, MessageDrop};
-use lotus_services::content;
+use liv_core::*;
+use liv_services::comms::{self, MessageDrop};
+use liv_services::content;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_comms_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_comms_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -35,7 +35,7 @@ fn drop_a() -> MessageDrop {
 }
 
 fn messages(store: &Store) -> Vec<&Entity> {
-    let message_type = lotus_services::content::find_type(store, "message").unwrap();
+    let message_type = liv_services::content::find_type(store, "message").unwrap();
     store
         .entities()
         .filter(|e| !e.trashed && e.has(props::TYPE, &Value::Reference(message_type)))
@@ -63,7 +63,7 @@ fn one_batch_is_one_transaction_and_one_undo() {
     // unwinds the entire batch, plumbing included.
     session.undo(Author::User).unwrap();
     let store = session.store();
-    assert!(lotus_services::content::find_type(store, "message").is_none());
+    assert!(liv_services::content::find_type(store, "message").is_none());
     cleanup(&path);
 }
 
@@ -91,14 +91,14 @@ fn reimport_is_a_no_op_and_refresh_updates_only_feed_owned() {
 
     let store = session.store();
     let row = store.get(id).unwrap();
-    let content_prop = lotus_services::property_id(store, "content").unwrap();
+    let content_prop = liv_services::property_id(store, "content").unwrap();
     assert!(matches!(
         row.get(content_prop),
         Some(Value::Text(t)) if t.contains("måndag")
     ));
-    let subjects = lotus_services::property_id(store, "subjects").unwrap();
+    let subjects = liv_services::property_id(store, "subjects").unwrap();
     assert!(row.get(subjects).is_some(), "yours: subjects survived the refresh");
-    let unread = lotus_services::property_id(store, "unread").unwrap();
+    let unread = liv_services::property_id(store, "unread").unwrap();
     assert!(
         matches!(row.get(unread), Some(Value::Bool(false))),
         "yours: a cleared unread is never re-set by a refresh"
@@ -117,7 +117,7 @@ fn senders_resolve_to_person_entities_when_a_name_matches() {
     comms::import_messages(&mut session, &[drop_a()]).unwrap();
     let store = session.store();
     let row = messages(store)[0];
-    let from = lotus_services::property_id(store, "from").unwrap();
+    let from = liv_services::property_id(store, "from").unwrap();
     assert!(
         matches!(row.get(from), Some(Value::Reference(target)) if *target == person),
         "the sender resolved to the person entity"
@@ -138,7 +138,7 @@ fn senders_resolve_to_person_entities_when_a_name_matches() {
     });
     let unknown = unknown.unwrap();
     assert!(unknown.get(from).is_none(), "no guessed reference");
-    let label = lotus_services::property_id(store, "from-label").unwrap();
+    let label = liv_services::property_id(store, "from-label").unwrap();
     assert!(matches!(unknown.get(label), Some(Value::Text(t)) if t == "Unknown Sender"));
     cleanup(&path);
 }

@@ -1,4 +1,4 @@
-// lotus — the theme engine (P20a, the Viggo pack's token system).
+// liv — the theme engine (P20a, the Viggo pack's token system).
 // Four named themes as TOKEN SWAPS — never layout, never behavior
 // (app-mockup.tokens.css is the authority; the values below are its bytes).
 // Every Theme.* color resolves through a dynamic provider that reads the

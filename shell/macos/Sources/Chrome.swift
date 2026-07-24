@@ -1,4 +1,4 @@
-// lotus — the window chrome of the Liv port (liv-ui-map.md §1, P1).
+// liv — the window chrome of the Liv port (liv-ui-map.md §1, P1).
 // Three chrome rows over an activity rail and a three-pane body. The
 // active extension is app-global; vault-wide tools go full-bleed and
 // hide the note chrome; the right inspector stays. Focus mode hides
@@ -102,7 +102,7 @@ enum RightLens: String, CaseIterable {
 /// dangling target is pruned on replay (never crashes).
 ///
 /// bp4's SECOND history (the per-content-tab back-stack) collapses to
-/// nothing here by design: a lotus tab holds exactly one entity for its
+/// nothing here by design: a liv tab holds exactly one entity for its
 /// whole life (dedup on open, blank converts once at birth), so there is
 /// no within-tab navigation to stack — the places history subsumes it,
 /// and reopen-with-content rides the ⌘⇧T tombstone ring.
@@ -328,7 +328,7 @@ final class ChromeModel: ObservableObject {
         }
         beginReplayGrace()
         NotificationCenter.default.post(
-            name: .lotusNavReplay, object: NavReplay(entry: entry, forward: false))
+            name: .livNavReplay, object: NavReplay(entry: entry, forward: false))
     }
 
     func goForward() {
@@ -339,7 +339,7 @@ final class ChromeModel: ObservableObject {
         }
         beginReplayGrace()
         NotificationCenter.default.post(
-            name: .lotusNavReplay, object: NavReplay(entry: entry, forward: true))
+            name: .livNavReplay, object: NavReplay(entry: entry, forward: true))
     }
 
     /// The rail chevrons' dim state (repainted on the objectWillChange the nav
@@ -349,11 +349,11 @@ final class ChromeModel: ObservableObject {
 }
 
 extension Notification.Name {
-    static let lotusNavReplay = Notification.Name("lotus.navReplay")
-    static let lotusNavFocus = Notification.Name("lotus.navFocus")
-    static let lotusOpenSettings = Notification.Name("lotus.openSettings")
-    static let lotusGoHome = Notification.Name("lotus.goHome")
-    static let lotusGoInbox = Notification.Name("lotus.goInbox")
+    static let livNavReplay = Notification.Name("liv.navReplay")
+    static let livNavFocus = Notification.Name("liv.navFocus")
+    static let livOpenSettings = Notification.Name("liv.openSettings")
+    static let livGoHome = Notification.Name("liv.goHome")
+    static let livGoInbox = Notification.Name("liv.goInbox")
 }
 
 // MARK: - the activity rail (BP-4 · P17a)

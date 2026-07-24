@@ -6,18 +6,18 @@
 //! merge or auto-apply; (4) deletions and mass changes NEVER auto-apply —
 //! a disk deletion never deletes the entity.
 
-use lotus_core::*;
-use lotus_services::content;
-use lotus_services::projection::{self, Manifest, ReconcileFinding, VaultIo};
+use liv_core::*;
+use liv_services::content;
+use liv_services::projection::{self, Manifest, ReconcileFinding, VaultIo};
 use std::collections::BTreeMap;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_rec_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_rec_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -126,10 +126,10 @@ fn a_clean_external_edit_ingests_as_one_undoable_txn() {
 
     // The edit landed in the box…
     let store = session.store();
-    let content_prop = lotus_services::property_id(store, "content").unwrap();
+    let content_prop = liv_services::property_id(store, "content").unwrap();
     let body = match store.get(id).unwrap().get(content_prop) {
         Some(Value::RichText(rich)) => {
-            lotus_services::markdown::render_markdown(rich, &|_| String::new())
+            liv_services::markdown::render_markdown(rich, &|_| String::new())
         }
         other => panic!("expected rich content, got {other:?}"),
     };
@@ -140,7 +140,7 @@ fn a_clean_external_edit_ingests_as_one_undoable_txn() {
     let store = session.store();
     let body = match store.get(id).unwrap().get(content_prop) {
         Some(Value::RichText(rich)) => {
-            lotus_services::markdown::render_markdown(rich, &|_| String::new())
+            liv_services::markdown::render_markdown(rich, &|_| String::new())
         }
         _ => String::new(),
     };
@@ -156,7 +156,7 @@ fn a_conflict_never_auto_applies() {
     project(&mut io, session.store());
 
     // BOTH sides move: the box gets new content…
-    let spans = lotus_services::markdown::parse_markdown("the app side wrote this").spans;
+    let spans = liv_services::markdown::parse_markdown("the app side wrote this").spans;
     let store = session.store();
     let content_prop_now = store.get(id).unwrap().get(props::CONTENT);
     let base = content::content_fingerprint(content_prop_now);
@@ -315,7 +315,7 @@ fn resolve_take_disk_ingests_the_conflicting_file() {
     let mut io = MemIo::default();
     project(&mut io, session.store());
     // Both sides move (a conflict).
-    let spans = lotus_services::markdown::parse_markdown("app version").spans;
+    let spans = liv_services::markdown::parse_markdown("app version").spans;
     let base = content::content_fingerprint(session.store().get(id).unwrap().get(props::CONTENT));
     content::set_content(&mut session, id, spans, base).unwrap();
     let rel = "library/notes/contested.md";
@@ -324,9 +324,9 @@ fn resolve_take_disk_ingests_the_conflicting_file() {
     let manifest = projection::load_manifest(&io);
     projection::resolve_take_disk(&mut session, &io, id, rel).unwrap();
     let store = session.store();
-    let content_prop = lotus_services::property_id(store, "content").unwrap();
+    let content_prop = liv_services::property_id(store, "content").unwrap();
     let body = match store.get(id).unwrap().get(content_prop) {
-        Some(Value::RichText(r)) => lotus_services::markdown::render_markdown(r, &|_| String::new()),
+        Some(Value::RichText(r)) => liv_services::markdown::render_markdown(r, &|_| String::new()),
         _ => String::new(),
     };
     assert!(body.contains("disk version wins"), "{body}");
@@ -347,7 +347,7 @@ fn resolve_keep_app_rewrites_the_file_from_the_store() {
     let manifest = projection::load_manifest(&io);
     projection::resolve_keep_app(&mut io, session.store(), id).unwrap();
     let bytes = io.read(rel).unwrap();
-    let expected = lotus_services::vault::render_vault_entity(session.store(), id).unwrap();
+    let expected = liv_services::vault::render_vault_entity(session.store(), id).unwrap();
     assert_eq!(bytes, expected.as_bytes(), "the store's version is back on disk");
     // And a scan is now clean (the manifest row was refreshed).
     let refreshed = projection::load_manifest(&io);

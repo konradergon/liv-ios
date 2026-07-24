@@ -24,7 +24,7 @@ pub mod timeviews;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
-use lotus_core::{
+use liv_core::{
     props, Author, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session, Span,
     Store, Value,
 };
@@ -1122,12 +1122,12 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-fn plain(rich: &lotus_core::RichText) -> String {
+fn plain(rich: &liv_core::RichText) -> String {
     rich.spans
         .iter()
         .map(|s| match s {
-            lotus_core::Span::Text(t) => t.text.as_str(),
-            lotus_core::Span::Break(_) | lotus_core::Span::Ref(_) => "",
+            liv_core::Span::Text(t) => t.text.as_str(),
+            liv_core::Span::Break(_) | liv_core::Span::Ref(_) => "",
         })
         .collect()
 }
@@ -1154,7 +1154,7 @@ mod seed_tests {
     /// contact-fields guard pattern), and `find_type("link")` resolves.
     #[test]
     fn seed_links_is_additive_and_idempotent() {
-        let dir = std::env::temp_dir().join("lotus_seed_links");
+        let dir = std::env::temp_dir().join("liv_seed_links");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut session = Session::open(dir.join("box.log")).unwrap();
@@ -1181,7 +1181,7 @@ mod seed_tests {
     /// the starter type wins deterministically.
     #[test]
     fn the_scoping_seed_targets_the_starter_type_never_a_decoy() {
-        let dir = std::env::temp_dir().join("lotus_seed_decoy");
+        let dir = std::env::temp_dir().join("liv_seed_decoy");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("box.log");

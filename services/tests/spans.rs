@@ -3,12 +3,12 @@
 //! same date_only reading, end strictly after start), so the inspector's
 //! set seam and the search DSL are span-capable with no new entry point.
 
-use lotus_core::*;
-use lotus_services::content;
-use lotus_services::{property_id, seed_if_fresh};
+use liv_core::*;
+use liv_services::content;
+use liv_services::{property_id, seed_if_fresh};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_sp_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_sp_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");
@@ -99,8 +99,8 @@ fn a_span_matches_at_most_queries_by_its_start() {
     let span = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
     content::set_property(&mut session, span, "due", "2026-07-13 -> 2026-07-15").unwrap();
 
-    let q = lotus_services::search::parse(session.store(), "due<2026-07-13");
-    let hits = lotus_services::search::search(session.store(), &q, 200, |_| String::new());
+    let q = liv_services::search::parse(session.store(), "due<2026-07-13");
+    let hits = liv_services::search::search(session.store(), &q, 200, |_| String::new());
     assert!(hits.iter().any(|h| h.id == plain), "the plain boundary date matches");
     assert!(hits.iter().any(|h| h.id == span), "the span starting on the boundary matches too");
     cleanup(&path);
@@ -113,7 +113,7 @@ fn a_timed_span_still_joins_today() {
     let (path, mut session) = fresh("today");
     let id = content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
     content::set_property(&mut session, id, "due", "2026-07-10 23:59 -> 2026-07-11 09:00").unwrap();
-    let sections = lotus_services::today_sections(session.store(), DateTime::date(2026, 7, 10));
+    let sections = liv_services::today_sections(session.store(), DateTime::date(2026, 7, 10));
     assert!(sections.due.contains(&id), "the span's start keeps it in Today");
     cleanup(&path);
 }

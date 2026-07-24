@@ -1,4 +1,4 @@
-// lotus — the editor lens. The venue for thought itself: one entity's
+// liv — the editor lens. The venue for thought itself: one entity's
 // content in a centered ~65-character column, spans in, spans out.
 // Embedded references render as inline pills; an embedded task draws its
 // live checkbox. No toolbar; keyboard only; native text, never a webview.
@@ -194,8 +194,8 @@ final class PillContext {
 /// are derived from these; the marker glyphs (bullet, checkbox) are
 /// attachments derived from the block and never stored.
 extension NSAttributedString.Key {
-    static let lotusBlock = NSAttributedString.Key("lotusBlock")
-    static let lotusMarks = NSAttributedString.Key("lotusMarks")
+    static let livBlock = NSAttributedString.Key("livBlock")
+    static let livMarks = NSAttributedString.Key("livMarks")
 }
 
 final class BlockBox: NSObject {
@@ -256,12 +256,12 @@ enum SpanCodec {
     }
 
     /// The attribute dict for a (block, marks) pair — the source-of-truth
-    /// `.lotusBlock`/`.lotusMarks` plus their derived visuals. Shared by
+    /// `.livBlock`/`.livMarks` plus their derived visuals. Shared by
     /// initial render and by the mark toggles (which set attributes only).
     static func attributes(block: BlockJSON, marks: Marks) -> [NSAttributedString.Key: Any] {
         var attrs = baseAttributes
-        attrs[.lotusBlock] = BlockBox(block)
-        attrs[.lotusMarks] = marks.rawValue
+        attrs[.livBlock] = BlockBox(block)
+        attrs[.livMarks] = marks.rawValue
         attrs[.paragraphStyle] = paragraphStyle(block)
 
         var font = font(for: block)
@@ -286,7 +286,7 @@ enum SpanCodec {
         attachment.attachmentCell = RefAttachmentCell(entityId: id, context: context)
         let pill = NSMutableAttributedString(attachment: attachment)
         var attrs = baseAttributes
-        attrs[.lotusBlock] = BlockBox(block)
+        attrs[.livBlock] = BlockBox(block)
         attrs[.paragraphStyle] = paragraphStyle(block)
         pill.addAttributes(attrs, range: NSRange(location: 0, length: pill.length))
         return pill
@@ -311,7 +311,7 @@ enum SpanCodec {
         attachment.attachmentCell = cell
         let m = NSMutableAttributedString(attachment: attachment)
         m.addAttributes(
-            [.lotusBlock: BlockBox(block), .paragraphStyle: paragraphStyle(block)],
+            [.livBlock: BlockBox(block), .paragraphStyle: paragraphStyle(block)],
             range: NSRange(location: 0, length: m.length))
         return m
     }
@@ -365,7 +365,7 @@ enum SpanCodec {
         var out: [SpanJSON] = []
         let full = attributed.string as NSString
         // Split into paragraphs on newline; each paragraph reads its own
-        // block from .lotusBlock, its runs by .lotusMarks.
+        // block from .livBlock, its runs by .livMarks.
         var paraStart = 0
         var index = 0
         var paragraph = 0
@@ -398,7 +398,7 @@ enum SpanCodec {
 
     private static func blockOf(_ s: NSAttributedString, at loc: Int) -> BlockJSON? {
         guard loc < s.length else { return nil }
-        return (s.attribute(.lotusBlock, at: loc, effectiveRange: nil) as? BlockBox)?.block
+        return (s.attribute(.livBlock, at: loc, effectiveRange: nil) as? BlockBox)?.block
     }
 
     private static func emitRuns(
@@ -417,7 +417,7 @@ enum SpanCodec {
             }
             let text = ns.substring(with: r).replacingOccurrences(of: "\u{FFFC}", with: "")
             if text.isEmpty { return }
-            let marks = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+            let marks = Marks(rawValue: (attrs[.livMarks] as? UInt8) ?? 0)
             if case .text(let prev, let prevMarks) = out.last, prevMarks == marks {
                 out[out.count - 1] = .text(prev + text, marks)
             } else {
@@ -451,7 +451,7 @@ final class BlockMarkerCell: NSTextAttachmentCell {
     override func cellSize() -> NSSize {
         // A rule spans the writing column; a list marker is a small gutter.
         if case .rule = kind {
-            return NSSize(width: LotusTextView.measure, height: markerFont.boundingRectForFont.height)
+            return NSSize(width: LivTextView.measure, height: markerFont.boundingRectForFont.height)
         }
         return NSSize(width: 18, height: markerFont.boundingRectForFont.height)
     }
@@ -470,7 +470,7 @@ final class BlockMarkerCell: NSTextAttachmentCell {
         with theEvent: NSEvent, in cellFrame: NSRect, of controlView: NSView?,
         atCharacterIndex charIndex: Int, untilMouseUp flag: Bool
     ) -> Bool {
-        guard case .task = kind, let view = controlView as? LotusTextView else { return false }
+        guard case .task = kind, let view = controlView as? LivTextView else { return false }
         view.toggleTaskBlock(at: charIndex)
         return true
     }
@@ -617,7 +617,7 @@ final class RefAttachmentCell: NSTextAttachmentCell {
 
 // MARK: - the text view: TextKit 1 by hand, hygiene by override
 
-final class LotusTextView: NSTextView {
+final class LivTextView: NSTextView {
     var onEscape: () -> Void = {}
     var pillContext: PillContext?
     /// title → id, rebuilt whenever the completion list is asked for.
@@ -685,9 +685,9 @@ final class LotusTextView: NSTextView {
         guard let storage = textStorage else { return }
         let sel = selectedRange()
         if sel.length == 0 {
-            var m = Marks(rawValue: (typingAttributes[.lotusMarks] as? UInt8) ?? 0)
+            var m = Marks(rawValue: (typingAttributes[.livMarks] as? UInt8) ?? 0)
             m.formSymmetricDifference(mark)
-            let block = (typingAttributes[.lotusBlock] as? BlockBox)?.block ?? .body
+            let block = (typingAttributes[.livBlock] as? BlockBox)?.block ?? .body
             typingAttributes = SpanCodec.attributes(block: block, marks: m)
             return
         }
@@ -695,15 +695,15 @@ final class LotusTextView: NSTextView {
         var allHave = true
         storage.enumerateAttributes(in: sel) { attrs, _, _ in
             guard attrs[.attachment] == nil else { return }
-            let m = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+            let m = Marks(rawValue: (attrs[.livMarks] as? UInt8) ?? 0)
             if !m.contains(mark) { allHave = false }
         }
         // Collect first, mutate after — never edit storage mid-enumeration.
         var edits: [(NSRange, [NSAttributedString.Key: Any])] = []
         storage.enumerateAttributes(in: sel) { attrs, r, _ in
             guard attrs[.attachment] == nil else { return }
-            let block = (attrs[.lotusBlock] as? BlockBox)?.block ?? .body
-            var m = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+            let block = (attrs[.livBlock] as? BlockBox)?.block ?? .body
+            var m = Marks(rawValue: (attrs[.livMarks] as? UInt8) ?? 0)
             if allHave { m.remove(mark) } else { m.insert(mark) }
             edits.append((r, SpanCodec.attributes(block: block, marks: m)))
         }
@@ -721,7 +721,7 @@ final class LotusTextView: NSTextView {
         let range = (string as NSString).paragraphRange(
             for: NSRange(location: charIndex, length: 0))
         guard
-            let box = storage.attribute(.lotusBlock, at: range.location, effectiveRange: nil)
+            let box = storage.attribute(.livBlock, at: range.location, effectiveRange: nil)
                 as? BlockBox,
             case .task(let depth, let done) = box.block
         else { return }
@@ -739,7 +739,7 @@ final class LotusTextView: NSTextView {
         let range = currentParagraphRange()
         let current =
             (storage.length > range.location
-                ? storage.attribute(.lotusBlock, at: range.location, effectiveRange: nil)
+                ? storage.attribute(.livBlock, at: range.location, effectiveRange: nil)
                     as? BlockBox
                 : nil)?.block ?? .body
         let next: BlockJSON
@@ -853,18 +853,18 @@ final class LotusTextView: NSTextView {
         storage.enumerateAttributes(in: range) { attrs, r, _ in
             if attrs[.attachment] != nil {
                 var a = attrs
-                a[.lotusBlock] = BlockBox(block)
+                a[.livBlock] = BlockBox(block)
                 a[.paragraphStyle] = SpanCodec.paragraphStyle(block)
                 edits.append((r, a))
             } else {
-                let marks = Marks(rawValue: (attrs[.lotusMarks] as? UInt8) ?? 0)
+                let marks = Marks(rawValue: (attrs[.livMarks] as? UInt8) ?? 0)
                 edits.append((r, SpanCodec.attributes(block: block, marks: marks)))
             }
         }
         for (r, a) in edits { storage.setAttributes(a, range: r) }
         if range.location > 0 {
             storage.addAttribute(
-                .lotusBlock, value: BlockBox(block),
+                .livBlock, value: BlockBox(block),
                 range: NSRange(location: range.location - 1, length: 1))
         }
     }
@@ -960,7 +960,7 @@ final class LotusTextView: NSTextView {
                 para.length > 0
                 ? para.location : (para.location > 0 ? para.location - 1 : para.location)
             guard probe < storage.length,
-                let block = (storage.attribute(.lotusBlock, at: probe, effectiveRange: nil)
+                let block = (storage.attribute(.livBlock, at: probe, effectiveRange: nil)
                     as? BlockBox)?.block
             else { continue }
             let glyphs = lm.glyphRange(forCharacterRange: para, actualCharacterRange: nil)
@@ -1137,7 +1137,7 @@ final class LotusTextView: NSTextView {
     func paragraphBlock(at loc: Int) -> BlockJSON {
         guard let storage = textStorage, storage.length > 0 else { return .body }
         let probe = min(max(loc, 0), storage.length - 1)
-        return (storage.attribute(.lotusBlock, at: probe, effectiveRange: nil) as? BlockBox)?.block
+        return (storage.attribute(.livBlock, at: probe, effectiveRange: nil) as? BlockBox)?.block
             ?? .body
     }
 
@@ -1267,7 +1267,7 @@ final class EditorModel: ObservableObject {
     private(set) var base: UInt64 = 0
     private var lastLoadedName = ""
     /// Internal-read (P20c): the toolbar drives marks/blocks through it.
-    private(set) weak var textView: LotusTextView?
+    private(set) weak var textView: LivTextView?
     private var idleTimer: Timer?
     private var checkpointTimer: Timer?
     /// Bumped on every keystroke; a save only marks clean if untyped-over.
@@ -1294,7 +1294,7 @@ final class EditorModel: ObservableObject {
         EditorRegistry.shared.active = self
     }
 
-    func attach(_ view: LotusTextView) {
+    func attach(_ view: LivTextView) {
         textView = view
         view.pillContext = pills
         view.onEscape = { [weak self] in self?.onCloseRequest() }
@@ -1722,7 +1722,7 @@ struct NoteTextView: NSViewRepresentable {
         container.widthTracksTextView = true
         layout.addTextContainer(container)
 
-        let view = LotusTextView(frame: .zero, textContainer: container)
+        let view = LivTextView(frame: .zero, textContainer: container)
         view.isRichText = true
         view.isEditable = editable
         view.allowsUndo = editable
@@ -1764,7 +1764,7 @@ struct NoteTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard let view = notification.object as? LotusTextView else { return }
+            guard let view = notification.object as? LivTextView else { return }
             model.caret = view.selectedRange().location
         }
 
@@ -1783,7 +1783,7 @@ struct NoteTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             model.edited()
-            guard let view = notification.object as? LotusTextView else { return }
+            guard let view = notification.object as? LivTextView else { return }
             // A cancelled completion restores the trigger through this
             // very notification; eat that one, or Esc reopens the popup.
             if view.suppressAutoComplete {
@@ -1808,7 +1808,7 @@ struct NoteTextView: NSViewRepresentable {
             forPartialWordRange charRange: NSRange,
             indexOfSelectedItem index: UnsafeMutablePointer<Int>?
         ) -> [String] {
-            guard let view = textView as? LotusTextView else { return words }
+            guard let view = textView as? LivTextView else { return words }
             let raw = (view.string as NSString).substring(with: charRange)
             let query: String
             if raw.hasPrefix("@") { query = String(raw.dropFirst()) }
@@ -1910,12 +1910,12 @@ struct EditorView: View {
                         .help("Unsaved changes")
                 }
             }
-            .frame(maxWidth: LotusTextView.measure - 10)
+            .frame(maxWidth: LivTextView.measure - 10)
             .padding(.top, 12)
             .padding(.horizontal, 28)
             if let suggestion = nameSuggestion {
                 nameChips(suggestion)
-                    .frame(maxWidth: LotusTextView.measure - 10, alignment: .leading)
+                    .frame(maxWidth: LivTextView.measure - 10, alignment: .leading)
                     .padding(.horizontal, 28)
             }
 
@@ -1975,7 +1975,7 @@ struct EditorView: View {
     private var aiPill: some View {
         let pending = (model.box.snap?.inbox ?? []).filter { $0.entity == model.id }.count
         return Button {
-            NotificationCenter.default.post(name: .lotusOpenCopilot, object: model.id)
+            NotificationCenter.default.post(name: .livOpenCopilot, object: model.id)
         } label: {
             HStack(spacing: 3) {
                 Text("✦").font(.system(size: 10))
@@ -2003,10 +2003,10 @@ struct EditorView: View {
             Button("Source mode — lands with a later projection slice") {}
                 .disabled(true)
             Button(model.box.inVault ? "Reveal in Finder" : "Reveal in vault") {
-                NotificationCenter.default.post(name: .lotusRevealInVault, object: model.id)
+                NotificationCenter.default.post(name: .livRevealInVault, object: model.id)
             }
             Button("Export…") {
-                NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+                NotificationCenter.default.post(name: .livOpenExport, object: nil)
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -2128,7 +2128,7 @@ struct EditorView: View {
         let shown = projected ?? "Vault/\(model.title.isEmpty ? "Untitled" : model.title).md"
         return HStack(spacing: 10) {
             Button {
-                NotificationCenter.default.post(name: .lotusRevealInVault, object: model.id)
+                NotificationCenter.default.post(name: .livRevealInVault, object: model.id)
             } label: {
                 Text(shown)
                     .font(.system(size: 10, design: .monospaced))
@@ -2234,8 +2234,8 @@ struct SplitPreviewPane: View {
 }
 
 extension Notification.Name {
-    static let lotusOpenCopilot = Notification.Name("lotus.openCopilot")
-    static let lotusRevealInVault = Notification.Name("lotus.revealInVault")
+    static let livOpenCopilot = Notification.Name("liv.openCopilot")
+    static let livRevealInVault = Notification.Name("liv.revealInVault")
 }
 
 // MARK: - the outline projection (P17 five-lens panel)
@@ -2259,7 +2259,7 @@ extension EditorModel {
             in: NSRange(location: 0, length: ns.length), options: [.byParagraphs]
         ) { sub, range, _, _ in
             guard range.length > 0,
-                let box = storage.attribute(.lotusBlock, at: range.location, effectiveRange: nil)
+                let box = storage.attribute(.livBlock, at: range.location, effectiveRange: nil)
                     as? BlockBox,
                 case .heading(let n) = box.block
             else { return }

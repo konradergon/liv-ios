@@ -5,17 +5,17 @@
 //! and the render∘parse fixpoint over generated span trees. No IO here —
 //! the materializer (20j.2) builds on these gates.
 
-use lotus_core::*;
-use lotus_services::content;
-use lotus_services::vault;
+use liv_core::*;
+use liv_services::content;
+use liv_services::vault;
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_vault_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_vault_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -95,7 +95,7 @@ fn pools_classify_and_scraps_stay_box_only() {
 
     // A typeless scrap: captured, unrouted — materializes on ROUTE, not on
     // capture (the recorded delta).
-    let scrap = lotus_services::capture(&mut session, "a loose thought", stamp).unwrap();
+    let scrap = liv_services::capture(&mut session, "a loose thought", stamp).unwrap();
 
     let files = vault::expected_files(session.store());
     let path_of = |id: Id| files.iter().find(|f| f.id == id).map(|f| f.rel_path.clone());
@@ -176,9 +176,9 @@ fn realistic_documents_render_byte_stable() {
     let names = |_: Id| -> String { "target".into() };
     for case in 0..200u64 {
         let doc = generated_document(0x5eed_cafe ^ case, true);
-        let once = lotus_services::markdown::render_markdown(&doc, &names);
-        let reparsed = lotus_services::markdown::parse_markdown(&once);
-        let twice = lotus_services::markdown::render_markdown(&reparsed, &names);
+        let once = liv_services::markdown::render_markdown(&doc, &names);
+        let reparsed = liv_services::markdown::parse_markdown(&once);
+        let twice = liv_services::markdown::render_markdown(&reparsed, &names);
         assert_eq!(once, twice, "spaced documents must be byte-stable");
     }
 }
@@ -194,11 +194,11 @@ fn adversarial_documents_converge_in_one_round_trip() {
     let names = |_: Id| -> String { "target".into() };
     for case in 0..200u64 {
         let doc = generated_document(0xdead_beef ^ case, false);
-        let r1 = lotus_services::markdown::render_markdown(&doc, &names);
-        let p1 = lotus_services::markdown::parse_markdown(&r1);
-        let r2 = lotus_services::markdown::render_markdown(&p1, &names);
-        let p2 = lotus_services::markdown::parse_markdown(&r2);
-        let r3 = lotus_services::markdown::render_markdown(&p2, &names);
+        let r1 = liv_services::markdown::render_markdown(&doc, &names);
+        let p1 = liv_services::markdown::parse_markdown(&r1);
+        let r2 = liv_services::markdown::render_markdown(&p1, &names);
+        let p2 = liv_services::markdown::parse_markdown(&r2);
+        let r3 = liv_services::markdown::render_markdown(&p2, &names);
         assert_eq!(r2, r3, "one round trip must reach the fixpoint");
     }
 }

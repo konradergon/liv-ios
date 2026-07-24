@@ -2,16 +2,16 @@
 //! P13 remainder), and widgets (the board as small entities). All WORKING
 //! backstage; totals/projections computed on read, stored nowhere.
 
-use lotus_core::*;
-use lotus_services::{content, property_id, timeviews};
+use liv_core::*;
+use liv_services::{content, property_id, timeviews};
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_timeviews_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_timeviews_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -22,7 +22,7 @@ fn cleanup(path: &std::path::Path) {
 }
 
 fn capture(session: &mut Session, text: &str) -> Id {
-    lotus_services::capture(session, text, DateTime::at(2026, 7, 14, 9, 0)).unwrap()
+    liv_services::capture(session, text, DateTime::at(2026, 7, 14, 9, 0)).unwrap()
 }
 
 #[test]

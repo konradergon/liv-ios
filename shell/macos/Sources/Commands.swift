@@ -1,4 +1,4 @@
-// lotus — the command system (liv-ui-map.md §2.28).
+// liv — the command system (liv-ui-map.md §2.28).
 // One registry, one keydown listener walking it in insertion order:
 // earlier defines win conflicts. "Mod" is ⌘ on macOS. Unmodified keys
 // are suppressed while focus is in a text view. A capture scope (facet
@@ -142,7 +142,7 @@ final class CommandRegistry {
 
     /// The chords no override may touch: settings and undo must always
     /// answer (Esc is not a command; menus are AppKit's).
-    static let unstealable: Set<String> = ["app:open-settings", "lotus:undo-last-change"]
+    static let unstealable: Set<String> = ["app:open-settings", "liv:undo-last-change"]
     /// Their fixed chords, known before any command registers — load-time
     /// validation rejects overrides that would shadow them (P19 review).
     static let unstealableChords: [Hotkey] = [
@@ -225,7 +225,7 @@ final class CommandRegistry {
         unbound = []
         func discard() {
             // Total validation: one bad entry discards the whole map.
-            NSLog("lotus: app.keymap.v1 malformed — booting on default shortcuts")
+            NSLog("liv: app.keymap.v1 malformed — booting on default shortcuts")
             overrides = [:]
             unbound = []
             UserDefaults.standard.removeObject(forKey: "app.keymap.v1")

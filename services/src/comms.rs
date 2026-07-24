@@ -10,7 +10,7 @@
 
 use crate::content::{self, find_type};
 use crate::property_id;
-use lotus_core::*;
+use liv_core::*;
 
 pub struct MessageDrop {
     pub external_id: String,

@@ -1,4 +1,4 @@
-// lotus — the main window. One window, three regions: sidebar, one lens,
+// liv — the main window. One window, three regions: sidebar, one lens,
 // inspector. Every lens swaps in place; nothing floats free. The window
 // renders one JSON snapshot from the seam and never holds the box.
 //
@@ -303,7 +303,7 @@ struct SearchFacet: Codable, Identifiable {
     var id: UInt64 { property }
 }
 
-/// The lotus_search_at payload — ranked hits + facet counts.
+/// The liv_search_at payload — ranked hits + facet counts.
 struct SearchResult: Codable {
     var hits: [SearchHit] = []
     var facets: [SearchFacet] = []
@@ -318,7 +318,7 @@ struct SearchResult: Codable {
 }
 
 /// One status option as the kind's board/picker sees it —
-/// the lotus_status_options_at payload (P11.5a). A new seam with no legacy
+/// the liv_status_options_at payload (P11.5a). A new seam with no legacy
 /// payloads, so required is safe.
 struct StatusOption: Codable, Identifiable, Hashable {
     let id: UInt64
@@ -328,7 +328,7 @@ struct StatusOption: Codable, Identifiable, Hashable {
     let completes: Bool
 }
 
-/// One value-pool row — the lotus_distinct_values_at payload (P11.5a).
+/// One value-pool row — the liv_distinct_values_at payload (P11.5a).
 struct DistinctValue: Codable, Hashable {
     let value: String
     let count: Int
@@ -407,7 +407,7 @@ final class BoxModel: ObservableObject {
 
     /// One serial lane to the box: the app must never race its own lock.
     /// The CLI can still hold the box; that is what retry is for.
-    private let boxQueue = DispatchQueue(label: "lotus.box", qos: .userInitiated)
+    private let boxQueue = DispatchQueue(label: "liv.box", qos: .userInitiated)
     private var retryScheduled = false
     private var retryDelay = 0.2
 
@@ -438,9 +438,9 @@ final class BoxModel: ObservableObject {
         boxQueue.async {
             let raw: UnsafeMutablePointer<CChar>?
             if let window = window {
-                raw = lotus_snapshot_window_at(path, window.from, window.to)
+                raw = liv_snapshot_window_at(path, window.from, window.to)
             } else {
-                raw = lotus_snapshot(path)
+                raw = liv_snapshot(path)
             }
             guard let raw = raw else {
                 self.probeAndRetry()
@@ -470,7 +470,7 @@ final class BoxModel: ObservableObject {
     /// by the default refresh and the calendar's windowed refresh.
     private func applySnapshot(_ raw: UnsafeMutablePointer<CChar>) {
         let json = String(cString: raw)
-        lotus_string_free(raw)
+        liv_string_free(raw)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let snap = try? decoder.decode(Snapshot.self, from: Data(json.utf8))
@@ -488,9 +488,9 @@ final class BoxModel: ObservableObject {
     func search(_ raw: String) {
         let path = self.path
         boxQueue.async {
-            guard let ptr = lotus_search_at(path, raw) else { return }
+            guard let ptr = liv_search_at(path, raw) else { return }
             let json = String(cString: ptr)
-            lotus_string_free(ptr)
+            liv_string_free(ptr)
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let result = (try? decoder.decode(SearchResult.self, from: Data(json.utf8))) ?? .empty
@@ -505,9 +505,9 @@ final class BoxModel: ObservableObject {
     /// else is a fault the user must see, not a spinner.
     private func probeAndRetry() {
         var fault: BoxFault?
-        if let raw = lotus_probe(path) {
+        if let raw = liv_probe(path) {
             let json = String(cString: raw)
-            lotus_string_free(raw)
+            liv_string_free(raw)
             fault = try? JSONDecoder().decode(BoxFault.self, from: Data(json.utf8))
         }
         DispatchQueue.main.async {
@@ -529,7 +529,7 @@ final class BoxModel: ObservableObject {
     }
 
     func capture(_ text: String, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_capture_at(self.path, text) != 0 }
+        act(done) { liv_capture_at(self.path, text) != 0 }
     }
 
     /// P20d: capture handing back the scrap's id (the composer's H1-name
@@ -537,7 +537,7 @@ final class BoxModel: ObservableObject {
     func captureId(_ text: String, done: @escaping (UInt64?) -> Void) {
         let path = self.path
         boxQueue.async {
-            let id = lotus_capture_at(path, text)
+            let id = liv_capture_at(path, text)
             DispatchQueue.main.async {
                 done(id == 0 ? nil : id)
                 if id != 0 { self.refresh() }
@@ -546,18 +546,18 @@ final class BoxModel: ObservableObject {
     }
 
     func accept(_ proposal: ProposalRow) {
-        act { lotus_accept_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
+        act { liv_accept_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
     }
 
     func reject(_ proposal: ProposalRow) {
-        act { lotus_reject_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
+        act { liv_reject_at(self.path, proposal.entity, proposal.ordinal, proposal.fingerprint) == 1 }
     }
 
     /// Accept a whole group as ONE transaction, one undo (P16b) — the members'
-    /// fingerprints through lotus_accept_group_at.
+    /// fingerprints through liv_accept_group_at.
     func acceptGroup(_ fingerprints: [UInt64]) {
         let json = (try? String(data: JSONEncoder().encode(fingerprints), encoding: .utf8)) ?? "[]"
-        act { lotus_accept_group_at(self.path, json) == 1 }
+        act { liv_accept_group_at(self.path, json) == 1 }
     }
 
     /// How many pending proposals point at this entity — the in-place ✦ halo
@@ -567,17 +567,17 @@ final class BoxModel: ObservableObject {
     }
 
     func undo() {
-        act { lotus_undo_at(self.path) == 1 }
+        act { liv_undo_at(self.path) == 1 }
     }
 
     // ---- pins (P17g): the ONE pin source ----
 
     func pin(_ target: UInt64) {
-        act { lotus_pin_at(self.path, target) != 0 }
+        act { liv_pin_at(self.path, target) != 0 }
     }
 
     func unpin(_ target: UInt64) {
-        act { lotus_unpin_at(self.path, target) == 1 }
+        act { liv_unpin_at(self.path, target) == 1 }
     }
 
     func isPinned(_ target: UInt64) -> Bool {
@@ -594,7 +594,7 @@ final class BoxModel: ObservableObject {
 
     func saveLayer(name: String, workspace: UInt64, members: [UInt64]) {
         let json = (try? String(data: JSONEncoder().encode(members), encoding: .utf8)) ?? "[]"
-        act { lotus_layer_save_at(self.path, name, workspace, json) != 0 }
+        act { liv_layer_save_at(self.path, name, workspace, json) != 0 }
     }
 
     /// The current workspace's saved layouts (0 = Home).
@@ -605,30 +605,30 @@ final class BoxModel: ObservableObject {
     // ---- P18d: saved views + time ----
 
     func saveView(name: String, query: String) {
-        act { lotus_create_view_at(self.path, name, query) != 0 }
+        act { liv_create_view_at(self.path, name, query) != 0 }
     }
 
     /// Log a closed interval (full civil stamps) — the timer's stop writes
     /// exactly one entity.
     func logTime(target: UInt64, start: Int64, end: Int64) {
-        act { lotus_log_time_at(self.path, target, start, end) != 0 }
+        act { liv_log_time_at(self.path, target, start, end) != 0 }
     }
 
     /// Add a board widget — one transaction (types born beside it on a fresh
     /// box); config edits ride set, removal rides trash.
     func addWidget(kind: String, workspace: UInt64, span: Double) {
-        act { lotus_widget_add_at(self.path, kind, workspace, span) != 0 }
+        act { liv_widget_add_at(self.path, kind, workspace, span) != 0 }
     }
 
     /// Create a habit (P18g): points <= 0 means none (reads as 1).
     func createHabit(name: String, points: Double, cadence: String?) {
-        act { lotus_create_habit_at(self.path, name, points, cadence) != 0 }
+        act { liv_create_habit_at(self.path, name, points, cadence) != 0 }
     }
 
     /// Check a habit in today — one commit, one undo; idempotent, so the
     /// checkbox toggle is safe. Uncheck = trash(the row).
     func checkIn(_ habit: UInt64) {
-        act { lotus_check_in_at(self.path, habit, 0) != 0 }
+        act { liv_check_in_at(self.path, habit, 0) != 0 }
     }
 
     /// The rename engine (P19b): one grouped transaction across every
@@ -638,7 +638,7 @@ final class BoxModel: ObservableObject {
     ) {
         let path = self.path
         boxQueue.async {
-            let count = lotus_rename_value_at(path, property, old, new)
+            let count = liv_rename_value_at(path, property, old, new)
             DispatchQueue.main.async {
                 done(count)
                 if count >= 0 { self.refresh() }
@@ -664,10 +664,10 @@ final class BoxModel: ObservableObject {
     var vaultDisplayName: String {
         if let root = vaultRoot {
             let name = URL(fileURLWithPath: root).lastPathComponent
-            return name.isEmpty ? "lotus" : name
+            return name.isEmpty ? "liv" : name
         }
         let dir = URL(fileURLWithPath: path).deletingLastPathComponent()
-        return dir.lastPathComponent.isEmpty ? "lotus" : dir.lastPathComponent
+        return dir.lastPathComponent.isEmpty ? "liv" : dir.lastPathComponent
     }
 
     /// The absolute on-disk file for a projected entity, if it materializes.
@@ -692,9 +692,9 @@ final class BoxModel: ObservableObject {
     func vaultSync(done: @escaping (String?) -> Void = { _ in }) {
         let path = self.path
         boxQueue.async {
-            let raw = lotus_vault_sync_at(path)
+            let raw = liv_vault_sync_at(path)
             let json = raw.map { String(cString: $0) }
-            if let raw { lotus_string_free(raw) }
+            if let raw { liv_string_free(raw) }
             DispatchQueue.main.async {
                 done(json)
                 self.refresh()
@@ -705,9 +705,9 @@ final class BoxModel: ObservableObject {
     func vaultStatus(done: @escaping (String?) -> Void) {
         let path = self.path
         boxQueue.async {
-            let raw = lotus_vault_status_at(path)
+            let raw = liv_vault_status_at(path)
             let json = raw.map { String(cString: $0) }
-            if let raw { lotus_string_free(raw) }
+            if let raw { liv_string_free(raw) }
             DispatchQueue.main.async { done(json) }
         }
     }
@@ -721,9 +721,9 @@ final class BoxModel: ObservableObject {
         }
         let path = self.path
         boxQueue.async {
-            let raw = lotus_vault_findings_at(path, all ? 1 : 0)
+            let raw = liv_vault_findings_at(path, all ? 1 : 0)
             let json = raw.map { String(cString: $0) } ?? "[]"
-            if let raw { lotus_string_free(raw) }
+            if let raw { liv_string_free(raw) }
             let decoded = (try? JSONDecoder().decode([VaultFinding].self, from: Data(json.utf8))) ?? []
             DispatchQueue.main.async { self.vaultFindings = decoded }
         }
@@ -733,7 +733,7 @@ final class BoxModel: ObservableObject {
     func vaultResolve(id: UInt64, path rel: String, verdict: String) {
         let path = self.path
         boxQueue.async {
-            _ = lotus_vault_resolve_at(path, id, rel, verdict)
+            _ = liv_vault_resolve_at(path, id, rel, verdict)
             DispatchQueue.main.async {
                 self.refresh()
                 self.refreshVaultFindings()
@@ -760,7 +760,7 @@ final class BoxModel: ObservableObject {
     func importMessages(_ json: String, done: @escaping (Int64) -> Void) {
         let path = self.path
         boxQueue.async {
-            let changed = lotus_import_messages_at(path, json)
+            let changed = liv_import_messages_at(path, json)
             DispatchQueue.main.async {
                 done(changed)
                 if changed > 0 { self.refresh() }
@@ -771,12 +771,12 @@ final class BoxModel: ObservableObject {
     /// Toggle a kind flag ("hide-on-kind" / "core-on-kind") — additive per
     /// kind; `set` would replace every cell (P19 review).
     func kindFlag(def: UInt64, property: String, kind: UInt64, on: Bool) {
-        act { lotus_kind_flag_at(self.path, def, property, kind, on ? 1 : 0) >= 0 }
+        act { liv_kind_flag_at(self.path, def, property, kind, on ? 1 : 0) >= 0 }
     }
 
     /// Mint an option for a select property (idempotent).
     func addOption(property: UInt64, name: String) {
-        act { lotus_add_option_at(self.path, property, name) != 0 }
+        act { liv_add_option_at(self.path, property, name) != 0 }
     }
 
     /// One-shot query run (the Saved-view widget) — its own callback, never
@@ -784,12 +784,12 @@ final class BoxModel: ObservableObject {
     func runQuery(_ raw: String, done: @escaping ([UInt64]) -> Void) {
         let path = self.path
         boxQueue.async {
-            guard let ptr = lotus_search_at(path, raw) else {
+            guard let ptr = liv_search_at(path, raw) else {
                 DispatchQueue.main.async { done([]) }
                 return
             }
             let json = String(cString: ptr)
-            lotus_string_free(ptr)
+            liv_string_free(ptr)
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let result = (try? decoder.decode(SearchResult.self, from: Data(json.utf8))) ?? .empty
@@ -798,7 +798,7 @@ final class BoxModel: ObservableObject {
     }
 
     func set(_ id: UInt64, property: String, value: String, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_set_at(self.path, id, property, value) == 1 }
+        act(done) { liv_set_at(self.path, id, property, value) == 1 }
     }
 
     // ---- the P11 spine seams (P11.5a) — thin wrappers on the box queue ----
@@ -807,9 +807,9 @@ final class BoxModel: ObservableObject {
     func statusOptions(kind: String, done: @escaping ([StatusOption]) -> Void) {
         boxQueue.async {
             var options: [StatusOption] = []
-            if let raw = lotus_status_options_at(self.path, kind) {
+            if let raw = liv_status_options_at(self.path, kind) {
                 let json = String(cString: raw)
-                lotus_string_free(raw)
+                liv_string_free(raw)
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 options = (try? decoder.decode([StatusOption].self, from: Data(json.utf8))) ?? []
@@ -824,7 +824,7 @@ final class BoxModel: ObservableObject {
         done: @escaping (UInt64?) -> Void = { _ in }
     ) {
         boxQueue.async {
-            let id = lotus_add_status_option_at(self.path, kind, name, hue ?? -1.0)
+            let id = liv_add_status_option_at(self.path, kind, name, hue ?? -1.0)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -838,9 +838,9 @@ final class BoxModel: ObservableObject {
     func distinctValues(property: String, done: @escaping ([DistinctValue]) -> Void) {
         boxQueue.async {
             var values: [DistinctValue] = []
-            if let raw = lotus_distinct_values_at(self.path, property) {
+            if let raw = liv_distinct_values_at(self.path, property) {
                 let json = String(cString: raw)
-                lotus_string_free(raw)
+                liv_string_free(raw)
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 values = (try? decoder.decode([DistinctValue].self, from: Data(json.utf8))) ?? []
@@ -854,9 +854,9 @@ final class BoxModel: ObservableObject {
     func cycleDateRole(id: UInt64, property: String, done: @escaping (String?) -> Void = { _ in }) {
         boxQueue.async {
             var next: String?
-            if let raw = lotus_cycle_date_role_at(self.path, id, property) {
+            if let raw = liv_cycle_date_role_at(self.path, id, property) {
                 next = String(cString: raw)
-                lotus_string_free(raw)
+                liv_string_free(raw)
             }
             DispatchQueue.main.async {
                 if next == nil { NSSound.beep() }
@@ -873,7 +873,7 @@ final class BoxModel: ObservableObject {
         done: @escaping (Bool) -> Void = { _ in }
     ) {
         act(done) {
-            lotus_set_span_at(self.path, id, property, start, end, dateOnly ? 1 : 0) == 1
+            liv_set_span_at(self.path, id, property, start, end, dateOnly ? 1 : 0) == 1
         }
     }
 
@@ -882,7 +882,7 @@ final class BoxModel: ObservableObject {
         _ id: UInt64, property: String, value: String,
         done: @escaping (Bool) -> Void = { _ in }
     ) {
-        act(done) { lotus_add_cell_at(self.path, id, property, value) == 1 }
+        act(done) { liv_add_cell_at(self.path, id, property, value) == 1 }
     }
 
     /// Birth a property definition (P11.5g add-property create leg) — the
@@ -891,7 +891,7 @@ final class BoxModel: ObservableObject {
         name: String, kind: String, done: @escaping (UInt64?) -> Void = { _ in }
     ) {
         boxQueue.async {
-            let id = lotus_add_property_at(self.path, name, kind)
+            let id = liv_add_property_at(self.path, name, kind)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -908,7 +908,7 @@ final class BoxModel: ObservableObject {
         done: @escaping (UInt64?) -> Void = { _ in }
     ) {
         boxQueue.async {
-            let id = lotus_open_daily_note_at(self.path, dateCivil, workspace)
+            let id = liv_open_daily_note_at(self.path, dateCivil, workspace)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -930,12 +930,12 @@ final class BoxModel: ObservableObject {
 
     /// Stamp an entity's TYPE by name (P12 12d — the Inbox Route commit).
     func setType(_ id: UInt64, _ typeName: String, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_set_type_at(self.path, id, typeName) == 1 }
+        act(done) { liv_set_type_at(self.path, id, typeName) == 1 }
     }
 
     func createNote(_ done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
-            let id = lotus_create_note_at(self.path)
+            let id = liv_create_note_at(self.path)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -948,7 +948,7 @@ final class BoxModel: ObservableObject {
     /// distinct from a capture. Returns the new id, nil on failure.
     func createTask(_ done: @escaping (UInt64?) -> Void = { _ in }) {
         boxQueue.async {
-            let id = lotus_create_task_at(self.path)
+            let id = liv_create_task_at(self.path)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -964,7 +964,7 @@ final class BoxModel: ObservableObject {
     /// another month never clobbers that month's occurrences with this month's.
     func createEvent(dueCivil: Int64, allDay: Bool, done: @escaping (UInt64?) -> Void = { _ in }) {
         boxQueue.async {
-            let id = lotus_create_event_at(self.path, dueCivil, allDay ? 1 : 0)
+            let id = liv_create_event_at(self.path, dueCivil, allDay ? 1 : 0)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -975,7 +975,7 @@ final class BoxModel: ObservableObject {
     /// Birth of a list — named at birth (you name it before adding to it).
     func createList(_ name: String, done: @escaping (UInt64?) -> Void = { _ in }) {
         boxQueue.async {
-            let id = lotus_create_list_at(self.path, name)
+            let id = liv_create_list_at(self.path, name)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -988,17 +988,17 @@ final class BoxModel: ObservableObject {
     /// never a delete of the member. Idempotent (add-present / remove-absent
     /// are no-ops).
     func addMember(_ list: UInt64, _ member: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_add_cell_at(self.path, list, "related", "#\(member)") == 1 }
+        act(done) { liv_add_cell_at(self.path, list, "related", "#\(member)") == 1 }
     }
     func removeMember(_ list: UInt64, _ member: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_remove_cell_at(self.path, list, "related", "#\(member)") == 1 }
+        act(done) { liv_remove_cell_at(self.path, list, "related", "#\(member)") == 1 }
     }
 
     /// Add a file by reference — the librarian hashes it and creates the
     /// entity; the bytes are never moved. Returns the new id, nil on failure.
     func addFile(_ filePath: String, done: @escaping (UInt64?) -> Void = { _ in }) {
         boxQueue.async {
-            let id = lotus_add_file_at(self.path, filePath)
+            let id = liv_add_file_at(self.path, filePath)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -1015,7 +1015,7 @@ final class BoxModel: ObservableObject {
         done: @escaping (Int) -> Void = { _ in }
     ) {
         boxQueue.async {
-            let n = lotus_import_batch_at(self.path, itemsJSON, stampsJSON)
+            let n = liv_import_batch_at(self.path, itemsJSON, stampsJSON)
             DispatchQueue.main.async {
                 if n < 0 { NSSound.beep() }
                 done(Int(n))
@@ -1034,7 +1034,7 @@ final class BoxModel: ObservableObject {
         let groupsJSON =
             (try? String(data: JSONEncoder().encode(groupProps), encoding: .utf8)) ?? "[]"
         boxQueue.async {
-            let n = lotus_export_at(self.path, idsJSON, groupsJSON, dest)
+            let n = liv_export_at(self.path, idsJSON, groupsJSON, dest)
             DispatchQueue.main.async {
                 if n < 0 { NSSound.beep() }
                 done(Int(n))
@@ -1046,7 +1046,7 @@ final class BoxModel: ObservableObject {
     /// hash is rewritten and the snapshot refreshed; `done(true)` on a change.
     func resyncFile(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
         boxQueue.async {
-            let changed = lotus_resync_file_at(self.path, id) == 1
+            let changed = liv_resync_file_at(self.path, id) == 1
             DispatchQueue.main.async {
                 if changed { self.refresh() }
                 done(changed)
@@ -1059,9 +1059,9 @@ final class BoxModel: ObservableObject {
     func extractedText(_ id: UInt64, done: @escaping (String) -> Void) {
         boxQueue.async {
             let text: String
-            if let ptr = lotus_extracted_text_at(self.path, id) {
+            if let ptr = liv_extracted_text_at(self.path, id) {
                 text = String(cString: ptr)
-                lotus_string_free(ptr)
+                liv_string_free(ptr)
             } else {
                 text = ""
             }
@@ -1071,7 +1071,7 @@ final class BoxModel: ObservableObject {
 
     func createWorkspace(name: String, parent: UInt64, done: @escaping (UInt64?) -> Void) {
         boxQueue.async {
-            let id = lotus_create_workspace_at(self.path, name, parent)
+            let id = liv_create_workspace_at(self.path, name, parent)
             DispatchQueue.main.async {
                 if id == 0 { NSSound.beep() }
                 done(id == 0 ? nil : id)
@@ -1081,15 +1081,15 @@ final class BoxModel: ObservableObject {
     }
 
     func trashWorkspace(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_trash_workspace_at(self.path, id) == 1 }
+        act(done) { liv_trash_workspace_at(self.path, id) == 1 }
     }
 
     func unset(_ id: UInt64, property: String, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_unset_at(self.path, id, property) == 1 }
+        act(done) { liv_unset_at(self.path, id, property) == 1 }
     }
 
     func trash(_ id: UInt64, done: @escaping (Bool) -> Void = { _ in }) {
-        act(done) { lotus_trash_at(self.path, id) == 1 }
+        act(done) { liv_trash_at(self.path, id) == 1 }
     }
 
     /// The property catalog for the inspector — by name, with each
@@ -1115,9 +1115,9 @@ final class BoxModel: ObservableObject {
     /// under the flock, never inferred from a failure to open.
     func content(_ id: UInt64, retries: Int = 20, done: @escaping (ContentRead) -> Void) {
         boxQueue.async {
-            if let raw = lotus_content_at(self.path, id) {
+            if let raw = liv_content_at(self.path, id) {
                 let json = String(cString: raw)
-                lotus_string_free(raw)
+                liv_string_free(raw)
                 guard
                     let doc = try? JSONDecoder().decode(ContentDoc.self, from: Data(json.utf8))
                 else {
@@ -1153,7 +1153,7 @@ final class BoxModel: ObservableObject {
     ) {
         boxQueue.async {
             var fresh: UInt64 = 0
-            let result = lotus_set_content_at(self.path, id, spansJSON, base, &fresh)
+            let result = liv_set_content_at(self.path, id, spansJSON, base, &fresh)
             DispatchQueue.main.async {
                 switch result {
                 case 1: done(.saved(fresh))
@@ -1162,7 +1162,7 @@ final class BoxModel: ObservableObject {
                 }
                 // No full-box refresh here. Content saving fires on every
                 // autosave tick, checkpoint, and dirty tab close/switch; a
-                // whole-box lotus_snapshot decode + @Published republish on
+                // whole-box liv_snapshot decode + @Published republish on
                 // each was the tab-close/select lag and a drag while typing.
                 // The saving editor gets its fresh fingerprint via .saved, and
                 // no list/row field is derived from content (only contentPrint,
@@ -1176,9 +1176,9 @@ final class BoxModel: ObservableObject {
     func contentHistory(_ id: UInt64, done: @escaping ([HistoryVersion]) -> Void) {
         boxQueue.async {
             var versions: [HistoryVersion] = []
-            if let raw = lotus_content_history_at(self.path, id) {
+            if let raw = liv_content_history_at(self.path, id) {
                 let json = String(cString: raw)
-                lotus_string_free(raw)
+                liv_string_free(raw)
                 versions =
                     (try? JSONDecoder().decode([HistoryVersion].self, from: Data(json.utf8))) ?? []
             }
@@ -1214,7 +1214,7 @@ final class BoxModel: ObservableObject {
         for draft in DraftJournal.all(box: path) {
             boxQueue.async {
                 var fresh: UInt64 = 0
-                let result = lotus_set_content_at(
+                let result = liv_set_content_at(
                     self.path, draft.entity, SpanCodec.json(draft.spans), draft.base, &fresh)
                 if result == 1 {
                     DispatchQueue.main.async {
@@ -1231,9 +1231,9 @@ final class BoxModel: ObservableObject {
                 // keeps the journal for the next launch; anything else
                 // (entity gone, box reset) must surface, not rot.
                 var locked = false
-                if let raw = lotus_probe(self.path) {
+                if let raw = liv_probe(self.path) {
                     let json = String(cString: raw)
-                    lotus_string_free(raw)
+                    liv_string_free(raw)
                     let fault = try? JSONDecoder().decode(BoxFault.self, from: Data(json.utf8))
                     locked = fault?.code == "locked"
                 }
@@ -1288,30 +1288,30 @@ enum Civil {
 }
 
 extension Notification.Name {
-    static let lotusFocusSearch = Notification.Name("lotus.focusSearch")
+    static let livFocusSearch = Notification.Name("liv.focusSearch")
     /// Open the palette prefilled with a query (object = the query string) —
     /// the chip-click filter (P11.5c).
-    static let lotusSearchFor = Notification.Name("lotus.searchFor")
-    static let lotusFocusCapture = Notification.Name("lotus.focusCapture")
+    static let livSearchFor = Notification.Name("liv.searchFor")
+    static let livFocusCapture = Notification.Name("liv.focusCapture")
     /// The File → Daily Note menu item (P12 12b) — opens today's daily note.
-    static let lotusOpenDailyNote = Notification.Name("lotus.openDailyNote")
-    static let lotusNewNote = Notification.Name("lotus.newNote")
-    static let lotusNewTab = Notification.Name("lotus.newTab")
-    static let lotusOpenStaleDraft = Notification.Name("lotus.openStaleDraft")
+    static let livOpenDailyNote = Notification.Name("liv.openDailyNote")
+    static let livNewNote = Notification.Name("liv.newNote")
+    static let livNewTab = Notification.Name("liv.newTab")
+    static let livOpenStaleDraft = Notification.Name("liv.openStaleDraft")
     /// Open the Import funnel (P15e) / Export composer (P15f) sheets — ⌘⇧I / ⌘⇧E.
-    static let lotusOpenImport = Notification.Name("lotus.openImport")
-    static let lotusOpenExport = Notification.Name("lotus.openExport")
+    static let livOpenImport = Notification.Name("liv.openImport")
+    static let livOpenExport = Notification.Name("liv.openExport")
     /// Jump to Inbox › Tidy (P16f): the Agents doorway + row-halo taps.
-    static let lotusGoTidy = Notification.Name("lotus.goTidy")
-    static let lotusSaveLayer = Notification.Name("lotus.saveLayer")
-    static let lotusVaultGraph = Notification.Name("lotus.vaultGraph")
-    static let lotusStartTimer = Notification.Name("lotus.startTimer")
-    static let lotusReplayTour = Notification.Name("lotus.replayTour")
-    static let lotusToggleCapture = Notification.Name("lotus.toggleCapture")
-    static let lotusSaveTaskView = Notification.Name("lotus.saveTaskView")
-    static let lotusNewContact = Notification.Name("lotus.newContact")
-    static let lotusFocusContactFilter = Notification.Name("lotus.focusContactFilter")
-    static let lotusRestoreLayer = Notification.Name("lotus.restoreLayer")
+    static let livGoTidy = Notification.Name("liv.goTidy")
+    static let livSaveLayer = Notification.Name("liv.saveLayer")
+    static let livVaultGraph = Notification.Name("liv.vaultGraph")
+    static let livStartTimer = Notification.Name("liv.startTimer")
+    static let livReplayTour = Notification.Name("liv.replayTour")
+    static let livToggleCapture = Notification.Name("liv.toggleCapture")
+    static let livSaveTaskView = Notification.Name("liv.saveTaskView")
+    static let livNewContact = Notification.Name("liv.newContact")
+    static let livFocusContactFilter = Notification.Name("liv.focusContactFilter")
+    static let livRestoreLayer = Notification.Name("liv.restoreLayer")
 }
 
 // MARK: - lenses
@@ -1422,7 +1422,7 @@ struct WindowChrome: View {
     /// The Export composer (P15f) — a transient sheet; copy-only, a projection.
     @State private var exportOpen = false
     @StateObject private var exportComposer = ExportComposerModel()
-    /// The Inbox lens lives HERE, not inside InboxView, so a `.lotusGoTidy`
+    /// The Inbox lens lives HERE, not inside InboxView, so a `.livGoTidy`
     /// posted from another surface (the Tasks ✦ badge, the Agents doorway)
     /// survives InboxView being mounted lazily: the window sets .tidy BEFORE
     /// navigating, and the binding delivers it whether InboxView is already up
@@ -1521,29 +1521,29 @@ struct WindowChrome: View {
                     model: model, composer: exportComposer,
                     dismiss: { exportOpen = false })
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenImport)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenImport)) { _ in
                 importFunnel.reset()  // fresh each open — no re-import of committed items
                 importOpen = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.openSettings"))) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("liv.openSettings"))) { _ in
                 navigate(to: .settings)
             }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.navBack"))) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("liv.navBack"))) { _ in
                 chrome.goBack()
             }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.navForward"))) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("liv.navForward"))) { _ in
                 chrome.goForward()
             }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("lotus.goDashboard"))) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("liv.goDashboard"))) { _ in
                 navigate(to: .dashboard)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenCopilot)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenCopilot)) { note in
                 // The editor's ✦ AI pill (P20c): the Copilot lens, scoped.
                 if let id = note.object as? UInt64 { selection = id }
                 chrome.rightOpen = true
                 chrome.rightLens = .assist
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusRevealInVault)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livRevealInVault)) { note in
                 // P20j.6: in vault mode, reveal the REAL file in Finder;
                 // always surface the Vault tab too.
                 if let id = note.object as? UInt64, model.inVault {
@@ -1553,11 +1553,11 @@ struct WindowChrome: View {
                 leftViewRaw = SidebarView.vault.rawValue
                 chrome.persistPanes()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenExport)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenExport)) { _ in
                 exportComposer.reset()
                 exportOpen = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusGoTidy)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livGoTidy)) { _ in
                 inboxLens = .tidy
                 navigate(to: .inbox)
             }
@@ -1672,7 +1672,7 @@ struct WindowChrome: View {
     /// finish strip points here.
     private var tourPill: some View {
         Button {
-            NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
+            NotificationCenter.default.post(name: .livReplayTour, object: nil)
         } label: {
             HStack(spacing: 4) {
                 Text("✦").font(.system(size: 10)).foregroundColor(Theme.warning)
@@ -1726,7 +1726,7 @@ struct WindowChrome: View {
             Rectangle().fill(Theme.border).frame(width: 1, height: 16)
             layersButton
             bandButton("arrow.uturn.backward", "Undo (⌘⌥Z)") {
-                CommandRegistry.shared.run("lotus:undo-last-change")
+                CommandRegistry.shared.run("liv:undo-last-change")
             }
             HStack(spacing: 0) {
                 navChevron("chevron.left", enabled: chrome.canNavBack, help: "Back (⌥←)") {
@@ -2268,18 +2268,18 @@ struct WindowChrome: View {
     /// receiver chain (which the type-checker already strains under).
     private var layerHandlers: some View {
         Color.clear
-            .onReceive(NotificationCenter.default.publisher(for: .lotusSaveLayer)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livSaveLayer)) { _ in
                 saveLayerFlow()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusRestoreLayer)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livRestoreLayer)) { note in
                 guard let layer = note.object as? LayerRow else { return }
                 restoreLayer(layer)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusVaultGraph)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livVaultGraph)) { note in
                 vaultGraphFocus = note.object as? UInt64 ?? rightFocusId
                 chrome.vaultGraphOpen = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusStartTimer)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livStartTimer)) { note in
                 guard let target = note.object as? UInt64 else { return }
                 startTimer(target)
             }
@@ -2323,7 +2323,7 @@ struct WindowChrome: View {
         // version made replay a silent no-op mid-tour). Replay also clears
         // any overlay beneath — a welcome scrim over Settings invites an
         // Esc that means "close Settings" but reads as "skip the tour".
-        .onReceive(NotificationCenter.default.publisher(for: .lotusReplayTour)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .livReplayTour)) { _ in
             chrome.settingsOpen = false
             chrome.switcherOpen = false
             chrome.searchOpen = false
@@ -2384,7 +2384,7 @@ struct WindowChrome: View {
                 dismiss: { chrome.vaultGraphOpen = false },
                 open: { id in openEntityTab(id) },
                 searchFor: { q in
-                    NotificationCenter.default.post(name: .lotusSearchFor, object: q)
+                    NotificationCenter.default.post(name: .livSearchFor, object: q)
                 })
         }
     }
@@ -2520,38 +2520,38 @@ struct WindowChrome: View {
     /// background that only listens.
     private var eventHandlers: some View {
         Color.clear
-            .onReceive(NotificationCenter.default.publisher(for: .lotusFocusSearch)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livFocusSearch)) { _ in
                 // ⌘F: open the centered search palette.
                 if chrome.focusMode { chrome.toggleFocus() }
                 pendingSearch = nil
                 chrome.searchOpen = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusSearchFor)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livSearchFor)) { note in
                 // A chip click anywhere: the palette opens on that filter.
                 if chrome.focusMode { chrome.toggleFocus() }
                 pendingSearch = note.object as? String
                 chrome.searchOpen = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenEntity)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenEntity)) { note in
                 // CONNECTIONS' Ctrl/⌘-click: the entity opens in a tab.
                 if let id = note.object as? UInt64 { openEntityTab(id) }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenDailyNote)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenDailyNote)) { _ in
                 showDesk(.today)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livFocusCapture)) { _ in
                 closeEditor()
                 chrome.surface = .notes
                 query = ""
                 lens = .today
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusNewNote)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livNewNote)) { _ in
                 newNoteInTab()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusNewTab)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livNewTab)) { _ in
                 openBlankTab()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenStaleDraft)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenStaleDraft)) { note in
                 guard let draft = note.object as? DraftFile else { return }
                 chrome.surface = .notes
                 closeEditor { ok in
@@ -2562,21 +2562,21 @@ struct WindowChrome: View {
                     selection = draft.entity
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusNavReplay)) { note in
+            .onReceive(NotificationCenter.default.publisher(for: .livNavReplay)) { note in
                 guard let replay = note.object as? NavReplay else { return }
                 performReplay(replay)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusGoHome)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livGoHome)) { _ in
                 // The Home hub surface (bp4 ⑥): the desk tab on Today — the
                 // full landing, not just a surface switch (the old receiver
                 // never activated the desk tab).
                 showDesk(.today)
             }
             .background(layerHandlers)
-            .onReceive(NotificationCenter.default.publisher(for: .lotusGoInbox)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livGoInbox)) { _ in
                 navigate(to: .inbox)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .lotusOpenSettings)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .livOpenSettings)) { _ in
                 CommandRegistry.shared.run("app:open-settings")
             }
             .onReceive(
@@ -2671,11 +2671,11 @@ struct WindowChrome: View {
                         chrome: chrome, model: model,
                         select: { target in navigate(to: target) },
                         capture: {
-                            NotificationCenter.default.post(name: .lotusToggleCapture, object: nil)
+                            NotificationCenter.default.post(name: .livToggleCapture, object: nil)
                         },
                         graph: { chrome.vaultGraphOpen = true },
                         settings: {
-                            NotificationCenter.default.post(name: .lotusOpenSettings, object: nil)
+                            NotificationCenter.default.post(name: .livOpenSettings, object: nil)
                         },
                         ask: { chrome.searchOpen = true })
                         .background(Theme.panel)
@@ -2779,7 +2779,7 @@ struct WindowChrome: View {
                                         select: { id in selection = id },
                                         searchFor: { q in
                                             NotificationCenter.default.post(
-                                                name: .lotusSearchFor, object: q)
+                                                name: .livSearchFor, object: q)
                                         })
                                 }
                             }
@@ -2911,7 +2911,7 @@ struct WindowChrome: View {
             BaseFileView(model: model, id: id)
         case .blank:
             BlankTabLanding(
-                createNote: { NotificationCenter.default.post(name: .lotusNewNote, object: nil) },
+                createNote: { NotificationCenter.default.post(name: .livNewNote, object: nil) },
                 search: { chrome.searchOpen = true })
         default:  // .desk (or an unset tab, treated as the desk)
             deskContent
@@ -3101,14 +3101,14 @@ struct WindowChrome: View {
     }
 
     /// Add a file by reference: pick it, the librarian hashes it (never
-    /// copies), then open it read-only. The one place a file enters lotus.
+    /// copies), then open it read-only. The one place a file enters liv.
     private func addFileFlow() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Add"
-        panel.message = "Add a file by reference — lotus links it, never copies or moves it."
+        panel.message = "Add a file by reference — liv links it, never copies or moves it."
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             model.addFile(url.path) { id in
@@ -3221,7 +3221,7 @@ struct WindowChrome: View {
                 // The interim search field lives in the sidebar, which
                 // focus mode hides: search exits focus first.
                 if chrome.focusMode { chrome.toggleFocus() }
-                NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+                NotificationCenter.default.post(name: .livFocusSearch, object: nil)
             })
         registry.register(
             // ⇧⇥ = Mission Control (P20b, O7 — the pack closes the P18
@@ -3244,7 +3244,7 @@ struct WindowChrome: View {
                 category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "k")
             ) {
                 if chrome.focusMode { chrome.toggleFocus() }
-                NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+                NotificationCenter.default.post(name: .livFocusSearch, object: nil)
             })
         registry.register(
             // ⌘F is the CANONICAL search-palette chord (P13, owner-confirmed:
@@ -3256,7 +3256,7 @@ struct WindowChrome: View {
                 category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "f")
             ) {
                 if chrome.focusMode { chrome.toggleFocus() }
-                NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+                NotificationCenter.default.post(name: .livFocusSearch, object: nil)
             })
         registry.register(
             CommandDef(
@@ -3296,21 +3296,21 @@ struct WindowChrome: View {
                 id: "import:open", label: "Import…", scope: .global,
                 category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "i")
             ) {
-                NotificationCenter.default.post(name: .lotusOpenImport, object: nil)
+                NotificationCenter.default.post(name: .livOpenImport, object: nil)
             })
         registry.register(
             CommandDef(
                 id: "export:open", label: "Export…", scope: .global,
                 category: "File", binding: Hotkey(modifiers: [.mod, .shift], key: "e")
             ) {
-                NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+                NotificationCenter.default.post(name: .livOpenExport, object: nil)
             })
         registry.register(
             CommandDef(
                 id: "tab:new", label: "New tab", scope: .global,
                 category: "Navigate", binding: Hotkey(modifiers: [.mod], key: "t")
             ) {
-                NotificationCenter.default.post(name: .lotusNewTab, object: nil)
+                NotificationCenter.default.post(name: .livNewTab, object: nil)
             })
         registry.register(
             CommandDef(
@@ -3351,7 +3351,7 @@ struct WindowChrome: View {
                 id: "view:vault-graph", label: "Vault graph", scope: .global,
                 category: "View", binding: Hotkey(modifiers: [.ctrl, .shift], key: "g")
             ) {
-                NotificationCenter.default.post(name: .lotusVaultGraph, object: nil)
+                NotificationCenter.default.post(name: .livVaultGraph, object: nil)
             })
         registry.register(
             CommandDef(
@@ -3363,7 +3363,7 @@ struct WindowChrome: View {
             })
         registry.register(
             CommandDef(
-                id: "lotus:undo-last-change", label: "Undo last change", scope: .global,
+                id: "liv:undo-last-change", label: "Undo last change", scope: .global,
                 category: "Edit", binding: Hotkey(modifiers: [.mod, .alt], key: "z")
             ) {
                 // The box's undo, reachable whatever has focus — the
@@ -3394,7 +3394,7 @@ struct WindowChrome: View {
                 id: "file-explorer:new-file", label: "New note", scope: .global,
                 category: "File", binding: Hotkey(modifiers: [.mod], key: "n")
             ) {
-                NotificationCenter.default.post(name: .lotusNewNote, object: nil)
+                NotificationCenter.default.post(name: .livNewNote, object: nil)
             })
         registry.register(
             CommandDef(
@@ -3672,8 +3672,8 @@ struct EntityLine: View {
 
 // MARK: - Quick Capture (P12 12c) — the wall of orphan captures (a desk lens)
 
-/// bp5 panel A, reconciled to the lotus IA: the take box writes a bare scrap
-/// through `lotus_capture_at` (capture asks nothing, never blocks — the
+/// bp5 panel A, reconciled to the liv IA: the take box writes a bare scrap
+/// through `liv_capture_at` (capture asks nothing, never blocks — the
 /// silent workspace-stamp is REFUSED, design delta a4), and the wall is the
 /// debut mount of the BP-7 V2 `ObjectCard` over the client-side orphan set
 /// (content ∧ ¬type). The global ⌃⌥Space popup is the other doorway; this
@@ -3759,7 +3759,7 @@ struct QuickCaptureView: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.25)))
-        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusCapture)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .livFocusCapture)) { _ in
             captureFocused = true
         }
     }
@@ -3814,7 +3814,7 @@ struct ContactsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusNewContact)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .livNewContact)) { _ in
             model.createNote { newId in
                 guard let newId else { return }
                 model.setType(newId, "person") { _ in
@@ -3848,7 +3848,7 @@ struct ContactsView: View {
                     .foregroundColor(Theme.mutedFg)
                 Text("in People ·").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                 Button {
-                    NotificationCenter.default.post(name: .lotusRevealInVault, object: row.id)
+                    NotificationCenter.default.post(name: .livRevealInVault, object: row.id)
                 } label: {
                     Text(row.vaultPath ?? "library/contacts/\(slug(row.title)).md")
                         .font(.system(size: 10, design: .monospaced))
@@ -3994,11 +3994,11 @@ enum InboxLens: String, CaseIterable, Identifiable {
 /// surfaces — a13/a14). Route = orphan scraps → give each a type and it
 /// leaves the set. Tidy = the clerk's live assist proposals. The shared V3
 /// inspector is the app's RIGHT pane (this surface shows it, bound to
-/// selection) — lotus's mapping of bp5's inline inspector, not a duplicate.
+/// selection) — liv's mapping of bp5's inline inspector, not a duplicate.
 struct InboxView: View {
     @ObservedObject var model: BoxModel
     @Binding var selection: UInt64?
-    /// Owned by the window so a cross-surface `.lotusGoTidy` lands on Tidy even
+    /// Owned by the window so a cross-surface `.livGoTidy` lands on Tidy even
     /// when InboxView was not yet mounted at post time (see WindowChrome).
     @Binding var lens: InboxLens
     var open: (UInt64) -> Void = { _ in }
@@ -4200,7 +4200,7 @@ struct InboxView: View {
                                 row: row,
                                 selected: selection == row.id,
                                 chipTap: { f in
-                                    NotificationCenter.default.post(name: .lotusSearchFor, object: f)
+                                    NotificationCenter.default.post(name: .livSearchFor, object: f)
                                 },
                                 select: { selection = row.id },
                                 openRow: { open(row.id) })
@@ -4955,7 +4955,7 @@ struct SearchPopup: View {
             }) {
                 Button {
                     dismiss()
-                    NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+                    NotificationCenter.default.post(name: .livGoTidy, object: nil)
                 } label: {
                     HStack(spacing: 5) {
                         Text("✦").font(.system(size: 9))
@@ -5189,7 +5189,7 @@ struct SearchPopup: View {
 
                 // The footer actions (bp3 a13/a14/a15) — reserved disabled
                 // frames: Save-as-view / Export / Open-in-view need the views
-                // substrate lotus lacks; the raw query stays re-runnable.
+                // substrate liv lacks; the raw query stays re-runnable.
                 Divider()
                 HStack(spacing: 8) {
                     Spacer()
@@ -5838,7 +5838,7 @@ struct ContactsNav: View {
                 Text("\(people.count)").font(.system(size: 10)).foregroundColor(Theme.mutedFg)
                 Spacer()
                 Button {
-                    NotificationCenter.default.post(name: .lotusNewContact, object: nil)
+                    NotificationCenter.default.post(name: .livNewContact, object: nil)
                 } label: {
                     Image(systemName: "plus.circle.fill").font(.system(size: 13))
                         .foregroundColor(Theme.accent).contentShape(Rectangle())
@@ -5867,7 +5867,7 @@ struct ContactsNav: View {
                 .padding(.horizontal, 6)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusFocusContactFilter)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .livFocusContactFilter)) { _ in
             filterFocused = true
         }
     }
@@ -6046,7 +6046,7 @@ struct LibraryView: View {
                     .padding(.bottom, 2)
                 ForEach(views) { view in
                     Button {
-                        NotificationCenter.default.post(name: .lotusSearchFor, object: view.query)
+                        NotificationCenter.default.post(name: .livSearchFor, object: view.query)
                     } label: {
                         HStack(spacing: 7) {
                             Image(systemName: "line.3.horizontal.decrease.circle")
@@ -6092,9 +6092,9 @@ struct LibraryView: View {
             groupByMenu
             // P20f (map [6]): +New by kind — replaces the lone Add file.
             Menu {
-                Button("Note") { NotificationCenter.default.post(name: .lotusNewNote, object: nil) }
+                Button("Note") { NotificationCenter.default.post(name: .livNewNote, object: nil) }
                 Button("Contact") {
-                    NotificationCenter.default.post(name: .lotusNewContact, object: nil)
+                    NotificationCenter.default.post(name: .livNewContact, object: nil)
                 }
                 Button("File — by reference…") { addFile() }
                 Divider()
@@ -6108,14 +6108,14 @@ struct LibraryView: View {
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             Button {
-                NotificationCenter.default.post(name: .lotusOpenImport, object: nil)
+                NotificationCenter.default.post(name: .livOpenImport, object: nil)
             } label: {
                 Image(systemName: "square.and.arrow.down").font(.system(size: 12.5))
             }
             .buttonStyle(.borderless)
             .help("Import…  ⌘⇧I")
             Button {
-                NotificationCenter.default.post(name: .lotusOpenExport, object: nil)
+                NotificationCenter.default.post(name: .livOpenExport, object: nil)
             } label: {
                 Image(systemName: "square.and.arrow.up").font(.system(size: 12.5))
             }
@@ -6308,7 +6308,7 @@ struct LibraryView: View {
             Text("No files yet.")
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
-            Text("Add a file by reference — lotus links it, never copies it.")
+            Text("Add a file by reference — liv links it, never copies it.")
                 .font(.system(size: 11.5))
                 .foregroundColor(Theme.mutedFg)
             Button("Add file…", action: addFile).padding(.top, 4)
@@ -6361,7 +6361,7 @@ struct TasksNav: View {
                         .foregroundColor(Theme.mutedFg)
                     Spacer()
                     Button {
-                        NotificationCenter.default.post(name: .lotusSaveTaskView, object: nil)
+                        NotificationCenter.default.post(name: .livSaveTaskView, object: nil)
                     } label: {
                         Text("＋ view").font(.system(size: 10, weight: .medium))
                             .foregroundColor(Theme.accent).contentShape(Rectangle())
@@ -6621,7 +6621,7 @@ struct TasksView: View {
                 savedIds = []
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusSaveTaskView)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .livSaveTaskView)) { _ in
             // ＋ view (map [2]): keep the current pool as a saved view — an
             // ordinary entity, the P18 seam.
             Dialogs.shared.prompt(
@@ -7081,7 +7081,7 @@ struct TasksView: View {
         let pending = (model.snap?.inbox ?? []).count
         if pending > 0 {
             Button {
-                NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+                NotificationCenter.default.post(name: .livGoTidy, object: nil)
             } label: {
                 HStack(spacing: 4) {
                     Text("✦").font(.system(size: 10))
@@ -7139,12 +7139,12 @@ struct TasksView: View {
             toggle: taskStatusToggle(model, row),
             trailing: AnyView(priorityFlag(row)),
             chipTap: { filter in
-                NotificationCenter.default.post(name: .lotusSearchFor, object: filter)
+                NotificationCenter.default.post(name: .livSearchFor, object: filter)
             },
             select: { selection = row.id },
             openRow: { open(row.id) },
             haloCount: model.proposalCount(row.id),
-            onHalo: { NotificationCenter.default.post(name: .lotusGoTidy, object: nil) })
+            onHalo: { NotificationCenter.default.post(name: .livGoTidy, object: nil) })
     }
 
     /// The priority flag — a menu over the seeded `priority` options (never
@@ -7673,7 +7673,7 @@ struct AssistLensPane: View {
                             SuggestionCard(model: model, proposal: proposal)
                         }
                         Button("All suggestions — Inbox › Tidy") {
-                            NotificationCenter.default.post(name: .lotusGoTidy, object: nil)
+                            NotificationCenter.default.post(name: .livGoTidy, object: nil)
                         }
                         .buttonStyle(.link)
                         .font(.system(size: 11.5))

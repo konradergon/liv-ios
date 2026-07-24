@@ -3,15 +3,15 @@
 set -e
 cd "$(dirname "$0")"
 
-cargo build --release -p lotus-ffi --manifest-path ../../Cargo.toml
+cargo build --release -p liv-ffi --manifest-path ../../Cargo.toml
 
 mkdir -p build
 swiftc -O \
     Sources/main.swift Sources/Window.swift Sources/Editor.swift Sources/Tokens.swift Sources/Commands.swift Sources/Dialogs.swift Sources/Chrome.swift Sources/Spaces.swift Sources/Tabs.swift Sources/Calendar.swift Sources/Hues.swift Sources/RowKit.swift Sources/DigitMap.swift Sources/InspectorLayout.swift Sources/Inspector.swift Sources/InspectorEditors.swift Sources/Import.swift Sources/Export.swift Sources/Halo.swift Sources/Graph.swift Sources/VaultGraph.swift Sources/Dashboard.swift Sources/Capture.swift Sources/Comms.swift Sources/Vault.swift Sources/Themes.swift Sources/Settings.swift Sources/PropertyActions.swift Sources/Onboarding.swift \
-    -import-objc-header lotus.h \
-    -L ../../target/release -llotus_ffi \
+    -import-objc-header liv.h \
+    -L ../../target/release -lliv_ffi \
     -framework AppKit -framework Carbon -framework SwiftUI \
-    -o build/lotus
+    -o build/liv
 
-echo "built: shell/macos/build/lotus"
+echo "built: shell/macos/build/liv"
 echo "run it: the window opens, and ctrl-option-space captures from anywhere"

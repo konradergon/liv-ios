@@ -1,4 +1,4 @@
-// lotus — the local graph (P18a, bp12 Scene B): the right panel's fifth lens.
+// liv — the local graph (P18a, bp12 Scene B): the right panel's fifth lens.
 // Hub = the focused object, radial rings = hop depth; values are squares in
 // their frozen VALUE_HEX hue (byte-identical to their chips), objects are
 // neutral circles, the hub is the ONE lake-green. A navigator only: click an
@@ -398,7 +398,7 @@ struct GraphLensPane: View {
             .buttonStyle(.plain)
             .help("Hop through shared values")
             Button("Vault graph") {
-                NotificationCenter.default.post(name: .lotusVaultGraph, object: focus)
+                NotificationCenter.default.post(name: .livVaultGraph, object: focus)
             }
             .buttonStyle(.plain)
             .font(.system(size: 10, weight: .semibold))

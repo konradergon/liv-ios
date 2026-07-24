@@ -19,7 +19,7 @@
 //! - Past occurrences of a series are not debts: nothing here accumulates
 //!   what yesterday's expansion would have shown.
 
-use lotus_core::{props, DateTime, Entity, Id, Store, Value};
+use liv_core::{props, DateTime, Entity, Id, Store, Value};
 
 use crate::dates::{add_days, day_of, days_in_month, parts, weekday, WEEKDAYS};
 use crate::property_id;

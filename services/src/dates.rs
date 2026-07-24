@@ -3,7 +3,7 @@
 //! Fifty lines of calendar beat a clock dependency in a layer that must
 //! stay pure: nothing here reads the time.
 
-use lotus_core::DateTime;
+use liv_core::DateTime;
 
 pub(crate) const WEEKDAYS: [&str; 7] = [
     "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",

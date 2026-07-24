@@ -1,8 +1,8 @@
 //! The first lens. It renders anything with the configured properties —
 //! it neither knows nor asks what the entities are.
 
-use lotus_core::*;
-use lotus_views::{render, Config, Density};
+use liv_core::*;
+use liv_views::{render, Config, Density};
 
 const DUE: Id = 4301;
 

@@ -1,11 +1,11 @@
-// lotus — onboarding (P19i, bp2): first-run, the tour, replay. The tour is
+// liv — onboarding (P19i, bp2): first-run, the tour, replay. The tour is
 // three coach-bubble moments over the AS-BUILT surfaces — never a slideshow,
 // never a fake screenshot. Input passes through: every bubble leaves the
 // surface beneath it fully live. Fresh box + fresh prefs → the tour; a
 // non-empty box never tours regardless of prefs; skip anywhere lands in the
 // after-state (seeds intact) and it never auto-shows again. State survives
 // kill/relaunch at every dot (resume with surface validation). Rehearse it:
-//   LOTUS_BOX_PATH=$(mktemp -d)/tour.log ./shell/macos/build/lotus
+//   LIV_BOX_PATH=$(mktemp -d)/tour.log ./shell/macos/build/liv
 
 import AppKit
 import SwiftUI

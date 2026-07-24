@@ -1,4 +1,4 @@
-//! lotus-core — milestone 1 of the build order in `productivity_app.md`.
+//! liv-core — milestone 1 of the build order in `productivity_app.md`.
 //!
 //! The core model, in memory: Entity, Cell, Value, commands, transactions,
 //! undo. No UI, no disk. Where this code and the constitution disagree,

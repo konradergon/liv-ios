@@ -2,11 +2,11 @@
 //! reads "NaN" and "inf", but a NaN cell was a poison pill (non-reflexive
 //! equality made it unremovable) and infinity has no meaning in the log.
 
-use lotus_core::*;
-use lotus_services::{content, seed_if_fresh};
+use liv_core::*;
+use liv_services::{content, seed_if_fresh};
 
 fn fresh(name: &str) -> (std::path::PathBuf, Session) {
-    let dir = std::env::temp_dir().join(format!("lotus_num_{name}"));
+    let dir = std::env::temp_dir().join(format!("liv_num_{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("box.log");

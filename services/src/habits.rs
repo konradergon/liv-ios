@@ -2,7 +2,7 @@
 //! on read from the check-in records, stored nowhere. A trashed habit's
 //! records go dark (skipped, never a panic); deletion never cascades.
 
-use lotus_core::{props, Id, Store, Value};
+use liv_core::{props, Id, Store, Value};
 use serde::Serialize;
 
 use crate::content::find_type;

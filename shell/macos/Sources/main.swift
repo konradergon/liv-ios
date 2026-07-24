@@ -1,9 +1,9 @@
-// lotus — the macOS shell, milestone 4: capture.
+// liv — the macOS shell, milestone 4: capture.
 //
 // A menu-bar agent, a global hotkey, a panel. Hotkey, type, enter, gone —
 // the main window never opens, because there is no main window yet.
 // The shell orchestrates; it owns no data. Everything it knows about the
-// box goes through the three functions in lotus.h.
+// box goes through the three functions in liv.h.
 
 import AppKit
 import Carbon.HIToolbox
@@ -24,13 +24,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     /// The box admits one writer, so the shell never holds it: every
     /// capture, snapshot, and triage opens, acts, closes. The CLI stays
     /// usable while the app runs.
-    /// The rehearsal harness (P19c, H6): LOTUS_BOX_PATH points the whole app
+    /// The rehearsal harness (P19c, H6): LIV_BOX_PATH points the whole app
     /// at any box — the onboarding tour is rehearsed on throwaway boxes from
     /// the shell, end to end, instead of being discovered once at the finish.
-    private let boxPath =
-        ProcessInfo.processInfo.environment["LOTUS_BOX_PATH"]
-        ?? FileManager.default.homeDirectoryForCurrentUser.path
-            + "/Library/Application Support/lotus/lotus.log"
+    private let boxPath: String = {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["LIV_BOX_PATH"] ?? env["LOTUS_BOX_PATH"] { return override }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let path = home + "/Library/Application Support/liv/liv.log"
+        // Boxes born before the product rename stay where they are: fall
+        // back to the codename-era location while the new one doesn't exist.
+        let legacy = home + "/Library/Application Support/lotus/lotus.log"
+        if !FileManager.default.fileExists(atPath: path),
+            FileManager.default.fileExists(atPath: legacy)
+        {
+            return legacy
+        }
+        return path
+    }()
 
     private lazy var model = BoxModel(path: boxPath)
 
@@ -49,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // (stale, or its note gone) opens its editor so the user's own
         // words resolve visibly; a journal is never silently orphaned.
         model.replayDrafts { draft in
-            NotificationCenter.default.post(name: .lotusOpenStaleDraft, object: draft)
+            NotificationCenter.default.post(name: .livOpenStaleDraft, object: draft)
         }
     }
 
@@ -86,13 +97,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
-        w.title = "lotus"
+        w.title = "liv"
         // Hidden title, traffic lights overlaying the app's own top band.
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.isReleasedWhenClosed = false
         w.isMovableByWindowBackground = true
-        w.setFrameAutosaveName("lotus.main")
+        w.setFrameAutosaveName("liv.main")
         let hosting = NSHostingController(rootView: WindowChrome(model: model))
         // Let the content run under the titlebar so the header controls
         // and the tab strip sit in the traffic-light band at the very
@@ -125,17 +136,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     @objc private func focusSearch() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusFocusSearch, object: nil)
+        NotificationCenter.default.post(name: .livFocusSearch, object: nil)
     }
 
     @objc private func focusCapture() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusFocusCapture, object: nil)
+        NotificationCenter.default.post(name: .livFocusCapture, object: nil)
     }
 
     @objc private func openDailyNote() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusOpenDailyNote, object: nil)
+        NotificationCenter.default.post(name: .livOpenDailyNote, object: nil)
     }
 
     /// ⌘⌥Z is always the box. Under a dirty draft it flushes first —
@@ -161,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     @objc private func newNote() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusNewNote, object: nil)
+        NotificationCenter.default.post(name: .livNewNote, object: nil)
     }
 
     /// The native menu, Liv's shape (§2.1): custom items carry NO
@@ -307,35 +318,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     @objc private func replayTour() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusReplayTour, object: nil)
+        NotificationCenter.default.post(name: .livReplayTour, object: nil)
     }
 
     @objc private func openSettings() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: Notification.Name("lotus.openSettings"), object: nil)
+        NotificationCenter.default.post(name: Notification.Name("liv.openSettings"), object: nil)
     }
 
     @objc private func goDashboard() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: Notification.Name("lotus.goDashboard"), object: nil)
+        NotificationCenter.default.post(name: Notification.Name("liv.goDashboard"), object: nil)
     }
 
     @objc private func navBack() {
-        NotificationCenter.default.post(name: Notification.Name("lotus.navBack"), object: nil)
+        NotificationCenter.default.post(name: Notification.Name("liv.navBack"), object: nil)
     }
 
     @objc private func navForward() {
-        NotificationCenter.default.post(name: Notification.Name("lotus.navForward"), object: nil)
+        NotificationCenter.default.post(name: Notification.Name("liv.navForward"), object: nil)
     }
 
     @objc private func goHome() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusGoHome, object: nil)
+        NotificationCenter.default.post(name: .livGoHome, object: nil)
     }
 
     @objc private func goInbox() {
         window?.makeKeyAndOrderFront(nil)
-        NotificationCenter.default.post(name: .lotusGoInbox, object: nil)
+        NotificationCenter.default.post(name: .livGoInbox, object: nil)
     }
 
     // MARK: menu bar
@@ -465,7 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     /// ⌃⌥Space by default, via Carbon — no permissions dialog, works
     /// everywhere. The binding is a budgeted setting (P19d): the KeyRecorder
-    /// writes `app.capture.hotkey.v1` and posts `.lotusRebindCapture`; the
+    /// writes `app.capture.hotkey.v1` and posts `.livRebindCapture`; the
     /// hotkey re-registers LIVE, no relaunch.
     private func registerHotKey() {
         var eventType = EventTypeSpec(
@@ -485,14 +496,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             nil)
         applyCaptureHotKey()
         NotificationCenter.default.addObserver(
-            forName: Notification.Name("lotus.rebindCapture"), object: nil, queue: .main
+            forName: Notification.Name("liv.rebindCapture"), object: nil, queue: .main
         ) { [weak self] _ in
             self?.applyCaptureHotKey()
         }
         // P20b: the rail's Capture door fronts the same panel the global
         // hotkey does — one doorway, two knocks.
         NotificationCenter.default.addObserver(
-            forName: Notification.Name("lotus.toggleCapture"), object: nil, queue: .main
+            forName: Notification.Name("liv.toggleCapture"), object: nil, queue: .main
         ) { [weak self] _ in
             self?.togglePanel()
         }
@@ -519,7 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                 keyCode = validCode
                 modifiers = validMods
             } else {
-                NSLog("lotus: app.capture.hotkey.v1 malformed — back on ⌃⌥Space")
+                NSLog("liv: app.capture.hotkey.v1 malformed — back on ⌃⌥Space")
                 UserDefaults.standard.removeObject(forKey: "app.capture.hotkey.v1")
             }
         }
@@ -534,7 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         if status != noErr && keyCode != UInt32(kVK_Space) {
             // The saved chord can't register (stale key code from another
             // keyboard, say) — fall back rather than launch capture-less.
-            NSLog("lotus: capture hotkey rejected (\(status)) — back on ⌃⌥Space")
+            NSLog("liv: capture hotkey rejected (\(status)) — back on ⌃⌥Space")
             UserDefaults.standard.removeObject(forKey: "app.capture.hotkey.v1")
             RegisterEventHotKey(
                 UInt32(kVK_Space), UInt32(controlKey | optionKey), hotKeyID,

@@ -1,4 +1,4 @@
-// lotus — the Export composer (P15f). A transient sheet: select by filter
+// liv — the Export composer (P15f). A transient sheet: select by filter
 // (uncheck to exclude), compose a ≤2-level folder structure, preview the tree,
 // then Export → COPY. The honest way out — the box keeps everything; the folder
 // is an independent projection, never a mirror (LB5; move-out refused).

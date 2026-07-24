@@ -1,8 +1,8 @@
-// lotus — the Import funnel (P15e). A transient tool you run: drop tabs / files /
+// liv — the Import funnel (P15e). A transient tool you run: drop tabs / files /
 // a bookmarks.html / pasted text into the pool, glance-review, then "Import N →"
 // commits the whole batch in ONE transaction (the shipped `commit_batch`).
 //
-// DELTA (recorded): bp14/LB6 wanted the funnel as a content TAB. lotus's tab
+// DELTA (recorded): bp14/LB6 wanted the funnel as a content TAB. liv's tab
 // system is Notes-scoped, so forcing an import tool into the Notes tab strip is
 // awkward; it opens as a transient SHEET instead — the same "run it, close it,
 // it's gone" contract. The pool is pure shell scratch (D1): nothing touches the

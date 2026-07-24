@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use lotus_core::{
+use liv_core::{
     props, Author, Cell, Command, DateTime, FileRef, Id, PersistError, Session, Value,
 };
 

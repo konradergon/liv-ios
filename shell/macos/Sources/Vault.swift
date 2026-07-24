@@ -1,4 +1,4 @@
-// lotus — the vault projection's shell surface (P20j.7): the read-only
+// liv — the vault projection's shell surface (P20j.7): the read-only
 // FSEvents watcher and the divergence banner. The watcher NEVER writes —
 // it only schedules a debounced sync (the same verb the user triggers),
 // and sync is echo-proof (kill-shot B: an own-write never re-ingests), so
@@ -8,7 +8,7 @@
 import AppKit
 import SwiftUI
 
-// MARK: - one divergence finding (the wire shape of lotus_vault_findings_at)
+// MARK: - one divergence finding (the wire shape of liv_vault_findings_at)
 
 struct VaultFinding: Decodable, Identifiable, Equatable {
     let kind: String

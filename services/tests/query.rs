@@ -1,8 +1,8 @@
 //! The v0 query: a plain conjunction of (property, operator, value),
 //! interpreted the same way for every view that will ever exist.
 
-use lotus_core::*;
-use lotus_services::{run, Constraint, Op, Query, Sort};
+use liv_core::*;
+use liv_services::{run, Constraint, Op, Query, Sort};
 
 const STATUS: Id = 4300;
 const DUE: Id = 4301;

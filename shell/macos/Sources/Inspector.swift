@@ -1,4 +1,4 @@
-// lotus — the V3 keyboard-compact inspector (P11.5f, design §2). BP-1's
+// liv — the V3 keyboard-compact inspector (P11.5f, design §2). BP-1's
 // grammar rendered native: ONE component with six kind tunings, replacing
 // the P5 pane in place — same signature, both mounts (the window's right
 // pane and the calendar's embedded column). Static grammar + existing
@@ -24,9 +24,9 @@ extension Notification.Name {
     /// The inspector key bus: command actions post a key token; the one
     /// mounted pane acts on it (the calendar never coexists with the
     /// global pane — Window.swift's surface gate).
-    static let lotusInspectorKey = Notification.Name("lotus.inspector.key")
+    static let livInspectorKey = Notification.Name("liv.inspector.key")
     /// Open an entity in a (background) tab — CONNECTIONS' Ctrl/⌘-click.
-    static let lotusOpenEntity = Notification.Name("lotus.openEntity")
+    static let livOpenEntity = Notification.Name("liv.openEntity")
 }
 
 /// Ordinary CommandDefs in the one registry (§2.3), registered once.
@@ -44,7 +44,7 @@ enum InspectorCommands {
         registered = true
         let registry = CommandRegistry.shared
         func post(_ key: String) {
-            NotificationCenter.default.post(name: .lotusInspectorKey, object: key)
+            NotificationCenter.default.post(name: .livInspectorKey, object: key)
         }
         registry.register(
             CommandDef(
@@ -166,7 +166,7 @@ struct InspectorPane: View {
         .onChange(of: menuRow) {
             InspectorFocus.shared.editorOpen = editingRow != nil || menuRow != nil
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lotusInspectorKey)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: .livInspectorKey)) { note in
             guard let key = note.object as? String else { return }
             handle(key)
         }
@@ -478,7 +478,7 @@ struct InspectorPane: View {
         Button {
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             if flags.contains(.command) || flags.contains(.control) {
-                NotificationCenter.default.post(name: .lotusOpenEntity, object: target)
+                NotificationCenter.default.post(name: .livOpenEntity, object: target)
             } else {
                 selection = target
             }
@@ -859,7 +859,7 @@ struct ObjectHeader: View {
         list.cells.contains { $0.property == "related" && $0.refTarget == entity.id }
     }
 
-    // The 9b gesture, kept verbatim: lotus's Relate affordance rides the
+    // The 9b gesture, kept verbatim: liv's Relate affordance rides the
     // header (design §2.1).
     @ViewBuilder private var addToListMenu: some View {
         let lists = allLists.filter { $0.id != entity.id }

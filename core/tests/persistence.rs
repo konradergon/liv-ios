@@ -2,7 +2,7 @@
 //! is a materialization of it. These tests close and reopen the log to prove
 //! state — including undo and merge — survives a restart.
 
-use lotus_core::*;
+use liv_core::*;
 
 fn cell(property: Id, value: Value) -> Cell {
     Cell { property, value }
@@ -10,7 +10,7 @@ fn cell(property: Id, value: Value) -> Cell {
 
 /// A fresh log path per test; removed up front so each run starts empty.
 fn temp_path(name: &str) -> std::path::PathBuf {
-    let p = std::env::temp_dir().join(format!("lotus_persist_{name}.log"));
+    let p = std::env::temp_dir().join(format!("liv_persist_{name}.log"));
     let _ = std::fs::remove_file(format!("{}.declined", p.display()));
     let _ = std::fs::remove_file(format!("{}.pending", p.display()));
     let _ = std::fs::remove_file(&p);
@@ -69,7 +69,7 @@ fn header_carries_version() {
     }
     let content = std::fs::read_to_string(&path).unwrap();
     let first = content.lines().next().unwrap();
-    assert_eq!(first, r#"{"lotus_log":1}"#);
+    assert_eq!(first, r#"{"liv_log":1}"#);
     assert_eq!(LOG_VERSION, 2);
     let _ = std::fs::remove_file(&path);
 }

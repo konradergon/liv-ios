@@ -7,7 +7,7 @@
 //! and already-run query results, and emits inert display data the shell
 //! walks. It keys on properties present in cells, never on type.
 
-use lotus_core::{props, Entity, Id, Span, Store, Value};
+use liv_core::{props, Entity, Id, Span, Store, Value};
 
 /// One renderer, two densities.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -2,16 +2,16 @@
 //! WORKING backstage record (date + habit reference). Stats — streaks, week
 //! points, the 84-day chain — are computed on read, stored nowhere (D13).
 
-use lotus_core::*;
-use lotus_services::{content, habits, property_id};
+use liv_core::*;
+use liv_services::{content, habits, property_id};
 
 fn boxed(name: &str) -> (Session, std::path::PathBuf) {
-    let path = std::env::temp_dir().join(format!("lotus_habits_{name}.log"));
+    let path = std::env::temp_dir().join(format!("liv_habits_{name}.log"));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(format!("{}.declined", path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", path.display()));
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     (session, path)
 }
 
@@ -150,7 +150,7 @@ fn open_seed_open_births_one_type_set() {
     drop(session);
     // Reopen + reseed: the guard must hold — exactly one habit type.
     let mut session = Session::open(&path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     let store = session.store();
     let habit_types = store
         .entities()

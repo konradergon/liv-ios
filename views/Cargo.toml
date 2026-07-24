@@ -1,10 +1,10 @@
 [package]
-name = "lotus-views"
+name = "liv-views"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "lotus_views"
+name = "liv_views"
 
 [dependencies]
-lotus-core = { path = "../core" }
+liv-core = { path = "../core" }

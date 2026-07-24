@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lotus_core::{
+use liv_core::{
     props, Author, Cell, Command, DateTime, FileRef, Id, PersistError, RichText, Session, Span,
     Value,
 };
@@ -291,7 +291,7 @@ fn frontmatter_cell(
     Some((id, Value::text(raw)))
 }
 
-fn external_id_exists(store: &lotus_core::Store, ext: &str) -> bool {
+fn external_id_exists(store: &liv_core::Store, ext: &str) -> bool {
     !run(
         store,
         &Query {
@@ -306,7 +306,7 @@ fn external_id_exists(store: &lotus_core::Store, ext: &str) -> bool {
     .is_empty()
 }
 
-fn file_hash_exists(store: &lotus_core::Store, file_prop: Id, hash: [u8; 32]) -> bool {
+fn file_hash_exists(store: &liv_core::Store, file_prop: Id, hash: [u8; 32]) -> bool {
     // FileRef equality is hash-only, so the path here is irrelevant.
     !run(
         store,
@@ -322,7 +322,7 @@ fn file_hash_exists(store: &lotus_core::Store, file_prop: Id, hash: [u8; 32]) ->
     .is_empty()
 }
 
-fn entity_by_name(store: &lotus_core::Store, name: &str) -> Option<Id> {
+fn entity_by_name(store: &liv_core::Store, name: &str) -> Option<Id> {
     run(
         store,
         &Query {
@@ -343,7 +343,7 @@ mod tests {
     use crate::seed_if_fresh;
 
     fn session(name: &str) -> Session {
-        let dir = std::env::temp_dir().join(format!("lotus_import_{name}"));
+        let dir = std::env::temp_dir().join(format!("liv_import_{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut s = Session::open(dir.join("box.log")).unwrap();
@@ -356,7 +356,7 @@ mod tests {
     }
 
     fn tempfile(name: &str, bytes: &[u8]) -> String {
-        let dir = std::env::temp_dir().join("lotus_import_files");
+        let dir = std::env::temp_dir().join("liv_import_files");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
@@ -476,7 +476,7 @@ mod tests {
         // The body parsed to rich spans (a heading break is present).
         match e.get(props::CONTENT) {
             Some(Value::RichText(rt)) => {
-                assert!(rt.spans.iter().any(|sp| matches!(sp, Span::Break(lotus_core::Block::Heading(1)))));
+                assert!(rt.spans.iter().any(|sp| matches!(sp, Span::Break(liv_core::Block::Heading(1)))));
             }
             other => panic!("no rich content: {other:?}"),
         }

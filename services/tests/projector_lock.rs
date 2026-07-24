@@ -6,18 +6,18 @@
 //! box lock) serializes them; convergence is asserted over racing threads
 //! on a REAL directory (RealVaultIo: tmp+fsync+rename).
 
-use lotus_core::*;
-use lotus_services::content;
-use lotus_services::projection::{self, RealVaultIo, VaultIo};
+use liv_core::*;
+use liv_services::content;
+use liv_services::projection::{self, RealVaultIo, VaultIo};
 
 #[test]
 fn kill_shot_c_racing_projectors_converge() {
-    let box_path = std::env::temp_dir().join("lotus_lock_race.log");
+    let box_path = std::env::temp_dir().join("liv_lock_race.log");
     let _ = std::fs::remove_file(&box_path);
     let _ = std::fs::remove_file(format!("{}.declined", box_path.display()));
     let _ = std::fs::remove_file(format!("{}.pending", box_path.display()));
     let mut session = Session::open(&box_path).unwrap();
-    lotus_services::seed_if_fresh(&mut session).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
     let stamp = DateTime::at(2026, 7, 15, 9, 0);
     for i in 0..8 {
         let id = content::create_note(&mut session, stamp).unwrap();
@@ -25,7 +25,7 @@ fn kill_shot_c_racing_projectors_converge() {
         content::set_property(&mut session, id, "name", &format!("Race {i}")).unwrap();
     }
 
-    let root = std::env::temp_dir().join("lotus_lock_race_vault");
+    let root = std::env::temp_dir().join("liv_lock_race_vault");
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
 
@@ -43,7 +43,7 @@ fn kill_shot_c_racing_projectors_converge() {
     // Converged: every expected file on disk with exact bytes, the
     // manifest parses (never torn), and a fresh plan is empty.
     let io = RealVaultIo::new(&root);
-    for file in lotus_services::vault::expected_files(store) {
+    for file in liv_services::vault::expected_files(store) {
         if let Some(content) = &file.content {
             let bytes = io.read(&file.rel_path).unwrap_or_else(|_| {
                 panic!("missing {}", file.rel_path)

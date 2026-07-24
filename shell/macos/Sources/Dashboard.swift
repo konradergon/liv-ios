@@ -1,4 +1,4 @@
-// lotus — the Dashboard surface (P18e, bp8): survey and launch, never work.
+// liv — the Dashboard surface (P18e, bp8): survey and launch, never work.
 // A real Surface in the chrome (the owner's 07-14 ruling — never an overlay);
 // board cards float on the bare material; every row opens its real surface.
 // Widgets are LENSES over existing collections — small backstage entities
@@ -526,7 +526,7 @@ struct DashboardView: View {
             // The one daily note, never a second Today (P12 D1): this row
             // LAUNCHES into it.
             Button {
-                NotificationCenter.default.post(name: .lotusGoHome, object: nil)
+                NotificationCenter.default.post(name: .livGoHome, object: nil)
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "sun.max.fill").font(.system(size: 10))
@@ -814,7 +814,7 @@ struct HabitsCardBody: View {
             Spacer()
             // The collection link: the SAME definition, another lens.
             Button("habits ›") {
-                NotificationCenter.default.post(name: .lotusSearchFor, object: "is:habit")
+                NotificationCenter.default.post(name: .livSearchFor, object: "is:habit")
             }
             .buttonStyle(.plain)
             .font(.system(size: 10.5, weight: .medium))
@@ -937,7 +937,7 @@ struct SavedViewBody: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Button {
                         NotificationCenter.default.post(
-                            name: .lotusSearchFor, object: view.query)
+                            name: .livSearchFor, object: view.query)
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "line.3.horizontal.decrease.circle")
@@ -1109,7 +1109,7 @@ struct TimeCardBody: View {
                     if hoveredBar == total.target {
                         Button {
                             NotificationCenter.default.post(
-                                name: .lotusStartTimer, object: total.target)
+                                name: .livStartTimer, object: total.target)
                             timerEpoch += 1
                         } label: {
                             Image(systemName: "play.fill")

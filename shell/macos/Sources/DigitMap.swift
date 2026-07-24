@@ -1,4 +1,4 @@
-// lotus — THE one global shortcut map (P11.5e, ruling R2 / D21). Keyed by
+// liv — THE one global shortcut map (P11.5e, ruling R2 / D21). Keyed by
 // property NAME. A key means the same row on every kind — kind-tuning moves
 // a row between core and MORE, never its key. The registry is a pure
 // function of the catalog: no stored state, no migration. P19's Settings →
