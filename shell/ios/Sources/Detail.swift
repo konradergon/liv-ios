@@ -117,27 +117,49 @@ struct EntityInspector: View {
 
     // MARK: status
 
-    private func statusRow(_ row: EntityRow) -> some View {
-        HStack {
-            DetailRowLabel("status")
-            Spacer(minLength: 12)
-            Menu {
-                ForEach(options) { option in
-                    Button(option.name ?? "") {
-                        box.set(id, "status", option.name ?? "")
+    /// An empty scoped vocabulary (untyped scraps) must never render a
+    /// live-looking Menu with zero items — a silent no-op (eval §5.4).
+    /// Disabled-with-explainer instead; with a vocabulary, the whole row
+    /// is the menu (full-width target, like the due row).
+    @ViewBuilder private func statusRow(_ row: EntityRow) -> some View {
+        Group {
+            if options.isEmpty {
+                HStack {
+                    DetailRowLabel("status")
+                    Spacer(minLength: 12)
+                    if let status = row.status, !status.isEmpty {
+                        ValueChip(status)  // display-only; nothing to change it to
+                    } else {
+                        Text("none for this kind")
+                            .font(.system(size: 12))
+                            .foregroundStyle(LivTheme.muted)
                     }
                 }
-            } label: {
-                if let status = row.status, !status.isEmpty {
-                    ValueChip(status)
-                } else {
-                    Text("—")
-                        .font(.system(size: 12))
-                        .foregroundStyle(LivTheme.muted)
+                .frame(minHeight: 40)
+            } else {
+                Menu {
+                    ForEach(options) { option in
+                        Button(option.name ?? "") {
+                            box.set(id, "status", option.name ?? "")
+                        }
+                    }
+                } label: {
+                    HStack {
+                        DetailRowLabel("status")
+                        Spacer(minLength: 12)
+                        if let status = row.status, !status.isEmpty {
+                            ValueChip(status)
+                        } else {
+                            Text("—")
+                                .font(.system(size: 12))
+                                .foregroundStyle(LivTheme.muted)
+                        }
+                    }
+                    .frame(minHeight: 40)
+                    .contentShape(Rectangle())
                 }
             }
         }
-        .frame(minHeight: 40)
         .overlay(alignment: .bottom) { DetailHairline() }
     }
 
@@ -343,8 +365,9 @@ private struct DetailHairline: View {
 // MARK: - the due shortcuts sheet
 
 /// M1 due editing is shortcuts + one date picker. No clear leg — the
-/// model has no unset verb yet; setSpan writes, never erases.
-private struct DetailDueSheet: View {
+/// model has no unset verb yet; setSpan writes, never erases. Internal:
+/// the Tasks row's "Pick" swipe verb opens this same sheet.
+struct DetailDueSheet: View {
     let model: BoxModel
     let id: UInt64
     let property: String
@@ -357,14 +380,20 @@ private struct DetailDueSheet: View {
             SectionLabel("Due")
                 .padding(.top, 18)
                 .padding(.bottom, 6)
+            shortcut("Today", preview: preview(Civil.todayDay())) {
+                commit(Civil.stamp(day: Civil.todayDay(), hhmm: 0), dateOnly: true)
+            }
             shortcut("Tonight", preview: previewTonight) {
                 commit(Civil.stamp(day: Civil.todayDay(), hhmm: 2000), dateOnly: false)
             }
             shortcut("Tomorrow", preview: preview(Civil.addDays(Civil.todayDay(), 1))) {
                 commit(Civil.stamp(day: Civil.addDays(Civil.todayDay(), 1), hhmm: 0), dateOnly: true)
             }
-            shortcut("Weekend", preview: preview(DetailFmt.nextSaturday())) {
-                commit(Civil.stamp(day: DetailFmt.nextSaturday(), hhmm: 0), dateOnly: true)
+            // On a Friday, Weekend IS tomorrow — one option, not two.
+            if DetailFmt.nextSaturday() != Civil.addDays(Civil.todayDay(), 1) {
+                shortcut("Weekend", preview: preview(DetailFmt.nextSaturday())) {
+                    commit(Civil.stamp(day: DetailFmt.nextSaturday(), hhmm: 0), dateOnly: true)
+                }
             }
             HStack {
                 DatePicker(

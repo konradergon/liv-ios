@@ -106,14 +106,18 @@ struct CaptureSheet: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(LivTheme.canvas)
-        .presentationDetents([.medium, .large])
+        // One detent, the final one. Two detents auto-expanded when the
+        // keyboard rose, and the animated re-layout stole first responder
+        // and moved the verb row mid-tap (eval §5.1/§5.8).
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .sheet(item: $pick) { p in
             pickerSheet(p)
         }
         .onAppear {
-            // Sheets steal first responder; focus after the slide settles.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { focused = true }
+            // First responder synchronously at presentation — a delayed
+            // detent-settle focus is a window where typed text goes nowhere.
+            focused = true
         }
     }
 
@@ -187,6 +191,7 @@ struct CaptureSheet: View {
                 .font(.system(size: 15))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(4...10)
+                .textInputAutocapitalization(.never)  // typed text stays literal
                 .focused($focused)
                 .submitLabel(.done)
                 .onSubmit(save)
@@ -200,6 +205,7 @@ struct CaptureSheet: View {
             TextField("Task name", text: $name)
                 .font(.system(size: 15))
                 .foregroundStyle(LivTheme.text)
+                .textInputAutocapitalization(.never)  // typed text stays literal
                 .focused($focused)
                 .submitLabel(.done)
                 .onSubmit(save)
@@ -213,6 +219,7 @@ struct CaptureSheet: View {
             TextField("Event name", text: $name)
                 .font(.system(size: 15))
                 .foregroundStyle(LivTheme.text)
+                .textInputAutocapitalization(.never)  // typed text stays literal
                 .focused($focused)
                 .submitLabel(.done)
                 .onSubmit(save)
@@ -704,7 +711,10 @@ private struct CaptureDuePicker: View {
             VStack(spacing: 0) {
                 shortcut("Today", day: Civil.todayDay())
                 shortcut("Tomorrow", day: Civil.addDays(Civil.todayDay(), 1))
-                shortcut("Weekend", day: CaptureCivil.nextSaturday())
+                // On a Friday, Weekend IS tomorrow — one option, not two.
+                if CaptureCivil.nextSaturday() != Civil.addDays(Civil.todayDay(), 1) {
+                    shortcut("Weekend", day: CaptureCivil.nextSaturday())
+                }
             }
             HStack(spacing: 10) {
                 DatePicker("", selection: $date, displayedComponents: .date)
@@ -835,4 +845,105 @@ private func captureStatusColor(_ o: StatusOption) -> Color {
     guard let h = o.hue else { return LivTheme.muted }
     let deg = Double(((h % 360) + 360) % 360)
     return Color(hue: deg / 360, saturation: 0.55, brightness: 0.75)
+}
+
+// MARK: - the persistent Details chip row (the saved entity's body)
+
+/// design/ios.md §6: the +Tag +Project +Person +Due +Type row lives on the
+/// saved entity body itself, not only on the capture sheet's transient
+/// confirmation (eval §5.6). Values come off the live row — the box is the
+/// truth — and every write rides the same verbs the sheet uses.
+struct EntityChipRow: View {
+    let id: UInt64
+
+    @EnvironmentObject var model: BoxModel
+    @State private var pick: CapturePick? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Details")
+            CaptureFlow(spacing: 6) {
+                ForEach(valueChips) { chip in
+                    Button {
+                        pick = chip.pick  // re-open to change / add more
+                    } label: {
+                        ValueChip(chip.display, dotted: chip.dotted, big: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+                ForEach(addChips) { p in
+                    AddChip(p.title, big: true) { pick = p }
+                }
+            }
+        }
+        .sheet(item: $pick) { p in
+            pickerSheet(p)
+        }
+    }
+
+    private var row: EntityRow? { model.entity(id) }
+
+    private var valueChips: [CaptureApplied] {
+        guard let row else { return [] }
+        var out: [CaptureApplied] = []
+        if (row.kinds ?? []).contains("task"), let status = row.status, !status.isEmpty {
+            out.append(CaptureApplied(pick: .status, display: status, dotted: true))
+        }
+        let picks: [(CapturePick, String)] = [(.tag, "subjects"), (.project, "project"), (.person, "people")]
+        for (pick, property) in picks {
+            for cell in row.cells ?? [] where cell.property == property {
+                guard let v = cell.value, !v.isEmpty else { continue }
+                let chip = CaptureApplied(pick: pick, display: v, dotted: true)
+                if !out.contains(where: { $0.id == chip.id }) { out.append(chip) }
+            }
+        }
+        if let due = row.due, due > 0 {
+            out.append(
+                CaptureApplied(
+                    pick: .due, display: "Due \(captureDayName(Civil.day(of: due)))",
+                    dotted: false))
+        }
+        return out
+    }
+
+    /// Mirrors the capture sheet's chipSection: Status only for tasks; Tag
+    /// and Person always (multi-valued); the rest only while absent.
+    private var addChips: [CapturePick] {
+        guard let row else { return [] }
+        let kinds = row.kinds ?? []
+        var out: [CapturePick] = []
+        if kinds.contains("task"), (row.status ?? "").isEmpty { out.append(.status) }
+        out.append(.tag)
+        if !hasCell("project") { out.append(.project) }
+        out.append(.person)
+        if (row.due ?? 0) == 0 { out.append(.due) }
+        if kinds.isEmpty { out.append(.type) }
+        return out
+    }
+
+    private func hasCell(_ property: String) -> Bool {
+        (row?.cells ?? []).contains { $0.property == property && !($0.value ?? "").isEmpty }
+    }
+
+    @ViewBuilder private func pickerSheet(_ p: CapturePick) -> some View {
+        switch p {
+        case .due:
+            CaptureDuePicker { day in
+                model.setSpan(
+                    id, "due", start: Civil.stamp(day: day, hhmm: 0), end: 0,
+                    dateOnly: true)
+            }
+        case .status:
+            CaptureStatusPicker(model: model) { v in model.set(id, "status", v) }
+        default:
+            CaptureValuePicker(pick: p, model: model) { v in
+                switch p {
+                case .tag, .person: model.addCell(id, p.property, v)
+                case .project: model.set(id, p.property, v)
+                case .type: model.setType(id, v)
+                default: break
+                }
+            }
+        }
+    }
 }

@@ -6,7 +6,9 @@
 // untyped scraps last. Rank order survives inside each group. A result
 // opens as a Desk tab and the overlay closes itself; Cancel is the
 // overlay's own close affordance (self-contained — the chrome only flips
-// the flag).
+// the flag). Find-or-create (eval §4.3, Obsidian's quick switcher): a
+// query no rendered title matches exactly ends in a Create row — capture
+// as a scrap, open the tab, drop the veil.
 
 import SwiftUI
 
@@ -21,6 +23,16 @@ struct SearchView: View {
 
     private var trimmed: String {
         query.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Find-or-create offers only when no row we actually render is
+    /// titled exactly like the query (case-insensitive).
+    private var offersCreate: Bool {
+        guard !trimmed.isEmpty else { return false }
+        return !hits.contains { id in
+            guard let title = box.entity(id)?.title else { return false }
+            return title.caseInsensitiveCompare(trimmed) == .orderedSame
+        }
     }
 
     private var groups: [(kind: String, ids: [UInt64])] {
@@ -71,8 +83,11 @@ struct SearchView: View {
                     EmptyHint("Search the box.").padding(.top, 40)
                 }
             } else if hits.isEmpty {
+                // Zero results: the Create row IS the empty state, at the
+                // top of the scroll area so the keyboard never hides it.
                 ScrollView {
-                    EmptyHint("No matches.").padding(.top, 40)
+                    createButton
+                        .padding(.horizontal, 16)
                 }
             } else {
                 List {
@@ -107,6 +122,20 @@ struct SearchView: View {
                         }
                         .listSectionSeparator(.hidden, edges: .top)
                     }
+                    if offersCreate {
+                        Section {
+                            createButton
+                                .listRowBackground(Color.clear)
+                                .listRowSeparatorTint(LivTheme.border)
+                                .listRowInsets(
+                                    EdgeInsets(
+                                        top: 0, leading: 16, bottom: 0,
+                                        trailing: 16
+                                    )
+                                )
+                        }
+                        .listSectionSeparator(.hidden, edges: .top)
+                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -125,6 +154,27 @@ struct SearchView: View {
     private func open(_ id: UInt64) {
         desk.open(id)
         desk.searchShown = false
+    }
+
+    private var createButton: some View {
+        Button {
+            create()
+        } label: {
+            SearchCreateRow(query: trimmed)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Find-or-create commits capture-asks-nothing: the query is the
+    /// scrap's content verbatim — no type, no title.
+    private func create() {
+        box.capture(trimmed) { id in
+            if id != 0 {
+                desk.open(id)
+                desk.searchShown = false
+            }
+        }
     }
 
     private var pill: some View {
@@ -183,6 +233,33 @@ struct SearchView: View {
             guard ticket == seq else { return }
             hits = ids
         }
+    }
+}
+
+// MARK: - the find-or-create row (eval §4.3)
+
+private struct SearchCreateRow: View {
+    let query: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                .fill(LivTheme.accentSoft)
+                .frame(width: 24, height: 24)
+                .overlay(
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(LivTheme.accent)
+                )
+            (Text("Create \"") + Text(query).fontWeight(.semibold)
+                + Text("\""))
+                .font(.system(size: 13))
+                .foregroundStyle(LivTheme.accent)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 42)
+        .accessibilityLabel("Create \(query)")
     }
 }
 

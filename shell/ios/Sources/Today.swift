@@ -1,7 +1,8 @@
 // liv iOS — Today (design/ios.md §6). The day at a glance: 7-day strip,
-// 2×2 count tiles, one merged agenda (events by civil time, then dues),
-// the captured-today strip. Reads ride the snapshot window [today-1,
-// today+7]; every act goes through the one BoxModel, act-then-refresh.
+// 2×2 count tiles, one merged agenda (events by civil time, then dues,
+// then the inline quick-add ghost row), the captured-today strip. Reads
+// ride the snapshot window [today-1, today+7]; every act goes through
+// the one BoxModel, act-then-refresh.
 // The chrome owns the top bar, settings, and the bottom bar; a row tap
 // opens the entity as a Desk tab (desk.open) — no navigation stack here.
 
@@ -80,6 +81,7 @@ struct TodayView: View {
                         agendaLine(item, doneNames: doneNames, today: today)
                     }
                 }
+                TodayQuickAddRow(day: selectedDay)
                 if !captured.isEmpty {
                     SectionLabel(
                         "Captured today",
@@ -239,16 +241,19 @@ struct TodayView: View {
             Label("Tomorrow", systemImage: "arrow.turn.up.right")
         }
         .tint(LivTheme.green)
-        Button {
-            box.setSpan(
-                row.id, property,
-                start: Civil.stamp(
-                    day: Self.nextWeekend(after: Civil.todayDay()), hhmm: 0),
-                end: 0, dateOnly: true)
-        } label: {
-            Label("Weekend", systemImage: "beach.umbrella")
+        // On a Friday, Weekend IS tomorrow — one option, not two.
+        if Self.nextWeekend(after: Civil.todayDay()) != Civil.addDays(Civil.todayDay(), 1) {
+            Button {
+                box.setSpan(
+                    row.id, property,
+                    start: Civil.stamp(
+                        day: Self.nextWeekend(after: Civil.todayDay()), hhmm: 0),
+                    end: 0, dateOnly: true)
+            } label: {
+                Label("Weekend", systemImage: "beach.umbrella")
+            }
+            .tint(LivTheme.purple)
         }
-        .tint(LivTheme.purple)
     }
 
     // MARK: snapshot slices
@@ -495,6 +500,62 @@ private struct TodayRow: View {
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+}
+
+/// The inline quick-add ghost row (eval §4.1 — ClickUp's context-inheriting
+/// "New" row): a name typed under a day becomes a task DUE that day,
+/// date-only, no picker — tap, type, return = a dated task, 3 gestures.
+/// The field clears only on create success and keeps focus for serial adds.
+private struct TodayQuickAddRow: View {
+    @EnvironmentObject var box: BoxModel
+    let day: Int64
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Dashed StatusRing ghost — a task that isn't yet.
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(
+                    LivTheme.muted,
+                    style: StrokeStyle(lineWidth: 1.5, dash: [2.5])
+                )
+                .frame(width: 15, height: 15)
+                .frame(width: 31)
+            TextField("New for \(Civil.dayLabel(day))…", text: $text)
+                .font(.system(size: 13))
+                .foregroundStyle(LivTheme.text)
+                .textInputAutocapitalization(.never)  // capture-verbatim law
+                .autocorrectionDisabled(true)
+                .focused($focused)
+                .onSubmit(submit)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+
+    /// Create only on real text; on success (id != 0) name + due land as
+    /// their own acts and the trailing refresh surfaces the row above.
+    /// A refused create keeps the draft — the field never clears on failure.
+    private func submit() {
+        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let day = self.day
+        box.createTask { id in
+            guard id != 0 else { return }
+            box.set(id, "name", name)
+            box.setSpan(
+                id, "due", start: Civil.stamp(day: day, hhmm: 0),
+                end: 0, dateOnly: true)
+            text = ""
+            focused = true
         }
     }
 }

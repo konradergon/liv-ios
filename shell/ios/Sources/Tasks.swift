@@ -21,6 +21,13 @@ struct TasksView: View {
     @State private var expanded: Set<String> = []
     @State private var quickAdd = ""
     @FocusState private var quickAddFocused: Bool
+    /// The row whose "Pick" swipe verb is choosing a date (sheet item).
+    @State private var duePick: TasksDuePick?
+
+    private struct TasksDuePick: Identifiable {
+        let entity: UInt64
+        var id: UInt64 { entity }
+    }
 
     private enum TasksFilter: Equatable {
         case all
@@ -66,6 +73,10 @@ struct TasksView: View {
         .scrollDismissesKeyboard(.interactively)
         .contentMargins(.bottom, 76, for: .scrollContent)  // the bottom bar floats over
         .background(LivTheme.canvas.ignoresSafeArea())
+        .sheet(item: $duePick) { p in
+            DetailDueSheet(model: model, id: p.entity, property: "due")
+                .presentationDetents([.medium])
+        }
         .onAppear {
             model.refresh()  // full snapshot — undated tasks must not drop
             model.statusOptions(kind: "task") { fetched in
@@ -313,10 +324,24 @@ struct TasksView: View {
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            // The spec's full verb set (§6): Tonight / Tomorrow / Weekend /
+            // Pick. Tonight matches the due sheet's 20:00; on a Friday,
+            // Weekend IS tomorrow and drops out (eval §5.11).
+            Button("Tonight") {
+                model.setSpan(
+                    row.id, "due",
+                    start: Civil.stamp(day: Civil.todayDay(), hhmm: 2000),
+                    end: 0, dateOnly: false)
+            }
+            .tint(LivTheme.accent)
             Button("Tomorrow") { reschedule(row.id, to: TasksDates.tomorrow()) }
-                .tint(LivTheme.accent)
-            Button("Weekend") { reschedule(row.id, to: TasksDates.weekend()) }
                 .tint(LivTheme.green)
+            if TasksDates.weekend() != TasksDates.tomorrow() {
+                Button("Weekend") { reschedule(row.id, to: TasksDates.weekend()) }
+                    .tint(LivTheme.purple)
+            }
+            Button("Pick") { duePick = TasksDuePick(entity: row.id) }
+                .tint(LivTheme.text2)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {

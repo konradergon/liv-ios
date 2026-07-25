@@ -217,14 +217,22 @@ Surfaces (bodies; mockups in the artifact):
   Upcoming / Pinned); merged agenda (events by civil time, then dues, then a
   collapsed "Captured today" strip). Swipe right = reschedule
   (Tonight/Tomorrow/Weekend/Pick), swipe left = status (first two dynamic
-  options + …). Desk-mirror rows read-only with a desk glyph.
+  options + …). Desk-mirror rows read-only with a desk glyph. **Inline
+  quick-add under the selected day** (absorbed from ClickUp's agenda "New"
+  row, eval §4.1): a ghost row beneath the agenda; typing a name creates a
+  task whose **due is inherited from the selected day** (date-only) —
+  task-with-due in ~3 gestures, no picker on the dominant path.
 - **New tab (the capture door)** — Desk `+` opens it; verbs Capture idea /
   New task / New event / Photo / Open…. One field, asks nothing, **no token
   grammar** (refused by law — typed `due:` stays literal text). Chips unlock
   **after** save: +Tag +Project +Person +Due +Type via the three-layer picker
   (used values → seed → create-new); the saved entity becomes this tab's
-  content. "Another" = serial capture. Draft survives every interruption;
-  field clears only on confirmed commit.
+  content. Draft survives every interruption; field clears only on confirmed
+  commit. **Serial capture is a persistent sheet** (absorbed from ClickUp's
+  create-and-start-another, eval §4.2, replacing the old "Another" button):
+  save clears the field and keeps the sheet, the confirmation collapses to a
+  tappable toast, and **serial captures reuse one Desk tab** — the tab-hygiene
+  rule answering eval §3(b)1. Lands with the capture-path bug-fix pass.
 - **Camera flow** — shutter first: bytes land in the App Group and
   `liv_add_file_at` commits **at the shutter sound**; a post-shot tray
   (thumbnails, optional caption, chip row, "apply to all (n)") tags while the
@@ -244,9 +252,12 @@ Surfaces (bodies; mockups in the artifact):
   navigate = open as another tab; CAS editor); the metadata collapse button
   top-right opens the full-body inspector (property rows, pickers,
   add-property, trash/undo); history lens later.
-- **Search (global circle)** — full-screen overlay from any mode: pill bar,
-  `liv_search_at`, kind-grouped flat rows, pinned capsules; a result opens
-  as a Desk tab.
+- **Search (global magnifier)** — full-screen overlay from anywhere: pill
+  bar, `liv_search_at`, kind-grouped flat rows, pinned capsules; a result
+  opens as a Desk tab. **Find-or-create** (absorbed from Obsidian's quick
+  switcher, eval §4.3): a non-matching query offers "Create '<query>'" —
+  captures the text as a scrap and opens it as a tab; retrieval and capture
+  share one 3-gesture surface.
 - **Settings** — box info, Handoff status (per-item ledger + hazard card),
   assist switch, notification prefs (64-cap honesty footer), appearance.
   Settings never write cells.

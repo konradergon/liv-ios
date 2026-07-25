@@ -102,6 +102,7 @@ struct RootView: View {
             .map(\.id)
         switch state {
         case "grid": desk.gridShown = true
+        case "search": desk.searchShown = true
         case "today": desk.featureShown = .today
         case "tasks": desk.featureShown = .tasks
         case "inbox": desk.featureShown = .inbox

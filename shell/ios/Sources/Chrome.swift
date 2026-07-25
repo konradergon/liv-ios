@@ -60,6 +60,17 @@ enum DeskTabContent: Equatable {
     case entity(UInt64)
 }
 
+/// One capture-sheet presentation: the verb the door chose and the tab
+/// that receives every entity committed this session (serial captures
+/// reuse it — §6's tab-hygiene rule). The id is fresh per open so the
+/// sheet's initial verb state can never be reused across presentations
+/// (eval §5.5: "New task" opening on Idea mode).
+struct CaptureRequest: Identifiable {
+    let id = UUID()
+    let verb: CaptureVerb
+    let tabId: UUID
+}
+
 /// The chrome's one state object. Boots in Feature view on Today; the
 /// desk keeps at least one tab alive at all times. Entity-tab ids + the
 /// active index ride UserDefaults ("desk.tabs.v1"); ids missing from the
@@ -77,6 +88,9 @@ final class DeskModel: ObservableObject {
     @Published var searchShown = false
     @Published var gridShown = false
     @Published var cameraShown = false
+    /// The live capture sheet, presented by DeskHost — NOT by the .new tab
+    /// body, which the first commit replaces (eval §5.2/§5.3).
+    @Published var captureRequest: CaptureRequest?
 
     /// Tab-activation history for the bar's ‹ › — device state, not cells.
     private var backIds: [UUID] = []

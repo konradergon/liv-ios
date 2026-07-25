@@ -11,6 +11,7 @@ import SwiftUI
 /// `.id(tab.id)` resets per-tab @State when focus moves between tabs.
 struct DeskHost: View {
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var box: BoxModel
 
     var body: some View {
         Group {
@@ -21,7 +22,10 @@ struct DeskHost: View {
                 case .new:
                     NewTabBody(tabId: tab.id).id(tab.id)
                 case .entity(let id):
-                    EntityTabBody(id: id).id(tab.id)
+                    // Keyed by ENTITY: serial captures rewrite this same
+                    // tab with a new entity, and per-entity @State (the
+                    // seeded title) must reseed on that flip.
+                    EntityTabBody(id: id).id(id)
                 }
             } else {
                 // DeskModel keeps a tab alive by invariant; belt anyway.
@@ -31,6 +35,23 @@ struct DeskHost: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LivTheme.canvas)
+        // The capture sheet hangs off the HOST, not the .new tab body: the
+        // commit flips that tab to .entity, and a sheet presented from the
+        // replaced body is torn down mid-flow — the eval §5.2/§5.3
+        // vanishing confirmation and dead-ended "Another". The host
+        // outlives the flip, so the sheet shows its saved stage after
+        // EVERY commit and "Another" keeps the sheet alive.
+        .sheet(item: $desk.captureRequest) { req in
+            CaptureSheet(
+                initialVerb: req.verb,
+                openCamera: {
+                    desk.captureRequest = nil
+                    desk.cameraShown = true
+                },
+                onCreated: { id in desk.setContent(req.tabId, entity: id) }
+            )
+            .environmentObject(box)
+        }
     }
 }
 
@@ -43,9 +64,6 @@ struct NewTabBody: View {
     let tabId: UUID
 
     @EnvironmentObject var desk: DeskModel
-    @EnvironmentObject var box: BoxModel
-    @State private var captureShown = false
-    @State private var captureVerb: CaptureVerb = .idea
 
     var body: some View {
         VStack(spacing: 8) {
@@ -64,22 +82,12 @@ struct NewTabBody: View {
             Spacer()  // sit the stack a touch above center
         }
         .padding(.horizontal, 48)
-        .sheet(isPresented: $captureShown) {
-            CaptureSheet(
-                initialVerb: captureVerb,
-                openCamera: {
-                    captureShown = false
-                    desk.cameraShown = true
-                },
-                onCreated: { id in desk.setContent(tabId, entity: id) }
-            )
-            .environmentObject(box)
-        }
     }
 
+    /// The verb rides the request so the sheet opens in ITS mode (§5.5);
+    /// DeskHost presents — this body will not survive the first commit.
     private func present(_ v: CaptureVerb) {
-        captureVerb = v
-        captureShown = true
+        desk.captureRequest = CaptureRequest(verb: v, tabId: tabId)
     }
 
     private func verb(
@@ -214,6 +222,9 @@ struct EntityTabBody: View {
                     RoundedRectangle(cornerRadius: LivTheme.radiusSm)
                         .strokeBorder(LivTheme.border, lineWidth: 0.5)
                 )
+                // The visual stays 26pt; the hit target meets the 44pt HIG
+                // floor (eval §5.9) — the glyph pinned where it always was.
+                .frame(width: 44, height: 44, alignment: .topTrailing)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -227,6 +238,10 @@ struct EntityTabBody: View {
             VStack(alignment: .leading, spacing: 10) {
                 metaLine(row)
                 contentSection(row)
+                // The chip row is PERSISTENT here (eval §5.6) — the sheet's
+                // confirmation is transient; the body is where it lives.
+                EntityChipRow(id: row.id)
+                    .padding(.top, 4)
                 refSection(row)
             }
             .padding(.horizontal, 16)
