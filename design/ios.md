@@ -350,9 +350,45 @@ Structure from ClickUp mobile; soul, tokens, and density from Liv:
   real entitlements exist. §8 defaults adopted pending owner word: media →
   `~/liv/attachments/`, single home desk, mirror privacy deferred while the
   transport is a local folder.
-- **M3 — P2**: notification scheduler + mirror union; widgets + App Intents;
-  Calendar surface. *P2 complete.*
-- **M4 — phase-2 fidelity**: `ImportItem` variants land in services;
-  drainer lowering flips; retype card. 
-- **M5+** — P4 notes via vault mediation / oplog destination. (P3 messages:
-  killed 2026-07-26, see §4.)
+### Reordered 2026-07-26 (owner): the app first, sync last
+
+The owner's ruling: **notes, workspaces and filters come before any more
+sync.** "Sync comes last, when we have what I just listed in a somewhat
+good working order." M2 stays shipped (it works), but the *rest* of the
+sync programme — the read-back mirror, iCloud transport, phase-2 import
+fidelity — moves behind the app itself. Rationale, stated plainly: a
+phone that can capture a thought but cannot read it back is a dictation
+box, not a notes app. That hole is bigger than notifications.
+
+- **M3 — notes on the phone** *(next)*: read and edit note content in the
+  phone's own box — `liv_content_at` / `liv_set_content_at` with the
+  fingerprint compare-and-swap the core already provides (a stale save is
+  refused, never forced). No sync needed for any of it. Then **templates**
+  as a small follow-on (a template is an object you copy; the daily-note
+  get-or-create is half of it already).
+- **M4 — workspaces + filters**: the workspace hub becomes real (today it
+  is a one-workspace placeholder). Design, per the owner 2026-07-26 and
+  Viktor's D14/D22:
+  - A workspace holds **a set of default cells + a query** — *not* a
+    hardcoded Area/Project pair. Area+Project is then just the common
+    case, and "client X, tier 1" needs no code change. (Data model first.)
+  - Defaults are stamped on new objects as a **visible, removable chip** —
+    never a silent write (P12 §1.4 refuses silent capture-time stamping).
+  - **The Inbox ignores the workspace filter, always.** Unfiled things are
+    visible from everywhere. This is the safety valve against the classic
+    "I captured it and it vanished" bug that hits every workspace system.
+  - **One tab plane** whose *open set* is remembered per workspace (the
+    owner's clarification: per-workspace tabs, never per-workspace tab
+    *bars* — that was the old app's three-tab-system debt, and D18 kills
+    it). Opening something from search or the inbox joins the current
+    workspace's set.
+  - Filters are saved view entities holding a query string (the core has
+    them). **One filter grammar everywhere** — search, tasks, files.
+- **M5 — P2 time**: notification scheduler; widgets + App Intents;
+  Calendar surface.
+- **M6 — sync, the rest of it**: the read-back "On the Mac" mirror; iCloud
+  transport (needs the Xcode project's entitlements); phase-2
+  `ImportItem` variants + the retype card; the provenance label ask
+  (services, additive, test-first — see the M2 commit's known delta).
+- **Later** — P4 note sync via vault mediation / oplog destination.
+  (P3 messages: killed 2026-07-26, see §4.)
