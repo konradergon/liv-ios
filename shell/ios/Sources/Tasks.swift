@@ -266,6 +266,14 @@ struct TasksView: View {
                 .focused($quickAddFocused)
                 .submitLabel(.done)
                 .onSubmit { submitQuickAdd(status: status) }
+            // The stamp promised before the write (no chip strip here).
+            if !workspaces.stampHint.isEmpty {
+                Text(workspaces.stampHint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(LivTheme.muted)
+                    .lineLimit(1)
+                    .padding(.trailing, 4)
+            }
         }
         .frame(minHeight: 40)
         .overlay(alignment: .bottom) {
@@ -284,6 +292,8 @@ struct TasksView: View {
             guard id != 0 else { return }  // failure already surfaced by the model
             model.set(id, "name", text)
             if let status { model.set(id, "status", status) }
+            // The lens stamps here too (M4) — see WorkspaceModel.stamp.
+            workspaces.stamp(id, in: model)
         }
         quickAdd = ""
         quickAddFocused = true  // serial entry

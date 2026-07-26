@@ -364,6 +364,35 @@ final class WorkspaceModel: ObservableObject {
         LivQuery.parse(query(of: activeId) ?? "").stampCells
     }
 
+    /// Write the active workspace's stamp onto something just created.
+    /// The ONE implementation — every creation door calls this, so a task
+    /// typed into a filtered Today inherits exactly what the capture sheet
+    /// would have given it. Returns what it wrote (empty when there is no
+    /// active workspace, or its query has no equality term).
+    ///
+    /// Not stamping in a filtered surface is the worse bug: you add a task
+    /// while looking at Work, it does not get `area:Work`, and it vanishes
+    /// from the list you are staring at.
+    @discardableResult
+    func stamp(_ id: UInt64, in box: BoxModel) -> [(property: String, value: String)] {
+        let cells = stampCells
+        guard id != 0, !cells.isEmpty else { return [] }
+        for cell in cells {
+            if cell.property == "type" {
+                box.setType(id, cell.value)
+            } else {
+                box.set(id, cell.property, cell.value)
+            }
+        }
+        return cells
+    }
+
+    /// "stamps area:Work" for the doors that have no post-save chip strip
+    /// to show it in — the promise is made before the write, not after.
+    var stampHint: String {
+        LivQuery.parse(query(of: activeId) ?? "").stampSummary
+    }
+
     func setActive(_ id: UInt64) {
         activeId = id
         activeFilterId = nil

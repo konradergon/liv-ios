@@ -92,6 +92,7 @@ struct RootView: View {
             })
             .environmentObject(box)
             .environmentObject(desk)
+            .environmentObject(workspaces)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {

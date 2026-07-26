@@ -339,16 +339,8 @@ struct CaptureSheet: View {
     /// No active workspace, or a query with no equality term, changes
     /// nothing at all.
     private func stamp(_ id: UInt64) {
-        let cells = workspaces.stampCells
-        stamped = []
-        guard !cells.isEmpty else { return }
-        for cell in cells {
-            if cell.property == "type" {
-                model.setType(id, cell.value)
-            } else {
-                model.set(id, cell.property, cell.value)
-            }
-            stamped.append(CaptureStamp(property: cell.property, value: cell.value))
+        stamped = workspaces.stamp(id, in: model).map {
+            CaptureStamp(property: $0.property, value: $0.value)
         }
     }
 

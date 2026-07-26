@@ -271,6 +271,7 @@ struct CameraFlow: View {
     var onDone: (([UInt64]) -> Void)? = nil
 
     @EnvironmentObject var model: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @StateObject private var engine = CameraEngine()
@@ -464,6 +465,13 @@ struct CameraFlow: View {
 
     private var chipRow: some View {
         HStack(spacing: 6) {
+            // What the active workspace already put on this shot (M4).
+            if !workspaces.stampHint.isEmpty {
+                Text(workspaces.stampHint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(LivTheme.muted)
+                    .lineLimit(1)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
                     ForEach(applied[target] ?? []) { chip in
@@ -643,6 +651,9 @@ struct CameraFlow: View {
                         return
                     }
                     commitCaption()  // the shot the user was captioning
+                    // Photos inherit the active workspace like every other
+                    // capture door (M4); the tray's stamp line says so.
+                    workspaces.stamp(id, in: model)
                     shots.append(CameraShot(id: id, thumb: thumb))
                     target = id
                     caption = captions[id] ?? ""

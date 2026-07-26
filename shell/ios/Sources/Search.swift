@@ -182,7 +182,7 @@ struct SearchView: View {
         Button {
             create()
         } label: {
-            SearchCreateRow(query: trimmed)
+            SearchCreateRow(query: trimmed, stampHint: workspaces.stampHint)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -193,6 +193,8 @@ struct SearchView: View {
     private func create() {
         box.capture(trimmed) { id in
             if id != 0 {
+                // Search is lensed, so its create door stamps too (M4).
+                workspaces.stamp(id, in: box)
                 desk.open(id)
                 desk.searchShown = false
             }
@@ -262,6 +264,8 @@ struct SearchView: View {
 
 private struct SearchCreateRow: View {
     let query: String
+    /// The active workspace's stamp, promised before the write.
+    let stampHint: String
 
     var body: some View {
         HStack(spacing: 8) {
@@ -279,6 +283,12 @@ private struct SearchCreateRow: View {
                 .foregroundStyle(LivTheme.accent)
                 .lineLimit(1)
             Spacer(minLength: 0)
+            if !stampHint.isEmpty {
+                Text(stampHint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(LivTheme.muted)
+                    .lineLimit(1)
+            }
         }
         .frame(minHeight: 42)
         .accessibilityLabel("Create \(query)")

@@ -526,6 +526,7 @@ private struct TodayRow: View {
 /// The field clears only on create success and keeps focus for serial adds.
 private struct TodayQuickAddRow: View {
     @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     let day: Int64
 
     @State private var text = ""
@@ -548,6 +549,15 @@ private struct TodayQuickAddRow: View {
                 .autocorrectionDisabled(true)
                 .focused($focused)
                 .onSubmit(submit)
+            // No post-save chip strip here, so the stamp is promised
+            // BEFORE the write rather than shown after it.
+            if !workspaces.stampHint.isEmpty {
+                Text(workspaces.stampHint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(LivTheme.muted)
+                    .lineLimit(1)
+                    .padding(.trailing, 4)
+            }
         }
         .frame(minHeight: 44)
         .contentShape(Rectangle())
@@ -570,6 +580,11 @@ private struct TodayQuickAddRow: View {
             box.setSpan(
                 id, "due", start: Civil.stamp(day: day, hhmm: 0),
                 end: 0, dateOnly: true)
+            // The active workspace stamps here too (M4) — otherwise a task
+            // added while looking at Work lacks Work's cells and vanishes
+            // from the very list it was typed into. The row's hint says so
+            // before the write.
+            workspaces.stamp(id, in: box)
             text = ""
             focused = true
         }
