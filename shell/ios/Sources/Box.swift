@@ -94,6 +94,23 @@ struct StatusOption: Decodable, Identifiable {
     }
 }
 
+/// One entity's content, fresh from the box (liv_content_at). EVERY field
+/// Optional — the standing law; a missing key must never drop the doc.
+/// `spans` are the log's own serde encoding of Span, verbatim (Editor.swift
+/// holds the total decoder).
+struct ContentDoc: Decodable {
+    var id: UInt64?
+    var name: String?
+    var trashed: Bool?
+    /// True when the box opened fine but no such entity exists. A nil
+    /// ContentDoc means something else entirely: the box would not open.
+    var missing: Bool?
+    /// Identity of the stored content value; a save must present it back.
+    /// 0 when the entity carries no content cell.
+    var fingerprint: UInt64?
+    var spans: [SpanJSON]?
+}
+
 // MARK: - private wires (payloads the model flattens before publishing)
 
 private struct DistinctWire: Decodable {
@@ -371,6 +388,52 @@ final class BoxModel: ObservableObject {
                 values = wire.compactMap { $0.value }
             }
             DispatchQueue.main.async { done(values) }
+        }
+    }
+
+    /// One entity's content, fresh from the box — the editor's read.
+    /// nil = the box itself was unavailable (probe to learn why); a doc with
+    /// `missing == true` means the box opened and holds no such entity.
+    /// The span encoding is capitalized ("Text"/"Break"/"Ref"), so this
+    /// decoder must NOT wear the snapshot's snake_case strategy.
+    func content(_ id: UInt64, done: @escaping (ContentDoc?) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            guard let raw = liv_content_at(path, id) else {
+                self.verbFailed("content")
+                DispatchQueue.main.async { done(nil) }
+                return
+            }
+            let json = String(cString: raw)
+            liv_string_free(raw)
+            var doc: ContentDoc?
+            do {
+                doc = try JSONDecoder().decode(ContentDoc.self, from: Data(json.utf8))
+            } catch {
+                Self.log.error(
+                    "content decode failed: \(String(describing: error), privacy: .public)")
+            }
+            DispatchQueue.main.async { done(doc) }
+        }
+    }
+
+    /// Replace one entity's whole content in one transaction — the editor's
+    /// save, compare-and-swap on `base`. There is no force flag by design.
+    /// `done` receives (status, freshFingerprint): 1 saved (fresh valid),
+    /// -1 STALE (the base moved — re-read, never overwrite), 0 busy/invalid.
+    func setContent(
+        _ id: UInt64, spansJson: String, base: UInt64,
+        done: @escaping (Int32, UInt64) -> Void
+    ) {
+        let path = self.path
+        boxQueue.async {
+            var fresh: UInt64 = 0
+            let status = liv_set_content_at(path, id, spansJson, base, &fresh)
+            if status == 0 { self.verbFailed("setContent") }
+            DispatchQueue.main.async {
+                done(status, fresh)
+                if status == 1 { self.refresh() }
+            }
         }
     }
 

@@ -11,6 +11,17 @@ struct LivApp: App {
     @StateObject private var desk = DeskModel()
     @StateObject private var outbox = Outbox.shared
 
+    init() {
+        // The span codec has no test target to live in (no Xcode project);
+        // `simctl launch … -spans.selfcheck 1` runs its round-trips and
+        // prints the failures. Silent = pass.
+        if UserDefaults.standard.bool(forKey: "spans.selfcheck") {
+            let failures = livSpanCodecSelfCheck()
+            print("SPAN-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("SPAN-SELFCHECK \($0)") }
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

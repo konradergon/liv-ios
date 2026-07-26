@@ -146,10 +146,30 @@ struct EntityTabBody: View {
         }
     }
 
+    /// A name CELL, not the displayed title: a scrap has none, and its
+    /// title is derived from its content's first line. Two editors over one
+    /// value is the bug this asks about — for a scrap the content editor is
+    /// the only surface, so the title row simply is not there.
+    private var named: Bool {
+        (box.entity(id)?.cells ?? []).contains {
+            $0.property == "name" && !($0.value ?? "").isEmpty
+        }
+    }
+
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
-                titleField
+                if named {
+                    titleField
+                } else if let row = box.entity(id) {
+                    // A scrap has no title row; without something in it the
+                    // header is a dead band with a lone chevron. Its meta
+                    // line moves up here instead of below.
+                    metaLine(row)
+                    Spacer(minLength: 0)
+                } else {
+                    Spacer(minLength: 0)
+                }
                 collapseButton
             }
             .padding(.horizontal, 16)
@@ -233,21 +253,26 @@ struct EntityTabBody: View {
 
     // MARK: the content body
 
+    /// Metadata on top, then the note itself filling everything left — M3.
+    /// The editor is not in a ScrollView: it scrolls itself, and a text view
+    /// nested in a scroll view has no height to fill.
     private func bodyContent(_ row: EntityRow) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                metaLine(row)
-                contentSection(row)
-                // The chip row is PERSISTENT here (eval §5.6) — the sheet's
-                // confirmation is transient; the body is where it lives.
-                EntityChipRow(id: row.id)
-                    .padding(.top, 4)
-                refSection(row)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 2)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 8) {
+            // Named entities keep their meta under the title; a scrap's rides
+            // in the header row above (see `content`).
+            if named { metaLine(row) }
+            // The chip row is PERSISTENT here (eval §5.6) — the sheet's
+            // confirmation is transient; the body is where it lives.
+            EntityChipRow(id: row.id)
+            refSection(row)
+            NoteEditor(id: row.id, placeholder: named ? "Write…" : "Write this scrap out…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        // Clear the floating bottom bar — the editor must never hide under it.
+        .padding(.bottom, 76)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func metaLine(_ row: EntityRow) -> some View {
@@ -263,25 +288,9 @@ struct EntityTabBody: View {
         }
     }
 
-    @ViewBuilder private func contentSection(_ row: EntityRow) -> some View {
-        if (row.contentPrint ?? 0) != 0 {
-            // Honest, not aspirational: M2 shipped the funnel, not an editor.
-            // Don't name a milestone here again until one actually holds it.
-            Text("This has content. Reading and editing it on the phone isn't built yet.")
-                .font(.system(size: 12))
-                .foregroundStyle(LivTheme.muted)
-                .padding(.vertical, 6)
-        } else if (row.kinds ?? []).isEmpty {
-            // A scrap: its captured text IS the title above.
-            Text("A scrap — the captured text is the title. Route it from the Inbox.")
-                .font(.system(size: 12))
-                .foregroundStyle(LivTheme.muted)
-                .padding(.vertical, 6)
-        }
-    }
-
     /// Reference cells as chips; a tap opens the target as another tab —
-    /// the Ref-span gesture grammar, chip-shaped until the M2 editor.
+    /// the Ref-span gesture grammar, chip-shaped (a Ref span INSIDE the
+    /// content is a token in the editor's buffer, tap-to-open pending).
     @ViewBuilder private func refSection(_ row: EntityRow) -> some View {
         let refs = (row.cells ?? []).filter {
             $0.kind == "reference" && $0.refTarget != nil
