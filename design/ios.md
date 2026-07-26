@@ -369,9 +369,34 @@ box, not a notes app. That hole is bigger than notifications.
 - **M4 — workspaces + filters**: the workspace hub becomes real (today it
   is a one-workspace placeholder). Design, per the owner 2026-07-26 and
   Viktor's D14/D22:
-  - A workspace holds **a set of default cells + a query** — *not* a
-    hardcoded Area/Project pair. Area+Project is then just the common
-    case, and "client X, tier 1" needs no code change. (Data model first.)
+
+  **The data model (settled 2026-07-26, after reading the core).**
+  A workspace is an entity carrying **one `query` cell** — core property
+  id 9, `props::QUERY`, the same property saved views already use. The
+  query is a search-DSL string, e.g. `area:Work project:Viggo`.
+
+  That one cell is both halves of the owner's model:
+  - **The lens** = run the query.
+  - **The stamp** = the query's plain `key:value` equality terms, written
+    as cells on objects created while the workspace is active. Terms that
+    are not plain equality (`-tag:old`, `due<20260801`, `has:x`) filter
+    but never stamp — they have no single value to write.
+
+  Why this shape and not the obvious alternatives:
+  - *Not* a hardcoded Area+Project pair: any property works, so "client X,
+    tier 1" is a string edit, never a code change.
+  - *Not* "the workspace's own user-property cells are its defaults" —
+    that was the first design and it is **wrong**: `create_workspace`
+    already writes `parent` and `order` as user-space properties
+    (`services/src/content.rs`), so those structural cells would be
+    mistaken for defaults and stamped onto every new object.
+  - `query` is a **core** property (id < 4096), so it can never collide
+    with a user property, and one parser serves both the lens and the
+    stamp. No new FFI verbs: `liv_create_workspace_at` + one `liv_set_at`.
+  - Saved filters are the same thing minus the stamp: view entities with
+    a `query` cell (`liv_create_view_at` already writes exactly this).
+    **A workspace is a saved view that also stamps** — one grammar, one
+    parser, one mental model.
   - Defaults are stamped on new objects as a **visible, removable chip** —
     never a silent write (P12 §1.4 refuses silent capture-time stamping).
   - **The Inbox ignores the workspace filter, always.** Unfiled things are
