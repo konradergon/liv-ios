@@ -1,8 +1,11 @@
 // liv iOS — the Capture sheet (design/ios.md §6): the doorway that asks
 // nothing. One field, NO token grammar (a typed "due:" stays literal text);
 // chips unlock only AFTER the save. The draft survives every interruption —
-// the field clears only inside the confirmed-commit callback. "Another" is
-// serial capture. Photo lives in Camera.swift; the verb here only opens it.
+// the field clears only inside the confirmed-commit callback. The sheet is
+// PERSISTENT (eval §4.2, ClickUp's create-and-start-another as the default):
+// a commit clears the field, keeps focus, and drops a tappable toast —
+// serial capture is type, return, type, return. Photo lives in
+// Camera.swift; the verb here only opens it.
 
 import SwiftUI
 import UIKit
@@ -54,9 +57,9 @@ private struct CaptureApplied: Identifiable {
 
 struct CaptureSheet: View {
     let openCamera: () -> Void
-    /// Fired exactly once per successfully created entity, inside the same
-    /// success callback that flips the sheet to its saved state ("Another"
-    /// fires it again for the NEXT entity — one call per commit).
+    /// Fired exactly once per successfully created entity — every serial
+    /// commit fires it again, and the desk routes each to the SAME tab
+    /// (latest-wins; the §6 tab-hygiene rule, eval §3(b)1).
     let onCreated: ((UInt64) -> Void)?
 
     init(
@@ -83,6 +86,7 @@ struct CaptureSheet: View {
     @State private var savedId: UInt64? = nil
     @State private var savedTitle = ""
     @State private var savedText = ""  // Undo restores the field verbatim
+    @State private var savedVerb: CaptureVerb = .idea  // Undo lands on ITS editor
     @State private var applied: [CaptureApplied] = []
     @State private var pick: CapturePick? = nil
     @FocusState private var focused: Bool
@@ -90,17 +94,14 @@ struct CaptureSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             verbRow
+            editor
             if savedId != nil {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        committedCard
-                        chipSection
-                    }
-                }
-                anotherDoneRow
-            } else {
-                editor
-                Spacer(minLength: 0)
+                toast
+                chipStrip
+            }
+            Spacer(minLength: 0)
+            if savedId != nil {
+                doneRow
             }
         }
         .padding(16)
@@ -143,7 +144,7 @@ struct CaptureSheet: View {
         Button {
             select(v)
         } label: {
-            segLabel(label, icon, on: verb == v && savedId == nil)
+            segLabel(label, icon, on: verb == v)
         }
         .buttonStyle(.plain)
     }
@@ -163,14 +164,9 @@ struct CaptureSheet: View {
         .contentShape(Rectangle())
     }
 
-    /// Switching verbs abandons a saved-state chip row (the entity is
-    /// committed; chips were optional) — never the idea draft.
+    /// Switching verbs keeps the toast — the last capture is committed and
+    /// the chips still aim at it. Only the editor (and focus) moves.
     private func select(_ v: CaptureVerb) {
-        if savedId != nil {
-            savedId = nil
-            applied = []
-            name = ""
-        }
         verb = v
         focused = true
     }
@@ -278,6 +274,9 @@ struct CaptureSheet: View {
     private func save() {
         let text = trimmedInput
         guard !text.isEmpty else { return }
+        // The return key resigns first responder; reassert NOW so serial
+        // capture never drops the keyboard (commit reasserts again async).
+        focused = true
         switch verb {
         case .idea:
             let full = draft
@@ -307,13 +306,15 @@ struct CaptureSheet: View {
         }
     }
 
-    /// The one flip to saved state — every success callback lands here, so
-    /// onCreated fires exactly once per committed entity.
+    /// The serial-capture pivot: every success callback lands here with the
+    /// field already cleared — keep focus (zero taps to the next thought),
+    /// raise the toast, hand the entity to the desk's one tab.
     private func commit(_ id: UInt64, title: String) {
         savedId = id
         savedTitle = title
+        savedVerb = verb
         applied = []
-        focused = false
+        focused = true
         onCreated?(id)
     }
 
@@ -321,34 +322,41 @@ struct CaptureSheet: View {
         UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 
-    // MARK: saved state — the committed card + the unlocked chips
+    // MARK: the toast — the confirmation, one compact tappable row
 
-    private var committedCard: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 18))
-                .foregroundStyle(LivTheme.accent)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(savedTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(LivTheme.text)
-                    .lineLimit(2)
-                HStack(spacing: 4) {
-                    Text("Captured — no questions asked ·")
-                        .font(.system(size: 11))
-                        .foregroundStyle(LivTheme.text3)
-                    Button(action: undoSave) {
-                        Text("Undo")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(LivTheme.accent)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+    /// Replaces the old full saved-state card (eval §4.2). Tap the text =
+    /// dismiss; the entity is already this tab's content via onCreated.
+    private var toast: some View {
+        HStack(spacing: 8) {
+            Button {
+                dismiss()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(LivTheme.accent)
+                    Text(savedTitle)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(LivTheme.text)
+                        .lineLimit(1)
                 }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
+            Spacer(minLength: 6)
+            Button(action: undoSave) {
+                Text("Undo")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(LivTheme.accent)
+                    .padding(.horizontal, 6)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .padding(12)
+        .padding(.horizontal, 10)
+        .frame(height: 36)
         .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .overlay(
             RoundedRectangle(cornerRadius: LivTheme.radius)
@@ -356,40 +364,47 @@ struct CaptureSheet: View {
         )
     }
 
+    /// Undo reverses the LAST commit and returns to composing it — but the
+    /// text restores only into an EMPTY field: a next thought already being
+    /// typed never loses to an undo.
     private func undoSave() {
         model.undo()
-        if verb == .idea { draft = savedText } else { name = savedText }
+        verb = savedVerb
+        if savedVerb == .idea {
+            if draft.isEmpty { draft = savedText }
+        } else if name.isEmpty {
+            name = savedText
+        }
         savedId = nil
         applied = []
         focused = true
     }
 
-    private var chipSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Details")
-            CaptureFlow(spacing: 6) {
-                ForEach(applied) { a in
-                    Button {
-                        pick = a.pick  // re-open to change / add more
-                    } label: {
-                        ValueChip(a.display, dotted: a.dotted, big: true)
-                    }
-                    .buttonStyle(.plain)
+    /// The chips-after-save law, one line shorter: a compact strip under
+    /// the toast, writing to the LAST captured entity.
+    private var chipStrip: some View {
+        CaptureFlow(spacing: 6) {
+            ForEach(applied) { a in
+                Button {
+                    pick = a.pick  // re-open to change / add more
+                } label: {
+                    ValueChip(a.display, dotted: a.dotted, big: true)
                 }
-                if verb == .task, !isApplied(.status) {
-                    AddChip(CapturePick.status.title, big: true) { pick = .status }
-                }
-                AddChip(CapturePick.tag.title, big: true) { pick = .tag }
-                if !isApplied(.project) {
-                    AddChip(CapturePick.project.title, big: true) { pick = .project }
-                }
-                AddChip(CapturePick.person.title, big: true) { pick = .person }
-                if !isApplied(.due) {
-                    AddChip(CapturePick.due.title, big: true) { pick = .due }
-                }
-                if !isApplied(.type) {
-                    AddChip(CapturePick.type.title, big: true) { pick = .type }
-                }
+                .buttonStyle(.plain)
+            }
+            if savedVerb == .task, !isApplied(.status) {
+                AddChip(CapturePick.status.title, big: true) { pick = .status }
+            }
+            AddChip(CapturePick.tag.title, big: true) { pick = .tag }
+            if !isApplied(.project) {
+                AddChip(CapturePick.project.title, big: true) { pick = .project }
+            }
+            AddChip(CapturePick.person.title, big: true) { pick = .person }
+            if !isApplied(.due) {
+                AddChip(CapturePick.due.title, big: true) { pick = .due }
+            }
+            if !isApplied(.type) {
+                AddChip(CapturePick.type.title, big: true) { pick = .type }
             }
         }
     }
@@ -428,47 +443,21 @@ struct CaptureSheet: View {
         applied.append(chip)
     }
 
-    // MARK: Another / Done
+    // MARK: Done — dismiss; the desk tab already shows the last capture
 
-    private var anotherDoneRow: some View {
-        HStack(spacing: 10) {
-            Button {
-                another()
-            } label: {
-                Text("Another")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 38)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: LivTheme.radius)
-                            .strokeBorder(LivTheme.accent.opacity(0.5), lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Button {
-                dismiss()
-            } label: {
-                Text("Done")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(LivTheme.onAccent)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 38)
-                    .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.accent))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+    private var doneRow: some View {
+        Button {
+            dismiss()
+        } label: {
+            Text("Done")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(LivTheme.onAccent)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.accent))
+                .contentShape(Rectangle())
         }
-    }
-
-    /// Serial capture: back to a fresh idea state, sheet stays up.
-    private func another() {
-        verb = .idea
-        savedId = nil
-        applied = []
-        name = ""
-        focused = true
+        .buttonStyle(.plain)
     }
 
     // MARK: the picker sheets
