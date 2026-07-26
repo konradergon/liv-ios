@@ -5,6 +5,8 @@
 //! orchestrator: parse arguments, open the session, run services, print what
 //! the renderer emitted. It owns no data and defines no commands.
 
+mod satellite;
+
 use chrono::{Datelike, Local, Timelike};
 
 use liv_core::{props, Author, DateTime, Id, Session, Value};
@@ -54,6 +56,17 @@ fn dispatch(args: &[String]) -> Result<(), String> {
     if let Some(dir) = std::path::Path::new(&log_path).parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
+
+    // Satellite export (design/ios.md §2.2) reads through the ffi seam, which
+    // opens — and locks — the box itself, so it must run before this process
+    // takes the session lock below.
+    if let Some((&"satellite-export", export_args)) = rest.split_first() {
+        let root = export_args
+            .first()
+            .ok_or("usage: liv satellite-export SATELLITE-ROOT")?;
+        return satellite::export(&log_path, root);
+    }
+
     let mut session = Session::open(&log_path).map_err(|e| e.to_string())?;
     liv_services::seed_if_fresh(&mut session).map_err(|e| e.to_string())?;
 
@@ -94,13 +107,17 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         }
         Some((&"time", rest)) => time(&mut session, rest),
         Some((&"rename-value", rest)) => rename_value(&mut session, rest),
+        // The satellite drain (design/ios.md §2.2): the phone's outbox
+        // becomes box entities, one transaction per batch.
+        Some((&"drain", rest)) => satellite::drain(&mut session, rest),
         _ => Err("usage: liv [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
                   inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
                   set ID PROP VALUE... | history | \
                   habit NAME... [--points N] [--cadence TEXT] | \
                   checkin HABIT-ID [DAY] | habits | \
-                  time [TARGET-ID START END] | rename-value PROP OLD NEW..."
+                  time [TARGET-ID START END] | rename-value PROP OLD NEW... | \
+                  drain SATELLITE-ROOT | satellite-export SATELLITE-ROOT"
             .into()),
     }
 }

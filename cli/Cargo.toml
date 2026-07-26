@@ -11,4 +11,12 @@ path = "src/main.rs"
 liv-core = { path = "../core" }
 liv-services = { path = "../services" }
 liv-views = { path = "../views" }
+# The satellite export renders the same snapshot JSON the FFI serves every
+# shell — the builder is private to liv-ffi, so the CLI links the rlib and
+# calls the C-ABI fn through a safe wrapper (cli/src/satellite.rs).
+liv-ffi = { path = "../ffi" }
 chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# gzip for snapshot/desk.json.gz (the satellite wire format).
+flate2 = "1"

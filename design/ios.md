@@ -341,6 +341,15 @@ Structure from ClickUp mobile; soul, tokens, and density from Liv:
 - **M2 — the funnel**: outbox projector, shipper, ack processor; desktop
   drainer + drain UX + snapshot exporter (PR); property-test gate. *P1
   complete.*
+  **Delta 2026-07-26 (M2 start):** the drainer + snapshot exporter land as
+  **CLI verbs** (`liv drain <satellite-root>`, `liv satellite-export`) —
+  headless-testable today, desk-agnostic (works for the SwiftUI shell, the
+  Tauri pivot, or bare CLI), and the shell's drain UX becomes a thin wrapper
+  later. Transport v1 is a **plain folder** (`LIV_SATELLITE_PATH`); the
+  iCloud ubiquity container is the same protocol at a different path once
+  real entitlements exist. §8 defaults adopted pending owner word: media →
+  `~/liv/attachments/`, single home desk, mirror privacy deferred while the
+  transport is a local folder.
 - **M3 — P2**: notification scheduler + mirror union; widgets + App Intents;
   Calendar surface. *P2 complete.*
 - **M4 — phase-2 fidelity**: `ImportItem` variants land in services;

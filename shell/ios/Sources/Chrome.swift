@@ -262,45 +262,260 @@ struct TopBar: View {
 
 // MARK: - settings (relocated from Today's header; the chrome owns the gear)
 
-/// Facts and notes only — Settings never writes cells.
+/// Facts and notes only — Settings never writes cells. The Handoff section
+/// (design/ios.md §2.2) is the funnel's honesty surface: the status card,
+/// the per-item Pending/Shipped/Delivered ledger, "Ship now", and the
+/// satellite-path row (dev-grade paste field — file pickers arrive with
+/// the real Xcode project). Setting the path is device config, not a cell.
 struct SettingsSheet: View {
     @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var outbox: Outbox
+    @State private var pathDraft = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Settings")
-                .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(LivTheme.text)
-                .padding(.bottom, 4)
-            SectionLabel("Box")
-            Text(box.path)
-                .font(.system(size: 11, design: .monospaced))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Settings")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(LivTheme.text)
+                    .padding(.bottom, 4)
+                SectionLabel("Box")
+                Text(box.path)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(LivTheme.text2)
+                    .textSelection(.enabled)
+                Text("\(box.snap?.entities?.count ?? 0) entities")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
+                SectionLabel("Handoff")
+                    .padding(.top, 10)
+                statusCard
+                ledger
+                shipRow
+                satellitePathRow
+                Text(
+                    "The box never leaves this device. Captures travel as write-once batches; the desk drains at open. Re-delivery is harmless by design."
+                )
+                .font(.system(size: 10.5))
+                .foregroundStyle(LivTheme.muted)
+                SectionLabel("Assist")
+                    .padding(.top, 10)
+                Text(
+                    "Assist is proposals-only and lands with the Inbox Tidy lens (M2). Amber marks its presence; nothing writes without an accept."
+                )
+                .font(.system(size: 12))
                 .foregroundStyle(LivTheme.text2)
-                .textSelection(.enabled)
-            Text("\(box.snap?.entities?.count ?? 0) entities")
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(LivTheme.text3)
-            SectionLabel("Assist")
-                .padding(.top, 10)
-            Text(
-                "Assist is proposals-only and lands with the Inbox Tidy lens (M2). Amber marks its presence; nothing writes without an accept."
-            )
-            .font(.system(size: 12))
-            .foregroundStyle(LivTheme.text2)
-            SectionLabel("Handoff")
-                .padding(.top, 10)
-            Text(
-                "Captures stay in this phone's own box for now. The desk funnel — write-once batches the Mac drains at open — arrives with M2."
-            )
-            .font(.system(size: 12))
-            .foregroundStyle(LivTheme.text2)
-            Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(LivTheme.surface)
+        // Read-only refresh: acks on disk become Delivered chips.
+        .onAppear { outbox.scanAcks() }
+    }
+
+    // The status card: honest counts, or the shipping-off notice.
+
+    private static let shipDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, HH:mm"
+        return f
+    }()
+
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if outbox.satellitePath == nil {
+                Text("Shipping is off — set a satellite folder.")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(LivTheme.text)
+                Text("Captures stay in this phone's own box until a folder is set.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(LivTheme.text3)
+            } else {
+                Text(
+                    outbox.pendingCount == 0
+                        ? "Nothing waiting for your desk"
+                        : "\(outbox.pendingCount) drop\(outbox.pendingCount == 1 ? "" : "s") waiting for your desk"
+                )
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .foregroundStyle(LivTheme.text)
+                Text(
+                    outbox.lastShipDate.map {
+                        "Last shipped \(Self.shipDate.string(from: $0))"
+                    } ?? "Nothing shipped from this phone yet"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(LivTheme.text3)
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LivTheme.radius)
+                .strokeBorder(LivTheme.border, lineWidth: 0.5)
+        )
+    }
+
+    // The per-item honesty ledger — newest first, hairline rows.
+
+    @ViewBuilder private var ledger: some View {
+        if outbox.entries.isEmpty {
+            Text("Nothing in the ledger yet — captures land here on their way to the desk.")
+                .font(.system(size: 11))
+                .foregroundStyle(LivTheme.muted)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(outbox.entries) { entry in
+                    ledgerRow(entry)
+                    if entry.id != outbox.entries.last?.id {
+                        Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                    }
+                }
+            }
+        }
+    }
+
+    private func ledgerRow(_ entry: OutboxEntry) -> some View {
+        HStack(spacing: 6) {
+            Text(entry.title.isEmpty ? "Untitled" : entry.title)
+                .font(.system(size: 12))
+                .foregroundStyle(LivTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            ValueChip(entry.kind.rawValue, dotted: false)
+            OutboxStateChip(state: entry.state)
+        }
+        .frame(height: 34)
+    }
+
+    // "Ship now" — closes the open batch into the satellite outbox.
+
+    private var shipRow: some View {
+        Button {
+            outbox.closeBatch(snapshot: box.snap)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "paperplane")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Ship now")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                if outbox.pendingCount > 0 {
+                    Text("\(outbox.pendingCount)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(LivTheme.text3)
+                }
+            }
+            .foregroundStyle(
+                outbox.satellitePath == nil ? LivTheme.muted : LivTheme.accent
+            )
+            .frame(height: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(outbox.satellitePath == nil)
+        .accessibilityLabel("Ship now")
+    }
+
+    // The satellite-path row (dev-grade: paste + Clear).
+
+    private var satellitePathRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let path = outbox.satellitePath {
+                HStack(spacing: 8) {
+                    Text(path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(LivTheme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: 6)
+                    Button("Clear") { outbox.setSatellitePath(nil) }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(LivTheme.accent)
+                        .buttonStyle(.plain)
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("Paste a satellite folder path", text: $pathDraft)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(LivTheme.text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit(setPath)
+                Button("Set", action: setPath)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(draftReady ? LivTheme.accent : LivTheme.muted)
+                    .buttonStyle(.plain)
+                    .disabled(!draftReady)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
+            )
+            Text("Dev build: paste a folder path — file pickers arrive with the Xcode project.")
+                .font(.system(size: 10))
+                .foregroundStyle(LivTheme.muted)
+        }
+    }
+
+    private var draftReady: Bool {
+        !pathDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func setPath() {
+        let trimmed = pathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        outbox.setSatellitePath(trimmed)
+        pathDraft = ""
+    }
+}
+
+/// The honesty chip (design/ios.md §2.2): Pending muted, Shipped accent,
+/// Delivered green with a check. Kit's chip recipe, state ink only.
+private struct OutboxStateChip: View {
+    let state: OutboxState
+
+    private var label: String {
+        switch state {
+        case .pending: return "Pending"
+        case .shipped: return "Shipped"
+        case .delivered: return "Delivered"
+        }
+    }
+
+    private var ink: Color {
+        switch state {
+        case .pending: return LivTheme.muted
+        case .shipped: return LivTheme.accent
+        case .delivered: return LivTheme.green
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if state == .delivered {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 7.5, weight: .bold))
+            }
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(ink)
+        .padding(.horizontal, 6)
+        .frame(height: 16)
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 }
 

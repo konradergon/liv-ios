@@ -292,15 +292,15 @@ final class BoxModel: ObservableObject {
     }
 
     func capture(_ text: String, done: ((UInt64) -> Void)? = nil) {
-        actId("capture", done) { liv_capture_at(self.path, text) }
+        actId("capture", Outbox.tracking(.idea, done)) { liv_capture_at(self.path, text) }
     }
 
     func createTask(done: ((UInt64) -> Void)? = nil) {
-        actId("createTask", done) { liv_create_task_at(self.path) }
+        actId("createTask", Outbox.tracking(.task, done)) { liv_create_task_at(self.path) }
     }
 
     func createEvent(dueCivil: Int64, dateOnly: Bool, done: ((UInt64) -> Void)? = nil) {
-        actId("createEvent", done) { liv_create_event_at(self.path, dueCivil, dateOnly ? 1 : 0) }
+        actId("createEvent", Outbox.tracking(.event, done)) { liv_create_event_at(self.path, dueCivil, dateOnly ? 1 : 0) }
     }
 
     func set(_ id: UInt64, _ property: String, _ value: String) {
@@ -326,7 +326,7 @@ final class BoxModel: ObservableObject {
 
     /// The librarian: by reference, never moves the file.
     func addFile(_ path: String, done: ((UInt64) -> Void)? = nil) {
-        actId("addFile", done) { liv_add_file_at(self.path, path) }
+        actId("addFile", Outbox.tracking(.photo, done)) { liv_add_file_at(self.path, path) }
     }
 
     /// Soft, reversible, never cascades.

@@ -9,12 +9,14 @@ import SwiftUI
 struct LivApp: App {
     @StateObject private var box = BoxModel(path: BoxPath.resolve())
     @StateObject private var desk = DeskModel()
+    @StateObject private var outbox = Outbox.shared
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(box)
                 .environmentObject(desk)
+                .environmentObject(outbox)
         }
     }
 }
@@ -69,9 +71,20 @@ struct RootView: View {
             .environmentObject(desk)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { box.refresh() }
+            if phase == .active {
+                box.refresh()
+                Outbox.shared.scanAcks()
+            } else if phase == .background {
+                Outbox.shared.closeBatch(snapshot: box.snap)
+            }
         }
+        .onAppear { bindOutboxTitles() }
         .onReceive(box.$snap) { snap in
+            // Rebind on every snapshot: assigning the resolver republishes the
+            // ledger, and at .onAppear there is no snapshot to resolve against
+            // yet (titles would freeze as "#id"). Rebinding also keeps entry
+            // titles current when an entity is renamed after capture.
+            bindOutboxTitles()
             guard !bootApplied, let snap else { return }
             bootApplied = true
             applyBootState(snap)
@@ -85,6 +98,18 @@ struct RootView: View {
                     .background(LivTheme.red, in: Capsule())
                     .padding(.top, 4)
             }
+        }
+    }
+
+    /// The outbox resolves ledger titles through the live box. A scrap
+    /// carries no name cell (capture writes content only), so fall back to
+    /// its first content line — the display name the rest of the shell shows.
+    private func bindOutboxTitles() {
+        Outbox.shared.titleResolver = { [weak box] id in
+            guard let row = box?.entity(id) else { return nil }
+            if let name = row.title, !name.isEmpty { return name }
+            let content = row.cells?.first { $0.property == "content" }?.value
+            return content?.split(separator: "\n").first.map(String.init)
         }
     }
 
