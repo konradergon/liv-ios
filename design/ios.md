@@ -15,7 +15,11 @@ the owner:
 - **P1** — photograph and capture ideas with fast, optional metadata; content
   reaches the desktop box.
 - **P2** — add tasks; local notifications for due tasks and calendar events.
-- **P3** (low) — a unified read-only view of imported messages (Slack/Gmail/…).
+- ~~**P3** (low) — a unified read-only view of imported messages~~ —
+  **KILLED, owner decision 2026-07-26.** The unified-inbox category is a
+  graveyard and nothing here differentiates. The core's
+  `liv_import_messages_at` verb stays (shipped, tested, harmless); no
+  mobile surface will ever be built on it.
 - **P4** (hardest) — notes sync.
 
 One sentence of architecture: the phone links the **same Rust core** as a
@@ -146,13 +150,14 @@ Dropbox/Syncthing later.
 - The app icon badge carries the **proposal-inbox count only** — the app's one
   badge, by law.
 
-## 4. P3 — messages (later)
+## 4. P3 — messages — KILLED (2026-07-26)
 
-`liv_import_messages_at` already implements the needed engine (external-id
-upsert, feed-owned vs user cells). The phone renders `message` entities from
-the mirror read-only (Comms rules: no compose, text-only source chips).
-Fetching Slack/Gmail/Discord is a fence-opening the constitution hasn't
-granted — nothing here builds it; the surface waits.
+Killed by owner decision. The rationale, recorded: every unified-inbox
+product has died or pivoted; the connector fence was never opened; and the
+mobile app's job is capture, not reading feeds. `liv_import_messages_at`
+stays in the core (shipped and tested — deleting working code buys
+nothing), but no phone or roadmap surface builds on it. Section number
+kept so cross-references in the eval and earlier docs stay valid.
 
 ## 5. P4 — notes (later)
 
@@ -340,5 +345,5 @@ Structure from ClickUp mobile; soul, tokens, and density from Liv:
   Calendar surface. *P2 complete.*
 - **M4 — phase-2 fidelity**: `ImportItem` variants land in services;
   drainer lowering flips; retype card. 
-- **M5+** — P3 messages surface (read-only, when the connector fence opens);
-  P4 notes via vault mediation / oplog destination.
+- **M5+** — P4 notes via vault mediation / oplog destination. (P3 messages:
+  killed 2026-07-26, see §4.)
