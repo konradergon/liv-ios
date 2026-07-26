@@ -265,7 +265,9 @@ struct EntityTabBody: View {
 
     @ViewBuilder private func contentSection(_ row: EntityRow) -> some View {
         if (row.contentPrint ?? 0) != 0 {
-            Text("Content lives on this entity — the editor arrives with M2.")
+            // Honest, not aspirational: M2 shipped the funnel, not an editor.
+            // Don't name a milestone here again until one actually holds it.
+            Text("This has content. Reading and editing it on the phone isn't built yet.")
                 .font(.system(size: 12))
                 .foregroundStyle(LivTheme.muted)
                 .padding(.vertical, 6)
