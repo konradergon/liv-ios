@@ -286,6 +286,13 @@ struct WorkspaceRow {
     /// 0 = top level; the tree is parent references, nothing else.
     parent: Id,
     order: f64,
+    /// The lens: a search-DSL string (`props::QUERY`, the property saved
+    /// views already use). A shell runs it to filter and reads its plain
+    /// `key:value` terms to stamp new objects. Absent when unset — without
+    /// it on the wire a shell must keep its own copy of the query, which
+    /// is the second source of truth the constitution refuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query: Option<String>,
 }
 
 /// One pin on the Favourites shelf (P17g): a backstage entity pointing at
@@ -989,6 +996,10 @@ fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTime) -> Snaps
                     order: match order_prop.and_then(|p| e.get(p)) {
                         Some(Value::Number(n)) => *n,
                         _ => 0.0,
+                    },
+                    query: match e.get(props::QUERY) {
+                        Some(Value::Text(q)) if !q.is_empty() => Some(q.clone()),
+                        _ => None,
                     },
                 })
                 .collect();
@@ -4901,6 +4912,36 @@ mod tests {
         assert!(
             !snap["everything"].as_array().unwrap().iter().any(|id| *id == area || *id == child)
         );
+
+        // The lens (design/ios.md M4): a workspace's `query` cell is what
+        // makes it a saved view that also stamps. It rides the ordinary set
+        // door and must reach the wire, or a shell has to keep its own copy
+        // — a second source of truth the constitution refuses.
+        let query_prop = CString::new("query").unwrap();
+        let lens = CString::new("area:Work").unwrap();
+        assert_eq!(
+            unsafe { liv_set_at(c_path.as_ptr(), area, query_prop.as_ptr(), lens.as_ptr()) },
+            1
+        );
+        let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+        let row = snap["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["id"] == area)
+            .unwrap()
+            .clone();
+        assert_eq!(row["query"], "area:Work");
+        // A workspace without one carries no key at all (skip-serialized),
+        // which every decoder already treats as absent.
+        let home = snap["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["builtin"] == "home")
+            .unwrap()
+            .clone();
+        assert!(home["query"].is_null());
 
         // favorite/archived ride the ordinary set door; unset removes.
         let favorite = CString::new("favorite").unwrap();

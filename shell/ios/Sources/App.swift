@@ -10,6 +10,7 @@ struct LivApp: App {
     @StateObject private var box = BoxModel(path: BoxPath.resolve())
     @StateObject private var desk = DeskModel()
     @StateObject private var outbox = Outbox.shared
+    @StateObject private var workspaces = WorkspaceModel()
 
     init() {
         // The span codec has no test target to live in (no Xcode project);
@@ -20,6 +21,13 @@ struct LivApp: App {
             print("SPAN-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("SPAN-SELFCHECK \($0)") }
         }
+        // The workspace query grammar, same door:
+        // `simctl launch … -workspace.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "workspace.selfcheck") {
+            let failures = livWorkspaceSelfCheck()
+            print("WS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("WS-SELFCHECK \($0)") }
+        }
     }
 
     var body: some Scene {
@@ -28,6 +36,7 @@ struct LivApp: App {
                 .environmentObject(box)
                 .environmentObject(desk)
                 .environmentObject(outbox)
+                .environmentObject(workspaces)
         }
     }
 }
@@ -35,6 +44,7 @@ struct LivApp: App {
 struct RootView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var bootApplied = false
 
@@ -68,11 +78,13 @@ struct RootView: View {
             FeatureWindow(feature: feature)
                 .environmentObject(box)
                 .environmentObject(desk)
+                .environmentObject(workspaces)
         }
         .fullScreenCover(isPresented: $desk.searchShown) {
             SearchView()
                 .environmentObject(box)
                 .environmentObject(desk)
+                .environmentObject(workspaces)
         }
         .fullScreenCover(isPresented: $desk.cameraShown) {
             CameraFlow(onDone: { ids in
@@ -96,9 +108,15 @@ struct RootView: View {
             // yet (titles would freeze as "#id"). Rebinding also keeps entry
             // titles current when an entity is renamed after capture.
             bindOutboxTitles()
+            workspaces.apply(snap)
             guard !bootApplied, let snap else { return }
             bootApplied = true
             applyBootState(snap)
+        }
+        // One tab plane, swapped per workspace — the desk saves the set it
+        // is leaving and restores the one it is joining.
+        .onChange(of: workspaces.activeId) { _, id in
+            desk.adopt(workspace: id)
         }
         .overlay(alignment: .top) {
             if let fault = box.boxFault {

@@ -12,6 +12,7 @@ import SwiftUI
 struct DeskHost: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
 
     var body: some View {
         Group {
@@ -51,6 +52,7 @@ struct DeskHost: View {
                 onCreated: { id in desk.setContent(req.tabId, entity: id) }
             )
             .environmentObject(box)
+            .environmentObject(workspaces)
         }
     }
 }

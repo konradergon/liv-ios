@@ -25,6 +25,7 @@ private struct TodayAgendaItem: Identifiable {
 struct TodayView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var selectedDay = Civil.todayDay()
@@ -46,6 +47,8 @@ struct TodayView: View {
             Group {
                 HStack(spacing: 8) {
                     SectionLabel("Today · " + Civil.dayLabel(today))
+                    // Why the list is short — never a mystery (M4).
+                    if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
                     if box.busyRetrying { ProgressView().scaleEffect(0.7) }
                 }
                 .padding(.top, 8)
@@ -56,7 +59,7 @@ struct TodayView: View {
                     todayCount: selectedDay == today
                         ? items.count : agenda(for: today).count,
                     overdueCount: overdue.count,
-                    capturedTotal: box.snap?.unstructured?.count ?? 0)
+                    capturedTotal: capturedTotal)
                 if showOverdue && !overdue.isEmpty {
                     SectionLabel(
                         "Overdue", trailing: "Hide",
@@ -258,9 +261,12 @@ struct TodayView: View {
 
     // MARK: snapshot slices
 
+    /// The lens (M4): the active workspace's query, run client-side over
+    /// the rows the phone already holds. An inert query costs one branch.
     private var datedRows: [EntityRow] {
-        (box.snap?.dated ?? []).compactMap { box.entity($0) }
-            .filter { $0.trashed != true }
+        let lens = workspaces.activeQuery
+        return (box.snap?.dated ?? []).compactMap { box.entity($0) }
+            .filter { $0.trashed != true && lens.matches($0) }
     }
 
     private func dueRows(on day: Int64) -> [EntityRow] {
@@ -325,13 +331,23 @@ struct TodayView: View {
         }.count
     }
 
+    /// The Captured tile counts what the lens shows — a tile that disagrees
+    /// with the section under it is worse than no tile.
+    private var capturedTotal: Int {
+        let lens = workspaces.activeQuery
+        return (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
+            .filter { $0.trashed != true && lens.matches($0) }
+            .count
+    }
+
     private func capturedRows(today: Int64) -> [EntityRow] {
-        (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
+        let lens = workspaces.activeQuery
+        return (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
             .filter { row in
                 guard row.trashed != true, let created = row.created else {
                     return false
                 }
-                return Civil.day(of: created) == today
+                return Civil.day(of: created) == today && lens.matches(row)
             }
             .sorted { ($0.created ?? 0) > ($1.created ?? 0) }
     }

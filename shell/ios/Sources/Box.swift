@@ -16,32 +16,39 @@ struct Snapshot: Decodable {
     var entities: [EntityRow]?
     var properties: [PropertyRow]?
     var kinds: [KindRow]?
+    /// The workspace tree (M4). Shapes live in Workspace.swift.
+    var workspaces: [WorkspaceRow]?
+    /// Saved filters — view entities with a `query` cell (M4).
+    var views: [SavedViewRow]?
 }
 
+/// Optionals carry `= nil` so the memberwise initializer has defaults —
+/// the workspace self-check builds rows by hand, and a 15-argument call
+/// would be a test that lies about what it is testing.
 struct EntityRow: Decodable, Identifiable {
     var id: UInt64
-    var title: String?
-    var kinds: [String]?
-    var due: Int64?
-    var dueEnd: Int64?
-    var dueDateOnly: Bool?
-    var positionedBy: String?
-    var status: String?
-    var created: Int64?
-    var trashed: Bool?
-    var bookmarked: Bool?
-    var archived: Bool?
-    var contentPrint: UInt64?
-    var vaultPath: String?
-    var cells: [CellRow]?
+    var title: String? = nil
+    var kinds: [String]? = nil
+    var due: Int64? = nil
+    var dueEnd: Int64? = nil
+    var dueDateOnly: Bool? = nil
+    var positionedBy: String? = nil
+    var status: String? = nil
+    var created: Int64? = nil
+    var trashed: Bool? = nil
+    var bookmarked: Bool? = nil
+    var archived: Bool? = nil
+    var contentPrint: UInt64? = nil
+    var vaultPath: String? = nil
+    var cells: [CellRow]? = nil
 }
 
 struct CellRow: Decodable {
-    var propertyId: UInt64?
-    var property: String?
-    var kind: String?
-    var value: String?
-    var refTarget: UInt64?
+    var propertyId: UInt64? = nil
+    var property: String? = nil
+    var kind: String? = nil
+    var value: String? = nil
+    var refTarget: UInt64? = nil
 }
 
 struct Occurrence: Decodable {
@@ -346,9 +353,52 @@ final class BoxModel: ObservableObject {
         actId("addFile", Outbox.tracking(.photo, done)) { liv_add_file_at(self.path, path) }
     }
 
+    /// Remove EVERY cell of one property — the inverse of `set`. This is
+    /// how a capture-time stamp chip is taken back off.
+    func unset(_ id: UInt64, _ property: String) {
+        act("unset") { liv_unset_at(self.path, id, property) == 1 }
+    }
+
     /// Soft, reversible, never cascades.
     func trash(_ id: UInt64) {
         act("trash") { liv_trash_at(self.path, id) == 1 }
+    }
+
+    // MARK: workspaces + saved filters (M4)
+
+    /// Birth a workspace: Create + type + name (+ parent), one transaction.
+    /// parent 0 = top level. The `query` cell is a SEPARATE `set` — the
+    /// caller writes it, so one refused write never half-builds a workspace.
+    func createWorkspace(
+        name: String, parent: UInt64 = 0, done: ((UInt64) -> Void)? = nil
+    ) {
+        actId("createWorkspace", done) {
+            liv_create_workspace_at(self.path, name, parent)
+        }
+    }
+
+    /// Trash ONE workspace. Deletion never cascades: children keep their
+    /// dangling `parent` and the shell re-roots them.
+    func trashWorkspace(_ id: UInt64) {
+        act("trashWorkspace") { liv_trash_workspace_at(self.path, id) == 1 }
+    }
+
+    /// Save a filter: a view entity carrying the query string. Same
+    /// grammar as a workspace's, minus the stamp.
+    func createView(name: String, query: String, done: ((UInt64) -> Void)? = nil) {
+        actId("createView", done) {
+            liv_create_view_at(self.path, name, query)
+        }
+    }
+
+    /// Birth a property definition by name + value kind. `set` REFUSES an
+    /// unknown property name, so a workspace whose query names a property
+    /// the box has never seen must mint it before it can stamp. Minting an
+    /// existing name is refused harmlessly (id 0) — never a duplicate.
+    func addProperty(_ name: String, kind: String = "text", done: ((UInt64) -> Void)? = nil) {
+        actId("addProperty", done) {
+            liv_add_property_at(self.path, name, kind)
+        }
     }
 
     func undo() {

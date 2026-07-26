@@ -12,10 +12,17 @@ import SwiftUI
 struct InboxView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
 
     /// (kinds empty) ∧ (contentPrint set) ∧ ¬trashed over the `everything`
     /// projection — the id lists exclude backstage plumbing; entities[] alone
     /// does not.
+    ///
+    /// THE WORKSPACE LENS IS NOT APPLIED HERE, EVER (design/ios.md M4). An
+    /// unfiled thing must be reachable from every workspace, or a capture
+    /// made under the wrong lens appears to vanish — the classic bug that
+    /// hits every workspace system. This is a stated safety rule, not an
+    /// oversight; do not "fix" it.
     private var scraps: [EntityRow] {
         (box.snap?.everything ?? [])
             .compactMap { box.entity($0) }
@@ -89,6 +96,8 @@ struct InboxView: View {
     }
 
     /// Route active; Tidy visibly present but inert until assist lands.
+    /// While a workspace lens is on elsewhere, say plainly that it is NOT
+    /// on here — the user should never wonder where a capture went.
     private var lensBar: some View {
         HStack(spacing: 4) {
             lensSegment("Route", active: true)
@@ -96,6 +105,11 @@ struct InboxView: View {
                 .opacity(0.45)
                 .accessibilityLabel("Tidy — arrives with assist")
             Spacer()
+            if workspaces.lensOn {
+                Text("shows every workspace")
+                    .font(.system(size: 10))
+                    .foregroundStyle(LivTheme.muted)
+            }
         }
     }
 

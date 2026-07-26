@@ -73,9 +73,16 @@ struct CaptureRequest: Identifiable {
 
 /// The chrome's one state object. Boots in Feature view on Today; the
 /// desk keeps at least one tab alive at all times. Entity-tab ids + the
-/// active index ride UserDefaults ("desk.tabs.v1"); ids missing from the
-/// box are dropped LAZILY — the dead tab renders an EmptyHint, never a
-/// crash and never an eager sweep against a box that may still be opening.
+/// active index ride UserDefaults ("desk.tabs.v1.<workspace>"); ids missing
+/// from the box are dropped LAZILY — the dead tab renders an EmptyHint,
+/// never a crash and never an eager sweep against a box that may still be
+/// opening.
+///
+/// M4: ONE tab plane whose open SET is remembered per workspace — never a
+/// second tab bar (that was the old app's three-tab-system debt). Switching
+/// workspace saves the current set and restores that workspace's; a
+/// workspace with no saved set starts with one fresh `.new` tab, because
+/// the desk is never empty.
 final class DeskModel: ObservableObject {
     /// The feature window currently covering the chrome (sheet item);
     /// nil = the desk.
@@ -96,7 +103,14 @@ final class DeskModel: ObservableObject {
     private var backIds: [UUID] = []
     private var forwardIds: [UUID] = []
 
-    private static let persistKey = "desk.tabs.v1"
+    /// The workspace whose tab set is currently on the plane. 0 = "All".
+    private(set) var workspaceId: UInt64 = 0
+
+    /// The pre-M4 single-plane key. Migrated once into the All plane so no
+    /// one loses their open tabs to this change.
+    private static let legacyKey = "desk.tabs.v1"
+
+    private var persistKey: String { WorkspaceModel.tabsKey(workspaceId) }
 
     var activeTab: DeskTab? {
         tabs.first { $0.id == activeTabId }
@@ -140,17 +154,51 @@ final class DeskModel: ObservableObject {
     }
 
     init() {
+        // One-time migration: the old single plane becomes the All plane.
+        let defaults = UserDefaults.standard
+        if defaults.dictionary(forKey: WorkspaceModel.tabsKey(0)) == nil,
+            let legacy = defaults.dictionary(forKey: Self.legacyKey)
+        {
+            defaults.set(legacy, forKey: WorkspaceModel.tabsKey(0))
+        }
+        workspaceId = UInt64(defaults.integer(forKey: WorkspaceModel.activeKey))
+        let (restored, active) = Self.load(WorkspaceModel.tabsKey(workspaceId))
+        tabs = restored
+        activeTabId =
+            restored.indices.contains(active) ? restored[active].id : restored.first?.id
+    }
+
+    /// One plane's saved set. Entity ids only — `.new` tabs are moments.
+    /// An empty plane is one fresh `.new` tab: the desk is never empty.
+    private static func load(_ key: String) -> ([DeskTab], Int) {
         var restored: [DeskTab] = []
         var active = -1
-        if let stored = UserDefaults.standard.dictionary(forKey: Self.persistKey) {
+        if let stored = UserDefaults.standard.dictionary(forKey: key) {
             let ids = (stored["ids"] as? [String] ?? []).compactMap { UInt64($0) }
             restored = ids.map { DeskTab(id: UUID(), content: .entity($0)) }
             active = stored["active"] as? Int ?? -1
         }
         if restored.isEmpty { restored = [DeskTab(id: UUID(), content: .new)] }
+        return (restored, active)
+    }
+
+    /// Swap the plane. The outgoing set is saved under ITS key first, so a
+    /// switch is never a loss; the incoming set replaces the tabs whole and
+    /// the ‹ › history resets — it belonged to the other workspace.
+    func adopt(workspace id: UInt64) {
+        guard id != workspaceId else { return }
+        persist()  // the OUTGOING key — persistKey still points at it
+        workspaceId = id
+        let (restored, active) = Self.load(persistKey)
+        backIds = []
+        forwardIds = []
         tabs = restored
         activeTabId =
             restored.indices.contains(active) ? restored[active].id : restored.first?.id
+        featureShown = nil
+        switcherShown = false
+        gridShown = false
+        objectWillChange.send()
     }
 
     /// Focus the tab already holding this entity, or append one. Opening a
@@ -201,6 +249,8 @@ final class DeskModel: ObservableObject {
     }
 
     /// Entity ids only — .new tabs are moments, not state worth restoring.
+    /// Always to the CURRENT workspace's key: opening something from search
+    /// or the inbox joins the current workspace's set, by construction.
     private func persist() {
         var ids: [String] = []
         var active = -1
@@ -210,35 +260,41 @@ final class DeskModel: ObservableObject {
             ids.append(String(entity))
         }
         UserDefaults.standard.set(
-            ["ids": ids, "active": active], forKey: Self.persistKey)
+            ["ids": ids, "active": active], forKey: persistKey)
     }
 }
 
 // MARK: - top bar
 
-/// Both modes: the workspace hub left (the desktop HomeHub — one
-/// workspace in v1, so the menu is a placeholder), the gear right.
+/// Both modes: the workspace hub left (the desktop HomeHub — M4 makes it
+/// real: it opens the switcher), the gear right.
 struct TopBar: View {
+    @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @State private var settingsShown = false
+    @State private var switcherShown = false
 
     var body: some View {
         HStack(spacing: 0) {
-            Menu {
-                Text("Home is the only workspace yet.")
+            Button {
+                switcherShown = true
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "house")
+                    Image(systemName: workspaces.activeId == 0 ? "square.grid.2x2" : "house")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(LivTheme.text2)
-                    Text("Home")
+                    Text(workspaces.activeName)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(LivTheme.text)
+                        .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(LivTheme.text3)
                 }
                 .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Workspace: \(workspaces.activeName)")
             Spacer()
             Button {
                 settingsShown = true
@@ -256,6 +312,337 @@ struct TopBar: View {
         .frame(height: 40)
         .sheet(isPresented: $settingsShown) {
             SettingsSheet()
+        }
+        .sheet(isPresented: $switcherShown) {
+            WorkspaceSwitcher()
+                .environmentObject(box)
+                .environmentObject(workspaces)
+        }
+    }
+}
+
+// MARK: - the workspace switcher (M4)
+
+/// The hub's sheet: All (no lens), every workspace, the saved filters, and
+/// the new-workspace form. Switching swaps the desk's open tabs — one tab
+/// plane, remembered per workspace.
+struct WorkspaceSwitcher: View {
+    @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var composing = false
+    /// nil while composing a NEW workspace; the id being edited otherwise.
+    /// Editing exists because the box ships a seeded "Home" workspace: with
+    /// a create-only form it could never become a workspace at all.
+    @State private var editing: UInt64?
+    @State private var draftName = ""
+    @State private var draftQuery = ""
+    @State private var composingFilter = false
+    @State private var filterName = ""
+    @State private var filterQuery = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionLabel("Workspace")
+                    .padding(.bottom, 4)
+                choice(
+                    name: "All", detail: "Everything — no lens, no stamp",
+                    active: workspaces.activeId == 0, icon: "square.grid.2x2"
+                ) {
+                    choose(0)
+                }
+                ForEach(workspaces.workspaces) { ws in
+                    choice(
+                        name: ws.display, detail: queryDetail(ws),
+                        active: workspaces.activeId == ws.id, icon: "house"
+                    ) {
+                        choose(ws.id)
+                    }
+                    .contextMenu {
+                        Button {
+                            editing = ws.id
+                            draftName = ws.display
+                            draftQuery = workspaces.query(of: ws.id) ?? ""
+                            composing = true
+                        } label: {
+                            Label("Edit name + query", systemImage: "slider.horizontal.3")
+                        }
+                        Button(role: .destructive) {
+                            workspaces.forgetQuery(ws.id)
+                            if workspaces.activeId == ws.id { choose(0, close: false) }
+                            box.trashWorkspace(ws.id)
+                        } label: {
+                            Label("Trash workspace", systemImage: "trash")
+                        }
+                    }
+                }
+                if composing {
+                    newWorkspaceForm
+                } else {
+                    addRow("New workspace…") {
+                        editing = nil
+                        draftName = ""
+                        draftQuery = ""
+                        composing = true
+                    }
+                }
+
+                SectionLabel("Filters")
+                    .padding(.top, 18)
+                    .padding(.bottom, 4)
+                if workspaces.filters.isEmpty && !composingFilter {
+                    Text("A filter is a workspace's query without the stamp.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(LivTheme.muted)
+                        .padding(.vertical, 6)
+                }
+                ForEach(workspaces.filters) { view in
+                    choice(
+                        name: view.display, detail: view.query ?? "",
+                        active: workspaces.activeFilterId == view.id,
+                        icon: "line.3.horizontal.decrease"
+                    ) {
+                        workspaces.activeFilterId =
+                            workspaces.activeFilterId == view.id ? nil : view.id
+                    }
+                }
+                if composingFilter {
+                    newFilterForm
+                } else {
+                    addRow("New filter…") { composingFilter = true }
+                }
+
+                Text(
+                    "A workspace's query is both halves: it filters Today, Tasks and Search, and its plain key:value terms are stamped on what you capture — visibly, removably. The Inbox is never filtered."
+                )
+                .font(.system(size: 10.5))
+                .foregroundStyle(LivTheme.muted)
+                .padding(.top, 18)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+        }
+        .background(LivTheme.canvas)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    /// The lens, read straight off the wire.
+    private func queryDetail(_ ws: WorkspaceRow) -> String {
+        workspaces.query(of: ws.id) ?? "no query"
+    }
+
+    private func choose(_ id: UInt64, close: Bool = true) {
+        workspaces.setActive(id)
+        if close { dismiss() }
+    }
+
+    private func choice(
+        name: String, detail: String, active: Bool, icon: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(active ? LivTheme.accent : LivTheme.text3)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 13.5, weight: active ? .semibold : .regular))
+                        .foregroundStyle(active ? LivTheme.accent : LivTheme.text)
+                        .lineLimit(1)
+                    if !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(LivTheme.text3)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 6)
+                if active {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(LivTheme.accent)
+                }
+            }
+            .frame(minHeight: 42)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+
+    private func addRow(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 18)
+                Text(label).font(.system(size: 13))
+                Spacer()
+            }
+            .foregroundStyle(LivTheme.accent)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: the new-workspace form — name + query + the stamp hint
+
+    private var newWorkspaceForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            field("Name", text: $draftName, mono: false)
+            field("Query — e.g. area:Work", text: $draftQuery, mono: true)
+            Text(stampHint(draftQuery))
+                .font(.system(size: 10.5))
+                .foregroundStyle(
+                    LivQuery.parse(draftQuery).stampCells.isEmpty
+                        ? LivTheme.muted : LivTheme.accent)
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Cancel") {
+                    composing = false
+                    editing = nil
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(LivTheme.text3)
+                .buttonStyle(.plain)
+                Button(action: saveWorkspace) {
+                    Text(editing == nil ? "Create" : "Save")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(LivTheme.onAccent)
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(Capsule().fill(LivTheme.accent))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmed(draftName).isEmpty)
+                .opacity(trimmed(draftName).isEmpty ? 0.45 : 1)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var newFilterForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            field("Name", text: $filterName, mono: false)
+            field("Query — e.g. has:due -status:done", text: $filterQuery, mono: true)
+            Text("A filter only filters — it never stamps.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(LivTheme.muted)
+            HStack(spacing: 10) {
+                Spacer()
+                Button("Cancel") { composingFilter = false }
+                    .font(.system(size: 12))
+                    .foregroundStyle(LivTheme.text3)
+                    .buttonStyle(.plain)
+                Button(action: createFilter) {
+                    Text("Save")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(LivTheme.onAccent)
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(Capsule().fill(LivTheme.accent))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty)
+                .opacity(
+                    trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty ? 0.45 : 1)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func field(_ prompt: String, text: Binding<String>, mono: Bool) -> some View {
+        TextField(prompt, text: text)
+            .font(.system(size: 13, design: mono ? .monospaced : .default))
+            .foregroundStyle(LivTheme.text)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
+            .overlay(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
+            )
+    }
+
+    /// The honesty line: exactly what a capture in this workspace inherits.
+    private func stampHint(_ query: String) -> String {
+        let parsed = LivQuery.parse(query)
+        let summary = parsed.stampSummary
+        if !summary.isEmpty { return summary }
+        return parsed.isInert
+            ? "Stamps nothing — plain key:value terms are what stamp."
+            : "Filters only — no plain key:value term to stamp."
+    }
+
+    private func trimmed(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Birth (or re-aim) the workspace: write its `query` cell, and mint any
+    /// property the stamp names but the box has never seen — `set` REFUSES
+    /// an unknown property name, so without this the stamp would silently do
+    /// nothing. One serial lane, so these land in order.
+    private func saveWorkspace() {
+        let name = trimmed(draftName)
+        let query = trimmed(draftQuery)
+        guard !name.isEmpty else { return }
+        if let id = editing {
+            box.set(id, "name", name)
+            write(query, to: id)
+            finish(id)
+        } else {
+            box.createWorkspace(name: name) { id in
+                guard id != 0 else { return }
+                write(query, to: id)
+                finish(id)
+            }
+        }
+    }
+
+    /// The `query` cell IS the workspace. An emptied query clears the cell
+    /// rather than leaving a stale lens behind.
+    private func write(_ query: String, to id: UInt64) {
+        if query.isEmpty {
+            box.unset(id, "query")
+        } else {
+            box.set(id, "query", query)
+            for cell in LivQuery.parse(query).stampCells where cell.property != "type" {
+                box.addProperty(cell.property)
+            }
+        }
+        workspaces.rememberQuery(id, query)
+    }
+
+    private func finish(_ id: UInt64) {
+        draftName = ""
+        draftQuery = ""
+        composing = false
+        editing = nil
+        choose(id)
+    }
+
+    private func createFilter() {
+        let name = trimmed(filterName)
+        let query = trimmed(filterQuery)
+        guard !name.isEmpty, !query.isEmpty else { return }
+        box.createView(name: name, query: query) { id in
+            guard id != 0 else { return }
+            filterName = ""
+            filterQuery = ""
+            composingFilter = false
+            workspaces.activeFilterId = id
         }
     }
 }

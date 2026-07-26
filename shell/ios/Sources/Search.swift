@@ -15,14 +15,28 @@ import SwiftUI
 struct SearchView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @State private var query = ""
-    @State private var hits: [UInt64] = []
+    /// Raw ranked ids from the core, before the workspace lens.
+    @State private var rawHits: [UInt64] = []
     /// Monotonic ticket: a stale debounce or a stale result must drop.
     @State private var seq = 0
     @FocusState private var focused: Bool
 
     private var trimmed: String {
         query.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The lens (M4), applied to the CORE's ranked ids — rank order is
+    /// preserved, the workspace only removes. Search is filtered; the
+    /// Inbox never is.
+    private var hits: [UInt64] {
+        let lens = workspaces.activeQuery
+        guard workspaces.lensOn, !lens.isInert else { return rawHits }
+        return rawHits.filter { id in
+            guard let row = box.entity(id) else { return true }
+            return lens.matches(row)
+        }
     }
 
     /// Find-or-create offers only when no row we actually render is
@@ -78,6 +92,14 @@ struct SearchView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 8)
+            if workspaces.lensOn {
+                HStack {
+                    LensChip(label: workspaces.lensLabel)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
             if trimmed.isEmpty {
                 ScrollView {
                     EmptyHint("Search the box.").padding(.top, 40)
@@ -212,7 +234,7 @@ struct SearchView: View {
         let ticket = seq
         let q = trimmed
         guard !q.isEmpty else {
-            hits = []
+            rawHits = []
             return
         }
         if debounce {
@@ -231,7 +253,7 @@ struct SearchView: View {
         guard ticket == seq else { return }
         box.search(q) { ids in
             guard ticket == seq else { return }
-            hits = ids
+            rawHits = ids
         }
     }
 }

@@ -53,6 +53,16 @@ private struct CaptureApplied: Identifiable {
     var id: String { pick.rawValue + "|" + display }
 }
 
+/// One cell the active workspace stamped on the fresh capture (M4). It is
+/// ALREADY written — this is the receipt, not a proposal — and one tap on
+/// its ✕ takes it back off (`unset` on that property). Liv law: no silent
+/// capture-time metadata (P12 §1.4).
+private struct CaptureStamp: Identifiable {
+    let property: String
+    let value: String
+    var id: String { property + "|" + value }
+}
+
 // MARK: - the sheet
 
 struct CaptureSheet: View {
@@ -73,6 +83,7 @@ struct CaptureSheet: View {
     }
 
     @EnvironmentObject var model: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
 
     /// The draft survives failure AND process death; cleared ONLY on
@@ -88,6 +99,9 @@ struct CaptureSheet: View {
     @State private var savedText = ""  // Undo restores the field verbatim
     @State private var savedVerb: CaptureVerb = .idea  // Undo lands on ITS editor
     @State private var applied: [CaptureApplied] = []
+    /// What the active workspace stamped on the last commit — shown as
+    /// filled, already-applied, one-tap-removable chips.
+    @State private var stamped: [CaptureStamp] = []
     @State private var pick: CapturePick? = nil
     @FocusState private var focused: Bool
 
@@ -316,6 +330,38 @@ struct CaptureSheet: View {
         applied = []
         focused = true
         onCreated?(id)
+        stamp(id)
+    }
+
+    /// The workspace's stamp (M4): the active workspace's plain `key:value`
+    /// terms, written as cells on what was just created. Never silent —
+    /// each lands as a filled chip in the strip below, removable in one tap.
+    /// No active workspace, or a query with no equality term, changes
+    /// nothing at all.
+    private func stamp(_ id: UInt64) {
+        let cells = workspaces.stampCells
+        stamped = []
+        guard !cells.isEmpty else { return }
+        for cell in cells {
+            if cell.property == "type" {
+                model.setType(id, cell.value)
+            } else {
+                model.set(id, cell.property, cell.value)
+            }
+            stamped.append(CaptureStamp(property: cell.property, value: cell.value))
+        }
+    }
+
+    /// One tap takes a stamp back off — `unset` removes every cell of that
+    /// property, the exact inverse of the `set` that put it there.
+    private func unstamp(_ chip: CaptureStamp) {
+        guard let id = savedId else { return }
+        if chip.property == "type" {
+            model.unset(id, "type")
+        } else {
+            model.unset(id, chip.property)
+        }
+        stamped.removeAll { $0.id == chip.id }
     }
 
     private func captureFailed() {
@@ -377,13 +423,19 @@ struct CaptureSheet: View {
         }
         savedId = nil
         applied = []
+        stamped = []
         focused = true
     }
 
     /// The chips-after-save law, one line shorter: a compact strip under
-    /// the toast, writing to the LAST captured entity.
+    /// the toast, writing to the LAST captured entity. The workspace's
+    /// stamps lead — they are already written, so they read as FILLED
+    /// chips with a ✕, not as offers.
     private var chipStrip: some View {
         CaptureFlow(spacing: 6) {
+            ForEach(stamped) { s in
+                CaptureStampChip(label: "\(s.property): \(s.value)") { unstamp(s) }
+            }
             ForEach(applied) { a in
                 Button {
                     pick = a.pick  // re-open to change / add more
@@ -480,6 +532,40 @@ struct CaptureSheet: View {
             get: { CaptureCivil.date(ofDay: eventDay) },
             set: { eventDay = CaptureCivil.day(of: $0) }
         )
+    }
+}
+
+// MARK: - the workspace stamp chip (M4)
+
+/// A cell the workspace ALREADY wrote: filled accent body (not the hollow
+/// AddChip's offer, not the neutral ValueChip's report), with a ✕ that
+/// removes it in one tap. The ✕ carries a 24pt hit target inside a 24pt
+/// chip — the whole trailing end is the button.
+private struct CaptureStampChip: View {
+    let label: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(LivTheme.accent)
+                .lineLimit(1)
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(LivTheme.accent)
+                    .frame(width: 22, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Remove \(label)")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 0)
+        .frame(height: 24)
+        .background(Capsule().fill(LivTheme.accentSoft))
+        .overlay(Capsule().strokeBorder(LivTheme.accent.opacity(0.45), lineWidth: 0.5))
     }
 }
 

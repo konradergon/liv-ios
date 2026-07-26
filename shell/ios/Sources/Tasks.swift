@@ -13,6 +13,7 @@ import SwiftUI
 struct TasksView: View {
     @EnvironmentObject var model: BoxModel
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
 
     @State private var options: [StatusOption] = []
     @State private var projects: [String] = []
@@ -92,8 +93,12 @@ struct TasksView: View {
 
     /// SectionLabel-scale only — the chrome's top bar is the big header now.
     private var headerRow: some View {
-        SectionLabel("Tasks")
-            .padding(.top, 8)
+        HStack(spacing: 8) {
+            SectionLabel("Tasks")
+            // Why the list is short — never a mystery (M4).
+            if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
+        }
+        .padding(.top, 8)
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -134,9 +139,11 @@ struct TasksView: View {
 
     private var emptyRow: some View {
         EmptyHint(
-            filter == .all
-                ? "No tasks yet. Add one below."
-                : "Nothing matches this filter."
+            filter != .all
+                ? "Nothing matches this filter."
+                : workspaces.lensOn
+                    ? "No tasks in \(workspaces.lensLabel). Switch to All to see the rest."
+                    : "No tasks yet. Add one below."
         )
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
@@ -147,9 +154,12 @@ struct TasksView: View {
     /// The vocabulary's groups in board order + a final "No status" catch-all
     /// (also holds statuses no longer in the vocabulary — every task shows).
     private func visibleGroups() -> [TasksGroup] {
+        // The lens (M4) runs BEFORE the chip filter: the workspace scopes
+        // the surface, the chips narrow inside it.
+        let lens = workspaces.activeQuery
         let tasks = (model.snap?.entities ?? []).filter {
             ($0.kinds ?? []).contains("task") && $0.trashed != true
-                && $0.archived != true
+                && $0.archived != true && lens.matches($0)
         }
         let filtered = tasks.filter(matchesFilter)
 
