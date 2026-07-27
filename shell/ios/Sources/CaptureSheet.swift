@@ -16,12 +16,13 @@ import UIKit
 enum CaptureVerb: String { case idea, task, event }
 
 private enum CapturePick: String, Identifiable {
-    case tag, project, person, due, type, status
+    case area, tag, project, person, due, type, status
     var id: String { rawValue }
 
     /// Layer-1 source (liv_distinct_values_at) + the write arity.
     var property: String {
         switch self {
+        case .area: return "area"
         case .tag: return "subjects"
         case .project: return "project"
         case .person: return "people"
@@ -34,6 +35,7 @@ private enum CapturePick: String, Identifiable {
     var multi: Bool { self == .tag || self == .person }
     var title: String {
         switch self {
+        case .area: return "Area"
         case .tag: return "Tag"
         case .project: return "Project"
         case .person: return "Person"
@@ -43,6 +45,11 @@ private enum CapturePick: String, Identifiable {
         }
     }
 }
+
+/// The six kinds of thing (what-liv-is-for): fixed furniture. The Type
+/// picker offers exactly these — photos are born through the camera, so
+/// the picker lists five. No create-a-type door anywhere.
+let captureFixedKinds = ["note", "task", "event", "person", "link"]
 
 /// A locally tracked applied chip — the snapshot refreshes behind us, but
 /// the sheet's chip row must not wait for it.
@@ -436,6 +443,10 @@ struct CaptureSheet: View {
                 }
                 .buttonStyle(.plain)
             }
+            // Fixed furniture leads: Area is the one filing question.
+            if !isApplied(.area), !isStamped("area") {
+                AddChip(CapturePick.area.title, big: true) { pick = .area }
+            }
             if savedVerb == .task, !isApplied(.status) {
                 AddChip(CapturePick.status.title, big: true) { pick = .status }
             }
@@ -457,27 +468,43 @@ struct CaptureSheet: View {
         applied.contains { $0.pick == p }
     }
 
+    /// The workspace already stamped this property — the strip shows its
+    /// filled chip, so the hollow offer would be a duplicate door.
+    private func isStamped(_ property: String) -> Bool {
+        stamped.contains { $0.property == property }
+    }
+
     // MARK: apply — set / addCell / setType / setSpan against the saved id
 
+    /// Chip honesty: the chip is recorded ONLY in the verb's success
+    /// callback. A refused write buzzes and leaves no chip — the box is
+    /// the truth, the strip its receipt (the fresh-box silent-chip bug).
     private func apply(_ p: CapturePick, value: String) {
         guard let id = savedId else { return }
+        let done: (Bool) -> Void = { ok in
+            guard ok else { return captureFailed() }
+            record(p, display: value, dotted: true)
+        }
         switch p {
         case .tag, .person:
-            model.addCell(id, p.property, value)
-        case .project, .status:
-            model.set(id, p.property, value)
+            model.addCell(id, p.property, value, done: done)
+        case .area, .project, .status:
+            model.set(id, p.property, value, done: done)
         case .type:
-            model.setType(id, value)
+            model.setType(id, value, done: done)
         case .due:
             return  // dates go through applyDue
         }
-        record(p, display: value, dotted: true)
     }
 
     private func applyDue(day: Int64) {
         guard let id = savedId else { return }
-        model.setSpan(id, "due", start: Civil.stamp(day: day, hhmm: 0), end: 0, dateOnly: true)
-        record(.due, display: "Due \(captureDayName(day))", dotted: false)
+        model.setSpan(
+            id, "due", start: Civil.stamp(day: day, hhmm: 0), end: 0, dateOnly: true
+        ) { ok in
+            guard ok else { return captureFailed() }
+            record(.due, display: "Due \(captureDayName(day))", dotted: false)
+        }
     }
 
     private func record(_ p: CapturePick, display: String, dotted: Bool) {
@@ -512,6 +539,10 @@ struct CaptureSheet: View {
             CaptureDuePicker { day in applyDue(day: day) }
         case .status:
             CaptureStatusPicker(model: model) { v in apply(.status, value: v) }
+        case .area:
+            CaptureAreaPicker(model: model) { v in apply(.area, value: v) }
+        case .type:
+            CaptureTypePicker { v in apply(.type, value: v) }
         default:
             CaptureValuePicker(pick: p, model: model) { v in apply(p, value: v) }
         }
@@ -695,19 +726,25 @@ private struct CaptureValuePicker: View {
                 .foregroundStyle(LivTheme.text)
                 .focused($focused)
                 .submitLabel(.done)
+                // Values are verbatim too — "errands" must not become
+                // "Errands" on its way into a cell.
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
                 .onSubmit { if creatable { choose(trimmed) } }
                 .padding(.horizontal, 10)
                 .frame(height: 34)
                 .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    ForEach(filtered, id: \.self) { v in
+                        row(dot: Hue.dot(v), label: v) { choose(v) }
+                    }
+                    // Create-new stays — real life varies here — but LAST:
+                    // the furniture leads, the door does not (§10).
                     if creatable {
                         row(icon: "plus", tint: LivTheme.accent, label: "Create \u{201C}\(trimmed)\u{201D}") {
                             choose(trimmed)
                         }
-                    }
-                    ForEach(filtered, id: \.self) { v in
-                        row(dot: Hue.dot(v), label: v) { choose(v) }
                     }
                     if values.isEmpty && trimmed.isEmpty {
                         EmptyHint("No values yet — type to create one.")
@@ -748,6 +785,144 @@ private struct CaptureValuePicker: View {
                 Text(label)
                     .font(.system(size: 13.5))
                     .foregroundStyle(icon == nil ? LivTheme.text : tint)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+}
+
+// MARK: - the area picker: the six areas of life, NO create-new (§10)
+
+/// The one filing question — "which part of life?" — answered from fixed
+/// furniture. Rows are the canonical six unioned with whatever the box
+/// already holds (live select options off the snapshot, plus distinct
+/// values for a legacy text `area`); there is deliberately no create row
+/// and no type-to-create field.
+struct CaptureAreaPicker: View {
+    let model: BoxModel
+    let onPick: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var extras: [String] = []
+
+    /// Canonical six first, then anything extra the box carries.
+    private var rows: [String] {
+        var out = Furnish.areaNames
+        for v in extras
+        where !out.contains(where: { $0.compare(v, options: .caseInsensitive) == .orderedSame }) {
+            out.append(v)
+        }
+        return out
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("AREA")
+                .font(.system(size: 9.5, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(LivTheme.text3)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(rows, id: \.self) { v in
+                        areaRow(v)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(LivTheme.canvas)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            // Live options off the snapshot the model already holds…
+            let held = (model.snap?.properties ?? [])
+                .first { ($0.name ?? "").compare("area", options: .caseInsensitive) == .orderedSame }?
+                .options?.filter { $0.hidden != true }.compactMap { $0.name } ?? []
+            extras = held
+            // …unioned with distinct live values (a legacy text `area`).
+            model.distinctValues(property: "area") { live in
+                var merged = held
+                for v in live
+                where !merged.contains(where: { $0.compare(v, options: .caseInsensitive) == .orderedSame }) {
+                    merged.append(v)
+                }
+                extras = merged
+            }
+        }
+    }
+
+    private func areaRow(_ v: String) -> some View {
+        Button {
+            onPick(v)
+            dismiss()
+        } label: {
+            HStack(spacing: 8) {
+                Circle().fill(Hue.dot(v)).frame(width: 6, height: 6)
+                Text(v)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(LivTheme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+}
+
+// MARK: - the type picker: the fixed kinds, NO create-new (§10)
+
+/// Kinds are ours and they don't grow: note · task · event · person ·
+/// link (photos are born through the camera). The old picker offered a
+/// create-a-type row whose write the core refused anyway.
+struct CaptureTypePicker: View {
+    let onPick: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TYPE")
+                .font(.system(size: 9.5, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(LivTheme.text3)
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(captureFixedKinds, id: \.self) { kind in
+                        typeRow(kind)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(LivTheme.canvas)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func typeRow(_ kind: String) -> some View {
+        Button {
+            onPick(kind)
+            dismiss()
+        } label: {
+            HStack(spacing: 8) {
+                Circle().fill(Hue.dot(kind)).frame(width: 6, height: 6)
+                Text(kind)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(LivTheme.text)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -956,7 +1131,9 @@ struct EntityChipRow: View {
         if (row.kinds ?? []).contains("task"), let status = row.status, !status.isEmpty {
             out.append(CaptureApplied(pick: .status, display: status, dotted: true))
         }
-        let picks: [(CapturePick, String)] = [(.tag, "subjects"), (.project, "project"), (.person, "people")]
+        let picks: [(CapturePick, String)] = [
+            (.area, "area"), (.tag, "subjects"), (.project, "project"), (.person, "people"),
+        ]
         for (pick, property) in picks {
             for cell in row.cells ?? [] where cell.property == property {
                 guard let v = cell.value, !v.isEmpty else { continue }
@@ -973,12 +1150,14 @@ struct EntityChipRow: View {
         return out
     }
 
-    /// Mirrors the capture sheet's chipSection: Status only for tasks; Tag
-    /// and Person always (multi-valued); the rest only while absent.
+    /// Mirrors the capture sheet's chipSection: Area leads (the one filing
+    /// question); Status only for tasks; Tag and Person always
+    /// (multi-valued); the rest only while absent.
     private var addChips: [CapturePick] {
         guard let row else { return [] }
         let kinds = row.kinds ?? []
         var out: [CapturePick] = []
+        if !hasCell("area") { out.append(.area) }
         if kinds.contains("task"), (row.status ?? "").isEmpty { out.append(.status) }
         out.append(.tag)
         if !hasCell("project") { out.append(.project) }
@@ -998,19 +1177,32 @@ struct EntityChipRow: View {
             CaptureDuePicker { day in
                 model.setSpan(
                     id, "due", start: Civil.stamp(day: day, hhmm: 0), end: 0,
-                    dateOnly: true)
+                    dateOnly: true, done: buzzUnless)
             }
         case .status:
-            CaptureStatusPicker(model: model) { v in model.set(id, "status", v) }
+            CaptureStatusPicker(model: model) { v in
+                model.set(id, "status", v, done: buzzUnless)
+            }
+        case .area:
+            CaptureAreaPicker(model: model) { v in
+                model.set(id, "area", v, done: buzzUnless)
+            }
+        case .type:
+            CaptureTypePicker { v in model.setType(id, v, done: buzzUnless) }
         default:
             CaptureValuePicker(pick: p, model: model) { v in
                 switch p {
-                case .tag, .person: model.addCell(id, p.property, v)
-                case .project: model.set(id, p.property, v)
-                case .type: model.setType(id, v)
+                case .tag, .person: model.addCell(id, p.property, v, done: buzzUnless)
+                case .project: model.set(id, p.property, v, done: buzzUnless)
                 default: break
                 }
             }
         }
+    }
+
+    /// The chips here render off the live row — the box is the truth — so
+    /// honesty needs only the failure signal: a refused write buzzes.
+    private func buzzUnless(_ ok: Bool) {
+        if !ok { UINotificationFeedbackGenerator().notificationOccurred(.error) }
     }
 }

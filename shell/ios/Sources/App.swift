@@ -47,6 +47,11 @@ struct RootView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var bootApplied = false
+    /// The furnishing pass runs once per launch, on the FIRST decoded
+    /// snapshot. Cross-launch idempotence is Furnish's presence guards,
+    /// never this flag (it only stops re-entry from the refreshes the
+    /// pass itself triggers).
+    @State private var furnished = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -110,7 +115,12 @@ struct RootView: View {
             // titles current when an entity is renamed after capture.
             bindOutboxTitles()
             workspaces.apply(snap)
-            guard !bootApplied, let snap else { return }
+            guard let snap else { return }
+            if !furnished {
+                furnished = true
+                Furnish.run(snap, box: box)
+            }
+            guard !bootApplied else { return }
             bootApplied = true
             applyBootState(snap)
         }

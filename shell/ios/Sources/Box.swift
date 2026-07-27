@@ -63,6 +63,16 @@ struct PropertyRow: Decodable {
     var usage: Int?
     var icon: String?
     var hideWhenEmpty: Bool?
+    /// A select property's vocabulary (the wire's OptionRow list; empty for
+    /// other kinds). The area picker reads it live off the snapshot.
+    var options: [PropertyOptionRow]?
+}
+
+/// One option of a select property. Every field Optional — the standing law.
+struct PropertyOptionRow: Decodable {
+    var id: UInt64?
+    var name: String?
+    var hidden: Bool?
 }
 
 struct KindRow: Decodable {
@@ -293,11 +303,16 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    private func act(_ verb: String, _ work: @escaping () -> Bool) {
+    /// `done` (optional) always receives the verdict — the chip-honesty
+    /// seam: a caller may show an applied chip ONLY inside `done(true)`.
+    private func act(
+        _ verb: String, _ done: ((Bool) -> Void)? = nil, _ work: @escaping () -> Bool
+    ) {
         boxQueue.async {
             let ok = work()
             if !ok { self.verbFailed(verb) }
             DispatchQueue.main.async {
+                done?(ok)
                 if ok { self.refresh() }
             }
         }
@@ -327,25 +342,28 @@ final class BoxModel: ObservableObject {
         actId("createEvent", Outbox.tracking(.event, done)) { liv_create_event_at(self.path, dueCivil, dateOnly ? 1 : 0) }
     }
 
-    func set(_ id: UInt64, _ property: String, _ value: String) {
-        act("set") { liv_set_at(self.path, id, property, value) == 1 }
+    func set(_ id: UInt64, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+        act("set", done) { liv_set_at(self.path, id, property, value) == 1 }
     }
 
     /// One span write (the mirror contract). end <= 0 = no end (plain date);
     /// dateOnly applies to both ends.
-    func setSpan(_ id: UInt64, _ property: String, start: Int64, end: Int64, dateOnly: Bool) {
-        act("setSpan") {
+    func setSpan(
+        _ id: UInt64, _ property: String, start: Int64, end: Int64, dateOnly: Bool,
+        done: ((Bool) -> Void)? = nil
+    ) {
+        act("setSpan", done) {
             liv_set_span_at(self.path, id, property, start, end <= 0 ? 0 : end, dateOnly ? 1 : 0) == 1
         }
     }
 
-    func setType(_ id: UInt64, _ type: String) {
-        act("setType") { liv_set_type_at(self.path, id, type) == 1 }
+    func setType(_ id: UInt64, _ type: String, done: ((Bool) -> Void)? = nil) {
+        act("setType", done) { liv_set_type_at(self.path, id, type) == 1 }
     }
 
     /// One cell of a multi-valued property — membership, never replace-all.
-    func addCell(_ id: UInt64, _ property: String, _ value: String) {
-        act("addCell") { liv_add_cell_at(self.path, id, property, value) == 1 }
+    func addCell(_ id: UInt64, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+        act("addCell", done) { liv_add_cell_at(self.path, id, property, value) == 1 }
     }
 
     /// The librarian: by reference, never moves the file.
@@ -398,6 +416,16 @@ final class BoxModel: ObservableObject {
     func addProperty(_ name: String, kind: String = "text", done: ((UInt64) -> Void)? = nil) {
         actId("addProperty", done) {
             liv_add_property_at(self.path, name, kind)
+        }
+    }
+
+    /// Mint an option for a select/status property, BY PROPERTY ID (the
+    /// snapshot's properties[] carries it). Idempotent in the core: an
+    /// existing name returns the existing option's id — never a duplicate.
+    /// 0 = refusal (unknown/trashed property, wrong kind, empty name).
+    func addOption(_ property: UInt64, _ name: String, done: ((UInt64) -> Void)? = nil) {
+        actId("addOption", done) {
+            liv_add_option_at(self.path, property, name)
         }
     }
 

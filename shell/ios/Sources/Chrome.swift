@@ -6,6 +6,7 @@
 // state — tabs persist per device in UserDefaults, never as cells.
 
 import SwiftUI
+import UIKit
 
 /// Ink for solid amber fills (the desktop's onYellowInk; Kit's copy is
 /// file-private).
@@ -356,7 +357,8 @@ struct WorkspaceSwitcher: View {
                 ForEach(workspaces.workspaces) { ws in
                     choice(
                         name: ws.display, detail: queryDetail(ws),
-                        active: workspaces.activeId == ws.id, icon: "house"
+                        active: workspaces.activeId == ws.id, icon: "house",
+                        emoji: ws.emoji
                     ) {
                         choose(ws.id)
                     }
@@ -439,16 +441,24 @@ struct WorkspaceSwitcher: View {
         if close { dismiss() }
     }
 
+    /// A workspace's own emoji leads its row (the furnished areas each
+    /// carry one); the SF Symbol is the emoji-less fallback.
     private func choice(
         name: String, detail: String, active: Bool, icon: String,
-        action: @escaping () -> Void
+        emoji: String? = nil, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .foregroundStyle(active ? LivTheme.accent : LivTheme.text3)
-                    .frame(width: 18)
+                if let emoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 13))
+                        .frame(width: 18)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 12))
+                        .foregroundStyle(active ? LivTheme.accent : LivTheme.text3)
+                        .frame(width: 18)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(name)
                         .font(.system(size: 13.5, weight: active ? .semibold : .regular))
@@ -649,7 +659,10 @@ struct WorkspaceSwitcher: View {
 
 // MARK: - settings (relocated from Today's header; the chrome owns the gear)
 
-/// Facts and notes only — Settings never writes cells. The Handoff section
+/// Facts and notes — plus the ONE schema door (§10): Fields, where a new
+/// property definition is minted. Settings still never writes cells on
+/// entities; the inspector's old "+ property" moved here because schema
+/// growth is possible, not daily use. The Handoff section
 /// (design/ios.md §2.2) is the funnel's honesty surface: the status card,
 /// the per-item Pending/Shipped/Delivered ledger, "Ship now", and the
 /// satellite-path row (dev-grade paste field — file pickers arrive with
@@ -658,6 +671,8 @@ struct SettingsSheet: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var outbox: Outbox
     @State private var pathDraft = ""
+    @State private var addingField = false
+    @State private var fieldDraft = ""
 
     var body: some View {
         ScrollView {
@@ -674,6 +689,9 @@ struct SettingsSheet: View {
                 Text("\(box.snap?.entities?.count ?? 0) entities")
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)
+                SectionLabel("Fields")
+                    .padding(.top, 10)
+                fieldsRow
                 SectionLabel("Handoff")
                     .padding(.top, 10)
                 statusCard
@@ -701,6 +719,102 @@ struct SettingsSheet: View {
         .presentationBackground(LivTheme.surface)
         // Read-only refresh: acks on disk become Delivered chips.
         .onAppear { outbox.scanAcks() }
+    }
+
+    // The Fields door (§10): the schema the box holds, and the ONE place a
+    // new field is born. Relocated from the inspector's "+ property" row —
+    // adding a kind of field is possible, never in the flow of daily use.
+
+    /// The box's field vocabulary, usage-desc, off the live snapshot.
+    private var fieldNames: [String] {
+        (box.snap?.properties ?? [])
+            .sorted { ($0.usage ?? 0) > ($1.usage ?? 0) }
+            .compactMap { $0.name }
+            .filter { !$0.isEmpty }
+    }
+
+    @ViewBuilder private var fieldsRow: some View {
+        if !fieldNames.isEmpty {
+            Text(fieldNames.joined(separator: " · "))
+                .font(.system(size: 11))
+                .foregroundStyle(LivTheme.text3)
+                .lineLimit(3)
+        }
+        if addingField {
+            HStack(spacing: 8) {
+                TextField("Name the new field", text: $fieldDraft)
+                    .font(.system(size: 12))
+                    .foregroundStyle(LivTheme.text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit(createField)
+                Button("Create", action: createField)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(fieldDraftReady ? LivTheme.accent : LivTheme.muted)
+                    .buttonStyle(.plain)
+                    .disabled(!fieldDraftReady)
+                Button {
+                    addingField = false
+                    fieldDraft = ""
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
+            )
+        } else {
+            Button {
+                addingField = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Add your own field…")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                }
+                .foregroundStyle(LivTheme.accent)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add your own field")
+        }
+    }
+
+    private var fieldDraftReady: Bool {
+        let name = fieldDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return false }
+        // Minting a duplicate is refused by the core anyway; disable the
+        // button rather than offer a refusal.
+        return !fieldNames.contains {
+            $0.compare(name, options: .caseInsensitive) == .orderedSame
+        }
+    }
+
+    /// Births a TEXT property — the same implicit kind the inspector's old
+    /// flow assumed. Other kinds stay a desktop/CLI affair for now.
+    private func createField() {
+        let name = fieldDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard fieldDraftReady else { return }
+        box.addProperty(name) { id in
+            guard id != 0 else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            fieldDraft = ""
+            addingField = false
+        }
     }
 
     // The status card: honest counts, or the shipping-off notice.

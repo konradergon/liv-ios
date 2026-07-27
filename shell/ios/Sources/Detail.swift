@@ -1,6 +1,8 @@
 // liv iOS — the metadata editor (design/ios.md §6). EntityInspector is
 // the desktop right-panel inspector, full-bleed: kinds, due shortcuts,
-// status menu, one compact row per property, add-property, trash + undo.
+// status menu, one compact row per property, trash + undo. Add-property
+// moved behind the Settings door (§10 — schema growth is not daily use);
+// the Details chip row still adds values for the fixed fields.
 // The Desk body owns the title; EntityDetailView stays as a thin pushed
 // wrapper (title + inspector) for the NavigationStack callers. Content
 // editing waits for M2 (CAS). Rows 40pt+, hairline separators, no cards.
@@ -17,7 +19,6 @@ struct EntityInspector: View {
 
     @State private var options: [StatusOption] = []
     @State private var showDueSheet = false
-    @State private var showAddSheet = false
     @State private var confirmTrash = false
 
     init(id: UInt64) {
@@ -49,9 +50,6 @@ struct EntityInspector: View {
             )
             .presentationDetents([.medium])
         }
-        .sheet(isPresented: $showAddSheet) {
-            DetailAddSheet(box: box, id: id)
-        }
         .tint(LivTheme.accent)
         .onAppear {
             box.statusOptions(kind: box.entity(id)?.kinds?.first ?? "") {
@@ -74,7 +72,6 @@ struct EntityInspector: View {
                 ForEach(DetailCellGroup.groups(row, skipping: skipSet(row))) {
                     cellRow($0)
                 }
-                addRow
                 footer(row)
             }
             .padding(.horizontal, 16)
@@ -211,16 +208,6 @@ struct EntityInspector: View {
                 .foregroundStyle(LivTheme.text)
                 .multilineTextAlignment(.trailing)
         }
-    }
-
-    // MARK: add-property
-
-    private var addRow: some View {
-        HStack {
-            AddChip("Property", big: true) { showAddSheet = true }
-            Spacer(minLength: 0)
-        }
-        .frame(minHeight: 44)
     }
 
     // MARK: trash + undo (toolbar verbs relocated; the inspector has no bar)
@@ -445,165 +432,6 @@ struct DetailDueSheet: View {
 
     private func preview(_ day: Int64) -> String {
         Civil.dayLabel(day)
-    }
-}
-
-// MARK: - the add-property sheet (three-layer: used values -> create-new)
-
-/// Two steps in one sheet: pick the property (usage-desc suggestions off
-/// the snapshot, create-new allowed), then its value (distinct live
-/// values, create-new allowed). Commits via addCell — membership, never
-/// replace: the least destructive arity for a generic add. Datetime
-/// properties are excluded; dates go through the due row's sheet.
-private struct DetailAddSheet: View {
-    let box: BoxModel
-    let id: UInt64
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var property: String? = nil  // nil = still picking the property
-    @State private var typed = ""
-    @State private var values: [String] = []  // count-desc, as the seam sent them
-    @FocusState private var focused: Bool
-
-    private var trimmed: String {
-        typed.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Property suggestions: snapshot vocabulary, usage-desc. "name" is
-    /// the title's; datetime kinds route through the due sheet instead.
-    private var propertyNames: [String] {
-        (box.snap?.properties ?? [])
-            .filter {
-                let n = $0.name ?? ""
-                return !n.isEmpty && n != "name" && $0.kind != "datetime"
-            }
-            .sorted { ($0.usage ?? 0) > ($1.usage ?? 0) }
-            .compactMap { $0.name }
-    }
-
-    private var choices: [String] {
-        let all = property == nil ? propertyNames : values
-        return trimmed.isEmpty
-            ? all
-            : all.filter { $0.localizedCaseInsensitiveContains(trimmed) }
-    }
-
-    private var creatable: Bool {
-        let all = property == nil ? propertyNames : values
-        return !trimmed.isEmpty
-            && !all.contains { $0.compare(trimmed, options: .caseInsensitive) == .orderedSame }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            TextField(property == nil ? "Search or create a property…" : "Search or create…", text: $typed)
-                .font(.system(size: 14))
-                .foregroundStyle(LivTheme.text)
-                .focused($focused)
-                .submitLabel(.done)
-                .onSubmit { if creatable { choose(trimmed) } }
-                .padding(.horizontal, 10)
-                .frame(height: 34)
-                .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if creatable {
-                        row(icon: "plus", tint: LivTheme.accent, label: "Create \u{201C}\(trimmed)\u{201D}") {
-                            choose(trimmed)
-                        }
-                    }
-                    ForEach(choices, id: \.self) { v in
-                        row(dot: property == nil ? nil : Hue.dot(v), label: v) {
-                            choose(v)
-                        }
-                    }
-                    if choices.isEmpty && trimmed.isEmpty {
-                        EmptyHint(
-                            property == nil
-                                ? "No properties yet — type to create one."
-                                : "No values yet — type to create one.")
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(LivTheme.canvas)
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
-        .onAppear {
-            // Sheets steal first responder; focus after the slide settles.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { focused = true }
-        }
-    }
-
-    /// Step 1 header is a label; step 2's is a back button to re-pick.
-    @ViewBuilder private var header: some View {
-        if let property {
-            Button {
-                self.property = nil
-                typed = ""
-                values = []
-                focused = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 9, weight: .bold))
-                    Text(property.uppercased())
-                        .font(.system(size: 9.5, weight: .bold))
-                        .kerning(0.6)
-                }
-                .foregroundStyle(LivTheme.text3)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        } else {
-            Text("ADD PROPERTY")
-                .font(.system(size: 9.5, weight: .bold))
-                .kerning(0.6)
-                .foregroundStyle(LivTheme.text3)
-        }
-    }
-
-    private func choose(_ v: String) {
-        if let property {
-            box.addCell(id, property, v)
-            dismiss()
-        } else {
-            property = v
-            typed = ""
-            values = []
-            // Once per property pick, never per keystroke.
-            box.distinctValues(property: v) { values = $0 }
-            focused = true
-        }
-    }
-
-    private func row(
-        icon: String? = nil, tint: Color = LivTheme.text2, dot: Color? = nil,
-        label: String, action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                if let icon {
-                    Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(tint)
-                }
-                if let dot {
-                    Circle().fill(dot).frame(width: 6, height: 6)
-                }
-                Text(label)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(icon == nil ? LivTheme.text : tint)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .frame(height: 40)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { DetailHairline() }
     }
 }
 

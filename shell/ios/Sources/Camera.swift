@@ -27,20 +27,24 @@ private struct CameraApplied: Identifiable {
     var id: String { property + ":" + value }
 }
 
-/// Tag/person are multi-valued (addCell = membership); project replaces.
+/// Tag/person are multi-valued (addCell = membership); project and area
+/// replace. Area is fixed furniture: its editor offers the six options
+/// only — no type-to-create (§10's door rule).
 private enum CameraChipKind: String, Identifiable {
-    case tag, project, person
+    case area, tag, project, person
     var id: String { rawValue }
     var property: String {
         switch self {
+        case .area: return "area"
         case .tag: return "subjects"
         case .project: return "project"
         case .person: return "people"
         }
     }
-    var multi: Bool { self != .project }
+    var multi: Bool { self == .tag || self == .person }
     var label: String {
         switch self {
+        case .area: return "Area"
         case .tag: return "Tag"
         case .project: return "Project"
         case .person: return "Person"
@@ -477,6 +481,8 @@ struct CameraFlow: View {
                     ForEach(applied[target] ?? []) { chip in
                         ValueChip(chip.value)
                     }
+                    // Fixed furniture leads: Area is the one filing question.
+                    AddChip("Area") { openChip(.area) }
                     AddChip("Tag") { openChip(.tag) }
                     AddChip("Project") { openChip(.project) }
                     AddChip("Person") { openChip(.person) }
@@ -507,38 +513,57 @@ struct CameraFlow: View {
     }
 
     /// Three-layer lite: used values (count-desc, fetched once on open) →
-    /// type-to-create. Commit fires the verb(s) and closes.
+    /// type-to-create. Commit fires the verb(s) and closes. Area is the
+    /// exception (§10): a pick-only row of the six areas — no text field,
+    /// no create.
     private var chipEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                TextField(
-                    "New \(adding?.label.lowercased() ?? "value")",
-                    text: $chipText
-                )
-                .font(.system(size: 13))
-                .textFieldStyle(.plain)
-                .submitLabel(.done)
-                .onSubmit { applyChip(chipText) }
-                .padding(.horizontal, 9)
-                .frame(height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                        .fill(LivTheme.panel)
-                )
-                Button { applyChip(chipText) } label: {
-                    Text("Add")
+            if adding == .area {
+                HStack(spacing: 6) {
+                    Text("Area")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
+                        .foregroundStyle(LivTheme.text2)
+                    Spacer()
+                    Button {
+                        adding = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(LivTheme.text3)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                Button {
-                    adding = nil
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
+            } else {
+                HStack(spacing: 6) {
+                    TextField(
+                        "New \(adding?.label.lowercased() ?? "value")",
+                        text: $chipText
+                    )
+                    .font(.system(size: 13))
+                    .textFieldStyle(.plain)
+                    .submitLabel(.done)
+                    .onSubmit { applyChip(chipText) }
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                            .fill(LivTheme.panel)
+                    )
+                    Button { applyChip(chipText) } label: {
+                        Text("Add")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(LivTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        adding = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(LivTheme.text3)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
             if !filteredSuggestions.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -565,6 +590,8 @@ struct CameraFlow: View {
     }
 
     private var filteredSuggestions: [String] {
+        // Area is pick-only: every option stays visible, nothing filters.
+        if adding == .area { return suggestions }
         let typed = chipText.trimmingCharacters(in: .whitespaces)
         let pool =
             typed.isEmpty
@@ -680,27 +707,47 @@ struct CameraFlow: View {
     private func openChip(_ kind: CameraChipKind) {
         adding = kind
         chipText = ""
-        suggestions = []
-        model.distinctValues(property: kind.property) { suggestions = $0 }
+        if kind == .area {
+            // Fixed furniture first; union in whatever the box holds.
+            suggestions = Furnish.areaNames
+            model.distinctValues(property: "area") { live in
+                var merged = Furnish.areaNames
+                for v in live
+                where !merged.contains(where: {
+                    $0.compare(v, options: .caseInsensitive) == .orderedSame
+                }) {
+                    merged.append(v)
+                }
+                suggestions = merged
+            }
+        } else {
+            suggestions = []
+            model.distinctValues(property: kind.property) { suggestions = $0 }
+        }
     }
 
-    /// One verb per entity: membership properties addCell, project sets.
+    /// One verb per entity: membership properties addCell, project/area
+    /// set. Chip honesty: the chip is recorded ONLY in the verb's success
+    /// callback — a refused write buzzes and leaves no chip.
     private func applyChip(_ raw: String) {
         guard let kind = adding else { return }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
         let ids = applyAll ? shots.map(\.id) : [target]
         for id in ids where id != 0 {
-            if kind.multi {
-                model.addCell(id, kind.property, value)
-            } else {
-                model.set(id, kind.property, value)
+            let done: (Bool) -> Void = { ok in
+                guard ok else { return CameraFlow.buzz() }
+                var list = applied[id, default: []]
+                let chip = CameraApplied(property: kind.property, value: value)
+                if !list.contains(where: { $0.id == chip.id }) {
+                    list.append(chip)
+                    applied[id] = list
+                }
             }
-            var list = applied[id, default: []]
-            let chip = CameraApplied(property: kind.property, value: value)
-            if !list.contains(where: { $0.id == chip.id }) {
-                list.append(chip)
-                applied[id] = list
+            if kind.multi {
+                model.addCell(id, kind.property, value, done: done)
+            } else {
+                model.set(id, kind.property, value, done: done)
             }
         }
         adding = nil
