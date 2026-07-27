@@ -55,7 +55,9 @@ tomorrow, your work wouldn't.
 
 The furniture, fixed and few. This is the product.
 
-**Areas of life** — Personal · Work · Home · Health · Money
+**Areas of life** — Work · Health · Money · Home · Family & Friends · Learning
+  *(the six that recur across PARA, the Wheel of Life, Ultimate Brain and
+  Things' own examples — researched, not invented; 2026-07-27)*
 **Fields** — Due · Status · Area · Project · People · Tags
 **Kinds of thing** — Note · Task · Event · Photo · Person · Link
 
@@ -75,7 +77,7 @@ not in the flow of daily use.
 ## The cost of this, stated honestly
 
 Deciding for people means being wrong for some of them. Someone whose life
-doesn't divide into these five areas will feel the walls. That is the
+doesn't divide into these six areas will feel the walls. That is the
 trade: we lose the person who wants to build their own system, and we win
 the far larger number who never wanted to.
 

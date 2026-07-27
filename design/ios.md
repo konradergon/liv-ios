@@ -417,3 +417,34 @@ box, not a notes app. That hole is bigger than notifications.
   (services, additive, test-first — see the M2 commit's known delta).
 - **Later** — P4 note sync via vault mediation / oplog destination.
   (P3 messages: killed 2026-07-26, see §4.)
+
+## 10. The furnishing (M5-furnish, owner thesis 2026-07-27)
+
+The app arrives furnished (design/what-liv-is-for.md v2). The furniture is
+the RESEARCHED convergence of proven systems (PARA, GTD, Things 3, Wheel
+of Life, the Notion template canon — see the furnish-research pass), not
+invention. All of it lands from the SHELL via existing verbs, idempotently,
+per-item-guarded like the core seed; services stays untouched.
+
+- **Six areas as workspaces** — Work 💼 · Health 💪 · Money 💰 · Home 🏠 ·
+  Family & Friends ❤️ · Learning 📚 — each a workspace whose query is
+  `area:<Name>` (quoted where spaced), so the M4 switcher IS the area
+  switcher: one concept, lens + stamp. The protected builtin Home
+  workspace BECOMES the Home area (gains query + emoji) — never a second
+  "Home" beside it.
+- **The `area` property** — select, exactly six options, no create-new in
+  its picker. The one filing question is "which part of life?"
+- **`project`, `subjects`, `people`** — text properties, created at
+  furnish time. This also fixes a real fresh-box bug: the capture-sheet
+  and camera chips currently write NOTHING on a fresh box (the properties
+  don't exist; `set` refuses; the chip shows success anyway).
+- **Values stay open where life varies**: project/tag/people pickers keep
+  create-new, LAST. The Type picker is the six kinds, no create. The
+  inspector's "+ property" (schema growth) moves behind the Settings door.
+- **No trackers, no review ceremonies, no Someday list** — the research's
+  documented failure modes (classification ambiguity, ritual burnout,
+  property sprawl, graveyard lists) are honored by absence. Groceries and
+  habits are recorded as proven candidates, deliberately deferred.
+- Idempotence: presence-checked per item against the snapshot on every
+  launch (the seed's own pattern) — reinstall-safe, existing boxes simply
+  gain what's missing, nothing ever duplicates.
