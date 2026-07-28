@@ -411,6 +411,10 @@ box, not a notes app. That hole is bigger than notifications.
     them). **One filter grammar everywhere** — search, tasks, files.
 - **M5 — P2 time**: notification scheduler; widgets + App Intents;
   Calendar surface.
+  **Status 2026-07-28: scheduler + Calendar shipped** (commit b9593be —
+  reminders fire and were delivered live; the clamp and the
+  kinds-or-status predicate fixes rode along). Widgets + App Intents
+  remain Xcode-gated, with the share extension.
 - **M6 — sync, the rest of it**: the read-back "On the Mac" mirror; iCloud
   transport (needs the Xcode project's entitlements); phase-2
   `ImportItem` variants + the retype card; the provenance label ask
