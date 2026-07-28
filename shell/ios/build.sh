@@ -13,7 +13,7 @@ swiftc -O -parse-as-library \
     Sources/*.swift \
     -sdk "$SDK" \
     -target arm64-apple-ios17.0-simulator \
-    -import-objc-header ../macos/liv.h \
+    -import-objc-header ../../ffi/liv.h \
     -L ../../target/aarch64-apple-ios-sim/release -lliv_ffi \
     -framework SwiftUI -framework UIKit -framework AVFoundation \
     -o build/Liv.app/Liv

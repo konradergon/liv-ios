@@ -1,9 +1,9 @@
 /target
 .DS_Store
 
-# The macOS shell's built binary — a build artifact, not source. Kept on disk
-# (build.sh writes it) but out of git; it bloated history at ~7MB per commit.
-/shell/macos/build/
+# Built binaries — artifacts, not source. Kept on disk (build.sh writes
+# them) but out of git; they bloated history at ~7MB per commit.
+/archive/macos-shell/build/
 
 # Local Liv reference material — never part of the liv repo
 /Programming the productivity app/
