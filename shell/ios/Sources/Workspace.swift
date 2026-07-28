@@ -373,15 +373,23 @@ final class WorkspaceModel: ObservableObject {
     /// Not stamping in a filtered surface is the worse bug: you add a task
     /// while looking at Work, it does not get `area:Work`, and it vanishes
     /// from the list you are staring at.
+    /// `landed` reports what the box ACCEPTED, one call per cell. A verb can
+    /// refuse — a select value with no matching option, a property that does
+    /// not exist — and a refusal must never be drawn as an applied chip. The
+    /// return value is the intent; only `landed` is evidence.
     @discardableResult
-    func stamp(_ id: UInt64, in box: BoxModel) -> [(property: String, value: String)] {
+    func stamp(
+        _ id: UInt64, in box: BoxModel,
+        landed: (((property: String, value: String)) -> Void)? = nil
+    ) -> [(property: String, value: String)] {
         let cells = stampCells
         guard id != 0, !cells.isEmpty else { return [] }
         for cell in cells {
+            let done: (Bool) -> Void = { ok in if ok { landed?(cell) } }
             if cell.property == "type" {
-                box.setType(id, cell.value)
+                box.setType(id, cell.value, done: done)
             } else {
-                box.set(id, cell.property, cell.value)
+                box.set(id, cell.property, cell.value, done: done)
             }
         }
         return cells

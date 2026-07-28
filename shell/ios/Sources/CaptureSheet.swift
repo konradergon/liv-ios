@@ -346,8 +346,13 @@ struct CaptureSheet: View {
     /// No active workspace, or a query with no equality term, changes
     /// nothing at all.
     private func stamp(_ id: UInt64) {
-        stamped = workspaces.stamp(id, in: model).map {
-            CaptureStamp(property: $0.property, value: $0.value)
+        // Chips are drawn from what LANDED, never from the intent: a select
+        // value with no matching option is refused by the box, and a chip
+        // for a cell that was never written is a lie the user acts on.
+        stamped = []
+        workspaces.stamp(id, in: model) { cell in
+            let chip = CaptureStamp(property: cell.property, value: cell.value)
+            if !stamped.contains(where: { $0.id == chip.id }) { stamped.append(chip) }
         }
     }
 
