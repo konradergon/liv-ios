@@ -670,6 +670,7 @@ struct WorkspaceSwitcher: View {
 struct SettingsSheet: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var outbox: Outbox
+    @ObservedObject private var notify = Notify.shared
     @State private var pathDraft = ""
     @State private var addingField = false
     @State private var fieldDraft = ""
@@ -692,6 +693,9 @@ struct SettingsSheet: View {
                 SectionLabel("Fields")
                     .padding(.top, 10)
                 fieldsRow
+                SectionLabel("Notifications")
+                    .padding(.top, 10)
+                notifyRows
                 SectionLabel("Handoff")
                     .padding(.top, 10)
                 statusCard
@@ -815,6 +819,78 @@ struct SettingsSheet: View {
             fieldDraft = ""
             addingField = false
         }
+    }
+
+    // The Notifications section (M5, Notify.swift): master toggle, the two
+    // per-kind lead pickers, and the 64-cap honesty line. All DEVICE state
+    // (UserDefaults) — Settings never writes cells. Every change rebuilds
+    // the pending queue from the snapshot in hand. Quiet hours: DEFERRED —
+    // reminders currently ring at any hour.
+
+    @ViewBuilder private var notifyRows: some View {
+        Toggle(isOn: notifyEnabled) {
+            Text("Due reminders")
+                .font(.system(size: 13))
+                .foregroundStyle(LivTheme.text)
+        }
+        .tint(LivTheme.accent)
+        .frame(minHeight: 30)
+        if notify.enabled {
+            leadRow("Tasks", selection: notifyLead(\.taskLead))
+            leadRow("Events", selection: notifyLead(\.eventLead))
+            Text(notifyCountLine)
+                .font(.system(size: 10.5).monospacedDigit())
+                .foregroundStyle(notify.denied ? LivTheme.red : LivTheme.muted)
+        }
+    }
+
+    private func leadRow(_ label: String, selection: Binding<NotifyLead>) -> some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(LivTheme.text2)
+                .frame(width: 44, alignment: .leading)
+            Picker(label, selection: selection) {
+                ForEach(NotifyLead.allCases) { lead in
+                    Text(lead.label).tag(lead)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .frame(minHeight: 30)
+    }
+
+    private var notifyEnabled: Binding<Bool> {
+        Binding(
+            get: { notify.enabled },
+            set: {
+                notify.enabled = $0
+                notify.rebuild(snapshot: box.snap, box: box)
+            })
+    }
+
+    private func notifyLead(
+        _ path: ReferenceWritableKeyPath<Notify, NotifyLead>
+    ) -> Binding<NotifyLead> {
+        Binding(
+            get: { notify[keyPath: path] },
+            set: {
+                notify[keyPath: path] = $0
+                notify.rebuild(snapshot: box.snap, box: box)
+            })
+    }
+
+    /// The honesty line: what the queue actually holds, and the iOS cap
+    /// that bounds it. A denial is stated, never papered over.
+    private var notifyCountLine: String {
+        if notify.denied {
+            return "Notifications are off for Liv in iOS Settings."
+        }
+        var line = "\(notify.scheduledCount) scheduled · iOS caps at 64"
+        if notify.droppedCount > 0 {
+            line += " — soonest kept, \(notify.droppedCount) dropped"
+        }
+        return line
     }
 
     // The status card: honest counts, or the shipping-off notice.

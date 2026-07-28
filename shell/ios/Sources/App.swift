@@ -4,6 +4,7 @@
 // bar: mode toggle far left, global search far right.
 
 import SwiftUI
+import UserNotifications
 
 @main
 struct LivApp: App {
@@ -13,6 +14,9 @@ struct LivApp: App {
     @StateObject private var workspaces = WorkspaceModel()
 
     init() {
+        // The delegate must exist before launch finishes, or a cold-start
+        // notification tap is dropped by the system (M5, Notify.swift).
+        UNUserNotificationCenter.current().delegate = Notify.shared
         // The span codec has no test target to live in (no Xcode project);
         // `simctl launch … -spans.selfcheck 1` runs its round-trips and
         // prints the failures. Silent = pass.
@@ -107,7 +111,12 @@ struct RootView: View {
                 Outbox.shared.closeBatch(snapshot: box.snap)
             }
         }
-        .onAppear { bindOutboxTitles() }
+        .onAppear {
+            bindOutboxTitles()
+            // A tapped notification lands as a desk tab (design/ios.md §3);
+            // Notify parks a cold-launch tap until this wiring exists.
+            Notify.shared.onOpen = { [weak desk] id in desk?.open(id) }
+        }
         .onReceive(box.$snap) { snap in
             // Rebind on every snapshot: assigning the resolver republishes the
             // ledger, and at .onAppear there is no snapshot to resolve against
@@ -115,6 +124,9 @@ struct RootView: View {
             // titles current when an entity is renamed after capture.
             bindOutboxTitles()
             workspaces.apply(snap)
+            // Every decoded snapshot rebuilds the notification schedule —
+            // the queue is a projection of the box, never patched (M5).
+            Notify.shared.rebuild(snapshot: snap, box: box)
             guard let snap else { return }
             if !furnished {
                 furnished = true
@@ -204,7 +216,7 @@ struct FeatureWindow: View {
             case .today: TodayView()
             case .inbox: InboxView()
             case .tasks: TasksView()
-            case .calendar: EmptyHint("Calendar arrives with M3.")
+            case .calendar: CalendarView()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
