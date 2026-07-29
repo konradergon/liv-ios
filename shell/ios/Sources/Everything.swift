@@ -20,9 +20,15 @@ import SwiftUI
 
 /// Which slice of the box is on screen.
 private enum EverythingLens: String, CaseIterable, Identifiable {
-    case all, unfiled
+    case all, upcoming, unfiled
     var id: String { rawValue }
-    var title: String { self == .all ? "All" : "Unfiled" }
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .upcoming: return "Upcoming"
+        case .unfiled: return "Unfiled"
+        }
+    }
 }
 
 struct EverythingView: View {
@@ -47,11 +53,7 @@ struct EverythingView: View {
                 picker
                     .padding(.vertical, 6)
                 if rows.isEmpty {
-                    EmptyHint(
-                        lens == .all
-                            ? "Nothing yet. Everything you capture lands here."
-                            : "Nothing unfiled — every item has an area."
-                    )
+                    EmptyHint(empty)
                 } else {
                     ForEach(rows) { row in line(row) }
                 }
@@ -68,6 +70,14 @@ struct EverythingView: View {
         .onAppear { box.refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { box.refresh() }
+        }
+    }
+
+    private var empty: String {
+        switch lens {
+        case .all: return "Nothing yet. Everything you capture lands here."
+        case .upcoming: return "Nothing dated in the next seven days."
+        case .unfiled: return "Nothing unfiled — every item has an area."
         }
     }
 
@@ -121,16 +131,11 @@ struct EverythingView: View {
                 }
             }
             Spacer(minLength: 8)
-            if let created = row.created, created > 0 {
-                // Today reads as a time, older as a date — a column of
-                // identical dates tells you nothing.
-                Text(
-                    Civil.day(of: created) == Civil.todayDay()
-                        ? Civil.timeString(created)
-                        : Civil.dayLabel(Civil.day(of: created))
-                )
+            if let trailing = trailing(row) {
+                Text(trailing)
                     .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
+                    .foregroundStyle(
+                        lens == .upcoming ? LivTheme.text2 : LivTheme.text3)
             }
         }
         .padding(.vertical, 4)
@@ -158,8 +163,40 @@ struct EverythingView: View {
         let all = (box.snap?.everything ?? [])
             .compactMap { box.entity($0) }
             .filter { $0.trashed != true && $0.archived != true }
-        let slice = lens == .all ? all : all.filter { area($0) == nil }
-        return slice.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
+        switch lens {
+        case .all:
+            return all.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
+        case .unfiled:
+            return all.filter { area($0) == nil }
+                .sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
+        case .upcoming:
+            // The next seven days, soonest first — the one slice sorted
+            // FORWARD, because "what is coming" reads in the order it will
+            // arrive. Today included: a thing due in an hour is upcoming.
+            let today = Civil.todayDay()
+            let horizon = Civil.addDays(today, 7)
+            return all
+                .filter { row in
+                    guard let due = row.due, due > 0 else { return false }
+                    let day = Civil.day(of: due)
+                    return day >= today && day <= horizon
+                }
+                .sorted { ($0.due ?? 0, $0.id) < ($1.due ?? 0, $1.id) }
+        }
+    }
+
+    /// Upcoming answers "when is it due"; the other slices answer "when did
+    /// I catch it". Today reads as a time either way — a column of identical
+    /// dates tells you nothing.
+    private func trailing(_ row: EntityRow) -> String? {
+        let stamp = lens == .upcoming ? row.due : row.created
+        guard let stamp, stamp > 0 else { return nil }
+        let day = Civil.day(of: stamp)
+        if day == Civil.todayDay() {
+            let time = Civil.timeString(stamp)
+            return time.isEmpty ? "today" : time
+        }
+        return Civil.dayLabel(day)
     }
 
     private func area(_ row: EntityRow) -> String? {

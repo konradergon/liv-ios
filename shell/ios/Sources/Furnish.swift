@@ -21,16 +21,6 @@ enum Furnish {
         "Work", "Health", "Money", "Home", "Family & Friends", "Learning",
     ]
 
-    /// The five area WORKSPACES to create. Home is deliberately absent:
-    /// the protected builtin Home workspace BECOMES the Home area (it
-    /// gains query + emoji below) — never a second "Home" beside it.
-    static let areaWorkspaces: [(name: String, emoji: String)] = [
-        ("Work", "\u{1F4BC}"),               // 💼
-        ("Health", "\u{1F4AA}"),             // 💪
-        ("Money", "\u{1F4B0}"),              // 💰
-        ("Family & Friends", "\u{2764}\u{FE0F}"),  // ❤️
-        ("Learning", "\u{1F4DA}"),           // 📚
-    ]
 
     /// The text fields the capture/camera chips write. `area` is separate:
     /// it is a select, born with its options.
@@ -65,7 +55,6 @@ private final class FurnishPass {
 
     func run(_ snap: Snapshot) {
         furnishProperties(snap)
-        furnishWorkspaces(snap)
         launched = true
         finishIfDone()
     }
@@ -114,44 +103,22 @@ private final class FurnishPass {
         }
     }
 
-    // MARK: c — the six areas as workspaces
+    // MARK: c — no workspaces
 
-    private func furnishWorkspaces(_ snap: Snapshot) {
-        let rows = snap.workspaces ?? []
-
-        // The builtin Home BECOMES the Home area: query + emoji, each only
-        // where absent/empty — a re-aimed or re-emojied Home stays the
-        // user's. Never create a workspace named Home.
-        if let home = rows.first(where: { ($0.builtin ?? "") == "home" }) {
-            if (home.query ?? "").isEmpty {
-                track()
-                box.set(home.id, "query", Furnish.areaQuery("Home")) { [self] _ in landed() }
-            }
-            if (home.emoji ?? "").isEmpty {
-                track()
-                box.set(home.id, "emoji", "\u{1F3E0}") { [self] _ in landed() }  // 🏠
-            }
-        }
-
-        for area in Furnish.areaWorkspaces {
-            guard area.name.compare("Home", options: .caseInsensitive) != .orderedSame,
-                !rows.contains(where: {
-                    ($0.name ?? "").compare(area.name, options: .caseInsensitive)
-                        == .orderedSame
-                })
-            else { continue }
-            track()
-            box.createWorkspace(name: area.name) { [self] id in
-                if id != 0 {
-                    track()
-                    box.set(id, "query", Furnish.areaQuery(area.name)) { [self] _ in landed() }
-                    track()
-                    box.set(id, "emoji", area.emoji) { [self] _ in landed() }
-                }
-                landed()
-            }
-        }
-    }
+    /// The six areas are FIELD VALUES, not places (design/furnishing-study.md).
+    /// They were furnished as six workspaces until 2026-07-29; that made
+    /// filing a mode you had to enter BEFORE typing, and put the app's most
+    /// ambiguous question — is the child's dentist Health or Family? — in
+    /// front as the primary navigation. The study measured 4 of 7 ordinary
+    /// captures with no defensible area.
+    ///
+    /// A workspace is now what the owner says it is: a working context the
+    /// USER makes, which presets fields on new objects and filters the
+    /// surfaces to match. The app ships with none, and the builtin Home is
+    /// left as the plain default — never re-aimed at an "area:Home" lens.
+    ///
+    /// Existing boxes keep whatever workspaces they already have. Nothing is
+    /// deleted; the app simply stops creating these.
 
     // MARK: the outstanding-write ledger (main-thread only)
 
