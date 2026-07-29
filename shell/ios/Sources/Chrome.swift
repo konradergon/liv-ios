@@ -17,13 +17,14 @@ private let chromeAmberInk = Color(red: 0x3A / 255, green: 0x2A / 255, blue: 0)
 /// The lens roster. Calendar is a v1 placeholder — its body renders
 /// EmptyHint("Calendar arrives with M3.") until M3.
 enum Feature: String, CaseIterable, Identifiable {
-    case today, inbox, tasks, calendar
+    case today, everything, inbox, tasks, calendar
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .today: return "Today"
+        case .everything: return "Everything"
         case .inbox: return "Inbox"
         case .tasks: return "Tasks"
         case .calendar: return "Calendar"
@@ -33,6 +34,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .today: return "sun.max"
+        case .everything: return "tray.full"
         case .inbox: return "tray"
         case .tasks: return "checkmark.circle"
         case .calendar: return "calendar"
@@ -42,6 +44,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var filledIcon: String {
         switch self {
         case .today: return "sun.max.fill"
+        case .everything: return "tray.full.fill"
         case .inbox: return "tray.fill"
         case .tasks: return "checkmark.circle.fill"
         case .calendar: return "calendar"  // no .fill variant exists

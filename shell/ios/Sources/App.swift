@@ -214,6 +214,7 @@ struct FeatureWindow: View {
         Group {
             switch feature {
             case .today: TodayView()
+            case .everything: EverythingView()
             case .inbox: InboxView()
             case .tasks: TasksView()
             case .calendar: CalendarView()
