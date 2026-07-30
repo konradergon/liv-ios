@@ -496,7 +496,9 @@ struct NoteEditor: View {
     @EnvironmentObject var box: BoxModel
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = NoteEditorModel()
-    @FocusState private var focused: Bool
+    /// Plain state, not @FocusState — the UIKit text view reports focus
+    /// through the representable's binding.
+    @State private var focused = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -532,17 +534,18 @@ struct NoteEditor: View {
                     .padding(.vertical, 10)
                     .allowsHitTesting(false)
             }
-            TextEditor(text: $model.text)
-                .font(.system(size: 15))
-                .foregroundStyle(LivTheme.text)
-                .lineSpacing(2)
-                .scrollContentBackground(.hidden)
-                .focused($focused)
-                .disabled(!model.loaded || model.missing)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
-                .accessibilityIdentifier("note.editor")
-                .accessibilityLabel("Note content")
+            // The live markdown surface (EditorText.swift). Styling is a
+            // pure function of the text; the buffer the codec saves is the
+            // same plain string. Swipe-down keyboard dismissal lives in the
+            // view (keyboardDismissMode = .interactive); the toolbar rides
+            // the keyboard's own animation — chrome rule 4 as narrowed
+            // 2026-07-30.
+            MarkdownEditor(
+                text: $model.text, focused: $focused,
+                editable: model.loaded && !model.missing
+            )
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
@@ -553,14 +556,6 @@ struct NoteEditor: View {
             RoundedRectangle(cornerRadius: LivTheme.radius)
                 .strokeBorder(LivTheme.border, lineWidth: 0.5)
         )
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { focused = false }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-            }
-        }
     }
 
     // MARK: the world moved — non-destructive, both truths kept

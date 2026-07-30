@@ -32,6 +32,13 @@ struct LivApp: App {
             print("WS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("WS-SELFCHECK \($0)") }
         }
+        // The markdown scan + edit operations (EditorStyle.swift), same
+        // door: `simctl launch … -editor.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "editor.selfcheck") {
+            let failures = livEditorSelfCheck()
+            print("ED-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("ED-SELFCHECK \($0)") }
+        }
     }
 
     var body: some Scene {
@@ -64,30 +71,47 @@ struct RootView: View {
                 bodyView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            // Room for the floating bar; the body scrolls under it.
-            .padding(.bottom, 0)
-
-            if desk.gridShown {
-                // Tap-away scrim under the feature grid.
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture { desk.gridShown = false }
-                FeatureGrid()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 76)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+            // While the menu is up, a tap anywhere here only dismisses it
+            // (the catcher below). Assistive tech has to be told separately:
+            // occlusion hides a view from eyes and from touch, never from
+            // VoiceOver, so without this a swipe walks onto controls the
+            // panel covers and activating them really fires.
+            .accessibilityHidden(desk.gridShown)
 
             BottomBar()
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
+                .accessibilityHidden(desk.gridShown)
+
+            // The features menu is drawn AFTER the bar, so it covers the
+            // bar it was summoned from (owner, 2026-07-29). Its own `v`
+            // button lands where the `^` was.
+            if desk.gridShown {
+                // An invisible tap-away catcher, not a dimming scrim.
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            desk.gridShown = false
+                        }
+                    }
+                FeatureGrid()
+                    .transition(.move(edge: .bottom))
+            }
         }
         .background(LivTheme.canvas.ignoresSafeArea())
-        .sheet(item: $desk.featureShown) { feature in
+        .fullScreenCover(item: $desk.featureShown) { feature in
             FeatureWindow(feature: feature)
                 .environmentObject(box)
                 .environmentObject(desk)
                 .environmentObject(workspaces)
+        }
+        // The tab view takes the whole screen too (owner, 2026-07-29) — top
+        // bar and bottom bar both covered. Its own footer carries Done.
+        .fullScreenCover(isPresented: $desk.switcherShown) {
+            TabSwitcher()
+                .environmentObject(box)
+                .environmentObject(desk)
         }
         .fullScreenCover(isPresented: $desk.searchShown) {
             SearchView()
@@ -192,38 +216,74 @@ struct RootView: View {
         }
     }
 
-    /// The body IS the desk — features are windows over it, never a mode.
-    @ViewBuilder private var bodyView: some View {
-        if desk.switcherShown {
-            TabSwitcher()
-        } else {
-            DeskHost()
-        }
+    /// The body IS the desk — features and the tab view are windows over
+    /// it, never a mode.
+    private var bodyView: some View {
+        DeskHost()
     }
 }
 
-/// A feature summoned from the menu: a window over the whole chrome
-/// (bar included), dismissed by swipe or by opening a row as a desk tab.
+/// A feature summoned from the menu: it takes the ENTIRE screen (owner,
+/// 2026-07-29) — no sheet inset, no strip of desk showing above it, nothing
+/// reading through. Dismissed by the `v` in its header, by dragging that
+/// header down, or by opening a row as a desk tab.
 struct FeatureWindow: View {
     @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var desk: DeskModel
     let feature: Feature
 
     var body: some View {
-        // Feature bodies carry their own headers — the window adds only
-        // the sheet chrome (grabber, canvas, large detent).
-        Group {
-            switch feature {
-            case .today: TodayView()
-            case .everything: EverythingView()
-            case .inbox: InboxView()
-            case .tasks: TasksView()
-            case .calendar: CalendarView()
+        VStack(spacing: 0) {
+            header
+            // Feature bodies carry their own headers — the window adds
+            // only the one control that puts it away.
+            Group {
+                switch feature {
+                case .today: TodayView()
+                case .everything: EverythingView()
+                case .inbox: InboxView()
+                case .tasks: TasksView()
+                case .calendar: CalendarView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 10)
-        .background(LivTheme.canvas)
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .background(LivTheme.canvas.ignoresSafeArea())
+    }
+
+    /// Same 40pt band as TopBar, in the same place, so the screen swaps
+    /// under a header that does not move. The drag keeps the swipe-down
+    /// muscle memory a sheet used to give for free.
+    ///
+    /// The WHOLE band closes the window, not just the 32pt glyph. SwiftUI
+    /// merges this HStack into one accessibility element spanning the full
+    /// width and labelled "Close <feature>", and its activation point is
+    /// the band's centre — so with only the glyph wired up, Voice Control,
+    /// Switch Control and UI tests aimed at the middle of the band and
+    /// nothing happened. A full-screen window with no bar and no grabber
+    /// has no other way out, so the band must mean what it advertises.
+    private var header: some View {
+        HStack(spacing: 0) {
+            Button { desk.featureShown = nil } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close \(feature.title)")
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .contentShape(Rectangle())
+        .onTapGesture { desk.featureShown = nil }
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { g in
+                    if g.translation.height > 40 { desk.featureShown = nil }
+                }
+        )
     }
 }

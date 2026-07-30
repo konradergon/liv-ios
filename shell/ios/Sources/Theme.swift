@@ -22,6 +22,25 @@ private func dyn(_ light: UIColor, _ dark: UIColor) -> Color {
     })
 }
 
+/// The same tokens at the UIColor level, for the UIKit text stack (the
+/// markdown editor draws with TextKit, which never sees SwiftUI Color).
+/// Same hex pairs as LivTheme — add here only what the editor needs.
+enum LivInk {
+    static func pair(_ light: UIColor, _ dark: UIColor) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? dark : light }
+    }
+
+    static let accent = pair(hex(0x2F7D6B), hex(0x5CB596))
+    static let onAccent = pair(hex(0xFFFFFF), hex(0x0B1310))
+    static let surface = pair(hex(0xFFFFFF), hex(0x1A2220))
+    static let panel2 = pair(hex(0xEAEEEA), hex(0x1D2622))
+    static let text = pair(hex(0x17201B), hex(0xEAF0EC))
+    static let text2 = pair(hex(0x45514A), hex(0xBFCCC4))
+    static let text3 = pair(hex(0x67736C), hex(0x9FADA4))
+    static let muted = pair(hex(0x96A09A), hex(0x66746C))
+    static let border = pair(hex(0x000000, 0.10), hex(0xFFFFFF, 0.09))
+}
+
 enum LivTheme {
     // Accent: lake green — #2F7D6B light / #5CB596 dark (owner-decided).
     static let accent = dyn(hex(0x2F7D6B), hex(0x5CB596))

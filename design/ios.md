@@ -184,12 +184,12 @@ force) is the phone editor's conflict primitive for its own box today.
 
 **Bottom bar** (always the same, Obsidian's nav row under Liv law):
 
-- Far left, always: the **features button** (`^`) — opens the floating
-  feature grid (ClickUp "More" idiom): Today, Inbox, Tasks, Calendar,
+- Far left, always: the **features button** (`^`) — opens the feature menu
+  (ClickUp "More" idiom): Today, Everything, Inbox, Tasks, Calendar,
   Capture, Camera. It carries the amber proposal-count badge (the app's
   only badge — Inbox lives behind this menu). **Selecting a feature opens
-  it as a window covering everything**, dismissed by swipe-down or by
-  opening a row (which lands as a Desk tab).
+  it as a window covering everything**, dismissed by its `v`, by dragging
+  its header down, or by opening a row (which lands as a Desk tab).
 - Right of it, one pill, always present (copy Obsidian): **‹ › search +
   [tab count]** — back/forward over tab-activation history (greyed when
   empty), the global Liv search, new tab (the capture door), and the
@@ -201,6 +201,34 @@ collapse button) or the New-tab verb stack. **Opening any row anywhere —
 in a feature window, search, the switcher — lands it as a Desk tab** and
 dismisses whatever summoned it. Desk tabs + activation history persist per
 device (transient shell state, never cells).
+
+**Four chrome rules (owner, 2026-07-29).**
+
+1. The `^` menu is a **solid panel pinned to the bottom edge that covers
+   the bar it was summoned from**. Its own far-left `v` sits exactly where
+   the `^` sits, so the toggle never appears to move.
+2. **No translucency anywhere.** Blur materials are gone from the bar, the
+   menu and the camera chrome; every floating surface is an opaque theme
+   colour. Nothing underneath may read through.
+3. **A feature window and the tab view each take the entire screen** — top
+   bar and bottom bar both covered, no sheet inset, no strip of desk above,
+   no grabber. A feature window carries a 40pt header whose one control is
+   the `v` that closes it (that header also accepts a downward drag); the
+   tab view carries the same header, and its `+ | N tabs | Done` footer is a
+   second way out. That top band is not decoration — a scroll view touching
+   the top safe area draws its content through it, so without a band ahead
+   of it a scrolled row collides with the clock and the Dynamic Island.
+   A full-width header must also BE the control it advertises: SwiftUI
+   merges the band into one accessibility element whose activation point is
+   the band's centre, so wiring only the glyph leaves Voice Control and
+   Switch Control with no way to close a full-screen surface.
+4. **Nothing moves a row independently of the keyboard.** (Narrowed by the
+   owner 2026-07-30, editor-study decision 1; the original 2026-07-29 rule
+   banned any keyboard accessory row after a lone "Done" bar shoved the chip
+   row around.) A row that appears and hides **as part of the keyboard's own
+   animation** — the editor's formatting toolbar — is allowed. Anything that
+   jolts layout on its own schedule stays banned, and the
+   swipe-down-in-text dismissal stays regardless.
 
 **Metadata**: when the current body shows something that carries metadata,
 a **collapse button sits at the top-right of the body** (the Obsidian
