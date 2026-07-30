@@ -8,8 +8,7 @@
 import SwiftUI
 import UIKit
 
-/// Ink for solid amber fills (the desktop's onYellowInk; Kit's copy is
-/// file-private).
+/// Ink for solid amber fills (the desktop's onYellowInk).
 private let chromeAmberInk = Color(red: 0x3A / 255, green: 0x2A / 255, blue: 0)
 
 // MARK: - features
@@ -38,16 +37,6 @@ enum Feature: String, CaseIterable, Identifiable {
         case .inbox: return "tray"
         case .tasks: return "checkmark.circle"
         case .calendar: return "calendar"
-        }
-    }
-
-    var filledIcon: String {
-        switch self {
-        case .today: return "sun.max.fill"
-        case .everything: return "tray.full.fill"
-        case .inbox: return "tray.fill"
-        case .tasks: return "checkmark.circle.fill"
-        case .calendar: return "calendar"  // no .fill variant exists
         }
     }
 }
@@ -219,6 +208,13 @@ final class DeskModel: ObservableObject {
         featureShown = nil
         switcherShown = false
         gridShown = false
+        // Search and the camera are covers too. A tapped reminder routes
+        // here from anywhere, so leaving these up made the notification
+        // look ignored: the tab was created and focused behind a cover the
+        // user was still looking at, and closing it landed them on a tab
+        // they never picked.
+        searchShown = false
+        cameraShown = false
         persist()
     }
 
@@ -1132,7 +1128,8 @@ struct BottomBar: View {
             .padding(.horizontal, 4)
             .frame(height: 46)
             .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial, in: Capsule())
+            // Solid, never a blur: the body must not read through the bar.
+            .background(LivTheme.surface, in: Capsule())
             .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
             .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         }
@@ -1150,7 +1147,7 @@ struct BottomBar: View {
                 .rotationEffect(.degrees(desk.gridShown ? 180 : 0))
                 .foregroundStyle(desk.gridShown ? LivTheme.accent : LivTheme.text2)
                 .frame(width: 46, height: 46)
-                .background(.ultraThinMaterial, in: Circle())
+                .background(LivTheme.surface, in: Circle())
                 .overlay(Circle().strokeBorder(
                     desk.gridShown ? LivTheme.accent : LivTheme.border,
                     lineWidth: desk.gridShown ? 1 : 0.5))
@@ -1214,9 +1211,11 @@ struct BottomBar: View {
 
 // MARK: - feature grid
 
-/// The `^` overflow card (ClickUp's "More") — the consumer floats it just
-/// above the bar while gridShown. Tap swaps the body or fires the verb,
-/// then closes. A later pass lets this grid re-pin the two bar features.
+/// The `^` menu (ClickUp's "More"): a solid panel pinned to the bottom
+/// edge that COVERS the bar it was summoned from (owner, 2026-07-29). No
+/// blur and no translucency — nothing underneath may read through it. Its
+/// own far-left `v` sits exactly where the `^` sits, so the toggle never
+/// appears to jump. Tap swaps the body or fires the verb, then closes.
 struct FeatureGrid: View {
     @EnvironmentObject var desk: DeskModel
 
@@ -1224,27 +1223,55 @@ struct FeatureGrid: View {
         repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(Feature.allCases) { f in
-                cell(f.title, f.icon, on: desk.featureShown == f) {
-                    desk.featureShown = f
+        VStack(spacing: 8) {
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(Feature.allCases) { f in
+                    cell(f.title, f.icon, on: desk.featureShown == f) {
+                        desk.featureShown = f
+                    }
+                }
+                cell("Capture", "square.and.pencil", on: false) {
+                    desk.newTab()
+                }
+                cell("Camera", "camera", on: false) {
+                    desk.cameraShown = true
                 }
             }
-            cell("Capture", "square.and.pencil", on: false) {
-                desk.newTab()
-            }
-            cell("Camera", "camera", on: false) {
-                desk.cameraShown = true
-            }
+            closeRow
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 16).fill(LivTheme.surface))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(LivTheme.border, lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
         .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity)
+        .background(
+            LivTheme.surface
+                .overlay(alignment: .top) {
+                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                }
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    /// 12pt inside the panel's own 16pt gutter = 28pt from the screen edge,
+    /// which is where the bar's `^` circle is (App's 12 + BottomBar's 16).
+    private var closeRow: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) { desk.gridShown = false }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(LivTheme.accent)
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(LivTheme.panel))
+                    .overlay(Circle().strokeBorder(LivTheme.accent, lineWidth: 1))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Features")
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 12)
+        .padding(.bottom, 4)
     }
 
     private func cell(

@@ -65,7 +65,7 @@ struct EverythingView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        .contentMargins(.bottom, 76, for: .scrollContent)  // the floating bar
+        .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
         .background(LivTheme.canvas)
         .onAppear { box.refresh() }
         .onChange(of: scenePhase) { _, phase in

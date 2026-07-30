@@ -72,7 +72,7 @@ struct TasksView: View {
         .environment(\.defaultMinListRowHeight, 40)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
-        .contentMargins(.bottom, 76, for: .scrollContent)  // the bottom bar floats over
+        .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
         .background(LivTheme.canvas.ignoresSafeArea())
         .sheet(item: $duePick) { p in
             DetailDueSheet(model: model, id: p.entity, property: "due")

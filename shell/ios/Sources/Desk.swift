@@ -16,9 +16,7 @@ struct DeskHost: View {
 
     var body: some View {
         Group {
-            if desk.switcherShown {
-                TabSwitcher()
-            } else if let tab = desk.activeTab {
+            if let tab = desk.activeTab {
                 switch tab.content {
                 case .new:
                     NewTabBody(tabId: tab.id).id(tab.id)
@@ -178,6 +176,14 @@ struct EntityTabBody: View {
             .padding(.top, 6)
             if inspectorShown {
                 EntityInspector(id: id)
+                    // Clear the floating bottom bar, exactly as bodyContent
+                    // does below. Without it a long property list ends under
+                    // the bar and the bar takes the taps: "Undo" hit the `^`
+                    // and opened the features menu, "Move to Trash" hit the
+                    // tab square. The clearance belongs here, not inside
+                    // EntityInspector — that view also renders on surfaces
+                    // where no bar floats.
+                    .padding(.bottom, 76)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             } else if let row = box.entity(id) {
                 bodyContent(row)
@@ -315,9 +321,10 @@ struct EntityTabBody: View {
 
 // MARK: - the tab switcher
 
-/// Full-body view, not a sheet — the bottom bar stays live under it.
-/// Card grid with previews, ✕ per card, the dashed new-tab card, and the
-/// + | "N tabs" | Done footer.
+/// The tab view: it takes the WHOLE screen (owner, 2026-07-29) — top bar
+/// and bottom bar both covered, nothing showing through. Card grid with
+/// previews, ✕ per card, the dashed new-tab card, and the
+/// + | "N tabs" | Done footer, which is the way out.
 struct TabSwitcher: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
@@ -329,6 +336,7 @@ struct TabSwitcher: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            header
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(desk.tabs) { tab in card(tab) }
@@ -338,7 +346,40 @@ struct TabSwitcher: View {
             }
             footer
         }
-        .background(LivTheme.canvas)
+        .background(LivTheme.canvas.ignoresSafeArea())
+    }
+
+    /// FeatureWindow's header, same 40pt band, same `v`. It is not
+    /// decoration: a ScrollView that touches the top safe area takes it over
+    /// and draws its content THROUGH it, so without a band ahead of it a
+    /// scrolled card row slides under the clock and the Dynamic Island —
+    /// and a ✕ resting behind the Island cannot be tapped, because that
+    /// region belongs to the system. Rule 2 bans the blur that would
+    /// normally sit there. This band absorbs the inset and gives the tab
+    /// view the same way out the feature windows have.
+    private var header: some View {
+        HStack(spacing: 0) {
+            Button { desk.switcherShown = false } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close tabs")
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .contentShape(Rectangle())
+        .onTapGesture { desk.switcherShown = false }
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { g in
+                    if g.translation.height > 40 { desk.switcherShown = false }
+                }
+        )
     }
 
     // MARK: cards
@@ -464,8 +505,9 @@ struct TabSwitcher: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        // Clear the floating bottom bar — the footer must never hide under it.
-        .padding(.bottom, 76)
+        // Full screen: no floating bar to clear, just the home indicator
+        // (the safe area already handles that).
+        .padding(.bottom, 4)
         .overlay(alignment: .top) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
         }

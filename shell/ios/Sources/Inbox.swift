@@ -81,13 +81,10 @@ struct InboxView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets())
-                    Color.clear
-                        .frame(height: 64)  // floating bottom-bar clearance
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

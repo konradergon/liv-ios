@@ -12,6 +12,12 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// Solid ink for controls sitting on the live viewfinder. The rest of the
+/// shell dropped blur materials (owner, 2026-07-29) and so does this — but
+/// a themed surface would vanish against a bright frame in light mode, so
+/// camera chrome carries its own opaque dark.
+private let cameraChromeFill = Color(red: 0x1B / 255, green: 0x22 / 255, blue: 0x20 / 255)
+
 // MARK: - session tray rows
 
 private struct CameraShot: Identifiable {
@@ -364,7 +370,7 @@ struct CameraFlow: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.white)
                 .frame(width: 32, height: 32)
-                .background(.ultraThinMaterial, in: Circle())
+                .background(cameraChromeFill, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -431,7 +437,7 @@ struct CameraFlow: View {
         .padding(9)
         .background(
             RoundedRectangle(cornerRadius: LivTheme.radius)
-                .fill(.ultraThinMaterial)
+                .fill(LivTheme.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: LivTheme.radius)
@@ -581,7 +587,7 @@ struct CameraFlow: View {
         .padding(9)
         .background(
             RoundedRectangle(cornerRadius: LivTheme.radius)
-                .fill(.ultraThinMaterial)
+                .fill(LivTheme.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: LivTheme.radius)
