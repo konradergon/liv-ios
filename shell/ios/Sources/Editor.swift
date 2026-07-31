@@ -138,11 +138,20 @@ enum SpanText {
     /// well-formed "[[id]]" / "[[id|name]]" is a Ref; everything else is
     /// literal text. An empty buffer is NO spans — which removes the
     /// content cell, exactly as the seam documents.
-    static func textToSpans(_ text: String) -> [SpanJSON] {
+    ///
+    /// `isKnown` demotes tokens whose id is not in this box to literal
+    /// text (owner ruling 5, 2026-07-30). The core refuses a whole save
+    /// that carries a Ref to nothing (`services/src/content.rs`), so
+    /// pasting a note containing "[[123]]" from elsewhere used to loop
+    /// forever on "The box refused this save". The characters stay exactly
+    /// as typed — only their meaning is demoted.
+    static func textToSpans(
+        _ text: String, isKnown: (UInt64) -> Bool = { _ in true }
+    ) -> [SpanJSON] {
         var out: [SpanJSON] = []
         for (i, paragraph) in text.components(separatedBy: "\n").enumerated() {
             if i > 0 { out.append(.brk(.body)) }
-            out.append(contentsOf: spans(inParagraph: paragraph))
+            out.append(contentsOf: spans(inParagraph: paragraph, isKnown: isKnown))
         }
         return out
     }
@@ -167,14 +176,16 @@ enum SpanText {
 
     // MARK: token scanning
 
-    private static func spans(inParagraph paragraph: String) -> [SpanJSON] {
+    private static func spans(
+        inParagraph paragraph: String, isKnown: (UInt64) -> Bool
+    ) -> [SpanJSON] {
         var out: [SpanJSON] = []
         var buffer = ""
         let chars = Array(paragraph)
         var i = 0
         while i < chars.count {
             if chars[i] == "[", i + 1 < chars.count, chars[i + 1] == "[",
-                let (id, end) = token(chars, from: i)
+                let (id, end) = token(chars, from: i), isKnown(id)
             {
                 if !buffer.isEmpty {
                     out.append(.text(buffer, marks: 0))
@@ -368,7 +379,10 @@ final class NoteEditorModel: ObservableObject {
         checkpointTimer?.invalidate()
         checkpointTimer = nil
         let payload = text
-        let spans = SpanText.textToSpans(payload)
+        // Ruling 5: a token pointing at nothing in THIS box saves as text,
+        // never as a Ref the core would refuse.
+        let known: (UInt64) -> Bool = { [weak box] id in box?.entity(id) != nil }
+        let spans = SpanText.textToSpans(payload, isKnown: known)
         attempt(box: box, json: SpanText.json(spans), payload: payload, base: base, retries: 3) {
             [weak self] outcome in
             guard let self = self else {
@@ -501,10 +515,16 @@ struct NoteEditor: View {
     /// Scraps have no name cell — their displayed title IS this content's
     /// first line, so this editor is the only surface for it.
     var placeholder: String = "Write…"
+    /// A tapped `[[…]]` lands as a desk tab — the shell's one rule for
+    /// opening anything from anywhere.
+    var onOpenRef: (UInt64) -> Void = { _ in }
 
     @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = NoteEditorModel()
+    @StateObject private var bridge = EditorBridge()
+    @State private var outlineShown = false
     /// Plain state, not @FocusState — the UIKit text view reports focus
     /// through the representable's binding.
     @State private var focused = false
@@ -560,7 +580,8 @@ struct NoteEditor: View {
             // keyboard (keyboardDismissMode = .interactive).
             MarkdownEditor(
                 text: $model.text, focused: $focused, styleShown: $styleShown,
-                editable: model.loaded && !model.missing
+                editable: model.loaded && !model.missing,
+                bridge: bridge, onOpenRef: onOpenRef
             )
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
@@ -574,7 +595,110 @@ struct NoteEditor: View {
             RoundedRectangle(cornerRadius: LivTheme.radius)
                 .strokeBorder(LivTheme.border, lineWidth: 0.5)
         )
-        .overlay(alignment: .bottomTrailing) { styleButton }
+        .overlay(alignment: .bottomTrailing) { floatingControls }
+        .overlay(alignment: .bottom) { linkPicker }
+        .sheet(isPresented: $outlineShown) { outlineSheet }
+    }
+
+    // MARK: the floating controls — quiet, and only when relevant
+
+    /// Two controls at most, both contextual: the outline appears only
+    /// once a note has enough headings to be worth jumping around, and
+    /// `Aa` only while writing.
+    private var floatingControls: some View {
+        HStack(spacing: 6) {
+            if bridge.outline.count >= 3 {
+                floater("list.bullet.indent", label: "Outline") { outlineShown = true }
+            }
+            if writing {
+                floater(nil, label: "Formatting") { styleShown.toggle() }
+            }
+        }
+        .padding(.trailing, 4)
+        .padding(.bottom, 2)
+    }
+
+    @ViewBuilder private func floater(
+        _ symbol: String?, label: String, action: @escaping () -> Void
+    ) -> some View {
+        let on = symbol == nil && styleShown
+        Button(action: action) {
+            Group {
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: 14, weight: .medium))
+                } else {
+                    Text("Aa").font(.system(size: 14, weight: .semibold))
+                }
+            }
+            .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text3)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(on ? LivTheme.accent : LivTheme.panel2))
+            .overlay(
+                Circle().strokeBorder(on ? Color.clear : LivTheme.border, lineWidth: 0.5)
+            )
+            // The visual stays 36pt; the hit target meets the 44pt floor.
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .transition(.opacity)
+    }
+
+    // MARK: the [[ picker
+
+    /// Typing `[[` opens it, over the note and above the keyboard, with
+    /// the caret still in the text so you keep typing to filter. Picking
+    /// writes a reference to an ENTITY — never a file path, never a name
+    /// resolved later (design/editor-study.md §5).
+    @ViewBuilder private var linkPicker: some View {
+        if let link = bridge.openLink {
+            LinkPicker(
+                query: link.query, excluding: id,
+                onPick: { id, name in bridge.completeLink(id: id, name: name) },
+                onDismiss: { bridge.dismissLink() }
+            )
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
+            .transition(.opacity)
+        }
+    }
+
+    // MARK: the outline
+
+    private var outlineSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionLabel("Outline")
+                    .padding(.bottom, 6)
+                ForEach(bridge.outline) { item in
+                    Button {
+                        outlineShown = false
+                        bridge.scroll(to: item.id)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(item.title)
+                                .font(.system(size: 14, weight: item.level == 1 ? .semibold : .regular))
+                                .foregroundStyle(item.level == 1 ? LivTheme.text : LivTheme.text2)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.leading, CGFloat(item.level - 1) * 14)
+                        .frame(minHeight: 40)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+        }
+        .background(LivTheme.canvas)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     /// The one visible formatting control: a quiet 36pt `Aa` that floats
@@ -678,6 +802,163 @@ struct NoteEditor: View {
         .font(.system(size: 10))
         .foregroundStyle(LivTheme.muted)
         .frame(height: 12)
+    }
+}
+
+// MARK: - the [[ picker
+
+/// Ranked candidates from the box, plus a create row when nothing matches.
+/// It never steals focus: the caret stays in the note, so typing keeps
+/// filtering and the keyboard never flinches.
+private struct LinkPicker: View {
+    let query: String
+    /// The note doing the linking. A note cannot link to itself, and while
+    /// you type `[[kitchen` its own content contains that text, so without
+    /// this it ranks itself first.
+    let excluding: UInt64
+    let onPick: (UInt64, String) -> Void
+    let onDismiss: () -> Void
+
+    @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
+    @State private var hits: [UInt64] = []
+    @State private var searched = ""
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Front-of-house rows only, and never a link to nothing: an entity
+    /// that is not in the box cannot be a target.
+    private var rows: [EntityRow] {
+        hits.compactMap { box.entity($0) }
+            .filter { $0.trashed != true && $0.id != excluding }
+            .prefix(4)
+            .map { $0 }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            ForEach(rows) { row in
+                Button {
+                    onPick(row.id, title(row))
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: glyph(row))
+                            .font(.system(size: 11))
+                            .foregroundStyle(LivTheme.text3)
+                            .frame(width: 16)
+                        Text(title(row))
+                            .font(.system(size: 13))
+                            .foregroundStyle(LivTheme.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                    }
+                    .frame(height: 38)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                }
+            }
+            if !trimmed.isEmpty { createRow }
+            if rows.isEmpty && trimmed.isEmpty {
+                Text("Type to find something to link to.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(LivTheme.muted)
+                    .frame(height: 34)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LivTheme.radius)
+                .strokeBorder(LivTheme.border, lineWidth: 0.5)
+        )
+        .onAppear { run(trimmed) }
+        .onChange(of: query) { _, now in
+            run(now.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("LINK TO")
+                .font(.system(size: 9.5, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(LivTheme.text3)
+            Spacer(minLength: 0)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close link picker")
+        }
+        .frame(height: 32)
+    }
+
+    /// Find-or-create: an unmatched query becomes an entity, then the
+    /// link. Capture asks nothing — the query is the content verbatim —
+    /// and the workspace stamps it, exactly like Search's create door.
+    private var createRow: some View {
+        Button {
+            box.capture(trimmed) { id in
+                guard id != 0 else { return }
+                workspaces.stamp(id, in: box)
+                onPick(id, trimmed)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 16)
+                Text("Create “\(trimmed)”")
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+            }
+            .foregroundStyle(LivTheme.accent)
+            .frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func run(_ q: String) {
+        guard q != searched else { return }
+        searched = q
+        guard !q.isEmpty else {
+            hits = []
+            return
+        }
+        box.search(q) { ids in
+            guard q == searched else { return }  // a stale answer never lands
+            hits = ids
+        }
+    }
+
+    private func title(_ row: EntityRow) -> String {
+        let raw = row.title ?? "#\(row.id)"
+        let clean = livDisplayTitle(raw)
+        return clean.isEmpty ? raw : clean
+    }
+
+    private func glyph(_ row: EntityRow) -> String {
+        let kinds = row.kinds ?? []
+        if kinds.contains("event") { return "calendar" }
+        if kinds.contains("task") || (row.status?.isEmpty == false) { return "checkmark.circle" }
+        if kinds.contains("person") { return "person" }
+        if kinds.contains("link") { return "link" }
+        if kinds.contains("note") { return "doc.text" }
+        return "circle.dotted"
     }
 }
 

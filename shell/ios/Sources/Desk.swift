@@ -273,7 +273,10 @@ struct EntityTabBody: View {
             // confirmation is transient; the body is where it lives.
             EntityChipRow(id: row.id)
             refSection(row)
-            NoteEditor(id: row.id, placeholder: named ? "Write…" : "Write this scrap out…")
+            NoteEditor(
+                id: row.id,
+                placeholder: named ? "Write…" : "Write this scrap out…",
+                onOpenRef: { desk.open($0) })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 16)

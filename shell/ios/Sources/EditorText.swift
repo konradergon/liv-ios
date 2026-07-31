@@ -22,6 +22,38 @@ import UIKit
 extension NSAttributedString.Key {
     /// On the 3-char "[ ]" / "[x]" of a task line. Value: NSNumber (checked).
     static let livTaskBox = NSAttributedString.Key("liv.taskBox")
+    /// On a whole `[[id|Name]]` token. Value: NSNumber (the target id).
+    static let livRef = NSAttributedString.Key("liv.ref")
+}
+
+// MARK: - the bridge
+
+/// The one object SwiftUI and the text view share. SwiftUI reads the
+/// published state (is a `[[` being typed, what headings exist) and calls
+/// the verbs; the view never reaches upward. Everything here is display
+/// state — the box is never touched from this file.
+final class EditorBridge: ObservableObject {
+    /// The unfinished `[[` the caret sits in, or nil. Drives the picker.
+    @Published var openLink: OpenLink?
+    /// Headings, recomputed off the typing path (see `scheduleOutline`).
+    @Published var outline: [OutlineItem] = []
+
+    fileprivate weak var coordinator: MarkdownEditor.Coordinator?
+
+    /// Finish the `[[` being typed with a real target.
+    func completeLink(id: UInt64, name: String) {
+        coordinator?.completeLink(id: id, name: name)
+    }
+
+    /// Put the picker away without touching the text — the brackets stay
+    /// as typed, which is what they are: literal characters.
+    func dismissLink() {
+        openLink = nil
+        coordinator?.suppressLink()
+    }
+
+    /// Jump to a heading and put the caret at its start.
+    func scroll(to location: Int) { coordinator?.scroll(to: location) }
 }
 
 // MARK: - fonts
@@ -84,6 +116,22 @@ enum MarkStyler {
             _, lineRange, _, _ in
             style(line: n.substring(with: lineRange), at: lineRange.location, storage: storage)
         }
+    }
+
+    /// The digits inside a `[[…]]` token — the same grammar the codec
+    /// parses, so what is tappable and what is stored can never disagree.
+    private static func refId(_ line: String, _ token: NSRange) -> UInt64? {
+        let n = line as NSString
+        guard token.length > 4 else { return nil }
+        var digits = ""
+        var i = token.location + 2
+        while i < NSMaxRange(token) {
+            let c = n.character(at: i)
+            guard c >= 0x30, c <= 0x39 else { break }
+            digits.append(Character(UnicodeScalar(c)!))
+            i += 1
+        }
+        return UInt64(digits)
     }
 
     private static func style(line: String, at base: Int, storage: NSTextStorage) {
@@ -174,8 +222,13 @@ enum MarkStyler {
                 }
             case .refToken(let whole, let name):
                 // The link reads as a value: name (or id) in accent, the
-                // bracket/id plumbing dimmed. Tap-to-open is phase 2.
+                // bracket/id plumbing dimmed. The livRef attribute is what
+                // makes a tap open the target (phase 2).
                 dim(whole)
+                if let id = refId(line, whole) {
+                    storage.addAttribute(
+                        .livRef, value: NSNumber(value: id), range: abs(whole))
+                }
                 if let name, name.length > 0 {
                     storage.addAttributes(
                         [.font: EditorFont.body, .foregroundColor: LivInk.accent],
@@ -272,11 +325,17 @@ struct MarkdownEditor: UIViewRepresentable {
     /// quiet `Aa` that summons it floats over the note, not in a bar.
     @Binding var styleShown: Bool
     var editable: Bool
+    /// The shared display state (the `[[` in flight, the outline) and the
+    /// verbs SwiftUI calls back with.
+    var bridge: EditorBridge
+    /// A tapped `[[…]]` — the desk opens it as a tab.
+    var onOpenRef: (UInt64) -> Void
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView()
         view.delegate = context.coordinator
         context.coordinator.install(on: view)
+        bridge.coordinator = context.coordinator
         return view
     }
 
@@ -294,6 +353,10 @@ struct MarkdownEditor: UIViewRepresentable {
             view.text = text
             let n = (text as NSString).length
             view.selectedRange = NSRange(location: min(selected.location, n), length: 0)
+            // A load or a conflict swap is a whole new document: the
+            // outline has to catch up too (it is not on the typing path,
+            // so nothing else recomputes it here).
+            context.coordinator.scheduleOutline(text)
         }
         if focused, !view.isFirstResponder, view.window != nil, editable {
             view.becomeFirstResponder()
@@ -313,6 +376,10 @@ struct MarkdownEditor: UIViewRepresentable {
         /// only when the composition commits, so the input system's marked
         /// text is never touched mid-flight.
         private var pendingIME: NSRange?
+        /// A `[[` the user dismissed: the picker stays away until the caret
+        /// leaves that token, so Escape means escape.
+        private var suppressedLink: NSRange?
+        private var outlineWork: DispatchWorkItem?
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
@@ -370,6 +437,103 @@ struct MarkdownEditor: UIViewRepresentable {
                 apply(around: pending, to: textView.textStorage)
             }
             parent.text = textView.text
+            trackLink(in: textView)
+            scheduleOutline(textView.text)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            trackLink(in: textView)
+        }
+
+        // MARK: the [[ picker
+
+        /// Publish (or clear) the unfinished `[[` the caret sits in. Pure
+        /// scan of one line — cheap enough for every keystroke.
+        private func trackLink(in textView: UITextView) {
+            guard textView.isEditable, textView.selectedRange.length == 0 else {
+                setOpenLink(nil)
+                return
+            }
+            let found = MarkScan.openLink(textView.text, caret: textView.selectedRange.location)
+            if let suppressed = suppressedLink {
+                // Stay quiet until the caret leaves the token it was
+                // dismissed on.
+                if let found, found.range.location == suppressed.location {
+                    setOpenLink(nil)
+                    return
+                }
+                suppressedLink = nil
+            }
+            setOpenLink(found)
+        }
+
+        /// NEVER publish synchronously from a UIKit text callback.
+        /// textViewDidChangeSelection fires inside the edit cycle, before
+        /// textViewDidChange has pushed the new text up; publishing there
+        /// re-enters SwiftUI, updateUIView sees a view newer than its
+        /// binding, and it resets the view — which silently ate every
+        /// keystroke typed after `[[`. One hop to the next runloop turn is
+        /// the whole fix.
+        private func setOpenLink(_ link: OpenLink?) {
+            guard parent.bridge.openLink != link else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.parent.bridge.openLink != link else { return }
+                self.parent.bridge.openLink = link
+            }
+        }
+
+        func completeLink(id: UInt64, name: String) {
+            guard let view, let link = parent.bridge.openLink else { return }
+            // The published range can only lag by a runloop hop, but a hop
+            // is enough if the buffer moved: verify before replacing, and
+            // fall back to a fresh scan at the caret.
+            let buffer = view.text as NSString
+            var token = link.range
+            let intact =
+                NSMaxRange(token) <= buffer.length
+                && buffer.substring(with: token) == "[[" + link.query
+            if !intact {
+                guard let fresh = MarkScan.openLink(view.text, caret: view.selectedRange.location)
+                else { return }
+                token = fresh.range
+            }
+            // Tapping the picker resigned first responder, so replace()
+            // would not fire textViewDidChange — push the text up by hand.
+            let result = EditOps.completeLink(
+                view.text, token: token, id: id, name: name)
+            applyThroughSystem(result, to: view)
+            parent.text = view.text
+            parent.bridge.openLink = nil
+            suppressedLink = nil
+            scheduleOutline(view.text)
+        }
+
+        func suppressLink() {
+            suppressedLink = parent.bridge.openLink?.range
+        }
+
+        // MARK: the outline
+
+        /// A whole-document scan, so it runs on a debounce — never on the
+        /// typing path (design/editor-study.md phase 1: no whole-note
+        /// rescans per keystroke).
+        func scheduleOutline(_ text: String) {
+            outlineWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                let items = livOutline(text)
+                if self.parent.bridge.outline != items { self.parent.bridge.outline = items }
+            }
+            outlineWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        }
+
+        func scroll(to location: Int) {
+            guard let view else { return }
+            let n = (view.text as NSString).length
+            let target = NSRange(location: min(location, n), length: 0)
+            view.selectedRange = target
+            view.scrollRangeToVisible(target)
         }
 
         func textView(
@@ -522,9 +686,15 @@ struct MarkdownEditor: UIViewRepresentable {
         // MARK: checkbox taps
 
         @objc private func boxTapped(_ gesture: UITapGestureRecognizer) {
-            guard let view = view,
-                let result = EditOps.toggleTask(
-                    view.text, at: characterIndex(of: gesture.location(in: view)))
+            guard let view = view else { return }
+            let point = gesture.location(in: view)
+            // A tap on a link follows it (Obsidian's shipped iOS grammar —
+            // long-press still places the caret through the native loupe).
+            if let id = hit(.livRef, at: point)?.value {
+                parent.onOpenRef(UInt64(truncating: id))
+                return
+            }
+            guard let result = EditOps.toggleTask(view.text, at: characterIndex(of: point))
             else { return }
             // Toggle WITHOUT stealing focus or moving the caret: this is a
             // control tap, not an edit gesture. Undo still registers if the
@@ -554,36 +724,50 @@ struct MarkdownEditor: UIViewRepresentable {
                 fractionOfDistanceBetweenInsertionPoints: nil)
         }
 
-        /// Only claim touches GEOMETRICALLY inside a drawn checkbox (plus
+        /// Only claim touches GEOMETRICALLY inside a drawn control (plus
         /// small slack). characterIndex alone returns the NEAREST character
         /// for any point — an index-only gate would swallow taps in empty
         /// space below a trailing task line and silently toggle it (the
         /// audit's finding). Everything else stays native text handling.
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch
-        ) -> Bool {
-            guard let view = view, (view.text as NSString).length > 0 else { return false }
-            let point = touch.location(in: view)
+        private func hit(
+            _ key: NSAttributedString.Key, at point: CGPoint, slack: CGFloat = 6
+        ) -> (range: NSRange, value: NSNumber)? {
+            guard let view = view, (view.text as NSString).length > 0 else { return nil }
             let index = characterIndex(of: point)
             let n = (view.text as NSString).length
-            var boxRange: NSRange?
+            var found: (NSRange, NSNumber)?
             for probe in [index, index - 1, index + 1] where probe >= 0 && probe < n {
                 var effective = NSRange(location: 0, length: 0)
-                if view.textStorage.attribute(.livTaskBox, at: probe, effectiveRange: &effective)
-                    != nil
+                if let value = view.textStorage.attribute(key, at: probe, effectiveRange: &effective)
+                    as? NSNumber
                 {
-                    boxRange = effective
+                    found = (effective, value)
                     break
                 }
             }
-            guard let boxRange else { return false }
+            guard let (range, value) = found else { return nil }
             let glyphs = view.layoutManager.glyphRange(
-                forCharacterRange: boxRange, actualCharacterRange: nil)
-            var rect = view.layoutManager.boundingRect(
-                forGlyphRange: glyphs, in: view.textContainer)
+                forCharacterRange: range, actualCharacterRange: nil)
+            // A wrapped token spans two line fragments; the union of the
+            // used rects is what the user actually sees.
+            var rect = CGRect.null
+            view.layoutManager.enumerateEnclosingRects(
+                forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                in: view.textContainer
+            ) { piece, _ in
+                rect = rect.isNull ? piece : rect.union(piece)
+            }
+            guard !rect.isNull else { return nil }
             rect.origin.x += view.textContainerInset.left
             rect.origin.y += view.textContainerInset.top
-            return rect.insetBy(dx: -10, dy: -6).contains(point)
+            return rect.insetBy(dx: -slack, dy: -slack).contains(point) ? (range, value) : nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch
+        ) -> Bool {
+            let point = touch.location(in: view ?? UIView())
+            return hit(.livRef, at: point) != nil || hit(.livTaskBox, at: point, slack: 10) != nil
         }
     }
 }

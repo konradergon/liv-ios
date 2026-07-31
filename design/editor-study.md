@@ -441,10 +441,16 @@ with a CLI cross-check against the box.
   autosave, CAS, conflict banner, codec, self-check. Per-keystroke work
   stays incremental: restyle the dirty line's elements only, no whole-note
   rescans, no FFI reads on the typing path.
-- **Phase 2 — links and structure (1–2 weeks).** `[[` picker over the box
-  with find-or-create, inserting id-based refs; tap navigates, long-press
-  edits; the unknown-`[[digits]]` demotion policy; the outline sheet
-  (tap-to-jump headings); read-only-pretty pipe tables with drop-to-source.
+- **Phase 2 — links and structure. SHIPPED 2026-07-31** (except tables).
+  `[[` opens a picker over the box that filters as you keep typing, with a
+  find-or-create row; picking writes an id-based ref. Tapping a link opens
+  its target as a desk tab; long-press still places the caret. Unknown ids
+  demote to literal text at save time (ruling 5) instead of looping on a
+  refusal the core will never accept. The outline follows §6 rev 2's
+  principle rather than the toolbar button first sketched here: its control
+  appears **only once a note has three or more headings**, which is the
+  point at which jumping around is a real need.
+  *Deferred:* read-only-pretty pipe tables with drop-to-source.
 - **Phase 3 — metadata while writing (1–2 weeks).** Inspector rows become
   editors (select sheets, autocomplete with create rows, date pickers);
   fold the chip row behind the ≥44pt chevron; context defaults as removable

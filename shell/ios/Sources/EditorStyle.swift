@@ -415,6 +415,90 @@ enum EditOps {
     enum BlockVerb: Equatable { case headingCycle, bullet, ordered, task, quote, rule }
 }
 
+// MARK: - links being typed
+
+/// An unfinished `[[` the caret is sitting inside: the whole token range
+/// (from the brackets to the caret) and what has been typed after them.
+struct OpenLink: Equatable {
+    var range: NSRange  // the "[[query" span, document-absolute
+    var query: String
+}
+
+extension MarkScan {
+    /// Is the caret inside an unclosed `[[`? Scans backwards from the caret
+    /// to the line start only — a link never spans lines, and a closed
+    /// `]]` between the brackets and the caret ends it.
+    static func openLink(_ text: String, caret: Int) -> OpenLink? {
+        let n = text as NSString
+        guard caret >= 2, caret <= n.length else { return nil }
+        let line = EditOps.lineRange(text, at: caret)
+        var i = caret - 1
+        while i >= line.location + 1 {
+            let c = n.character(at: i)
+            // A closed token, or a newline, means the caret is not in one.
+            if c == 0x5D, n.character(at: i - 1) == 0x5D { return nil }
+            if c == 0x5B, n.character(at: i - 1) == 0x5B {
+                let start = i - 1
+                let query = n.substring(with: NSRange(location: i + 1, length: caret - i - 1))
+                // A query never contains the closer or a pipe — those end
+                // the picker and hand the text back to the codec.
+                if query.contains("]") || query.contains("|") { return nil }
+                return OpenLink(
+                    range: NSRange(location: start, length: caret - start), query: query)
+            }
+            i -= 1
+        }
+        return nil
+    }
+}
+
+extension EditOps {
+    /// Replace a half-typed `[[query` with the finished token. The id is
+    /// the payload; the name is cosmetic (Editor.swift's codec re-derives
+    /// it on every load), so a name carrying "]]" or newlines is cleaned
+    /// exactly the way SpanText.token cleans it.
+    static func completeLink(
+        _ text: String, token: NSRange, id: UInt64, name: String
+    ) -> EditResult {
+        let clean =
+            name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "]]", with: "] ]")
+        let inserted = clean.isEmpty ? "[[\(id)]]" : "[[\(id)|\(clean)]]"
+        let out = ns(text).replacingCharacters(in: token, with: inserted)
+        return EditResult(
+            text: out,
+            selection: NSRange(
+                location: token.location + (inserted as NSString).length, length: 0))
+    }
+}
+
+// MARK: - outline
+
+/// One heading, for the jump list.
+struct OutlineItem: Identifiable, Equatable {
+    let id: Int  // the heading line's start location — unique per note
+    var level: Int
+    var title: String
+}
+
+/// Every heading in the note, in order. A whole-document scan, so it is
+/// called on a debounce and when a note loads — never on the typing path.
+func livOutline(_ text: String) -> [OutlineItem] {
+    let n = text as NSString
+    var out: [OutlineItem] = []
+    n.enumerateSubstrings(in: NSRange(location: 0, length: n.length), options: [.byLines]) {
+        line, range, _, _ in
+        guard let line else { return }
+        let shape = MarkScan.shape(line)
+        guard case .heading(let level) = shape.block else { return }
+        let title = livDisplayTitle(line)
+        out.append(
+            OutlineItem(id: range.location, level: level, title: title.isEmpty ? "—" : title))
+    }
+    return out
+}
+
 // MARK: - display titles
 
 /// A scrap's display name is its content's first line — which now
@@ -573,6 +657,40 @@ func livEditorSelfCheck() -> [String] {
             == "Pack the van for Kitchen rebuild")
     check("plain title unchanged", livDisplayTitle("Call the dentist") == "Call the dentist")
     check("rule line titles empty", livDisplayTitle("---") == "")
+
+    // phase 2: the [[ picker, link completion, outline
+    check(
+        "open link found",
+        MarkScan.openLink("see [[kit", caret: 9)
+            == OpenLink(range: NSRange(location: 4, length: 5), query: "kit"))
+    check("open link with empty query", MarkScan.openLink("a [[", caret: 4)?.query == "")
+    check("closed link is not open", MarkScan.openLink("see [[42]] now", caret: 14) == nil)
+    check("single bracket is not a link", MarkScan.openLink("a [x", caret: 4) == nil)
+    check(
+        "link does not cross lines",
+        MarkScan.openLink("[[a\nplain", caret: 9) == nil)
+    check("a pipe ends the picker", MarkScan.openLink("[[42|na", caret: 7) == nil)
+    let done = EditOps.completeLink(
+        "see [[kit", token: NSRange(location: 4, length: 5), id: 4155, name: "Kitchen rebuild")
+    check("link completes", done.text == "see [[4155|Kitchen rebuild]]", done.text)
+    check("caret lands after the token", done.selection.location == (done.text as NSString).length)
+    let noName = EditOps.completeLink(
+        "x [[q", token: NSRange(location: 2, length: 3), id: 7, name: "  ")
+    check("nameless token when the name is blank", noName.text == "x [[7]]", noName.text)
+    let outline = livOutline("# One\nbody\n### Three\n- not a heading\n## Two")
+    check("outline finds three headings", outline.count == 3, "\(outline.count)")
+    check("outline keeps levels", outline.map(\.level) == [1, 3, 2], "\(outline.map(\.level))")
+    check("outline strips markers", outline.first?.title == "One", outline.first?.title ?? "nil")
+
+    // the codec demotes ids the box does not hold (ruling 5)
+    check(
+        "unknown id saves as text",
+        SpanText.textToSpans("see [[999]]", isKnown: { _ in false })
+            == [.text("see [[999]]", marks: 0)])
+    check(
+        "known id still saves as a ref",
+        SpanText.textToSpans("see [[999]]", isKnown: { $0 == 999 })
+            == [.text("see ", marks: 0), .ref(999)])
 
     return failures
 }
