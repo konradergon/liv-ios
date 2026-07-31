@@ -261,7 +261,16 @@ final class NoteEditorModel: ObservableObject {
     // MARK: lifecycle
 
     func attach(box: BoxModel, id: UInt64) {
-        guard self.box == nil else { return }
+        guard self.box == nil else {
+            // Re-appear after a full-screen cover (a feature window, the
+            // tab view, search, the camera): the cover fired onDisappear →
+            // stop(), so re-arm and catch up on anything the box did while
+            // covered. Without this the editor stopped following the box
+            // for the rest of the tab's life.
+            stopped = false
+            snapshotArrived()
+            return
+        }
         self.box = box
         self.id = id
         load()
@@ -504,8 +513,8 @@ struct NoteEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             if model.conflicted { banner }
             if model.flattens { notice(
-                "Formatting from the desk (headings, lists, styles) shows as plain "
-                    + "text here. Saving replaces it with what you see.") }
+                "This note carries desk formatting this editor can't keep. "
+                    + "Saving replaces it with what you see here.") }
             if model.saveFailed { notice("The box refused this save. It will try again.") }
             editor
             statusLine

@@ -521,7 +521,9 @@ struct TabSwitcher: View {
             return "New tab"
         case .entity(let id):
             let t = box.entity(id)?.title ?? ""
-            return t.isEmpty ? "Untitled" : t
+            guard !t.isEmpty else { return "Untitled" }
+            let clean = livDisplayTitle(t)
+            return clean.isEmpty ? t : clean
         }
     }
 

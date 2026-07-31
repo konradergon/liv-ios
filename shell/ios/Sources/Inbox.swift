@@ -150,7 +150,10 @@ private struct InboxScrapRow: View {
     }
 
     private var titleText: Text {
-        let t = row.title ?? "#\(row.id)"
+        // Markers off for display: a scrap's derived title may start "# ".
+        let raw = row.title ?? "#\(row.id)"
+        let clean = livDisplayTitle(raw)
+        let t = clean.isEmpty ? raw : clean
         guard !named else { return Text(t).foregroundStyle(LivTheme.text) }
         return Text("✦ ").foregroundStyle(LivTheme.text3)
             + Text(t).foregroundStyle(LivTheme.text)

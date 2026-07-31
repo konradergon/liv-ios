@@ -39,6 +39,9 @@ enum LivInk {
     static let text3 = pair(hex(0x67736C), hex(0x9FADA4))
     static let muted = pair(hex(0x96A09A), hex(0x66746C))
     static let border = pair(hex(0x000000, 0.10), hex(0xFFFFFF, 0.09))
+    /// Style-keyboard key fill. panel2-on-surface vanishes in dark mode
+    /// (1.03:1); the dark value here actually clears the surface.
+    static let keyFill = pair(hex(0xEAEEEA), hex(0x323D38))
 }
 
 enum LivTheme {

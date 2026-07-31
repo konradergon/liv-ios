@@ -39,8 +39,16 @@ private enum EditorFont {
         }
     }
 
+    /// One step heavier than the base — **bold** inside an H1 (already
+    /// bold) must read HEAVIER than its line, never lighter.
     static func bolded(_ base: UIFont) -> UIFont {
-        UIFont.systemFont(ofSize: base.pointSize, weight: .semibold)
+        let raw =
+            (base.fontDescriptor.object(forKey: .traits)
+                as? [UIFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0
+        let weight: UIFont.Weight =
+            raw >= UIFont.Weight.bold.rawValue
+            ? .heavy : raw >= UIFont.Weight.semibold.rawValue ? .bold : .semibold
+        return UIFont.systemFont(ofSize: base.pointSize, weight: weight)
     }
 
     static func italicized(_ base: UIFont) -> UIFont {
@@ -237,7 +245,13 @@ final class MarkdownTextView: UITextView {
         textColor = LivInk.text
         keyboardDismissMode = .interactive
         alwaysBounceVertical = true
-        textContainerInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
+        // Two hyphens must stay two hyphens — smart dashes would eat the
+        // "---" rule (and any -- ) as it is typed. Smart quotes stay on;
+        // nothing parses quote characters.
+        smartDashesType = .no
+        // left/right 0: the 5pt lineFragmentPadding plus the SwiftUI-side
+        // 4pt matches the placeholder's 9pt exactly.
+        textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         self.textContainer.lineFragmentPadding = 5
         accessibilityLabel = "Note content"
         accessibilityIdentifier = "note.editor"
@@ -267,12 +281,10 @@ struct MarkdownEditor: UIViewRepresentable {
         view.isEditable = editable
         if view.text != text {
             // Programmatic set (load, conflict swap, re-apply): keep the
-            // caret sane, restyle the whole document once.
+            // caret sane. Styling arrives via the storage delegate — every
+            // character mutation flows through it.
             let selected = view.selectedRange
             view.text = text
-            MarkStyler.apply(
-                to: view.textStorage,
-                in: NSRange(location: 0, length: (text as NSString).length))
             let n = (text as NSString).length
             view.selectedRange = NSRange(location: min(selected.location, n), length: 0)
         }
@@ -285,14 +297,26 @@ struct MarkdownEditor: UIViewRepresentable {
 
     // MARK: coordinator
 
-    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, NSTextStorageDelegate,
+        UIGestureRecognizerDelegate
+    {
         private let parent: MarkdownEditor
         private weak var view: MarkdownTextView?
+        /// Character edits made during IME composition (CJK etc.) — styled
+        /// only when the composition commits, so the input system's marked
+        /// text is never touched mid-flight.
+        private var pendingIME: NSRange?
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
         func install(on view: MarkdownTextView) {
             self.view = view
+            // Styling rides the STORAGE, not the caret: every character
+            // mutation (typing, paste, drop, undo, programmatic replace)
+            // flows through didProcessEditing with the range that actually
+            // changed. This is what keeps styling a pure function of the
+            // text under multi-paragraph edits — the audit's top finding.
+            view.textStorage.delegate = self
             view.inputAccessoryView = EditorToolbar(
                 onVerb: { [weak self] verb in self?.toolbar(verb) },
                 height: 44)
@@ -305,10 +329,38 @@ struct MarkdownEditor: UIViewRepresentable {
 
         // MARK: text flow
 
+        func textStorage(
+            _ textStorage: NSTextStorage,
+            didProcessEditing editedMask: NSTextStorage.EditActions,
+            range editedRange: NSRange, changeInLength delta: Int
+        ) {
+            // Attribute-only edits are our own restyle re-entering — skip,
+            // or this recurses forever.
+            guard editedMask.contains(.editedCharacters) else { return }
+            if view?.markedTextRange != nil {
+                pendingIME = pendingIME.map { NSUnionRange($0, editedRange) } ?? editedRange
+                return
+            }
+            apply(around: editedRange, to: textStorage)
+        }
+
+        /// Widened one character each side: a return that SPLITS a line
+        /// edits only the newline, but both halves need restyling.
+        private func apply(around range: NSRange, to storage: NSTextStorage) {
+            let n = (storage.string as NSString).length
+            let lo = max(0, min(range.location, n) - 1)
+            let hi = min(n, NSMaxRange(range) + 1)
+            MarkStyler.apply(to: storage, in: NSRange(location: lo, length: hi - lo))
+        }
+
         func textViewDidChange(_ textView: UITextView) {
-            // Restyle only the paragraph(s) around the edit — the caret
-            // marks where the edit landed.
-            MarkStyler.apply(to: textView.textStorage, in: textView.selectedRange)
+            // Mid-composition text is the input system's, not ours: no
+            // binding push (a half-composed syllable must not autosave).
+            guard textView.markedTextRange == nil else { return }
+            if let pending = pendingIME {
+                pendingIME = nil
+                apply(around: pending, to: textView.textStorage)
+            }
             parent.text = textView.text
         }
 
@@ -447,10 +499,10 @@ struct MarkdownEditor: UIViewRepresentable {
                 applyThroughSystem(result, to: view)
                 view.selectedRange = selected
             } else {
+                // Styling arrives via the storage delegate; the binding
+                // push must be explicit (no textViewDidChange for
+                // programmatic sets).
                 view.text = result.text
-                MarkStyler.apply(
-                    to: view.textStorage,
-                    in: NSRange(location: 0, length: (result.text as NSString).length))
                 parent.text = result.text
             }
         }
@@ -465,26 +517,36 @@ struct MarkdownEditor: UIViewRepresentable {
                 fractionOfDistanceBetweenInsertionPoints: nil)
         }
 
-        /// Only claim touches that land on a drawn checkbox (with a little
-        /// slack); everything else stays native text handling.
+        /// Only claim touches GEOMETRICALLY inside a drawn checkbox (plus
+        /// small slack). characterIndex alone returns the NEAREST character
+        /// for any point — an index-only gate would swallow taps in empty
+        /// space below a trailing task line and silently toggle it (the
+        /// audit's finding). Everything else stays native text handling.
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch
         ) -> Bool {
             guard let view = view, (view.text as NSString).length > 0 else { return false }
-            let index = characterIndex(of: touch.location(in: view))
+            let point = touch.location(in: view)
+            let index = characterIndex(of: point)
             let n = (view.text as NSString).length
-            guard index < n else { return false }
-            var effective = NSRange(location: 0, length: 0)
-            let value = view.textStorage.attribute(
-                .livTaskBox, at: index, effectiveRange: &effective)
-            if value != nil { return true }
-            // One glyph of slack on either side of the box.
-            for probe in [index - 1, index + 1]
-            where probe >= 0 && probe < n
-                && view.textStorage.attribute(.livTaskBox, at: probe, effectiveRange: nil) != nil {
-                return true
+            var boxRange: NSRange?
+            for probe in [index, index - 1, index + 1] where probe >= 0 && probe < n {
+                var effective = NSRange(location: 0, length: 0)
+                if view.textStorage.attribute(.livTaskBox, at: probe, effectiveRange: &effective)
+                    != nil
+                {
+                    boxRange = effective
+                    break
+                }
             }
-            return false
+            guard let boxRange else { return false }
+            let glyphs = view.layoutManager.glyphRange(
+                forCharacterRange: boxRange, actualCharacterRange: nil)
+            var rect = view.layoutManager.boundingRect(
+                forGlyphRange: glyphs, in: view.textContainer)
+            rect.origin.x += view.textContainerInset.left
+            rect.origin.y += view.textContainerInset.top
+            return rect.insetBy(dx: -10, dy: -6).contains(point)
         }
     }
 }
@@ -521,11 +583,15 @@ final class EditorToolbar: UIInputView {
         let scroller = UIScrollView()
         scroller.showsHorizontalScrollIndicator = false
         let middle = UIStackView(arrangedSubviews: [
-            key(symbol: "checkmark.square") { [weak self] in self?.onVerb(.task) },
-            key(symbol: "increase.indent") { [weak self] in self?.onVerb(.indent) },
-            key(symbol: "decrease.indent") { [weak self] in self?.onVerb(.outdent) },
-            key(symbol: "arrow.uturn.backward") { [weak self] in self?.onVerb(.undo) },
-            key(symbol: "arrow.uturn.forward") { [weak self] in self?.onVerb(.redo) },
+            key(symbol: "checkmark.square", access: "Toggle task") { [weak self] in
+                self?.onVerb(.task)
+            },
+            key(symbol: "increase.indent", access: "Indent") { [weak self] in self?.onVerb(.indent) },
+            key(symbol: "decrease.indent", access: "Outdent") { [weak self] in
+                self?.onVerb(.outdent)
+            },
+            key(symbol: "arrow.uturn.backward", access: "Undo") { [weak self] in self?.onVerb(.undo) },
+            key(symbol: "arrow.uturn.forward", access: "Redo") { [weak self] in self?.onVerb(.redo) },
         ])
         middle.axis = .horizontal
         middle.spacing = 2
@@ -560,7 +626,8 @@ final class EditorToolbar: UIInputView {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     private func key(
-        title: String? = nil, symbol: String? = nil, action: @escaping () -> Void
+        title: String? = nil, symbol: String? = nil, access: String? = nil,
+        action: @escaping () -> Void
     ) -> UIButton {
         let button = UIButton(type: .system)
         if let title {
@@ -574,6 +641,7 @@ final class EditorToolbar: UIInputView {
                     withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)),
                 for: .normal)
         }
+        if let access { button.accessibilityLabel = access }
         button.tintColor = LivInk.text2
         button.addAction(UIAction { _ in action() }, for: .touchUpInside)
         NSLayoutConstraint.activate([
@@ -596,10 +664,12 @@ final class StyleKeyboard: UIInputView {
         allowsSelfSizing = true
         backgroundColor = LivInk.surface
 
-        func row(_ keys: [(String, Bool, StyleVerb)]) -> UIStackView {
+        func row(_ keys: [(String, Bool, String, StyleVerb)]) -> UIStackView {
             let stack = UIStackView(
-                arrangedSubviews: keys.map { (label, isSymbol, verb) in
-                    key(label: label, isSymbol: isSymbol) { [weak self] in self?.onVerb(verb) }
+                arrangedSubviews: keys.map { (label, isSymbol, access, verb) in
+                    key(label: label, isSymbol: isSymbol, access: access) { [weak self] in
+                        self?.onVerb(verb)
+                    }
                 })
             stack.axis = .horizontal
             stack.spacing = 6
@@ -609,18 +679,18 @@ final class StyleKeyboard: UIInputView {
 
         let rows = UIStackView(arrangedSubviews: [
             row([
-                ("H", false, .heading),
-                ("bold", true, .bold),
-                ("italic", true, .italic),
-                ("strikethrough", true, .strike),
-                ("chevron.left.forwardslash.chevron.right", true, .code),
+                ("H", false, "Heading", .heading),
+                ("bold", true, "Bold", .bold),
+                ("italic", true, "Italic", .italic),
+                ("strikethrough", true, "Strikethrough", .strike),
+                ("chevron.left.forwardslash.chevron.right", true, "Code", .code),
             ]),
             row([
-                ("list.bullet", true, .bullet),
-                ("list.number", true, .ordered),
-                ("checkmark.square", true, .task),
-                ("text.quote", true, .quote),
-                ("minus", true, .rule),
+                ("list.bullet", true, "Bulleted list", .bullet),
+                ("list.number", true, "Numbered list", .ordered),
+                ("checkmark.square", true, "Task list", .task),
+                ("text.quote", true, "Quote", .quote),
+                ("minus", true, "Divider", .rule),
             ]),
         ])
         rows.axis = .vertical
@@ -637,7 +707,9 @@ final class StyleKeyboard: UIInputView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    private func key(label: String, isSymbol: Bool, action: @escaping () -> Void) -> UIButton {
+    private func key(
+        label: String, isSymbol: Bool, access: String, action: @escaping () -> Void
+    ) -> UIButton {
         let button = UIButton(type: .system)
         if isSymbol {
             button.setImage(
@@ -649,8 +721,9 @@ final class StyleKeyboard: UIInputView {
             button.setTitle(label, for: .normal)
             button.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
         }
+        button.accessibilityLabel = access
         button.tintColor = LivInk.text
-        button.backgroundColor = LivInk.panel2
+        button.backgroundColor = LivInk.keyFill
         button.layer.cornerRadius = 8
         NSLayoutConstraint.activate([
             button.heightAnchor.constraint(equalToConstant: 52)

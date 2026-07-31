@@ -158,12 +158,17 @@ enum MarkScan {
                 i = close + 1
                 continue
             }
-            // [[ref]] — digits, optional |name, ]] (the codec's grammar)
+            // [[ref]] — digits, optional |name, ]] (the codec's grammar,
+            // including its UInt64 bound: an overflowing digit run is
+            // literal text to the codec, so it must not LOOK like a link)
             if c == 0x5B, i + 1 < u.count, u[i + 1] == 0x5B {
                 var j = i + 2
-                var digits = 0
-                while j < u.count, u[j] >= 0x30, u[j] <= 0x39 { digits += 1; j += 1 }
-                if digits > 0 {
+                var digitStr = ""
+                while j < u.count, u[j] >= 0x30, u[j] <= 0x39 {
+                    digitStr.append(Character(UnicodeScalar(u[j])!))
+                    j += 1
+                }
+                if !digitStr.isEmpty, UInt64(digitStr) != nil {
                     if j + 1 < u.count, u[j] == 0x5D, u[j + 1] == 0x5D {
                         out.append(
                             .refToken(NSRange(location: i, length: j + 2 - i), name: nil))
@@ -266,7 +271,8 @@ enum EditOps {
         // Only act at end-of-line — mid-line return splits the line plainly.
         guard selection.location == r.location + r.length else { return nil }
         let shape = MarkScan.shape(l)
-        let pad = String(repeating: " ", count: shape.indent)
+        // The ORIGINAL whitespace, not a rebuild — a tab must stay a tab.
+        let pad = ns(l).substring(to: shape.indent)
         let continuation: String
         switch shape.block {
         case .task: continuation = "\(pad)- [ ] "
@@ -302,16 +308,18 @@ enum EditOps {
         var replaced: [String] = []
         for (idx, l) in lines.enumerated() {
             let shape = MarkScan.shape(l)
-            let pad = String(repeating: " ", count: shape.indent)
+            // The ORIGINAL whitespace, not a rebuild — a tab must stay a tab.
+            let pad = ns(l).substring(to: shape.indent)
             let stripped =
                 shape.marker.length > 0
                 ? ns(l).substring(from: shape.marker.length)
-                : String(l.dropFirst(shape.indent))
+                : ns(l).substring(from: shape.indent)
             switch verb {
             case .headingCycle:
                 let next: Int
                 if case .heading(let h) = shape.block { next = h >= 3 ? 0 : h + 1 } else { next = 1 }
-                replaced.append(next == 0 ? stripped : String(repeating: "#", count: next) + " " + stripped)
+                replaced.append(
+                    pad + (next == 0 ? stripped : String(repeating: "#", count: next) + " " + stripped))
             case .bullet:
                 if case .bullet = shape.block { replaced.append(pad + stripped) } else { replaced.append(pad + "- " + stripped) }
             case .ordered:
@@ -343,10 +351,23 @@ enum EditOps {
     }
 
     /// Inline verbs: wrap the selection, unwrap it if already wrapped, or
-    /// (empty selection) insert the pair and park the caret inside.
+    /// (empty selection) insert the pair and park the caret inside. A
+    /// selection spanning lines wraps each line separately — inline pairs
+    /// must close on one line or they are literal text.
     static func toggleInline(_ text: String, selection: NSRange, marker: String) -> EditResult {
         let n = ns(text)
         let m = ns(marker).length
+        if selection.length > 0, n.substring(with: selection).contains("\n") {
+            let wrapped = n.substring(with: selection)
+                .components(separatedBy: "\n")
+                .map { $0.isEmpty ? $0 : marker + $0 + marker }
+                .joined(separator: "\n")
+            let out = n.replacingCharacters(in: selection, with: wrapped)
+            return EditResult(
+                text: out,
+                selection: NSRange(
+                    location: selection.location, length: (wrapped as NSString).length))
+        }
         if selection.length == 0 {
             let out = n.replacingCharacters(in: selection, with: marker + marker)
             return EditResult(
@@ -392,6 +413,49 @@ enum EditOps {
     }
 
     enum BlockVerb: Equatable { case headingCycle, bullet, ordered, task, quote, rule }
+}
+
+// MARK: - display titles
+
+/// A scrap's display name is its content's first line — which now
+/// routinely carries markdown markers. Everywhere a title STRING is shown
+/// (rows, cards, the ledger, notifications) the markers come off; the
+/// buffer itself is never touched. Pure, line-local.
+func livDisplayTitle(_ raw: String) -> String {
+    let line = raw.components(separatedBy: "\n").first ?? raw
+    let shape = MarkScan.shape(line)
+    if case .rule = shape.block { return "" }
+    let n = line as NSString
+    let content = n.substring(from: min(shape.marker.length, n.length))
+    let runs = MarkScan.inline(content, from: 0)
+    guard !runs.isEmpty else {
+        return content.trimmingCharacters(in: .whitespaces)
+    }
+    // Rebuild the line, skipping marker glyphs; a named ref token shows
+    // its name, a nameless one stays as typed.
+    let c = content as NSString
+    var skip: [NSRange] = []
+    for run in runs {
+        switch run {
+        case .marker(let r): skip.append(r)
+        case .refToken(let whole, let name):
+            if let name {
+                skip.append(NSRange(location: whole.location, length: name.location - whole.location))
+                skip.append(
+                    NSRange(location: NSMaxRange(name), length: NSMaxRange(whole) - NSMaxRange(name)))
+            }
+        case .bold, .italic, .strike, .code: break
+        }
+    }
+    skip.sort { $0.location < $1.location }
+    var out = ""
+    var i = 0
+    for r in skip {
+        if r.location > i { out += c.substring(with: NSRange(location: i, length: r.location - i)) }
+        i = max(i, NSMaxRange(r))
+    }
+    if i < c.length { out += c.substring(from: i) }
+    return out.trimmingCharacters(in: .whitespaces)
 }
 
 // MARK: - self-check (run: simctl launch … -editor.selfcheck 1)
@@ -485,6 +549,30 @@ func livEditorSelfCheck() -> [String] {
     check("indent both", d1.text == "  a\n  b")
     let d2 = EditOps.indent(d1.text, selection: d1.selection, out: true)
     check("outdent both", d2.text == "a\nb")
+
+    // audit round: tabs survive, heading keeps indent, multi-line inline,
+    // overflowing ref digits stay text, display titles drop markers
+    let tab = EditOps.returnKey("\t- item", selection: NSRange(location: 7, length: 0))
+    check("tab indent survives return", tab?.text == "\t- item\n\t- ", tab?.text ?? "nil")
+    let hIndent = EditOps.setBlock(
+        "  note", selection: NSRange(location: 2, length: 0), verb: .headingCycle)
+    check("heading keeps indent", hIndent.text == "  # note", hIndent.text)
+    let multi = EditOps.toggleInline(
+        "a\nb", selection: NSRange(location: 0, length: 3), marker: "**")
+    check("multi-line wraps per line", multi.text == "**a**\n**b**", multi.text)
+    check(
+        "overflow digits are not a link",
+        !MarkScan.inline("[[99999999999999999999999]]", from: 0).contains { run in
+            if case .refToken = run { return true } else { return false }
+        })
+    check("title drops heading marker", livDisplayTitle("# Trip planning") == "Trip planning")
+    check("title drops task marker", livDisplayTitle("- [ ] Call the bank") == "Call the bank")
+    check(
+        "title drops inline markers",
+        livDisplayTitle("**Pack** the `van` for [[4155|Kitchen rebuild]]")
+            == "Pack the van for Kitchen rebuild")
+    check("plain title unchanged", livDisplayTitle("Call the dentist") == "Call the dentist")
+    check("rule line titles empty", livDisplayTitle("---") == "")
 
     return failures
 }

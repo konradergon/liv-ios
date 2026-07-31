@@ -233,11 +233,16 @@ final class Notify: NSObject, ObservableObject {
     /// Title = the entity's name, else its first content line (the display
     /// name the rest of the shell shows — a scrap carries no name cell).
     private static func title(_ row: EntityRow) -> String {
-        if let name = row.title, !name.isEmpty { return name }
+        // Markers off for display — a reminder must never ring "# Dentist".
+        if let name = row.title, !name.isEmpty {
+            let clean = livDisplayTitle(name)
+            return clean.isEmpty ? name : clean
+        }
         if let content = row.cells?.first(where: { $0.property == "content" })?.value,
             let line = content.split(separator: "\n").first, !line.isEmpty
         {
-            return String(line)
+            let clean = livDisplayTitle(String(line))
+            return clean.isEmpty ? String(line) : clean
         }
         return "Untitled"
     }

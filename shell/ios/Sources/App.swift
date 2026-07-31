@@ -183,9 +183,17 @@ struct RootView: View {
     private func bindOutboxTitles() {
         Outbox.shared.titleResolver = { [weak box] id in
             guard let row = box?.entity(id) else { return nil }
-            if let name = row.title, !name.isEmpty { return name }
-            let content = row.cells?.first { $0.property == "content" }?.value
-            return content?.split(separator: "\n").first.map(String.init)
+            // Markers off for display (livDisplayTitle) — ledger rows and
+            // scrap titles must not read "# Trip planning".
+            if let name = row.title, !name.isEmpty {
+                let clean = livDisplayTitle(name)
+                return clean.isEmpty ? name : clean
+            }
+            let first = row.cells?.first { $0.property == "content" }?.value?
+                .split(separator: "\n").first.map(String.init)
+            guard let first else { return nil }
+            let clean = livDisplayTitle(first)
+            return clean.isEmpty ? first : clean
         }
     }
 

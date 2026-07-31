@@ -205,12 +205,18 @@ struct EverythingView: View {
     }
 
     /// A scrap carries no name cell — its display name is its first content
-    /// line, the same rule the desk and the outbox ledger use.
+    /// line, the same rule the desk and the outbox ledger use. Markdown
+    /// markers come off for display (livDisplayTitle): a note that starts
+    /// "# Trip planning" is titled "Trip planning", never "# Trip planning".
     private func display(_ row: EntityRow) -> String {
-        if let name = row.title, !name.isEmpty { return name }
+        if let name = row.title, !name.isEmpty {
+            let clean = livDisplayTitle(name)
+            return clean.isEmpty ? name : clean
+        }
         let content = (row.cells ?? []).first { $0.property == "content" }?.value
         let first = content?.split(separator: "\n").first.map(String.init) ?? ""
-        return first.isEmpty ? "untitled" : first
+        let clean = livDisplayTitle(first)
+        return clean.isEmpty ? "untitled" : clean
     }
 
     /// The task test is the shell's own: a typed task OR anything carrying a
