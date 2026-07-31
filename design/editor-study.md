@@ -181,7 +181,55 @@ with mobile-first pickers: select sheets where the core defines options,
 type-to-filter autocomplete where the vocabulary is free, the native date
 picker for dates. Details in §8.
 
-## 6. The keyboard toolbar — spec, and the chrome-rule-4 narrowing it needs
+## 6 rev 2. Formatting chrome — the layered model (owner, 2026-07-30)
+
+> Superseding §6 rev 1 below. The owner's principle: *hide everything that
+> is not relevant to the current task, while making every tool instantly
+> accessible when it becomes relevant.* A persistent toolbar row fails it —
+> it is standing chrome for something roughly 95% of keystrokes do not need.
+> Rev 1's spec (and the rule-4 narrowing it asked for) is kept below as the
+> record of what was built and why it changed.
+
+The reframe that makes this affordable: **typing a marker already formats.**
+`#`, `- `, `- [ ] ` style live as you type, so the fast path needs no chrome
+at all. That is the expert path, and it is faster than any toolbar. The
+visible controls exist for people who do not know the markers — and controls
+hidden one action away cost the expert nothing.
+
+Four layers, each appearing exactly when it becomes relevant:
+
+- **Layer 0 — the note.** While writing: text and keyboard. The advisory
+  notices (flatten, save-refused) and the status line hide; the conflict
+  banner does not, because it is about the words being typed right now.
+- **Layer 1 — the markers.** Live styling, always. No chrome.
+- **Layer 2 — the selection menu.** Bold / Italic / Strikethrough / Code
+  join the system edit menu, inserted straight after Cut/Copy so they are
+  on its first page. They exist exactly while there is a selection to
+  format and leave with it. Inline formatting IS an act on a selection, so
+  this is where it belongs; and the menu is a control every iOS user
+  already knows, which answers the discoverability half of the principle.
+- **Layer 3 — the `Aa`.** One quiet 36pt control floating over the note's
+  bottom corner while writing (44pt hit target), gone when you stop. It
+  swaps the keyboard for the full-height style panel: three rows —
+  inline, blocks, then outdent / indent / undo / redo / hide-keyboard.
+  Block formatting is occasional, so it gets a handle, not a residence.
+
+**What this costs, honestly.** Checkbox and indent go from one tap to two
+(swipe-to-indent, when it lands, makes indent a gesture; checkboxes are
+mostly made by typing or by continuing a list). Block formatting is one
+notch less discoverable — mitigated by the `Aa` being visible, just quiet.
+And it deviates from Obsidian's persistent toolbar, which this study's own
+§3 already lists among their documented complaints.
+
+**Keyboard dismissal** is the swipe-down-in-text gesture (the Notes idiom,
+already implemented) plus the pinned key in the style panel. If the gesture
+proves undiscoverable in use, the fallback is a second floating control —
+deliberately not built yet, because it doubles the standing chrome for
+something the platform already trains.
+
+---
+
+## 6 rev 1 (superseded). The keyboard toolbar — spec, and the chrome-rule-4 narrowing it needs
 
 **The rule as written** (`design/ios.md:225-229`, owner, 2026-07-29):
 

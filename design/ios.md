@@ -222,13 +222,16 @@ device (transient shell state, never cells).
    merges the band into one accessibility element whose activation point is
    the band's centre, so wiring only the glyph leaves Voice Control and
    Switch Control with no way to close a full-screen surface.
-4. **Nothing moves a row independently of the keyboard.** (Narrowed by the
-   owner 2026-07-30, editor-study decision 1; the original 2026-07-29 rule
-   banned any keyboard accessory row after a lone "Done" bar shoved the chip
-   row around.) A row that appears and hides **as part of the keyboard's own
-   animation** — the editor's formatting toolbar — is allowed. Anything that
-   jolts layout on its own schedule stays banned, and the
-   swipe-down-in-text dismissal stays regardless.
+4. **Hide what the moment does not need; keep it one action away.**
+   (Owner, 2026-07-30, superseding both the 2026-07-29 ban on keyboard
+   accessory rows and the narrowing that followed it.) While you write,
+   the note is the screen: no toolbar row, no advisory notices, no status
+   line. Tools appear where and when they are relevant — inline formatting
+   in the selection menu, block formatting behind one quiet floating
+   control, properties behind the chevron. Nothing may jolt layout on its
+   own schedule, and the swipe-down-in-text keyboard dismissal stays.
+   Hidden must never mean unreachable: every hidden tool keeps one
+   visible, boring handle.
 
 **Metadata**: when the current body shows something that carries metadata,
 a **collapse button sits at the top-right of the body** (the Obsidian

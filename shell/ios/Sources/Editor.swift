@@ -508,17 +508,28 @@ struct NoteEditor: View {
     /// Plain state, not @FocusState — the UIKit text view reports focus
     /// through the representable's binding.
     @State private var focused = false
+    /// The style panel has replaced the system keyboard.
+    @State private var styleShown = false
+
+    /// Everything that is not the note gets out of the way while you write
+    /// (owner, 2026-07-30): the notices are advisory and can wait, the
+    /// status line is a footnote. A conflict is the one exception — it is
+    /// about the words being typed right now, so it stays.
+    private var writing: Bool { focused }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if model.conflicted { banner }
-            if model.flattens { notice(
+            if !writing, model.flattens { notice(
                 "This note carries desk formatting this editor can't keep. "
                     + "Saving replaces it with what you see here.") }
-            if model.saveFailed { notice("The box refused this save. It will try again.") }
+            if !writing, model.saveFailed {
+                notice("The box refused this save. It will try again.")
+            }
             editor
-            statusLine
+            if !writing { statusLine }
         }
+        .animation(.easeOut(duration: 0.18), value: writing)
         .onAppear { model.attach(box: box, id: id) }
         .onDisappear { model.stop() }
         .onChange(of: model.text) { _, _ in model.textChanged() }
@@ -545,12 +556,10 @@ struct NoteEditor: View {
             }
             // The live markdown surface (EditorText.swift). Styling is a
             // pure function of the text; the buffer the codec saves is the
-            // same plain string. Swipe-down keyboard dismissal lives in the
-            // view (keyboardDismissMode = .interactive); the toolbar rides
-            // the keyboard's own animation — chrome rule 4 as narrowed
-            // 2026-07-30.
+            // same plain string. Swipe down inside the text to dismiss the
+            // keyboard (keyboardDismissMode = .interactive).
             MarkdownEditor(
-                text: $model.text, focused: $focused,
+                text: $model.text, focused: $focused, styleShown: $styleShown,
                 editable: model.loaded && !model.missing
             )
             .padding(.horizontal, 4)
@@ -565,6 +574,46 @@ struct NoteEditor: View {
             RoundedRectangle(cornerRadius: LivTheme.radius)
                 .strokeBorder(LivTheme.border, lineWidth: 0.5)
         )
+        .overlay(alignment: .bottomTrailing) { styleButton }
+    }
+
+    /// The one visible formatting control: a quiet 36pt `Aa` that floats
+    /// over the note's bottom corner while you write, and is gone the
+    /// moment you stop. Tapping it swaps the keyboard for the style panel.
+    ///
+    /// Why one small button instead of a toolbar row (owner, 2026-07-30):
+    /// typing a marker (`#`, `-`, `- [ ] `) already formats live, so the
+    /// fast path needs no chrome at all, and inline formatting rides the
+    /// selection menu — which appears only when there is something to
+    /// format. What is left is block formatting, which is occasional. It
+    /// gets a handle, not a residence.
+    @ViewBuilder private var styleButton: some View {
+        if writing {
+            Button {
+                styleShown.toggle()
+            } label: {
+                Text("Aa")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(styleShown ? LivTheme.onAccent : LivTheme.text3)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        Circle().fill(styleShown ? LivTheme.accent : LivTheme.panel2)
+                    )
+                    .overlay(
+                        Circle().strokeBorder(
+                            styleShown ? Color.clear : LivTheme.border, lineWidth: 0.5)
+                    )
+                    // The visual stays 36pt; the hit target meets the 44pt
+                    // floor the shell enforces everywhere else.
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 4)
+            .padding(.bottom, 2)
+            .accessibilityLabel("Formatting")
+            .transition(.opacity)
+        }
     }
 
     // MARK: the world moved — non-destructive, both truths kept

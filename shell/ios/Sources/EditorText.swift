@@ -268,6 +268,9 @@ final class MarkdownTextView: UITextView {
 struct MarkdownEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var focused: Bool
+    /// The style keyboard is up. Owned by the SwiftUI side because the
+    /// quiet `Aa` that summons it floats over the note, not in a bar.
+    @Binding var styleShown: Bool
     var editable: Bool
 
     func makeUIView(context: Context) -> MarkdownTextView {
@@ -278,7 +281,11 @@ struct MarkdownEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MarkdownTextView, context: Context) {
+        context.coordinator.parent = self
         view.isEditable = editable
+        if styleShown != view.styleKeyboardShown {
+            context.coordinator.setStyleKeyboard(styleShown, on: view)
+        }
         if view.text != text {
             // Programmatic set (load, conflict swap, re-apply): keep the
             // caret sane. Styling arrives via the storage delegate — every
@@ -300,7 +307,7 @@ struct MarkdownEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate, NSTextStorageDelegate,
         UIGestureRecognizerDelegate
     {
-        private let parent: MarkdownEditor
+        var parent: MarkdownEditor
         private weak var view: MarkdownTextView?
         /// Character edits made during IME composition (CJK etc.) — styled
         /// only when the composition commits, so the input system's marked
@@ -317,9 +324,10 @@ struct MarkdownEditor: UIViewRepresentable {
             // changed. This is what keeps styling a pure function of the
             // text under multi-paragraph edits — the audit's top finding.
             view.textStorage.delegate = self
-            view.inputAccessoryView = EditorToolbar(
-                onVerb: { [weak self] verb in self?.toolbar(verb) },
-                height: 44)
+            // No inputAccessoryView, on purpose (design/editor-study.md §6
+            // rev 2): while you type there is the note and the keyboard and
+            // nothing else. Inline formatting lives in the selection menu,
+            // blocks behind the floating `Aa`.
             // Checkbox taps: the recognizer only RECEIVES touches that land
             // on a drawn box, so caret placement everywhere else is native.
             let tap = UITapGestureRecognizer(target: self, action: #selector(boxTapped(_:)))
@@ -382,9 +390,43 @@ struct MarkdownEditor: UIViewRepresentable {
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.focused = false
             if let view = view, view.styleKeyboardShown {
-                view.styleKeyboardShown = false
-                view.inputView = nil
+                setStyleKeyboard(false, on: view)
+                parent.styleShown = false
             }
+        }
+
+        /// Inline formatting rides the SELECTION menu: it exists exactly
+        /// while there is a selection to format, and leaves with it. No
+        /// standing chrome, and the menu is a control everyone already
+        /// knows (design/editor-study.md §6 rev 2).
+        func textView(
+            _ textView: UITextView, editMenuForTextIn range: NSRange,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            guard range.length > 0, textView.isEditable else { return nil }
+            func action(_ title: String, _ symbol: String, _ marker: String) -> UIAction {
+                UIAction(title: title, image: UIImage(systemName: symbol)) { [weak self] _ in
+                    guard let self, let view = self.view else { return }
+                    let selection = view.selectedRange
+                    self.applyThroughSystem(
+                        EditOps.toggleInline(view.text, selection: selection, marker: marker),
+                        to: view)
+                }
+            }
+            let format = UIMenu(
+                options: .displayInline,
+                children: [
+                    action("Bold", "bold", "**"),
+                    action("Italic", "italic", "*"),
+                    action("Strikethrough", "strikethrough", "~~"),
+                    action("Code", "chevron.left.forwardslash.chevron.right", "`"),
+                ])
+            // Straight after Cut/Copy/Paste, ahead of Look Up and Share:
+            // appended at the end it lands three pages into the menu, which
+            // is not "one effortless action away".
+            var children = suggestedActions
+            children.insert(format, at: min(1, children.count))
+            return UIMenu(children: children)
         }
 
         /// Route an EditResult through the UITextInput API as ONE minimal
@@ -415,34 +457,17 @@ struct MarkdownEditor: UIViewRepresentable {
                 length: min(result.selection.length, n - min(result.selection.location, n)))
         }
 
-        // MARK: the toolbar verbs
+        // MARK: the style keyboard
 
-        private func toolbar(_ verb: ToolbarVerb) {
-            guard let view = view else { return }
-            switch verb {
-            case .styleKeyboard:
-                view.styleKeyboardShown.toggle()
-                view.inputView =
-                    view.styleKeyboardShown
-                    ? StyleKeyboard(onVerb: { [weak self] v in self?.style(v) }) : nil
-                view.reloadInputViews()
-            case .task:
-                applyThroughSystem(
-                    EditOps.setBlock(view.text, selection: view.selectedRange, verb: .task),
-                    to: view)
-            case .indent:
-                applyThroughSystem(
-                    EditOps.indent(view.text, selection: view.selectedRange, out: false), to: view)
-            case .outdent:
-                applyThroughSystem(
-                    EditOps.indent(view.text, selection: view.selectedRange, out: true), to: view)
-            case .undo:
-                view.undoManager?.undo()
-            case .redo:
-                view.undoManager?.redo()
-            case .dismiss:
-                view.resignFirstResponder()
-            }
+        /// Swap the system keyboard for the style panel, or back. The panel
+        /// replaces the keyboard rather than sitting above it, so the note
+        /// never loses more room than the keyboard already took.
+        func setStyleKeyboard(_ shown: Bool, on view: MarkdownTextView) {
+            guard view.styleKeyboardShown != shown else { return }
+            view.styleKeyboardShown = shown
+            view.inputView =
+                shown ? StyleKeyboard(onVerb: { [weak self] v in self?.style(v) }) : nil
+            view.reloadInputViews()
         }
 
         private func style(_ verb: StyleVerb) {
@@ -479,6 +504,18 @@ struct MarkdownEditor: UIViewRepresentable {
             case .rule:
                 applyThroughSystem(
                     EditOps.setBlock(view.text, selection: sel, verb: .rule), to: view)
+            case .indent:
+                applyThroughSystem(
+                    EditOps.indent(view.text, selection: sel, out: false), to: view)
+            case .outdent:
+                applyThroughSystem(
+                    EditOps.indent(view.text, selection: sel, out: true), to: view)
+            case .undo:
+                view.undoManager?.undo()
+            case .redo:
+                view.undoManager?.redo()
+            case .dismiss:
+                view.resignFirstResponder()
             }
         }
 
@@ -551,109 +588,20 @@ struct MarkdownEditor: UIViewRepresentable {
     }
 }
 
-// MARK: - the toolbar (rides the keyboard's own animation — rule 4)
 
-enum ToolbarVerb { case styleKeyboard, task, indent, outdent, undo, redo, dismiss }
-enum StyleVerb { case heading, bold, italic, strike, code, bullet, ordered, task, quote, rule }
+// MARK: - the style keyboard (summoned by the floating `Aa`)
 
-/// One 44pt row: Aa pinned left, verbs scrolling in the middle, dismiss
-/// pinned right. Opaque surface, hairline top edge, no accent spent.
-final class EditorToolbar: UIInputView {
-    private let onVerb: (ToolbarVerb) -> Void
-
-    init(onVerb: @escaping (ToolbarVerb) -> Void, height: CGFloat) {
-        self.onVerb = onVerb
-        super.init(
-            frame: CGRect(x: 0, y: 0, width: 0, height: height), inputViewStyle: .keyboard)
-        allowsSelfSizing = true
-        backgroundColor = LivInk.surface
-
-        let hairline = UIView()
-        hairline.backgroundColor = LivInk.border
-        hairline.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hairline)
-
-        let aa = key(title: "Aa") { [weak self] in self?.onVerb(.styleKeyboard) }
-        aa.accessibilityLabel = "Formatting"
-        let dismiss = key(symbol: "keyboard.chevron.compact.down") { [weak self] in
-            self?.onVerb(.dismiss)
-        }
-        dismiss.accessibilityLabel = "Hide keyboard"
-
-        let scroller = UIScrollView()
-        scroller.showsHorizontalScrollIndicator = false
-        let middle = UIStackView(arrangedSubviews: [
-            key(symbol: "checkmark.square", access: "Toggle task") { [weak self] in
-                self?.onVerb(.task)
-            },
-            key(symbol: "increase.indent", access: "Indent") { [weak self] in self?.onVerb(.indent) },
-            key(symbol: "decrease.indent", access: "Outdent") { [weak self] in
-                self?.onVerb(.outdent)
-            },
-            key(symbol: "arrow.uturn.backward", access: "Undo") { [weak self] in self?.onVerb(.undo) },
-            key(symbol: "arrow.uturn.forward", access: "Redo") { [weak self] in self?.onVerb(.redo) },
-        ])
-        middle.axis = .horizontal
-        middle.spacing = 2
-        middle.translatesAutoresizingMaskIntoConstraints = false
-        scroller.addSubview(middle)
-        scroller.translatesAutoresizingMaskIntoConstraints = false
-
-        let row = UIStackView(arrangedSubviews: [aa, scroller, dismiss])
-        row.axis = .horizontal
-        row.spacing = 2
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-
-        NSLayoutConstraint.activate([
-            hairline.topAnchor.constraint(equalTo: topAnchor),
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.heightAnchor.constraint(equalToConstant: 0.5),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 0.5),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            row.heightAnchor.constraint(equalToConstant: height - 0.5),
-            middle.topAnchor.constraint(equalTo: scroller.contentLayoutGuide.topAnchor),
-            middle.bottomAnchor.constraint(equalTo: scroller.contentLayoutGuide.bottomAnchor),
-            middle.leadingAnchor.constraint(equalTo: scroller.contentLayoutGuide.leadingAnchor),
-            middle.trailingAnchor.constraint(equalTo: scroller.contentLayoutGuide.trailingAnchor),
-            middle.heightAnchor.constraint(equalTo: scroller.frameLayoutGuide.heightAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("unused") }
-
-    private func key(
-        title: String? = nil, symbol: String? = nil, access: String? = nil,
-        action: @escaping () -> Void
-    ) -> UIButton {
-        let button = UIButton(type: .system)
-        if let title {
-            button.setTitle(title, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        }
-        if let symbol {
-            button.setImage(
-                UIImage(
-                    systemName: symbol,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)),
-                for: .normal)
-        }
-        if let access { button.accessibilityLabel = access }
-        button.tintColor = LivInk.text2
-        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-        NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44)
-        ])
-        return button
-    }
+enum StyleVerb {
+    case heading, bold, italic, strike, code
+    case bullet, ordered, task, quote, rule
+    case outdent, indent, undo, redo, dismiss
 }
 
 /// The Aa panel: the system keyboard swapped for full-size formatting keys
-/// (Bear's style keyboard). Two rows of honest 52pt targets; Aa again (or
-/// ending editing) brings the letters back.
+/// (Bear's style keyboard). Three rows of honest 52pt targets — inline,
+/// blocks, then structure and history. Aa again (or ending editing) brings
+/// the letters back. This is the app's ONLY formatting chrome: nothing
+/// stands over the note while you type (design/editor-study.md §6 rev 2).
 final class StyleKeyboard: UIInputView {
     private let onVerb: (StyleVerb) -> Void
 
@@ -692,6 +640,17 @@ final class StyleKeyboard: UIInputView {
                 ("text.quote", true, "Quote", .quote),
                 ("minus", true, "Divider", .rule),
             ]),
+            // Structure and history — the controls that used to stand in a
+            // bar over the note. Undo/redo are here rather than on the
+            // writing surface: the system shake gesture still works, and
+            // this is where a user goes when they are fixing, not writing.
+            row([
+                ("decrease.indent", true, "Outdent", .outdent),
+                ("increase.indent", true, "Indent", .indent),
+                ("arrow.uturn.backward", true, "Undo", .undo),
+                ("arrow.uturn.forward", true, "Redo", .redo),
+                ("keyboard.chevron.compact.down", true, "Hide keyboard", .dismiss),
+            ]),
         ])
         rows.axis = .vertical
         rows.spacing = 6
@@ -701,7 +660,7 @@ final class StyleKeyboard: UIInputView {
             rows.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            rows.heightAnchor.constraint(equalToConstant: 110),
+            rows.heightAnchor.constraint(equalToConstant: 168),
         ])
     }
 
