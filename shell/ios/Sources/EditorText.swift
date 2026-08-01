@@ -10,9 +10,9 @@
 // just dimmed (ruling 3A: identical in every caret state, nothing ever
 // reflows on tap).
 //
-// The toolbar is a UIInputView riding the keyboard's own animation —
-// chrome rule 4 as narrowed by the owner 2026-07-30. The Aa key swaps the
-// system keyboard for the full-height style keyboard (Bear's trick).
+// The toolbar is one scrollable row riding directly above the keyboard
+// (owner, 2026-07-31 — the Bear shape). It appears and hides with the
+// keyboard's own animation, so nothing ever jolts on its own schedule.
 
 import SwiftUI
 import UIKit
@@ -59,15 +59,17 @@ final class EditorBridge: ObservableObject {
 // MARK: - fonts
 
 private enum EditorFont {
-    static let body = UIFont.systemFont(ofSize: 15)
-    static let mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    static let codeInline = UIFont.monospacedSystemFont(ofSize: 13.5, weight: .regular)
+    // Bumped one step across the board (owner, 2026-07-31: "clearer,
+    // larger text") — reading comfort beats density in the editor.
+    static let body = UIFont.systemFont(ofSize: 16)
+    static let mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let codeInline = UIFont.monospacedSystemFont(ofSize: 14.5, weight: .regular)
 
     static func heading(_ level: Int) -> UIFont {
         switch level {
-        case 1: return .systemFont(ofSize: 22, weight: .bold)
-        case 2: return .systemFont(ofSize: 19, weight: .semibold)
-        default: return .systemFont(ofSize: 17, weight: .semibold)
+        case 1: return .systemFont(ofSize: 25, weight: .bold)
+        case 2: return .systemFont(ofSize: 21, weight: .semibold)
+        default: return .systemFont(ofSize: 18, weight: .semibold)
         }
     }
 
@@ -281,8 +283,42 @@ final class LivLayoutManager: NSLayoutManager {
 // MARK: - the text view
 
 final class MarkdownTextView: UITextView {
-    /// Swapped in by the Aa key; nil = the system keyboard.
-    var styleKeyboardShown = false
+    /// Clearance for the floating circles the title starts below.
+    private static let titleTop: CGFloat = 54
+    private static let gutter: CGFloat = 15
+    private static let titleGap: CGFloat = 6
+
+    /// The note's title, living INSIDE this scroll view (owner,
+    /// 2026-08-01 — Obsidian's layout). A UITextView is a UIScrollView, so
+    /// a subview placed in the space `textContainerInset.top` reserves
+    /// scrolls with the body: the title starts below the floating circles
+    /// and slides up under them as you read. A separate SwiftUI header
+    /// could never do that — it would stay pinned.
+    let titleView: UITextView = {
+        let v = UITextView()
+        v.isScrollEnabled = false
+        v.backgroundColor = .clear
+        v.font = .systemFont(ofSize: 26, weight: .bold)
+        v.textColor = LivInk.text
+        v.textContainerInset = .zero
+        v.textContainer.lineFragmentPadding = 0
+        v.returnKeyType = .done
+        v.autocorrectionType = .no
+        v.accessibilityLabel = "Note title"
+        v.accessibilityIdentifier = "note.title"
+        return v
+    }()
+
+    /// The derived title, in grey, when no name cell exists.
+    let titlePrompt: UILabel = {
+        let l = UILabel()
+        l.font = .systemFont(ofSize: 26, weight: .bold)
+        l.textColor = LivInk.muted
+        l.numberOfLines = 3
+        l.lineBreakMode = .byTruncatingTail
+        l.isUserInteractionEnabled = false
+        return l
+    }()
 
     init() {
         let storage = NSTextStorage()
@@ -302,15 +338,55 @@ final class MarkdownTextView: UITextView {
         // "---" rule (and any -- ) as it is typed. Smart quotes stay on;
         // nothing parses quote characters.
         smartDashesType = .no
-        // left/right 0: the 5pt lineFragmentPadding plus the SwiftUI-side
-        // 4pt matches the placeholder's 9pt exactly.
-        textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        // Full-bleed: the text IS the screen. 15pt gutters (10 + the 5pt
+        // lineFragmentPadding); the deep bottom inset lets the last lines
+        // scroll clear of the floating bottom bar hovering over the text.
+        // The TOP inset is recomputed per layout to hold the title.
+        textContainerInset = UIEdgeInsets(
+            top: Self.titleTop + 32 + Self.titleGap, left: 10, bottom: 110, right: 10)
         self.textContainer.lineFragmentPadding = 5
         accessibilityLabel = "Note content"
         accessibilityIdentifier = "note.editor"
+        addSubview(titleView)
+        addSubview(titlePrompt)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    /// The title's measured height. Kept as state because the top inset
+    /// must NOT be written during a layout pass: mutating
+    /// textContainerInset re-invalidates text layout from inside
+    /// layoutSubviews, and the whole document silently stops drawing
+    /// (found live — the note went blank). Layout only positions; this
+    /// runs from the update path instead.
+    private var titleHeight: CGFloat = 32
+
+    func refreshTitleLayout() {
+        let width = max(bounds.width - Self.gutter * 2, 1)
+        let fitted = titleView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude))
+        let height = max(fitted.height, 32)
+        guard abs(height - titleHeight) > 0.5 else {
+            placeTitle(width: width)
+            return
+        }
+        titleHeight = height
+        textContainerInset.top = Self.titleTop + height + Self.titleGap
+        placeTitle(width: width)
+    }
+
+    private func placeTitle(width: CGFloat) {
+        let frame = CGRect(x: Self.gutter, y: Self.titleTop, width: width, height: titleHeight)
+        if titleView.frame != frame {
+            titleView.frame = frame
+            titlePrompt.frame = frame
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        placeTitle(width: max(bounds.width - Self.gutter * 2, 1))
+    }
 }
 
 // MARK: - the SwiftUI face
@@ -321,20 +397,25 @@ final class MarkdownTextView: UITextView {
 struct MarkdownEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var focused: Bool
-    /// The style keyboard is up. Owned by the SwiftUI side because the
-    /// quiet `Aa` that summons it floats over the note, not in a bar.
-    @Binding var styleShown: Bool
+    /// The note's name cell, edited in the scrolling title line.
+    @Binding var title: String
+    /// The derived title shown in grey while no name cell exists.
+    var titlePrompt: String
+    var onTitleCommit: () -> Void
     var editable: Bool
     /// The shared display state (the `[[` in flight, the outline) and the
     /// verbs SwiftUI calls back with.
     var bridge: EditorBridge
     /// A tapped `[[…]]` — the desk opens it as a tab.
     var onOpenRef: (UInt64) -> Void
+    /// The toolbar's outline key — NoteEditor presents the sheet.
+    var onOutline: () -> Void
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView()
         view.delegate = context.coordinator
         context.coordinator.install(on: view)
+        view.titleView.delegate = context.coordinator.title
         bridge.coordinator = context.coordinator
         return view
     }
@@ -342,9 +423,16 @@ struct MarkdownEditor: UIViewRepresentable {
     func updateUIView(_ view: MarkdownTextView, context: Context) {
         context.coordinator.parent = self
         view.isEditable = editable
-        if styleShown != view.styleKeyboardShown {
-            context.coordinator.setStyleKeyboard(styleShown, on: view)
+        view.titleView.isEditable = editable
+        if view.titleView.text != title {
+            view.titleView.text = title
+            view.setNeedsLayout()
         }
+        if view.titlePrompt.text != titlePrompt {
+            view.titlePrompt.text = titlePrompt
+        }
+        view.titlePrompt.isHidden = !title.isEmpty
+        view.refreshTitleLayout()
         if view.text != text {
             // Programmatic set (load, conflict swap, re-apply): keep the
             // caret sane. Styling arrives via the storage delegate — every
@@ -380,21 +468,42 @@ struct MarkdownEditor: UIViewRepresentable {
         /// leaves that token, so Escape means escape.
         private var suppressedLink: NSRange?
         private var outlineWork: DispatchWorkItem?
+        /// The title line has its own delegate so none of the body's text
+        /// machinery (styling, the [[ tracker, the outline) ever sees it.
+        let title = TitleDelegate()
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
         func install(on view: MarkdownTextView) {
             self.view = view
+            title.onChange = { [weak self, weak view] text in
+                self?.parent.title = text
+                view?.titlePrompt.isHidden = !text.isEmpty
+                view?.refreshTitleLayout()
+            }
+            title.onCommit = { [weak self] in self?.parent.onTitleCommit() }
+            // Return in the title commits and drops into the body — the
+            // title is one line of intent, not a place to live.
+            title.onReturn = { [weak self] in
+                guard let self, let view = self.view else { return }
+                view.titleView.resignFirstResponder()
+                view.becomeFirstResponder()
+                view.selectedRange = NSRange(location: 0, length: 0)
+            }
             // Styling rides the STORAGE, not the caret: every character
             // mutation (typing, paste, drop, undo, programmatic replace)
             // flows through didProcessEditing with the range that actually
             // changed. This is what keeps styling a pure function of the
             // text under multi-paragraph edits — the audit's top finding.
             view.textStorage.delegate = self
-            // No inputAccessoryView, on purpose (design/editor-study.md §6
-            // rev 2): while you type there is the note and the keyboard and
-            // nothing else. Inline formatting lives in the selection menu,
-            // blocks behind the floating `Aa`.
+            // The toolbar rides directly above the keyboard, horizontally
+            // scrollable — the Bear shape, by the owner's word 2026-07-31
+            // (§6 rev 3; this reverses rev 2's hidden-Aa model, which the
+            // owner tried and rejected). It appears and hides with the
+            // keyboard's own animation, so nothing ever jolts on its own.
+            view.inputAccessoryView = EditorToolbar { [weak self] verb in
+                self?.perform(verb)
+            }
             // Checkbox taps: the recognizer only RECEIVES touches that land
             // on a drawn box, so caret placement everywhere else is native.
             let tap = UITapGestureRecognizer(target: self, action: #selector(boxTapped(_:)))
@@ -553,10 +662,6 @@ struct MarkdownEditor: UIViewRepresentable {
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.focused = false
-            if let view = view, view.styleKeyboardShown {
-                setStyleKeyboard(false, on: view)
-                parent.styleShown = false
-            }
         }
 
         /// Inline formatting rides the SELECTION menu: it exists exactly
@@ -621,20 +726,9 @@ struct MarkdownEditor: UIViewRepresentable {
                 length: min(result.selection.length, n - min(result.selection.location, n)))
         }
 
-        // MARK: the style keyboard
+        // MARK: the toolbar verbs
 
-        /// Swap the system keyboard for the style panel, or back. The panel
-        /// replaces the keyboard rather than sitting above it, so the note
-        /// never loses more room than the keyboard already took.
-        func setStyleKeyboard(_ shown: Bool, on view: MarkdownTextView) {
-            guard view.styleKeyboardShown != shown else { return }
-            view.styleKeyboardShown = shown
-            view.inputView =
-                shown ? StyleKeyboard(onVerb: { [weak self] v in self?.style(v) }) : nil
-            view.reloadInputViews()
-        }
-
-        private func style(_ verb: StyleVerb) {
+        private func perform(_ verb: StyleVerb) {
             guard let view = view else { return }
             let sel = view.selectedRange
             switch verb {
@@ -678,6 +772,16 @@ struct MarkdownEditor: UIViewRepresentable {
                 view.undoManager?.undo()
             case .redo:
                 view.undoManager?.redo()
+            case .link:
+                // Insert the trigger; trackLink sees it and opens the picker.
+                let n = view.text as NSString
+                let out = n.replacingCharacters(in: sel, with: "[[")
+                applyThroughSystem(
+                    EditResult(
+                        text: out, selection: NSRange(location: sel.location + 2, length: 0)),
+                    to: view)
+            case .outline:
+                parent.onOutline()
             case .dismiss:
                 view.resignFirstResponder()
             }
@@ -748,19 +852,22 @@ struct MarkdownEditor: UIViewRepresentable {
             guard let (range, value) = found else { return nil }
             let glyphs = view.layoutManager.glyphRange(
                 forCharacterRange: range, actualCharacterRange: nil)
-            // A wrapped token spans two line fragments; the union of the
-            // used rects is what the user actually sees.
-            var rect = CGRect.null
+            // A wrapped token spans several line fragments. Test each piece
+            // separately — a UNION of pieces is a rectangle that can cover
+            // the whole line between them, which made the entire line act
+            // like the control (found live: a tap on plain text opened a
+            // link two words away).
+            var hit = false
             view.layoutManager.enumerateEnclosingRects(
                 forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
                 in: view.textContainer
             ) { piece, _ in
-                rect = rect.isNull ? piece : rect.union(piece)
+                var rect = piece
+                rect.origin.x += view.textContainerInset.left
+                rect.origin.y += view.textContainerInset.top
+                if rect.insetBy(dx: -slack, dy: -slack).contains(point) { hit = true }
             }
-            guard !rect.isNull else { return nil }
-            rect.origin.x += view.textContainerInset.left
-            rect.origin.y += view.textContainerInset.top
-            return rect.insetBy(dx: -slack, dy: -slack).contains(point) ? (range, value) : nil
+            return hit ? (range, value) : nil
         }
 
         func gestureRecognizer(
@@ -772,106 +879,135 @@ struct MarkdownEditor: UIViewRepresentable {
     }
 }
 
+// MARK: - the title line's delegate
 
-// MARK: - the style keyboard (summoned by the floating `Aa`)
+/// Kept apart from the body's coordinator on purpose: the title is plain
+/// text with no markdown, no links and no outline.
+final class TitleDelegate: NSObject, UITextViewDelegate {
+    var onChange: (String) -> Void = { _ in }
+    var onCommit: () -> Void = {}
+    var onReturn: () -> Void = {}
 
-enum StyleVerb {
-    case heading, bold, italic, strike, code
-    case bullet, ordered, task, quote, rule
-    case outdent, indent, undo, redo, dismiss
+    func textViewDidChange(_ textView: UITextView) { onChange(textView.text) }
+
+    func textViewDidEndEditing(_ textView: UITextView) { onCommit() }
+
+    func textView(
+        _ textView: UITextView, shouldChangeTextIn range: NSRange,
+        replacementText text: String
+    ) -> Bool {
+        guard text == "\n" else { return true }
+        onReturn()
+        return false
+    }
 }
 
-/// The Aa panel: the system keyboard swapped for full-size formatting keys
-/// (Bear's style keyboard). Three rows of honest 52pt targets — inline,
-/// blocks, then structure and history. Aa again (or ending editing) brings
-/// the letters back. This is the app's ONLY formatting chrome: nothing
-/// stands over the note while you type (design/editor-study.md §6 rev 2).
-final class StyleKeyboard: UIInputView {
+// MARK: - the toolbar (rides the keyboard's own animation)
+
+/// Everything the editor can do to text, one verb each.
+enum StyleVerb {
+    case undo, redo, link
+    case heading, bold, italic, strike, code
+    case task, bullet, ordered, quote, indent, outdent, rule
+    case outline, dismiss
+}
+
+/// One row directly above the keyboard, horizontally scrollable — the
+/// owner's 2026-07-31 direction, the Bear shape. The keyboard covers the
+/// bottom bar; this row covers nothing else and moves only with the
+/// keyboard. The dismiss key is pinned at the right so the way out never
+/// scrolls away.
+final class EditorToolbar: UIInputView {
     private let onVerb: (StyleVerb) -> Void
 
     init(onVerb: @escaping (StyleVerb) -> Void) {
         self.onVerb = onVerb
         super.init(
-            frame: CGRect(x: 0, y: 0, width: 0, height: 220), inputViewStyle: .keyboard)
+            frame: CGRect(x: 0, y: 0, width: 0, height: 46), inputViewStyle: .keyboard)
         allowsSelfSizing = true
         backgroundColor = LivInk.surface
 
-        func row(_ keys: [(String, Bool, String, StyleVerb)]) -> UIStackView {
-            let stack = UIStackView(
-                arrangedSubviews: keys.map { (label, isSymbol, access, verb) in
-                    key(label: label, isSymbol: isSymbol, access: access) { [weak self] in
-                        self?.onVerb(verb)
-                    }
-                })
-            stack.axis = .horizontal
-            stack.spacing = 6
-            stack.distribution = .fillEqually
-            return stack
+        let hairline = UIView()
+        hairline.backgroundColor = LivInk.border
+        hairline.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hairline)
+
+        let keys: [(String, String, StyleVerb)] = [
+            ("arrow.uturn.backward", "Undo", .undo),
+            ("arrow.uturn.forward", "Redo", .redo),
+            ("link", "Link", .link),
+            ("textformat.size", "Heading", .heading),
+            ("bold", "Bold", .bold),
+            ("italic", "Italic", .italic),
+            ("strikethrough", "Strikethrough", .strike),
+            ("chevron.left.forwardslash.chevron.right", "Code", .code),
+            ("checkmark.square", "Task list", .task),
+            ("list.bullet", "Bulleted list", .bullet),
+            ("list.number", "Numbered list", .ordered),
+            ("text.quote", "Quote", .quote),
+            ("increase.indent", "Indent", .indent),
+            ("decrease.indent", "Outdent", .outdent),
+            ("minus", "Divider", .rule),
+            ("list.bullet.indent", "Outline", .outline),
+        ]
+        let middle = UIStackView(
+            arrangedSubviews: keys.map { (symbol, access, verb) in
+                key(symbol, access) { [weak self] in self?.onVerb(verb) }
+            })
+        middle.axis = .horizontal
+        middle.spacing = 0
+        middle.translatesAutoresizingMaskIntoConstraints = false
+
+        let scroller = UIScrollView()
+        scroller.showsHorizontalScrollIndicator = false
+        scroller.translatesAutoresizingMaskIntoConstraints = false
+        scroller.addSubview(middle)
+
+        let dismiss = key("keyboard.chevron.compact.down", "Hide keyboard") { [weak self] in
+            self?.onVerb(.dismiss)
         }
 
-        let rows = UIStackView(arrangedSubviews: [
-            row([
-                ("H", false, "Heading", .heading),
-                ("bold", true, "Bold", .bold),
-                ("italic", true, "Italic", .italic),
-                ("strikethrough", true, "Strikethrough", .strike),
-                ("chevron.left.forwardslash.chevron.right", true, "Code", .code),
-            ]),
-            row([
-                ("list.bullet", true, "Bulleted list", .bullet),
-                ("list.number", true, "Numbered list", .ordered),
-                ("checkmark.square", true, "Task list", .task),
-                ("text.quote", true, "Quote", .quote),
-                ("minus", true, "Divider", .rule),
-            ]),
-            // Structure and history — the controls that used to stand in a
-            // bar over the note. Undo/redo are here rather than on the
-            // writing surface: the system shake gesture still works, and
-            // this is where a user goes when they are fixing, not writing.
-            row([
-                ("decrease.indent", true, "Outdent", .outdent),
-                ("increase.indent", true, "Indent", .indent),
-                ("arrow.uturn.backward", true, "Undo", .undo),
-                ("arrow.uturn.forward", true, "Redo", .redo),
-                ("keyboard.chevron.compact.down", true, "Hide keyboard", .dismiss),
-            ]),
-        ])
-        rows.axis = .vertical
-        rows.spacing = 6
-        rows.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rows)
+        let row = UIStackView(arrangedSubviews: [scroller, dismiss])
+        row.axis = .horizontal
+        row.spacing = 2
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
         NSLayoutConstraint.activate([
-            rows.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            rows.heightAnchor.constraint(equalToConstant: 168),
+            hairline.topAnchor.constraint(equalTo: topAnchor),
+            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hairline.heightAnchor.constraint(equalToConstant: 0.5),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 0.5),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            row.heightAnchor.constraint(equalToConstant: 45.5),
+            middle.topAnchor.constraint(equalTo: scroller.contentLayoutGuide.topAnchor),
+            middle.bottomAnchor.constraint(equalTo: scroller.contentLayoutGuide.bottomAnchor),
+            middle.leadingAnchor.constraint(equalTo: scroller.contentLayoutGuide.leadingAnchor),
+            middle.trailingAnchor.constraint(equalTo: scroller.contentLayoutGuide.trailingAnchor),
+            middle.heightAnchor.constraint(equalTo: scroller.frameLayoutGuide.heightAnchor),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
     private func key(
-        label: String, isSymbol: Bool, access: String, action: @escaping () -> Void
+        _ symbol: String, _ access: String, action: @escaping () -> Void
     ) -> UIButton {
         let button = UIButton(type: .system)
-        if isSymbol {
-            button.setImage(
-                UIImage(
-                    systemName: label,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)),
-                for: .normal)
-        } else {
-            button.setTitle(label, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        }
+        button.setImage(
+            UIImage(
+                systemName: symbol,
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)),
+            for: .normal)
         button.accessibilityLabel = access
-        button.tintColor = LivInk.text
-        button.backgroundColor = LivInk.keyFill
-        button.layer.cornerRadius = 8
-        NSLayoutConstraint.activate([
-            button.heightAnchor.constraint(equalToConstant: 52)
-        ])
+        button.tintColor = LivInk.text2
         button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 46)
+        ])
         return button
     }
 }
