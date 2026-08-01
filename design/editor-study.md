@@ -468,10 +468,20 @@ with a CLI cross-check against the box.
   appears **only once a note has three or more headings**, which is the
   point at which jumping around is a real need.
   *Deferred:* read-only-pretty pipe tables with drop-to-source.
-- **Phase 3 — metadata while writing (1–2 weeks).** Inspector rows become
-  editors (select sheets, autocomplete with create rows, date pickers);
-  fold the chip row behind the ≥44pt chevron; context defaults as removable
-  chips; zero-fill-pressure row policy.
+- **Phase 3 — metadata while writing. SHIPPED 2026-08-01.** The inspector's
+  rows are editors. ONE sheet serves every property, because the
+  differences between fields live in a descriptor read off the snapshot
+  (`InspectorField`) rather than in branches in the view: whether the
+  vocabulary is closed (a select — no create row, §10's fixed furniture),
+  whether the field holds several values at once, and how a value is
+  written. Tapping a value toggles it; a single-valued field answers its
+  question and closes; an open vocabulary offers "Create …" last.
+  Zero fill pressure is a row policy: area, project, subjects and people
+  are always present even when empty, reading "—" rather than nagging, and
+  every other property appears only once it holds a value. The chip row is
+  already gone (the full-bleed pass), so nothing duplicates the inspector.
+  *Deferred:* a date picker richer than the existing due sheet, and
+  reference-typed fields (people-as-entities rather than text).
 - **Phase 4 — templates (about 1 week).** The `template` cell and "Save as
   template"; new-from-template at every creation point; insert-at-cursor
   from the toolbar; the four variable pills resolved at instantiation;

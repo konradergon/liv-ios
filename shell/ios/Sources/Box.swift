@@ -380,6 +380,14 @@ final class BoxModel: ObservableObject {
 
     /// Remove EVERY cell of one property — the inverse of `set`. This is
     /// how a capture-time stamp chip is taken back off.
+    /// One value of a multi-valued property, removed by value — the
+    /// mirror of addCell. `unset` clears the whole property instead.
+    func removeCell(_ id: UInt64, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+        act("removeCell", done) {
+            liv_remove_cell_at(self.path, id, property, value) == 1
+        }
+    }
+
     func unset(_ id: UInt64, _ property: String) {
         act("unset") { liv_unset_at(self.path, id, property) == 1 }
     }

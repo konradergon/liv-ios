@@ -9,6 +9,54 @@
 
 import SwiftUI
 
+// MARK: - the field descriptor: what a property IS, before any UI
+
+/// One editable property, described from the SNAPSHOT rather than from a
+/// hardcoded list. Every editing behaviour the sheet needs is a property
+/// of the data, not a branch in the view: whether the vocabulary is
+/// closed (a select — no create row, §10's fixed furniture), whether the
+/// field holds several values at once, and how a value is written.
+struct InspectorField: Identifiable {
+    var id: String { property }
+    let property: String
+    /// The core's value kind: "select", "reference", "datetime", "text"…
+    let kind: String
+    /// Several values at once (membership, addCell) versus one (set).
+    let multi: Bool
+    /// A closed vocabulary: non-empty for a select. No create row.
+    let options: [String]
+
+    var closed: Bool { !options.isEmpty }
+
+    /// The fields every note shows even when empty — the "zero fill
+    /// pressure" core (design/editor-study.md §8: two filled fields is a
+    /// finished object). Everything else appears only once it has a value.
+    static let core = ["area", "project", "subjects", "people"]
+
+    /// Multi-valued by name — the same rule the camera's chip editor uses
+    /// (Camera.swift's CameraChipKind.multi): tags and people accumulate,
+    /// area and project replace.
+    static func isMulti(_ property: String) -> Bool {
+        property == "subjects" || property == "people"
+    }
+
+    /// Describe a property from the live snapshot.
+    static func describe(_ property: String, in snap: Snapshot?) -> InspectorField {
+        let row = (snap?.properties ?? []).first {
+            ($0.name ?? "").compare(property, options: .caseInsensitive) == .orderedSame
+        }
+        let options = (row?.options ?? [])
+            .filter { $0.hidden != true }
+            .compactMap { $0.name }
+            .filter { !$0.isEmpty }
+        return InspectorField(
+            property: property,
+            kind: row?.kind ?? "text",
+            multi: isMulti(property),
+            options: options)
+    }
+}
+
 // MARK: - the inspector (full-body; no title, no nav chrome)
 
 struct EntityInspector: View {
@@ -20,6 +68,8 @@ struct EntityInspector: View {
     @State private var options: [StatusOption] = []
     @State private var showDueSheet = false
     @State private var confirmTrash = false
+    /// The field whose sheet is open. One sheet serves every property.
+    @State private var editing: InspectorField?
 
     init(id: UInt64) {
         self.id = id
@@ -42,6 +92,13 @@ struct EntityInspector: View {
             Button("Move to Trash", role: .destructive) {
                 box.trash(id)
             }
+        }
+        .sheet(item: $editing) { field in
+            InspectorValueSheet(
+                field: field, id: id,
+                current: values(of: field.property, in: box.entity(id))
+            )
+            .environmentObject(box)
         }
         .sheet(isPresented: $showDueSheet) {
             DetailDueSheet(
@@ -69,6 +126,13 @@ struct EntityInspector: View {
                 }
                 dueRow(row)
                 statusRow(row)
+                // Zero fill pressure: the core fields are always here, even
+                // empty; everything else appears only once it holds a value
+                // (design/editor-study.md §8). Two filled fields is a
+                // finished object — the rows must never nag.
+                ForEach(InspectorField.core, id: \.self) { property in
+                    fieldRow(property, row)
+                }
                 ForEach(DetailCellGroup.groups(row, skipping: skipSet(row))) {
                     cellRow($0)
                 }
@@ -97,11 +161,11 @@ struct EntityInspector: View {
                 Spacer(minLength: 12)
                 if let due = row.due {
                     Text(DetailFmt.due(due, end: row.dueEnd, dateOnly: row.dueDateOnly ?? false))
-                        .font(.system(size: 12).monospacedDigit())
+                        .font(.system(size: 14).monospacedDigit())
                         .foregroundStyle(LivTheme.text)
                 } else {
                     Text("—")
-                        .font(.system(size: 12))
+                        .font(.system(size: 14))
                         .foregroundStyle(LivTheme.muted)
                 }
             }
@@ -128,7 +192,7 @@ struct EntityInspector: View {
                         ValueChip(status)  // display-only; nothing to change it to
                     } else {
                         Text("none for this kind")
-                            .font(.system(size: 12))
+                            .font(.system(size: 14))
                             .foregroundStyle(LivTheme.muted)
                     }
                 }
@@ -148,7 +212,7 @@ struct EntityInspector: View {
                             ValueChip(status)
                         } else {
                             Text("—")
-                                .font(.system(size: 12))
+                                .font(.system(size: 14))
                                 .foregroundStyle(LivTheme.muted)
                         }
                     }
@@ -163,7 +227,47 @@ struct EntityInspector: View {
     // MARK: the general property rows
 
     private func skipSet(_ row: EntityRow) -> Set<String> {
-        ["name", "status", dueProperty(row)]
+        Set(["name", "status", dueProperty(row)] + InspectorField.core)
+    }
+
+    /// The values this entity holds for a property, in wire order.
+    private func values(of property: String, in row: EntityRow?) -> [String] {
+        (row?.cells ?? [])
+            .filter { $0.property == property }
+            .compactMap { $0.value }
+            .filter { !$0.isEmpty }
+    }
+
+    /// A core field's row: tap anywhere on it to open the one editing
+    /// sheet. Empty reads as "—", never as a prompt to fill it in.
+    private func fieldRow(_ property: String, _ row: EntityRow) -> some View {
+        let held = values(of: property, in: row)
+        return Button {
+            editing = InspectorField.describe(property, in: box.snap)
+        } label: {
+            HStack {
+                DetailRowLabel(property)
+                Spacer(minLength: 12)
+                if held.isEmpty {
+                    Text("—")
+                        .font(.system(size: 14))
+                        .foregroundStyle(LivTheme.muted)
+                } else {
+                    HStack(spacing: 5) {
+                        ForEach(held.prefix(3), id: \.self) { ValueChip($0) }
+                        if held.count > 3 {
+                            Text("+\(held.count - 3)")
+                                .font(.system(size: 12).monospacedDigit())
+                                .foregroundStyle(LivTheme.text3)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) { DetailHairline() }
     }
 
     private func cellRow(_ group: DetailCellGroup) -> some View {
@@ -200,11 +304,11 @@ struct EntityInspector: View {
             ValueChip(v.value)
         case "datetime":
             Text(DetailFmt.datetime(v.value))
-                .font(.system(size: 12).monospacedDigit())
+                .font(.system(size: 14).monospacedDigit())
                 .foregroundStyle(LivTheme.text)
         default:
             Text(v.value)
-                .font(.system(size: 12))
+                .font(.system(size: 14))
                 .foregroundStyle(LivTheme.text)
                 .multilineTextAlignment(.trailing)
         }
@@ -253,6 +357,152 @@ struct EntityInspector: View {
             }
         }
         .padding(.top, 8)
+    }
+}
+
+// MARK: - the one editing sheet, driven by the field descriptor
+
+/// Every property is edited the same way: the values in use are listed
+/// with the current ones checked, tapping toggles, and an open vocabulary
+/// gets a create row LAST (the furniture leads, the door does not — §10).
+/// One sheet for area, project, tags and people, because the differences
+/// between them live in InspectorField, not here.
+struct InspectorValueSheet: View {
+    let field: InspectorField
+    let id: UInt64
+    /// The values this entity currently holds for the field.
+    let current: [String]
+
+    @EnvironmentObject var box: BoxModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var typed = ""
+    @State private var known: [String] = []
+
+    private var trimmed: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Everything offered: the closed vocabulary if there is one, else the
+    /// values already in use across the box, plus whatever this entity
+    /// holds (a value can outlive its neighbours).
+    private var all: [String] {
+        var out = field.closed ? field.options : known
+        for v in current where !out.contains(where: { same($0, v) }) { out.append(v) }
+        return out
+    }
+
+    private var filtered: [String] {
+        trimmed.isEmpty ? all : all.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    private var creatable: Bool {
+        !field.closed && !trimmed.isEmpty && !all.contains { same($0, trimmed) }
+    }
+
+    private func same(_ a: String, _ b: String) -> Bool {
+        a.compare(b, options: .caseInsensitive) == .orderedSame
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(field.property.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(LivTheme.text3)
+            if !field.closed {
+                TextField("Search or create…", text: $typed)
+                    .font(.system(size: 16))
+                    .foregroundStyle(LivTheme.text)
+                    .submitLabel(.done)
+                    // Values are verbatim: "errands" must not become
+                    // "Errands" on its way into a cell.
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .onSubmit { if creatable { add(trimmed) } }
+                    .padding(.horizontal, 12)
+                    .frame(height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
+            }
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(filtered, id: \.self) { value in
+                        let on = current.contains { same($0, value) }
+                        row(value, checked: on) { on ? remove(value) : add(value) }
+                    }
+                    if creatable {
+                        row("Create \u{201C}\(trimmed)\u{201D}", accent: true) { add(trimmed) }
+                    }
+                    if all.isEmpty && trimmed.isEmpty {
+                        EmptyHint(
+                            field.closed ? "Nothing to choose from." : "Type to create one.")
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(LivTheme.canvas)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            // Once per open, never per keystroke.
+            guard !field.closed else { return }
+            box.distinctValues(property: field.property) { known = $0 }
+        }
+    }
+
+    // MARK: writes — the box is the only truth; the sheet re-reads nothing
+
+    private func add(_ value: String) {
+        if field.multi {
+            box.addCell(id, field.property, value)
+        } else {
+            box.set(id, field.property, value)
+            dismiss()  // one value means the question is answered
+        }
+        typed = ""
+    }
+
+    private func remove(_ value: String) {
+        if field.multi {
+            box.removeCell(id, field.property, value)
+        } else {
+            box.unset(id, field.property)
+        }
+    }
+
+    private func row(
+        _ label: String, checked: Bool = false, accent: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                if accent {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(LivTheme.accent)
+                        .frame(width: 16)
+                } else {
+                    Circle().fill(Hue.dot(label)).frame(width: 7, height: 7)
+                        .frame(width: 16)
+                }
+                Text(label)
+                    .font(.system(size: 16))
+                    .foregroundStyle(accent ? LivTheme.accent : LivTheme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if checked {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(LivTheme.accent)
+                }
+            }
+            .frame(height: 46)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
     }
 }
 
@@ -336,7 +586,7 @@ private struct DetailRowLabel: View {
     init(_ text: String) { self.text = text }
     var body: some View {
         Text(text)
-            .font(.system(size: 11))
+            .font(.system(size: 14))
             .foregroundStyle(LivTheme.text3)
             .lineLimit(1)
             .layoutPriority(1)
