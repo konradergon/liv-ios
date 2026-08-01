@@ -508,16 +508,22 @@ final class NoteEditorModel: ObservableObject {
     }
 }
 
-// MARK: - the view: one plain buffer, Liv-compact
+// MARK: - the view: the note IS the screen
 
 struct NoteEditor: View {
     let id: UInt64
-    /// Scraps have no name cell — their displayed title IS this content's
-    /// first line, so this editor is the only surface for it.
-    var placeholder: String = "Write…"
+    /// The note's name cell, edited in the title line that scrolls with
+    /// the body (Obsidian's layout — owner, 2026-08-01).
+    @Binding var title: String
+    /// The derived title, shown grey while no name cell exists.
+    var titlePrompt: String
+    var onTitleCommit: () -> Void
     /// A tapped `[[…]]` lands as a desk tab — the shell's one rule for
     /// opening anything from anywhere.
     var onOpenRef: (UInt64) -> Void = { _ in }
+    /// A note created a moment ago: open with the caret already in it, so
+    /// "Create a note" lands you writing, not looking at a blank screen.
+    var autoFocus: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
@@ -528,13 +534,11 @@ struct NoteEditor: View {
     /// Plain state, not @FocusState — the UIKit text view reports focus
     /// through the representable's binding.
     @State private var focused = false
-    /// The style panel has replaced the system keyboard.
-    @State private var styleShown = false
 
     /// Everything that is not the note gets out of the way while you write
-    /// (owner, 2026-07-30): the notices are advisory and can wait, the
-    /// status line is a footnote. A conflict is the one exception — it is
-    /// about the words being typed right now, so it stays.
+    /// (owner, 2026-07-30): the notices are advisory and can wait. A
+    /// conflict is the one exception — it is about the words being typed
+    /// right now, so it stays.
     private var writing: Bool { focused }
 
     var body: some View {
@@ -547,13 +551,18 @@ struct NoteEditor: View {
                 notice("The box refused this save. It will try again.")
             }
             editor
-            if !writing { statusLine }
         }
-        .animation(.easeOut(duration: 0.18), value: writing)
-        .onAppear { model.attach(box: box, id: id) }
+        .animation(LivMotion.nav, value: writing)
+        .onAppear {
+            model.attach(box: box, id: id)
+            if autoFocus { focused = true }
+        }
+        .onChange(of: autoFocus) { _, now in if now { focused = true } }
         .onDisappear { model.stop() }
         .onChange(of: model.text) { _, _ in model.textChanged() }
-        .onChange(of: focused) { _, now in if !now { model.flush() } }
+        .onChange(of: focused) { _, now in
+            if !now { model.flush() }
+        }
         .onChange(of: scenePhase) { _, phase in
             // .inactive comes first and is the reliable one; .background
             // flushes again in case the app went straight there.
@@ -562,87 +571,25 @@ struct NoteEditor: View {
         .onReceive(box.$snap) { _ in model.snapshotArrived() }
     }
 
-    // MARK: the buffer
+    // MARK: the buffer — full-bleed, no card, no chrome of its own
 
+    /// No placeholder, no "Write…", no instructional text (owner,
+    /// 2026-08-01): an empty note is a blinking caret on a dark page.
     private var editor: some View {
-        ZStack(alignment: .topLeading) {
-            if model.text.isEmpty {
-                Text(model.loaded ? placeholder : "Reading…")
-                    .font(.system(size: 15))
-                    .foregroundStyle(LivTheme.muted)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 10)
-                    .allowsHitTesting(false)
-            }
-            // The live markdown surface (EditorText.swift). Styling is a
-            // pure function of the text; the buffer the codec saves is the
-            // same plain string. Swipe down inside the text to dismiss the
-            // keyboard (keyboardDismissMode = .interactive).
-            MarkdownEditor(
-                text: $model.text, focused: $focused, styleShown: $styleShown,
-                editable: model.loaded && !model.missing,
-                bridge: bridge, onOpenRef: onOpenRef
-            )
-            .padding(.horizontal, 4)
-            .padding(.vertical, 2)
-        }
+        // The live markdown surface (EditorText.swift). Styling is a
+        // pure function of the text; the buffer the codec saves is the
+        // same plain string. Swipe down inside the text to dismiss the
+        // keyboard (keyboardDismissMode = .interactive).
+        MarkdownEditor(
+            text: $model.text, focused: $focused,
+            title: $title, titlePrompt: titlePrompt, onTitleCommit: onTitleCommit,
+            editable: model.loaded && !model.missing,
+            bridge: bridge, onOpenRef: onOpenRef,
+            onOutline: { outlineShown = true }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .fill(LivTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .strokeBorder(LivTheme.border, lineWidth: 0.5)
-        )
-        .overlay(alignment: .bottomTrailing) { floatingControls }
         .overlay(alignment: .bottom) { linkPicker }
         .sheet(isPresented: $outlineShown) { outlineSheet }
-    }
-
-    // MARK: the floating controls — quiet, and only when relevant
-
-    /// Two controls at most, both contextual: the outline appears only
-    /// once a note has enough headings to be worth jumping around, and
-    /// `Aa` only while writing.
-    private var floatingControls: some View {
-        HStack(spacing: 6) {
-            if bridge.outline.count >= 3 {
-                floater("list.bullet.indent", label: "Outline") { outlineShown = true }
-            }
-            if writing {
-                floater(nil, label: "Formatting") { styleShown.toggle() }
-            }
-        }
-        .padding(.trailing, 4)
-        .padding(.bottom, 2)
-    }
-
-    @ViewBuilder private func floater(
-        _ symbol: String?, label: String, action: @escaping () -> Void
-    ) -> some View {
-        let on = symbol == nil && styleShown
-        Button(action: action) {
-            Group {
-                if let symbol {
-                    Image(systemName: symbol).font(.system(size: 14, weight: .medium))
-                } else {
-                    Text("Aa").font(.system(size: 14, weight: .semibold))
-                }
-            }
-            .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text3)
-            .frame(width: 36, height: 36)
-            .background(Circle().fill(on ? LivTheme.accent : LivTheme.panel2))
-            .overlay(
-                Circle().strokeBorder(on ? Color.clear : LivTheme.border, lineWidth: 0.5)
-            )
-            // The visual stays 36pt; the hit target meets the 44pt floor.
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .transition(.opacity)
     }
 
     // MARK: the [[ picker
@@ -658,9 +605,9 @@ struct NoteEditor: View {
                 onPick: { id, name in bridge.completeLink(id: id, name: name) },
                 onDismiss: { bridge.dismissLink() }
             )
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 10)
             .padding(.bottom, 6)
-            .transition(.opacity)
+            .transition(.move(edge: .bottom))
         }
     }
 
@@ -669,8 +616,9 @@ struct NoteEditor: View {
     private var outlineSheet: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SectionLabel("Outline")
-                    .padding(.bottom, 6)
+                if bridge.outline.isEmpty {
+                    EmptyHint("No headings yet.")
+                }
                 ForEach(bridge.outline) { item in
                     Button {
                         outlineShown = false
@@ -678,13 +626,13 @@ struct NoteEditor: View {
                     } label: {
                         HStack(spacing: 8) {
                             Text(item.title)
-                                .font(.system(size: 14, weight: item.level == 1 ? .semibold : .regular))
+                                .font(.system(size: 16, weight: item.level == 1 ? .semibold : .regular))
                                 .foregroundStyle(item.level == 1 ? LivTheme.text : LivTheme.text2)
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                         }
-                        .padding(.leading, CGFloat(item.level - 1) * 14)
-                        .frame(minHeight: 40)
+                        .padding(.leading, CGFloat(item.level - 1) * 16)
+                        .frame(minHeight: 44)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -701,107 +649,50 @@ struct NoteEditor: View {
         .presentationDragIndicator(.visible)
     }
 
-    /// The one visible formatting control: a quiet 36pt `Aa` that floats
-    /// over the note's bottom corner while you write, and is gone the
-    /// moment you stop. Tapping it swaps the keyboard for the style panel.
-    ///
-    /// Why one small button instead of a toolbar row (owner, 2026-07-30):
-    /// typing a marker (`#`, `-`, `- [ ] `) already formats live, so the
-    /// fast path needs no chrome at all, and inline formatting rides the
-    /// selection menu — which appears only when there is something to
-    /// format. What is left is block formatting, which is occasional. It
-    /// gets a handle, not a residence.
-    @ViewBuilder private var styleButton: some View {
-        if writing {
-            Button {
-                styleShown.toggle()
-            } label: {
-                Text("Aa")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(styleShown ? LivTheme.onAccent : LivTheme.text3)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle().fill(styleShown ? LivTheme.accent : LivTheme.panel2)
-                    )
-                    .overlay(
-                        Circle().strokeBorder(
-                            styleShown ? Color.clear : LivTheme.border, lineWidth: 0.5)
-                    )
-                    // The visual stays 36pt; the hit target meets the 44pt
-                    // floor the shell enforces everywhere else.
-                    .frame(width: 44, height: 44)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(.trailing, 4)
-            .padding(.bottom, 2)
-            .accessibilityLabel("Formatting")
-            .transition(.opacity)
-        }
-    }
-
     // MARK: the world moved — non-destructive, both truths kept
 
     private var banner: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("This changed elsewhere")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
             Text("The box's version is shown. Your edit is kept.")
-                .font(.system(size: 11))
+                .font(.system(size: 13))
                 .foregroundStyle(LivTheme.text3)
             HStack(spacing: 8) {
                 Button("Re-apply my edit") { model.reapplyDraft() }
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(LivTheme.onAccent)
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
                     .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.accent))
                 Button("Keep this one") { model.discardDraft() }
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .foregroundStyle(LivTheme.text2)
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
                     .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel2))
             }
             .buttonStyle(.plain)
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.accentSoft))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .padding(.horizontal, 10)
     }
 
+    /// Advisory notices only — the routine Saved/Unsaved footnote is gone
+    /// (owner, 2026-07-31: no informational micro-text). Autosave's honesty
+    /// surfaces are the conflict banner and the refusal notice.
     private func notice(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
+            .font(.system(size: 13))
             .foregroundStyle(LivTheme.text3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel2))
-    }
-
-    // MARK: the loss budget, said out loud
-
-    private var statusLine: some View {
-        HStack(spacing: 5) {
-            if model.missing {
-                Text("Not in this box anymore.")
-            } else if !model.loaded {
-                Text("Reading…")
-            } else if model.dirty {
-                Circle().fill(LivTheme.accent).frame(width: 5, height: 5)
-                Text("Unsaved — saves on its own")
-            } else if model.savedOnce {
-                Text("Saved")
-            } else {
-                Text("")
-            }
-            Spacer(minLength: 0)
-        }
-        .font(.system(size: 10))
-        .foregroundStyle(LivTheme.muted)
-        .frame(height: 12)
+            .padding(.horizontal, 10)
     }
 }
 

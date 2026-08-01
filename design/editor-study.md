@@ -181,6 +181,23 @@ with mobile-first pickers: select sheets where the core defines options,
 type-to-filter autocomplete where the vocabulary is free, the native date
 picker for dates. Details in §8.
 
+## 6 rev 3. The toolbar returns, the chrome retreats (owner, 2026-07-31)
+
+> Superseding rev 2. The owner used the hidden-`Aa` model and rejected it:
+> formatting belongs in ONE horizontally scrollable row directly above the
+> keyboard (the Bear shape, from the owner's own screenshot), with the
+> keyboard covering the bottom bar. Everything else moved the other way:
+> the persistent top bar is gone (Workspace/Settings behind the desk's
+> floating `…`), the DETAILS row and meta line left the editing view, the
+> editor is full-bleed with the bars hovering over it, explanatory
+> micro-text is banned, the type scale went up one step, animations are
+> slide-only (`LivMotion.nav`), and the lake-green theme is replaced by a
+> generic dark theme (system-blue accent, forced dark). Rev 2's selection-
+> menu formatting SURVIVES — it cost nothing and is still the fastest
+> inline path. What rev 2 got wrong, for the record: "one effortless
+> action away" read as one tap TOO MANY for block formatting, and a
+> hidden-by-default toolbar traded real discoverability for a principle.
+
 ## 6 rev 2. Formatting chrome — the layered model (owner, 2026-07-30)
 
 > Superseding §6 rev 1 below. The owner's principle: *hide everything that

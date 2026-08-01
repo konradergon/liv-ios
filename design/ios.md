@@ -223,15 +223,30 @@ device (transient shell state, never cells).
    the band's centre, so wiring only the glyph leaves Voice Control and
    Switch Control with no way to close a full-screen surface.
 4. **Hide what the moment does not need; keep it one action away.**
-   (Owner, 2026-07-30, superseding both the 2026-07-29 ban on keyboard
-   accessory rows and the narrowing that followed it.) While you write,
-   the note is the screen: no toolbar row, no advisory notices, no status
-   line. Tools appear where and when they are relevant — inline formatting
-   in the selection menu, block formatting behind one quiet floating
-   control, properties behind the chevron. Nothing may jolt layout on its
-   own schedule, and the swipe-down-in-text keyboard dismissal stays.
-   Hidden must never mean unreachable: every hidden tool keeps one
-   visible, boring handle.
+   (Owner, 2026-07-30; sharpened 2026-07-31.) While you write, the note is
+   the screen: the persistent top bar is gone (Workspace and Settings live
+   behind the desk's floating `…`), the two floating circles stay put in
+   every state (owner, 2026-08-01 — they are the constant), the
+   advisory notices and status line hide, and the DETAILS row and meta
+   line are gone from the editing view entirely — properties live behind
+   the metadata chevron. Every note carries an Obsidian-style title line
+   that is PART OF THE NOTE, not a header: it lives inside the editor's
+   own scroll view, starts below the floating circles, and slides up under
+   them as you read (owner, 2026-08-01).
+   the name cell when a human has set it, else the DERIVED title (first
+   content line, markers stripped) as a grey suggestion — display-only,
+   never written to the box, so the name cell's absence itself records
+   that the user has not titled it, and nothing automatic can ever
+   overwrite a human title. A new note focuses the BODY, never the title,
+   and an empty note is a blinking caret — no placeholder text at all.
+   Formatting is one scrollable toolbar riding
+   DIRECTLY above the keyboard (the Bear shape — the owner tried the
+   hidden-`Aa` panel of 2026-07-30 and rejected it); the keyboard covers
+   the bottom bar. No explanatory micro-text anywhere in the chrome.
+
+5. **One motion.** Navigation areas move from and into view — one curve,
+   one duration (`LivMotion.nav`), no rotations, no combined fades, no
+   springs. Calm beats clever.
 
 **Metadata**: when the current body shows something that carries metadata,
 a **collapse button sits at the top-right of the body** (the Obsidian
@@ -303,6 +318,12 @@ Surfaces (bodies; mockups in the artifact):
 - **Widgets** — lock-screen capture/camera circulars, next-due rectangular,
   medium Today with interactive checkboxes (App Intents against the App Group
   box); honest "as of" staleness footer.
+
+> **Theme delta (owner, 2026-07-31):** the lake-green identity is retired
+> ("yuck", verbatim). The app wears a generic dark theme — neutral dark
+> greys, the system blue as the one accent — and renders dark regardless
+> of the system setting. `interface.md`'s lake-green law is superseded for
+> the phone by this delta; recorded here rather than by rewriting history.
 
 ## 7. Visual design
 

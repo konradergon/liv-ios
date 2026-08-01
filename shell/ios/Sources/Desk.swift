@@ -14,26 +14,70 @@ struct DeskHost: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
+    @State private var settingsShown = false
+    @State private var switcherShown = false
+
     var body: some View {
-        Group {
-            if let tab = desk.activeTab {
-                switch tab.content {
-                case .new:
-                    NewTabBody(tabId: tab.id).id(tab.id)
-                case .entity(let id):
-                    // Keyed by ENTITY: serial captures rewrite this same
-                    // tab with a new entity, and per-entity @State (the
-                    // seeded title) must reseed on that flip.
-                    EntityTabBody(id: id).id(id)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let tab = desk.activeTab {
+                    switch tab.content {
+                    case .new:
+                        NewTabBody(tabId: tab.id).id(tab.id)
+                    case .entity(let id):
+                        // Keyed by ENTITY: serial captures rewrite this same
+                        // tab with a new entity, and per-entity @State (the
+                        // seeded title) must reseed on that flip.
+                        EntityTabBody(id: id).id(id)
+                    }
+                } else {
+                    // DeskModel keeps a tab alive by invariant; belt anyway.
+                    EmptyHint("No tab open — tap + for one.")
+                        .frame(maxHeight: .infinity)
                 }
-            } else {
-                // DeskModel keeps a tab alive by invariant; belt anyway.
-                EmptyHint("No tab open — tap + for one.")
-                    .frame(maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // The only standing chrome over the note: two quiet circles,
+            // top-right, hovering over the full-bleed text — visible in
+            // every state, editing included (owner, 2026-08-01: the top
+            // actions stay put). Workspace and Settings moved here from
+            // the old persistent top bar, one level back from daily use.
+            HStack(spacing: 8) {
+                if case .entity = desk.activeTab?.content {
+                    FloatCircle(
+                        symbol: desk.inspectorShown ? "chevron.up" : "chevron.down",
+                        on: desk.inspectorShown, label: "Metadata"
+                    ) {
+                        withAnimation(LivMotion.nav) { desk.inspectorShown.toggle() }
+                    }
+                }
+                Menu {
+                    Button {
+                        switcherShown = true
+                    } label: {
+                        Label(workspaces.activeName, systemImage: "square.grid.2x2")
+                    }
+                    Button {
+                        settingsShown = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                } label: {
+                    FloatCircleLabel(symbol: "ellipsis", on: false)
+                }
+                .accessibilityLabel("More")
+            }
+            .padding(.trailing, 12)
+            .padding(.top, 6)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LivTheme.canvas)
+        .sheet(isPresented: $settingsShown) { SettingsSheet() }
+        .sheet(isPresented: $switcherShown) {
+            WorkspaceSwitcher()
+                .environmentObject(box)
+                .environmentObject(workspaces)
+        }
         // The capture sheet hangs off the HOST, not the .new tab body: the
         // commit flips that tab to .entity, and a sheet presented from the
         // replaced body is torn down mid-flow — the eval §5.2/§5.3
@@ -55,33 +99,85 @@ struct DeskHost: View {
     }
 }
 
+/// One quiet floating control: 36pt circle, 44pt target.
+struct FloatCircle: View {
+    let symbol: String
+    var on: Bool = false
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            FloatCircleLabel(symbol: symbol, on: on)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+struct FloatCircleLabel: View {
+    let symbol: String
+    var on: Bool = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text2)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(on ? LivTheme.accent : LivTheme.panel2))
+            .overlay(
+                Circle().strokeBorder(on ? Color.clear : LivTheme.border, lineWidth: 0.5)
+            )
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+    }
+}
+
 // MARK: - the new-tab body (the capture door)
 
-/// Verbs, no questions. Idea/task/event run in the CaptureSheet; the
-/// committed entity becomes THIS tab's content. Photo and Open… hand off
-/// to the chrome's camera / search flags.
+/// Verbs, no questions. "Create a note" opens the editor DIRECTLY — no
+/// sheet, no intermediate question (owner, 2026-07-31: the desktop has no
+/// "capture an idea" concept, and a note starts by writing). Task and
+/// event still run through the CaptureSheet, which is where their date and
+/// status live. Photo and Open… hand off to the chrome's flags.
 struct NewTabBody: View {
     let tabId: UUID
 
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var workspaces: WorkspaceModel
+    @State private var creating = false
 
     var body: some View {
         VStack(spacing: 8) {
             Spacer()
-            verb("Capture an idea", "lightbulb", primary: true) { present(.idea) }
+            verb("Create a note", "square.and.pencil", primary: true) { createNote() }
             verb("New task", "checkmark.circle") { present(.task) }
             verb("New event", "calendar") { present(.event) }
             verb("Photo", "camera") { desk.cameraShown = true }
             verb("Open…", "magnifyingglass") { desk.searchShown = true }
-            Text("A new tab holds one thing — capture it, then shape it.")
-                .font(.system(size: 11))
-                .foregroundStyle(LivTheme.muted)
-                .multilineTextAlignment(.center)
-                .padding(.top, 10)
             Spacer()
             Spacer()  // sit the stack a touch above center
         }
         .padding(.horizontal, 48)
+        .disabled(creating)
+    }
+
+    /// Birth an empty note and become it: this tab flips to the entity and
+    /// the editor takes the screen with the caret already in it. The
+    /// workspace stamps it exactly as any other creation door does.
+    private func createNote() {
+        guard !creating else { return }
+        creating = true
+        box.createNote { id in
+            guard id != 0 else {
+                creating = false
+                return
+            }
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.setContent(tabId, entity: id)
+        }
     }
 
     /// The verb rides the request so the sheet opens in ITS mode (§5.5);
@@ -97,13 +193,13 @@ struct NewTabBody: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: primary ? .semibold : .regular))
+                    .font(.system(size: 15, weight: primary ? .semibold : .regular))
                 Text(label)
-                    .font(.system(size: 13, weight: primary ? .semibold : .regular))
+                    .font(.system(size: 15, weight: primary ? .semibold : .regular))
             }
             .foregroundStyle(primary ? LivTheme.onAccent : LivTheme.text)
             .frame(maxWidth: .infinity)
-            .frame(height: 40)
+            .frame(height: 46)
             .background(
                 RoundedRectangle(cornerRadius: LivTheme.radius)
                     .fill(primary ? LivTheme.accent : LivTheme.surface)
@@ -121,9 +217,10 @@ struct NewTabBody: View {
 
 // MARK: - the entity tab body
 
-/// One entity, content-first. The 26pt collapse button top-right swaps
-/// the body under the title for the full inspector (Obsidian's properties
-/// chevron); the title itself stays put and stays editable.
+/// One entity, full-bleed: the text IS the screen (owner, 2026-07-31).
+/// No DETAILS row, no meta line, no card — properties live behind the
+/// floating metadata chevron (DeskHost), and the title, when the entity
+/// has one, is the only thing above the text.
 struct EntityTabBody: View {
     let id: UInt64
 
@@ -131,9 +228,8 @@ struct EntityTabBody: View {
     @EnvironmentObject var box: BoxModel
     @State private var title = ""
     @State private var titleSeeded = false
-    // Rehearsal hook: `simctl launch … -desk.boot.inspector 1` boots with the
-    // metadata editor open (headless screenshots; launch args feed UserDefaults).
-    @State private var inspectorShown = UserDefaults.standard.bool(forKey: "desk.boot.inspector")
+    /// Set once, in onAppear, for a note born a moment ago.
+    @State private var autoFocus = false
     @FocusState private var titleFocused: Bool
 
     var body: some View {
@@ -147,9 +243,8 @@ struct EntityTabBody: View {
     }
 
     /// A name CELL, not the displayed title: a scrap has none, and its
-    /// title is derived from its content's first line. Two editors over one
-    /// value is the bug this asks about — for a scrap the content editor is
-    /// the only surface, so the title row simply is not there.
+    /// title is derived from its content's first line — the editor is its
+    /// only surface.
     private var named: Bool {
         (box.entity(id)?.cells ?? []).contains {
             $0.property == "name" && !($0.value ?? "").isEmpty
@@ -158,167 +253,79 @@ struct EntityTabBody: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                if named {
-                    titleField
-                } else if let row = box.entity(id) {
-                    // A scrap has no title row; without something in it the
-                    // header is a dead band with a lone chevron. Its meta
-                    // line moves up here instead of below.
-                    metaLine(row)
-                    Spacer(minLength: 0)
-                } else {
-                    Spacer(minLength: 0)
-                }
-                collapseButton
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            if inspectorShown {
+            if desk.inspectorShown {
                 EntityInspector(id: id)
-                    // Clear the floating bottom bar, exactly as bodyContent
-                    // does below. Without it a long property list ends under
-                    // the bar and the bar takes the taps: "Undo" hit the `^`
-                    // and opened the features menu, "Move to Trash" hit the
-                    // tab square. The clearance belongs here, not inside
-                    // EntityInspector — that view also renders on surfaces
-                    // where no bar floats.
+                    // Clear the floating bottom bar — the inspector's
+                    // Undo / Move to Trash row must never rest under it.
+                    .padding(.top, 52)
                     .padding(.bottom, 76)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else if let row = box.entity(id) {
-                bodyContent(row)
-                    .transition(.opacity)
+                    .transition(.move(edge: .trailing))
+            } else if box.entity(id) != nil {
+                NoteEditor(
+                    id: id,
+                    title: $title, titlePrompt: derivedTitle,
+                    onTitleCommit: commitTitle,
+                    // A token whose target is not in this box LOOKS like a
+                    // link but saves as text (ruling 5) — tapping it must
+                    // not open a dead tab.
+                    onOpenRef: { target in
+                        if box.entity(target) != nil { desk.open(target) }
+                    },
+                    autoFocus: autoFocus
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear { seedTitle() }
-        .onChange(of: box.entity(id)?.title) {
-            // The snapshot moved under us (undo, another surface): reseed
-            // unless the caret is in the field — a draft never loses.
-            if !titleFocused {
-                titleSeeded = false
-                seedTitle()
-            }
+        .onAppear {
+            seedTitle()
+            // Child onAppear fires before the parent's, so the editor reads
+            // this through onChange, not its own onAppear.
+            autoFocus = desk.consumeFocus(id)
+        }
+        .onChange(of: storedName) { _, fresh in
+            // The snapshot moved under us (undo, another surface). Reseed
+            // only when the field is not mid-edit, which the comparison
+            // against the live draft already tells us.
+            if title != fresh, title == "" || title == storedName { title = fresh }
         }
     }
 
-    // MARK: title — inline-editable, commits through the box
+    // MARK: title — lives in the editor's scroll view now
 
-    private var titleField: some View {
-        TextField("Untitled", text: $title, axis: .vertical)
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(LivTheme.text)
-            .lineLimit(1...3)
-            .focused($titleFocused)
-            .submitLabel(.done)
-            .onSubmit(commitTitle)
-            .onChange(of: titleFocused) {
-                if !titleFocused { commitTitle() }
-            }
-            .padding(.vertical, 4)
+    /// First content line, markers off — or nothing at all for a note that
+    /// is still empty (a blank field with a caret, never instructions, and
+    /// never the wire's "#id" fallback).
+    private var derivedTitle: String {
+        guard !named, let row = box.entity(id) else { return "" }
+        let first = (row.cells ?? [])
+            .first { $0.property == "content" }?.value?
+            .split(separator: "\n").first.map(String.init) ?? ""
+        return livDisplayTitle(first)
+    }
+
+    /// The NAME CELL, never row.title — the wire title is a derived
+    /// display string ("#id" for an empty note, the first content line for
+    /// a scrap) and belongs in the grey prompt, not in the field.
+    private var storedName: String {
+        (box.entity(id)?.cells ?? [])
+            .first { $0.property == "name" }?.value ?? ""
     }
 
     private func seedTitle() {
         guard !titleSeeded else { return }
-        title = box.entity(id)?.title ?? ""
+        title = storedName
         titleSeeded = true
     }
 
     private func commitTitle() {
-        let stored = box.entity(id)?.title ?? ""
+        let stored = storedName
         let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard typed != stored, !typed.isEmpty else {
             title = stored  // an emptied field reverts, never erases the name
             return
         }
         box.set(id, "name", typed)
-    }
-
-    private var collapseButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.22)) { inspectorShown.toggle() }
-        } label: {
-            Image(systemName: inspectorShown ? "chevron.up" : "chevron.down")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(inspectorShown ? LivTheme.accent : LivTheme.text2)
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                        .fill(LivTheme.panel2)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                        .strokeBorder(LivTheme.border, lineWidth: 0.5)
-                )
-                // The visual stays 26pt; the hit target meets the 44pt HIG
-                // floor (eval §5.9) — the glyph pinned where it always was.
-                .frame(width: 44, height: 44, alignment: .topTrailing)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Metadata")
-    }
-
-    // MARK: the content body
-
-    /// Metadata on top, then the note itself filling everything left — M3.
-    /// The editor is not in a ScrollView: it scrolls itself, and a text view
-    /// nested in a scroll view has no height to fill.
-    private func bodyContent(_ row: EntityRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Named entities keep their meta under the title; a scrap's rides
-            // in the header row above (see `content`).
-            if named { metaLine(row) }
-            // The chip row is PERSISTENT here (eval §5.6) — the sheet's
-            // confirmation is transient; the body is where it lives.
-            EntityChipRow(id: row.id)
-            refSection(row)
-            NoteEditor(
-                id: row.id,
-                placeholder: named ? "Write…" : "Write this scrap out…",
-                onOpenRef: { desk.open($0) })
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
-        // Clear the floating bottom bar — the editor must never hide under it.
-        .padding(.bottom, 76)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private func metaLine(_ row: EntityRow) -> some View {
-        HStack(spacing: 6) {
-            Text(deskKindLabel(row))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(LivTheme.text3)
-            if let created = row.created {
-                Text("· created \(deskStampLabel(created))")
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(LivTheme.muted)
-            }
-        }
-    }
-
-    /// Reference cells as chips; a tap opens the target as another tab —
-    /// the Ref-span gesture grammar, chip-shaped (a Ref span INSIDE the
-    /// content is a token in the editor's buffer, tap-to-open pending).
-    @ViewBuilder private func refSection(_ row: EntityRow) -> some View {
-        let refs = (row.cells ?? []).filter {
-            $0.kind == "reference" && $0.refTarget != nil
-        }
-        if !refs.isEmpty {
-            SectionLabel("Linked").padding(.top, 8)
-            DeskChipFlow(spacing: 6) {
-                ForEach(Array(refs.enumerated()), id: \.offset) { _, cell in
-                    Button {
-                        if let target = cell.refTarget { desk.open(target) }
-                    } label: {
-                        ValueChip(cell.value ?? "#\(cell.refTarget ?? 0)", big: true)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
     }
 }
 
@@ -563,66 +570,6 @@ struct TabSwitcher: View {
         case .entity(let id):
             guard let row = box.entity(id) else { return "missing" }
             return row.kinds?.first ?? "scrap"
-        }
-    }
-}
-
-// MARK: - helpers (file-private, Desk-prefixed by law)
-
-private func deskKindLabel(_ row: EntityRow) -> String {
-    let kinds = row.kinds ?? []
-    return kinds.isEmpty ? "scrap" : kinds.joined(separator: " · ")
-}
-
-private func deskStampLabel(_ stamp: Int64) -> String {
-    var out = Civil.dayLabel(Civil.day(of: stamp))
-    let time = Civil.timeString(stamp)
-    if !time.isEmpty { out += " " + time }
-    return out
-}
-
-/// A wrapping chip row (CaptureSheet's Flow is file-private there).
-private struct DeskChipFlow: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(
-        proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
-    ) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowH: CGFloat = 0
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x > 0, x + sz.width > width {
-                x = 0
-                y += rowH + spacing
-                rowH = 0
-            }
-            x += sz.width + spacing
-            rowH = max(rowH, sz.height)
-        }
-        return CGSize(
-            width: width.isFinite ? width : max(x - spacing, 0), height: y + rowH)
-    }
-
-    func placeSubviews(
-        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews,
-        cache: inout ()
-    ) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowH: CGFloat = 0
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + sz.width > bounds.maxX {
-                x = bounds.minX
-                y += rowH + spacing
-                rowH = 0
-            }
-            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
-            x += sz.width + spacing
-            rowH = max(rowH, sz.height)
         }
     }
 }

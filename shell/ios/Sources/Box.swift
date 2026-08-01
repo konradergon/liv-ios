@@ -334,6 +334,13 @@ final class BoxModel: ObservableObject {
         actId("capture", Outbox.tracking(.idea, done)) { liv_capture_at(self.path, text) }
     }
 
+    /// An empty, typed note — the editor's own creation door. Unlike
+    /// `capture`, which refuses empty text (a blank thought is not a
+    /// capture), this births the entity so the caret has somewhere to land.
+    func createNote(done: ((UInt64) -> Void)? = nil) {
+        actId("createNote", Outbox.tracking(.idea, done)) { liv_create_note_at(self.path) }
+    }
+
     func createTask(done: ((UInt64) -> Void)? = nil) {
         actId("createTask", Outbox.tracking(.task, done)) { liv_create_task_at(self.path) }
     }
