@@ -88,9 +88,28 @@ final class DeskModel: ObservableObject {
     @Published var searchShown = false
     @Published var gridShown = false
     @Published var cameraShown = false
+    /// The metadata inspector covers the active entity tab's body.
+    /// Lifted to the model so DeskHost's floating chevron can drive it;
+    /// reset on every tab move — metadata is a visit, not a mode.
+    @Published var inspectorShown = UserDefaults.standard.bool(forKey: "desk.boot.inspector")
     /// The live capture sheet, presented by DeskHost — NOT by the .new tab
     /// body, which the first commit replaces (eval §5.2/§5.3).
     @Published var captureRequest: CaptureRequest?
+
+    /// A just-born note whose editor should open with the caret already in
+    /// it. Deliberately NOT @Published — it is consumed once by the editor
+    /// that claims it, and a republish here would re-focus on every later
+    /// visit to that tab.
+    private var pendingFocus: UInt64?
+
+    func requestFocus(_ id: UInt64) { pendingFocus = id }
+
+    /// True exactly once, for the entity that was just created.
+    func consumeFocus(_ id: UInt64) -> Bool {
+        guard pendingFocus == id else { return false }
+        pendingFocus = nil
+        return true
+    }
 
     /// Tab-activation history for the bar's ‹ › — device state, not cells.
     private var backIds: [UUID] = []
@@ -123,6 +142,7 @@ final class DeskModel: ObservableObject {
         if let current = activeTabId { backIds.append(current) }
         forwardIds.removeAll()
         activeTabId = tabId
+        inspectorShown = false
         objectWillChange.send()
     }
 
@@ -191,6 +211,7 @@ final class DeskModel: ObservableObject {
         featureShown = nil
         switcherShown = false
         gridShown = false
+        inspectorShown = false
         objectWillChange.send()
     }
 
@@ -261,63 +282,6 @@ final class DeskModel: ObservableObject {
         }
         UserDefaults.standard.set(
             ["ids": ids, "active": active], forKey: persistKey)
-    }
-}
-
-// MARK: - top bar
-
-/// Both modes: the workspace hub left (the desktop HomeHub — M4 makes it
-/// real: it opens the switcher), the gear right.
-struct TopBar: View {
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-    @State private var settingsShown = false
-    @State private var switcherShown = false
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Button {
-                switcherShown = true
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: workspaces.activeId == 0 ? "square.grid.2x2" : "house")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(LivTheme.text2)
-                    Text(workspaces.activeName)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(LivTheme.text)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Workspace: \(workspaces.activeName)")
-            Spacer()
-            Button {
-                settingsShown = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 40)
-        .sheet(isPresented: $settingsShown) {
-            SettingsSheet()
-        }
-        .sheet(isPresented: $switcherShown) {
-            WorkspaceSwitcher()
-                .environmentObject(box)
-                .environmentObject(workspaces)
-        }
     }
 }
 
@@ -393,12 +357,6 @@ struct WorkspaceSwitcher: View {
                 SectionLabel("Filters")
                     .padding(.top, 18)
                     .padding(.bottom, 4)
-                if workspaces.filters.isEmpty && !composingFilter {
-                    Text("A filter is a workspace's query without the stamp.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(LivTheme.muted)
-                        .padding(.vertical, 6)
-                }
                 ForEach(workspaces.filters) { view in
                     choice(
                         name: view.display, detail: view.query ?? "",
@@ -415,12 +373,6 @@ struct WorkspaceSwitcher: View {
                     addRow("New filter…") { composingFilter = true }
                 }
 
-                Text(
-                    "A workspace's query is both halves: it filters Today, Tasks and Search, and its plain key:value terms are stamped on what you capture — visibly, removably. The Inbox is never filtered."
-                )
-                .font(.system(size: 10.5))
-                .foregroundStyle(LivTheme.muted)
-                .padding(.top, 18)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -701,18 +653,6 @@ struct SettingsSheet: View {
                 ledger
                 shipRow
                 satellitePathRow
-                Text(
-                    "The box never leaves this device. Captures travel as write-once batches; the desk drains at open. Re-delivery is harmless by design."
-                )
-                .font(.system(size: 10.5))
-                .foregroundStyle(LivTheme.muted)
-                SectionLabel("Assist")
-                    .padding(.top, 10)
-                Text(
-                    "Assist is proposals-only and lands with the Inbox Tidy lens (M2). Amber marks its presence; nothing writes without an accept."
-                )
-                .font(.system(size: 12))
-                .foregroundStyle(LivTheme.text2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -1039,9 +979,6 @@ struct SettingsSheet: View {
                 RoundedRectangle(cornerRadius: LivTheme.radiusSm)
                     .strokeBorder(LivTheme.border, lineWidth: 0.5)
             )
-            Text("Dev build: paste a folder path — file pickers arrive with the Xcode project.")
-                .font(.system(size: 10))
-                .foregroundStyle(LivTheme.muted)
         }
     }
 
@@ -1140,11 +1077,10 @@ struct BottomBar: View {
     /// proposal count surfaces here since Inbox lives behind this menu).
     private var featuresButton: some View {
         Button {
-            withAnimation(.easeOut(duration: 0.18)) { desk.gridShown.toggle() }
+            withAnimation(LivMotion.nav) { desk.gridShown.toggle() }
         } label: {
             Image(systemName: "chevron.up")
                 .font(.system(size: 15, weight: .semibold))
-                .rotationEffect(.degrees(desk.gridShown ? 180 : 0))
                 .foregroundStyle(desk.gridShown ? LivTheme.accent : LivTheme.text2)
                 .frame(width: 46, height: 46)
                 .background(LivTheme.surface, in: Circle())
@@ -1256,7 +1192,7 @@ struct FeatureGrid: View {
     private var closeRow: some View {
         HStack(spacing: 0) {
             Button {
-                withAnimation(.easeOut(duration: 0.18)) { desk.gridShown = false }
+                withAnimation(LivMotion.nav) { desk.gridShown = false }
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 15, weight: .semibold))
@@ -1278,12 +1214,12 @@ struct FeatureGrid: View {
         _ label: String, _ icon: String, on: Bool, action: @escaping () -> Void
     ) -> some View {
         Button {
-            withAnimation(.easeOut(duration: 0.18)) { desk.gridShown = false }
+            withAnimation(LivMotion.nav) { desk.gridShown = false }
             action()
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: icon).font(.system(size: 17))
-                Text(label).font(.system(size: 10, weight: .medium))
+                Text(label).font(.system(size: 12, weight: .medium))
             }
             .foregroundStyle(on ? LivTheme.accent : LivTheme.text2)
             .frame(maxWidth: .infinity)

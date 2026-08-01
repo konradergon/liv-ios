@@ -66,11 +66,11 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                TopBar()
-                bodyView
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            // No persistent top bar (owner, 2026-07-31): the note takes the
+            // screen; Workspace and Settings live behind the desk's floating
+            // ••• (DeskHost). The body is the desk, edge to edge.
+            bodyView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             // While the menu is up, a tap anywhere here only dismisses it
             // (the catcher below). Assistive tech has to be told separately:
             // occlusion hides a view from eyes and from touch, never from
@@ -91,15 +91,16 @@ struct RootView: View {
                 Color.black.opacity(0.001)
                     .ignoresSafeArea()
                     .onTapGesture {
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            desk.gridShown = false
-                        }
+                        withAnimation(LivMotion.nav) { desk.gridShown = false }
                     }
                 FeatureGrid()
                     .transition(.move(edge: .bottom))
             }
         }
         .background(LivTheme.canvas.ignoresSafeArea())
+        // A generic dark theme, regardless of the system setting (owner,
+        // 2026-07-31 — the lake-green identity is retired).
+        .preferredColorScheme(.dark)
         .fullScreenCover(item: $desk.featureShown) { feature in
             FeatureWindow(feature: feature)
                 .environmentObject(box)
