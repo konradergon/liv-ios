@@ -119,7 +119,7 @@ struct EverythingView: View {
                 )
             VStack(alignment: .leading, spacing: 2) {
                 Text(display(row))
-                    .font(.system(size: 14))
+                    .font(.system(size: 15))
                     .foregroundStyle(
                         display(row) == "untitled" ? LivTheme.muted : LivTheme.text
                     )
@@ -133,7 +133,7 @@ struct EverythingView: View {
             Spacer(minLength: 8)
             if let trailing = trailing(row) {
                 Text(trailing)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(
                         lens == .upcoming ? LivTheme.text2 : LivTheme.text3)
             }

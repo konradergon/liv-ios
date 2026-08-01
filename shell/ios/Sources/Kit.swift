@@ -24,7 +24,7 @@ struct SectionLabel: View {
     var body: some View {
         HStack {
             Text(text.uppercased())
-                .font(.system(size: 9.5, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .kerning(0.6)
                 .foregroundStyle(LivTheme.text3)
             Spacer()
@@ -32,14 +32,14 @@ struct SectionLabel: View {
                 if let trailingAction {
                     Button(action: trailingAction) {
                         Text(trailing)
-                            .font(.system(size: 10.5, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(LivTheme.accent)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 } else {
                     Text(trailing)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 12))
                         .foregroundStyle(LivTheme.muted)
                 }
             }
@@ -209,7 +209,7 @@ struct EmptyHint: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12))
+            .font(.system(size: 14))
             .foregroundStyle(LivTheme.muted)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)

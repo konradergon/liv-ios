@@ -1,8 +1,8 @@
-// liv iOS — tokens (design/ios.md §7). The desktop ThemeSpec ported 1:1 to
-// UIColor(dynamicProvider:); brand-light/brand-dark ride the SYSTEM scheme —
-// no theme engine on the phone. Neutrals re-derived toward neutral-green
-// (the phone wears lake green, not the desktop's violet-leaning greys).
-// Amber is reserved app-wide for AI presence. Never violet/blue accents.
+// liv iOS — tokens (design/ios.md §7, owner delta 2026-07-31): a generic
+// dark theme. The lake-green identity is retired by the owner's word —
+// neutral dark greys, the system blue as the one accent, and the app
+// renders dark regardless of the system setting (RootView forces the
+// scheme). Amber stays reserved app-wide for AI presence.
 
 import SwiftUI
 import UIKit
@@ -15,61 +15,59 @@ private func hex(_ value: UInt32, _ alpha: CGFloat = 1) -> UIColor {
         alpha: alpha)
 }
 
-/// One token = a light/dark pair resolved at draw time.
-private func dyn(_ light: UIColor, _ dark: UIColor) -> Color {
-    Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark ? dark : light
-    })
+private func solid(_ value: UInt32, _ alpha: CGFloat = 1) -> Color {
+    Color(hex(value, alpha))
+}
+
+/// One consistent motion for the whole app (owner, 2026-07-31): navigation
+/// areas move from and into view — nothing rotates, nothing fades in
+/// combination, nothing springs. One curve, one duration, everywhere.
+enum LivMotion {
+    static let nav = Animation.easeInOut(duration: 0.22)
 }
 
 /// The same tokens at the UIColor level, for the UIKit text stack (the
 /// markdown editor draws with TextKit, which never sees SwiftUI Color).
-/// Same hex pairs as LivTheme — add here only what the editor needs.
 enum LivInk {
-    static func pair(_ light: UIColor, _ dark: UIColor) -> UIColor {
-        UIColor { $0.userInterfaceStyle == .dark ? dark : light }
-    }
-
-    static let accent = pair(hex(0x2F7D6B), hex(0x5CB596))
-    static let onAccent = pair(hex(0xFFFFFF), hex(0x0B1310))
-    static let surface = pair(hex(0xFFFFFF), hex(0x1A2220))
-    static let panel2 = pair(hex(0xEAEEEA), hex(0x1D2622))
-    static let text = pair(hex(0x17201B), hex(0xEAF0EC))
-    static let text2 = pair(hex(0x45514A), hex(0xBFCCC4))
-    static let text3 = pair(hex(0x67736C), hex(0x9FADA4))
-    static let muted = pair(hex(0x96A09A), hex(0x66746C))
-    static let border = pair(hex(0x000000, 0.10), hex(0xFFFFFF, 0.09))
-    /// Style-keyboard key fill. panel2-on-surface vanishes in dark mode
-    /// (1.03:1); the dark value here actually clears the surface.
-    static let keyFill = pair(hex(0xEAEEEA), hex(0x323D38))
+    static let accent = hex(0x0A84FF)
+    static let onAccent = hex(0xFFFFFF)
+    static let surface = hex(0x1E1E20)
+    static let panel2 = hex(0x2C2C2E)
+    static let text = hex(0xF5F5F7)
+    static let text2 = hex(0xC9C9CE)
+    static let text3 = hex(0x9A9AA2)
+    static let muted = hex(0x707078)
+    static let border = hex(0xFFFFFF, 0.10)
+    /// Style-panel key fill — kept for any full-size key surface.
+    static let keyFill = hex(0x2C2C2E)
 }
 
 enum LivTheme {
-    // Accent: lake green — #2F7D6B light / #5CB596 dark (owner-decided).
-    static let accent = dyn(hex(0x2F7D6B), hex(0x5CB596))
-    static let accentSoft = dyn(hex(0xE2EFEA), hex(0x5CB596, 0.16))
-    static let onAccent = dyn(hex(0xFFFFFF), hex(0x0B1310))
+    // The one accent: the system blue. Generic on purpose.
+    static let accent = solid(0x0A84FF)
+    static let accentSoft = solid(0x0A84FF, 0.18)
+    static let onAccent = solid(0xFFFFFF)
 
-    // Elevation is tonal — canvas behind cards, surface for cards/tiles,
+    // Elevation is tonal — canvas behind everything, surface for cards,
     // panel for wells, panel2 for chips/small fills.
-    static let canvas = dyn(hex(0xF1F3F1), hex(0x12171A))
-    static let surface = dyn(hex(0xFFFFFF), hex(0x1A2220))
-    static let panel = dyn(hex(0xF2F4F2), hex(0x151C19))
-    static let panel2 = dyn(hex(0xEAEEEA), hex(0x1D2622))
+    static let canvas = solid(0x161618)
+    static let surface = solid(0x1E1E20)
+    static let panel = solid(0x242426)
+    static let panel2 = solid(0x2C2C2E)
 
     // The four text tiers + hairlines.
-    static let text = dyn(hex(0x17201B), hex(0xEAF0EC))
-    static let text2 = dyn(hex(0x45514A), hex(0xBFCCC4))
-    static let text3 = dyn(hex(0x67736C), hex(0x9FADA4))
-    static let muted = dyn(hex(0x96A09A), hex(0x66746C))
-    static let border = dyn(hex(0x000000, 0.10), hex(0xFFFFFF, 0.09))
-    static let border2 = dyn(hex(0x000000, 0.16), hex(0xFFFFFF, 0.15))
+    static let text = solid(0xF5F5F7)
+    static let text2 = solid(0xC9C9CE)
+    static let text3 = solid(0x9A9AA2)
+    static let muted = solid(0x707078)
+    static let border = solid(0xFFFFFF, 0.10)
+    static let border2 = solid(0xFFFFFF, 0.16)
 
     // The semantic set — the ONLY value colors (O2: VALUE_HEX retired).
-    static let green = dyn(hex(0x2F7A63), hex(0x97C459))
-    static let red = dyn(hex(0xC0392B), hex(0xF09595))
-    static let amber = dyn(hex(0xF6A823), hex(0xF6A823))
-    static let purple = dyn(hex(0x9334E6), hex(0xC99BF5))
+    static let green = solid(0x30D158)
+    static let red = solid(0xFF453A)
+    static let amber = solid(0xFFB340)
+    static let purple = solid(0xBF5AF2)
 
     static let radius: CGFloat = 10
     static let radiusSm: CGFloat = 6
