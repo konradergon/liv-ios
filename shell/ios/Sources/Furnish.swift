@@ -26,6 +26,10 @@ enum Furnish {
     /// it is a select, born with its options.
     static let textProperties = ["project", "subjects", "people"]
 
+    /// The marker that makes a note a template (design/editor-study.md §7).
+    /// A text property, so a template is an ordinary note wearing one cell.
+    static let templateProperty = Template.property
+
     /// A workspace query value, quoted where spaced (the DSL's tokenizer:
     /// `area:"Family & Friends"` is one token).
     static func areaQuery(_ name: String) -> String {
@@ -55,6 +59,7 @@ private final class FurnishPass {
 
     func run(_ snap: Snapshot) {
         furnishProperties(snap)
+        furnishTemplates(snap)
         launched = true
         finishIfDone()
     }
@@ -103,7 +108,58 @@ private final class FurnishPass {
         }
     }
 
-    // MARK: c — no workspaces
+    // MARK: c — the three built-in templates
+
+    /// Presence-guarded by NAME, like everything else here: a box that
+    /// already holds a template called "Daily note" gains nothing, and one
+    /// the user renamed or trashed is never resurrected under its old
+    /// name. Each built-in is an ordinary note carrying the marker cell.
+    private func furnishTemplates(_ snap: Snapshot) {
+        // The property must exist before any cell can be written to it —
+        // `set` refuses an unknown name. If it is missing we mint it and
+        // let the NEXT launch seed the notes, which keeps this pass free
+        // of ordering games.
+        let properties = snap.properties ?? []
+        let hasProperty = properties.contains {
+            ($0.name ?? "").compare(Furnish.templateProperty, options: .caseInsensitive)
+                == .orderedSame
+        }
+        guard hasProperty else {
+            track()
+            box.addProperty(Furnish.templateProperty) { [self] _ in landed() }
+            return
+        }
+
+        let held = Set(
+            (snap.entities ?? [])
+                .filter { row in
+                    (row.cells ?? []).contains {
+                        $0.property == Furnish.templateProperty && !($0.value ?? "").isEmpty
+                    }
+                }
+                .compactMap { $0.title })
+        for built in BuiltInTemplate.all where !held.contains(built.name) {
+            seed(built)
+        }
+    }
+
+    private func seed(_ built: BuiltInTemplate) {
+        track()
+        box.createNote { [self] id in
+            guard id != 0 else {
+                landed()
+                return
+            }
+            box.set(id, "name", built.name)
+            box.set(id, Furnish.templateProperty, Template.marker)
+            let spans = SpanText.textToSpans(built.body)
+            box.setContent(id, spansJson: SpanText.json(spans), base: 0) { [self] _, _ in
+                landed()
+            }
+        }
+    }
+
+    // MARK: d — no workspaces
 
     /// The six areas are FIELD VALUES, not places (design/furnishing-study.md).
     /// They were furnished as six workspaces until 2026-07-29; that made

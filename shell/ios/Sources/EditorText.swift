@@ -54,6 +54,9 @@ final class EditorBridge: ObservableObject {
 
     /// Jump to a heading and put the caret at its start.
     func scroll(to location: Int) { coordinator?.scroll(to: location) }
+
+    /// Drop text in at the caret (a template's resolved body).
+    func insert(_ text: String) { coordinator?.insert(text) }
 }
 
 // MARK: - fonts
@@ -410,6 +413,8 @@ struct MarkdownEditor: UIViewRepresentable {
     var onOpenRef: (UInt64) -> Void
     /// The toolbar's outline key — NoteEditor presents the sheet.
     var onOutline: () -> Void
+    /// The toolbar's template key — NoteEditor presents the picker.
+    var onTemplate: () -> Void
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView()
@@ -637,6 +642,22 @@ struct MarkdownEditor: UIViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
         }
 
+        /// Insert at the caret, through the system API so undo registers
+        /// and the storage delegate styles what arrived.
+        func insert(_ text: String) {
+            guard let view else { return }
+            let sel = view.selectedRange
+            let out = (view.text as NSString).replacingCharacters(in: sel, with: text)
+            applyThroughSystem(
+                EditResult(
+                    text: out,
+                    selection: NSRange(
+                        location: sel.location + (text as NSString).length, length: 0)),
+                to: view)
+            parent.text = view.text
+            scheduleOutline(view.text)
+        }
+
         func scroll(to location: Int) {
             guard let view else { return }
             let n = (view.text as NSString).length
@@ -782,6 +803,8 @@ struct MarkdownEditor: UIViewRepresentable {
                     to: view)
             case .outline:
                 parent.onOutline()
+            case .template:
+                parent.onTemplate()
             case .dismiss:
                 view.resignFirstResponder()
             }
@@ -909,7 +932,7 @@ enum StyleVerb {
     case undo, redo, link
     case heading, bold, italic, strike, code
     case task, bullet, ordered, quote, indent, outdent, rule
-    case outline, dismiss
+    case outline, template, dismiss
 }
 
 /// One row directly above the keyboard, horizontally scrollable — the
@@ -949,6 +972,7 @@ final class EditorToolbar: UIInputView {
             ("decrease.indent", "Outdent", .outdent),
             ("minus", "Divider", .rule),
             ("list.bullet.indent", "Outline", .outline),
+            ("doc.on.doc", "Insert template", .template),
         ]
         let middle = UIStackView(
             arrangedSubviews: keys.map { (symbol, access, verb) in

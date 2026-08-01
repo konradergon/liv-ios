@@ -515,8 +515,6 @@ struct NoteEditor: View {
     /// The note's name cell, edited in the title line that scrolls with
     /// the body (Obsidian's layout — owner, 2026-08-01).
     @Binding var title: String
-    /// The derived title, shown grey while no name cell exists.
-    var titlePrompt: String
     var onTitleCommit: () -> Void
     /// A tapped `[[…]]` lands as a desk tab — the shell's one rule for
     /// opening anything from anywhere.
@@ -524,6 +522,8 @@ struct NoteEditor: View {
     /// A note created a moment ago: open with the caret already in it, so
     /// "Create a note" lands you writing, not looking at a blank screen.
     var autoFocus: Bool = false
+    /// Where a template's {{cursor}} asked the caret to land.
+    var autoCaret: Int? = nil
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
@@ -531,6 +531,7 @@ struct NoteEditor: View {
     @StateObject private var model = NoteEditorModel()
     @StateObject private var bridge = EditorBridge()
     @State private var outlineShown = false
+    @State private var templatesShown = false
     /// Plain state, not @FocusState — the UIKit text view reports focus
     /// through the representable's binding.
     @State private var focused = false
@@ -540,6 +541,15 @@ struct NoteEditor: View {
     /// conflict is the one exception — it is about the words being typed
     /// right now, so it stays.
     private var writing: Bool { focused }
+
+    /// The automatic title: the note's first line with its markers off.
+    /// Derived HERE, from the live buffer, because the wire's own summary
+    /// flattens the WHOLE body into one string — a multi-line note would
+    /// otherwise suggest "Sat 1 Aug ## Today - [ ] ## Notes" as its title.
+    /// Empty once a human has named the note: their title is the title.
+    private var derivedPrompt: String {
+        title.isEmpty ? livDisplayTitle(model.text) : ""
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -555,9 +565,16 @@ struct NoteEditor: View {
         .animation(LivMotion.nav, value: writing)
         .onAppear {
             model.attach(box: box, id: id)
-            if autoFocus { focused = true }
+            if autoFocus {
+                focused = true
+                if let autoCaret { bridge.scroll(to: autoCaret) }
+            }
         }
-        .onChange(of: autoFocus) { _, now in if now { focused = true } }
+        .onChange(of: autoFocus) { _, now in
+            guard now else { return }
+            focused = true
+            if let autoCaret { bridge.scroll(to: autoCaret) }
+        }
         .onDisappear { model.stop() }
         .onChange(of: model.text) { _, _ in model.textChanged() }
         .onChange(of: focused) { _, now in
@@ -582,14 +599,24 @@ struct NoteEditor: View {
         // keyboard (keyboardDismissMode = .interactive).
         MarkdownEditor(
             text: $model.text, focused: $focused,
-            title: $title, titlePrompt: titlePrompt, onTitleCommit: onTitleCommit,
+            title: $title, titlePrompt: derivedPrompt, onTitleCommit: onTitleCommit,
             editable: model.loaded && !model.missing,
             bridge: bridge, onOpenRef: onOpenRef,
-            onOutline: { outlineShown = true }
+            onOutline: { outlineShown = true },
+            onTemplate: { templatesShown = true }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .bottom) { linkPicker }
         .sheet(isPresented: $outlineShown) { outlineSheet }
+        .sheet(isPresented: $templatesShown) {
+            TemplateSheet(verb: .insert) { template in
+                box.templateBody(template.id, now: Civil.nowStamp()) { body in
+                    guard !body.isEmpty else { return }
+                    bridge.insert(body)
+                }
+            }
+            .environmentObject(box)
+        }
     }
 
     // MARK: the [[ picker

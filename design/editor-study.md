@@ -482,10 +482,23 @@ with a CLI cross-check against the box.
   already gone (the full-bleed pass), so nothing duplicates the inspector.
   *Deferred:* a date picker richer than the existing due sheet, and
   reference-typed fields (people-as-entities rather than text).
-- **Phase 4 — templates (about 1 week).** The `template` cell and "Save as
-  template"; new-from-template at every creation point; insert-at-cursor
-  from the toolbar; the four variable pills resolved at instantiation;
-  pre-filled cells; default-template-per-project; the three built-ins.
+- **Phase 4 — templates. SHIPPED 2026-08-01.** A template IS a note wearing
+  a `template` cell: no folder, no setting, no plugin, no second kind of
+  object. The list is a projection over that cell, so a trashed template
+  simply stops matching. "Save as template" COPIES (ruling 6) — your note
+  never moves. New-from-template sits in the creation stack;
+  insert-at-caret sits in the keyboard toolbar. Property cells are
+  inherited, minus identity and the marker itself.
+  *Deviation from §7, deliberate:* variables are plain text tokens, not
+  structured spans — a fourth span shape would be a core change, which is
+  not the shell's to make, and text tokens survive a round trip through
+  the desktop that unknown spans would not. The law is untouched because
+  NOTHING scans an ordinary note: `{{date}}` is literal forever in a
+  normal note and resolves only in the copy path, out of a note the user
+  marked as a template. Three variables, not four: `{{title}}` is dropped
+  because nothing here asks for a name when it creates a note — the title
+  is derived FROM the body, so there is no title to interpolate.
+  *Deferred:* default-template-per-project.
 - **Phase 5 — marks-and-blocks storage (1–2 weeks, can slide).** Extend the
   Swift encoder to write Marks + Break spans (D19 path B); narrow the
   flatten notice to still-unsupported shapes; add the source-mode toggle.

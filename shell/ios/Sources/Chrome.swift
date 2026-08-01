@@ -101,14 +101,28 @@ final class DeskModel: ObservableObject {
     /// that claims it, and a republish here would re-focus on every later
     /// visit to that tab.
     private var pendingFocus: UInt64?
+    /// Where the caret should land — a template's {{cursor}} marker.
+    private var pendingCaret: Int?
 
-    func requestFocus(_ id: UInt64) { pendingFocus = id }
+    func requestFocus(_ id: UInt64, caret: Int? = nil) {
+        pendingFocus = id
+        pendingCaret = caret
+    }
 
-    /// True exactly once, for the entity that was just created.
-    func consumeFocus(_ id: UInt64) -> Bool {
-        guard pendingFocus == id else { return false }
+    /// One focus request, consumed exactly once.
+    struct FocusRequest {
+        /// Where a template's {{cursor}} asked the caret to land, if any.
+        let caret: Int?
+    }
+
+    /// The focus request for this entity, consumed exactly once. nil means
+    /// this tab was not the one just created.
+    func consumeFocus(_ id: UInt64) -> FocusRequest? {
+        guard pendingFocus == id else { return nil }
         pendingFocus = nil
-        return true
+        let caret = pendingCaret
+        pendingCaret = nil
+        return FocusRequest(caret: caret)
     }
 
     /// Tab-activation history for the bar's ‹ › — device state, not cells.

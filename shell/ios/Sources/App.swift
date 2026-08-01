@@ -1,4 +1,4 @@
-// Liv iOS — the capture satellite (design/ios.md, M1).
+// Liv iOS (design/ios.md, M1).
 // Two-mode chrome (owner sketch 2026-07-22): Feature view = the rail,
 // Desk view = the center pane with content tabs. One consistent bottom
 // bar: mode toggle far left, global search far right.
@@ -31,6 +31,12 @@ struct LivApp: App {
             let failures = livWorkspaceSelfCheck()
             print("WS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("WS-SELFCHECK \($0)") }
+        }
+        // Template resolution, same door: `-template.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "template.selfcheck") {
+            let failures = livTemplateSelfCheck()
+            print("TPL-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("TPL-SELFCHECK \($0)") }
         }
         // The markdown scan + edit operations (EditorStyle.swift), same
         // door: `simctl launch … -editor.selfcheck 1`.

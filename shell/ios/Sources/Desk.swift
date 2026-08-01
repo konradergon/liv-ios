@@ -53,6 +53,16 @@ struct DeskHost: View {
                     }
                 }
                 Menu {
+                    // Ruling 6: this COPIES. The note you are writing
+                    // stays exactly where it is; the copy becomes the
+                    // template, so nothing you wrote ever moves.
+                    if case .entity(let entity) = desk.activeTab?.content {
+                        Button {
+                            box.saveAsTemplate(entity)
+                        } label: {
+                            Label("Save as template", systemImage: "doc.on.doc")
+                        }
+                    }
                     Button {
                         switcherShown = true
                     } label: {
@@ -147,11 +157,13 @@ struct NewTabBody: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @State private var creating = false
+    @State private var templatesShown = false
 
     var body: some View {
         VStack(spacing: 8) {
             Spacer()
             verb("Create a note", "square.and.pencil", primary: true) { createNote() }
+            verb("From template…", "doc.on.doc") { templatesShown = true }
             verb("New task", "checkmark.circle") { present(.task) }
             verb("New event", "calendar") { present(.event) }
             verb("Photo", "camera") { desk.cameraShown = true }
@@ -161,6 +173,29 @@ struct NewTabBody: View {
         }
         .padding(.horizontal, 48)
         .disabled(creating)
+        .sheet(isPresented: $templatesShown) {
+            TemplateSheet(verb: .create) { template in
+                fromTemplate(template.id)
+            }
+            .environmentObject(box)
+        }
+    }
+
+    /// A new note from a template: the same landing as "Create a note" —
+    /// this tab becomes the note and the caret is already in it, at the
+    /// template's {{cursor}} if it named one.
+    private func fromTemplate(_ template: UInt64) {
+        guard !creating else { return }
+        creating = true
+        box.newFromTemplate(template, now: Civil.nowStamp()) { id, caret in
+            guard id != 0 else {
+                creating = false
+                return
+            }
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id, caret: caret)
+            desk.setContent(tabId, entity: id)
+        }
     }
 
     /// Birth an empty note and become it: this tab flips to the entity and
@@ -228,6 +263,7 @@ struct EntityTabBody: View {
     @EnvironmentObject var box: BoxModel
     @State private var title = ""
     @State private var titleSeeded = false
+    @State private var autoCaret: Int?
     /// Set once, in onAppear, for a note born a moment ago.
     @State private var autoFocus = false
     @FocusState private var titleFocused: Bool
@@ -263,15 +299,14 @@ struct EntityTabBody: View {
             } else if box.entity(id) != nil {
                 NoteEditor(
                     id: id,
-                    title: $title, titlePrompt: derivedTitle,
-                    onTitleCommit: commitTitle,
+                    title: $title, onTitleCommit: commitTitle,
                     // A token whose target is not in this box LOOKS like a
                     // link but saves as text (ruling 5) — tapping it must
                     // not open a dead tab.
                     onOpenRef: { target in
                         if box.entity(target) != nil { desk.open(target) }
                     },
-                    autoFocus: autoFocus
+                    autoFocus: autoFocus, autoCaret: autoCaret
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -281,7 +316,10 @@ struct EntityTabBody: View {
             seedTitle()
             // Child onAppear fires before the parent's, so the editor reads
             // this through onChange, not its own onAppear.
-            autoFocus = desk.consumeFocus(id)
+            if let request = desk.consumeFocus(id) {
+                autoFocus = true
+                autoCaret = request.caret
+            }
         }
         .onChange(of: storedName) { _, fresh in
             // The snapshot moved under us (undo, another surface). Reseed
@@ -292,17 +330,6 @@ struct EntityTabBody: View {
     }
 
     // MARK: title — lives in the editor's scroll view now
-
-    /// First content line, markers off — or nothing at all for a note that
-    /// is still empty (a blank field with a caret, never instructions, and
-    /// never the wire's "#id" fallback).
-    private var derivedTitle: String {
-        guard !named, let row = box.entity(id) else { return "" }
-        let first = (row.cells ?? [])
-            .first { $0.property == "content" }?.value?
-            .split(separator: "\n").first.map(String.init) ?? ""
-        return livDisplayTitle(first)
-    }
 
     /// The NAME CELL, never row.title — the wire title is a derived
     /// display string ("#id" for an empty note, the first content line for
