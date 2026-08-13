@@ -1,5 +1,117 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-13 — nothing between the month and the timeline
+
+Owner: *"remove the 'ALL DAY' row in calendar. there should be no row
+between timeline and mini calendar."*
+
+- **The ALL DAY band is DELETED**, with `allDayBand`, `allDayPill` and
+  `allDayTask`. The timeline starts where the month grid ends.
+- **What it costs, plainly:** a thing with a DATE but no TIME — an
+  all-day event, a task due today — is not drawn on this screen any
+  more. It is still a coloured dot on its day in the month grid, and it
+  is still in Today, in Tasks and in search. Restoring the band is one
+  `git revert` away if a missing task turns out to bite.
+- **The month grid's long-press now makes a TIMED event, at 09:00.** It
+  used to make an all-day one, which only that band drew — so with the
+  band gone it would have created something invisible. A door that makes
+  a thing you cannot see is a defect. The properties are up a beat later
+  and the time is the first row in them.
+
+## 2026-08-13 — one workspace button, at the top of everything
+
+Owner: *"workspace switch button should appear at the top in the center
+in all places where that button now exists: global panel (delete current
+button), new tab (move). it should also be where you view a note. it
+should remain visible as you swipe into the global panel. style should be
+same as it looks now in new tab. rearrange the global panel in a way that
+fits having workspace at top center."*
+
+- **`WorkspaceButton`** (Workspace.swift) is the one copy, in New Tab's
+  own dress: the ring, the name, a chevron. It is drawn by DeskHost at
+  the top CENTRE, between the library door and the properties door, with
+  the highest z — so it stays put while the library panel slides in
+  underneath it. It steps aside for one surface only: the PROPERTIES
+  panel, which is about this note, and the workspace is not one of its
+  facts.
+- **Two copies deleted**: the row at the foot of the library panel and
+  the row at the foot of New Tab.
+- **The panel's bands say what they DO now.** "Views" and the workspace's
+  own name became **"All workspaces"** (Today, Inbox — the two that
+  ignore the lens) and **"This workspace"** (Calendar, Tasks,
+  Everything). The name was in the label only to say which lens those
+  three wear; the button above the panel says the name, and saying it
+  twice on one screen is what the calendar's date row was doing.
+- The bottom band is Settings alone, and the list starts 52pt down —
+  clearance for the button floating over it.
+
+## 2026-08-13 — the timeline places, the properties name
+
+Owner: *"remove 'TODAY · THU 13 AUG' row completely … should be indicated
+by the 'Today' button … the 'Today' button should work like a toggle …
+naming of items should be done in properties … properties should open
+with the cursor in the title field … only interaction in the timeline
+will be dragging, creating and deleting items."*
+
+- **The date heading is DELETED.** The month grid already says which day
+  is selected, and the Today toggle says whether that day is today —
+  three places said the same date.
+- **The Today button is the day heading now.** Lit (accent fill, the
+  word CARVED out in the canvas colour, the icon chips' stencil) when
+  the day on screen is today; the soft tint otherwise. And it TOGGLES:
+  the second tap puts you back on the day you left, which is what you
+  want after a glance at today. It remembers ONE step, not a history.
+- **No more inline naming.** `EventDraft`, `draftBlock` and
+  `EventDraftField` are all deleted. Tap an hour and the event EXISTS at
+  that minute; its properties rise with the caret already in the name
+  (`desk.requestFocus` + the card's existing `autoFocus` channel). Same
+  for the month grid's long-press, which makes an all-day one.
+- **A record card can throw itself away.** One destructive "Move to
+  Trash" row at the foot of the CARD — not the properties panel, which
+  keeps only describing (owner, 2026-08-02) because the desk's •••
+  sits two inches from it. A card has no such menu, so a task or event
+  opened from Today, Tasks or the calendar had no way to be deleted at
+  all. Soft and reversible like every trash here.
+
+Verified on the simulator end to end: tapping 20:15 wrote `new event`
+at `202608132015`, the card came up focused, typing "Team sync" and
+swiping the card away wrote `set name`, and Move to Trash wrote
+`{"Trash":{"entity":4299}}` with the block gone from the grid.
+
+**Two gesture collisions were raised in review and did NOT reproduce.**
+The drag recogniser lives on the WINDOW, so on paper it can preempt the
+month cell's own long-press (0.28s vs 0.45s) and stay armed under the
+record card. Driven on the simulator with blocks on screen: long-pressing
+day 20 created its all-day event, and a long press inside the card gave
+the normal iOS text callout with nothing moved underneath. One
+configuration each — the mechanism is real, so if a lift haptic ever
+fires where nothing should lift, this is where to look.
+
+**Noticed, not fixed** (settled zone): `liv_trash_at` calls
+`content::trash_workspace`, so EVERY trash in the app is logged with the
+label "trash workspace" — a note, a task, an event, all of them.
+
+## 2026-08-13 — the calendar loses its quick-add and gains its properties
+
+Owner: *"'New for Tue 11 Aug…' in bottom in calendar is redundant since
+users click where they want their items to be in the timeline. Also,
+properties should slide up immediately when new calendar items are
+created."*
+
+- **The quick-add row at the foot of the calendar is DELETED**, and
+  `CalendarQuickAddRow` with it. It made a date-only TASK from a screen
+  whose whole point is pointing at an hour. A dated task is still made
+  in Tasks and in Today, where the same row lives and means something.
+- **The properties card rises the moment an event exists.** Naming the
+  draft block writes it and `desk.open(id, as: .record)` raises the card
+  over the calendar — which stays where it was, Option C's rule. The
+  shape is passed explicitly: the entity is a heartbeat old and may not
+  be in the snapshot `shapeOf` reads yet.
+
+Verified on the simulator: tapping 21:15, typing "Dinner", Return —
+`#4299 Dinner event 2026-08-13 21:15` in the box, and the card up with
+due, status and the filing rows on it.
+
 ## 2026-08-13 — making a link opens SEARCH
 
 Owner: *"Creating links will open search to select the thing you want to

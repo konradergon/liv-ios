@@ -226,10 +226,45 @@ struct RecordBody: View {
                 // date edited there are the same code.
                 EntityInspector(id: id, scrolls: false)
                 notesSection
+                if inCard { trashRow }
             }
             .padding(.bottom, 40)
         }
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// A card is a dead end for verbs: the desk's ••• menu is not on
+    /// screen behind it, so a task or an event opened from Today, from
+    /// Tasks or from the calendar had NO way to be thrown away. One
+    /// destructive row, at the bottom where destructive things belong,
+    /// and only in the card (the properties PANEL keeps its ••• two
+    /// inches away and still only describes — owner, 2026-08-02).
+    ///
+    /// Soft and reversible like every trash in this app.
+    private var trashRow: some View {
+        Button(role: .destructive) {
+            box.trash(id)
+            desk.recordCard = nil
+            desk.minimisedRecord = nil
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "trash")
+                    .font(.system(size: LivType.body))
+                Text("Move to Trash")
+                    .font(.system(size: LivType.strong))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(LivTheme.red)
+            .frame(height: LivRow.height)
+            .padding(.horizontal, 16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 18)
+        .overlay(alignment: .top) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                .padding(.top, 18)
+        }
     }
 
     // MARK: the name — one line, because a name is one line

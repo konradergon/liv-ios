@@ -106,6 +106,18 @@ struct DeskHost: View {
             .opacity(anyPanel ? 0 : 1)
             .accessibilityHidden(anyPanel)
 
+            // The workspace, top CENTRE, between the doors — on the desk,
+            // on the New Tab chooser, and OVER the library panel, which
+            // is why it is drawn last with the highest z (owner,
+            // 2026-08-13: "it should remain visible as you swipe into the
+            // global panel"). It hides only under the PROPERTIES panel,
+            // which is about this note and not about the app.
+            WorkspaceButton { desk.workspaceShown = true }
+                .padding(.top, 6)
+                .opacity(inspectorUp ? 0 : 1)
+                .accessibilityHidden(inspectorUp)
+                .zIndex(3)
+
             // The panels, drawn last so they cover doors and body alike.
             // Mounted while shown OR while a finger is dragging one, and
             // positioned by that drag — they follow the hand rather than
@@ -232,6 +244,13 @@ struct DeskHost: View {
     /// Any full-screen surface covering the desk body.
     private var anyPanel: Bool {
         desk.libraryShown || desk.inspectorShown || desk.newTabShown
+    }
+
+    /// The PROPERTIES panel is up, or a finger is bringing it in. The one
+    /// surface the workspace button steps aside for: it describes this
+    /// note, and the workspace is not one of its facts.
+    private var inspectorUp: Bool {
+        desk.inspectorShown || dragging?.which == .inspector
     }
 
     /// A panel over a live keyboard would sit UNDER it — the keyboard is a
@@ -573,10 +592,9 @@ struct NewTabChooser: View {
                 // bar is now always up on this screen. Two doors to one
                 // room is a defect (standing rule 4), and the one that
                 // went is the one that was only reachable from here.
-                Spacer()
-                // The workspace this creation lands in — switchable right
-                // here (owner, 2026-08-03), because the stamp depends on it.
-                workspaceRow
+                // The workspace this creation lands in is named at the
+                // TOP of the screen now, in the one button DeskHost
+                // floats over everything — not a second row down here.
                 Spacer()
             }
             .padding(.horizontal, 48)
@@ -628,28 +646,6 @@ struct NewTabChooser: View {
                     }
                 }
         )
-    }
-
-    private var workspaceRow: some View {
-        Button(action: onWorkspace) {
-            HStack(spacing: 8) {
-                LivIcon(
-                    glyph: workspaces.activeId == 0 ? .workspaces : .workspace,
-                    color: LivTheme.text3, size: 17)
-                Text(workspaces.activeName)
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(LivTheme.text2)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 40)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Workspace: \(workspaces.activeName). Switch")
     }
 
     /// A new note from a template: the same landing as "Create a note" —

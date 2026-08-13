@@ -468,6 +468,43 @@ final class WorkspaceModel: ObservableObject {
 
 // MARK: - the lens chip
 
+/// The workspace you are standing in, and the door to change it. ONE
+/// button, at the top centre of everything (owner, 2026-08-13): the desk,
+/// the New Tab chooser, and — drawn over it — the library panel, because
+/// the panel is exactly where you go to change what you are looking at
+/// and watching the name vanish as you swipe in was backwards.
+///
+/// It used to be a row at the foot of the panel and another at the foot
+/// of New Tab; both are gone, this is the one.
+struct WorkspaceButton: View {
+    @EnvironmentObject var workspaces: WorkspaceModel
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                LivIcon(
+                    glyph: workspaces.activeId == 0 ? .workspaces : .workspace,
+                    color: LivTheme.text3, size: 17)
+                Text(workspaces.activeName)
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(LivTheme.text2)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: LivType.caption, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+            }
+            .padding(.horizontal, 12)
+            // Capped so a long name never reaches the doors either side.
+            .frame(maxWidth: 170)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Workspace: \(workspaces.activeName). Switch")
+    }
+}
+
 /// The quiet indicator every FILTERED surface wears, so a short list is
 /// never a mystery. The Inbox never shows it — the Inbox is never filtered.
 struct LensChip: View {

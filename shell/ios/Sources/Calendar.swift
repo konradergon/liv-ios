@@ -44,6 +44,11 @@ struct CalendarView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
+    /// The day the Today toggle came FROM, so its second tap can put you
+    /// back. Cleared once used: a toggle remembers one step, not a
+    /// history.
+    @State private var wasOn: Int64?
+
     /// First day of the shown month (packed civil), the grid's anchor.
     @State private var monthFirst = CalGrid.firstOfMonth(Civil.todayDay())
     @State private var selectedDay = Civil.todayDay()
@@ -58,7 +63,6 @@ struct CalendarView: View {
     /// event and throw you into the note editor to name it (owner,
     /// 2026-08-06 — "setting names of calendar items should be done in
     /// calendar", and an event is not a document).
-    @State private var draft: EventDraft?
     /// Which way the last month change went, so the grid slides the way
     /// the finger did. +1 forward, -1 back.
     @State private var monthStep = 1
@@ -115,37 +119,67 @@ struct CalendarView: View {
             // (owner, 2026-08-10) — it is a button that takes you to
             // today, so it wears a button's face. The 26pt pill sits in
             // a 40pt tap target.
+            //
+            // It is also the day heading now (owner, 2026-08-13): lit
+            // means the day on screen is today, so nothing else has to
+            // say so. And it TOGGLES — the second tap puts you back on
+            // the day you left, which is what you want after a glance at
+            // today.
             Button {
-                // One month away is a step and slides; a leap of many
-                // has no direction worth animating, so it lands.
-                let home = CalGrid.firstOfMonth(today)
-                if home == CalGrid.addMonths(monthFirst, -1) {
-                    page(-1)
-                } else if home == CalGrid.addMonths(monthFirst, 1) {
-                    page(1)
+                if onToday {
+                    guard let back = wasOn else { return }
+                    wasOn = nil
+                    go(to: back, today: today)
                 } else {
-                    monthDrag = 0
-                    monthFirst = home
-                    selectedDay = today
+                    wasOn = selectedDay
+                    go(to: today, today: today)
                 }
             } label: {
+                // ON = the day on screen IS today. Bright, with the word
+                // carved out of it — the same stencil the icon chips
+                // wear, and the app's one way of saying "this is the
+                // live one". OFF keeps the soft tint.
                 Text("Today")
                     .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
+                    .foregroundStyle(onToday ? LivTheme.canvas : LivTheme.accent)
                     .padding(.horizontal, 11)
                     .frame(height: 26)
-                    .background(Capsule().fill(LivTheme.accent.opacity(0.16)))
+                    .background(
+                        Capsule().fill(
+                            onToday ? LivTheme.accent : LivTheme.accent.opacity(0.16))
+                    )
                     .overlay(
                         Capsule().strokeBorder(
-                            LivTheme.accent.opacity(0.5), lineWidth: 0.5)
+                            onToday ? Color.clear : LivTheme.accent.opacity(0.5),
+                            lineWidth: 0.5)
                     )
                     .frame(height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Go to today")
+            .accessibilityLabel("Today")
+            .accessibilityAddTraits(onToday ? [.isSelected] : [])
             chevron("chevron.left", label: "Previous month") { page(-1) }
             chevron("chevron.right", label: "Next month") { page(1) }
+        }
+    }
+
+    /// Is the day on screen today's?
+    private var onToday: Bool { selectedDay == Civil.todayDay() }
+
+    /// Land on a day, sliding when it is one month away and jumping when
+    /// it is further — a leap of many months has no direction worth
+    /// animating.
+    private func go(to day: Int64, today: Int64) {
+        selectedDay = day
+        let home = CalGrid.firstOfMonth(day)
+        if home == CalGrid.addMonths(monthFirst, -1) {
+            page(-1)
+        } else if home == CalGrid.addMonths(monthFirst, 1) {
+            page(1)
+        } else {
+            monthDrag = 0
+            monthFirst = home
         }
     }
 
@@ -356,39 +390,52 @@ struct CalendarView: View {
         .accessibilityValue(count == 0 ? "" : "\(count) items")
     }
 
-    /// The event door: create-then-open, capture-asks-nothing — no dialog;
-    /// the fresh event lands as a desk tab for naming. The workspace stamps
-    /// it (every creation door stamps, M4). desk.open also dismisses this
-    /// window — the chrome's own rule.
-    /// Tap an empty hour: an event AT that hour (phase 4). One tap, no
-    /// dialog — it lands as a desk tab for naming, the same door the
-    /// month grid's long-press opens.
-    /// Long-press a month cell: an ALL-DAY event on that day — named in
-    /// the all-day band, not in a note editor.
+    /// Long-press a month cell: an event on that day, at 09:00. It used
+    /// to make an ALL-DAY one, which the band under the month grid drew
+    /// — and that band is gone (owner, 2026-08-13), so an all-day event
+    /// would now be created and never seen. A door that makes something
+    /// invisible is a defect, so this door makes a TIMED thing, at the
+    /// hour a day usually starts. The properties are up a beat later and
+    /// the time is the first row in them.
     private func createEvent(on day: Int64) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         selectedDay = day
-        draft = EventDraft(day: day, minutes: 0, allDay: true)
+        create(on: day, minutes: 9 * 60, allDay: false)
     }
 
-    /// The ONE write path for a drafted event: create, name, stamp. Called
-    /// only with a non-empty name.
-    private func commitDraft(_ d: EventDraft, name: String) {
+    /// The ONE write path: the event exists the instant you point at the
+    /// hour, and its PROPERTIES rise with the caret already in the name
+    /// (owner, 2026-08-13: "naming of items should be done in
+    /// properties"). No draft block, no inline field, nothing to commit
+    /// or cancel — the timeline places things in time, the card says
+    /// what they are.
+    ///
+    /// The card rises OVER the calendar, which stays where it was
+    /// (Option C). The shape is passed explicitly because the entity is
+    /// a heartbeat old and may not be in the snapshot `shapeOf` reads.
+    private func create(on day: Int64, minutes: Int, allDay: Bool) {
         let stamp = Civil.stamp(
-            day: d.day, hhmm: d.allDay ? 0 : Int64(CalClock.hhmm(d.minutes)))
-        box.createEvent(dueCivil: stamp, dateOnly: d.allDay) { id in
+            day: day, hhmm: allDay ? 0 : Int64(CalClock.hhmm(minutes)))
+        box.createEvent(dueCivil: stamp, dateOnly: allDay) { id in
             guard id != 0 else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
-            box.set(id, "name", name)
             workspaces.stamp(id, in: box)
-            draft = nil
             loadWindow()
+            desk.requestFocus(id)
+            desk.open(id, as: .record)
         }
     }
 
-    // MARK: the day panel — pills, rows, quick-add (fixed, not a modal)
+    // MARK: the day panel — the all-day band and the hour grid
+    //
+    // No quick-add row at the foot. It said "New for Tue 11 Aug…" and
+    // made a date-only TASK, which is not what this screen is for: you
+    // point at the hour you mean and the thing lands there (owner,
+    // 2026-08-13, "redundant since users click where they want their
+    // items to be in the timeline"). A dated task is still made in Tasks
+    // and in Today, where the same row lives.
 
     /// The day, Apple Calendar's shape (phase 4): an all-day band, then an
     /// hour grid where a timed item is a positioned block. Tap an empty
@@ -396,93 +443,20 @@ struct CalendarView: View {
     private func dayPanel(
         items: [CalendarDayItem], today: Int64, doneNames: Set<String>
     ) -> some View {
-        // All-day rides the band — including date-only TASKS, which keep
-        // their ring there (a timeless task must stay checkable without
-        // hunting the grid for a block it has no time for).
-        let band = items.filter(\.allDay)
         let timed = items.filter { !$0.allDay }
         return VStack(spacing: 0) {
-            SectionLabel(
-                selectedDay == today
-                    ? "Today · " + Civil.dayLabel(selectedDay)
-                    : Civil.dayLabel(selectedDay),
-                trailing: items.isEmpty ? nil : "\(items.count)"
-            )
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
-            if !band.isEmpty || draft?.allDay == true {
-                allDayBand(band, doneNames: doneNames)
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
-            }
+            // NOTHING between the month grid and the timeline — no date
+            // heading, no ALL DAY band (owner, 2026-08-13). The timeline
+            // starts where the month ends.
+            //
+            // What that costs, said plainly: a thing with a DATE but no
+            // time — an all-day event, a task due today — is not drawn
+            // on this screen any more. It is still a dot on its day in
+            // the month grid, and it is still in Today, in Tasks and in
+            // search. The band that carried them is deleted, ring and
+            // all.
             hourGrid(timed: timed, today: today, doneNames: doneNames)
-            CalendarQuickAddRow(day: selectedDay)
-                .padding(.horizontal, 16)
         }
-    }
-
-    private func allDayBand(
-        _ items: [CalendarDayItem], doneNames: Set<String>
-    ) -> some View {
-        HStack(spacing: 6) {
-            Text("ALL DAY")
-                .font(.system(size: LivType.label, weight: .semibold))
-                .kerning(0.3)
-                .foregroundStyle(LivTheme.text2)
-                .frame(width: 56, alignment: .leading)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(items) { item in
-                        if livCanTick(item.row) {
-                            allDayTask(item, doneNames: doneNames)
-                        } else {
-                            allDayPill(item)
-                        }
-                    }
-                    if let d = draft, d.allDay, d.day == selectedDay {
-                        EventDraftField(
-                            placeholder: "All day",
-                            onCommit: { name in commitDraft(d, name: name) },
-                            onCancel: { draft = nil }
-                        )
-                        .frame(width: 190, height: 26)
-                        .background(Capsule().fill(LivTheme.accent.opacity(0.2)))
-                        .overlay(Capsule().strokeBorder(LivTheme.accent, lineWidth: 1.5))
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-    }
-
-    /// A timeless task: pill-shaped like its neighbours, but the ring is
-    /// its own control — the rest of the pill opens the tab.
-    private func allDayTask(
-        _ item: CalendarDayItem, doneNames: Set<String>
-    ) -> some View {
-        HStack(spacing: 5) {
-            StatusRing(done: isDone(item.row, doneNames), compact: true) {
-                toggleStatus(item.row.id)
-            }
-            Button {
-                desk.open(item.row.id)
-            } label: {
-                Text(livRowTitle(item.row))
-                    .font(.system(size: LivType.label))
-                    .foregroundStyle(
-                        isDone(item.row, doneNames) ? LivTheme.text3 : LivTheme.text
-                    )
-                    .lineLimit(1)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, 6)
-        .padding(.trailing, 9)
-        .frame(height: 24)
-        .background(Capsule().fill(LivTheme.panel2))
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 
     // MARK: the hour grid
@@ -540,9 +514,6 @@ struct CalendarView: View {
                         hourLines
                         ForEach(frames) { frame in
                             block(frame, doneNames: doneNames)
-                        }
-                        if let d = draft, d.day == selectedDay, !d.allDay {
-                            draftBlock(d, width: geo.size.width)
                         }
                         if selectedDay == today {
                             nowLine(nowMinutes)
@@ -621,7 +592,7 @@ struct CalendarView: View {
         let minutes = max(
             0, min(24 * 60 - 60, CalClock.snap(Int(point.y / unit))))
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        draft = EventDraft(day: selectedDay, minutes: minutes, allDay: false)
+        create(on: selectedDay, minutes: minutes, allDay: false)
     }
 
     private func startMinutes(_ id: UInt64, _ frames: [HourFrame]) -> Int {
@@ -756,29 +727,6 @@ struct CalendarView: View {
             )
     }
 
-    /// The draft, drawn as a block at the hour you tapped: same shape as
-    /// a real event, with a live name field where the title goes. Return
-    /// writes it; empty return or the ✗ throws it away, having touched
-    /// nothing.
-    private func draftBlock(_ d: EventDraft, width: CGFloat) -> some View {
-        let unit = CalClock.hourHeight / 60
-        let left = CalClock.lane
-        let right: CGFloat = 18
-        return EventDraftField(
-            placeholder: CalClock.range(d.minutes, 60),
-            onCommit: { name in commitDraft(d, name: name) },
-            onCancel: { draft = nil }
-        )
-        .frame(width: max(40, width - left - right), height: CalClock.hourHeight - 2,
-               alignment: .topLeading)
-        .background(blockFill(LivTheme.accent, 0.2))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(LivTheme.accent, lineWidth: 1.5)
-        )
-        .offset(x: left, y: CGFloat(d.minutes) * unit)
-        .id("draft-\(d.day)-\(d.minutes)")
-    }
 
     @ViewBuilder private func blockFace(
         _ item: CalendarDayItem, name: String, span: String, length: Int,
@@ -810,35 +758,6 @@ struct CalendarView: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
-    }
-
-    private func allDayPill(_ item: CalendarDayItem) -> some View {
-        Button {
-            desk.open(item.row.id)
-        } label: {
-            HStack(spacing: 5) {
-                // An all-day pill holds no task (those go to allDayTask),
-                // so the kind mark never competes with a ring here.
-                LivIcon(
-                    glyph: LivKind.glyph(of: item.row),
-                    color: LivKind.color(of: item.row), size: 14)
-                if item.occurrence {
-                    Image(systemName: "repeat")
-                        .font(.system(size: LivType.micro, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                }
-                Text(livRowTitle(item.row))
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(LivTheme.text)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(Capsule().fill(LivTheme.panel2))
-            .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: snapshot slices
@@ -914,134 +833,6 @@ struct CalendarView: View {
         box.refreshWindow(
             from: Civil.stamp(day: start, hhmm: 0),
             to: Civil.stamp(day: end, hhmm: 2359))
-    }
-}
-
-// MARK: - naming an event where it lives
-
-/// Where a new event is being drawn, before it exists. Held by the
-/// calendar; the box learns about it only when a name is submitted.
-private struct EventDraft: Equatable {
-    let day: Int64
-    /// Minutes from midnight. Ignored when `allDay`.
-    let minutes: Int
-    let allDay: Bool
-}
-
-/// The name field inside a draft block. It is a field and a Return key,
-/// nothing else — an event's name is one line, and this is not a
-/// document. Focus is taken on appear so the keyboard is already up.
-private struct EventDraftField: View {
-    let placeholder: String
-    let onCommit: (String) -> Void
-    let onCancel: () -> Void
-
-    @State private var text = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 4) {
-            TextField(placeholder, text: $text)
-                .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.text)
-                .textInputAutocapitalization(.never)  // capture-verbatim law
-                .autocorrectionDisabled(true)
-                .focused($focused)
-                .submitLabel(.done)
-                .onSubmit(commit)
-            Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Discard")
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .onAppear { focused = true }
-    }
-
-    private func commit() {
-        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // An empty submit discards. An untitled event helps nobody.
-        guard !name.isEmpty else { return onCancel() }
-        onCommit(name)
-    }
-}
-
-// MARK: - the quick-add ghost row
-
-/// Today's inline quick-add under the selected day, here under the panel:
-/// a name typed becomes a task DUE the selected day, date-only, no picker.
-/// (TodayQuickAddRow is file-private to Today.swift; this is its mirror —
-/// same acts, same stamp promise, kept in lockstep by eye.)
-private struct CalendarQuickAddRow: View {
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-    @EnvironmentObject var desk: DeskModel
-    let day: Int64
-
-    @State private var text = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            // The time column stays blank — a quick-add is date-only.
-            Color.clear.frame(width: 44, height: 1)
-            RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(
-                    LivTheme.muted,
-                    style: StrokeStyle(lineWidth: 1.5, dash: [2.5])
-                )
-                .frame(width: 15, height: 15)
-                .frame(width: 31)
-            TextField("New for \(Civil.dayLabel(day))…", text: $text)
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text)
-                .textInputAutocapitalization(.never)  // capture-verbatim law
-                .autocorrectionDisabled(true)
-                .focused($focused)
-                .onSubmit(submit)
-            // No post-save chip strip here, so the stamp is promised
-            // BEFORE the write rather than shown after it.
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
-        .onTapGesture { focused = true }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-    }
-
-    /// Create only on real text; on success (id != 0) name + due land as
-    /// their own acts and the trailing refresh surfaces the row above.
-    /// A refused create keeps the draft — the field never clears on failure.
-    private func submit() {
-        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let day = self.day
-        box.createTask { id in
-            guard id != 0 else { return }
-            box.set(id, "name", name)
-            // 09:00, not a bare date — a task with no clock time has no
-            // moment to ring at (owner, 2026-08-07).
-            box.setSpan(
-                id, "due", start: Civil.stamp(day: day, hhmm: LivDue.defaultHHMM),
-                end: 0, dateOnly: false)
-            // Every creation door stamps (M4) — the row's hint says so
-            // before the write.
-            workspaces.stamp(id, in: box)
-            // Into properties, the standard way a task is made (owner,
-            // 2026-08-11). The day is already set from the row it was
-            // typed under; what is usually wanted next is everything
-            // else. `as: .record` — the snapshot has not caught up.
-            desk.open(id, as: .record)
-            text = ""
-            focused = false
-        }
     }
 }
 

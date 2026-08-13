@@ -79,8 +79,10 @@ struct LibraryPanel: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        SectionLabel("Views")
-                            .padding(.top, 10)
+                        // Clearance for the workspace button, which floats
+                        // OVER this panel at the top centre.
+                        SectionLabel("All workspaces")
+                            .padding(.top, 52)
                             .padding(.bottom, 2)
                         ForEach(Array(globalViews.enumerated()), id: \.element.id) { i, feature in
                             row(
@@ -90,10 +92,13 @@ struct LibraryPanel: View {
                             }
                         }
 
-                        // The workspace band carries the workspace's NAME:
-                        // these lists are filtered by its query, and the
-                        // label is what makes that self-evident.
-                        SectionLabel(workspaces.activeName)
+                        // Not the workspace's NAME any more — the button
+                        // floating above this panel says that, and saying
+                        // it twice on one screen is what the calendar's
+                        // date row was doing. These two labels say the
+                        // thing the name never did: which lists ignore the
+                        // workspace and which wear it.
+                        SectionLabel("This workspace")
                             .padding(.top, 22)
                             .padding(.bottom, 2)
                         ForEach(Array(workspaceViews.enumerated()), id: \.element.id) { i, feature in
@@ -146,17 +151,13 @@ struct LibraryPanel: View {
         desk.featureShown = feature
     }
 
-    /// Pinned below the scroll (rev 6): where you are, and the app's own
-    /// door. A hairline separates it from whatever the list scrolled to.
+    /// Pinned below the scroll (rev 6): the app's own door. "Where you
+    /// are" left this band on 2026-08-13 — the workspace is named at the
+    /// top of the screen now, over this panel, and a second copy at the
+    /// foot was the same fact twice.
     private var bottomBand: some View {
         VStack(alignment: .leading, spacing: 0) {
-            row(
-                workspaces.activeName,
-                glyph: workspaces.activeId == 0 ? .workspaces : .workspace
-            ) {
-                onWorkspace()
-            }
-            row("Settings", glyph: .settings, divided: true) {
+            row("Settings", glyph: .settings) {
                 onSettings()
             }
         }
