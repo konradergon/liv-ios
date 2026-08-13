@@ -49,8 +49,10 @@ final class EditorBridge: ObservableObject {
     fileprivate weak var coordinator: MarkdownEditor.Coordinator?
 
     /// Finish the `[[` being typed with a real target.
-    func completeLink(id: UInt64, name: String) {
-        coordinator?.completeLink(id: id, name: name)
+    /// Write a link to `id` where the caret is: over the `[[query` being
+    /// typed when there is one, else inserted whole.
+    func placeLink(id: UInt64, name: String) {
+        coordinator?.placeLink(id: id, name: name)
     }
 
     /// Put the picker away without touching the text — the brackets stay
@@ -598,6 +600,8 @@ struct MarkdownEditor: UIViewRepresentable {
     var bridge: EditorBridge
     /// A tapped `[[…]]` — the desk opens it as a tab.
     var onOpenRef: (UInt64) -> Void
+    /// The toolbar's link key — NoteEditor presents SEARCH.
+    var onLink: () -> Void
     /// The toolbar's outline key — NoteEditor presents the sheet.
     var onOutline: () -> Void
     /// The toolbar's template key — NoteEditor presents the picker.
@@ -851,7 +855,26 @@ struct MarkdownEditor: UIViewRepresentable {
             }
         }
 
-        func completeLink(id: UInt64, name: String) {
+        /// The search sheet came back with a thing. If a `[[` is being
+        /// typed, the token replaces it; otherwise it lands at the caret.
+        /// The published range can lapse while the sheet is up — the
+        /// text view is no longer first responder — so this rescans
+        /// before giving up on it.
+        func placeLink(id: UInt64, name: String) {
+            if parent.bridge.openLink == nil, let view,
+                let fresh = MarkScan.openLink(
+                    view.text, caret: view.selectedRange.location)
+            {
+                parent.bridge.openLink = fresh
+            }
+            guard parent.bridge.openLink != nil else {
+                insert(SpanText.token(id, name: name))
+                return
+            }
+            completeLink(id: id, name: name)
+        }
+
+        private func completeLink(id: UInt64, name: String) {
             guard let view, let link = parent.bridge.openLink else { return }
             // The published range can only lag by a runloop hop, but a hop
             // is enough if the buffer moved: verify before replacing, and
@@ -1049,13 +1072,9 @@ struct MarkdownEditor: UIViewRepresentable {
             case .redo:
                 view.undoManager?.redo()
             case .link:
-                // Insert the trigger; trackLink sees it and opens the picker.
-                let n = view.text as NSString
-                let out = n.replacingCharacters(in: sel, with: "[[")
-                applyThroughSystem(
-                    EditResult(
-                        text: out, selection: NSRange(location: sel.location + 2, length: 0)),
-                    to: view)
+                // Straight to search — no "[[" typed into the note first.
+                // The whole token is written when something is picked.
+                parent.onLink()
             case .outline:
                 parent.onOutline()
             case .template:
@@ -1196,16 +1215,9 @@ enum StyleVerb {
 /// keyboard. The dismiss key is pinned at the right so the way out never
 /// scrolls away.
 final class EditorToolbar: UIInputView, UIScrollViewDelegate {
-    private let embedded: Bool
-
     private let onVerb: (StyleVerb) -> Void
 
-    /// Embedded in a record card, two of the advanced verbs have no
-    /// door: Outline scrolls a view whose scrolling is switched off, and
-    /// Template would land a document's boilerplate in a task. A menu
-    /// item that does nothing is a lie, so they are not offered there.
     init(embedded: Bool = false, onVerb: @escaping (StyleVerb) -> Void) {
-        self.embedded = embedded
         self.onVerb = onVerb
         super.init(
             frame: CGRect(x: 0, y: 0, width: 0, height: 46), inputViewStyle: .keyboard)
@@ -1218,59 +1230,85 @@ final class EditorToolbar: UIInputView, UIScrollViewDelegate {
         // note behind it — accepted by the owner's explicit ask.
         backgroundColor = nil
 
-        // The DAILY set rides the row; everything else lives behind `+`
-        // (phase 2, owner 2026-08-05 — Notesnook's shape: a short row of
-        // buttons and the + for more advanced options).
-        let keys: [(String, String, StyleVerb)] = [
-            ("arrow.uturn.backward", "Undo", .undo),
-            ("arrow.uturn.forward", "Redo", .redo),
-            ("textformat.size", "Heading", .heading),
-            ("bold", "Bold", .bold),
-            ("italic", "Italic", .italic),
-            ("checkmark.square", "Task list", .task),
-            ("list.bullet", "Bulleted list", .bullet),
-            ("increase.indent", "Indent", .indent),
-            ("decrease.indent", "Outdent", .outdent),
+        // GROUPED, most-used first, with a hairline between groups —
+        // the Notesnook shape the owner asked for (2026-08-13). Fifteen
+        // identical squares in a row is a wall; six groups is something
+        // the eye can aim at. Link is IN the row, not behind the `+`:
+        // it is a daily verb, not an advanced one.
+        let groups: [[(String, String, StyleVerb)]] = [
+            [
+                ("arrow.uturn.backward", "Undo", .undo),
+                ("arrow.uturn.forward", "Redo", .redo),
+            ],
+            [
+                ("bold", "Bold", .bold),
+                ("italic", "Italic", .italic),
+                ("strikethrough", "Strikethrough", .strike),
+            ],
+            [("link", "Link", .link)],
+            [
+                ("textformat.size", "Heading", .heading),
+                ("checkmark.square", "Task list", .task),
+                ("list.bullet", "Bulleted list", .bullet),
+                ("list.number", "Numbered list", .ordered),
+            ],
+            [
+                ("increase.indent", "Indent", .indent),
+                ("decrease.indent", "Outdent", .outdent),
+            ],
+            [
+                ("text.quote", "Quote", .quote),
+                ("chevron.left.forwardslash.chevron.right", "Code", .code),
+                ("minus", "Divider", .rule),
+            ],
         ]
-        // The + menu: inserts and the rarer marks. Same verbs, same
-        // handlers — only the door moved.
+        // Behind the `+`: what is NOT universal. Template and Outline are
+        // Liv's own tools rather than ways to shape text, and this is
+        // where anything advanced lands later (the owner named maths).
+        //
+        // Embedded in a record card, neither has a door: Outline scrolls
+        // a view whose scrolling is switched off, and Template would land
+        // a document's boilerplate in a task. A menu item that does
+        // nothing is a lie, so the `+` itself goes away there.
         var advanced: [(String, String, StyleVerb)] = [
-            ("link", "Link", .link),
             ("doc.on.doc", "Template", .template),
-            ("list.number", "Numbered list", .ordered),
-            ("text.quote", "Quote", .quote),
-            ("strikethrough", "Strikethrough", .strike),
-            ("chevron.left.forwardslash.chevron.right", "Code", .code),
-            ("minus", "Divider", .rule),
             ("list.bullet.indent", "Outline", .outline),
         ]
-        if embedded {
-            advanced.removeAll { $0.2 == .template || $0.2 == .outline }
+        if embedded { advanced.removeAll() }
+
+        var keys: [UIView] = []
+        if !advanced.isEmpty {
+            let plus = UIButton(type: .system)
+            plus.setImage(
+                UIImage(
+                    systemName: "plus",
+                    withConfiguration: UIImage.SymbolConfiguration(
+                        pointSize: 17, weight: .medium)),
+                for: .normal)
+            plus.tintColor = LivInk.accent
+            plus.accessibilityLabel = "Insert"
+            plus.showsMenuAsPrimaryAction = true
+            plus.menu = UIMenu(children: advanced.map { (symbol, title, verb) in
+                UIAction(title: title, image: UIImage(systemName: symbol)) { [onVerb] _ in
+                    onVerb(verb)
+                }
+            })
+            NSLayoutConstraint.activate([
+                plus.widthAnchor.constraint(greaterThanOrEqualToConstant: 46)
+            ])
+            keys.append(plus)
+            keys.append(rule())
         }
-        let plus = UIButton(type: .system)
-        plus.setImage(
-            UIImage(
-                systemName: "plus",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)),
-            for: .normal)
-        plus.tintColor = LivInk.accent
-        plus.accessibilityLabel = "Insert"
-        plus.showsMenuAsPrimaryAction = true
-        plus.menu = UIMenu(children: advanced.map { (symbol, title, verb) in
-            UIAction(title: title, image: UIImage(systemName: symbol)) { [onVerb] _ in
-                onVerb(verb)
+        for (i, group) in groups.enumerated() {
+            if i > 0 { keys.append(rule()) }
+            keys += group.map { (symbol, access, verb) in
+                key(symbol, access) { [weak self] in self?.onVerb(verb) }
             }
-        })
-        NSLayoutConstraint.activate([
-            plus.widthAnchor.constraint(greaterThanOrEqualToConstant: 46)
-        ])
-        let middle = UIStackView(
-            arrangedSubviews: [plus]
-                + keys.map { (symbol, access, verb) in
-                    key(symbol, access) { [weak self] in self?.onVerb(verb) }
-                })
+        }
+        let middle = UIStackView(arrangedSubviews: keys)
         middle.axis = .horizontal
         middle.spacing = 0
+        middle.alignment = .center
         middle.translatesAutoresizingMaskIntoConstraints = false
 
         let scroller = UIScrollView()
@@ -1327,6 +1365,25 @@ final class EditorToolbar: UIInputView, UIScrollViewDelegate {
         if scrollView.contentOffset.y != 0 {
             scrollView.contentOffset.y = 0
         }
+    }
+
+    /// The hairline BETWEEN two groups of keys — 1pt of ink, short, with
+    /// its own breathing room, so it reads as a divider and never as a
+    /// key.
+    private func rule() -> UIView {
+        let holder = UIView()
+        let line = UIView()
+        line.backgroundColor = LivInk.border
+        line.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(line)
+        NSLayoutConstraint.activate([
+            holder.widthAnchor.constraint(equalToConstant: 13),
+            line.widthAnchor.constraint(equalToConstant: 1),
+            line.heightAnchor.constraint(equalToConstant: 22),
+            line.centerXAnchor.constraint(equalTo: holder.centerXAnchor),
+            line.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+        ])
+        return holder
     }
 
     private func key(

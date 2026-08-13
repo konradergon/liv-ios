@@ -13,9 +13,20 @@
 import SwiftUI
 
 struct SearchView: View {
+    /// When set, search is PICKING a thing rather than going to it: a
+    /// result reports itself and the screen closes, instead of landing
+    /// as a tab. This is the link door (owner, 2026-08-13) — creating a
+    /// link opens search, and the whole `[[id|Name]]` is written for
+    /// you. One search screen, two endings; there is no second, smaller
+    /// search anywhere in the app.
+    var onPick: ((UInt64, String) -> Void)? = nil
+    /// What was already typed at the door — the `[[kit` in the note.
+    var seed: String = ""
+
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
+    @Environment(\.dismiss) private var dismissSheet
     @State private var query = ""
     /// Raw ranked ids from the core, before the workspace lens.
     @State private var rawHits: [UInt64] = []
@@ -88,7 +99,7 @@ struct SearchView: View {
             HStack(spacing: 10) {
                 pill
                 Button {
-                    desk.searchShown = false
+                    close()
                 } label: {
                     Text("Cancel")
                         .font(.system(size: LivType.body, weight: .medium))
@@ -184,15 +195,33 @@ struct SearchView: View {
         .background(LivTheme.canvas.ignoresSafeArea())
         .onAppear {
             box.refresh()  // hits render off the entity index
+            if query.isEmpty, !seed.isEmpty {
+                query = seed
+                kick(debounce: false)
+            }
             DispatchQueue.main.async { focused = true }
         }
         .onChange(of: query) { _, _ in kick(debounce: true) }
     }
 
-    /// The one exit that carries a result: land at the desk, drop the veil.
+    /// The one exit that carries a result. Picking REPORTS it; searching
+    /// lands at the desk. Both then drop the veil.
     private func open(_ id: UInt64) {
+        if let onPick {
+            onPick(id, box.entity(id).map(livRowTitle) ?? "")
+            close()
+            return
+        }
         desk.open(id)
-        desk.searchShown = false
+        close()
+    }
+
+    private func close() {
+        if onPick != nil {
+            dismissSheet()
+        } else {
+            desk.searchShown = false
+        }
     }
 
     private var createButton: some View {
@@ -207,14 +236,23 @@ struct SearchView: View {
 
     /// Find-or-create commits capture-asks-nothing: the query is the
     /// scrap's content verbatim — no type, no title.
+    ///
+    /// Linking to something that does not exist yet is the same verb: the
+    /// scrap is born and the link points at it. The NAME comes from what
+    /// was typed, not from a lookup — the entity is not in the snapshot
+    /// yet at this instant, and the query IS what its title will be.
     private func create() {
-        box.capture(trimmed) { id in
-            if id != 0 {
-                // Search is lensed, so its create door stamps too (M4).
-                workspaces.stamp(id, in: box)
+        let typed = trimmed
+        box.capture(typed) { id in
+            guard id != 0 else { return }
+            // Search is lensed, so its create door stamps too (M4).
+            workspaces.stamp(id, in: box)
+            if let onPick {
+                onPick(id, typed)
+            } else {
                 desk.open(id)
-                desk.searchShown = false
             }
+            close()
         }
     }
 

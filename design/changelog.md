@@ -1,5 +1,48 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-13 — making a link opens SEARCH
+
+Owner: *"Creating links will open search to select the thing you want to
+link the currently opened thing with, and then insert the whole link for
+you."*
+
+- **One search screen, two endings.** `SearchView` takes an `onPick`: a
+  result reports itself instead of opening as a tab. The editor presents
+  it as the link door, and writes the whole `[[id|Name]]` for you.
+- **Both doors lead there.** The toolbar's Link key no longer types
+  `[[` into the note — it opens search directly. Typing `[[` opens the
+  same screen, with what you had already typed carried in as the query.
+  Dismissing without picking suppresses that token, so brackets you
+  meant literally do not summon it again until the caret leaves them.
+- **The toolbar is GROUPED** (owner, 2026-08-13, pointing at
+  Notesnook): six runs of keys with a hairline between them, most-used
+  first — undo/redo · bold italic strike · **link** · heading task
+  bullet numbered · indent outdent · quote code divider. Fifteen
+  identical squares in a row was a wall.
+- **Link is IN the row**, not behind the `+`. The `+` now holds only
+  what is not universal — Template and Outline today, and whatever
+  advanced thing lands later (the owner named maths).
+- **The four-row `[[` picker is DELETED** — its own search, its own
+  create row, its own list style. A second search screen is a second
+  thing to keep true (standing rule 4), and it showed four results where
+  search shows all of them grouped by kind.
+- **Find-or-create links too.** "Create …" in the link door makes the
+  scrap and points the link at it, in one tap.
+- **A bug this joined up.** `EditOps.completeLink` built the link token
+  itself, spacing only `]]` where the codec spaces every `]`. So a link
+  made in the editor to a name ending in a bracket — "Q3 [final]" —
+  wrote `[[4155|Q3 [final]]]`, which the scanner closed early, leaking
+  one bracket into the note per save. Exactly the defect fixed in the
+  codec on 2026-08-11 and missed here, because there were two builders.
+  There is one now, with its own checks.
+
+The "LINK TO" header went with the picker; that string exists nowhere in
+the app any more.
+
+Verified on the simulator both ways, and against the box: the saved
+content is `Text("Wire test ") · Ref(4184) · Text(" and ") · Ref(4295)`
+— real references, not literal text.
+
 ## 2026-08-13 — a markdown file IS a note
 
 Owner, opening a .md he had just added: *"Totally broken. It should open

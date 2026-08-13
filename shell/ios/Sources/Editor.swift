@@ -804,6 +804,8 @@ struct NoteEditor: View {
     @StateObject private var bridge = EditorBridge()
     @State private var outlineShown = false
     @State private var templatesShown = false
+    /// The link door: search, presented to pick what to link to.
+    @State private var linkShown = false
     /// Plain state, not @FocusState — the UIKit text view reports focus
     /// through the representable's binding.
     @State private var focused = false
@@ -890,6 +892,7 @@ struct NoteEditor: View {
             title: $title, titlePrompt: derivedPrompt, onTitleCommit: onTitleCommit,
             editable: model.loaded && !model.missing,
             bridge: bridge, onOpenRef: onOpenRef,
+            onLink: { linkShown = true },
             onOutline: { outlineShown = true },
             onTemplate: { templatesShown = true },
             showsTitle: showsTitle, embedded: embedded
@@ -898,7 +901,15 @@ struct NoteEditor: View {
             maxWidth: .infinity,
             maxHeight: embedded ? nil : .infinity,
             alignment: .topLeading)
-        .overlay(alignment: .bottom) { linkPicker }
+        // Typing `[[` is the same door. Dismissing without picking
+        // SUPPRESSES that token, so the sheet does not reappear on the
+        // brackets you meant literally until the caret leaves them.
+        .onChange(of: bridge.openLink) { _, link in
+            if link != nil { linkShown = true }
+        }
+        .sheet(isPresented: $linkShown, onDismiss: { bridge.dismissLink() }) {
+            linkSearchSheet
+        }
         .sheet(isPresented: $outlineShown) { outlineSheet }
         .sheet(isPresented: $templatesShown) {
             TemplateSheet(verb: .insert) { template in
@@ -911,23 +922,24 @@ struct NoteEditor: View {
         }
     }
 
-    // MARK: the [[ picker
+    // MARK: the link door
 
-    /// Typing `[[` opens it, over the note and above the keyboard, with
-    /// the caret still in the text so you keep typing to filter. Picking
-    /// writes a reference to an ENTITY — never a file path, never a name
-    /// resolved later (design/editor-study.md §5).
-    @ViewBuilder private var linkPicker: some View {
-        if let link = bridge.openLink {
-            LinkPicker(
-                query: link.query, excluding: id,
-                onPick: { id, name in bridge.completeLink(id: id, name: name) },
-                onDismiss: { bridge.dismissLink() }
-            )
-            .padding(.horizontal, 10)
-            .padding(.bottom, 6)
-            .transition(.move(edge: .bottom))
-        }
+    /// Creating a link opens SEARCH (owner, 2026-08-13): the same screen
+    /// that finds anything finds what you are linking to, and the whole
+    /// `[[id|Name]]` is written for you. Typing `[[` is the shortcut to
+    /// the same door — it seeds the query with whatever you had typed.
+    ///
+    /// What was here before: a four-row picker of its own, with its own
+    /// search, its own create row and its own list style. A second
+    /// search screen is a second thing to keep true (standing rule 4).
+    private var linkSearchSheet: some View {
+        SearchView(
+            onPick: { id, name in bridge.placeLink(id: id, name: name) },
+            seed: bridge.openLink?.query ?? ""
+        )
+        .environmentObject(box)
+        .environmentObject(desk)
+        .environmentObject(workspaces)
     }
 
     // MARK: the outline
@@ -1013,151 +1025,6 @@ struct NoteEditor: View {
             .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel2))
             .padding(.horizontal, 10)
     }
-}
-
-// MARK: - the [[ picker
-
-/// Ranked candidates from the box, plus a create row when nothing matches.
-/// It never steals focus: the caret stays in the note, so typing keeps
-/// filtering and the keyboard never flinches.
-private struct LinkPicker: View {
-    let query: String
-    /// The note doing the linking. A note cannot link to itself, and while
-    /// you type `[[kitchen` its own content contains that text, so without
-    /// this it ranks itself first.
-    let excluding: UInt64
-    let onPick: (UInt64, String) -> Void
-    let onDismiss: () -> Void
-
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-    @State private var hits: [UInt64] = []
-    @State private var searched = ""
-
-    private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    /// Front-of-house rows only, and never a link to nothing: an entity
-    /// that is not in the box cannot be a target.
-    private var rows: [EntityRow] {
-        hits.compactMap { box.entity($0) }
-            .filter { $0.trashed != true && $0.id != excluding }
-            .prefix(4)
-            .map { $0 }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            ForEach(rows) { row in
-                Button {
-                    onPick(row.id, title(row))
-                } label: {
-                    HStack(spacing: 8) {
-                        // What you are linking TO, said in its own color.
-                        IconChip(
-                            glyph: LivKind.glyph(of: row),
-                            color: LivKind.color(of: row), size: 22,
-                            on: LivTheme.surface)
-                        Text(title(row))
-                            .font(.system(size: LivType.body))
-                            .foregroundStyle(LivTheme.text)
-                            .lineLimit(1)
-                        Spacer(minLength: 6)
-                    }
-                    .frame(height: 38)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .overlay(alignment: .bottom) {
-                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                }
-            }
-            if !trimmed.isEmpty { createRow }
-            if rows.isEmpty && trimmed.isEmpty {
-                Text("Type to find something to link to.")
-                    .font(.system(size: LivType.label))
-                    .foregroundStyle(LivTheme.muted)
-                    .frame(height: 34)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radius)
-                .strokeBorder(LivTheme.border, lineWidth: 0.5)
-        )
-        .onAppear { run(trimmed) }
-        .onChange(of: query) { _, now in
-            run(now.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            Text("LINK TO")
-                .font(.system(size: LivType.body, weight: .semibold))
-                .kerning(0.3)
-                .foregroundStyle(LivTheme.text2)
-            Spacer(minLength: 0)
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close link picker")
-        }
-        .frame(height: 32)
-    }
-
-    /// Find-or-create: an unmatched query becomes an entity, then the
-    /// link. Capture asks nothing — the query is the content verbatim —
-    /// and the workspace stamps it, exactly like Search's create door.
-    private var createRow: some View {
-        Button {
-            box.capture(trimmed) { id in
-                guard id != 0 else { return }
-                workspaces.stamp(id, in: box)
-                onPick(id, trimmed)
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .frame(width: 16)
-                Text("Create “\(trimmed)”")
-                    .font(.system(size: LivType.body))
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-            }
-            .foregroundStyle(LivTheme.accent)
-            .frame(height: 38)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func run(_ q: String) {
-        guard q != searched else { return }
-        searched = q
-        guard !q.isEmpty else {
-            hits = []
-            return
-        }
-        box.search(q) { ids, _ in
-            guard q == searched else { return }  // a stale answer never lands
-            hits = ids
-        }
-    }
-
-    private func title(_ row: EntityRow) -> String { livRowTitle(row) }
-
 }
 
 // MARK: - the codec's self-check (pure in, pure out; no test target here)

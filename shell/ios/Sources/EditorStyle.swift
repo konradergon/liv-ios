@@ -486,14 +486,16 @@ extension EditOps {
     /// the payload; the name is cosmetic (Editor.swift's codec re-derives
     /// it on every load), so a name carrying "]]" or newlines is cleaned
     /// exactly the way SpanText.token cleans it.
+    /// The token comes from the CODEC's own builder. This used to
+    /// space only "]]" where the codec spaces every "]", so a link made
+    /// here to a name ending in a bracket — "Q3 [final]" — was written
+    /// `[[4155|Q3 [final]]]`, closed early by the scanner, and leaked one
+    /// bracket into the note per save. Fixed in the codec 2026-08-11 and
+    /// missed here, because there were two builders (standing rule 4).
     static func completeLink(
         _ text: String, token: NSRange, id: UInt64, name: String
     ) -> EditResult {
-        let clean =
-            name.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "]]", with: "] ]")
-        let inserted = clean.isEmpty ? "[[\(id)]]" : "[[\(id)|\(clean)]]"
+        let inserted = SpanText.token(id, name: name)
         let out = ns(text).replacingCharacters(in: token, with: inserted)
         return EditResult(
             text: out,
@@ -725,6 +727,18 @@ func livEditorSelfCheck() -> [String] {
         "link does not cross lines",
         MarkScan.openLink("[[a\nplain", caret: 9) == nil)
     check("a pipe ends the picker", MarkScan.openLink("[[42|na", caret: 7) == nil)
+    // The token comes from the codec's builder, so a name that ENDS in
+    // a bracket cannot close the token early (the leak fixed in the
+    // codec 2026-08-11 lived on here until the two were joined).
+    check(
+        "link to a bracketed name is spaced",
+        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]")
+            .text == "see [[7|Q3 [final] ]]",
+        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]").text)
+    check(
+        "link to a nameless thing carries no pipe",
+        EditOps.completeLink("[[", token: NSRange(location: 0, length: 2), id: 9, name: "  ")
+            .text == "[[9]]")
     let done = EditOps.completeLink(
         "see [[kit", token: NSRange(location: 4, length: 5), id: 4155, name: "Kitchen rebuild")
     check("link completes", done.text == "see [[4155|Kitchen rebuild]]", done.text)

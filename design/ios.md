@@ -918,6 +918,24 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 16. The link door (rev 18, owner 2026-08-13)
+
+Creating a link opens SEARCH. The toolbar's Link key and typing `[[`
+both lead to the same screen; picking writes the whole `[[id|Name]]`
+where the caret is, over the `[[query` when one is being typed.
+`SearchView(onPick:)` is the only search in the app — the old four-row
+`[[` picker is deleted. "Create …" in that screen makes the thing and
+links to it in one tap.
+
+The keyboard toolbar is GROUPED, Notesnook's shape: a hairline between
+runs of keys, most-used first — undo/redo · bold italic strike · link ·
+heading task bullet numbered · indent outdent · quote code divider. The
+`+` holds only what is NOT universal (Template, Outline; maths later).
+
+The token is built in ONE place, `SpanText.token`. `EditOps.completeLink`
+used to build its own and spaced only `]]`, which leaked a bracket per
+save for any name ending in one.
+
 ## 15. The icon language (rev 17, owner 2026-08-13)
 
 Owner: *"apply the kind colors everywhere, and i don't see the
