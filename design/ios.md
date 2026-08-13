@@ -182,7 +182,182 @@ force) is the phone editor's conflict primitive for its own box today.
 + ⌄ (the desktop HomeHub; stamps defaults on new entities); far right the
 **settings gear**.
 
-**Bottom bar** (always the same, Obsidian's nav row under Liv law):
+> **Rev 4 (owner-directed, 2026-08-01): the three-zone model.** Tabs hold
+> EDITABLE content and nothing else — a note is a tab, a view is a visit.
+> The app has three zones with one door each:
+> **left, the library** — a solid slide-over panel holding everything
+> about the APP: workspace, the five views (Today/Everything/Inbox/Tasks/
+> Calendar), capture doors, Settings. Opened by the top-left circle.
+> **center, the desk** — one editable thing, full-bleed.
+> **right, the item panel** — everything about THIS note: metadata
+> (SCHEDULE/FILING/OTHER — never the content, which is the note itself,
+> not one of its properties) and the item's verbs (Save as template,
+> Undo, Move to Trash). Opened by the top-right circle.
+> The `^` features menu is deleted; the bottom bar is ONE row (‹ ›
+> search + [tabs]) and retires while a panel is up. Views stay cheap
+> stateless projections over the box, so they need no persistence or
+> instances mechanism — nothing tempts them back into the tab plane.
+>
+> **Rev 5 (owner-directed, 2026-08-02): describe vs act.** The top-right
+> door is a **`•••` menu**, not the panel itself: *Properties* (opens the
+> right panel), *Save as template*, *Move to Trash*. The panel is renamed
+> **Properties** and now only DESCRIBES — the verbs left it for the menu,
+> because a metadata inspector that also acts on the document blurs the
+> line the menu exists to draw. The panel's old *Undo* is deleted
+> outright: it was the box-level "undo last transaction" masquerading as
+> a property undo, and undo-without-redo is a trap. Trash confirms, then
+> closes the tab and offers **Undo on a transient chip** (5s) — the core
+> has no restore verb, and undo-right-after IS restore precisely while
+> the trash is the last transaction, which the shell guarantees by
+> flushing the editor BEFORE trashing (a teardown flush after it would
+> make the chip undo the wrong write — found live). *Save as template*
+> acknowledges on the same chip. **Due** grew up: Today / Tomorrow /
+> a real date picker / an opt-in time (a due is a DAY unless you add a
+> clock; quick picks move the day and keep the time), plus Clear —
+> commits as you pick, no Set button. The bottom bar also retires while
+> a KEYBOARD is up: keyboard avoidance would park it on top of the
+> editor's formatting row, two bars stacked over the keys.
+>
+> **Rev 6 (owner-directed 2026-08-03, with reference screenshots:
+> Notesnook sidebar + editor, ClickUp Today/Tasks/dates, Apple
+> Calendar).** The owner's principles, now standing law for this shell:
+> *frequent actions get dedicated UI, never an overflow menu; minimize
+> modal dialogs and interruptive menus; AI never acts without explicit
+> approval; workspaces define context consistently via property
+> filtering; ClickUp as visual/surface inspiration, kept simpler.*
+> What changes:
+>
+> 1. **Both side panels are FULL-SCREEN and swiped into from anywhere**
+>    (swipe right = library, swipe left = properties), plus their
+>    doors. Notesnook sidebar is the layout model.
+> 2. **The library reorganizes into three bands**: *Global* (Today,
+>    Inbox) — views that ignore the workspace lens; *Workspace*
+>    (Calendar, Tasks, Everything) — content views that FILTER by the
+>    active workspace's query; *bottom, pinned* (workspace switcher,
+>    Settings). The Camera row leaves the sidebar (owner: current
+>    behaviour "seems useless"; scanning is future work) — the camera
+>    stays reachable from the capture chooser.
+> 3. **Workspace filtering becomes consistent**: the workspace-band
+>    views apply the active workspace query to their rows, the same
+>    lens capture already stamps with. A workspace = its tabs + its
+>    filter, everywhere.
+> 4. **Properties leaves the ••• menu** for a dedicated top-right door
+>    (frequent action → dedicated UI) + the swipe. The ••• keeps only
+>    secondary verbs: **Duplicate note** (new: a fresh note carrying
+>    this note's property cells — filing context without the body),
+>    Save as template, Move to Trash; Share/Export join later. The
+>    owner's open question ("dual access from ••• too?") is answered
+>    NO — a third path to the same panel is the unclean he suspected.
+> 5. **The New Tab screen is an overlay, never a tab.** `+` opens a
+>    full-screen chooser (create note / task / event / photo /
+>    template / switch workspace); choosing creates the tab. An EMPTY
+>    desk shows the same chooser as its body — the "desk is never
+>    empty" invariant survives as "the empty desk IS the chooser".
+> 6. **New-task flow simplifies** — the post-creation quick menu goes;
+>    creation should be one uninterrupted gesture.
+> 7. **The keyboard toolbar goes transparent** (Notesnook): the system
+>    keyboard material shows through; it must never scroll vertically.
+> 8. **Templates get a safeguard** (owner: "prone to misuse"): a
+>    template opened on the desk wears a visible banner naming it a
+>    template, whose primary action is "New note from this template" —
+>    so editing-the-template-when-you-meant-a-copy stops being the
+>    default trap. Considered alternative (a buried "default note
+>    content" setting) rejected: an editable object beats a setting.
+> 9. **"Apply Properties" rides the CLERK, not an LLM**: the Rust
+>    clerk's deterministic proposals, reviewed in the Properties panel
+>    — suggest, show the diff, apply only what the user accepts.
+>    Nothing automatic, per the AI principle and the constitution's
+>    quarantine.
+> 10. Deferred, recorded as TBD: the Filter button, the Graph view,
+>    Share/Export, ClickUp-style task relations.
+>
+> **Rev 7 (owner-directed 2026-08-05, roadmap phase 4): the day is an
+> hour grid.** Apple Calendar's shape under the month navigator: an
+> ALL-DAY band (timeless events as pills, timeless TASKS as pills that
+> keep their status ring), then a scrollable 24-hour grid where a timed
+> item is a positioned block, with a red now-line on today and the view
+> opening at now (or 08:00 on another day). **Tap an empty hour** and an
+> event is created AT that hour, landing as a desk tab for naming — the
+> same capture-asks-nothing door the month grid's long-press uses for
+> all-day events. A block's tap opens it; its time is changed in the
+> Properties panel's due row (rev 5's editor: date, opt-in time, Clear).
+> No scroll bar — the hour labels say where you are.
+>
+> **Drag-to-move, done in UIKit (owner: "do the UIKit drag properly").**
+> Press a block, then move it: 15-minute steps, the block draws at the
+> live minute while it is in the air, one `setSpan` on release. SwiftUI
+> cannot express this — a vertical drag inside a vertically scrolling
+> view never reaches the app. Instrumented live, all zero events: a
+> plain `DragGesture` on the block, `LongPressGesture.sequenced(before:)`
+> (Apple Calendar's grammar), and a `highPriorityGesture` on a grip; a
+> Menu and a Button placed inside a block also lost their taps to the
+> block's own tap.
+>
+> What works, and the two rules that make it work (`HourGridDrag`):
+> a `UILongPressGestureRecognizer` on **the window**, not the block and
+> not the scroll view — recognizers added to SwiftUI's hosting scroll
+> view are never offered the touch (verified: `shouldBegin` was not
+> called even for a real 0.8s press), while the window sees everything.
+> (1) `gestureRecognizerShouldBegin` returns false unless the touch is
+> inside a movable block, in the grid's own content space, so ordinary
+> taps and scrolls never even reach the arbiter. (2)
+> `shouldRecognizeSimultaneouslyWith` MUST return true — refusing it
+> starved the scroll view's pan and the grid stopped scrolling entirely;
+> safety comes instead from switching `isScrollEnabled` off for the
+> duration of a lift. Block geometry is computed ONCE and shared by the
+> renderer and the hit-test, so what you grab is what you see.
+> Occurrences are not movable (moving one instance of a series is a
+> recurrence edit). A drag is finger-only, so the same move is exposed
+> as five accessibility actions (±15 min, ±1 h, Pick a time).
+>
+> **Rev 8 (roadmap phase 7, 2026-08-06): Share & Export.** The •••
+> menu gains its two secondary residents. **Share** hands the note to
+> the system share sheet as markdown text; **Export as Markdown** hands
+> over a real `.md` file, so "Save to Files" produces markdown rather
+> than a .txt of the same words. Both are READS — nothing is written to
+> the box. Both flatten through `SpanText.spansToText`, the one
+> flattener in the shell, and add an `# H1` title only when the note
+> carries a name its first line does not already state (a file that
+> opens "- [ ] milk" tells the reader nothing). The filename is the
+> note's own name with the characters a filesystem argues about
+> stripped, capped, and never empty — `liv-note-<id>.md` when there is
+> no name. A sixth self-check suite (`-share.selfcheck 1`, 12
+> assertions) pins the markdown and filename shaping. An empty note
+> refuses to share rather than handing over a blank file.
+>
+> **Overlapping blocks split the width** instead of hiding each other
+> (`CalLayout.slots`, pure and self-checked): a cluster of overlapping
+> spans shares columns, greedily reusing a column as soon as it frees,
+> and a block that merely starts where another ends gets the full width
+> back.
+>
+> Two latent bugs fell out of the work: `-desk.boot <feature>` was being
+> wiped a frame after it was set (the workspace-adopt onChange clears
+> every overlay), so headless feature-view verification silently didn't
+> work — the boot state now applies one hop later, and `calendar` and
+> `everything` joined the roster. And labelling a container that carries
+> children flattens the subtree for VoiceOver, which had hidden a
+> block's status ring.
+>
+> **Shipped 2026-08-04** (all ten except the TBDs): full-screen swiped
+> panels; the three-band library (Camera row removed); Everything now
+> lensed — its old "never hides" rule retired by principle 3, chip worn;
+> Today's occurrence loop was the one lens gap, closed; the ••• is
+> secondary-only with the new **Duplicate note** (properties, not body;
+> due copied structurally, never as its display string); the chooser
+> overlay + empty-desk-is-the-chooser; direct task creation (its first
+> line is its name — the CaptureSheet now serves only events); the
+> transparent toolbar (known rule-2 delta on hardware keyboards,
+> accepted); the template banner; and **Suggested** — the clerk's
+> per-note proposals in the Properties panel with per-proposal ✓/✗,
+> gated by the assist consent switch now toggleable in Settings (the
+> ONE Settings row that writes a cell, because consent lives in the box
+> and both shells must agree about it). The clerk is deterministic Rust
+> (regex-grade proposers, no model, no network) — "AI" property
+> application per the owner's flow, with the LLM tier still quarantined.
+
+**Bottom bar** (rev 4: one row — ‹ › search + [tab count]; the features
+button is gone, features live in the library):
 
 - Far left, always: the **features button** (`^`) — opens the feature menu
   (ClickUp "More" idiom): Today, Everything, Inbox, Tasks, Calendar,
@@ -238,7 +413,10 @@ device (transient shell state, never cells).
    never written to the box, so the name cell's absence itself records
    that the user has not titled it, and nothing automatic can ever
    overwrite a human title. A new note focuses the BODY, never the title,
-   and an empty note is a blinking caret — no placeholder text at all.
+   and an empty note is a blinking caret — no placeholder text in the
+   BODY. Amended 2026-08-06: the TITLE line does show a grey "Untitled"
+   when the note has no name, so it reads the same there as it does in
+   every list (owner).
    Formatting is one scrollable toolbar riding
    DIRECTLY above the keyboard (the Bear shape — the owner tried the
    hidden-`Aa` panel of 2026-07-30 and rejected it); the keyboard covers
@@ -303,6 +481,33 @@ Surfaces (bodies; mockups in the artifact):
   navigate = open as another tab; CAS editor); the metadata collapse button
   top-right opens the full-body inspector (property rows, pickers,
   add-property, trash/undo); history lens later.
+
+  > **Rev 16 (2026-08-11): the codec writes the core's blocks.** Until
+  > now the phone stored markdown markers as literal text — every line a
+  > Body paragraph, `## Title` saved as the characters `## Title` (the
+  > recorded deviation from D19, which the core's own
+  > `services/src/tasks.rs` grew a second read-form to tolerate). The
+  > codec now derives each line's block through `MarkScan.shape` — the
+  > SAME scanner the styler renders with, so screen and box can never
+  > disagree — and each delimiter pair through `MarkScan.inline` into
+  > mark bits. Markers live only in the buffer; the box stores
+  > `Heading/Task/Bullet/Ordered/Quote/Rule` and marks. Rendering is
+  > untouched. Legacy notes convert wholesale on their first edit —
+  > verified live: one checkbox toggle from the Tasks view rewrote a
+  > seeded literal note into 7 structural breaks with the toggled line
+  > done. What still flattens (banner-gated, never silent): Code fences,
+  > Callouts, combined marks, and any marked run whose rendered form the
+  > scanner would not re-derive — decided by rendering and rescanning,
+  > not by delimiter arithmetic. Canonicalisations pinned in the
+  > self-check: rule variants → `---`, `>x` gains its space, odd indents
+  > floor to two-space units, ordered numbers renumber from 1 per run,
+  > a tab becomes two spaces, `* ` becomes `- `, an indented heading or
+  > quote loses its indent, and depth clamps at 15.
+  >
+  > The banner is computed by RENDERING AND RESCANNING with the same
+  > `name` and `isKnown` closures the save uses — reasoning about cases
+  > leaked twice (a trailing `*` inside bold; a Body paragraph whose
+  > text begins `# `, which the Rust importer produces from `\#`).
 - **Search (global magnifier)** — full-screen overlay from anywhere: pill
   bar, `liv_search_at`, kind-grouped flat rows, pinned capsules; a result
   opens as a Desk tab. **Find-or-create** (absorbed from Obsidian's quick
@@ -385,11 +590,24 @@ Structure from ClickUp mobile; soul, tokens, and density from Liv:
   Tasks, Capture sheet, Camera flow (PhotosPicker stand-in on simulator),
   Inbox Route lens, Search, minimal Detail, persistent PillBar. Verified
   end-to-end: app seeds its box; a CLI capture into the same box renders in
-  the UI after relaunch. **Remaining for M1:** the share extension + device
-  builds need a real Xcode project with App Group entitlements + signing
-  (owner's Xcode; hand-rolled bundles can't carry them), and hands-on QA of
-  the gesture wiring (swipes, chips, camera) which headless simctl can't
-  drive.
+  the UI after relaunch. **Remaining for M1:** the share extension + App
+  Group entitlements still need a real Xcode project (hand-rolled bundles
+  can't carry them), and hands-on QA of the gesture wiring (swipes, chips,
+  camera) which headless simctl can't drive.
+  **Update 2026-08-02 — device builds work WITHOUT a project.**
+  `./build.sh device run` builds for `aarch64-apple-ios`, signs, and
+  installs on the owner's iPhone via `devicectl`. One-time bootstrap
+  (done): a throwaway Xcode project with bundle id `app.liv.ios` +
+  "Automatically manage signing" + one Run on the phone, which mints the
+  Apple Development certificate (keychain) and the provisioning profile
+  (`~/Library/Developer/Xcode/UserData/Provisioning Profiles/`); the
+  script finds both by itself and the throwaway project can be deleted.
+  Lesson recorded in the script: link the Rust seam by explicit
+  `libliv_ffi.a` path, never `-L … -lliv_ffi` — with both .a and .dylib
+  in the target dir the linker silently picks the dylib, whose absolute
+  Mac path is meaningless on the phone (launch crash: "Library not
+  loaded"). The simulator never caught it because the simulator IS the
+  Mac.
 - **M2 — the funnel**: outbox projector, shipper, ack processor; desktop
   drainer + drain UX + snapshot exporter (PR); property-test gate. *P1
   complete.*
@@ -504,3 +722,244 @@ per-item-guarded like the core seed; services stays untouched.
 - Idempotence: presence-checked per item against the snapshot on every
   launch (the seed's own pattern) — reinstall-safe, existing boxes simply
   gain what's missing, nothing ever duplicates.
+
+## 11. Two tab shapes: document vs record (rev 9, owner 2026-08-06)
+
+The desk edited everything as a document. Opening a task gave you a
+markdown buffer whose first line was the task's name, a keyboard
+toolbar offering headings and dividers, and the due date hidden behind
+a swipe. The owner: *"things that aren't documents should not be edited
+like a document."*
+
+**The rule.** `TabShape.of(row)` (Record.swift) is the single decision:
+
+| kinds | shape | body |
+|---|---|---|
+| contains `note` | document | `NoteEditor` |
+| empty (a scrap) | document | `NoteEditor` — its title IS its first line |
+| anything else | record | `RecordBody` |
+
+**A record is a name, its facts, and notes.** The name is a one-line
+field that commits on return or blur — never line 1 of a buffer. The
+facts are `EntityInspector(scrolls: false)`, the very same rows the (i)
+panel shows: on a task the due date IS the content, so it belongs in
+the body, not behind a door. Notes are **the note editor itself**,
+embedded without its title line (rev 15, 2026-08-10).
+
+> *Superseded:* notes used to be a plain `TextEditor` over
+> `NoteEditorModel`, on the reasoning that the debounce, CAS guard and
+> flush came for free while "the markdown apparatus deliberately does
+> not". The owner asked why: *"There is already a note editor. Can this
+> and other app mechanisms be reused?"* It can, and the old reasoning
+> was wrong twice. A record's notes are content spans on the record
+> entity — the SAME data a note's body is — so the plain field was not
+> a different kind of thing, only a worse way of editing the same
+> thing. And what it withheld is exactly what a task wants: a
+> **checklist**, and a **[[link]]** to the note or project it belongs
+> to. `MarkdownTextView(showsTitle:)` and `MarkdownEditor.embedded`
+> carry the difference; the card supplies the name, the editor supplies
+> everything else, and the second text editor is deleted.
+
+**What follows from the rule.** On a record the (i) door and the
+left-swipe are suppressed (they would open a copy of the screen), and
+••• keeps only Duplicate and Move to Trash — you do not save a task as
+a template, and exporting one as markdown yields a heading with nothing
+under it.
+
+**A record with no name cell** shows its derived title as the PROMPT,
+not as text. It reads correctly and writes nothing; typing over it is
+what mints the name cell.
+
+**Naming happens where the thing lives.** Tapping an hour in the
+calendar draws a draft block with a name field in it. The box learns
+nothing until submit; an empty submit discards. This replaced
+create-then-open-the-editor, which wrote an untitled event before
+anyone had decided there would be one.
+
+## 12. The type scale, dates, and what a row is for (rev 10, owner 2026-08-06)
+
+**Type.** One recipe for every section header: 13pt semibold, letter
+spacing 0.3, `text2`, uppercased (`SectionLabel`, Kit.swift). Nothing in
+the app writes its own header. The floor stays 11pt and is now actually
+held: the five 9.5pt copies and the two 9pt calendar labels are gone.
+
+The quietest grey is #8E8E93, not #707078. The old value read at 3.7:1
+against the canvas, under the 4.5:1 readability minimum, and it carried
+text in 36 places including the sentence shown on an empty screen.
+
+Screen titles are still absent by design — the top bar was deleted in
+"the chrome retreats" and the feature window's whole 40pt header band is
+the close control (§6). If screens ever get titles they go inside the
+scroll content, never in that band.
+
+**Dates.** Two questions, two groups. WHICH DAY: Today, Tomorrow and
+"Choose a date", all three the same kind of row, because they answer the
+same question — three different faces implied a grouping that did not
+exist. "Choose a date" opens a month calendar under itself rather than a
+small popup, so it is a real button like its neighbours. WHAT TIME: its
+own group, always present.
+
+**A due date carries a clock time, and the default is 09:00.** The old
+"no time" state had to invent a time somewhere and it invented 09:00
+inside the reminder code, where nobody could see or change it. Now one
+constant says it out loud: `LivDue.defaultHHMM`. Reminders ring at the
+due moment; there are no lead times.
+
+**All-day belongs to EVENTS, not tasks** (`LivDue.carriesTime`). A
+holiday is not due at 09:00, so an all-day event keeps its all-day-ness
+when you change only its day; touching the clock is what gives it a
+time. A task always gets a moment, because a task with no clock time
+cannot ring, and ringing is most of what its date is for. A due with no
+clock time schedules no reminder at all.
+
+**A row is for something you can change.** The properties panel's rows
+are editable fields and nothing else. The top line names the ITEM —
+grey "Untitled" when it has no name — with the type as a chip below it.
+Facts you cannot change (the type, the creation time) are a chip and a
+quiet line, never a row: a row that looks like every other row and does
+nothing when tapped is a lie about what the list is for.
+
+## 13. Option C: a tab is a document (rev 11, owner 2026-08-08)
+
+Supersedes §11's record TAB. The shape rule survives; where it opens
+changed.
+
+**A tab holds a document.** Notes, templates, and untyped captures.
+Nothing else, ever.
+
+**A record is edited where you stand.** Tapping a task or event anywhere
+raises a card over the current surface and closes nothing. The card's
+body is `RecordBody` — name field, the inspector's own rows, notes — at
+medium height, because a record's facts fill a card and not a screen.
+
+**A record is born where you stand.** The calendar names new events in
+the grid; the quick-add rows name tasks in place. The create menu's
+"New task" opens the card with the caret already in the name.
+
+**The mechanics that matter.**
+
+- `DeskModel.shapeOf` reads the live snapshot. Never cache the kind at
+  open() time: `Box.actId` calls its completion before the snapshot
+  refreshes, so a fresh record would look like a document for a frame.
+- Exactly ONE surface may host the card (`recordCardHost(active:)`).
+  UIKit gives a presenter one presentation; the desk raising a card
+  while a full-screen view is up tears that view down, which is the
+  context exit this whole change removes.
+- A swiped-away card minimises to a pill, one at a time. It is pure
+  navigation — every record edit writes immediately.
+- Saved tab sets from before this change may hold records; they close
+  quietly on the first snapshot.
+
+**Vocabulary.** The word "scrap" was never the owner's. The concept — an
+untyped capture the Inbox routes — stays, because it IS
+capture-costs-nothing. The visible word is "capture".
+
+## 14. Files (rev 12, owner 2026-08-09)
+
+**A file of any format is an ordinary entity.** The bytes stay as a
+file; the box records a reference — the path plus a hash of the content
+— and the same six fields everything else carries. Filing a contract is
+filing, not foldering: area, project, people, due, status, subjects, and
+the workspace lens applies to it like anything else.
+
+**Having a file crosscuts the six kinds.** There is no seventh "File"
+kind. A scanned contract is a file AND can be a task. `TabShape.of`
+checks for a file cell FIRST, because what you want to see is the
+contract.
+
+**A file keeps a tab.** §13 says a tab is a document; a file is a
+document you work on. The tab law reads "things you work on" — records
+are the exception, not files.
+
+**Liv never writes foreign bytes.** It previews (Apple's own renderer
+handles .docx, .xlsx, .pptx, .pdf and images offline and for free),
+hands off with "Open in…", and re-hashes on open — a changed hash IS
+the integration. No watcher, no timer, no sync engine. That means the
+phone's loop is: open in Word, save, come back, and Liv notices. There
+is no silent round-trip on iOS and pretending otherwise would be a lie.
+
+**A phone import copies; the desktop references in place.** The picker
+returns a path inside another app's container, readable only for the
+length of that callback — recorded, it yields an entity whose file is
+gone the next time you look (verified live before the copy was added).
+So `FileStore.adopt` copies into Liv's own store, exactly as the camera
+already does, and Liv's copy becomes the truth. The same core verb
+serves both platforms; the difference lives in the shell.
+
+**One glyph table**, keyed off the format for files. Two had drifted and
+the same file wore different icons in two lists. It lives in `LivKind`
+now (§15).
+
+**Markdown is not a foreign format** (owner, 2026-08-13). A .md added
+through any door becomes a NOTE, with its words in the box; only formats
+Liv cannot be is a file. `NoteBytes` (Files.swift) holds the list, which
+is markdown and nothing else — `.txt`, `.tex` and `.bib` are somebody
+else's text and stay files. This does not weaken "Liv never writes your
+bytes": the words are copied in once, at the door, and nothing is ever
+written back.
+
+**A file tab is its NAME and its filing** (owner, 2026-08-13: the
+preview "is absolutely useless"). No render of the bytes, in any format:
+QuickLook, the extracted-text fallback and the empty-state hint are all
+deleted. Reading a foreign file means opening the app that owns it,
+••• → "Open in…". Its facts still live behind the (i) door like a
+note's, and a property view still never renders file contents.
+
+**The panel drag is a UIKit recognizer** (PanelDrag.swift; the
+HourGridDrag recipe), and the drag-never-presses rule is enforced in
+SwiftUI, not UIKit: the desk disables its whole tree while a drag is
+latched, which cancels any in-flight press. This is the one mechanism
+that works — touch cancellation, recognizer exclusion, and delayed
+delivery were each tried and each failed to reach SwiftUI's buttons
+(2026-08-09). A tap never latches, so taps are never disabled. The
+recognizer refuses to start on horizontal scrollers and text-selection
+chrome, allows the outer 24pt of either screen edge regardless (a file
+tab is one full-bleed scroller), settles by where you stopped or a real
+flick (700pt/s), and honours `-drag.off 1`.
+
+
+## 15. The icon language (rev 17, owner 2026-08-13)
+
+Owner: *"apply the kind colors everywhere, and i don't see the
+blueprint's custom icons in the app."*
+
+**The icons are DRAWN.** `Glyph.swift` holds the blueprints' own stroked
+24×24 set (`design/mockups/blueprints/icon-style.html` for kinds and
+furniture, `home-views.html` for places). SF Symbols are a different
+language — filled, heavier, on their own grid — and using them was why
+the approved icon system was invisible in the app. Apple's symbols stay
+for chrome that is not about a thing: chevrons, the close cross, the
+repeat mark, the search magnifier.
+
+**One classifier.** `LivKind.of(row)` is the only answer to "what is
+this?", and the enum carries the colour AND the glyph. Two tables had
+disagreed — the colour asked `kinds.first`, the glyph asked
+`kinds.contains` plus status — so a task filed as `["note","task"]` drew
+a tick on a blue square. Priority: file > template > event >
+task-or-any-status > person > link > note > capture.
+
+**The library panel is the exception**: its rows are bare, colourless
+and large (26pt, text2). A view is a place to go, not a thing you own,
+and seven hues stacked in one column shouted louder than the content.
+
+**Two ways an icon appears.** `IconChip` is the carved chip: a solid
+square of the kind colour with the glyph punched through in the surface
+BENEATH it — pass `on:` whatever the chip sits on, or the stencil stops
+working. `LivIcon` is the bare stroked glyph, for rows where a solid
+block would shout or where it shares a column with a status ring.
+
+**Where the colour does NOT go** (both rejected on sight, 2026-08-12):
+the create menu's verbs and the Inbox's routing buttons — they take the
+shared glyph in plain ink, because colour marks what a thing IS, never
+what a button would make; and property field rows, which wear a small
+colour dot instead. A chip standing for a THING (a kind word, a
+reference to another entity) takes the kind colour on its dot; every
+other chip keeps the `Hue` hash.
+
+**`livCanTick` is not the kind.** It asks whether a row has a status to
+close, which an event can also have. The kind says what the row IS.
+Keeping them apart is what stops an event losing its ring.
+
+`-glyph.selfcheck 1` asserts all of it: one kind per row, colour and
+glyph agreeing, no two kinds sharing a drawing, every path inside its
+box.

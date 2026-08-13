@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liv blueprint — Icon system</title>
+<style>
+  :root{
+    --canvas:#161618; --surface:#1E1E20; --raised:#232326; --pressed:#2C2C2E;
+    --hairline:rgba(255,255,255,.10); --hairline-soft:rgba(255,255,255,.06);
+    --t1:#F5F5F7; --t2:#C9C9CE; --t3:#9A9AA2; --muted:#8E8E93;
+    --accent:#0A84FF;
+    --k-note:#0A84FF; --k-task:#BF5AF2; --k-event:#64D2FF; --k-file:#FF9F0A;
+    --k-person:#FF375F; --k-capture:#FFD60A; --k-template:#98989D;
+    --h-area:#FFB340; --h-project:#30D158; --h-subject:#BF5AF2;
+    --clock:#64D2FF; --status:#0A84FF; --late:#FF453A;
+    --shadow:0 4px 18px rgba(0,0,0,.35);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#0d0d0e; color:var(--t1);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    padding:36px 28px 56px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page-head{max-width:1760px;margin:0 auto 26px}
+  .page-head h1{font-size:16px;font-weight:600;color:var(--t2)}
+  .page-head p{font-size:12px;color:var(--muted);margin-top:4px}
+  .board{display:flex;flex-wrap:wrap;gap:40px;justify-content:center;align-items:flex-start;max-width:1860px;margin:0 auto}
+  .unit{display:flex;flex-direction:column;gap:10px;width:390px}
+  .caption{font-size:12px;color:#8a8a90;line-height:1.5;padding:0 8px}
+  .caption b{color:#b9b9c0;font-weight:600}
+
+  .frame{
+    width:390px;background:var(--canvas);
+    border-radius:30px;border:1px solid rgba(255,255,255,.13);
+    overflow:hidden;position:relative;display:flex;flex-direction:column;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);
+    padding:24px 16px 26px;
+  }
+
+  .seclabel{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--t3);display:flex;align-items:baseline}
+
+  /* ---- THE carved chip: solid kind color, glyph in the surface color beneath ---- */
+  .cv{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none}
+  .cv svg{display:block}
+  /* bare slot for marks that are never boxed */
+  .bare{width:28px;height:28px;display:flex;align-items:center;justify-content:center;flex:none}
+  .bare svg{display:block}
+
+  /* ---- reference grid ---- */
+  .icogrid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px 8px;margin:14px 0 4px}
+  .icell{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .icell .nm{font-size:13px;color:var(--t2)}
+
+  /* ---- real rows ---- */
+  .lrow{height:52px;display:flex;align-items:center;gap:12px;position:relative}
+  .lrow + .lrow::before{content:"";position:absolute;top:0;left:40px;right:0;height:1px;background:var(--hairline-soft)}
+  .lrow .lab{font-size:16px;font-weight:400;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .due{margin-left:auto;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  .card{
+    margin-top:18px;background:var(--surface);border:1px solid var(--hairline);
+    border-radius:12px;box-shadow:var(--shadow);padding:4px 12px 8px;
+  }
+  .cardhead{height:44px;display:flex;align-items:center;gap:10px}
+  .cardhead .name{font-size:16px;font-weight:600;flex:1}
+  .irow{height:44px;display:flex;align-items:center;gap:12px;position:relative}
+  .irow + .irow::before{content:"";position:absolute;top:0;left:40px;right:0;height:1px;background:var(--hairline-soft)}
+  .irow .lbl{font-size:13px;color:var(--t3)}
+  .vchip{margin-left:auto;height:22px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:500;
+    display:inline-flex;align-items:center;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>Liv — UI improvement blueprint · Icon system</h1>
+  <p>Decided 2026-08-12: every icon box is its color at full strength with the glyph carved out of it — a stencil, drawn in the surface color beneath. Boxes carve; value chips stay tinted; glyphs that sit bare in a row stay bare. Person is always the silhouette, never an initial.</p>
+</div>
+
+<div class="board">
+
+  <!-- ============================================================ -->
+  <!-- FRAME 1 — THE LANGUAGE: every icon in its carved square      -->
+  <!-- ============================================================ -->
+  <div class="unit">
+    <div class="frame">
+      <div class="seclabel">Kinds</div>
+      <div class="icogrid">
+        <div class="icell">
+          <span class="cv" style="background:var(--k-note)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.75" width="14" height="16.5" rx="3"/><path d="M8.5 9h7M8.5 13h5"/></svg></span>
+          <span class="nm">note</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--k-task)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.5 12.3l2.6 2.6 4.6-5.4"/></svg></span>
+          <span class="nm">task</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--k-event)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>
+          <span class="nm">event</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--k-file)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 3.75h6l5 5v9a2.5 2.5 0 0 1-2.5 2.5h-8a2.5 2.5 0 0 1-2.5-2.5v-11.5a2.5 2.5 0 0 1 2-2.5z"/><path d="M13.5 3.75v5h5"/></svg></span>
+          <span class="nm">file</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--k-person)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.9"/><path d="M19.4 20.5v-1.2a4.5 4.5 0 0 0-4.5-4.5H9.1a4.5 4.5 0 0 0-4.5 4.5v1.2"/></svg></span>
+          <span class="nm">person</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--k-capture)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>
+          <span class="nm">capture</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--k-template)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.75" width="14" height="16.5" rx="3" stroke-dasharray="2.6 2.9"/><path d="M8.5 9h7M8.5 13h5"/></svg></span>
+          <span class="nm">template</span>
+        </div>
+      </div>
+
+      <div class="seclabel" style="margin-top:18px">Furniture &amp; state</div>
+      <div class="icogrid">
+        <div class="icell">
+          <span class="cv" style="background:var(--accent)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2.4"><circle cx="12" cy="12" r="5.6"/></svg></span>
+          <span class="nm">workspace</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--h-area)"><svg width="16" height="16" viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="2.5" fill="#161618"/></svg></span>
+          <span class="nm">area</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--h-project)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2.2"><rect x="7.5" y="7.5" width="9" height="9" rx="1.6" transform="rotate(45 12 12)"/></svg></span>
+          <span class="nm">project</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--h-subject)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 5h6.2c.53 0 1.04.21 1.41.59l6.8 6.8a2 2 0 010 2.83l-3.7 3.7a2 2 0 01-2.83 0l-6.8-6.8A2 2 0 015 10.7V6.5A1.5 1.5 0 016.5 5z" transform="translate(-.5 -.3)"/><circle cx="8.4" cy="8.5" r="1.7" fill="#161618" stroke="none"/></svg></span>
+          <span class="nm">subject</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--clock)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><path d="M12 7.8V12l3 1.9"/></svg></span>
+          <span class="nm">clock</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--status)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2"><rect x="4.5" y="4.5" width="15" height="15" rx="5"/></svg></span>
+          <span class="nm">status</span>
+        </div>
+        <div class="icell">
+          <span class="cv" style="background:var(--late)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20.2V4.8M7 5h9.8l-2.8 3.8 2.8 3.8H7"/></svg></span>
+          <span class="nm">priority</span>
+        </div>
+        <div class="icell">
+          <span class="bare"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="8.4" cy="9.6" r="4.1" stroke="#30D158" stroke-width="1.8"/><circle cx="15.6" cy="9.6" r="4.1" stroke="#BF5AF2" stroke-width="1.8"/><circle cx="12" cy="15.4" r="4.1" stroke="#0A84FF" stroke-width="1.8"/></svg></span>
+          <span class="nm">properties</span>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>The language</b> — 28px squares, radius 8, ~2px strokes; the glyph is drawn in the surface color beneath (#161618 here) so it reads as punched out; furniture takes the entity's own hue; the properties mark stays as-is, never boxed.</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- FRAME 2 — REAL ROWS: canvas carve vs card carve              -->
+  <!-- ============================================================ -->
+  <div class="unit">
+    <div class="frame">
+      <div class="seclabel">Everything</div>
+
+      <div class="lrow" style="margin-top:4px">
+        <span class="cv" style="background:var(--k-note)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.75" width="14" height="16.5" rx="3"/><path d="M8.5 9h7M8.5 13h5"/></svg></span>
+        <span class="lab">Kitchen rebuild</span>
+      </div>
+      <div class="lrow">
+        <span class="cv" style="background:var(--k-task)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.5 12.3l2.6 2.6 4.6-5.4"/></svg></span>
+        <span class="lab">Call the surveyor</span>
+        <span class="due">14:00</span>
+      </div>
+      <div class="lrow">
+        <span class="cv" style="background:var(--k-event)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></span>
+        <span class="lab">Fitter visit</span>
+        <span class="due">Thu 14 Aug</span>
+      </div>
+      <div class="lrow">
+        <span class="cv" style="background:var(--k-file)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 3.75h6l5 5v9a2.5 2.5 0 0 1-2.5 2.5h-8a2.5 2.5 0 0 1-2.5-2.5v-11.5a2.5 2.5 0 0 1 2-2.5z"/><path d="M13.5 3.75v5h5"/></svg></span>
+        <span class="lab">boarding-pass.pdf</span>
+      </div>
+      <div class="lrow">
+        <span class="cv" style="background:var(--k-person)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.9"/><path d="M19.4 20.5v-1.2a4.5 4.5 0 0 0-4.5-4.5H9.1a4.5 4.5 0 0 0-4.5 4.5v1.2"/></svg></span>
+        <span class="lab">Steven</span>
+      </div>
+      <div class="lrow">
+        <span class="cv" style="background:var(--k-capture)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>
+        <span class="lab">Gym schedule autumn</span>
+      </div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="name">Call the surveyor</span>
+          <span class="bare"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="8.4" cy="9.6" r="4.1" stroke="#30D158" stroke-width="1.8"/><circle cx="15.6" cy="9.6" r="4.1" stroke="#BF5AF2" stroke-width="1.8"/><circle cx="12" cy="15.4" r="4.1" stroke="#0A84FF" stroke-width="1.8"/></svg></span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--clock)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><path d="M12 7.8V12l3 1.9"/></svg></span>
+          <span class="lbl">due</span>
+          <span class="vchip" style="background:rgba(100,210,255,.16);color:#64D2FF">Tue 11 Aug 14:00</span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--status)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2"><rect x="4.5" y="4.5" width="15" height="15" rx="5"/></svg></span>
+          <span class="lbl">status</span>
+          <span class="vchip" style="background:rgba(10,132,255,.16);color:#0A84FF">To do</span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--h-area)"><svg width="16" height="16" viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="2.5" fill="#1E1E20"/></svg></span>
+          <span class="lbl">area</span>
+          <span class="vchip" style="background:rgba(255,179,64,.16);color:#FFB340">House</span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--h-project)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2.2"><rect x="7.5" y="7.5" width="9" height="9" rx="1.6" transform="rotate(45 12 12)"/></svg></span>
+          <span class="lbl">project</span>
+          <span class="vchip" style="background:rgba(48,209,88,.16);color:#30D158">Roof</span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--h-subject)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 5h6.2c.53 0 1.04.21 1.41.59l6.8 6.8a2 2 0 010 2.83l-3.7 3.7a2 2 0 01-2.83 0l-6.8-6.8A2 2 0 015 10.7V6.5A1.5 1.5 0 016.5 5z" transform="translate(-.5 -.3)"/><circle cx="8.4" cy="8.5" r="1.7" fill="#1E1E20" stroke="none"/></svg></span>
+          <span class="lbl">subjects</span>
+          <span class="vchip" style="background:rgba(191,90,242,.16);color:#BF5AF2">gutters</span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--k-person)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.9"/><path d="M19.4 20.5v-1.2a4.5 4.5 0 0 0-4.5-4.5H9.1a4.5 4.5 0 0 0-4.5 4.5v1.2"/></svg></span>
+          <span class="lbl">people</span>
+          <span class="vchip" style="background:rgba(255,55,95,.16);color:#FF375F">Steven</span>
+        </div>
+        <div class="irow">
+          <span class="cv" style="background:var(--late)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 20.2V4.8M7 5h9.8l-2.8 3.8 2.8 3.8H7"/></svg></span>
+          <span class="lbl">priority</span>
+          <span class="vchip" style="background:rgba(255,69,58,.16);color:#FF453A">High</span>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>Real rows</b> — the carve matches the surface beneath: #161618 on canvas rows, #1E1E20 inside the card; value chips stay tinted pills; the properties mark rides the card header bare.</div>
+  </div>
+
+</div>
+</body>
+</html>

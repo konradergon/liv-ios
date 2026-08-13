@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liv blueprint — editor · search · tabs</title>
+<style>
+  :root{
+    --page:#0d0d0e;
+    --canvas:#161618; --surface:#1E1E20; --raised:#232326; --pressed:#2C2C2E;
+    --hair:rgba(255,255,255,.10); --hair2:rgba(255,255,255,.16);
+    --t1:#F5F5F7; --t2:#C9C9CE; --t3:#9A9AA2; --mut:#8E8E93;
+    --accent:#0A84FF; --accent-soft:rgba(10,132,255,.18);
+    --k-note:#0A84FF;    --k-note-t:rgba(10,132,255,.14);
+    --k-task:#BF5AF2;    --k-task-t:rgba(191,90,242,.14);
+    --k-event:#64D2FF;   --k-event-t:rgba(100,210,255,.14);
+    --k-file:#FF9F0A;    --k-file-t:rgba(255,159,10,.14);
+    --k-person:#FF375F;  --k-person-t:rgba(255,55,95,.14);
+    --k-capture:#FFD60A; --k-capture-t:rgba(255,214,10,.14);
+    --k-template:#98989D;
+    --done:#30D158; --late:#FF453A; --doing:#FFD60A; --off:#8E8E93;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+  body{
+    background:var(--page);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--t1);
+    padding:44px 24px 64px;
+  }
+  .board{display:flex;flex-wrap:wrap;gap:44px 30px;justify-content:center;align-items:flex-start}
+  .unit{display:flex;flex-direction:column;align-items:center;gap:12px}
+  .cap{font-size:12px;color:#8E8E93;max-width:390px;text-align:center;line-height:1.5}
+  .phone{
+    width:390px;height:844px;border-radius:30px;background:var(--canvas);
+    border:1px solid rgba(255,255,255,.14);
+    box-shadow:0 24px 70px rgba(0,0,0,.55);
+    overflow:hidden;position:relative;display:flex;flex-direction:column;
+  }
+  /* ---------- status bar + island ---------- */
+  .status{height:52px;flex:none;position:relative;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 4px}
+  .island{position:absolute;top:10px;left:50%;transform:translateX(-50%);width:118px;height:34px;border-radius:17px;background:#000}
+  .status .time{font-size:15px;font-weight:600;letter-spacing:.2px}
+  .sicons{display:flex;align-items:center;gap:6px}
+  .sicons svg{display:block}
+  /* ---------- shared bits ---------- */
+  .ic{display:block;flex:none}
+  .hairline{height:1px;background:var(--hair)}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px;
+    border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap;
+  }
+  .kchip{ /* 28px solid kind square, glyph carved out in the surface color beneath */
+    width:28px;height:28px;border-radius:8px;flex:none;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .microcap{font-size:10.5px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--t3)}
+  .tnum{font-variant-numeric:tabular-nums}
+  /* ---------- editor ---------- */
+  .ed{flex:1;overflow:hidden;padding:18px 16px 0;display:flex;flex-direction:column}
+  .ed-title{font-size:26px;font-weight:700;line-height:1.22;letter-spacing:.1px;margin:16px 0 20px}
+  .ed-body{font-size:16px;line-height:26px;color:var(--t1)}
+  .mk{color:var(--mut)}                    /* dimmed marker, same size as its text */
+  .ed-h2{font-size:21px;font-weight:600;line-height:30px;margin:14px 0 6px}
+  .ed-p{margin:2px 0 8px}
+  .ed-line{display:flex;align-items:flex-start;gap:9px;min-height:28px;padding:1px 0}
+  .tbox{width:15px;height:15px;border-radius:4.5px;flex:none;margin-top:5.5px}
+  .tbox.open{border:1.5px solid var(--mut)}
+  .tbox.done{background:var(--accent);display:flex;align-items:center;justify-content:center}
+  .tdone{color:var(--mut);text-decoration:line-through;text-decoration-color:var(--mut)}
+  .bdot{width:5px;height:5px;border-radius:50%;background:var(--t2);flex:none;margin:11px 5px 0}
+  .ed-rule{height:1px;background:var(--mut);margin:14px 2px;opacity:.9}
+  .ed-quote{color:var(--t2)}
+  .codespan{
+    font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:14px;color:var(--t2);
+    background:var(--pressed);border-radius:4px;padding:1px 6px;
+  }
+  .refchip{ /* [[link]] rendered as a chip tinted by its TARGET's kind */
+    display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px 0 6px;
+    border-radius:999px;font-size:14px;font-weight:500;vertical-align:-4px;white-space:nowrap;
+  }
+  .refchip svg{display:block}
+  .ref-note{background:var(--k-note-t);color:var(--k-note)}
+  .ref-person{background:var(--k-person-t);color:var(--k-person)}
+  .caret{display:inline-block;width:2px;height:19px;background:var(--accent);vertical-align:-4px;border-radius:1px;animation:blink 1.1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .opentok{color:var(--t1)}
+  /* ---------- keyboard + toolbar ---------- */
+  .kbwrap{flex:none;margin-top:auto}
+  .toolbar{
+    height:46px;background:#202023;border-top:1px solid rgba(255,255,255,.06);
+    display:flex;align-items:stretch;padding:0 4px;
+  }
+  .tb-scroll{display:flex;flex:1;align-items:center;overflow:hidden}
+  .tb-key{width:38px;height:46px;display:flex;align-items:center;justify-content:center;color:var(--t2);flex:none}
+  .tb-key.plus{color:var(--accent)}
+  .tb-key .glyph{font-size:16px;font-weight:600;color:var(--t2)}
+  .tb-key .glyph.aa{font-weight:500}
+  .tb-key .glyph.it{font-style:italic;font-family:Georgia,serif;font-weight:500;font-size:17px}
+  .tb-dismiss{width:46px;display:flex;align-items:center;justify-content:center;color:var(--t2);border-left:1px solid rgba(255,255,255,.07)}
+  .kb{background:#202023;padding:8px 4px 4px}
+  .kb-row{display:flex;justify-content:center;gap:6px;margin-bottom:9px}
+  .kb .key{
+    height:42px;border-radius:6px;background:#4A4A4D;color:var(--t1);
+    box-shadow:0 1px 0 rgba(0,0,0,.35);
+    display:flex;align-items:center;justify-content:center;
+    font-size:16px;flex:1;max-width:33px;
+  }
+  .kb .key.wide{max-width:44px;background:#323235;font-size:12px}
+  .kb .key.space{max-width:none;flex:5}
+  .kb .key.ret{max-width:88px;flex:2.6;background:#323235;font-size:14px}
+  .kb-bottom{display:flex;justify-content:space-between;align-items:center;padding:2px 26px 0}
+  .homebar{width:140px;height:5px;border-radius:3px;background:rgba(255,255,255,.35);margin:10px auto 8px}
+  /* ---------- link picker ---------- */
+  .picker{
+    margin:0 10px 8px;background:var(--surface);border:1px solid var(--hair);border-radius:12px;
+    box-shadow:0 8px 24px rgba(0,0,0,.45);padding:2px 14px 6px;
+  }
+  .picker-h{height:34px;display:flex;align-items:center;justify-content:space-between}
+  .picker-row{display:flex;align-items:center;gap:10px;height:46px;border-top:1px solid var(--hair)}
+  .picker-row .rt{font-size:15px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .picker-row .rt b{font-weight:600;color:var(--t1)}
+  .create-row{display:flex;align-items:center;gap:10px;height:46px;border-top:1px solid var(--hair);color:var(--accent);font-size:15px}
+  .create-sq{
+    width:24px;height:24px;border-radius:6px;background:var(--accent);flex:none;
+    display:flex;align-items:center;justify-content:center;
+  }
+  /* ---------- search ---------- */
+  .search-top{display:flex;align-items:center;gap:12px;padding:10px 16px 6px}
+  .search-pill{
+    flex:1;height:44px;border-radius:22px;background:var(--surface);
+    border:1px solid var(--hair);box-shadow:0 4px 18px rgba(0,0,0,.35);
+    display:flex;align-items:center;gap:8px;padding:0 12px 0 14px;
+  }
+  .search-pill .q{font-size:15px;color:var(--t1);flex:1}
+  .cancel{font-size:15px;font-weight:500;color:var(--accent)}
+  .lensrow{padding:6px 16px 2px;display:flex}
+  .lens{background:var(--accent-soft);color:var(--accent)}
+  .sgroup{margin:14px 16px 0}
+  .sgroup-h{display:flex;align-items:center;gap:6px;padding:0 2px 6px}
+  .sgroup-h .dot{width:6px;height:6px;border-radius:50%}
+  .sgroup-h .cnt{margin-left:auto;font-size:12px;color:var(--mut)}
+  .scard{
+    background:var(--surface);border:1px solid var(--hair);border-radius:12px;
+    box-shadow:0 4px 18px rgba(0,0,0,.35);position:relative;overflow:hidden;
+  }
+  .rail{position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 2px 2px 0}
+  .srow{
+    display:flex;align-items:center;gap:8px;height:52px;margin:0 14px 0 17px;
+  }
+  .srow + .srow{border-top:1px solid var(--hair)}
+  .srow .t{font-size:15px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .srow .t b{font-weight:600;color:var(--t1)}
+  .srow .due{margin-left:auto;font-size:12px;color:var(--mut);flex:none}
+  .srow .due.today{color:var(--doing)}
+  .screate{margin:16px 16px 0}
+  .screate .create-row{border-top:none;height:52px}
+  /* ---------- tabs ---------- */
+  .band{height:44px;flex:none;display:flex;align-items:center;padding:0 12px;gap:4px}
+  .band .bicon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--t2)}
+  .band .btitle{font-size:16px;font-weight:600}
+  .band .bact{margin-left:auto;font-size:15px;font-weight:500;color:var(--accent);padding:0 8px}
+  .inactive-row{
+    margin:4px 16px 12px;height:54px;border-radius:12px;background:var(--surface);
+    border:1px solid var(--hair);box-shadow:0 4px 18px rgba(0,0,0,.35);
+    display:flex;align-items:center;gap:8px;padding:0 12px;
+  }
+  .inactive-row .lbl{font-size:15px;font-weight:500}
+  .inactive-row .cnt{margin-left:auto;font-size:15px;color:var(--t3)}
+  .chip-off{background:rgba(142,142,147,.16);color:#B9B9BF;height:22px;font-size:12px;padding:0 9px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px 96px}
+  .tcard{
+    height:154px;border-radius:12px;background:var(--surface);border:1px solid var(--hair);
+    box-shadow:0 4px 18px rgba(0,0,0,.35);
+    display:flex;flex-direction:column;overflow:hidden;position:relative;
+  }
+  .tcard.active{border:1.5px solid var(--accent)}
+  .tcard .tc-top{display:flex;align-items:flex-start;padding:10px 6px 0 12px;gap:4px}
+  .tcard .tc-title{font-size:15px;font-weight:600;line-height:1.25;flex:1;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .tcard .tc-x{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--t3);flex:none}
+  .tc-ex{padding:5px 12px 0;font-size:12px;line-height:17px;color:var(--t3);overflow:hidden}
+  .tc-ex .pl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tc-ex .pl .pn{color:var(--mut)}
+  .tc-ex .pl .pv{color:var(--t2)}
+  .tc-ex .none{color:var(--mut)}
+  .tc-foot{
+    margin-top:auto;height:22px;background:var(--raised);
+    display:flex;align-items:center;gap:5px;padding:0 12px;
+  }
+  .tc-foot .fdot{width:6px;height:6px;border-radius:50%;flex:none}
+  .tc-foot .fk{font-size:10.5px;font-weight:600;letter-spacing:.8px;color:var(--t3)}
+  .newcard{
+    height:154px;border-radius:12px;border:1px dashed var(--hair2);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--t3);
+  }
+  .newcard .nl{font-size:12px;font-weight:500}
+  .footpill{
+    position:absolute;left:16px;right:16px;bottom:12px;height:54px;border-radius:27px;
+    background:var(--surface);border:1px solid var(--hair);
+    box-shadow:0 8px 24px rgba(0,0,0,.45);
+    display:flex;align-items:center;padding:0 10px;
+  }
+  .footpill .fp-btn{width:56px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--t2)}
+  .footpill .fp-count{flex:1;text-align:center;font-size:15px;color:var(--t3)}
+  .footpill .fp-done{font-size:15px;font-weight:600;color:var(--accent);padding:0 14px}
+</style>
+</head>
+<body>
+<div class="board">
+
+<!-- ══════════════════════ 1 · NOTE EDITOR ══════════════════════ -->
+<div class="unit">
+  <div class="phone">
+    <div class="status">
+      <div class="island"></div>
+      <span class="time">9:41</span>
+      <span class="sicons">
+        <svg class="ic" width="18" height="12" viewBox="0 0 18 12" fill="#F5F5F7"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg class="ic" width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#F5F5F7" stroke-opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#F5F5F7"/><path d="M23.5 4 v4 a2 2 0 0 0 0 -4z" fill="#F5F5F7" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="ed">
+      <div class="ed-title">Kitchen rebuild</div>
+      <div class="ed-body">
+        <div class="ed-h2"><span class="mk">##&nbsp;</span>Plan</div>
+        <div class="ed-p">Walls are done. Compare the quotes in
+          <span class="refchip ref-note"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.75" width="14" height="16.5" rx="3"/><path d="M8.5 9h7M8.5 13h5"/></svg>Budget sheet</span>
+          and confirm the dates with
+          <span class="refchip ref-person"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.9"/><path d="M19.4 20.5v-1.2a4.5 4.5 0 0 0-4.5-4.5H9.1a4.5 4.5 0 0 0-4.5 4.5v1.2"/></svg>Steven</span>
+          before Friday.</div>
+
+        <div class="ed-line"><span class="tbox done"><svg class="ic" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="tdone">Book the fitter</span></div>
+        <div class="ed-line"><span class="tbox open"></span><span>Order the worktop</span></div>
+        <div class="ed-line"><span class="tbox open"></span><span>Return the tile samples<span class="caret"></span></span></div>
+
+        <div class="ed-h2"><span class="mk">##&nbsp;</span>Materials</div>
+        <div class="ed-line"><span class="bdot"></span><span>Oak veneer fronts</span></div>
+        <div class="ed-line"><span class="bdot"></span><span>Matte black handles, <span class="codespan">IKEA-2214</span></span></div>
+
+        <div class="ed-rule"></div>
+        <div class="ed-p ed-quote"><span class="mk">&gt;&nbsp;</span>Keep the old fridge until May</div>
+      </div>
+    </div>
+
+    <div class="kbwrap">
+      <div class="toolbar">
+        <div class="tb-scroll">
+          <span class="tb-key plus"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 5.5L4 9l3.5 3.5"/><path d="M4 9h9.5a5.5 5.5 0 0 1 0 11H9"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 5.5L20 9l-3.5 3.5"/><path d="M20 9h-9.5a5.5 5.5 0 0 0 0 11H15"/></svg></span>
+          <span class="tb-key"><span class="glyph aa">Aa</span></span>
+          <span class="tb-key"><span class="glyph">B</span></span>
+          <span class="tb-key"><span class="glyph it">I</span></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.5 12.3l2.6 2.6 4.6-5.4"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5.4" cy="6.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="5.4" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="5.4" cy="17.5" r="1.3" fill="currentColor" stroke="none"/><path d="M10 6.5h9.5M10 12h9.5M10 17.5h9.5"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M11.5 12h8.5M4 18.5h16"/><path d="M4.5 9.7l3 2.3-3 2.3"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M11.5 12h8.5M4 18.5h16"/><path d="M7.5 9.7l-3 2.3 3 2.3"/></svg></span>
+        </div>
+        <span class="tb-dismiss"><svg class="ic" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="10" rx="2.5"/><path d="M8.5 17.5l3.5 3 3.5-3"/></svg></span>
+      </div>
+      <div class="kb">
+        <div class="kb-row"><span class="key">Q</span><span class="key">W</span><span class="key">E</span><span class="key">R</span><span class="key">T</span><span class="key">Y</span><span class="key">U</span><span class="key">I</span><span class="key">O</span><span class="key">P</span></div>
+        <div class="kb-row" style="padding:0 18px"><span class="key">A</span><span class="key">S</span><span class="key">D</span><span class="key">F</span><span class="key">G</span><span class="key">H</span><span class="key">J</span><span class="key">K</span><span class="key">L</span></div>
+        <div class="kb-row"><span class="key wide">⇧</span><span class="key">Z</span><span class="key">X</span><span class="key">C</span><span class="key">V</span><span class="key">B</span><span class="key">N</span><span class="key">M</span><span class="key wide">⌫</span></div>
+        <div class="kb-row"><span class="key ret" style="max-width:88px">123</span><span class="key space">space</span><span class="key ret">return</span></div>
+        <div class="homebar"></div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">Editor — live markdown kept as-is; [[links]] read as chips tinted by their target's kind; the toolbar rides the keyboard</div>
+</div>
+
+<!-- ══════════════════════ 2 · EDITOR · [[ PICKER ══════════════════════ -->
+<div class="unit">
+  <div class="phone">
+    <div class="status">
+      <div class="island"></div>
+      <span class="time">9:41</span>
+      <span class="sicons">
+        <svg class="ic" width="18" height="12" viewBox="0 0 18 12" fill="#F5F5F7"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg class="ic" width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#F5F5F7" stroke-opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#F5F5F7"/><path d="M23.5 4 v4 a2 2 0 0 0 0 -4z" fill="#F5F5F7" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="ed">
+      <div class="ed-title">Kitchen rebuild</div>
+      <div class="ed-body">
+        <div class="ed-h2"><span class="mk">##&nbsp;</span>Plan</div>
+        <div class="ed-p">Confirm the dates with
+          <span class="refchip ref-person"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.9"/><path d="M19.4 20.5v-1.2a4.5 4.5 0 0 0-4.5-4.5H9.1a4.5 4.5 0 0 0-4.5 4.5v1.2"/></svg>Steven</span>
+          before Friday.</div>
+        <div class="ed-line"><span class="tbox open"></span><span>Order the worktop</span></div>
+        <div class="ed-p">Compare the quotes in <span class="mk">[[</span><span class="opentok">bud</span><span class="caret"></span></div>
+      </div>
+    </div>
+
+    <div class="kbwrap">
+      <div class="picker">
+        <div class="picker-h">
+          <span class="microcap">Link to</span>
+          <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9A9AA2" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </div>
+        <div class="picker-row">
+          <span class="kchip" style="background:var(--k-note)"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.75" width="14" height="16.5" rx="3"/><path d="M8.5 9h7M8.5 13h5"/></svg></span>
+          <span class="rt"><b>Bud</b>get sheet</span>
+        </div>
+        <div class="picker-row">
+          <span class="kchip" style="background:var(--k-file)"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 3.75h6l5 5v9a2.5 2.5 0 0 1-2.5 2.5h-8a2.5 2.5 0 0 1-2.5-2.5v-11.5a2.5 2.5 0 0 1 2-2.5z"/><path d="M13.5 3.75v5h5"/></svg></span>
+          <span class="rt"><b>bud</b>get-2025.xlsx</span>
+        </div>
+        <div class="picker-row">
+          <span class="kchip" style="background:var(--k-task)"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.5 12.3l2.6 2.6 4.6-5.4"/></svg></span>
+          <span class="rt">Buy <b>bud</b>get dust sheets</span>
+        </div>
+        <div class="create-row">
+          <span class="create-sq"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1E1E20" stroke-width="2.2" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg></span>
+          <span>Create &ldquo;<b style="font-weight:600">bud</b>&rdquo;</span>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <div class="tb-scroll">
+          <span class="tb-key plus"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 5.5L4 9l3.5 3.5"/><path d="M4 9h9.5a5.5 5.5 0 0 1 0 11H9"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 5.5L20 9l-3.5 3.5"/><path d="M20 9h-9.5a5.5 5.5 0 0 0 0 11H15"/></svg></span>
+          <span class="tb-key"><span class="glyph aa">Aa</span></span>
+          <span class="tb-key"><span class="glyph">B</span></span>
+          <span class="tb-key"><span class="glyph it">I</span></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4.5" width="15" height="15" rx="4.5"/><path d="M8.5 12.3l2.6 2.6 4.6-5.4"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5.4" cy="6.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="5.4" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="5.4" cy="17.5" r="1.3" fill="currentColor" stroke="none"/><path d="M10 6.5h9.5M10 12h9.5M10 17.5h9.5"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M11.5 12h8.5M4 18.5h16"/><path d="M4.5 9.7l3 2.3-3 2.3"/></svg></span>
+          <span class="tb-key"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M11.5 12h8.5M4 18.5h16"/><path d="M7.5 9.7l-3 2.3 3 2.3"/></svg></span>
+        </div>
+        <span class="tb-dismiss"><svg class="ic" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="10" rx="2.5"/><path d="M8.5 17.5l3.5 3 3.5-3"/></svg></span>
+      </div>
+      <div class="kb">
+        <div class="kb-row"><span class="key">Q</span><span class="key">W</span><span class="key">E</span><span class="key">R</span><span class="key">T</span><span class="key">Y</span><span class="key">U</span><span class="key">I</span><span class="key">O</span><span class="key">P</span></div>
+        <div class="kb-row" style="padding:0 18px"><span class="key">A</span><span class="key">S</span><span class="key">D</span><span class="key">F</span><span class="key">G</span><span class="key">H</span><span class="key">J</span><span class="key">K</span><span class="key">L</span></div>
+        <div class="kb-row"><span class="key wide">⇧</span><span class="key">Z</span><span class="key">X</span><span class="key">C</span><span class="key">V</span><span class="key">B</span><span class="key">N</span><span class="key">M</span><span class="key wide">⌫</span></div>
+        <div class="kb-row"><span class="key ret" style="max-width:88px">123</span><span class="key space">space</span><span class="key ret">return</span></div>
+        <div class="homebar"></div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">Editor · [[ picker — solid 28px kind squares with the glyph carved out, matched letters emphasized, find-or-create row; the caret never leaves the note</div>
+</div>
+
+<!-- ══════════════════════ 3 · SEARCH ══════════════════════ -->
+<div class="unit">
+  <div class="phone">
+    <div class="status">
+      <div class="island"></div>
+      <span class="time">9:41</span>
+      <span class="sicons">
+        <svg class="ic" width="18" height="12" viewBox="0 0 18 12" fill="#F5F5F7"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg class="ic" width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#F5F5F7" stroke-opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#F5F5F7"/><path d="M23.5 4 v4 a2 2 0 0 0 0 -4z" fill="#F5F5F7" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="search-top">
+      <div class="search-pill">
+        <svg class="ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2L19.5 19.5"/></svg>
+        <span class="q">kitchen<span class="caret" style="height:16px;vertical-align:-3px"></span></span>
+        <svg class="ic" width="17" height="17" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="#8E8E93"/><path d="M9 9l6 6M15 9l-6 6" stroke="#161618" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </div>
+      <span class="cancel">Cancel</span>
+    </div>
+
+    <div class="lensrow">
+      <span class="chip lens">
+        <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4.5 7h15M7.5 12h9M10.5 17h3"/></svg>
+        Home
+      </span>
+    </div>
+
+    <div class="sgroup">
+      <div class="sgroup-h"><span class="dot" style="background:var(--k-task)"></span><span class="microcap">Task</span><span class="cnt tnum">2</span></div>
+      <div class="scard">
+        <span class="rail" style="background:var(--k-task)"></span>
+        <div class="srow"><span class="t">Order the <b>kitchen</b> worktop</span><span class="due today tnum">today</span></div>
+        <div class="srow"><span class="t">Call the <b>kitchen</b> fitter</span><span class="due tnum">Fri 15 Aug</span></div>
+      </div>
+    </div>
+
+    <div class="sgroup">
+      <div class="sgroup-h"><span class="dot" style="background:var(--k-event)"></span><span class="microcap">Event</span><span class="cnt tnum">1</span></div>
+      <div class="scard">
+        <span class="rail" style="background:var(--k-event)"></span>
+        <div class="srow"><span class="t"><b>Kitchen</b> fitter visit</span><span class="due tnum">Thu 14 Aug</span></div>
+      </div>
+    </div>
+
+    <div class="sgroup">
+      <div class="sgroup-h"><span class="dot" style="background:var(--k-note)"></span><span class="microcap">Note</span><span class="cnt tnum">2</span></div>
+      <div class="scard">
+        <span class="rail" style="background:var(--k-note)"></span>
+        <div class="srow"><span class="t"><b>Kitchen</b> rebuild</span></div>
+        <div class="srow"><span class="t"><b>Kitchen</b> paint ideas</span></div>
+      </div>
+    </div>
+
+    <div class="sgroup">
+      <div class="sgroup-h"><span class="dot" style="background:var(--k-file)"></span><span class="microcap">File</span><span class="cnt tnum">1</span></div>
+      <div class="scard">
+        <span class="rail" style="background:var(--k-file)"></span>
+        <div class="srow"><span class="t"><b>kitchen</b>-plan.pdf</span></div>
+      </div>
+    </div>
+
+    <div class="sgroup">
+      <div class="sgroup-h"><span class="dot" style="background:var(--k-capture)"></span><span class="microcap">Captures</span><span class="cnt tnum">1</span></div>
+      <div class="scard">
+        <span class="rail" style="background:var(--k-capture)"></span>
+        <div class="srow"><span class="t"><b>kitchen</b> island moodboard links</span></div>
+      </div>
+    </div>
+
+    <div class="screate">
+      <div class="create-row">
+        <span class="create-sq"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#161618" stroke-width="2.2" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg></span>
+        <span>Create &ldquo;<b style="font-weight:600">kitchen</b>&rdquo;</span>
+      </div>
+    </div>
+  </div>
+  <div class="cap">Search — 44px pill field on a raised surface; results keep their kind grouping, now with color rails and matched-text emphasis</div>
+</div>
+
+<!-- ══════════════════════ 4 · TAB SWITCHER ══════════════════════ -->
+<div class="unit">
+  <div class="phone">
+    <div class="status">
+      <div class="island"></div>
+      <span class="time">9:41</span>
+      <span class="sicons">
+        <svg class="ic" width="18" height="12" viewBox="0 0 18 12" fill="#F5F5F7"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg class="ic" width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#F5F5F7" stroke-opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#F5F5F7"/><path d="M23.5 4 v4 a2 2 0 0 0 0 -4z" fill="#F5F5F7" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="band">
+      <span class="bicon"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9.5l6 5.5 6-5.5"/></svg></span>
+    </div>
+
+    <div class="inactive-row">
+      <svg class="ic" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#9A9AA2" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><path d="M12 7.5V12l3 1.8"/></svg>
+      <span class="lbl">Inactive</span>
+      <span class="chip chip-off">21 days</span>
+      <span class="cnt tnum">4</span>
+      <svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9A9AA2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </div>
+
+    <div class="grid">
+      <div class="tcard active">
+        <div class="tc-top">
+          <span class="tc-title">Kitchen rebuild</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex">
+          <div class="pl"><span class="pn">area ·</span> <span class="pv">Home</span></div>
+          <div class="pl"><span class="pn">project ·</span> <span class="pv">Rebuild</span></div>
+          <div class="pl"><span class="pn">due ·</span> <span class="pv">Fri 15 Aug</span></div>
+        </div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-note)"></span><span class="fk">NOTE</span></div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">Order the worktop</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex">
+          <div class="pl"><span class="pn">status ·</span> <span class="pv">doing</span></div>
+          <div class="pl"><span class="pn">due ·</span> <span class="pv">today</span></div>
+        </div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-task)"></span><span class="fk">TASK</span></div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">Fitter visit</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex">
+          <div class="pl"><span class="pn">due ·</span> <span class="pv">Thu 14 Aug</span></div>
+          <div class="pl"><span class="pn">area ·</span> <span class="pv">Home</span></div>
+        </div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-event)"></span><span class="fk">EVENT</span></div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">Call about invoice 448</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex"><div class="none">No details yet.</div></div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-capture)"></span><span class="fk">CAPTURE</span></div>
+      </div>
+
+      <div class="newcard">
+        <svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg>
+        <span class="nl">New tab</span>
+      </div>
+    </div>
+
+    <div class="footpill">
+      <span class="fp-btn"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg></span>
+      <span class="fp-count tnum">4 tabs</span>
+      <span class="fp-done">Done</span>
+    </div>
+  </div>
+  <div class="cap">Tabs — kind-colored footer dot per card, label·value excerpts raised to 12px, the footer detached as a floating pill</div>
+</div>
+
+<!-- ══════════════════════ 5 · INACTIVE LIST ══════════════════════ -->
+<div class="unit">
+  <div class="phone">
+    <div class="status">
+      <div class="island"></div>
+      <span class="time">9:41</span>
+      <span class="sicons">
+        <svg class="ic" width="18" height="12" viewBox="0 0 18 12" fill="#F5F5F7"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg class="ic" width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="#F5F5F7" stroke-opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#F5F5F7"/><path d="M23.5 4 v4 a2 2 0 0 0 0 -4z" fill="#F5F5F7" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="band">
+      <span class="bicon"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 6L9 12l5.5 6"/></svg></span>
+      <span class="btitle">Inactive</span>
+      <span class="bact">Close all</span>
+    </div>
+
+    <div class="grid" style="padding-top:8px">
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">Meeting notes 3 Jul</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex">
+          <div class="pl"><span class="pn">area ·</span> <span class="pv">Work</span></div>
+          <div class="pl"><span class="pn">project ·</span> <span class="pv">Offsite</span></div>
+        </div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-note)"></span><span class="fk">NOTE · 39D</span></div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">Renew the passport</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex">
+          <div class="pl"><span class="pn">status ·</span> <span class="pv">inactive</span></div>
+          <div class="pl"><span class="pn">area ·</span> <span class="pv">Home</span></div>
+        </div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-task)"></span><span class="fk">TASK · 25D</span></div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">boarding-pass.pdf</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex"><div class="none">Content lives on this entity.</div></div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-file)"></span><span class="fk">FILE · 31D</span></div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-top">
+          <span class="tc-title">Gym schedule autumn</span>
+          <span class="tc-x"><svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </div>
+        <div class="tc-ex"><div class="none">No details yet.</div></div>
+        <div class="tc-foot"><span class="fdot" style="background:var(--k-capture)"></span><span class="fk">CAPTURE · 22D</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">Inactive — the same card, its age riding the kind footer; Close all stays in the band, no explanatory sentence anywhere</div>
+</div>
+
+</div>
+</body>
+</html>

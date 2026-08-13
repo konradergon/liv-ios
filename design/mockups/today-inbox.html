@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today &amp; Inbox — phase 5 mockups</title>
+<style>
+  :root {
+    --canvas:#161618; --surface:#1e1e20; --panel:#232326; --panel2:#2c2c2e;
+    --text:#f5f5f7; --text2:#c9c9ce; --text3:#9a9aa2; --muted:#707078;
+    --border:rgba(255,255,255,.10); --accent:#0a84ff; --green:#30d158;
+    --red:#ff453a; --purple:#bf5af2; --amber:#ff9f0a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d0d0e; color:var(--text);
+         font:15px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",sans-serif;
+         display:flex; gap:34px; flex-wrap:wrap; justify-content:center; padding:26px 16px; }
+  .col { display:flex; flex-direction:column; gap:10px; align-items:center; }
+  .cap { font-size:12px; color:var(--text3); max-width:390px; }
+  .cap b { color:var(--text2); font-weight:600; }
+  .phone { width:390px; background:var(--canvas); border:1px solid var(--border);
+           border-radius:34px; overflow:hidden; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  .screen { padding:12px 0 10px; }
+  .band { display:flex; align-items:center; gap:8px; padding:4px 16px 8px; }
+  .lab { font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--text3); }
+  .h1 { font-size:11px; font-weight:700; letter-spacing:.6px; }
+  .grow { flex:1 }
+  .cnt { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .chip { display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:500;
+          color:var(--accent); background:rgba(10,132,255,.18); border-radius:999px;
+          height:17px; padding:0 7px; }
+  /* 7-day strip */
+  .days { display:flex; gap:6px; padding:2px 16px 10px; }
+  .day { flex:1; height:44px; border-radius:9px; display:flex; flex-direction:column;
+         align-items:center; justify-content:center; gap:2px; background:var(--surface);
+         border:.5px solid var(--border); }
+  .day .w { font-size:8.5px; font-weight:700; letter-spacing:.4px; color:var(--text3) }
+  .day .n { font-size:14px; font-variant-numeric:tabular-nums; color:var(--text2) }
+  .day.sel { background:var(--accent); border-color:transparent }
+  .day.sel .w,.day.sel .n { color:#fff; font-weight:700 }
+  .day .dot { width:3px; height:3px; border-radius:50%; background:var(--text3) }
+  .day.sel .dot { background:rgba(255,255,255,.9) }
+  /* overdue strip */
+  .odhead { display:flex; align-items:center; gap:7px; padding:10px 16px 3px; }
+  .oddot { width:7px; height:7px; border-radius:50%; background:var(--red) }
+  .odlab { font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--red) }
+  .odsub { font-size:10.5px; color:var(--muted) }
+  .odrow { display:flex; align-items:center; gap:9px; padding:0 16px; min-height:44px;
+           border-bottom:.5px solid var(--border); }
+  .ring { width:17px; height:17px; border-radius:5px; border:1.5px solid var(--muted); flex:none }
+  .odrow .t { flex:1; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .was { font-size:10.5px; color:var(--red); font-variant-numeric:tabular-nums }
+  .mini { font-size:11px; font-weight:600; color:var(--accent); background:var(--panel2);
+          border:.5px solid var(--border); border-radius:999px; height:24px;
+          display:inline-flex; align-items:center; padding:0 9px; }
+  /* the day */
+  .sec { display:flex; align-items:center; gap:7px; padding:14px 16px 3px }
+  .allday { display:flex; gap:6px; padding:2px 16px 8px; flex-wrap:wrap }
+  .pill { display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 10px;
+          border-radius:999px; background:var(--panel2); border:.5px solid var(--border);
+          font-size:11.5px }
+  .row { display:flex; align-items:center; gap:9px; padding:0 16px; min-height:46px;
+         border-bottom:.5px solid var(--border) }
+  .time { width:42px; font-size:11.5px; color:var(--text3); font-variant-numeric:tabular-nums }
+  .kind { width:3px; align-self:stretch; margin:9px 0; border-radius:2px }
+  .kind.task { background:var(--purple) }
+  .kind.event { background:var(--accent) }
+  .body { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px }
+  .title { font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .subs { display:flex; gap:4px }
+  .tag { font-size:10px; color:var(--text3); background:var(--panel2);
+         border:.5px solid var(--border); border-radius:999px; height:17px;
+         display:inline-flex; align-items:center; padding:0 7px }
+  .past .title,.past .time { color:var(--muted) }
+  .next { background:rgba(10,132,255,.07) }
+  .nowline { display:flex; align-items:center; gap:6px; padding:5px 16px 5px }
+  .nowline .l { flex:1; height:1.5px; background:var(--red) }
+  .nowbadge { font-size:9.5px; font-weight:700; color:#fff; background:var(--red);
+              border-radius:4px; padding:1px 5px; font-variant-numeric:tabular-nums }
+  .done { display:flex; align-items:center; gap:7px; padding:11px 16px; color:var(--muted);
+          font-size:12px; border-bottom:.5px solid var(--border) }
+  .quick { display:flex; align-items:center; gap:10px; padding:0 16px; min-height:44px;
+           color:var(--muted); font-size:14px }
+  .foot { display:flex; align-items:center; gap:8px; padding:12px 16px; font-size:12px;
+          color:var(--text3) }
+  .link { color:var(--accent); font-weight:600 }
+  /* inbox */
+  .card { padding:11px 16px 12px; border-bottom:.5px solid var(--border) }
+  .ctext { font-size:14px; line-height:1.35; margin-bottom:9px }
+  .verbs { display:flex; gap:7px }
+  .verb { flex:1; height:34px; border-radius:9px; background:var(--panel2);
+          border:.5px solid var(--border); display:flex; align-items:center;
+          justify-content:center; gap:5px; font-size:12.5px; font-weight:500 }
+  .verb.primary { background:rgba(10,132,255,.16); border-color:rgba(10,132,255,.5);
+                  color:#7cc0ff }
+  .when { font-size:10.5px; color:var(--muted); margin-top:7px }
+  .sug { display:flex; align-items:center; gap:9px; padding:0 16px; min-height:50px;
+         border-bottom:.5px solid var(--border) }
+  .sug .body { gap:3px }
+  .diff { display:inline-flex; align-items:center; height:19px; padding:0 8px;
+          border-radius:999px; font-size:11px; background:rgba(48,209,88,.14);
+          border:.5px solid rgba(48,209,88,.45); color:#7ee69a }
+  .why { font-size:11px; color:var(--text3) }
+  .act { width:34px; height:34px; border-radius:9px; display:flex; align-items:center;
+         justify-content:center; font-size:14px; flex:none }
+  .yes { color:var(--accent) } .no { color:var(--text3) }
+  .grouphead { display:flex; align-items:center; gap:7px; padding:14px 16px 4px }
+  .star { color:var(--amber); font-size:11px }
+  .ann { margin:10px 16px 4px; padding:8px 10px; border:1px dashed rgba(10,132,255,.5);
+         border-radius:10px; font-size:11.5px; color:var(--accent);
+         background:rgba(10,132,255,.06) }
+  .off { margin:14px 16px; padding:12px; border-radius:12px; background:var(--surface);
+         border:.5px solid var(--border); font-size:12.5px; color:var(--text2) }
+</style>
+</head>
+<body>
+
+<!-- ───────────────────────── TODAY ───────────────────────── -->
+<div class="col">
+  <div class="cap"><b>Today — "what now?"</b> Overdue is a strip you cannot
+    miss, and it means only what can still be DONE. The day is one
+    timeline that knows the time: what passed is dim, what is next is lit,
+    what is finished is one line. Colour says task vs event (the
+    Calendar's own language); chips say project/person, never the row's
+    own type.</div>
+  <div class="phone"><div class="screen">
+
+    <div class="band">
+      <span class="lab">TODAY · WED 5 AUG</span>
+      <span class="grow"></span>
+      <span class="cnt">6 left</span>
+    </div>
+
+    <div class="days">
+      <div class="day"><span class="w">M</span><span class="n">3</span></div>
+      <div class="day"><span class="w">T</span><span class="n">4</span><span class="dot"></span></div>
+      <div class="day sel"><span class="w">W</span><span class="n">5</span><span class="dot"></span></div>
+      <div class="day"><span class="w">T</span><span class="n">6</span></div>
+      <div class="day"><span class="w">F</span><span class="n">7</span><span class="dot"></span></div>
+      <div class="day"><span class="w">S</span><span class="n">8</span></div>
+      <div class="day"><span class="w">S</span><span class="n">9</span></div>
+    </div>
+
+    <div class="odhead">
+      <span class="oddot"></span><span class="odlab">LATE</span>
+      <span class="odsub">3 tasks</span>
+    </div>
+    <div class="odrow"><span class="ring"></span>
+      <span class="t">Renew passport</span>
+      <span class="was">Mon 3</span><span class="mini">Today</span></div>
+    <div class="odrow"><span class="ring"></span>
+      <span class="t">Send the roof quote</span>
+      <span class="was">Fri 31</span><span class="mini">Today</span></div>
+    <div class="odrow"><span class="ring"></span>
+      <span class="t">Call the surveyor</span>
+      <span class="was">Jul 28</span><span class="mini">Today</span></div>
+
+    <div class="sec"><span class="lab">ALL-DAY</span></div>
+    <div class="allday">
+      <span class="pill">Öland trip</span>
+      <span class="pill"><span class="ring" style="width:13px;height:13px"></span>Water the plants</span>
+    </div>
+
+    <div class="row past">
+      <span class="time">08:30</span><span class="kind event"></span>
+      <span class="body"><span class="title">Standup</span></span>
+    </div>
+    <div class="row past">
+      <span class="time">10:00</span><span class="kind task"></span>
+      <span class="body"><span class="title">Draft the gutter spec</span>
+        <span class="subs"><span class="tag">Roof</span></span></span>
+    </div>
+
+    <div class="nowline"><span class="nowbadge">11:45</span><span class="l"></span></div>
+
+    <div class="row next">
+      <span class="time">12:00</span><span class="kind event"></span>
+      <span class="body"><span class="title">Lunch with Lovisa</span>
+        <span class="subs"><span class="tag">Lovisa</span></span></span>
+    </div>
+    <div class="row">
+      <span class="time">15:00</span><span class="kind task"></span>
+      <span class="body"><span class="title">Book the ferry</span>
+        <span class="subs"><span class="tag">Öland</span></span></span>
+    </div>
+    <div class="row">
+      <span class="time">17:30</span><span class="kind event"></span>
+      <span class="body"><span class="title">Dentist</span></span>
+    </div>
+
+    <div class="done">▸ 2 done today</div>
+    <div class="quick"><span style="width:42px;text-align:center">＋</span>Add for today</div>
+
+    <div class="foot">3 captured today ·
+      <span class="link">Route them in the Inbox</span></div>
+
+
+  </div></div>
+</div>
+
+<!-- ───────────────────────── INBOX ───────────────────────── -->
+<div class="col">
+  <div class="cap"><b>Inbox — "what needs a decision from me?"</b> One
+    queue, two sections, no modes: things you captured that the app knows
+    nothing about, and things the clerk is waiting on. A verb FINISHES the
+    object — routing to Event asks for the date, because an event with no
+    date cannot appear in the Calendar. Everything is undoable.</div>
+  <div class="phone"><div class="screen">
+
+    <div class="band">
+      <span class="lab">INBOX</span>
+      <span class="chip">shows every workspace</span>
+      <span class="grow"></span>
+      <span class="cnt">1 + 3</span>
+    </div>
+
+    <div class="grouphead"><span class="lab">ROUTE</span><span class="cnt">1</span></div>
+
+    <div class="card">
+      <div class="ctext">ask the surveyor whether the ridge cap needs
+        replacing before the gutters go on</div>
+      <div class="verbs">
+        <span class="verb primary">Task</span>
+        <span class="verb">Event</span>
+        <span class="verb">Note</span>
+        <span class="verb">Link</span>
+      </div>
+      <div class="when">captured 09:12 today</div>
+    </div>
+
+
+    <div class="grouphead"><span class="star">✦</span><span class="lab">SUGGESTED</span>
+      <span class="cnt">3</span><span class="grow"></span>
+      <span class="mini">Accept all</span></div>
+
+    <div class="sug">
+      <span class="body">
+        <span class="diff">+ due · Fri 7 Aug</span>
+        <span class="why">“…before <b>friday</b>” in Roof project</span>
+      </span>
+      <span class="act no">✕</span><span class="act yes">✓</span>
+    </div>
+    <div class="sug">
+      <span class="body">
+        <span class="diff">+ people · Lovisa</span>
+        <span class="why">mentions “Lovisa” in Lunch notes</span>
+      </span>
+      <span class="act no">✕</span><span class="act yes">✓</span>
+    </div>
+    <div class="sug">
+      <span class="body">
+        <span class="diff">+ priority · high</span>
+        <span class="why">“urgent” in Send the roof quote</span>
+      </span>
+      <span class="act no">✕</span><span class="act yes">✓</span>
+    </div>
+
+
+
+  </div></div>
+</div>
+
+</body>
+</html>

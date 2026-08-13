@@ -61,18 +61,21 @@ struct InspectorField: Identifiable {
 
 struct EntityInspector: View {
     let id: UInt64
+    /// The panel scrolls; embedded as a record's body (Record.swift) it
+    /// must NOT — a scroll view inside a scroll view eats the gesture.
+    var scrolls: Bool = true
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
 
     @State private var options: [StatusOption] = []
     @State private var showDueSheet = false
-    @State private var confirmTrash = false
     /// The field whose sheet is open. One sheet serves every property.
     @State private var editing: InspectorField?
 
-    init(id: UInt64) {
+    init(id: UInt64, scrolls: Bool = true) {
         self.id = id
+        self.scrolls = scrolls
     }
 
     var body: some View {
@@ -82,15 +85,6 @@ struct EntityInspector: View {
             } else {
                 EmptyHint("This entity is gone.")
                     .frame(maxHeight: .infinity, alignment: .top)
-            }
-        }
-        .confirmationDialog(
-            "Move to Trash?", isPresented: $confirmTrash,
-            titleVisibility: .visible
-        ) {
-            // Soft, reversible, never cascades — still worth one ask.
-            Button("Move to Trash", role: .destructive) {
-                box.trash(id)
             }
         }
         .sheet(item: $editing) { field in
@@ -115,31 +109,182 @@ struct EntityInspector: View {
         }
     }
 
-    private func list(_ row: EntityRow) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if let kinds = row.kinds, !kinds.isEmpty {
-                    HStack(spacing: 5) {
-                        ForEach(kinds, id: \.self) { ValueChip($0) }
+    @ViewBuilder private func list(_ row: EntityRow) -> some View {
+        if scrolls {
+            ScrollView { rows(row) }
+        } else {
+            rows(row)
+        }
+    }
+
+    private func rows(_ row: EntityRow) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+                // The top line names the ITEM, with its type as a chip
+                // beside it. It used to be the chip alone, which meant a
+                // panel swiped over a note announced "note" and never
+                // said WHICH note; and the same type then appeared again
+                // as a row further down (owner, 2026-08-06).
+                //
+                // Suppressed when embedded in a record, whose own name
+                // field is directly above this.
+                if scrolls {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(livRowTitle(row))
+                            .font(.system(size: LivType.display, weight: .semibold))
+                            .foregroundStyle(
+                                hasName(row) ? LivTheme.text : LivTheme.text3)
+                            .lineLimit(2)
+                        Spacer(minLength: 4)
                     }
-                    .padding(.vertical, 8)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
                 }
+                HStack(spacing: 8) {
+                    // The kind words the box actually holds, each in its
+                    // own kind color — not the value hash, which spread
+                    // "note" and "event" over the same green.
+                    ForEach(row.kinds ?? [], id: \.self) {
+                        ValueChip($0, hue: LivKind.named($0).color)
+                    }
+                    if LivKind.of(row) == .template {
+                        ValueChip("template", hue: LivKind.template.color)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, 4)
+                SectionLabel("Schedule")
+                    .padding(.top, 18)
+                    .padding(.bottom, 2)
                 dueRow(row)
+                DetailHairline()
                 statusRow(row)
+                SectionLabel("Filing")
+                    .padding(.top, 22)
+                    .padding(.bottom, 2)
                 // Zero fill pressure: the core fields are always here, even
                 // empty; everything else appears only once it holds a value
                 // (design/editor-study.md §8). Two filled fields is a
                 // finished object — the rows must never nag.
-                ForEach(InspectorField.core, id: \.self) { property in
+                ForEach(
+                    Array(InspectorField.core.enumerated()), id: \.element
+                ) { i, property in
+                    if i > 0 { DetailHairline() }
                     fieldRow(property, row)
                 }
-                ForEach(DetailCellGroup.groups(row, skipping: skipSet(row))) {
-                    cellRow($0)
+                let extras = DetailCellGroup.groups(row, skipping: skipSet(row))
+                if !extras.isEmpty {
+                    SectionLabel("Other")
+                        .padding(.top, 22)
+                        .padding(.bottom, 2)
+                    ForEach(Array(extras.enumerated()), id: \.element.id) { i, group in
+                        if i > 0 { DetailHairline() }
+                        cellRow(group)
+                    }
                 }
-                footer(row)
+            suggestions
+            // Facts you cannot change are not rows. A row that looks like
+            // every other row and does nothing when tapped is a lie about
+            // what this list is for (owner, 2026-08-06).
+            if let made = createdLine(row) {
+                Text(made)
+                    .font(.system(size: LivType.body).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
+                    .padding(.top, 22)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, scrolls ? 14 : 0)
+        .padding(.bottom, scrolls ? 24 : 0)
+    }
+
+    // MARK: suggestions — the clerk proposes, the user decides (rev 6)
+
+    /// The clerk's pending proposals for THIS note. Deterministic Rust,
+    /// no model, and NOTHING automatic: the sweep only fills a queue;
+    /// the sole write path is the Accept button below. A decline is
+    /// remembered — the clerk never asks the same thing twice.
+    @ViewBuilder private var suggestions: some View {
+        let pending = box.proposals(for: id)
+        if !pending.isEmpty {
+            SectionLabel("Suggested")
+                .padding(.top, 22)
+                .padding(.bottom, 2)
+            ForEach(Array(pending.enumerated()), id: \.element.id) { i, proposal in
+                if i > 0 { DetailHairline() }
+                suggestionRow(proposal)
+            }
+        }
+    }
+
+    private func suggestionRow(_ proposal: ProposalRow) -> some View {
+        // One short summary names THIS proposal on both buttons, so two
+        // suggestions never read identically to VoiceOver (audit,
+        // 2026-08-04).
+        let summary = proposal.reason?.isEmpty == false
+            ? proposal.reason!
+            : (proposal.commands ?? []).prefix(3)
+                .compactMap { c in
+                    [c.property, c.value].compactMap { $0 }.filter { !$0.isEmpty }
+                        .joined(separator: " ")
+                }
+                .joined(separator: ", ")
+        return HStack(alignment: .center, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                // The diff: what would change, stated as chips.
+                HStack(spacing: 5) {
+                    ForEach(
+                        Array((proposal.commands ?? []).prefix(3).enumerated()),
+                        id: \.offset
+                    ) { _, command in
+                        commandChip(command)
+                    }
+                }
+                if let reason = proposal.reason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.system(size: LivType.body))
+                        .foregroundStyle(LivTheme.text3)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 4)
+            // A mis-tap here WRITES cells — full 44pt targets, the
+            // FloatCircle rule (audit, 2026-08-04).
+            Button {
+                box.reject(proposal)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: LivType.body, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss suggestion: \(summary)")
+            Button {
+                box.accept(proposal)
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: LivType.body, weight: .semibold))
+                    .foregroundStyle(LivTheme.accent)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Apply suggestion: \(summary)")
+        }
+        .frame(minHeight: LivRow.tall)
+    }
+
+    @ViewBuilder private func commandChip(_ command: ProposalCommandRow) -> some View {
+        let sign = (command.kind == "remove" || command.kind == "trash") ? "−" : "+"
+        let label = [command.property, command.value]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        if !label.isEmpty {
+            ValueChip("\(sign) \(label)")
+        } else if let kind = command.kind, !kind.isEmpty {
+            // A merge proposal's Trash/Redirect legs carry no property or
+            // value — the verb itself is the diff (audit, 2026-08-04).
+            ValueChip("\(sign) \(kind)")
         }
     }
 
@@ -161,19 +306,18 @@ struct EntityInspector: View {
                 Spacer(minLength: 12)
                 if let due = row.due {
                     Text(DetailFmt.due(due, end: row.dueEnd, dateOnly: row.dueDateOnly ?? false))
-                        .font(.system(size: 14).monospacedDigit())
+                        .font(.system(size: LivType.strong).monospacedDigit())
                         .foregroundStyle(LivTheme.text)
                 } else {
                     Text("—")
-                        .font(.system(size: 14))
+                        .font(.system(size: LivType.strong))
                         .foregroundStyle(LivTheme.muted)
                 }
             }
-            .frame(minHeight: 40)
+            .frame(minHeight: LivRow.height)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { DetailHairline() }
     }
 
     // MARK: status
@@ -192,11 +336,11 @@ struct EntityInspector: View {
                         ValueChip(status)  // display-only; nothing to change it to
                     } else {
                         Text("none for this kind")
-                            .font(.system(size: 14))
+                            .font(.system(size: LivType.strong))
                             .foregroundStyle(LivTheme.muted)
                     }
                 }
-                .frame(minHeight: 40)
+                .frame(minHeight: LivRow.height)
             } else {
                 Menu {
                     ForEach(options) { option in
@@ -212,22 +356,60 @@ struct EntityInspector: View {
                             ValueChip(status)
                         } else {
                             Text("—")
-                                .font(.system(size: 14))
+                                .font(.system(size: LivType.strong))
                                 .foregroundStyle(LivTheme.muted)
                         }
                     }
-                    .frame(minHeight: 40)
+                    .frame(minHeight: LivRow.height)
                     .contentShape(Rectangle())
                 }
             }
         }
-        .overlay(alignment: .bottom) { DetailHairline() }
     }
 
     // MARK: the general property rows
 
+    /// Properties that must never appear as a row.
+    ///
+    /// "content" is the NOTE itself — the primary data, edited on the
+    /// desk; listing it here treated the document as one of its own
+    /// properties (owner, 2026-08-01). "type" and "created" are FACTS,
+    /// not fields: nothing in this app can retype an entity or move its
+    /// birthday, and the type already shows as a chip at the top
+    /// (owner, 2026-08-06). The template marker is a chip too.
     private func skipSet(_ row: EntityRow) -> Set<String> {
-        Set(["name", "status", dueProperty(row)] + InspectorField.core)
+        Set(
+            [
+                "name", "status", "content", "type", "created",
+                // A file's path and format are FACTS, shown by the file
+                // tab's own header. A row you cannot edit is a lie about
+                // what this list is for (owner, 2026-08-06).
+                "file", "format",
+                Template.property, dueProperty(row),
+            ] + InspectorField.core)
+    }
+
+    private func hasName(_ row: EntityRow) -> Bool {
+        (row.cells ?? []).contains {
+            $0.property == "name" && !($0.value ?? "").isEmpty
+        }
+    }
+
+    /// The item's own name, or the derived title every list shows, or a
+    /// grey "Untitled". The bare `#id` the core emits for an entity with
+    /// nothing at all reads as "Untitled" here — an id is a fine label in
+    /// a list of many, and no label at all above a single item.
+    private func displayName(_ row: EntityRow) -> String {
+        let derived = livRowTitle(row)
+        return derived == "#\(row.id)" ? "Untitled" : derived
+    }
+
+    /// "Created Tue 4 Aug 18:52", or nothing if the box never said.
+    private func createdLine(_ row: EntityRow) -> String? {
+        let raw = (row.cells ?? [])
+            .first { $0.property == "created" }?.value ?? ""
+        guard !raw.isEmpty else { return nil }
+        return "Created " + DetailFmt.datetime(raw)
     }
 
     /// The values this entity holds for a property, in wire order.
@@ -250,24 +432,23 @@ struct EntityInspector: View {
                 Spacer(minLength: 12)
                 if held.isEmpty {
                     Text("—")
-                        .font(.system(size: 14))
+                        .font(.system(size: LivType.strong))
                         .foregroundStyle(LivTheme.muted)
                 } else {
                     HStack(spacing: 5) {
                         ForEach(held.prefix(3), id: \.self) { ValueChip($0) }
                         if held.count > 3 {
                             Text("+\(held.count - 3)")
-                                .font(.system(size: 12).monospacedDigit())
+                                .font(.system(size: LivType.body).monospacedDigit())
                                 .foregroundStyle(LivTheme.text3)
                         }
                     }
                 }
             }
-            .frame(minHeight: 44)
+            .frame(minHeight: LivRow.height)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { DetailHairline() }
     }
 
     private func cellRow(_ group: DetailCellGroup) -> some View {
@@ -281,8 +462,7 @@ struct EntityInspector: View {
             }
             .lineLimit(2)
         }
-        .frame(minHeight: 40)
-        .overlay(alignment: .bottom) { DetailHairline() }
+        .frame(minHeight: LivRow.height)
     }
 
     /// A reference chip navigates — open the target as a Desk tab, the
@@ -290,11 +470,14 @@ struct EntityInspector: View {
     @ViewBuilder private func cellValue(_ v: DetailCellValue, kind: String) -> some View {
         switch kind {
         case "reference":
+            // A reference IS another thing in the box, so its dot is that
+            // thing's kind color — a linked task reads purple here and
+            // purple in every list.
             if let target = v.refTarget {
                 Button {
                     desk.open(target)
                 } label: {
-                    ValueChip(v.value)
+                    ValueChip(v.value, hue: LivKind.color(of: box.entity(target)))
                 }
                 .buttonStyle(.plain)
             } else {
@@ -304,60 +487,22 @@ struct EntityInspector: View {
             ValueChip(v.value)
         case "datetime":
             Text(DetailFmt.datetime(v.value))
-                .font(.system(size: 14).monospacedDigit())
+                .font(.system(size: LivType.strong).monospacedDigit())
                 .foregroundStyle(LivTheme.text)
         default:
             Text(v.value)
-                .font(.system(size: 14))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
                 .multilineTextAlignment(.trailing)
         }
     }
 
-    // MARK: trash + undo (toolbar verbs relocated; the inspector has no bar)
+    // The verbs left this panel (owner, 2026-08-02): Save as template and
+    // Move to Trash act on the DOCUMENT, so they live in the desk's •••
+    // menu; this panel only describes. The old Undo went with them — it
+    // was the box-level "undo last transaction", which read as a
+    // property-undo here and wasn't one.
 
-    private func footer(_ row: EntityRow) -> some View {
-        HStack {
-            Button {
-                box.undo()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 11, weight: .medium))
-                    Text("Undo")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(LivTheme.text2)
-                .frame(height: 40)
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            if row.trashed == true {
-                Text("In the Trash — Undo restores it.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(LivTheme.muted)
-            } else {
-                Button {
-                    confirmTrash = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Move to Trash")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundStyle(LivTheme.red)
-                    .frame(height: 40)
-                    .padding(.horizontal, 4)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.top, 8)
-    }
 }
 
 // MARK: - the one editing sheet, driven by the field descriptor
@@ -372,6 +517,12 @@ struct InspectorValueSheet: View {
     let id: UInt64
     /// The values this entity currently holds for the field.
     let current: [String]
+    /// When set, the sheet REPORTS the chosen value instead of writing a
+    /// cell — the workspace form builds a lens, it does not edit an
+    /// entity. One picker either way: the choices, the create row and
+    /// the search all behave identically, which is the whole point of
+    /// not writing a second one (standing rule 4).
+    var onPick: ((String?) -> Void)? = nil
 
     @EnvironmentObject var box: BoxModel
     @Environment(\.dismiss) private var dismiss
@@ -404,12 +555,12 @@ struct InspectorValueSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(field.property.uppercased())
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: LivType.label, weight: .bold))
                 .kerning(0.6)
                 .foregroundStyle(LivTheme.text3)
             if !field.closed {
                 TextField("Search or create…", text: $typed)
-                    .font(.system(size: 16))
+                    .font(.system(size: LivType.title))
                     .foregroundStyle(LivTheme.text)
                     .submitLabel(.done)
                     // Values are verbatim: "errands" must not become
@@ -453,6 +604,11 @@ struct InspectorValueSheet: View {
     // MARK: writes — the box is the only truth; the sheet re-reads nothing
 
     private func add(_ value: String) {
+        if let onPick {
+            onPick(value)
+            dismiss()
+            return
+        }
         if field.multi {
             box.addCell(id, field.property, value)
         } else {
@@ -463,6 +619,11 @@ struct InspectorValueSheet: View {
     }
 
     private func remove(_ value: String) {
+        if let onPick {
+            onPick(nil)
+            dismiss()
+            return
+        }
         if field.multi {
             box.removeCell(id, field.property, value)
         } else {
@@ -478,7 +639,7 @@ struct InspectorValueSheet: View {
             HStack(spacing: 10) {
                 if accent {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                         .frame(width: 16)
                 } else {
@@ -486,17 +647,17 @@ struct InspectorValueSheet: View {
                         .frame(width: 16)
                 }
                 Text(label)
-                    .font(.system(size: 16))
+                    .font(.system(size: LivType.title))
                     .foregroundStyle(accent ? LivTheme.accent : LivTheme.text)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 if checked {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                 }
             }
-            .frame(height: 46)
+            .frame(height: LivRow.height)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -550,7 +711,7 @@ struct EntityDetailView: View {
 
     private var titleField: some View {
         TextField("Untitled", text: $title, axis: .vertical)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: LivType.title, weight: .semibold))
             .foregroundStyle(LivTheme.text)
             .lineLimit(1...3)
             .focused($titleFocused)
@@ -569,7 +730,10 @@ struct EntityDetailView: View {
     }
 
     private func commitTitle() {
-        let stored = box.entity(id)?.title ?? ""
+        // Never onto a gone or trashed note (same guard as the desk's
+        // title commit — a post-trash commit re-writes the old name).
+        guard let row = box.entity(id), row.trashed != true else { return }
+        let stored = row.title ?? ""
         let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard typed != stored, !typed.isEmpty else {
             title = stored  // an emptied field reverts, never erases the name
@@ -584,12 +748,42 @@ struct EntityDetailView: View {
 private struct DetailRowLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
+
+    /// Each field's COLOR — no glyph. Icons here were tried on
+    /// 2026-08-12 and rejected the same day: a clock for "due" and a tag
+    /// for "subjects" are pictures of the word beside them, which reads
+    /// as noise rather than information (owner: "icons for properties
+    /// are confusing, but color indication of some sort is ok"). A dot
+    /// is the owner's own metaphor — it says which family a field
+    /// belongs to and claims nothing more.
+    ///
+    /// Kind chips elsewhere (a note, a task, an event) keep their glyphs:
+    /// there the icon says what a THING is, which a word does not.
+    private static let hues: [String: Color] = [
+        "due": LivTheme.teal,
+        "status": LivTheme.accent,
+        "area": LivTheme.amber,
+        "project": LivTheme.green,
+        "subjects": LivTheme.purple,
+        "people": LivTheme.pink,
+    ]
+
     var body: some View {
-        Text(text)
-            .font(.system(size: 14))
-            .foregroundStyle(LivTheme.text3)
-            .lineLimit(1)
-            .layoutPriority(1)
+        HStack(spacing: 10) {
+            if let color = Self.hues[text.lowercased()] {
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+                    .frame(width: 26, alignment: .center)
+            }
+            Text(text)
+                // 15pt + 46pt rows: the library panel's density (rev 6 —
+                // "make the grouping UI akin to how the left panel looks").
+                .font(.system(size: LivType.strong))
+                .foregroundStyle(LivTheme.text3)
+                .lineLimit(1)
+        }
+        .layoutPriority(1)
     }
 }
 
@@ -599,89 +793,242 @@ private struct DetailHairline: View {
     }
 }
 
-// MARK: - the due shortcuts sheet
+// MARK: - the due sheet
 
-/// M1 due editing is shortcuts + one date picker. No clear leg — the
-/// model has no unset verb yet; setSpan writes, never erases. Internal:
-/// the Tasks row's "Pick" swipe verb opens this same sheet.
+/// Two groups, because there are two things to set: a DAY and a TIME.
+///
+/// Today, Tomorrow and "Choose a date" all answer the same question, so
+/// all three look and behave the same — a row you tap. They used to wear
+/// three different faces, which implied a grouping that did not exist
+/// (owner, 2026-08-06). "Choose a date" opens a month calendar under it
+/// rather than a small popup, so it is a real button like its two
+/// neighbours.
+///
+/// The time is its own group and is always set. There is no "no time"
+/// state and no 09:00 fallback hidden in the reminder code: a due you
+/// set without thinking about the clock takes the time it is now
+/// (owner, 2026-08-06). Changes save the moment you make them — no Set
+/// button to forget. Clear removes the due entirely.
+/// Internal: the Tasks row's "Pick" swipe verb opens this same sheet.
 struct DetailDueSheet: View {
-    let model: BoxModel
+    @ObservedObject var model: BoxModel
     let id: UInt64
     let property: String
 
     @Environment(\.dismiss) private var dismiss
-    @State private var picked = Date()
+    @State private var date: Date
+    @State private var time: Date
+    /// The month calendar under "Choose a date" is showing.
+    @State private var calendarShown = false
+    /// How long this thing lasts, kept across every edit.
+    @State private var spanMinutes: Int
+    /// Whether this thing carries a clock time. An all-day event is a
+    /// real kind of thing — a holiday is not due at 09:00 — so opening
+    /// this sheet and changing only the DAY must not quietly give it a
+    /// time (review, 2026-08-06). Touching the clock sets this.
+    @State private var timed: Bool
+
+    init(model: BoxModel, id: UInt64, property: String) {
+        self.model = model
+        self.id = id
+        self.property = property
+        // Start where the value already is. A due with no clock time
+        // seeds the time control with NOW, so the control never opens on
+        // a number nobody chose.
+        let row = model.entity(id)
+        let now = Date()
+        // How long the thing lasts, in minutes, so a day or time change
+        // MOVES it instead of truncating it. write() used to hardcode no
+        // end, so touching the time wheel on a 09:00–11:00 meeting
+        // deleted the 11:00 (review, 2026-08-06).
+        _spanMinutes = State(initialValue: Self.spanLength(row))
+        if let due = row?.due {
+            let day = Civil.day(of: due)
+            let hm = due % 10_000
+            _date = State(initialValue: Civil.date(day: day, hhmm: 1200) ?? now)
+            // The stored flag is the authority on whether this carries a
+            // clock time. Also testing `hm != 0` re-read a real midnight
+            // as "no time" and then quietly replaced it (review).
+            let has = (row?.dueDateOnly ?? false) == false
+            _timed = State(
+                initialValue: LivDue.carriesTime(
+                    dateOnly: !has, isEvent: (row?.kinds ?? []).contains("event")))
+            _time = State(
+                initialValue: has
+                    ? (Civil.date(day: day, hhmm: hm) ?? now)
+                    : LivDue.defaultTime(on: day))
+        } else {
+            let today = Civil.todayDay()
+            _date = State(initialValue: now)
+            _timed = State(initialValue: true)
+            _time = State(initialValue: LivDue.defaultTime(on: today))
+        }
+    }
+
+    /// Minutes between a due's start and its end. The arithmetic lives
+    /// in CalClock, where the calendar's self-check covers it.
+    private static func spanLength(_ row: EntityRow?) -> Int {
+        guard let start = row?.due else { return 0 }
+        return CalClock.span(start: start, end: row?.dueEnd)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("Due")
-                .padding(.top, 18)
-                .padding(.bottom, 6)
-            shortcut("Today", preview: preview(Civil.todayDay())) {
-                commit(Civil.stamp(day: Civil.todayDay(), hhmm: 0), dateOnly: true)
-            }
-            shortcut("Tonight", preview: previewTonight) {
-                commit(Civil.stamp(day: Civil.todayDay(), hhmm: 2000), dateOnly: false)
-            }
-            shortcut("Tomorrow", preview: preview(Civil.addDays(Civil.todayDay(), 1))) {
-                commit(Civil.stamp(day: Civil.addDays(Civil.todayDay(), 1), hhmm: 0), dateOnly: true)
-            }
-            // On a Friday, Weekend IS tomorrow — one option, not two.
-            if DetailFmt.nextSaturday() != Civil.addDays(Civil.todayDay(), 1) {
-                shortcut("Weekend", preview: preview(DetailFmt.nextSaturday())) {
-                    commit(Civil.stamp(day: DetailFmt.nextSaturday(), hhmm: 0), dateOnly: true)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                SectionLabel("Date")
+                    .padding(.top, 18)
+                    .padding(.bottom, 6)
+                // Neither shortcut closes the sheet: setting a day and
+                // THEN a time is the common pair, and being thrown out
+                // after the day meant reopening to finish (owner,
+                // 2026-08-11). They must also MOVE `date`, because
+                // every later write reads it — leaving it behind made
+                // the next time-change silently rewrite the day back to
+                // whatever the sheet opened on. The dismissal was hiding
+                // that; removing one without the other would have
+                // shipped the bug.
+                choice("Today", value: Civil.dayLabel(Civil.todayDay())) {
+                    pick(day: Civil.todayDay())
                 }
-            }
-            HStack {
-                DatePicker(
-                    "Pick a date", selection: $picked,
-                    displayedComponents: .date
-                )
-                .font(.system(size: 13))
-                .foregroundStyle(LivTheme.text)
-                Button("Set") {
-                    commit(Civil.stamp(day: DetailFmt.day(of: picked), hhmm: 0), dateOnly: true)
+                choice(
+                    "Tomorrow",
+                    value: Civil.dayLabel(Civil.addDays(Civil.todayDay(), 1)),
+                    divided: true
+                ) {
+                    pick(day: Civil.addDays(Civil.todayDay(), 1))
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(LivTheme.accent)
+                choice(
+                    "Choose a date", value: DetailFmt.dayLabel(date),
+                    chevron: calendarShown ? "chevron.up" : "chevron.down",
+                    divided: true
+                ) {
+                    withAnimation(LivMotion.nav) { calendarShown.toggle() }
+                }
+                if calendarShown { monthPicker }
+                SectionLabel("Time")
+                    .padding(.top, 22)
+                    .padding(.bottom, 6)
+                timeRow
+                // ALWAYS rendered, disabled when there is nothing to
+                // clear. It used to appear only once a due existed —
+                // which meant it materialised directly under the time
+                // control the instant you set a date, exactly where a
+                // finger was already travelling, and it unsets the whole
+                // value with no confirmation and no undo. The layout is
+                // fixed from the moment the sheet opens now, so nothing
+                // arrives under your thumb (owner, 2026-08-11:
+                // "setting time after date sometimes erases everything").
+                clearRow.padding(.top, 12)
             }
-            .frame(minHeight: 44)
-            Spacer(minLength: 0)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
         }
-        .padding(.horizontal, 16)
         .background(LivTheme.surface)
         .tint(LivTheme.accent)
     }
 
-    private func commit(_ start: Int64, dateOnly: Bool) {
-        model.setSpan(id, property, start: start, end: 0, dateOnly: dateOnly)
-        dismiss()
-    }
-
-    private func shortcut(_ label: String, preview: String, action: @escaping () -> Void) -> some View {
+    /// One row of the Date group. All three wear this face: the word on
+    /// the left is the tap target, the value on the right is what you
+    /// would get.
+    private func choice(
+        _ label: String, value: String, chevron: String? = nil,
+        divided: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 8) {
                 Text(label)
-                    .font(.system(size: 13))
+                    .font(.system(size: LivType.strong))
                     .foregroundStyle(LivTheme.text)
-                Spacer()
-                Text(preview)
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(LivTheme.muted)
+                Spacer(minLength: 8)
+                Text(value)
+                    .font(.system(size: LivType.strong).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
+                if let chevron {
+                    Image(systemName: chevron)
+                        .font(.system(size: LivType.label, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                }
             }
-            .frame(minHeight: 44)
+            .frame(minHeight: LivRow.height)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { DetailHairline() }
+        .overlay(alignment: .top) {
+            if divided { DetailHairline() }
+        }
     }
 
-    private var previewTonight: String {
-        Civil.dayLabel(Civil.todayDay()) + " 20:00"
+    private var monthPicker: some View {
+        DatePicker("Due date", selection: $date, displayedComponents: .date)
+            .datePickerStyle(.graphical)
+            .labelsHidden()
+            .padding(.vertical, 4)
+            .onChange(of: date) { commit() }
     }
 
-    private func preview(_ day: Int64) -> String {
-        Civil.dayLabel(day)
+    private var timeRow: some View {
+        HStack(spacing: 8) {
+            Text("At")
+                .font(.system(size: LivType.strong))
+                .foregroundStyle(LivTheme.text)
+            Spacer(minLength: 12)
+            DatePicker("Due time", selection: $time, displayedComponents: .hourAndMinute)
+                .labelsHidden()
+        }
+        .frame(minHeight: LivRow.height)
+        .onChange(of: time) {
+            timed = true  // setting a clock time is how an all-day thing gets one
+            commit()
+        }
+    }
+
+    private var clearRow: some View {
+        let has = model.entity(id)?.due != nil
+        return Button {
+            model.unset(id, property)
+            dismiss()
+        } label: {
+            HStack {
+                Text("Clear")
+                    .font(.system(size: LivType.strong))
+                    .foregroundStyle(has ? LivTheme.red : LivTheme.muted)
+                Spacer()
+            }
+            .frame(minHeight: LivRow.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!has)
+    }
+
+    /// The one write. dateOnly rides !hasTime, so the row and the
+    /// calendar know whether "when" includes a clock.
+    private func commit() {
+        write(day: Civil.day(of: date))
+    }
+
+    /// A shortcut day: move the sheet's own `date` to it, then write.
+    /// Every other write reads `date`, so a day set without moving it is
+    /// a day the next edit throws away.
+    private func pick(day: Int64) {
+        if let moved = Civil.date(day: day, hhmm: 1200) { date = moved }
+        write(day: day)
+    }
+
+    /// Always a day AND a clock time. The "no time" state is gone: a due
+    /// with no time had to invent one somewhere, and it invented 09:00
+    /// inside the reminder code where nobody could see it.
+    ///
+    /// A thing that lasts an hour still lasts an hour afterwards. The end
+    /// moves with the start rather than being dropped.
+    private func write(day: Int64) {
+        let hhmm = timed ? Civil.hhmm(of: time) : 0
+        let start = Civil.stamp(day: day, hhmm: hhmm)
+        model.setSpan(
+            id, property, start: start,
+            end: timed ? CalClock.end(start: start, length: spanMinutes) : 0,
+            dateOnly: !timed)
     }
 }
 
@@ -764,27 +1111,9 @@ private enum DetailFmt {
         return out
     }
 
-    static func day(of date: Date) -> Int64 {
-        let c = gregorian.dateComponents([.year, .month, .day], from: date)
-        return Int64(c.year ?? 0) * 10_000 + Int64((c.month ?? 0) * 100 + (c.day ?? 0))
+    /// The day a picker is sitting on, in the app's own day voice.
+    static func dayLabel(_ date: Date) -> String {
+        Civil.dayLabel(Civil.day(of: date))
     }
 
-    /// The next Saturday strictly after today.
-    static func nextSaturday() -> Int64 {
-        var day = Civil.todayDay()
-        for _ in 0..<7 {
-            day = Civil.addDays(day, 1)
-            var parts = DateComponents()
-            parts.year = Int(day / 10_000)
-            parts.month = Int((day / 100) % 100)
-            parts.day = Int(day % 100)
-            parts.hour = 12
-            if let date = gregorian.date(from: parts),
-                gregorian.component(.weekday, from: date) == 7
-            {
-                return day
-            }
-        }
-        return day
-    }
 }

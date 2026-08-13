@@ -19,6 +19,7 @@ pub mod import;
 pub mod markdown;
 pub mod recurrence;
 pub mod search;
+pub mod tasks;
 pub mod timeviews;
 
 use serde::{Deserialize, Serialize};
@@ -852,7 +853,11 @@ fn seed_bootstrap(session: &mut Session) -> Result<(), PersistError> {
     if !session.store().history().is_empty() {
         return Ok(());
     }
-    let definitions: [(Id, &str, &str); 14] = [
+    // default-view, renderer and config are no longer seeded (T2, owner
+    // 2026-08-09): nothing ever read them. Boxes that already carry the
+    // rows keep them harmlessly; the ids stay reserved in props and are
+    // never reused, so both generations of box agree about every id.
+    let definitions: [(Id, &str, &str); 11] = [
         (props::NAME, "name", "text"),
         (props::TYPE, "type", "reference"),
         (props::CREATED, "created", "datetime"),
@@ -860,10 +865,7 @@ fn seed_bootstrap(session: &mut Session) -> Result<(), PersistError> {
         (props::VALUE_KIND, "value-kind", "text"),
         (props::OPTIONS, "options", "reference"),
         (props::EXPECTED, "expected", "reference"),
-        (props::DEFAULT_VIEW, "default-view", "reference"),
         (props::QUERY, "query", "text"),
-        (props::RENDERER, "renderer", "text"),
-        (props::CONFIG, "config", "text"),
         (props::EXTERNAL_ID, "external-id", "text"),
         (props::WORKING, "working", "bool"),
         (props::PRIVATE, "private", "bool"),
@@ -1078,24 +1080,20 @@ fn satisfies(entity: &Entity, constraint: &Constraint) -> bool {
     }
 }
 
-/// Property definitions are entities, so name lookup is itself a query:
-/// the entity carrying a value-kind whose name matches.
+/// Property definitions are entities, so name lookup used to be a
+/// query — a full-store scan, at ~197 call sites, which twice made the
+/// snapshot quadratic. The store's name index answers it now (T1,
+/// owner 2026-08-09); the filters below reproduce the old query's
+/// semantics exactly: not trashed, carries a value-kind, lowest id
+/// wins, plumbing included (definitions ARE plumbing, but we asked).
 pub fn property_id(store: &Store, name: &str) -> Option<Id> {
-    let query = Query {
-        constraints: vec![
-            Constraint {
-                property: props::NAME,
-                op: Op::Equals(Value::text(name)),
-            },
-            Constraint {
-                property: props::VALUE_KIND,
-                op: Op::Exists,
-            },
-        ],
-        include_working: true, // definitions are plumbing, but we asked
-        ..Query::default()
-    };
-    run(store, &query).first().copied()
+    store
+        .named(name)
+        .iter()
+        .filter_map(|id| store.get(*id))
+        .filter(|e| !e.trashed && e.get(props::VALUE_KIND).is_some())
+        .map(|e| e.id)
+        .min()
 }
 
 /// Ordering for sorting only — value *equality* stays per-kind in the core.

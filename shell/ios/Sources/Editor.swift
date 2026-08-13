@@ -27,18 +27,24 @@ import os
 
 // MARK: - spans (the log's own serde encoding; decoding is TOTAL)
 
-/// The paragraph block a Break carries. The phone can only hold Body in a
-/// plain buffer, so the decode keeps exactly one bit of it: is this the
-/// plain body paragraph, or formatting the phone cannot edit yet? Unknown
-/// shapes read as `.other` — a thrown error here would drop a whole note.
+/// The core's block vocabulary (core/src/value.rs `Block`), at FULL
+/// fidelity. Until 2026-08-11 this was two cases — body and "other" —
+/// because the codec flattened everything anyway (the recorded
+/// deviation). Now the phone writes what the core stores. `.other`
+/// remains for the shapes this editor cannot hold (Code fences,
+/// Callouts, and whatever the core grows later): they still flatten,
+/// behind the same banner as before.
 enum BlockJSON: Equatable {
     case body
+    case heading(Int)  // 1...6
+    case quote
+    case bullet(depth: Int)
+    case ordered(depth: Int)
+    case task(depth: Int, done: Bool)
+    case rule
     case other
 }
 
-/// One span. `marks` is the raw 4-bit set (D19); the phone renders none of
-/// them and writes none of them — it keeps the value only so the editor can
-/// say so out loud before flattening.
 enum SpanJSON: Equatable {
     case text(String, marks: UInt8)
     case brk(BlockJSON)
@@ -50,6 +56,18 @@ extension SpanJSON: Codable {
     private struct MarkedText: Decodable {
         var text: String?
         var marks: UInt8?
+    }
+    /// One-key objects for the payload-carrying Break variants.
+    private struct Depthed: Decodable { var depth: UInt8? }
+    private struct TaskPayload: Decodable {
+        var depth: UInt8?
+        var done: Bool?
+    }
+    private struct BreakObject: Decodable {
+        var Heading: UInt8?
+        var Bullet: Depthed?
+        var Ordered: Depthed?
+        var Task: TaskPayload?
     }
 
     init(from decoder: Decoder) throws {
@@ -63,11 +81,29 @@ extension SpanJSON: Codable {
                 self = .text(m?.text ?? "", marks: m?.marks ?? 0)
             }
         } else if c.contains(.Break) {
-            // Unit variants ("Body"/"Quote"/"Rule") arrive as a bare string;
-            // the rest as an object. Anything not exactly "Body" is
-            // formatting this editor flattens.
+            // serde's external tagging: unit variants ride as a bare
+            // string, payload variants as a one-key object. An unknown
+            // variant of either shape is `.other` — kept, flattened on
+            // save, never a decode failure.
             if let s = try? c.decode(String.self, forKey: .Break) {
-                self = .brk(s == "Body" ? .body : .other)
+                switch s {
+                case "Body": self = .brk(.body)
+                case "Quote": self = .brk(.quote)
+                case "Rule": self = .brk(.rule)
+                default: self = .brk(.other)
+                }
+            } else if let o = try? c.decode(BreakObject.self, forKey: .Break) {
+                if let level = o.Heading {
+                    self = .brk(.heading(max(1, min(6, Int(level)))))
+                } else if let b = o.Bullet {
+                    self = .brk(.bullet(depth: Int(b.depth ?? 0)))
+                } else if let b = o.Ordered {
+                    self = .brk(.ordered(depth: Int(b.depth ?? 0)))
+                } else if let t = o.Task {
+                    self = .brk(.task(depth: Int(t.depth ?? 0), done: t.done ?? false))
+                } else {
+                    self = .brk(.other)  // Code, Callout, or newer
+                }
             } else {
                 self = .brk(.other)
             }
@@ -80,20 +116,54 @@ extension SpanJSON: Codable {
         }
     }
 
-    /// Only ever called on spans this editor built (textToSpans), which are
-    /// plain Text/Body-Break/Ref. `.other` would encode as Body — the same
-    /// flattening the buffer already performed, never a new surprise.
+    /// Encodes exactly what the core's serde parses — pinned by the
+    /// self-check against the JSON strings in core/src/value.rs's own
+    /// tests. An unmarked run stays the bare string so no fingerprint
+    /// moves on untouched text; `.other` encodes as Body, which is only
+    /// reachable when saving a doc the banner already said would flatten.
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .text(let t, _):
-            try c.encode(t, forKey: .Text)  // unmarked = the bare string
-        case .brk:
-            try c.encode("Body", forKey: .Break)
+        case .text(let t, let marks):
+            if marks == 0 {
+                try c.encode(t, forKey: .Text)
+            } else {
+                var o = c.nestedContainer(keyedBy: TextKeys.self, forKey: .Text)
+                try o.encode(t, forKey: .text)
+                try o.encode(marks, forKey: .marks)
+            }
+        case .brk(let b):
+            switch b {
+            case .body: try c.encode("Body", forKey: .Break)
+            case .quote: try c.encode("Quote", forKey: .Break)
+            case .rule: try c.encode("Rule", forKey: .Break)
+            case .other: try c.encode("Body", forKey: .Break)
+            case .heading(let n):
+                var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
+                try o.encode(UInt8(n), forKey: .Heading)
+            case .bullet(let d):
+                var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
+                var p = o.nestedContainer(keyedBy: DepthKeys.self, forKey: .Bullet)
+                try p.encode(UInt8(d), forKey: .depth)
+            case .ordered(let d):
+                var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
+                var p = o.nestedContainer(keyedBy: DepthKeys.self, forKey: .Ordered)
+                try p.encode(UInt8(d), forKey: .depth)
+            case .task(let d, let done):
+                var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
+                var p = o.nestedContainer(keyedBy: TaskKeys.self, forKey: .Task)
+                try p.encode(UInt8(d), forKey: .depth)
+                try p.encode(done, forKey: .done)
+            }
         case .ref(let id):
             try c.encode(id, forKey: .Ref)
         }
     }
+
+    private enum TextKeys: String, CodingKey { case text, marks }
+    private enum BreakKeys: String, CodingKey { case Heading, Bullet, Ordered, Task }
+    private enum DepthKeys: String, CodingKey { case depth }
+    private enum TaskKeys: String, CodingKey { case depth, done }
 }
 
 // MARK: - the codec: two pure functions, independently testable
@@ -103,41 +173,103 @@ extension SpanJSON: Codable {
 enum SpanText {
     /// A Ref span in the buffer. The id is the whole payload; the display
     /// name is cosmetic and re-derived on every load, so flattening its
-    /// newlines and breaking a literal "]]" inside it costs nothing.
+    /// newlines and spacing out its brackets costs nothing.
+    ///
+    /// EVERY "]" is spaced, not just a "]]" pair. The pair rule was
+    /// non-overlapping, so a name merely ENDING in "]" — "Q3 [final]",
+    /// or any untitled note whose first line ends that way — rendered
+    /// `[[4155|Q3 [final]]]`, whose first "]]" is the name's bracket plus
+    /// the token's. The scanner closed there, the leftover "]" fell into
+    /// the note as text, and it compounded: one bracket per save, five
+    /// saves gave "]]]]] today" (measured, 2026-08-11).
     static func token(_ id: UInt64, name: String?) -> String {
         let raw = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return "[[\(id)]]" }
         let clean =
             raw
             .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "]]", with: "] ]")
+            .replacingOccurrences(of: "]", with: "] ")
         return "[[\(id)|\(clean)]]"
     }
 
     /// Spans → the editing buffer. A Break opens a paragraph, so a LEADING
     /// break writes no newline (mirrors the macOS codec's openParagraph):
     /// the span model cannot express an empty first paragraph.
+    ///
+    /// Since 2026-08-11 the block RENDERS as its marker — `Heading(2)`
+    /// becomes "## ", `Task{done}` becomes "- [x] " — and marks render
+    /// their delimiters. The markers live only in the buffer; the box
+    /// stores the structure. Ordered numbers are presentation: each
+    /// consecutive run counts from 1, per depth, whatever was typed.
     static func spansToText(
         _ spans: [SpanJSON], name: (UInt64) -> String? = { _ in nil }
     ) -> String {
         var out = ""
+        var wrote = false
+        // Ordered-list counters, one per depth, cleared by any
+        // non-ordered paragraph.
+        var counters: [Int] = []
         for span in spans {
             switch span {
-            case .brk:
-                if !out.isEmpty { out.append("\n") }
-            case .text(let t, _):
-                out += t
+            case .brk(let block):
+                if wrote { out.append("\n") }
+                wrote = true
+                if case .ordered(let d) = block {
+                    let depth = max(0, d)
+                    if counters.count > depth + 1 { counters.removeLast(counters.count - depth - 1) }
+                    while counters.count < depth + 1 { counters.append(0) }
+                    counters[depth] += 1
+                    out += indent(depth) + "\(counters[depth]). "
+                } else {
+                    counters.removeAll()
+                    out += marker(block)
+                }
+            case .text(let t, let marks):
+                wrote = true
+                out += delimited(t, marks: marks)
             case .ref(let id):
+                wrote = true
                 out += token(id, name: name(id))
             }
         }
         return out
     }
 
-    /// The editing buffer → spans. Every newline is a Body Break; every
-    /// well-formed "[[id]]" / "[[id|name]]" is a Ref; everything else is
-    /// literal text. An empty buffer is NO spans — which removes the
-    /// content cell, exactly as the seam documents.
+    private static func indent(_ depth: Int) -> String {
+        String(repeating: "  ", count: max(0, min(15, depth)))
+    }
+
+    private static func marker(_ block: BlockJSON) -> String {
+        switch block {
+        case .body, .other: return ""
+        case .heading(let n): return String(repeating: "#", count: max(1, min(6, n))) + " "
+        case .quote: return "> "
+        case .rule: return "---"
+        case .bullet(let d): return indent(d) + "- "
+        case .task(let d, let done): return indent(d) + (done ? "- [x] " : "- [ ] ")
+        case .ordered(let d): return indent(d) + "1. "  // spansToText renumbers
+        }
+    }
+
+    /// A run's delimiters, outermost to innermost: ~~ ** * `. Single
+    /// marks are the whole supported set — the scanner is flat, so a
+    /// combination cannot be re-derived and carriesFormatting says so.
+    private static func delimited(_ t: String, marks: UInt8) -> String {
+        var out = t
+        if marks & 4 != 0 { out = "`\(out)`" }
+        if marks & 2 != 0 { out = "*\(out)*" }
+        if marks & 1 != 0 { out = "**\(out)**" }
+        if marks & 8 != 0 { out = "~~\(out)~~" }
+        return out
+    }
+
+    /// The editing buffer → spans, through the ONE scanner (MarkScan) the
+    /// styler renders with — so what you see on screen and what the box
+    /// stores can never disagree. Each line's block marker becomes its
+    /// Break; each inline delimiter pair becomes a mark bit; each
+    /// well-formed "[[id]]" token becomes a Ref. An empty buffer is NO
+    /// spans — which removes the content cell, exactly as the seam
+    /// documents.
     ///
     /// `isKnown` demotes tokens whose id is not in this box to literal
     /// text (owner ruling 5, 2026-07-30). The core refuses a whole save
@@ -149,57 +281,183 @@ enum SpanText {
         _ text: String, isKnown: (UInt64) -> Bool = { _ in true }
     ) -> [SpanJSON] {
         var out: [SpanJSON] = []
-        for (i, paragraph) in text.components(separatedBy: "\n").enumerated() {
-            if i > 0 { out.append(.brk(.body)) }
-            out.append(contentsOf: spans(inParagraph: paragraph, isKnown: isKnown))
+        for (i, line) in text.components(separatedBy: "\n").enumerated() {
+            let shape = MarkScan.shape(line)
+            let block = blockJSON(of: shape, line: line)
+            if i > 0 {
+                out.append(.brk(block))
+            } else if block != .body {
+                // A non-body FIRST paragraph needs its leading Break —
+                // the core counts lines the same way ("a leading break
+                // opens no line", services/src/tasks.rs).
+                out.append(.brk(block))
+            }
+            if case .rule = shape.block { continue }  // the marker IS the line
+            let content = (line as NSString).substring(from: shape.marker.length)
+            out.append(contentsOf: lineSpans(content, isKnown: isKnown))
         }
+        return out
+    }
+
+    /// LineShape → wire block. Depth counts the buffer's own indent
+    /// unit: one tab or two spaces per level (EditOps.indentUnit); a
+    /// lone leftover space floors.
+    private static func blockJSON(of shape: LineShape, line: String) -> BlockJSON {
+        func depth() -> Int {
+            let u = Array(line.utf16)
+            var units = 0
+            var i = 0
+            while i < u.count {
+                if u[i] == 0x09 { units += 1; i += 1 }
+                else if u[i] == 0x20, i + 1 < u.count, u[i + 1] == 0x20 { units += 1; i += 2 }
+                else { break }
+            }
+            return min(15, units)
+        }
+        switch shape.block {
+        case .body: return .body
+        case .heading(let n): return .heading(n)
+        case .bullet: return .bullet(depth: depth())
+        case .ordered: return .ordered(depth: depth())  // the number is presentation
+        case .task(let checked): return .task(depth: depth(), done: checked)
+        case .quote: return .quote
+        case .rule: return .rule
+        }
+    }
+
+    /// One line's content (after the block marker) → spans, off
+    /// MarkScan.inline's runs: delimiters are dropped, their content
+    /// carries the mark bit, ref tokens become Refs (or stay literal
+    /// when unknown). Plain stretches between runs are plain text.
+    private static func lineSpans(
+        _ content: String, isKnown: (UInt64) -> Bool
+    ) -> [SpanJSON] {
+        let n = content as NSString
+        var out: [SpanJSON] = []
+        var plain = ""
+        func flush() {
+            if !plain.isEmpty { out.append(.text(plain, marks: 0)) }
+            plain = ""
+        }
+        var cursor = 0
+        for run in MarkScan.inline(content, from: 0) {
+            let range: NSRange
+            let marks: UInt8
+            switch run {
+            case .marker(let r):
+                if r.location > cursor {
+                    plain += n.substring(with: NSRange(location: cursor, length: r.location - cursor))
+                }
+                cursor = NSMaxRange(r)
+                continue
+            case .bold(let r): range = r; marks = 1
+            case .italic(let r): range = r; marks = 2
+            case .code(let r): range = r; marks = 4
+            case .strike(let r): range = r; marks = 8
+            case .refToken(let r, _):
+                if r.location > cursor {
+                    plain += n.substring(with: NSRange(location: cursor, length: r.location - cursor))
+                }
+                let tokenText = n.substring(with: r)
+                if let (id, _) = token(Array(tokenText), from: 0), isKnown(id) {
+                    flush()
+                    out.append(.ref(id))
+                } else {
+                    plain += tokenText  // demoted: the characters stay
+                }
+                cursor = NSMaxRange(r)
+                continue
+            }
+            if range.location > cursor {
+                plain += n.substring(with: NSRange(location: cursor, length: range.location - cursor))
+            }
+            flush()
+            out.append(.text(n.substring(with: range), marks: marks))
+            cursor = NSMaxRange(range)
+        }
+        if cursor < n.length {
+            plain += n.substring(from: cursor)
+        }
+        flush()
         return out
     }
 
     static func json(_ spans: [SpanJSON]) -> String {
-        guard let data = try? JSONEncoder().encode(spans) else { return "[]" }
+        let encoder = JSONEncoder()
+        // Deterministic key order: serde happens to declare fields
+        // alphabetically (depth, done), so sorted keys reproduce its
+        // exact output and the self-check can pin the wire strings.
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(spans) else { return "[]" }
         return String(data: data, encoding: .utf8) ?? "[]"
     }
 
-    /// True when the stored spans carry structure this buffer cannot hold —
-    /// a non-Body block or any inline mark. The editor says so before a save
-    /// flattens it; it never flattens silently.
-    static func carriesFormatting(_ spans: [SpanJSON]) -> Bool {
+    /// True when the stored spans carry something the buffer cannot hold,
+    /// so the editor can say so before a save flattens it — it never
+    /// flattens silently.
+    ///
+    /// The question is LOSS, not change. A whole-document round trip
+    /// cannot tell the two apart: a legacy note holding the literal text
+    /// `- [x] Slides` comes back as a real `Task` block, which changes
+    /// the stored value and loses NOTHING — it is the promotion this
+    /// codec exists to do. Comparing documents flagged every old note in
+    /// the box with a banner saying the editor could not keep what it
+    /// was about to keep perfectly well (seen on the simulator,
+    /// 2026-08-11). So each way of losing something is asked about
+    /// directly, and each is decided by RENDERING AND RESCANNING the
+    /// piece in question rather than by reasoning about delimiters.
+    ///
+    /// KNOWN AND ACCEPTED: an ESCAPED marker — `\#` in a vault note,
+    /// which the Rust importer stores as Body text beginning `# ` — is
+    /// indistinguishable at this layer from a legacy note's literal
+    /// marker, and is promoted to a heading rather than flagged. Old
+    /// notes are the common case by orders of magnitude; a banner on
+    /// every one of them to catch an escaped hash is the wrong trade.
+    static func carriesFormatting(
+        _ spans: [SpanJSON],
+        name: (UInt64) -> String? = { _ in nil },
+        isKnown: (UInt64) -> Bool = { _ in true }
+    ) -> Bool {
         spans.contains { span in
             switch span {
-            case .brk(let b): return b != .body
-            case .text(_, let marks): return marks != 0
-            case .ref: return false
+            case .brk(let b):
+                // Code and Callout have no buffer form at all.
+                return b == .other
+            case .text(let t, let marks):
+                // An UNMARKED run is only ever text, whatever it holds —
+                // including raw newlines, which older writers put in one
+                // span (the core's own model says a Text never contains
+                // one, so splitting it into paragraphs is another
+                // promotion, not a loss). A MARKED run carrying a
+                // newline IS a loss, and the round trip below catches it
+                // without a rule of its own: "**a\nb**" rescans as two
+                // paragraphs of literal asterisks.
+                guard marks != 0 else { return false }
+                return roundTrip([.text(t, marks: marks)]) != [.text(t, marks: marks)]
+            case .ref(let id):
+                // The display name lands INSIDE the token's delimiters,
+                // and the shell's "is this known" is narrower than the
+                // core's — both can turn a link back into text.
+                return roundTrip([.ref(id)], name: name, isKnown: isKnown) != [.ref(id)]
             }
         }
     }
 
-    // MARK: token scanning
-
-    private static func spans(
-        inParagraph paragraph: String, isKnown: (UInt64) -> Bool
+    private static func roundTrip(
+        _ spans: [SpanJSON],
+        name: (UInt64) -> String? = { _ in nil },
+        isKnown: (UInt64) -> Bool = { _ in true }
     ) -> [SpanJSON] {
-        var out: [SpanJSON] = []
-        var buffer = ""
-        let chars = Array(paragraph)
-        var i = 0
-        while i < chars.count {
-            if chars[i] == "[", i + 1 < chars.count, chars[i + 1] == "[",
-                let (id, end) = token(chars, from: i), isKnown(id)
-            {
-                if !buffer.isEmpty {
-                    out.append(.text(buffer, marks: 0))
-                    buffer = ""
-                }
-                out.append(.ref(id))
-                i = end
-            } else {
-                buffer.append(chars[i])
-                i += 1
-            }
-        }
-        if !buffer.isEmpty { out.append(.text(buffer, marks: 0)) }
-        return out
+        normalised(textToSpans(spansToText(spans, name: name), isKnown: isKnown))
+    }
+
+    /// A LEADING Body break is not structure: it opens the first
+    /// paragraph, which the buffer opens anyway ("a leading break opens
+    /// no line", services/src/tasks.rs). Two values differing only by
+    /// one are the same document, so the comparison ignores it.
+    private static func normalised(_ spans: [SpanJSON]) -> [SpanJSON] {
+        guard case .brk(.body) = spans.first else { return spans }
+        return Array(spans.dropFirst())
     }
 
     /// "[[" digits ("|" anything-without-"]]")? "]]" — or nil, and the "[["
@@ -323,7 +581,10 @@ final class NoteEditorModel: ObservableObject {
             }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
-            self.flattens = SpanText.carriesFormatting(spans)
+            self.flattens = SpanText.carriesFormatting(
+                spans,
+                name: { [weak self] in self?.title($0) },
+                isKnown: { [weak box] id in box?.entity(id) != nil })
             let fresh = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
             self.storedText = fresh
             self.text = fresh
@@ -466,7 +727,10 @@ final class NoteEditorModel: ObservableObject {
             }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
-            self.flattens = SpanText.carriesFormatting(spans)
+            self.flattens = SpanText.carriesFormatting(
+                spans,
+                name: { [weak self] in self?.title($0) },
+                isKnown: { [weak box] id in box?.entity(id) != nil })
             let theirs = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
             self.draft = mine
             self.storedText = theirs
@@ -524,9 +788,17 @@ struct NoteEditor: View {
     var autoFocus: Bool = false
     /// Where a template's {{cursor}} asked the caret to land.
     var autoCaret: Int? = nil
+    /// A note owns its title line; a record's notes are titled by the
+    /// card above them (owner, 2026-08-10: "there is already a note
+    /// editor — can this and other app mechanisms be reused?").
+    var showsTitle: Bool = true
+    /// Sits inside someone else's scroll view and grows to its content,
+    /// rather than filling the screen and scrolling itself.
+    var embedded: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
+    @EnvironmentObject var desk: DeskModel
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = NoteEditorModel()
     @StateObject private var bridge = EditorBridge()
@@ -542,13 +814,20 @@ struct NoteEditor: View {
     /// right now, so it stays.
     private var writing: Bool { focused }
 
-    /// The automatic title: the note's first line with its markers off.
-    /// Derived HERE, from the live buffer, because the wire's own summary
-    /// flattens the WHOLE body into one string — a multi-line note would
-    /// otherwise suggest "Sat 1 Aug ## Today - [ ] ## Notes" as its title.
-    /// Empty once a human has named the note: their title is the title.
+    /// What the title line shows when the note has no name of its own:
+    /// its first line with the markdown markers taken off, or a grey
+    /// "Untitled" when there is no first line either (owner,
+    /// 2026-08-06). Derived HERE, from the live text, because the title
+    /// the core sends is the WHOLE body squashed into one line — a
+    /// multi-line note would otherwise propose "Sat 1 Aug ## Today - [ ]
+    /// ## Notes" as its name. Empty once a person has named the note:
+    /// their title is the title.
     private var derivedPrompt: String {
-        title.isEmpty ? livDisplayTitle(model.text) : ""
+        // Embedded there is no title line to prompt, and this scans the
+        // WHOLE text — on every keystroke, for something never drawn.
+        guard showsTitle, title.isEmpty else { return "" }
+        let derived = livDisplayTitle(model.text)
+        return derived.isEmpty ? "Untitled" : derived
     }
 
     var body: some View {
@@ -576,6 +855,15 @@ struct NoteEditor: View {
             if let autoCaret { bridge.scroll(to: autoCaret) }
         }
         .onDisappear { model.stop() }
+        // A panel or the chooser sliding over a live [[ picker would
+        // strand it: the keyboard resigns but the picker floats on.
+        // Dismissing HERE (not on every resign) keeps picker-row taps
+        // working — they too resign focus for a moment (audit,
+        // 2026-08-04). The typed [[ token stays as text, as always.
+        .onChange(of: desk.libraryShown || desk.inspectorShown || desk.newTabShown
+            || desk.recordCard != nil) { _, up in
+            if up { bridge.dismissLink() }
+        }
         .onChange(of: model.text) { _, _ in model.textChanged() }
         .onChange(of: focused) { _, now in
             if !now { model.flush() }
@@ -603,9 +891,13 @@ struct NoteEditor: View {
             editable: model.loaded && !model.missing,
             bridge: bridge, onOpenRef: onOpenRef,
             onOutline: { outlineShown = true },
-            onTemplate: { templatesShown = true }
+            onTemplate: { templatesShown = true },
+            showsTitle: showsTitle, embedded: embedded
         )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: embedded ? nil : .infinity,
+            alignment: .topLeading)
         .overlay(alignment: .bottom) { linkPicker }
         .sheet(isPresented: $outlineShown) { outlineSheet }
         .sheet(isPresented: $templatesShown) {
@@ -653,7 +945,7 @@ struct NoteEditor: View {
                     } label: {
                         HStack(spacing: 8) {
                             Text(item.title)
-                                .font(.system(size: 16, weight: item.level == 1 ? .semibold : .regular))
+                                .font(.system(size: LivType.title, weight: item.level == 1 ? .semibold : .regular))
                                 .foregroundStyle(item.level == 1 ? LivTheme.text : LivTheme.text2)
                                 .lineLimit(1)
                             Spacer(minLength: 0)
@@ -681,20 +973,20 @@ struct NoteEditor: View {
     private var banner: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("This changed elsewhere")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: LivType.strong, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
             Text("The box's version is shown. Your edit is kept.")
-                .font(.system(size: 13))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
             HStack(spacing: 8) {
                 Button("Re-apply my edit") { model.reapplyDraft() }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.onAccent)
                     .padding(.horizontal, 12)
                     .frame(height: 34)
                     .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.accent))
                 Button("Keep this one") { model.discardDraft() }
-                    .font(.system(size: 13))
+                    .font(.system(size: LivType.body))
                     .foregroundStyle(LivTheme.text2)
                     .padding(.horizontal, 12)
                     .frame(height: 34)
@@ -713,7 +1005,7 @@ struct NoteEditor: View {
     /// surfaces are the conflict banner and the refusal notice.
     private func notice(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13))
+            .font(.system(size: LivType.body))
             .foregroundStyle(LivTheme.text3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
@@ -761,12 +1053,13 @@ private struct LinkPicker: View {
                     onPick(row.id, title(row))
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: glyph(row))
-                            .font(.system(size: 11))
-                            .foregroundStyle(LivTheme.text3)
-                            .frame(width: 16)
+                        // What you are linking TO, said in its own color.
+                        IconChip(
+                            glyph: LivKind.glyph(of: row),
+                            color: LivKind.color(of: row), size: 22,
+                            on: LivTheme.surface)
                         Text(title(row))
-                            .font(.system(size: 13))
+                            .font(.system(size: LivType.body))
                             .foregroundStyle(LivTheme.text)
                             .lineLimit(1)
                         Spacer(minLength: 6)
@@ -782,7 +1075,7 @@ private struct LinkPicker: View {
             if !trimmed.isEmpty { createRow }
             if rows.isEmpty && trimmed.isEmpty {
                 Text("Type to find something to link to.")
-                    .font(.system(size: 11))
+                    .font(.system(size: LivType.label))
                     .foregroundStyle(LivTheme.muted)
                     .frame(height: 34)
             }
@@ -806,13 +1099,13 @@ private struct LinkPicker: View {
     private var header: some View {
         HStack(spacing: 6) {
             Text("LINK TO")
-                .font(.system(size: 9.5, weight: .bold))
-                .kerning(0.6)
-                .foregroundStyle(LivTheme.text3)
+                .font(.system(size: LivType.body, weight: .semibold))
+                .kerning(0.3)
+                .foregroundStyle(LivTheme.text2)
             Spacer(minLength: 0)
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: LivType.caption, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
@@ -836,10 +1129,10 @@ private struct LinkPicker: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: LivType.label, weight: .semibold))
                     .frame(width: 16)
                 Text("Create “\(trimmed)”")
-                    .font(.system(size: 13))
+                    .font(.system(size: LivType.body))
                     .lineLimit(1)
                 Spacer(minLength: 6)
             }
@@ -857,27 +1150,14 @@ private struct LinkPicker: View {
             hits = []
             return
         }
-        box.search(q) { ids in
+        box.search(q) { ids, _ in
             guard q == searched else { return }  // a stale answer never lands
             hits = ids
         }
     }
 
-    private func title(_ row: EntityRow) -> String {
-        let raw = row.title ?? "#\(row.id)"
-        let clean = livDisplayTitle(raw)
-        return clean.isEmpty ? raw : clean
-    }
+    private func title(_ row: EntityRow) -> String { livRowTitle(row) }
 
-    private func glyph(_ row: EntityRow) -> String {
-        let kinds = row.kinds ?? []
-        if kinds.contains("event") { return "calendar" }
-        if kinds.contains("task") || (row.status?.isEmpty == false) { return "checkmark.circle" }
-        if kinds.contains("person") { return "person" }
-        if kinds.contains("link") { return "link" }
-        if kinds.contains("note") { return "doc.text" }
-        return "circle.dotted"
-    }
 }
 
 // MARK: - the codec's self-check (pure in, pure out; no test target here)
@@ -908,22 +1188,187 @@ func livSpanCodecSelfCheck() -> [String] {
         check("text↔spans", round == sample, "\(sample.debugDescription) → \(round.debugDescription)")
     }
 
-    // 2. spans → text → spans: Text and Ref exactly; Break keeps the
-    //    paragraph, flattens the block (the documented v1 delta).
+    // 2. spans → text → spans: Text, Ref AND blocks exactly. The v1
+    //    "flattens the block" delta is retired (owner, 2026-08-11) —
+    //    only `.other` (Code, Callout, unknown) still flattens.
     let refDoc: [SpanJSON] = [
         .text("see ", marks: 0), .ref(4155), .text(" now", marks: 0),
         .brk(.body), .text("line two", marks: 0),
     ]
     check("ref round-trip", SpanText.textToSpans(SpanText.spansToText(refDoc, name: names)) == refDoc)
 
-    let heading: [SpanJSON] = [.brk(.other), .text("Title", marks: 0), .brk(.body), .text("body", marks: 0)]
+    let heading: [SpanJSON] = [
+        .brk(.heading(1)), .text("Title", marks: 0),
+        .brk(.body), .text("body", marks: 0),
+    ]
     check(
-        "leading break opens paragraph 1",
-        SpanText.spansToText(heading, name: names) == "Title\nbody")
+        "leading heading renders its marker",
+        SpanText.spansToText(heading, name: names) == "# Title\nbody",
+        SpanText.spansToText(heading, name: names).debugDescription)
     check(
-        "block flattens to Body",
-        SpanText.textToSpans("Title\nbody")
-            == [.text("Title", marks: 0), .brk(.body), .text("body", marks: 0)])
+        "heading derives from the buffer",
+        SpanText.textToSpans("# Title\nbody") == heading)
+    check(
+        "other still flattens",
+        SpanText.textToSpans(SpanText.spansToText(
+            [.brk(.other), .text("x", marks: 0)], name: names))
+            == [.text("x", marks: 0)])
+
+    // 2b. Every supported block derives, renders, and round-trips.
+    let structural = "# H\nbody\n- [ ] milk\n- [x] paid\n- item\n1. a\n2. b\n> q\n---"
+    let structSpans: [SpanJSON] = [
+        .brk(.heading(1)), .text("H", marks: 0),
+        .brk(.body), .text("body", marks: 0),
+        .brk(.task(depth: 0, done: false)), .text("milk", marks: 0),
+        .brk(.task(depth: 0, done: true)), .text("paid", marks: 0),
+        .brk(.bullet(depth: 0)), .text("item", marks: 0),
+        .brk(.ordered(depth: 0)), .text("a", marks: 0),
+        .brk(.ordered(depth: 0)), .text("b", marks: 0),
+        .brk(.quote), .text("q", marks: 0),
+        .brk(.rule),
+    ]
+    check(
+        "structural derive", SpanText.textToSpans(structural) == structSpans,
+        "\(SpanText.textToSpans(structural))")
+    check(
+        "structural render", SpanText.spansToText(structSpans, name: names) == structural,
+        SpanText.spansToText(structSpans, name: names).debugDescription)
+
+    // 2c. Depth: two spaces or one tab per level; a lone space floors.
+    check("two spaces is depth 1",
+        SpanText.textToSpans("  - deep") == [.brk(.bullet(depth: 1)), .text("deep", marks: 0)])
+    check("tab is depth 1",
+        SpanText.textToSpans("\t- deep") == [.brk(.bullet(depth: 1)), .text("deep", marks: 0)])
+    check("lone space floors to 0",
+        SpanText.textToSpans(" - x") == [.brk(.bullet(depth: 0)), .text("x", marks: 0)])
+    check("depth renders as two spaces",
+        SpanText.spansToText([.brk(.task(depth: 1, done: false)), .text("b", marks: 0)], name: names)
+            == "  - [ ] b")
+    check("body keeps its literal indent",
+        SpanText.textToSpans("  foo") == [.text("  foo", marks: 0)])
+
+    // 2d. Ordered numbering is canonical: derived numbers are dropped,
+    //     rendering counts each consecutive run per depth from 1.
+    check("typed numbers are presentation",
+        SpanText.spansToText(SpanText.textToSpans("7. a\n8. b"), name: names) == "1. a\n2. b")
+    check("nested ordered counts per depth",
+        SpanText.spansToText([
+            .brk(.ordered(depth: 0)), .text("a", marks: 0),
+            .brk(.ordered(depth: 1)), .text("b", marks: 0),
+            .brk(.ordered(depth: 0)), .text("c", marks: 0),
+        ], name: names) == "1. a\n  1. b\n2. c")
+
+    // 2e. Inline marks: the four single marks derive and render; the
+    //     delimiter characters live in the buffer, never in the box.
+    check("bold derives",
+        SpanText.textToSpans("**b** and `c`") == [
+            .text("b", marks: 1), .text(" and ", marks: 0), .text("c", marks: 4),
+        ])
+    check("italic and strike derive",
+        SpanText.textToSpans("*i* ~~s~~") == [
+            .text("i", marks: 2), .text(" ", marks: 0), .text("s", marks: 8),
+        ])
+    check("marks render their delimiters",
+        SpanText.spansToText([
+            .text("b", marks: 1), .text(" ", marks: 0), .text("s", marks: 8),
+        ], name: names) == "**b** ~~s~~")
+    check("unclosed marker stays literal",
+        SpanText.textToSpans("**x") == [.text("**x", marks: 0)])
+    check("marks round-trip through the buffer",
+        SpanText.textToSpans(SpanText.spansToText([
+            .brk(.task(depth: 0, done: false)), .text("call ", marks: 0),
+            .ref(4155), .text(" ", marks: 0), .text("now", marks: 1),
+        ], name: names)) == [
+            .brk(.task(depth: 0, done: false)), .text("call ", marks: 0),
+            .ref(4155), .text(" ", marks: 0), .text("now", marks: 1),
+        ])
+
+    // 2f. What still cannot be held says so — and ONLY that.
+    check("plain structure is not flagged", !SpanText.carriesFormatting(structSpans))
+    check("single marks are not flagged",
+        !SpanText.carriesFormatting([.text("b", marks: 1)]))
+    check("other is flagged", SpanText.carriesFormatting([.brk(.other)]))
+    check("combined marks are flagged",
+        SpanText.carriesFormatting([.text("x", marks: 3)]))
+    check("a delimiter inside its own mark is flagged",
+        SpanText.carriesFormatting([.text("a**b", marks: 1)]))
+    check("an empty marked run is flagged",
+        SpanText.carriesFormatting([.text("", marks: 1)]))
+    check("a trailing star inside bold is flagged",
+        SpanText.carriesFormatting([.text("a*", marks: 1)]))
+    check("a mid-run star inside bold is fine",
+        !SpanText.carriesFormatting([.text("a*b", marks: 1)]))
+    check("a newline in plain text is not flagged",
+        !SpanText.carriesFormatting([.text("a\nb", marks: 0)]))
+    check("a whole legacy note in one span is not flagged",
+        !SpanText.carriesFormatting([.text("- milk\n- bread\n# H", marks: 0)]))
+    check("a newline inside a MARKED run is flagged",
+        SpanText.carriesFormatting([.text("a\nb", marks: 1)]))
+    check("a ref-lookalike inside bold is fine",
+        !SpanText.carriesFormatting([.text("[[7]]", marks: 1)]))
+    // A legacy note — literal markers as Body text — is the COMMON case
+    // and must NOT be flagged: it is promoted, not flattened. The
+    // escaped-marker case rides along with it, knowingly (see
+    // carriesFormatting's note).
+    check("a legacy marker line is not flagged",
+        !SpanText.carriesFormatting([.text("- [x] Slides", marks: 0)]))
+    check("a legacy heading line is not flagged",
+        !SpanText.carriesFormatting([.text("# Plan", marks: 0)]))
+    check("a whole legacy note is not flagged",
+        !SpanText.carriesFormatting([
+            .text("# H", marks: 0), .brk(.body), .text("- [ ] milk", marks: 0),
+        ]))
+    check("a hash mid-line is fine",
+        !SpanText.carriesFormatting([.text("a # b", marks: 0)]))
+    check("a heading whose text starts with a hash survives",
+        !SpanText.carriesFormatting([.brk(.heading(1)), .text("# real", marks: 0)]))
+    check("a leading body break is not structure",
+        !SpanText.carriesFormatting([.brk(.body), .text("plain", marks: 0)]))
+    check("the structural corpus survives the round trip",
+        !SpanText.carriesFormatting(structSpans))
+    check("a ref survives the round trip",
+        !SpanText.carriesFormatting(refDoc))
+
+    // 2h. A DISPLAY NAME is attacker-shaped text: it lands inside the
+    //     token's own delimiters, so any "]" in it can close the token
+    //     early. The buffer must survive being written with the name and
+    //     read back — repeatedly, since a leak compounds every save.
+    let bracket: (UInt64) -> String? = { _ in "Q3 [final]" }
+    var cycled: [SpanJSON] = [.text("see ", marks: 0), .ref(4155), .text(" today", marks: 0)]
+    for _ in 0..<5 {
+        cycled = SpanText.textToSpans(SpanText.spansToText(cycled, name: bracket))
+    }
+    check(
+        "a name ending in ] does not leak into the note",
+        cycled == [.text("see ", marks: 0), .ref(4155), .text(" today", marks: 0)],
+        "\(cycled)")
+    check(
+        "a name full of brackets still round-trips",
+        SpanText.textToSpans(SpanText.spansToText(
+            [.ref(4155)], name: { _ in "]]] [[[ ]" }))
+            == [.ref(4155)])
+
+    // 2g. Canonicalisations, pinned: reload may normalise these exact
+    //     forms (and no others in this corpus).
+    check("rule variants canonicalise",
+        SpanText.spansToText(SpanText.textToSpans("***"), name: names) == "---")
+    check("spaceless quote gains its space",
+        SpanText.spansToText(SpanText.textToSpans(">x"), name: names) == "> x")
+    check("odd indent floors",
+        SpanText.spansToText(SpanText.textToSpans("   - x"), name: names) == "  - x")
+    // The full pinned set — a reload may rewrite THESE forms and no
+    // others. Widening it is a decision, not an accident.
+    check("a tab becomes two spaces",
+        SpanText.spansToText(SpanText.textToSpans("\t- x"), name: names) == "  - x")
+    check("a star bullet becomes a dash",
+        SpanText.spansToText(SpanText.textToSpans("* item"), name: names) == "- item")
+    check("an indented heading loses its indent",
+        SpanText.spansToText(SpanText.textToSpans("  # H"), name: names) == "# H")
+    check("an indented quote loses its indent",
+        SpanText.spansToText(SpanText.textToSpans("  > q"), name: names) == "> q")
+    check("depth clamps at 15",
+        SpanText.textToSpans(String(repeating: "  ", count: 20) + "- x")
+            == [.brk(.bullet(depth: 15)), .text("x", marks: 0)])
 
     // 3. A Ref survives a name it has never heard of, and a nameless one.
     check(
@@ -944,19 +1389,45 @@ func livSpanCodecSelfCheck() -> [String] {
     // 6. An empty buffer is no spans at all (the seam removes content).
     check("empty buffer removes content", SpanText.textToSpans("").isEmpty)
 
-    // 7. The wire shapes the core will parse.
+    // 7. The wire shapes the core will parse — the JSON strings are the
+    //    ones core/src/value.rs's own serde tests assert (key ORDER is
+    //    ours — sorted — since serde parses objects order-independently
+    //    and the fingerprint is FNV over the core's own re-encoding,
+    //    never over the wire bytes).
     check(
         "json of a ref doc",
         SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)])
             == #"[{"Text":"a"},{"Break":"Body"},{"Ref":9}]"#,
         SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)]))
+    let vocab: [SpanJSON] = [
+        .brk(.heading(2)), .text("b", marks: 1),
+        .brk(.task(depth: 0, done: false)),
+        .brk(.bullet(depth: 1)), .brk(.ordered(depth: 0)),
+        .brk(.quote), .brk(.rule),
+    ]
+    check(
+        "json of the block vocabulary",
+        SpanText.json(vocab)
+            == #"[{"Break":{"Heading":2}},{"Text":{"marks":1,"text":"b"}},"#
+            + #"{"Break":{"Task":{"depth":0,"done":false}}},"#
+            + #"{"Break":{"Bullet":{"depth":1}}},{"Break":{"Ordered":{"depth":0}}},"#
+            + #"{"Break":"Quote"},{"Break":"Rule"}]"#,
+        SpanText.json(vocab))
 
-    // 8. Decoding is total: marked text, unit and struct blocks, refs.
-    let wire = #"[{"Text":{"text":"m","marks":3}},{"Break":"Quote"},{"Break":{"Bullet":{"depth":0}}},{"Ref":9},{"Text":"z"}]"#
+    // 8. Decoding is total AND faithful: every variant lands on its own
+    //    case; Code and Callout land on .other; nothing throws.
+    let wire = #"[{"Text":{"text":"m","marks":3}},{"Break":"Quote"},{"Break":{"Bullet":{"depth":2}}},"#
+        + #"{"Break":{"Code":{"lang":"swift"}}},{"Break":{"Callout":{"kind":"note"}}},"#
+        + #"{"Break":{"Task":{"depth":1,"done":true}}},{"Ref":9},{"Text":"z"}]"#
     let decoded = (try? JSONDecoder().decode([SpanJSON].self, from: Data(wire.utf8))) ?? []
-    check("total decode", decoded.count == 5, "\(decoded.count)")
+    check("total decode", decoded.count == 8, "\(decoded.count)")
     check("marks survive the decode", decoded.first == .text("m", marks: 3))
-    check("formatting is detected", SpanText.carriesFormatting(decoded))
+    check("quote decodes", decoded.count > 1 && decoded[1] == .brk(.quote))
+    check("bullet keeps depth", decoded.count > 2 && decoded[2] == .brk(.bullet(depth: 2)))
+    check("code is other", decoded.count > 3 && decoded[3] == .brk(.other))
+    check("callout is other", decoded.count > 4 && decoded[4] == .brk(.other))
+    check("task keeps done", decoded.count > 5 && decoded[5] == .brk(.task(depth: 1, done: true)))
+    check("combined marks flag", SpanText.carriesFormatting(decoded))
     check("plain doc is not flagged", !SpanText.carriesFormatting(refDoc))
 
     return failures

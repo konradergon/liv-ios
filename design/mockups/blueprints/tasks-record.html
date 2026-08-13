@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liv blueprint — Tasks &amp; Record</title>
+<style>
+  :root{
+    --page:#0d0d0e;
+    --canvas:#161618; --surface:#1E1E20; --raised:#232326; --pressed:#2C2C2E;
+    --hair:rgba(255,255,255,.10); --hair2:rgba(255,255,255,.16);
+    --t1:#F5F5F7; --t2:#C9C9CE; --t3:#9A9AA2; --mut:#8E8E93;
+    --accent:#0A84FF;
+    --k-note:#0A84FF; --k-task:#BF5AF2; --k-event:#64D2FF; --k-file:#FF9F0A;
+    --k-person:#FF375F; --k-scrap:#FFD60A; --k-tpl:#98989D;
+    --s-done:#30D158; --s-late:#FF453A; --s-doing:#FFD60A; --s-off:#8E8E93;
+    --h-green:#30D158; --h-purple:#BF5AF2; --h-amber:#FFB340; --h-red:#FF453A; --h-blue:#0A84FF;
+    --shadow:0 4px 18px rgba(0,0,0,.35);
+    --shadow-bar:0 8px 24px rgba(0,0,0,.45);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--page);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+    color:var(--t1);
+    -webkit-font-smoothing:antialiased;
+    padding:36px 24px 56px;
+  }
+  .intro{max-width:900px;margin:0 auto 30px}
+  .intro h1{font-size:18px;font-weight:600;color:var(--t1)}
+  .intro p{font-size:12px;color:var(--t3);margin-top:6px;line-height:1.5}
+  .board{display:flex;flex-wrap:wrap;gap:34px;justify-content:center;align-items:flex-start}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .caption{font-size:12px;color:#8E8E93;max-width:380px;text-align:center;line-height:1.45}
+
+  .phone{
+    width:390px;height:844px;border-radius:30px;overflow:hidden;position:relative;
+    background:var(--canvas);border:1px solid var(--hair);
+    box-shadow:0 12px 40px rgba(0,0,0,.5);
+    display:flex;flex-direction:column;
+  }
+
+  /* ---------- status bar ---------- */
+  .status{height:26px;flex:none;display:flex;align-items:center;justify-content:space-between;
+    padding:6px 24px 0}
+  .status .time{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+  .status .icons{display:flex;gap:5px;align-items:center}
+  .status svg{display:block}
+
+  /* ---------- close band (FeatureWindow header) ---------- */
+  .closeband{height:40px;flex:none;display:flex;align-items:center;padding:0 16px}
+  .closeband svg{color:var(--t2)}
+
+  /* ---------- pushed-panel top band (back + panel mark) ---------- */
+  .navband{height:40px;flex:none;display:flex;align-items:center;padding:0 12px;position:relative}
+  .navband .back{width:34px;height:34px;display:flex;align-items:center;justify-content:center;color:var(--t2)}
+  .navband .mark{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+
+  /* ---------- section label ---------- */
+  .seclabel{display:flex;align-items:baseline;padding:14px 16px 4px;flex:none}
+  .seclabel b{font-size:12px;font-weight:600;letter-spacing:.6px;color:var(--t2)}
+  .seclabel span{margin-left:auto;font-size:13px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .seclabel span.act{color:var(--accent);font-weight:500}
+
+  /* ---------- filter pills ---------- */
+  .filters{display:flex;gap:6px;padding:10px 16px 8px;flex:none;overflow:hidden}
+  .fpill{height:26px;border-radius:999px;padding:0 12px;display:flex;align-items:center;gap:6px;
+    font-size:13px;color:var(--t2);background:var(--raised);border:1px solid var(--hair);
+    white-space:nowrap;flex:none}
+  .fpill .dot{width:6px;height:6px;border-radius:50%;flex:none}
+  .fpill.on{background:color-mix(in srgb,var(--accent) 16%,transparent);
+    border-color:color-mix(in srgb,var(--accent) 45%,transparent);color:var(--accent);font-weight:600}
+  .fpill.on-doing{background:color-mix(in srgb,var(--s-doing) 15%,transparent);
+    border-color:color-mix(in srgb,var(--s-doing) 42%,transparent);color:var(--s-doing);font-weight:600}
+
+  /* ---------- task rows ---------- */
+  .trow{display:flex;align-items:center;min-height:54px;padding:5px 16px 5px 8px;position:relative}
+  .trow::after{content:"";position:absolute;left:44px;right:16px;bottom:0;height:1px;background:var(--hair)}
+  .ringbox{width:36px;flex:none;display:flex;align-items:center;justify-content:center}
+  .tmain{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .ttitle{font-size:16px;color:var(--t1);line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ttitle.ph{color:var(--mut)}
+  .tchips{display:flex;gap:5px}
+  .due{margin-left:12px;flex:none;font-size:13px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .due.late{color:var(--s-late);font-weight:600}
+
+  /* small tinted chip (task rows) */
+  .chip-sm{height:20px;border-radius:999px;padding:0 8px;font-size:12px;font-weight:500;
+    display:inline-flex;align-items:center;gap:4px;flex:none}
+  /* 26px tinted chip (inspector values, kind, status) */
+  .chip{height:26px;border-radius:999px;padding:0 11px;font-size:12px;font-weight:500;
+    display:inline-flex;align-items:center;gap:5px;flex:none}
+  .chip svg,.chip-sm svg{flex:none}
+  .c-green{background:color-mix(in srgb,var(--h-green) 14%,transparent);color:var(--h-green)}
+  .c-purple{background:color-mix(in srgb,var(--h-purple) 14%,transparent);color:var(--h-purple)}
+  .c-amber{background:color-mix(in srgb,var(--h-amber) 14%,transparent);color:var(--h-amber)}
+  .c-red{background:color-mix(in srgb,var(--h-red) 14%,transparent);color:var(--h-red)}
+  .c-blue{background:color-mix(in srgb,var(--h-blue) 14%,transparent);color:var(--h-blue)}
+  .c-task{background:color-mix(in srgb,var(--k-task) 14%,transparent);color:var(--k-task)}
+  .c-accent{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+
+  /* in-notes rows */
+  .nrow{display:flex;align-items:center;min-height:52px;padding:0 16px 0 8px;position:relative;gap:0}
+  .nrow::after{content:"";position:absolute;left:44px;right:16px;bottom:0;height:1px;background:var(--hair)}
+  .ntext{font-size:16px;color:var(--t1);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .origin{height:22px;border-radius:999px;padding:0 9px;display:flex;align-items:center;gap:4px;
+    background:var(--pressed);border:1px solid var(--hair);color:var(--t3);
+    font-size:12px;font-weight:500;flex:none;margin-left:10px}
+
+  /* floating create (alternative) */
+  .fab{position:absolute;right:20px;bottom:34px;width:56px;height:56px;border-radius:50%;
+    background:var(--accent);display:flex;align-items:center;justify-content:center;
+    box-shadow:var(--shadow-bar)}
+
+  /* ---------- sheets ---------- */
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.5)}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);
+    border-radius:22px 22px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.45);
+    display:flex;flex-direction:column;overflow:hidden;--carve:var(--surface)}
+  .grabber{width:36px;height:5px;border-radius:3px;background:rgba(255,255,255,.22);
+    margin:8px auto 2px;flex:none}
+
+  /* ---------- inspector rows ---------- */
+  .irow{display:flex;align-items:center;min-height:52px;gap:12px;padding:0 16px}
+  /* carved field icons: solid category color, glyph punched out in the surface beneath
+     (--carve: #161618 on canvas, #1E1E20 on cards/sheets) */
+  .irow .ic{width:26px;height:26px;border-radius:8px;flex:none;display:flex;align-items:center;
+    justify-content:center;background:var(--raised);color:var(--carve,var(--canvas))}
+  .irow .ic.t-green{background:var(--h-green)}
+  .irow .ic.t-purple{background:var(--h-purple)}
+  .irow .ic.t-amber{background:var(--h-amber)}
+  .irow .ic.t-red{background:var(--h-red)}
+  .irow .ic.t-blue{background:var(--h-blue)}
+  .irow .ic.t-cyan{background:var(--k-event)}
+  .irow .ic.t-person{background:var(--k-person)}
+  .irow .lbl{font-size:15px;color:var(--t3);flex:none}
+  .irow .val{margin-left:auto;display:flex;align-items:center;gap:5px;min-width:0}
+  .irow .val .txt{font-size:16px;color:var(--t1);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .irow .val .none{font-size:16px;color:var(--mut)}
+  .irow .val .more{font-size:13px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .ihr{height:1px;background:var(--hair);margin-left:54px;flex:none}
+  .created{font-size:13px;color:var(--t3);font-variant-numeric:tabular-nums;padding:18px 16px 0}
+
+  /* record name / panel title */
+  .recname{font-size:26px;font-weight:600;color:var(--t1);line-height:1.2;padding:10px 16px 10px}
+  .paneltitle{font-size:22px;font-weight:600;color:var(--t1);line-height:1.25;padding:8px 16px 6px}
+  .kindrow{display:flex;gap:6px;padding:0 16px 2px}
+
+  /* notes checklist inside the record */
+  .noteline{display:flex;align-items:center;gap:10px;min-height:30px;padding:0 16px}
+  .noteline .box{flex:none}
+  .noteline span{font-size:15px;color:var(--t1)}
+  .noteline span.done{color:var(--mut);text-decoration:line-through}
+  .noteline a{font-size:15px;color:var(--accent);text-decoration:none}
+
+  /* ---------- due sheet rows ---------- */
+  .drow{display:flex;align-items:center;min-height:52px;padding:0 16px;position:relative}
+  .drow .word{font-size:16px;color:var(--t1)}
+  .drow .dval{margin-left:auto;font-size:16px;color:var(--t3);font-variant-numeric:tabular-nums;
+    display:flex;align-items:center;gap:7px}
+  .drow .dval svg{color:var(--t3)}
+  .dhr{height:1px;background:var(--hair)}
+  .timepill{height:34px;border-radius:8px;background:var(--pressed);display:flex;align-items:center;
+    padding:0 12px;font-size:16px;color:var(--t1);font-variant-numeric:tabular-nums}
+  .clear{font-size:16px;color:var(--s-late);font-weight:500}
+
+  /* suggestion row */
+  .sugg{display:flex;align-items:center;min-height:56px;padding:0 4px 0 16px;gap:4px}
+  .sugg .chips{display:flex;gap:5px;flex:1;min-width:0}
+  .sugg .act{width:44px;height:44px;display:flex;align-items:center;justify-content:center;flex:none}
+
+  .homebar{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+    width:134px;height:5px;border-radius:3px;background:rgba(255,255,255,.25)}
+  .spacer{flex:1}
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>Liv blueprint — Tasks &amp; the record card</h1>
+  <p>Same rows, same sections, same workflows as the shipped shell (Tasks.swift, Record.swift, Detail.swift) —
+  polished. Status rings fill by state in the option's own hue; filing rows carry the custom field icons
+  (swatch, diamond, tag, person silhouette); values are one-tap tinted chips; priority is one colored flag; late is red
+  and nothing else is. Dark only, 12px floor, hairlines only where rows truly divide.</p>
+</div>
+
+<div class="board">
+
+<!-- ============================================================ -->
+<!-- FRAME 1 — TASKS                                              -->
+<!-- ============================================================ -->
+<div class="cell">
+<div class="phone">
+  <div class="status">
+    <span class="time">9:41</span>
+    <span class="icons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5F5F7"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#F5F5F7" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.2a9 9 0 0 1 12 0"/><path d="M4.4 6.8a5.5 5.5 0 0 1 7.2 0"/><circle cx="8" cy="9.4" r="1.1" fill="#F5F5F7" stroke="none"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" fill="none" stroke="#F5F5F7" stroke-opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="#F5F5F7"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4Z" fill="#F5F5F7" fill-opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <div class="closeband">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7 9 11.5 13.5 7"/></svg>
+  </div>
+
+  <div class="seclabel" style="padding-top:2px"><b>TASKS</b></div>
+
+  <div class="filters">
+    <div class="fpill on">All</div>
+    <div class="fpill"><span class="dot" style="background:var(--accent)"></span>To do</div>
+    <div class="fpill"><span class="dot" style="background:var(--s-doing)"></span>Doing</div>
+    <div class="fpill"><span class="dot" style="background:var(--s-done)"></span>Done</div>
+    <div class="fpill"><span class="dot" style="background:var(--h-green)"></span>Roof</div>
+    <div class="fpill"><span class="dot" style="background:var(--h-blue)"></span>Thesis</div>
+  </div>
+
+  <div class="seclabel"><b>TO DO</b><span>4</span></div>
+
+  <!-- quick add -->
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"><path d="M9 3.5v11M3.5 9h11"/></svg>
+    </div>
+    <div class="tmain"><span class="ttitle ph">Add a task</span></div>
+  </div>
+
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#0A84FF" stroke-width="1.8"/></svg>
+    </div>
+    <div class="tmain">
+      <span class="ttitle">Call the surveyor</span>
+      <div class="tchips">
+        <span class="chip-sm c-green"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>Roof</span>
+      </div>
+    </div>
+    <span class="due">14:00</span>
+  </div>
+
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#0A84FF" stroke-width="1.8"/></svg>
+    </div>
+    <div class="tmain">
+      <span class="ttitle">Renew home insurance</span>
+      <div class="tchips">
+        <span class="chip-sm c-amber"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="3" y="3" width="12" height="12" rx="3.5" fill="currentColor"/></svg>House</span>
+      </div>
+    </div>
+    <span class="due">Wed 12 Aug</span>
+  </div>
+
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#0A84FF" stroke-width="1.8"/></svg>
+    </div>
+    <div class="tmain">
+      <span class="ttitle">Pay invoice #204</span>
+      <div class="tchips">
+        <span class="chip-sm c-purple"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>Invoices</span>
+      </div>
+    </div>
+    <span class="due late">Fri 7 Aug</span>
+  </div>
+
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#0A84FF" stroke-width="1.8"/></svg>
+    </div>
+    <div class="tmain">
+      <span class="ttitle">Order gutter brackets</span>
+      <div class="tchips">
+        <span class="chip-sm c-green"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>Roof</span>
+        <span class="chip-sm c-amber"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="3" y="3" width="12" height="12" rx="3.5" fill="currentColor"/></svg>House</span>
+      </div>
+    </div>
+    <span class="due">Sat 15 Aug</span>
+  </div>
+
+  <div class="seclabel"><b>DOING</b><span>1</span></div>
+
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#FFD60A" stroke-width="1.8"/><path d="M9 4H7.2A3.2 3.2 0 0 0 4 7.2v3.6A3.2 3.2 0 0 0 7.2 14H9Z" fill="#FFD60A"/></svg>
+    </div>
+    <div class="tmain">
+      <span class="ttitle">Draft thesis outline</span>
+      <div class="tchips">
+        <span class="chip-sm c-blue"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>Thesis</span>
+      </div>
+    </div>
+    <span class="due">Today</span>
+  </div>
+
+  <div class="seclabel"><b>DONE</b><span class="act">3 ▸</span></div>
+
+  <div class="seclabel"><b>IN NOTES</b><span>2</span></div>
+
+  <div class="nrow">
+    <div class="ringbox">
+      <svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="none" stroke="#9A9AA2" stroke-width="1.5"/></svg>
+    </div>
+    <span class="ntext">Book the scaffold delivery</span>
+    <span class="origin">
+      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 9 3M4.8 3H9v4.2"/></svg>
+      Roof notes
+    </span>
+  </div>
+
+  <div class="nrow">
+    <div class="ringbox">
+      <svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="none" stroke="#9A9AA2" stroke-width="1.5"/></svg>
+    </div>
+    <span class="ntext">Send meter photos</span>
+    <span class="origin">
+      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 9 3M4.8 3H9v4.2"/></svg>
+      House admin
+    </span>
+  </div>
+
+  <div class="spacer"></div>
+  <div class="homebar"></div>
+</div>
+<div class="caption">Tasks — status rings fill by state (open → half → done) in the option's own hue; one-tap filter pills; only lateness is red.</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- FRAME 2 — TASKS, FILTERED TO DOING (alternative: floating create) -->
+<!-- ============================================================ -->
+<div class="cell">
+<div class="phone">
+  <div class="status">
+    <span class="time">9:41</span>
+    <span class="icons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5F5F7"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#F5F5F7" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.2a9 9 0 0 1 12 0"/><path d="M4.4 6.8a5.5 5.5 0 0 1 7.2 0"/><circle cx="8" cy="9.4" r="1.1" fill="#F5F5F7" stroke="none"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" fill="none" stroke="#F5F5F7" stroke-opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="#F5F5F7"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4Z" fill="#F5F5F7" fill-opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <div class="closeband">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7 9 11.5 13.5 7"/></svg>
+  </div>
+
+  <div class="seclabel" style="padding-top:2px"><b>TASKS</b></div>
+
+  <div class="filters">
+    <div class="fpill">All</div>
+    <div class="fpill"><span class="dot" style="background:var(--accent)"></span>To do</div>
+    <div class="fpill on-doing"><span class="dot" style="background:var(--s-doing)"></span>Doing</div>
+    <div class="fpill"><span class="dot" style="background:var(--s-done)"></span>Done</div>
+    <div class="fpill"><span class="dot" style="background:var(--h-green)"></span>Roof</div>
+    <div class="fpill"><span class="dot" style="background:var(--h-blue)"></span>Thesis</div>
+  </div>
+
+  <div class="seclabel"><b>DOING</b><span>1</span></div>
+
+  <!-- quick add hosts here under a status filter -->
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"><path d="M9 3.5v11M3.5 9h11"/></svg>
+    </div>
+    <div class="tmain"><span class="ttitle ph">Add a task</span></div>
+  </div>
+
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#FFD60A" stroke-width="1.8"/><path d="M9 4H7.2A3.2 3.2 0 0 0 4 7.2v3.6A3.2 3.2 0 0 0 7.2 14H9Z" fill="#FFD60A"/></svg>
+    </div>
+    <div class="tmain">
+      <span class="ttitle">Draft thesis outline</span>
+      <div class="tchips">
+        <span class="chip-sm c-blue"><svg width="10" height="10" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>Thesis</span>
+      </div>
+    </div>
+    <span class="due">Today</span>
+  </div>
+
+  <div class="seclabel"><b>IN NOTES</b><span>2</span></div>
+
+  <div class="nrow">
+    <div class="ringbox">
+      <svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="none" stroke="#9A9AA2" stroke-width="1.5"/></svg>
+    </div>
+    <span class="ntext">Book the scaffold delivery</span>
+    <span class="origin">
+      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 9 3M4.8 3H9v4.2"/></svg>
+      Roof notes
+    </span>
+  </div>
+
+  <div class="nrow">
+    <div class="ringbox">
+      <svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="none" stroke="#9A9AA2" stroke-width="1.5"/></svg>
+    </div>
+    <span class="ntext">Send meter photos</span>
+    <span class="origin">
+      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 9 3M4.8 3H9v4.2"/></svg>
+      House admin
+    </span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="fab">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M11 4v14M4 11h14"/></svg>
+  </div>
+
+  <div class="homebar"></div>
+</div>
+<div class="caption">Tasks filtered to Doing — the active pill wears its status color and its group hosts add-a-task; alternative: floating create.</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- FRAME 3 — RECORD CARD                                        -->
+<!-- ============================================================ -->
+<div class="cell">
+<div class="phone">
+  <div class="status">
+    <span class="time">9:41</span>
+    <span class="icons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5F5F7"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#F5F5F7" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.2a9 9 0 0 1 12 0"/><path d="M4.4 6.8a5.5 5.5 0 0 1 7.2 0"/><circle cx="8" cy="9.4" r="1.1" fill="#F5F5F7" stroke="none"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" fill="none" stroke="#F5F5F7" stroke-opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="#F5F5F7"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4Z" fill="#F5F5F7" fill-opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <!-- Tasks behind, dimmed -->
+  <div class="closeband">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7 9 11.5 13.5 7"/></svg>
+  </div>
+  <div class="seclabel" style="padding-top:2px"><b>TASKS</b></div>
+  <div class="seclabel"><b>TO DO</b><span>4</span></div>
+  <div class="trow">
+    <div class="ringbox">
+      <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="#0A84FF" stroke-width="1.8"/></svg>
+    </div>
+    <div class="tmain"><span class="ttitle">Call the surveyor</span></div>
+    <span class="due">14:00</span>
+  </div>
+
+  <div class="scrim"></div>
+
+  <div class="sheet" style="height:748px">
+    <div class="grabber"></div>
+    <div class="recname">Call the surveyor</div>
+    <div class="kindrow">
+      <span class="chip c-task"><svg width="12" height="12" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>task</span>
+    </div>
+
+    <div class="seclabel"><b>SCHEDULE</b></div>
+    <div class="irow">
+      <span class="ic t-cyan">
+        <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6.8"/><path d="M9 5.8V9l2.3 1.6"/></svg>
+      </span>
+      <span class="lbl">due</span>
+      <span class="val"><span class="txt">Tue 11 Aug 14:00</span></span>
+    </div>
+    <div class="ihr"></div>
+    <div class="irow">
+      <span class="ic t-blue">
+        <svg width="16" height="16" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </span>
+      <span class="lbl">status</span>
+      <span class="val"><span class="chip c-accent">To do</span></span>
+    </div>
+
+    <div class="seclabel"><b>FILING</b></div>
+    <div class="irow">
+      <span class="ic t-amber">
+        <svg width="16" height="16" viewBox="0 0 18 18"><rect x="3" y="3" width="12" height="12" rx="3.5" fill="currentColor"/></svg>
+      </span>
+      <span class="lbl">area</span>
+      <span class="val"><span class="chip c-amber">House</span></span>
+    </div>
+    <div class="ihr"></div>
+    <div class="irow">
+      <span class="ic t-green">
+        <svg width="16" height="16" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </span>
+      <span class="lbl">project</span>
+      <span class="val"><span class="chip c-green">Roof</span></span>
+    </div>
+    <div class="ihr"></div>
+    <div class="irow">
+      <span class="ic t-purple">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3.5 4.9a1.4 1.4 0 0 1 1.4-1.4h4a2 2 0 0 1 1.4.6l4.1 4.1a2 2 0 0 1 0 2.8l-3.6 3.6a2 2 0 0 1-2.8 0L3.9 10.5a2 2 0 0 1-.6-1.4Z"/><circle cx="6.7" cy="6.7" r="1.3" fill="currentColor" stroke="none"/></svg>
+      </span>
+      <span class="lbl">subjects</span>
+      <span class="val"><span class="chip c-purple">gutters</span></span>
+    </div>
+    <div class="ihr"></div>
+    <div class="irow">
+      <span class="ic t-person">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor"><circle cx="9" cy="6.1" r="3"/><path d="M9 10.4c-3.4 0-5.7 2-5.7 4.4 0 .4.3.7.7.7h10c.4 0 .7-.3.7-.7 0-2.4-2.3-4.4-5.7-4.4Z"/></svg>
+      </span>
+      <span class="lbl">people</span>
+      <span class="val"><span class="none">—</span></span>
+    </div>
+
+    <div class="seclabel"><b>OTHER</b></div>
+    <div class="irow">
+      <span class="ic t-red">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 15.5v-12M5 3.8h7.6l-2.2 2.9 2.2 2.9H5"/></svg>
+      </span>
+      <span class="lbl">priority</span>
+      <span class="val"><span class="chip c-red">High</span></span>
+    </div>
+
+    <div class="created">Created Tue 4 Aug 18:52</div>
+
+    <div class="seclabel"><b>NOTES</b></div>
+    <div class="noteline">
+      <svg class="box" width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="none" stroke="#9A9AA2" stroke-width="1.5"/></svg>
+      <span>measure the gutters</span>
+    </div>
+    <div class="noteline">
+      <svg class="box" width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="4" fill="#30D158"/><path d="M4.6 8.2l2.2 2.3 4.4-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="done">photograph the fascia</span>
+    </div>
+    <div class="noteline" style="padding-left:42px">
+      <a>[[Roof]]</a>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="homebar" style="position:static;transform:none;margin:0 auto 8px"></div>
+  </div>
+</div>
+<div class="caption">Record card — a name, its facts, then notes; field icons carved out of solid color chips: swatch, diamond, tag, person silhouette; priority is one red flag.</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- FRAME 4 — DUE SHEET                                          -->
+<!-- ============================================================ -->
+<div class="cell">
+<div class="phone">
+  <div class="status">
+    <span class="time">9:41</span>
+    <span class="icons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5F5F7"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#F5F5F7" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.2a9 9 0 0 1 12 0"/><path d="M4.4 6.8a5.5 5.5 0 0 1 7.2 0"/><circle cx="8" cy="9.4" r="1.1" fill="#F5F5F7" stroke="none"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" fill="none" stroke="#F5F5F7" stroke-opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="#F5F5F7"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4Z" fill="#F5F5F7" fill-opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <!-- record card behind, dimmed -->
+  <div style="background:var(--surface);border-radius:22px 22px 0 0;flex:1;margin-top:8px;--carve:var(--surface)">
+    <div class="grabber"></div>
+    <div class="recname">Call the surveyor</div>
+    <div class="kindrow">
+      <span class="chip c-task"><svg width="12" height="12" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>task</span>
+    </div>
+    <div class="seclabel"><b>SCHEDULE</b></div>
+    <div class="irow">
+      <span class="ic t-cyan">
+        <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6.8"/><path d="M9 5.8V9l2.3 1.6"/></svg>
+      </span>
+      <span class="lbl">due</span>
+      <span class="val"><span class="txt">Tue 11 Aug 14:00</span></span>
+    </div>
+  </div>
+
+  <div class="scrim"></div>
+
+  <div class="sheet" style="height:436px">
+    <div class="grabber"></div>
+
+    <div class="seclabel" style="padding-top:12px"><b>DATE</b></div>
+    <div class="drow">
+      <span class="word">Today</span>
+      <span class="dval">Tue 11 Aug</span>
+    </div>
+    <div class="dhr"></div>
+    <div class="drow">
+      <span class="word">Tomorrow</span>
+      <span class="dval">Wed 12 Aug</span>
+    </div>
+    <div class="dhr"></div>
+    <div class="drow">
+      <span class="word">Choose a date</span>
+      <span class="dval">Tue 11 Aug
+        <svg width="13" height="13" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7 9 11.5 13.5 7"/></svg>
+      </span>
+    </div>
+
+    <div class="seclabel" style="padding-top:20px"><b>TIME</b></div>
+    <div class="drow">
+      <span class="word">At</span>
+      <span class="dval"><span class="timepill">14:00</span></span>
+    </div>
+
+    <div class="drow" style="margin-top:10px">
+      <span class="clear">Clear</span>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="homebar" style="position:static;transform:none;margin:0 auto 8px"></div>
+  </div>
+</div>
+<div class="caption">Due sheet — Today, Tomorrow and Choose a date wear one face and save on tap; the time row is always present; Clear never moves.</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- FRAME 5 — PROPERTIES PANEL                                   -->
+<!-- ============================================================ -->
+<div class="cell">
+<div class="phone">
+  <div class="status">
+    <span class="time">9:41</span>
+    <span class="icons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="#F5F5F7"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#F5F5F7" stroke-width="1.6" stroke-linecap="round"><path d="M2 4.2a9 9 0 0 1 12 0"/><path d="M4.4 6.8a5.5 5.5 0 0 1 7.2 0"/><circle cx="8" cy="9.4" r="1.1" fill="#F5F5F7" stroke="none"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" fill="none" stroke="#F5F5F7" stroke-opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="#F5F5F7"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4Z" fill="#F5F5F7" fill-opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <div class="navband">
+    <span class="back">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.5 6.5 9l4.5 4.5"/></svg>
+    </span>
+    <span class="mark">
+      <svg width="22" height="22" viewBox="0 0 20 20"><circle cx="6.6" cy="7.2" r="4.1" fill="#30D158"/><circle cx="13.4" cy="7.2" r="4.1" fill="#BF5AF2"/><circle cx="10" cy="13" r="4.1" fill="#0A84FF"/></svg>
+    </span>
+  </div>
+
+  <div class="paneltitle">Call the surveyor</div>
+  <div class="kindrow">
+    <span class="chip c-task"><svg width="12" height="12" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>task</span>
+  </div>
+
+  <div class="seclabel"><b>SCHEDULE</b></div>
+  <div class="irow">
+    <span class="ic t-cyan">
+      <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6.8"/><path d="M9 5.8V9l2.3 1.6"/></svg>
+    </span>
+    <span class="lbl">due</span>
+    <span class="val"><span class="txt">Tue 11 Aug 14:00</span></span>
+  </div>
+  <div class="ihr"></div>
+  <div class="irow">
+    <span class="ic t-blue">
+      <svg width="16" height="16" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </span>
+    <span class="lbl">status</span>
+    <span class="val"><span class="chip c-accent">To do</span></span>
+  </div>
+
+  <div class="seclabel"><b>FILING</b></div>
+  <div class="irow">
+    <span class="ic t-amber">
+      <svg width="16" height="16" viewBox="0 0 18 18"><rect x="3" y="3" width="12" height="12" rx="3.5" fill="currentColor"/></svg>
+    </span>
+    <span class="lbl">area</span>
+    <span class="val"><span class="chip c-amber">House</span></span>
+  </div>
+  <div class="ihr"></div>
+  <div class="irow">
+    <span class="ic t-green">
+      <svg width="16" height="16" viewBox="0 0 18 18"><rect x="4.8" y="4.8" width="8.4" height="8.4" rx="1.5" transform="rotate(45 9 9)" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </span>
+    <span class="lbl">project</span>
+    <span class="val"><span class="chip c-green">Roof</span></span>
+  </div>
+  <div class="ihr"></div>
+  <div class="irow">
+    <span class="ic t-purple">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3.5 4.9a1.4 1.4 0 0 1 1.4-1.4h4a2 2 0 0 1 1.4.6l4.1 4.1a2 2 0 0 1 0 2.8l-3.6 3.6a2 2 0 0 1-2.8 0L3.9 10.5a2 2 0 0 1-.6-1.4Z"/><circle cx="6.7" cy="6.7" r="1.3" fill="currentColor" stroke="none"/></svg>
+    </span>
+    <span class="lbl">subjects</span>
+    <span class="val">
+      <span class="chip c-purple">gutters</span>
+      <span class="chip c-red">warranty</span>
+      <span class="more">+1</span>
+    </span>
+  </div>
+  <div class="ihr"></div>
+  <div class="irow">
+    <span class="ic t-person">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor"><circle cx="9" cy="6.1" r="3"/><path d="M9 10.4c-3.4 0-5.7 2-5.7 4.4 0 .4.3.7.7.7h10c.4 0 .7-.3.7-.7 0-2.4-2.3-4.4-5.7-4.4Z"/></svg>
+    </span>
+    <span class="lbl">people</span>
+    <span class="val">
+      <span class="chip c-amber">Steven</span>
+      <span class="chip c-purple">Anna</span>
+    </span>
+  </div>
+
+  <div class="seclabel"><b>OTHER</b></div>
+  <div class="irow">
+    <span class="ic t-red">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 15.5v-12M5 3.8h7.6l-2.2 2.9 2.2 2.9H5"/></svg>
+    </span>
+    <span class="lbl">priority</span>
+    <span class="val"><span class="chip c-red">High</span></span>
+  </div>
+
+  <div class="seclabel"><b>SUGGESTED</b></div>
+  <div class="sugg">
+    <div class="chips">
+      <span class="chip c-accent">+ subject · roofing</span>
+    </div>
+    <span class="act">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="#9A9AA2" stroke-width="2" stroke-linecap="round"><path d="M5 5l8 8M13 5l-8 8"/></svg>
+    </span>
+    <span class="act">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="#0A84FF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.6l3 3.1 6.5-7"/></svg>
+    </span>
+  </div>
+
+  <div class="created">Created Tue 4 Aug 18:52</div>
+
+  <div class="spacer"></div>
+  <div class="homebar"></div>
+</div>
+<div class="caption">Properties panel — the three-dot mark names the panel; Schedule, Filing, Other, Suggested; multi-values stay one line with a +1 overflow.</div>
+</div>
+
+</div>
+</body>
+</html>

@@ -515,3 +515,82 @@ fn severing_leaves_a_member_pending() {
     assert_eq!(session.store().pending().len(), 1, "one severed, one remains");
     cleanup(&path);
 }
+
+/// A content save retracts only the proposals the sweep can RE-DERIVE
+/// (its own five proposers read the words and rebuild their drafts from
+/// whatever is there now). A draft from anyone else — a future model, a
+/// human on another device — cannot be re-derived: retracting it on
+/// every keystroke would silently destroy it (owner, 2026-08-07; the
+/// defect blocked AI-suggested titles).
+#[test]
+fn content_save_keeps_proposals_the_sweep_cannot_rebuild() {
+    let (mut session, path) = boxed("save_keeps_foreign_proposals");
+    let now = DateTime::at(2026, 8, 7, 12, 0);
+    let note = liv_services::content::create_note(&mut session, now).unwrap();
+    liv_services::content::set_content(
+        &mut session,
+        note,
+        vec![Span::Text(TextSpan::plain("meeting friday about the roof"))],
+        0,
+    )
+    .unwrap();
+
+    // One draft the sweep CAN rebuild (dates reads the words)…
+    let due = liv_services::property_id(session.store(), "due").unwrap();
+    session
+        .propose(Proposal {
+            commands: vec![Command::AddCell {
+                entity: note,
+                cell: Cell {
+                    property: due,
+                    value: Value::DateTime(DateTime::date(2026, 8, 8)),
+                },
+            }],
+            label: "due friday".into(),
+            author: Author::Proposer("dates".into()),
+            reason: "mentions friday".into(),
+        })
+        .unwrap();
+    // …and one it CANNOT (a generated title exists only in this draft).
+    session
+        .propose(Proposal {
+            commands: vec![Command::AddCell {
+                entity: note,
+                cell: Cell { property: props::NAME, value: Value::text("Roof meeting") },
+            }],
+            label: "suggest title".into(),
+            author: Author::Proposer("titler".into()),
+            reason: "generated".into(),
+        })
+        .unwrap();
+    assert_eq!(session.store().pending().len(), 2);
+
+    // The user types one more character.
+    let base = liv_services::content::content_fingerprint(
+        session.store().get(note).unwrap().get(props::CONTENT),
+    );
+    liv_services::content::set_content(
+        &mut session,
+        note,
+        vec![Span::Text(TextSpan::plain("meeting friday about the roof!"))],
+        base,
+    )
+    .unwrap();
+
+    let left: Vec<String> = session
+        .store()
+        .pending()
+        .iter()
+        .map(|p| match &p.author {
+            Author::Proposer(n) => n.clone(),
+            _ => "?".into(),
+        })
+        .collect();
+    assert_eq!(
+        left,
+        vec!["titler".to_string()],
+        "the sweep's own draft is retracted (it re-derives); the foreign one survives"
+    );
+
+    cleanup(&path);
+}

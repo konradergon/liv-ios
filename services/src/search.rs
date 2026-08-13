@@ -293,8 +293,7 @@ pub fn usage_counts(store: &Store) -> Vec<(Id, usize)> {
     // distinct property it carries.
     let mut carriers: HashMap<Id, usize> = HashMap::new();
     for e in store
-        .entities()
-        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+        .user_entities()
     {
         let mut seen: HashSet<Id> = HashSet::new();
         for cell in &e.cells {
@@ -338,8 +337,7 @@ pub fn distinct_values(store: &Store, property: Id) -> Vec<(Value, usize)> {
     // and the seam refuses new NaNs anyway.
     let mut counts: HashMap<String, (Value, usize)> = HashMap::new();
     for e in store
-        .entities()
-        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+        .user_entities()
     {
         for value in e.all(property) {
             let value = canonical(value);

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inactive tabs — the switcher row and the inactive screen</title>
+<style>
+  :root {
+    --canvas:#161618; --surface:#1e1e20; --panel:#232326; --panel2:#2c2c2e;
+    --text:#f5f5f7; --text2:#c9c9ce; --text3:#9a9aa2; --muted:#707078;
+    --border:rgba(255,255,255,.10); --border2:rgba(255,255,255,.16);
+    --accent:#0a84ff; --green:#30d158; --purple:#bf5af2; --amber:#ff9f0a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d0d0e; color:var(--text);
+         font:15px/1.45 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+         display:flex; gap:32px; flex-wrap:wrap; justify-content:center; padding:28px 16px; }
+  .col { display:flex; flex-direction:column; gap:10px; align-items:center; }
+  .cap { color:var(--text3); font-size:12px; text-align:center; max-width:390px; }
+  .cap b { color:var(--text2); font-weight:600; }
+  .phone { width:390px; height:780px; background:var(--canvas); border:1px solid var(--border);
+           border-radius:38px; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.5);
+           display:flex; flex-direction:column; }
+
+  /* the 40pt band — the house's one way out of a full-screen surface */
+  .band { height:40px; display:flex; align-items:center; padding:0 12px; flex:none; }
+  .band .chev { width:32px; height:32px; display:grid; place-items:center;
+                color:var(--text2); font-size:15px; font-weight:600; }
+  .band .title { font-size:13px; font-weight:600; color:var(--text); }
+
+  .body { flex:1; overflow:hidden; padding:0 16px; }
+
+  /* the summary row — one line, a count, a chevron. No subtitle. */
+  .inactiverow { display:flex; align-items:center; gap:8px; height:46px; padding:0 12px;
+            background:var(--surface); border:.5px solid var(--border);
+            border-radius:10px; margin-bottom:10px; }
+  .inactiverow .g { color:var(--text3); font-size:13px; width:16px; text-align:center; }
+  .inactiverow .t { font-size:13px; font-weight:500; color:var(--text); }
+  .inactiverow .n { font-size:12px; color:var(--text3); font-variant-numeric:tabular-nums; }
+  .inactiverow .c { color:var(--text3); font-size:11px; font-weight:600; }
+  .spacer { flex:1; }
+  /* the threshold as a CHIP, never a grey sentence (owner, 2026-08-06) */
+  .chip { display:inline-flex; align-items:center; height:17px; padding:0 7px;
+          border-radius:999px; font-size:10px; font-weight:500;
+          color:var(--text3); background:rgba(255,255,255,.07); }
+
+  /* the card grid — unchanged recipe, 150pt cards */
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .card { height:150px; background:var(--surface); border:.5px solid var(--border);
+          border-radius:12px; display:flex; flex-direction:column; overflow:hidden; }
+  .card.active { border:1.5px solid var(--accent); }
+  .card .top { display:flex; align-items:flex-start; gap:4px; padding:8px 10px 0; }
+  .card .name { font-size:12px; font-weight:600; line-height:1.25; }
+  .card .x { color:var(--text3); font-size:9px; font-weight:600; width:24px; height:24px;
+             display:grid; place-items:center; margin:-6px -6px 0 0; }
+  .card .ex { font-size:9.5px; color:var(--muted); line-height:1.35; padding:2px 10px 0;
+              white-space:pre-line; }
+  .card .foot { height:20px; background:var(--panel); display:flex; align-items:center;
+                gap:4px; padding:0 10px; margin-top:auto; }
+  .dot { width:5px; height:5px; border-radius:50%; }
+  .kind { font-size:8px; font-weight:600; letter-spacing:.5px; color:var(--text3); }
+  .newcard { height:150px; border:1px dashed var(--border2); border-radius:12px;
+             display:grid; place-items:center; color:var(--text3); }
+  .newcard div { text-align:center; font-size:10px; font-weight:500; }
+  .newcard span { font-size:16px; display:block; margin-bottom:3px; }
+
+  /* footers */
+  .foot-bar { height:52px; border-top:.5px solid var(--border); display:flex;
+              align-items:center; padding:0 12px; flex:none; }
+  .foot-bar .mid { flex:1; text-align:center; font-size:12px; color:var(--text3);
+                   font-variant-numeric:tabular-nums; }
+  .foot-bar .plus { color:var(--text2); font-size:15px; width:44px; }
+  .foot-bar .done { color:var(--accent); font-size:13px; font-weight:600; padding:0 8px; }
+
+  /* the bulk verb — a real control, in the band, not a floating capsule */
+  .closeall { color:var(--accent); font-size:13px; font-weight:500; padding:0 8px; }
+  .agechip { position:absolute; }
+</style>
+</head>
+<body>
+
+<div class="col">
+  <div class="phone">
+    <div class="band"><div class="chev">⌄</div></div>
+    <div class="body">
+      <div class="inactiverow">
+        <div class="g">◴</div>
+        <div class="t">Inactive</div>
+        <div class="chip">21 days</div>
+        <div class="spacer"></div>
+        <div class="n">13</div>
+        <div class="c">›</div>
+      </div>
+      <div class="grid">
+        <div class="card active">
+          <div class="top"><div class="name">Ideathon 2026 — notes</div><div class="x">✕</div></div>
+          <div class="ex">area · Studies
+project · Ideathon
+due · Tue 12 Aug</div>
+          <div class="foot"><div class="dot" style="background:var(--accent)"></div><div class="kind">NOTE</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">Kontrakt — refurbed.pdf</div><div class="x">✕</div></div>
+          <div class="ex">format · pdf
+area · Admin</div>
+          <div class="foot"><div class="dot" style="background:var(--purple)"></div><div class="kind">FILE</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">Veckans plan</div><div class="x">✕</div></div>
+          <div class="ex">Content lives on this entity.</div>
+          <div class="foot"><div class="dot" style="background:var(--accent)"></div><div class="kind">NOTE</div></div>
+        </div>
+        <div class="newcard"><div><span>+</span>New tab</div></div>
+      </div>
+    </div>
+    <div class="foot-bar">
+      <div class="plus">+</div>
+      <div class="mid">3 tabs</div>
+      <div class="done">Done</div>
+    </div>
+  </div>
+  <div class="cap"><b>The switcher.</b> One row above the grid. The threshold rides as a
+  <b>chip</b>, not a grey sentence — a sentence explaining a control is a design failure
+  (owner, 2026-08-06). The footer counts the <b>3</b> tabs you can see; the inactive 13 are
+  counted on their own row.</div>
+</div>
+
+<div class="col">
+  <div class="phone">
+    <div class="band">
+      <div class="chev">‹</div>
+      <div class="title">Inactive</div>
+      <div class="spacer"></div>
+      <div class="closeall">Close all</div>
+    </div>
+    <div class="body">
+      <div class="grid">
+        <div class="card">
+          <div class="top"><div class="name">Försändelse 00573132…</div><div class="x">✕</div></div>
+          <div class="ex">area · Admin</div>
+          <div class="foot"><div class="dot" style="background:var(--amber)"></div><div class="kind">CAPTURE · 34d</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">Boardingkort Visby</div><div class="x">✕</div></div>
+          <div class="ex">due · 28 Jul
+area · Resor</div>
+          <div class="foot"><div class="dot" style="background:var(--purple)"></div><div class="kind">FILE · 28d</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">SSSB — kösystem</div><div class="x">✕</div></div>
+          <div class="ex">No details yet.</div>
+          <div class="foot"><div class="dot" style="background:var(--amber)"></div><div class="kind">CAPTURE · 26d</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">DaVinci Resolve — kortkommandon</div><div class="x">✕</div></div>
+          <div class="ex">area · Video</div>
+          <div class="foot"><div class="dot" style="background:var(--accent)"></div><div class="kind">NOTE · 24d</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">Mötesanteckningar</div><div class="x">✕</div></div>
+          <div class="ex">project · Ideathon</div>
+          <div class="foot"><div class="dot" style="background:var(--accent)"></div><div class="kind">NOTE · 22d</div></div>
+        </div>
+        <div class="card">
+          <div class="top"><div class="name">Att läsa</div><div class="x">✕</div></div>
+          <div class="ex">Content lives on this entity.</div>
+          <div class="foot"><div class="dot" style="background:var(--accent)"></div><div class="kind">NOTE · 21d</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="cap"><b>The Inactive screen.</b> Same 40pt band the whole app uses to get out
+  of a full-screen surface — not a navigation push, which this shell has none of. No
+  explanatory paragraph, no inline link. <b>Close all</b> sits in the band as a real
+  control. Each card's kind footer earns its keep by carrying the age: <b>NOTE · 24d</b>.
+  No <b>+</b> and no <b>Done</b> here.</div>
+</div>
+
+<div class="col" style="max-width:340px">
+  <div class="cap" style="text-align:left">
+    <b>Why it differs from Chrome.</b><br><br>
+    <b>The word.</b> <b>Inactive</b>, literally — the owner's rule: names say what they
+    describe. (The original Liv called it "parking" in its tab menu, liv-ui-map.md:3984;
+    Chrome's word wins because it is the plainer one.)<br><br>
+    <b>No sentences.</b> Chrome explains itself twice: a subtitle under the row and a
+    paragraph on the screen, with a blue "settings" link. All three are refused by a
+    standing ruling — say it with the app's own chips, or don't say it.<br><br>
+    <b>No push.</b> This shell has zero NavigationStacks. A screen reached from a
+    full-screen surface wears the 40pt band, like every feature window.<br><br>
+    <b>No confirm, no undo.</b> Closing a tab writes nothing to the box — the note is
+    still there, in search, in Everything, in its workspace. The undo chip is reserved
+    for real box writes.<br><br>
+    <b>The age is on the card.</b> Chrome shows no per-card age; Liv already has a kind
+    footer with room in it, and "why is this here" is then answerable without a sentence.
+  </div>
+</div>
+
+</body>
+</html>

@@ -87,6 +87,40 @@ cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 iOS shell: `shell/ios/build.sh` (add `run` to boot it in a simulator).
 Do not commit unless the owner asks.
 
+## Standing rules that keep this from rotting
+
+Measured 2026-08-08 against the app this replaces (134,695 lines, 3 data
+stores, 275 direct storage calls from 70 files, 78 string-keyed events,
+one test file). The rewrite avoided all of that. These rules are what
+keeps it avoided — each one exists because its absence is visible in the
+old codebase.
+
+1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
+   second file calling the C ABI is a defect. (Today: 35 calls, one
+   file, and every other Swift file has zero.)
+2. **Anything on the snapshot path ships with a COST test**, not just a
+   correctness one — see `services/tests/scale.rs`. The file projection
+   was quadratic for weeks and 315 correctness tests could not see it.
+   Assert the SHAPE (doubling the box roughly doubles the work), never a
+   millisecond budget.
+3. **A rule that matters lives in a type, not in prose.** Colours are
+   tokenised in `Theme.swift` and have never drifted; type sizes are
+   prose and have drifted 38 times.
+4. **One grammar, one parser.** Two parsers for the same user-facing
+   syntax is a defect. Same for a display helper, a row type, a glyph
+   table.
+5. **A user never types a query language.** Filters and workspaces are
+   built from pickers over furniture that already exists; the text
+   grammar is the storage format and an advanced escape hatch.
+6. **When a decision makes code unnecessary, delete it in the same
+   change.** No dead code (owner, 2026-08-07).
+7. **No feature flag without a deletion date in the same change.**
+8. **One user action gets one snapshot.** Refreshes coalesce
+   (`Box.swift`); where the ABI forces a shell to hand-assemble several
+   verbs, add one compound verb — purely additive, and permitted.
+9. **A file past ~600 lines is a signal to look for the seam**, not a
+   number to hit.
+
 ## House rules
 
 - **Failing-test-first** for any `core`/`services`/`ffi` change; **mockup-first**

@@ -181,6 +181,20 @@ with mobile-first pickers: select sheets where the core defines options,
 type-to-filter autocomplete where the vocabulary is free, the native date
 picker for dates. Details in §8.
 
+## 6 rev 4. The `+` insertion menu (owner, 2026-08-05 — roadmap phase 2)
+
+> The Notesnook shape, per the proposal: a SHORT daily row and a `+` for
+> everything else. Row: `+` · undo · redo · heading · bold · italic ·
+> task · bullet · indent · outdent, dismiss pinned right. The `+` (accent
+> ink, first key) opens a native pull-up menu: Link, Template, Numbered
+> list, Quote, Strikethrough, Code, Divider, Outline — the same verbs,
+> only the door moved; the toolbar stays transparent and horizontal-only.
+> Found and fixed while verifying: the rule verb parked the caret at the
+> end of the inserted `---`, so the next keystroke corrupted the divider
+> into `---text`. It now inserts `\n---\n` and lands the caret on the
+> fresh line below (self-checked). Still deferred, owner's word pending:
+> `_underscore_` italics, fenced code blocks, tables, inline photos.
+
 ## 6 rev 3. The toolbar returns, the chrome retreats (owner, 2026-07-31)
 
 > Superseding rev 2. The owner used the hidden-`Aa` model and rejected it:

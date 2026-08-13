@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liv blueprint — Home: Library · Today · Inbox</title>
+<style>
+  :root{
+    --canvas:#161618; --surface:#1E1E20; --raised:#232326; --pressed:#2C2C2E;
+    --hairline:rgba(255,255,255,.10); --hairline-soft:rgba(255,255,255,.06);
+    --t1:#F5F5F7; --t2:#C9C9CE; --t3:#9A9AA2; --muted:#8E8E93;
+    --accent:#0A84FF;
+    --k-note:#0A84FF; --k-task:#BF5AF2; --k-event:#64D2FF; --k-file:#FF9F0A;
+    --k-person:#FF375F; --k-capture:#FFD60A; --k-template:#98989D;
+    --s-done:#30D158; --s-late:#FF453A; --s-doing:#FFD60A; --s-off:#8E8E93;
+    --ai:#FFB340;
+    --shadow:0 4px 18px rgba(0,0,0,.35);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#0d0d0e; color:var(--t1);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    padding:36px 28px 56px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page-head{max-width:1760px;margin:0 auto 26px}
+  .page-head h1{font-size:16px;font-weight:600;color:var(--t2)}
+  .page-head p{font-size:12px;color:var(--muted);margin-top:4px}
+  .board{display:flex;flex-wrap:wrap;gap:40px;justify-content:center;align-items:flex-start;max-width:1860px;margin:0 auto}
+  .unit{display:flex;flex-direction:column;gap:10px;width:390px}
+  .caption{font-size:12px;color:#8a8a90;line-height:1.5;padding:0 8px}
+  .caption b{color:#b9b9c0;font-weight:600}
+
+  .frame{
+    width:390px;height:844px;background:var(--canvas);
+    border-radius:30px;border:1px solid rgba(255,255,255,.13);
+    overflow:hidden;position:relative;display:flex;flex-direction:column;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);
+  }
+  .frame.on-surface{background:var(--surface)}
+
+  /* status bar + home indicator */
+  .statusbar{height:50px;display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 30px 6px 32px;flex:none}
+  .statusbar .time{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--t1)}
+  .statusbar .sys{display:flex;align-items:center;gap:6px;color:var(--t1)}
+  .homebar{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);
+    width:134px;height:5px;border-radius:3px;background:rgba(255,255,255,.28)}
+
+  /* feature-window close band (App.swift FeatureWindow.header) */
+  .featurehead{height:40px;flex:none;display:flex;align-items:center;padding:0 12px;color:var(--t2)}
+
+  .content{flex:1;overflow:hidden;padding:0 16px;display:flex;flex-direction:column}
+
+  .seclabel{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--t3);display:flex;align-items:baseline}
+  .seclabel .count{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:500;color:var(--muted);letter-spacing:0}
+
+  /* ---- icon chips: 28px solid rounded squares, glyph carved out in the surface color beneath ---- */
+  .ic{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none}
+  .ic svg{display:block}
+  .ic.neutral{background:var(--k-template);color:var(--surface)}
+
+  /* ---- library rows ---- */
+  .lrow{height:54px;display:flex;align-items:center;gap:12px;position:relative}
+  .lrow + .lrow::before{content:"";position:absolute;top:0;left:40px;right:0;height:1px;background:var(--hairline-soft)}
+  .lrow .lab{font-size:16px;font-weight:400;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .lab.quiet{color:var(--t3)}
+  .lrow .num{margin-left:auto;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .lrow .ondot{margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+  .bottomband{flex:none;border-top:1px solid var(--hairline);padding:2px 16px 26px}
+
+  /* ---- chips: 26px pills, tinted 14%, color as text ---- */
+  .chip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;
+    border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+  .chip.sm{height:22px;padding:0 8px}
+  .chip.acc{background:rgba(10,132,255,.14);color:var(--accent)}
+  .chip.neutral{background:rgba(255,255,255,.08);color:var(--t2)}
+  .chip.green{background:rgba(48,209,88,.14);color:var(--s-done)}
+  .chip.cyan{background:rgba(100,210,255,.14);color:var(--k-event)}
+  .chip.purple{background:rgba(191,90,242,.14);color:var(--k-task)}
+
+  /* ---- Today ---- */
+  .todayhead{display:flex;align-items:center;gap:8px;padding-top:8px}
+  .todayhead .left{margin-left:auto;font-size:13px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .strip{display:flex;gap:6px;margin:12px 0 4px}
+  .day{flex:1;height:46px;border-radius:12px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:1px}
+  .day .wd{font-size:10.5px;font-weight:600;color:var(--t3)}
+  .day .n{font-size:15px;font-weight:600;color:var(--t1);font-variant-numeric:tabular-nums}
+  .day.sel{background:var(--accent);box-shadow:var(--shadow)}
+  .day.sel .wd,.day.sel .n{color:#fff}
+  .day.today-ring{border:1px solid var(--accent)}
+
+  .lateband{display:flex;align-items:center;gap:7px;padding:16px 0 4px}
+  .lateband .dot{width:7px;height:7px;border-radius:50%;background:var(--s-late)}
+  .lateband .word{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--s-late)}
+  .lateband .n{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  .ring{width:15px;height:15px;border-radius:5px;border:1.5px solid var(--muted);flex:none}
+  .ring.compact{width:13px;height:13px}
+  .ghostring{width:15px;height:15px;border-radius:5px;border:1.5px dashed var(--muted);flex:none}
+
+  .agrow{min-height:46px;display:flex;align-items:center;gap:10px;position:relative;padding:2px 0}
+  .agrow + .agrow::before{content:"";position:absolute;top:0;left:54px;right:0;height:1px;background:var(--hairline-soft)}
+  .agrow .time{width:42px;flex:none;font-size:13px;color:var(--t3);font-variant-numeric:tabular-nums}
+  .agrow .glyph{width:16px;flex:none;display:flex;justify-content:center}
+  .agrow .body{min-width:0;display:flex;flex-direction:column;gap:3px}
+  .agrow .title{font-size:15px;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .agrow.dim .time,.agrow.dim .title{color:var(--muted)}
+  .agrow.dim .ring{border-color:rgba(142,142,147,.55)}
+  .agrow.next{background:rgba(10,132,255,.10);border:1px solid rgba(10,132,255,.30);
+    border-radius:12px;margin:4px -10px;padding:4px 10px;box-shadow:var(--shadow)}
+  .agrow.next::before{display:none}
+  .agrow.next + .agrow::before{display:none}
+
+  .latrow{min-height:46px;display:flex;align-items:center;gap:10px;position:relative;padding:2px 0}
+  .latrow + .latrow::before{content:"";position:absolute;top:0;left:25px;right:0;height:1px;background:var(--hairline-soft)}
+  .latrow .title{font-size:15px;color:var(--t1);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .latrow .due{margin-left:auto;font-size:12px;color:var(--s-late);font-variant-numeric:tabular-nums;flex:none}
+  .latrow .pill{flex:none}
+
+  .nowline{display:flex;align-items:center;gap:6px;height:20px;margin:2px 0}
+  .nowline .stamp{font-size:10.5px;font-weight:700;color:#fff;background:var(--s-late);
+    border-radius:4px;padding:1.5px 5px;font-variant-numeric:tabular-nums}
+  .nowline .rule{flex:1;height:1.5px;background:var(--s-late);border-radius:1px}
+
+  .allday{display:flex;gap:6px;overflow:hidden;padding:4px 0 2px}
+  .adpill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;
+    border-radius:999px;background:var(--raised);border:1px solid var(--hairline);
+    font-size:13px;color:var(--t1);white-space:nowrap;flex:none}
+
+  .collapse{display:flex;align-items:center;gap:7px;min-height:38px;color:var(--muted);
+    font-size:14px;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hairline-soft)}
+  .quickadd{display:flex;align-items:center;gap:10px;min-height:46px;
+    border-bottom:1px solid var(--hairline-soft)}
+  .quickadd .ph{font-size:15px;color:var(--muted)}
+  .captured{display:flex;align-items:center;gap:6px;min-height:42px;font-size:14px;
+    font-variant-numeric:tabular-nums}
+  .captured .n{color:var(--t3)}
+  .captured .go{color:var(--accent);font-weight:600}
+
+  .emptyhint{font-size:16px;color:var(--muted);text-align:center;padding:30px 0 22px}
+
+  /* small action pill (Today / Accept all) */
+  .actpill{display:inline-flex;align-items:center;height:26px;padding:0 11px;border-radius:999px;
+    background:rgba(10,132,255,.14);color:var(--accent);font-size:12px;font-weight:600}
+
+  /* ---- Inbox ---- */
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0 4px}
+  .tile{background:var(--surface);border:1px solid var(--hairline);border-radius:12px;
+    padding:12px 14px;display:flex;align-items:flex-start;box-shadow:var(--shadow)}
+  .tile .lft{display:flex;flex-direction:column;gap:8px}
+  .tile .lbl{font-size:13px;color:var(--t2)}
+  .tile .big{margin-left:auto;font-size:22px;font-weight:600;color:var(--t1);
+    font-variant-numeric:tabular-nums;line-height:28px}
+
+  .card{background:var(--surface);border:1px solid var(--hairline);border-radius:12px;
+    padding:14px;display:flex;flex-direction:column;gap:11px;box-shadow:var(--shadow)}
+  .card + .card{margin-top:10px}
+  .card .toprow{display:flex;align-items:baseline;gap:8px}
+  .card .ctitle{font-size:15px;font-weight:500;color:var(--t1);line-height:1.35;min-width:0}
+  .card .stamp{margin-left:auto;font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums;flex:none}
+  .verbs{display:flex;gap:7px}
+  .verb{flex:1;height:32px;border-radius:9px;background:var(--raised);border:1px solid var(--hairline);
+    display:flex;align-items:center;justify-content:center;gap:5px;
+    font-size:13px;font-weight:500;color:var(--t2)}
+  .kc{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    flex:none;color:var(--raised)}
+
+  .clerkhead{display:flex;align-items:center;gap:7px;padding:18px 0 6px}
+  .clerkhead .who{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--t3)}
+  .clerkhead .n{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .clerkhead .actpill{margin-left:auto}
+  .sugg{display:flex;align-items:center;gap:8px;min-height:60px;position:relative;padding:6px 0}
+  .sugg + .sugg::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--hairline-soft)}
+  .sugg .body{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .sugg .reason{font-size:13px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .diffchip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;
+    border-radius:999px;background:var(--raised);border:1px solid var(--hairline);
+    font-size:12px;color:var(--t2);white-space:nowrap}
+  .diffchip .plus{color:var(--s-done);font-weight:700}
+  .roundbtn{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;flex:none}
+  .roundbtn.no{background:rgba(255,255,255,.07);color:var(--t3)}
+  .roundbtn.yes{background:rgba(10,132,255,.16);color:var(--accent)}
+  .sugg .roundbtn.no{margin-left:auto}
+
+  .spacer{flex:1}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>Liv — UI improvement blueprint · Home: Library panel, Today, Inbox</h1>
+  <p>Evolution, not reinvention: same rows, same sections, same doors. Kind and state colors carry the hierarchy; icon chips, stat tiles and the floating-surface look come from the ClickUp / Google Workspace direction, translated to the dark theme.</p>
+</div>
+
+<div class="board">
+
+  <!-- ============================================================ -->
+  <!-- FRAME 1 — LIBRARY PANEL                                      -->
+  <!-- ============================================================ -->
+  <div class="unit">
+    <div class="frame on-surface">
+      <div class="statusbar">
+        <span class="time">9:41</span>
+        <span class="sys">
+          <svg width="17" height="11" viewBox="0 0 17 11"><g fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></g></svg>
+          <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 3.6a9.5 9.5 0 0 1 13 0"/><path d="M3.9 6.1a6 6 0 0 1 8.2 0"/><circle cx="8" cy="9.2" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.7" y="0.7" width="20.6" height="10.6" rx="3" stroke="currentColor" stroke-opacity=".4" stroke-width="1"/><rect x="2.2" y="2.2" width="14" height="7.6" rx="1.6" fill="currentColor"/><path d="M23.3 4v4a2.2 2.2 0 0 0 0-4z" fill="currentColor" fill-opacity=".4"/></svg>
+        </span>
+      </div>
+
+      <div class="content" style="padding-top:10px">
+        <div class="seclabel">Views</div>
+
+        <div class="lrow" style="margin-top:4px">
+          <span class="ic" style="background:#FF9F0A;color:var(--surface)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="12" r="3.8"/><line x1="17.8" y1="12" x2="20" y2="12"/><line x1="16.1" y1="16.1" x2="17.66" y2="17.66"/><line x1="12" y1="17.8" x2="12" y2="20"/><line x1="7.9" y1="16.1" x2="6.34" y2="17.66"/><line x1="6.2" y1="12" x2="4" y2="12"/><line x1="7.9" y1="7.9" x2="6.34" y2="6.34"/><line x1="12" y1="6.2" x2="12" y2="4"/><line x1="16.1" y1="7.9" x2="17.66" y2="6.34"/></svg>
+          </span>
+          <span class="lab">Today</span>
+        </div>
+        <div class="lrow">
+          <span class="ic" style="background:#FFD60A;color:var(--surface)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+          </span>
+          <span class="lab">Inbox</span>
+          <span class="num">3</span>
+        </div>
+
+        <div class="seclabel" style="margin-top:22px">Work</div>
+        <div class="lrow" style="margin-top:4px">
+          <span class="ic" style="background:#64D2FF;color:var(--surface)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
+          </span>
+          <span class="lab">Calendar</span>
+        </div>
+        <div class="lrow">
+          <span class="ic" style="background:#BF5AF2;color:var(--surface)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="5"/><polyline points="8.6 12.2 11 14.6 15.6 9.6"/></svg>
+          </span>
+          <span class="lab">Tasks</span>
+        </div>
+        <div class="lrow">
+          <span class="ic" style="background:#0A84FF;color:var(--surface)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="5" rx="1.5"/><path d="M4.5 9v9a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V9"/><line x1="10" y1="13.5" x2="14" y2="13.5"/></svg>
+          </span>
+          <span class="lab">Everything</span>
+        </div>
+
+        <div class="seclabel" style="margin-top:22px">Filters</div>
+        <div class="lrow" style="margin-top:4px">
+          <span class="ic neutral">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4H4l6 7.2V18l4 2.2v-9L20 4z"/></svg>
+          </span>
+          <span class="lab">Urgent</span>
+          <span class="ondot"></span>
+        </div>
+        <div class="lrow">
+          <span class="ic neutral">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4H4l6 7.2V18l4 2.2v-9L20 4z"/></svg>
+          </span>
+          <span class="lab">Waiting</span>
+        </div>
+        <div class="lrow">
+          <span class="ic neutral">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5.5" x2="12" y2="18.5"/><line x1="5.5" y1="12" x2="18.5" y2="12"/></svg>
+          </span>
+          <span class="lab quiet">New filter…</span>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+
+      <div class="bottomband">
+        <div class="lrow">
+          <span class="ic" style="background:#0A84FF;color:var(--surface)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="5.6"/></svg>
+          </span>
+          <span class="lab">Work</span>
+        </div>
+        <div class="lrow">
+          <span class="ic neutral">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="12" r="6.8"/><circle cx="12" cy="12" r="2"/><line x1="18.3" y1="12" x2="21" y2="12"/><line x1="16.45" y1="16.45" x2="18.36" y2="18.36"/><line x1="12" y1="18.3" x2="12" y2="21"/><line x1="7.55" y1="16.45" x2="5.64" y2="18.36"/><line x1="5.7" y1="12" x2="3" y2="12"/><line x1="7.55" y1="7.55" x2="5.64" y2="5.64"/><line x1="12" y1="5.7" x2="12" y2="3"/><line x1="16.45" y1="7.55" x2="18.36" y2="5.64"/></svg>
+          </span>
+          <span class="lab">Settings</span>
+        </div>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <div class="caption"><b>Library panel</b> — every view wears its own hue as a solid 28px chip with the glyph carved out of it (Calendar cyan, Tasks purple, Inbox capture-yellow); the active filter carries the accent on-dot; the Inbox count sits right as a tabular numeral; the workspace ring and Settings stay pinned below the hairline.</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- FRAME 2 — TODAY (today selected)                             -->
+  <!-- ============================================================ -->
+  <div class="unit">
+    <div class="frame">
+      <div class="statusbar">
+        <span class="time">9:41</span>
+        <span class="sys">
+          <svg width="17" height="11" viewBox="0 0 17 11"><g fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></g></svg>
+          <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 3.6a9.5 9.5 0 0 1 13 0"/><path d="M3.9 6.1a6 6 0 0 1 8.2 0"/><circle cx="8" cy="9.2" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.7" y="0.7" width="20.6" height="10.6" rx="3" stroke="currentColor" stroke-opacity=".4" stroke-width="1"/><rect x="2.2" y="2.2" width="14" height="7.6" rx="1.6" fill="currentColor"/><path d="M23.3 4v4a2.2 2.2 0 0 0 0-4z" fill="currentColor" fill-opacity=".4"/></svg>
+        </span>
+      </div>
+      <div class="featurehead">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+
+      <div class="content">
+        <div class="todayhead">
+          <span class="seclabel">Today · Mon Aug 11</span>
+          <span class="chip sm acc">Work</span>
+          <span class="left">7 left</span>
+        </div>
+
+        <div class="strip">
+          <div class="day sel"><span class="wd">M</span><span class="n">11</span></div>
+          <div class="day"><span class="wd">T</span><span class="n">12</span></div>
+          <div class="day"><span class="wd">W</span><span class="n">13</span></div>
+          <div class="day"><span class="wd">T</span><span class="n">14</span></div>
+          <div class="day"><span class="wd">F</span><span class="n">15</span></div>
+          <div class="day"><span class="wd">S</span><span class="n">16</span></div>
+          <div class="day"><span class="wd">S</span><span class="n">17</span></div>
+        </div>
+
+        <div class="lateband">
+          <span class="dot"></span><span class="word">LATE</span><span class="n">2 tasks</span>
+        </div>
+        <div class="latrow">
+          <span class="ring"></span>
+          <span class="title">Renew the passport</span>
+          <span class="due">Fri Aug 8</span>
+          <span class="actpill pill">Today</span>
+        </div>
+        <div class="latrow">
+          <span class="ring"></span>
+          <span class="title">Call the plumber</span>
+          <span class="due">Sun Aug 10</span>
+          <span class="actpill pill">Today</span>
+        </div>
+
+        <div class="seclabel" style="margin-top:16px">All-day</div>
+        <div class="allday">
+          <span class="adpill"><span class="ring compact"></span>Submit expense report</span>
+          <span class="adpill">Anna in town</span>
+        </div>
+
+        <div class="seclabel" style="margin-top:14px;margin-bottom:2px">Today <span class="count">5</span></div>
+
+        <div class="agrow dim">
+          <span class="time">08:30</span>
+          <span class="glyph" style="color:var(--t3)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          </span>
+          <div class="body"><span class="title">Morning run</span></div>
+        </div>
+        <div class="agrow dim">
+          <span class="time">09:30</span>
+          <span class="glyph"><span class="ring"></span></span>
+          <div class="body">
+            <span class="title">Email the invoices</span>
+            <span><span class="chip sm green"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 4.5 18.5 12 12 19.5 5.5 12z"/></svg>Finance</span></span>
+          </div>
+        </div>
+
+        <div class="nowline"><span class="stamp">14:32</span><span class="rule"></span></div>
+
+        <div class="agrow next">
+          <span class="time" style="color:var(--t2)">15:00</span>
+          <span class="glyph" style="color:var(--k-event)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
+          </span>
+          <div class="body">
+            <span class="title" style="font-weight:500">Design review</span>
+            <span><span class="chip sm cyan"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 4.5 18.5 12 12 19.5 5.5 12z"/></svg>Client A</span></span>
+          </div>
+        </div>
+
+        <div class="agrow">
+          <span class="time">16:30</span>
+          <span class="glyph"><span class="ring"></span></span>
+          <div class="body">
+            <span class="title">Prep the tax documents</span>
+            <span><span class="chip sm green"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 4.5 18.5 12 12 19.5 5.5 12z"/></svg>Finance</span></span>
+          </div>
+        </div>
+        <div class="agrow">
+          <span class="time">18:30</span>
+          <span class="glyph" style="color:var(--k-event)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
+          </span>
+          <div class="body"><span class="title">Dinner with Anna</span></div>
+        </div>
+
+        <div class="collapse">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+          2 done today
+        </div>
+
+        <div class="quickadd">
+          <span class="ghostring" style="margin:0 8px"></span>
+          <span class="ph">New for Mon Aug 11…</span>
+        </div>
+
+        <div class="captured">
+          <span class="n">3 captured today</span>
+          <span class="go">· Route them</span>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <div class="caption"><b>Today</b> — the LATE band runs on red logic (red dot, red day stamps, one-tap “Today” pills); the past dims above the red 14:32 now-line and the next item sits lit on a soft accent card; events carry the cyan calendar glyph, tasks their ring; counts (“7 left”, “5”) are right-aligned tabular numerals.</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- FRAME 3 — INBOX                                              -->
+  <!-- ============================================================ -->
+  <div class="unit">
+    <div class="frame">
+      <div class="statusbar">
+        <span class="time">9:41</span>
+        <span class="sys">
+          <svg width="17" height="11" viewBox="0 0 17 11"><g fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></g></svg>
+          <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 3.6a9.5 9.5 0 0 1 13 0"/><path d="M3.9 6.1a6 6 0 0 1 8.2 0"/><circle cx="8" cy="9.2" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.7" y="0.7" width="20.6" height="10.6" rx="3" stroke="currentColor" stroke-opacity=".4" stroke-width="1"/><rect x="2.2" y="2.2" width="14" height="7.6" rx="1.6" fill="currentColor"/><path d="M23.3 4v4a2.2 2.2 0 0 0 0-4z" fill="currentColor" fill-opacity=".4"/></svg>
+        </span>
+      </div>
+      <div class="featurehead">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+
+      <div class="content">
+        <div class="todayhead">
+          <span class="seclabel">Inbox</span>
+          <span class="chip sm neutral">all workspaces</span>
+        </div>
+
+        <div class="tiles">
+          <div class="tile">
+            <div class="lft">
+              <span class="ic" style="background:#FFD60A;color:var(--surface)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="12" cy="12" r="8" stroke-dasharray="2.4 4.2"/></svg>
+              </span>
+              <span class="lbl">Route</span>
+            </div>
+            <span class="big">3</span>
+          </div>
+          <div class="tile">
+            <div class="lft">
+              <span class="ic" style="background:#FFB340;color:var(--surface)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l2.1 6.9L21 12l-6.9 2.1L12 21l-2.1-6.9L3 12l6.9-2.1z"/></svg>
+              </span>
+              <span class="lbl">Suggested</span>
+            </div>
+            <span class="big">4</span>
+          </div>
+        </div>
+
+        <div class="seclabel" style="margin:12px 0 8px">Route <span class="count">3</span></div>
+
+        <div class="card">
+          <div class="toprow">
+            <span class="ctitle">Buy a dehumidifier for the basement</span>
+            <span class="stamp">09:12</span>
+          </div>
+          <div class="verbs">
+            <span class="verb"><span class="kc" style="background:#BF5AF2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="5"/><polyline points="8.6 12.2 11 14.6 15.6 9.6"/></svg></span>Task</span>
+            <span class="verb"><span class="kc" style="background:#64D2FF"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg></span>Event</span>
+            <span class="verb"><span class="kc" style="background:#0A84FF"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>Note</span>
+            <span class="verb"><span class="kc" style="background:#FF9F0A"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>Link</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="toprow">
+            <span class="ctitle">Call Tomek back about the kindergarten forms</span>
+            <span class="stamp">Sun Aug 10</span>
+          </div>
+          <div class="verbs">
+            <span class="verb"><span class="kc" style="background:#BF5AF2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="5"/><polyline points="8.6 12.2 11 14.6 15.6 9.6"/></svg></span>Task</span>
+            <span class="verb"><span class="kc" style="background:#64D2FF"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg></span>Event</span>
+            <span class="verb"><span class="kc" style="background:#0A84FF"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>Note</span>
+            <span class="verb"><span class="kc" style="background:#FF9F0A"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>Link</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="toprow">
+            <span class="ctitle">wired.com/story/heat-pump-guide</span>
+            <span class="stamp">Sat Aug 9</span>
+          </div>
+          <div class="verbs">
+            <span class="verb"><span class="kc" style="background:#BF5AF2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="5"/><polyline points="8.6 12.2 11 14.6 15.6 9.6"/></svg></span>Task</span>
+            <span class="verb"><span class="kc" style="background:#64D2FF"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg></span>Event</span>
+            <span class="verb"><span class="kc" style="background:#0A84FF"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>Note</span>
+            <span class="verb"><span class="kc" style="background:#FF9F0A"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>Link</span>
+          </div>
+        </div>
+
+        <div class="clerkhead">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="#FFB340"><path d="M12 3l2.1 6.9L21 12l-6.9 2.1L12 21l-2.1-6.9L3 12l6.9-2.1z"/></svg>
+          <span class="who">CLERK</span><span class="n">4</span>
+          <span class="actpill">Accept all</span>
+        </div>
+
+        <div class="sugg">
+          <div class="body">
+            <span><span class="diffchip"><span class="plus">+</span>project · Thesis</span></span>
+            <span class="reason">Same words as the Thesis notes</span>
+          </div>
+          <span class="roundbtn no"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></span>
+          <span class="roundbtn yes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12.5 10 17.5 19 7.5"/></svg></span>
+        </div>
+        <div class="sugg">
+          <div class="body">
+            <span><span class="diffchip"><span class="plus">+</span>due · Tue Aug 12</span></span>
+            <span class="reason">A date appears in the text</span>
+          </div>
+          <span class="roundbtn no"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></span>
+          <span class="roundbtn yes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12.5 10 17.5 19 7.5"/></svg></span>
+        </div>
+        <div class="sugg">
+          <div class="body">
+            <span><span class="diffchip"><span class="plus">+</span>person · Anna</span></span>
+            <span class="reason">Named in the first line</span>
+          </div>
+          <span class="roundbtn no"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></span>
+          <span class="roundbtn yes"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12.5 10 17.5 19 7.5"/></svg></span>
+        </div>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <div class="caption"><b>Inbox</b> — the section counts become two ClickUp-style stat tiles (Route in capture-yellow, Suggested in the clerk’s amber, glyphs carved out of the solid square); each capture is a raised, softly shadowed card whose four routing verbs lead with solid kind chips, glyph carved out; clerk suggestions keep diff chips with a green “+” and gain round ✕ / ✓ targets.</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- FRAME 4 — TODAY (Wednesday selected)                         -->
+  <!-- ============================================================ -->
+  <div class="unit">
+    <div class="frame">
+      <div class="statusbar">
+        <span class="time">9:41</span>
+        <span class="sys">
+          <svg width="17" height="11" viewBox="0 0 17 11"><g fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></g></svg>
+          <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 3.6a9.5 9.5 0 0 1 13 0"/><path d="M3.9 6.1a6 6 0 0 1 8.2 0"/><circle cx="8" cy="9.2" r="1.2" fill="currentColor" stroke="none"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.7" y="0.7" width="20.6" height="10.6" rx="3" stroke="currentColor" stroke-opacity=".4" stroke-width="1"/><rect x="2.2" y="2.2" width="14" height="7.6" rx="1.6" fill="currentColor"/><path d="M23.3 4v4a2.2 2.2 0 0 0 0-4z" fill="currentColor" fill-opacity=".4"/></svg>
+        </span>
+      </div>
+      <div class="featurehead">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+
+      <div class="content">
+        <div class="todayhead">
+          <span class="seclabel">Today · Mon Aug 11</span>
+          <span class="chip sm acc">Work</span>
+          <span class="left">2 left</span>
+        </div>
+
+        <div class="strip">
+          <div class="day today-ring"><span class="wd">M</span><span class="n">11</span></div>
+          <div class="day"><span class="wd">T</span><span class="n">12</span></div>
+          <div class="day sel"><span class="wd">W</span><span class="n">13</span></div>
+          <div class="day"><span class="wd">T</span><span class="n">14</span></div>
+          <div class="day"><span class="wd">F</span><span class="n">15</span></div>
+          <div class="day"><span class="wd">S</span><span class="n">16</span></div>
+          <div class="day"><span class="wd">S</span><span class="n">17</span></div>
+        </div>
+
+        <div class="lateband">
+          <span class="dot"></span><span class="word">LATE</span><span class="n">2 tasks</span>
+        </div>
+        <div class="latrow">
+          <span class="ring"></span>
+          <span class="title">Renew the passport</span>
+          <span class="due">Fri Aug 8</span>
+          <span class="actpill pill">Today</span>
+        </div>
+        <div class="latrow">
+          <span class="ring"></span>
+          <span class="title">Call the plumber</span>
+          <span class="due">Sun Aug 10</span>
+          <span class="actpill pill">Today</span>
+        </div>
+
+        <div class="seclabel" style="margin-top:16px">Wed Aug 13</div>
+        <div class="emptyhint">Nothing scheduled</div>
+
+        <div class="quickadd" style="border-top:1px solid var(--hairline-soft)">
+          <span class="ghostring" style="margin:0 8px"></span>
+          <span class="ph">New for Wed Aug 13…</span>
+        </div>
+
+        <div class="captured">
+          <span class="n">3 captured today</span>
+          <span class="go">· Route them</span>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+      <div class="homebar"></div>
+    </div>
+    <div class="caption"><b>Today, Wednesday selected</b> — selection fills the strip tile while today keeps its accent ring; the LATE band stays put in red logic; an empty day says it in two words; the quick-add ghost row inherits the selected day.</div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -13,7 +13,27 @@
 uint64_t liv_capture_at(const char *path, const char *text);
 
 /* Everything the window renders, as one JSON document.
-   NULL on failure (probe to learn why). Free with liv_string_free. */
+   NULL on failure (probe to learn why). Free with liv_string_free.
+
+   Among its keys, `note_tasks` is a PROJECTION (phase 3): the OPEN
+   checkbox lines inside live notes,
+     [{"entity":7,"line":1,"text":"call the surveyor","indent":0}, …]
+   derived on read and stored nowhere — no entity is created, no cell is
+   written. `line` is the line index in the shell's own buffer numbering
+   (a paragraph break is a newline; a leading break is not one), so a
+   shell can toggle the line through liv_set_content_at without a second
+   scan. Trashed, archived and TEMPLATE notes are excluded, as are
+   task/event-typed entities (their own body lines would double-count in
+   the view that already lists them). Both authored forms are seen: the
+   core's structural Block::Task and a literal "- [ ] " prefix in a Body
+   paragraph.
+
+   Each entity row's `title` is its DISPLAY NAME: its name cell, else the
+   first non-empty line of its content with the block marker taken off,
+   else "#<id>". Changed 2026-08-07 (owner) — it used to be a whole-body
+   summary, so a multi-paragraph note reached every list as one run-on
+   string. Test: services/tests/tasks.rs
+   display_name_is_the_first_line_not_the_whole_body. */
 char *liv_snapshot(const char *path);
 
 /* The same snapshot over a caller-chosen occurrence window: `dated` is

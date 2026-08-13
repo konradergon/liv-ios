@@ -45,6 +45,12 @@ pub struct Store {
 
     /// Derived — rebuildable from truth at any time.
     backlinks: HashMap<Id, Vec<Backlink>>,
+    /// Who carries a NAME cell with exactly this text — derived, like
+    /// backlinks. Name lookup used to be a full-store query; with ~197
+    /// resolution sites above the core, that shape made the snapshot
+    /// quadratic twice before this index existed (T1, owner 2026-08-09).
+    /// Unfiltered on purpose: trash and plumbing are read-time concerns.
+    names: HashMap<String, Vec<Id>>,
 
     /// The disk truth (milestone 2 makes this the append-only log on disk).
     /// Private, so the only way it grows is `commit`: append-only is a fact,
@@ -138,6 +144,25 @@ impl Store {
     /// scan only when a measured query hurts.
     pub fn entities(&self) -> impl Iterator<Item = &Entity> {
         self.entities.values()
+    }
+
+    /// The entities a USER can see: not trashed, not plumbing. Almost
+    /// every projection wants exactly this, and each used to write the
+    /// two filters by hand — forgetting the plumbing one once let the
+    /// starter types leak into Everything as ordinary rows and damaged
+    /// 9 of the owner's 20 early boxes (T4, 2026-08-09). Projections
+    /// that genuinely want plumbing say so by using `entities()`.
+    pub fn user_entities(&self) -> impl Iterator<Item = &Entity> {
+        self.entities.values().filter(|e| {
+            !e.trashed && !e.has(props::WORKING, &crate::value::Value::Bool(true))
+        })
+    }
+
+    /// Every entity carrying a NAME cell with exactly this text.
+    /// Unfiltered: the caller decides about trash, plumbing and kinds —
+    /// the index only answers "who claims this name", in id order.
+    pub fn named(&self, name: &str) -> &[Id] {
+        self.names.get(name).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Everything pointing at this entity, through any property or span —
@@ -454,6 +479,11 @@ impl Store {
                         property: cell.property,
                     });
                 }
+                if cell.property == props::NAME {
+                    if let crate::value::Value::Text(name) = &cell.value {
+                        self.names.entry(name.clone()).or_default().push(*entity);
+                    }
+                }
                 Ok(())
             }
             Command::RemoveCell { entity, cell } => {
@@ -477,6 +507,15 @@ impl Store {
                         };
                         if let Some(i) = links.iter().position(|l| *l == link) {
                             links.remove(i);
+                        }
+                    }
+                }
+                if removed.property == props::NAME {
+                    if let crate::value::Value::Text(name) = &removed.value {
+                        if let Some(ids) = self.names.get_mut(name) {
+                            if let Some(i) = ids.iter().position(|id| id == entity) {
+                                ids.remove(i);
+                            }
                         }
                     }
                 }

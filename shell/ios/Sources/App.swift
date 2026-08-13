@@ -38,6 +38,34 @@ struct LivApp: App {
             print("TPL-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("TPL-SELFCHECK \($0)") }
         }
+        // The day grid's clock arithmetic (Calendar.swift), same door:
+        // `-calendar.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "calendar.selfcheck") {
+            let failures = livCalendarSelfCheck()
+            print("CAL-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("CAL-SELFCHECK \($0)") }
+        }
+        // Share/Export's markdown + filename shaping, same door:
+        // `-share.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "share.selfcheck") {
+            let failures = livShareSelfCheck()
+            print("SHARE-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("SHARE-SELFCHECK \($0)") }
+        }
+        // The inactive-tab rule (Tabs.swift), same door:
+        // `-tabs.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "tabs.selfcheck") {
+            let failures = livTabsSelfCheck()
+            print("TABS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("TABS-SELFCHECK \($0)") }
+        }
+        // The icon language (Glyph.swift) — one kind per row, one colour
+        // per kind, every drawing inside its box: `-glyph.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "glyph.selfcheck") {
+            let failures = livGlyphSelfCheck()
+            print("GLYPH-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("GLYPH-SELFCHECK \($0)") }
+        }
         // The markdown scan + edit operations (EditorStyle.swift), same
         // door: `simctl launch … -editor.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "editor.selfcheck") {
@@ -59,10 +87,14 @@ struct LivApp: App {
 }
 
 struct RootView: View {
+    /// Dark, light, or follow the system (Settings → Appearance).
+    @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
+
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var keyboard = KeyboardWatch()
     @State private var bootApplied = false
     /// The furnishing pass runs once per launch, on the FIRST decoded
     /// snapshot. Cross-launch idempotence is Furnish's presence guards,
@@ -77,36 +109,65 @@ struct RootView: View {
             // ••• (DeskHost). The body is the desk, edge to edge.
             bodyView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // While the menu is up, a tap anywhere here only dismisses it
-            // (the catcher below). Assistive tech has to be told separately:
-            // occlusion hides a view from eyes and from touch, never from
-            // VoiceOver, so without this a swipe walks onto controls the
-            // panel covers and activating them really fires.
-            .accessibilityHidden(desk.gridShown)
 
-            BottomBar()
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
-                .accessibilityHidden(desk.gridShown)
-
-            // The features menu is drawn AFTER the bar, so it covers the
-            // bar it was summoned from (owner, 2026-07-29). Its own `v`
-            // button lands where the `^` was.
-            if desk.gridShown {
-                // An invisible tap-away catcher, not a dimming scrim.
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(LivMotion.nav) { desk.gridShown = false }
-                    }
-                FeatureGrid()
-                    .transition(.move(edge: .bottom))
+            // The bar retires while a PANEL is up — RootView draws it
+            // after the desk, so left alone it would float over the
+            // panel it should be behind. It also retires while a
+            // keyboard is up: keyboard avoidance would park it above the
+            // editor's formatting row, two bars deep (owner,
+            // 2026-08-02).
+            //
+            // It does NOT retire for the New Tab chooser any more
+            // (owner, 2026-08-10). The chooser had a bar when it was the
+            // empty desk's body and none when summoned by `+` — the same
+            // screen, furnished two ways depending on how you got there.
+            // Drawing over the chooser is what we want: the bar is the
+            // way back to your tabs. The pill follows the bar, since it
+            // is positioned against it.
+            if let id = desk.minimisedRecord, !desk.libraryShown, !keyboard.up {
+                MinimisedRecordPill(id: id)
+                    .padding(.bottom, 62)
+                    .zIndex(2)
+            }
+            if !desk.libraryShown && !desk.inspectorShown && !keyboard.up {
+                BottomBar()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    // The extra offset carries it past the bottom safe
+                    // area; the z keeps the exit above the opaque desk
+                    // (audit, 2026-08-01). Both are pure translations.
+                    .transition(.move(edge: .bottom).combined(with: .offset(y: 40)))
+                    .zIndex(1)
             }
         }
         .background(LivTheme.canvas.ignoresSafeArea())
-        // A generic dark theme, regardless of the system setting (owner,
-        // 2026-07-31 — the lake-green identity is retired).
-        .preferredColorScheme(.dark)
+        // Only when nothing covers the desk — see RecordCardHost.
+        .recordCardHost(
+            active: desk.featureShown == nil && !desk.searchShown
+                && !desk.switcherShown && !desk.cameraShown)
+        // Set on the WINDOW, not with preferredColorScheme. A sheet is a
+        // separate presentation with its own root, so it never inherited
+        // the scheme: flipping the appearance FROM Settings changed the
+        // whole app except the Settings sheet you were standing in, until
+        // you closed it (owner, 2026-08-08). The window override reaches
+        // every presentation there is.
+        .onAppear {
+            (LivAppearance(rawValue: appearance) ?? .dark).applyToWindows()
+            // The tab plane learns what an id IS (Option C). Reading the
+            // live snapshot each time means the answer is never stale —
+            // deciding once at open() would race the refresh that follows
+            // a creation (Box.actId calls back before the snapshot moves).
+            desk.shapeOf = { [weak box] id in TabShape.of(box?.entity(id)) }
+        }
+        // Saved tab sets from before Option C may hold tasks. The first
+        // snapshot is the first moment we can tell; after that they are
+        // closed quietly (owner, 2026-08-08).
+        .onReceive(box.$snap.compactMap { $0 }.prefix(1)) { _ in
+            desk.pruneRecordTabs()
+        }
+        .onChange(of: appearance) { _, fresh in
+            (LivAppearance(rawValue: fresh) ?? .dark).applyToWindows()
+        }
         .fullScreenCover(item: $desk.featureShown) { feature in
             FeatureWindow(feature: feature)
                 .environmentObject(box)
@@ -125,6 +186,13 @@ struct RootView: View {
                 .environmentObject(box)
                 .environmentObject(desk)
                 .environmentObject(workspaces)
+                // Search can open a task too, and it is a cover.
+                .recordCardHost(active: true)
+                .overlay(alignment: .bottom) {
+                    if let id = desk.minimisedRecord {
+                        MinimisedRecordPill(id: id).padding(.bottom, 10)
+                    }
+                }
         }
         .fullScreenCover(isPresented: $desk.cameraShown) {
             CameraFlow(onDone: { ids in
@@ -146,7 +214,9 @@ struct RootView: View {
             bindOutboxTitles()
             // A tapped notification lands as a desk tab (design/ios.md §3);
             // Notify parks a cold-launch tap until this wiring exists.
-            Notify.shared.onOpen = { [weak desk] id in desk?.open(id) }
+            Notify.shared.onOpen = { [weak desk] id in
+                desk?.open(id)
+            }
         }
         .onReceive(box.$snap) { snap in
             // Rebind on every snapshot: assigning the resolver republishes the
@@ -165,7 +235,12 @@ struct RootView: View {
             }
             guard !bootApplied else { return }
             bootApplied = true
-            applyBootState(snap)
+            // One hop later: `workspaces.apply` above can change activeId,
+            // whose onChange runs desk.adopt() — which clears featureShown
+            // and every overlay. Applied inline, a boot state was wiped a
+            // frame after it was set (found live, 2026-08-05; it silently
+            // broke -desk.boot for every feature view).
+            DispatchQueue.main.async { applyBootState(snap) }
         }
         // One tab plane, swapped per workspace — the desk saves the set it
         // is leaving and restores the one it is joining.
@@ -175,7 +250,7 @@ struct RootView: View {
         .overlay(alignment: .top) {
             if let fault = box.boxFault {
                 Text(fault)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.onAccent)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(LivTheme.red, in: Capsule())
@@ -190,23 +265,14 @@ struct RootView: View {
     private func bindOutboxTitles() {
         Outbox.shared.titleResolver = { [weak box] id in
             guard let row = box?.entity(id) else { return nil }
-            // Markers off for display (livDisplayTitle) — ledger rows and
-            // scrap titles must not read "# Trip planning".
-            if let name = row.title, !name.isEmpty {
-                let clean = livDisplayTitle(name)
-                return clean.isEmpty ? name : clean
-            }
-            let first = row.cells?.first { $0.property == "content" }?.value?
-                .split(separator: "\n").first.map(String.init)
-            guard let first else { return nil }
-            let clean = livDisplayTitle(first)
-            return clean.isEmpty ? first : clean
+            return livRowTitle(row)
         }
     }
 
     /// Rehearsal hook (headless screenshots, the LIV_BOX_PATH spirit):
     /// `simctl launch … app.liv.ios -desk.boot <state>` where state is one of
-    /// grid | tasks | inbox | desk | newtab | switcher. Launch args of the
+    /// library | search | today | tasks | inbox | calendar | everything |
+    /// desk | newtab | switcher. Launch args of the
     /// form `-key value` land in UserDefaults automatically.
     private func applyBootState(_ snap: Snapshot) {
         guard let state = UserDefaults.standard.string(forKey: "desk.boot") else { return }
@@ -217,15 +283,37 @@ struct RootView: View {
             .sorted { $0.id > $1.id }
             .map(\.id)
         switch state {
-        case "grid": desk.gridShown = true
+        case "grid", "library": desk.libraryShown = true
         case "search": desk.searchShown = true
         case "today": desk.featureShown = .today
         case "tasks": desk.featureShown = .tasks
         case "inbox": desk.featureShown = .inbox
+        case "calendar": desk.featureShown = .calendar
+        case "everything": desk.featureShown = .everything
         case "desk": if let id = newest.first { desk.open(id) }
+        // Open one NAMED entity, for looking at a specific note without
+        // driving the whole UI to reach it: `-desk.boot open -desk.open
+        // <substring of its title>`.
+        case "open":
+            let needle = (UserDefaults.standard.string(forKey: "desk.open") ?? "").lowercased()
+            if !needle.isEmpty,
+                let hit = newest.first(where: {
+                    (box.entity($0)?.title ?? "").lowercased().contains(needle)
+                })
+            {
+                desk.open(hit)
+            }
+        // rev 6: the chooser overlay (or the empty desk's own body).
         case "newtab": desk.newTab()
         case "switcher":
             for id in newest.prefix(3).reversed() { desk.open(id) }
+            desk.switcherShown = true
+        // Rehearsal for the Inactive list: open a handful of tabs and
+        // BACKDATE all but the active one, because nobody can wait three
+        // weeks to look at a screen (2026-08-10).
+        case "inactive":
+            for id in newest.prefix(7).reversed() { desk.open(id) }
+            desk.backdateTabsForRehearsal(days: 30)
             desk.switcherShown = true
         default: break
         }
@@ -264,6 +352,16 @@ struct FeatureWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(LivTheme.canvas.ignoresSafeArea())
+        // A feature window is a full-screen cover, and UIKit allows one
+        // presentation per presenter — so the desk behind cannot show
+        // the card while this is up. Tapping a task inside Tasks must
+        // edit it HERE (owner, 2026-08-08).
+        .recordCardHost(active: true)
+        .overlay(alignment: .bottom) {
+            if let id = desk.minimisedRecord {
+                MinimisedRecordPill(id: id).padding(.bottom, 10)
+            }
+        }
     }
 
     /// Same 40pt band as TopBar, in the same place, so the screen swaps
@@ -281,7 +379,7 @@ struct FeatureWindow: View {
         HStack(spacing: 0) {
             Button { desk.featureShown = nil } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: LivType.strong, weight: .semibold))
                     .foregroundStyle(LivTheme.text2)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())

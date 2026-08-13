@@ -19,6 +19,9 @@ struct SearchView: View {
     @State private var query = ""
     /// Raw ranked ids from the core, before the workspace lens.
     @State private var rawHits: [UInt64] = []
+    /// How many matched in total. The core sends the first 200; without
+    /// this a query matching 1,800 things looked like it matched 200.
+    @State private var totalHits = 0
     /// Monotonic ticket: a stale debounce or a stale result must drop.
     @State private var seq = 0
     @FocusState private var focused: Bool
@@ -49,12 +52,16 @@ struct SearchView: View {
         }
     }
 
-    private var groups: [(kind: String, ids: [UInt64])] {
-        var order: [String] = []
-        var byKind: [String: [UInt64]] = [:]
+    /// Grouped by KIND — the app's one classifier, so a row's group, its
+    /// colour and its glyph can never disagree. This used to read
+    /// `kinds.first` on its own, which put a task filed under "note" in
+    /// the wrong group.
+    private var groups: [(kind: LivKind, ids: [UInt64])] {
+        var order: [LivKind] = []
+        var byKind: [LivKind: [UInt64]] = [:]
         for id in hits {
             guard let row = box.entity(id) else { continue }
-            let kind = row.kinds?.first ?? ""
+            let kind = LivKind.of(row)
             if byKind[kind] == nil { order.append(kind) }
             byKind[kind, default: []].append(id)
         }
@@ -63,14 +70,16 @@ struct SearchView: View {
             .map { (kind: $0, ids: byKind[$0] ?? []) }
     }
 
-    private static func rank(_ kind: String) -> (Int, String) {
+    private static func rank(_ kind: LivKind) -> Int {
         switch kind {
-        case "task": return (0, "")
-        case "event": return (1, "")
-        case "note": return (2, "")
-        case "file": return (3, "")
-        case "": return (5, "")
-        default: return (4, kind)
+        case .task: return 0
+        case .event: return 1
+        case .note: return 2
+        case .file: return 3
+        case .person: return 4
+        case .link: return 5
+        case .template: return 6
+        case .capture: return 7
         }
     }
 
@@ -82,7 +91,7 @@ struct SearchView: View {
                     desk.searchShown = false
                 } label: {
                     Text("Cancel")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.accent)
                         .contentShape(Rectangle())
                 }
@@ -112,6 +121,13 @@ struct SearchView: View {
                         .padding(.horizontal, 16)
                 }
             } else {
+                if totalHits > rawHits.count {
+                    Text("Showing \(rawHits.count) of \(totalHits) — narrow the search")
+                        .font(.system(size: LivType.body).monospacedDigit())
+                        .foregroundStyle(LivTheme.text3)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 4)
+                }
                 List {
                     ForEach(groups, id: \.kind) { group in
                         Section {
@@ -136,8 +152,9 @@ struct SearchView: View {
                             }
                         } header: {
                             SectionLabel(
-                                group.kind.isEmpty ? "scraps" : group.kind,
-                                trailing: "\(group.ids.count)"
+                                group.kind == .capture ? "captures" : group.kind.wire,
+                                trailing: "\(group.ids.count)",
+                                dot: group.kind.color
                             )
                             .textCase(nil)
                             .padding(.horizontal, 16)
@@ -182,7 +199,7 @@ struct SearchView: View {
         Button {
             create()
         } label: {
-            SearchCreateRow(query: trimmed, stampHint: workspaces.stampHint)
+            SearchCreateRow(query: trimmed)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -204,10 +221,10 @@ struct SearchView: View {
     private var pill: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
             TextField("Search the box", text: $query)
-                .font(.system(size: 13))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
                 .focused($focused)
                 .submitLabel(.search)
@@ -219,7 +236,7 @@ struct SearchView: View {
                     query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
+                        .font(.system(size: LivType.body))
                         .foregroundStyle(LivTheme.muted)
                 }
                 .buttonStyle(.plain)
@@ -253,9 +270,10 @@ struct SearchView: View {
     /// results both drop.
     private func fire(_ ticket: Int, _ q: String) {
         guard ticket == seq else { return }
-        box.search(q) { ids in
+        box.search(q) { ids, total in
             guard ticket == seq else { return }
             rawHits = ids
+            totalHits = total
         }
     }
 }
@@ -265,7 +283,6 @@ struct SearchView: View {
 private struct SearchCreateRow: View {
     let query: String
     /// The active workspace's stamp, promised before the write.
-    let stampHint: String
 
     var body: some View {
         HStack(spacing: 8) {
@@ -274,21 +291,15 @@ private struct SearchCreateRow: View {
                 .frame(width: 24, height: 24)
                 .overlay(
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: LivType.label, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                 )
             (Text("Create \"") + Text(query).fontWeight(.semibold)
                 + Text("\""))
-                .font(.system(size: 13))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.accent)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if !stampHint.isEmpty {
-                Text(stampHint)
-                    .font(.system(size: 10))
-                    .foregroundStyle(LivTheme.muted)
-                    .lineLimit(1)
-            }
         }
         .frame(minHeight: 42)
         .accessibilityLabel("Create \(query)")
@@ -301,15 +312,17 @@ private struct SearchHitRow: View {
     let row: EntityRow
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(row.title ?? "#\(row.id)")
-                .font(.system(size: 13))
+        HStack(spacing: 9) {
+            // What the hit IS, before what it says.
+            IconChip(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 24)
+            Text(livRowTitle(row))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let due = row.due {
                 Text(dueLabel(due))
-                    .font(.system(size: 10.5).monospacedDigit())
+                    .font(.system(size: LivType.caption).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)
             }
         }

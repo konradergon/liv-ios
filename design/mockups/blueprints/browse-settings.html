@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liv blueprint — browse &amp; settings</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #0d0d0e; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    color: #F5F5F7;
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
+    gap: 40px; padding: 44px 28px 60px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .unit { display: flex; flex-direction: column; align-items: center; }
+  .caption {
+    font-size: 12px; color: #8E8E93; margin-top: 12px; max-width: 390px;
+    text-align: center; line-height: 1.5;
+  }
+  .phone {
+    width: 390px; height: 844px; border-radius: 30px; overflow: hidden;
+    background: #161618; border: 1px solid rgba(255,255,255,.08);
+    position: relative; display: flex; flex-direction: column; flex: none;
+  }
+
+  /* ---------- shared bits ---------- */
+  .statusbar {
+    height: 44px; flex: none; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 24px 0 30px;
+  }
+  .statusbar .time { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  .statusbar svg { display: block; }
+  /* carved icon chips: solid category color, glyph punched out in the surface beneath
+     (--carve: #161618 on canvas, #1E1E20 on cards/sheets) */
+  .icochip {
+    width: 28px; height: 28px; border-radius: 8px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--c); color: var(--carve, #161618);
+  }
+  .icochip svg, .inlineico svg { width: 16px; height: 16px; display: block; }
+  .icochip.neutral { background: #232326; color: #C9C9CE; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px;
+    padding: 0 11px; border-radius: 999px; font-size: 12px; font-weight: 500;
+    background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c);
+    white-space: nowrap; flex: none;
+  }
+  .chip.neutral { background: #232326; color: #C9C9CE; }
+  .chip.sm { height: 22px; padding: 0 9px; font-size: 11px; gap: 4px; }
+  .chip.sm .swatch { width: 11px; height: 11px; border-radius: 3.5px; }
+  .chip.sm svg { width: 11px; height: 11px; display: block; }
+  .seg { display: flex; gap: 8px; }
+  .seg .pill {
+    flex: 1; height: 32px; border-radius: 999px; display: flex; align-items: center;
+    justify-content: center; font-size: 13px; color: #9A9AA2;
+    border: 1px solid rgba(255,255,255,.10); background: transparent;
+  }
+  .seg .pill.on {
+    background: rgba(10,132,255,.16); color: #0A84FF; font-weight: 600;
+    border-color: rgba(10,132,255,.35);
+  }
+  .sectionlabel {
+    font-size: 11px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase;
+    color: #9A9AA2;
+  }
+  .toggle {
+    width: 44px; height: 26px; border-radius: 999px; background: #0A84FF;
+    position: relative; flex: none;
+  }
+  .toggle::after {
+    content: ""; position: absolute; top: 2px; right: 2px; width: 22px; height: 22px;
+    border-radius: 50%; background: #fff;
+  }
+  .mono { font-family: ui-monospaced, "SF Mono", Menlo, monospace; }
+  .tab { font-variant-numeric: tabular-nums; }
+
+  /* ---------- sheet scaffolding ---------- */
+  .dimmed { position: absolute; inset: 0; background: #161618; }
+  .dimmed .ghost { background: #232326; border-radius: 7px; }
+  .dimmed::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: #1E1E20; border-radius: 22px 22px 0 0;
+    box-shadow: 0 -10px 34px rgba(0,0,0,.45);
+    padding: 8px 16px 16px; display: flex; flex-direction: column;
+    --carve: #1E1E20;
+  }
+  .grabber {
+    width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.18);
+    margin: 0 auto 14px; flex: none;
+  }
+
+  /* ---------- everything ---------- */
+  .evhead { display: flex; align-items: baseline; gap: 10px; padding: 8px 16px 12px; }
+  .evhead h1 { font-size: 22px; font-weight: 600; letter-spacing: .1px; }
+  .evhead .count { margin-left: auto; font-size: 13px; color: #9A9AA2; }
+  .evseg { padding: 0 16px 6px; }
+  .rows { padding: 4px 16px 0; overflow: hidden; }
+  .row {
+    display: flex; align-items: center; gap: 12px; min-height: 54px;
+    padding: 9px 0; position: relative;
+  }
+  .row + .row::before {
+    content: ""; position: absolute; top: 0; left: 40px; right: 0; height: 1px;
+    background: rgba(255,255,255,.07);
+  }
+  .row .mid { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .row .title { font-size: 16px; font-weight: 500; color: #F5F5F7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .chips { display: flex; gap: 6px; }
+  .row .when { margin-left: auto; font-size: 13px; color: #9A9AA2; flex: none; align-self: center; }
+
+  /* ---------- workspace switcher ---------- */
+  .wsrow { display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 6px 0; position: relative; }
+  .wsrow + .wsrow::before, .addrow::before {
+    content: ""; position: absolute; top: 0; left: 40px; right: 0; height: 1px;
+    background: rgba(255,255,255,.07);
+  }
+  .wsrow .name { font-size: 15px; color: #F5F5F7; }
+  .wsrow .chips { display: flex; gap: 5px; margin-top: 4px; }
+  .wsrow.active .name { color: #0A84FF; font-weight: 600; }
+  .wsrow .check { margin-left: auto; color: #0A84FF; flex: none; display: flex; }
+  .wsrow .check svg { width: 16px; height: 16px; }
+  .addrow {
+    display: flex; align-items: center; gap: 12px; min-height: 50px; position: relative;
+    color: #0A84FF; font-size: 15px; font-weight: 500;
+  }
+  .addrow .plus { width: 28px; display: flex; justify-content: center; }
+  .addrow .plus svg { width: 15px; height: 15px; }
+
+  /* ---------- new workspace form ---------- */
+  .field {
+    height: 44px; border-radius: 12px; background: #232326;
+    border: 1px solid rgba(255,255,255,.10); display: flex; align-items: center;
+    padding: 0 14px; font-size: 15px; color: #F5F5F7;
+  }
+  .pickrow {
+    display: flex; align-items: center; gap: 8px; height: 54px; position: relative;
+  }
+  .pickrow + .pickrow::before, .foldrow::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: rgba(255,255,255,.07);
+  }
+  .pickrow .lab { font-size: 15px; color: #F5F5F7; }
+  .pickrow .any { margin-left: auto; font-size: 15px; color: #9A9AA2; }
+  .pickrow .val { margin-left: auto; }
+  .pickrow .chev, .foldrow .chev { color: #9A9AA2; display: flex; flex: none; }
+  .pickrow .chev svg, .foldrow .chev svg { width: 13px; height: 13px; }
+  .foldrow { display: flex; align-items: center; height: 44px; position: relative; }
+  .foldrow .lab { font-size: 13px; color: #9A9AA2; }
+  .foldrow .chev { margin-left: auto; }
+  .formbtns { display: flex; align-items: center; justify-content: flex-end; gap: 18px; padding-top: 10px; }
+  .btn-quiet { font-size: 15px; color: #9A9AA2; }
+  .btn-fill {
+    height: 32px; padding: 0 18px; border-radius: 999px; background: #0A84FF;
+    color: #fff; font-size: 15px; font-weight: 600; display: flex; align-items: center;
+  }
+  .swatch { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+
+  /* ---------- settings ---------- */
+  .card {
+    background: #232326; border: 1px solid rgba(255,255,255,.10); border-radius: 12px;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 11px; flex: none;
+  }
+  .cardhead { display: flex; align-items: center; gap: 11px; }
+  .cardhead .lab { font-size: 15px; font-weight: 600; color: #F5F5F7; }
+  .cardhead .chev { margin-left: auto; color: #9A9AA2; display: flex; }
+  .cardhead .chev svg { width: 13px; height: 13px; }
+  .cardhead .toggle { margin-left: auto; }
+  .card .seg .pill { background: #1A1A1C; border-color: rgba(255,255,255,.09); }
+  .card .seg .pill.on { background: rgba(10,132,255,.16); border-color: rgba(10,132,255,.35); }
+  .fieldchips { display: flex; gap: 6px; overflow: hidden; }
+  .addfield { display: flex; align-items: center; gap: 8px; color: #0A84FF; font-size: 15px; font-weight: 500; }
+  .addfield svg { width: 13px; height: 13px; }
+
+  /* ---------- file tab ---------- */
+  .filehead { padding: 14px 16px 0; }
+  .filehead h1 { font-size: 26px; font-weight: 600; line-height: 1.2; }
+  .filemeta { display: flex; align-items: center; gap: 10px; padding: 12px 16px 14px; }
+  .filemeta .openin { margin-left: auto; font-size: 15px; font-weight: 500; color: #0A84FF; }
+  .page {
+    margin: 0 16px; flex: 1; background: #FDFDFD; border-radius: 8px 8px 0 0;
+    box-shadow: 0 4px 18px rgba(0,0,0,.35); padding: 34px 30px; overflow: hidden;
+  }
+  .page .h { height: 11px; border-radius: 3px; background: #9d9da4; width: 62%; margin-bottom: 22px; }
+  .page .l { height: 6px; border-radius: 3px; background: #dcdce0; margin-bottom: 10px; }
+  .page .gap { height: 14px; }
+  .page .box { border: 1px solid #e2e2e6; border-radius: 6px; padding: 14px 14px 4px; margin: 8px 0 18px; }
+  .page .sig { height: 1px; background: #b9b9be; width: 42%; margin: 30px 0 8px; }
+  .floatbar {
+    position: absolute; left: 16px; right: 16px; bottom: 12px; height: 54px;
+    border-radius: 999px; background: #1E1E20; border: 1px solid rgba(255,255,255,.10);
+    box-shadow: 0 8px 24px rgba(0,0,0,.45);
+    display: flex; align-items: center; padding: 0 8px;
+  }
+  .floatbar .slot { flex: 1; display: flex; align-items: center; justify-content: center; color: #C9C9CE; }
+  .floatbar .slot.off { color: rgba(142,142,147,.45); }
+  .floatbar .slot svg { width: 20px; height: 20px; }
+  .tabcount {
+    width: 21px; height: 21px; border-radius: 6px; border: 1.5px solid #C9C9CE;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: #C9C9CE;
+  }
+</style>
+</head>
+<body>
+
+<!-- =============================================== icon defs -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-grid" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.75" y="3.75" width="7" height="7" rx="2"/><rect x="13.25" y="3.75" width="7" height="7" rx="2"/>
+      <rect x="3.75" y="13.25" width="7" height="7" rx="2"/><rect x="13.25" y="13.25" width="7" height="7" rx="2"/>
+    </g>
+    <g id="i-ring" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7.2"/></g>
+    <g id="i-note" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4.75" y="3.5" width="14.5" height="17" rx="2.5"/><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4.5"/>
+    </g>
+    <g id="i-task" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8.25"/><path d="M8.4 12.2l2.5 2.5 4.7-5"/>
+    </g>
+    <g id="i-event" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.75h17M8 3v4M16 3v4"/>
+    </g>
+    <g id="i-doc" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6.5 3.5H13l5.5 5.5v9.5a2 2 0 01-2 2h-10a2 2 0 01-2-2v-13a2 2 0 012-2z"/><path d="M13 3.5V9h5.5"/>
+    </g>
+    <g id="i-sheet" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.75" y="4.25" width="16.5" height="15.5" rx="2.2"/><path d="M3.75 10h16.5M10.25 10v9.75"/>
+    </g>
+    <g id="i-capture" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="7.6" stroke-dasharray="2.2 3.6"/>
+    </g>
+    <g id="i-person" fill="currentColor">
+      <circle cx="12" cy="8.1" r="3.9"/>
+      <path d="M12 13.8c-4.5 0-7.5 2.6-7.5 5.7 0 .5.4.9.9.9h13.2c.5 0 .9-.4.9-.9 0-3.1-3-5.7-7.5-5.7z"/>
+    </g>
+    <g id="i-tagdot" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 5h6.2c.53 0 1.04.21 1.41.59l6.8 6.8a2 2 0 010 2.83l-3.7 3.7a2 2 0 01-2.83 0l-6.8-6.8A2 2 0 015 10.7V6.5A1.5 1.5 0 016.5 5z" transform="translate(-.5 -.3)"/>
+      <circle cx="8.4" cy="8.5" r="1.7" fill="currentColor" stroke="none"/>
+    </g>
+    <g id="i-moon" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19.6 14.2A8.2 8.2 0 019.8 4.4a8.2 8.2 0 109.8 9.8z"/>
+    </g>
+    <g id="i-spark" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+      <path d="M12 4.5l1.7 4.3 4.3 1.7-4.3 1.7L12 16.5l-1.7-4.3L6 10.5l4.3-1.7z"/>
+      <path d="M18 16.5v3.5M16.25 18.25h3.5" stroke-linecap="round"/>
+    </g>
+    <g id="i-bell" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6.2 16.2v-5.4a5.8 5.8 0 0111.6 0v5.4l1.7 2.6H4.5z"/><path d="M10 21.2a2.3 2.3 0 004 0"/>
+    </g>
+    <g id="i-tabs" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+      <rect x="4" y="4" width="11" height="11" rx="2.2"/><path d="M9 19.5h8.5a2 2 0 002-2V9"/>
+    </g>
+    <g id="i-sliders" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M4 7.2h16M4 12h16M4 16.8h16"/>
+      <circle cx="9.2" cy="7.2" r="1.9" fill="currentColor"/><circle cx="15" cy="12" r="1.9" fill="currentColor"/><circle cx="7.4" cy="16.8" r="1.9" fill="currentColor"/>
+    </g>
+    <g id="i-search" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+      <circle cx="11" cy="11" r="5.6"/><path d="M15.3 15.3L19.2 19.2"/>
+    </g>
+    <g id="i-back" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5L8 12l6.5 6.5"/></g>
+    <g id="i-fwd" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 5.5L16 12l-6.5 6.5"/></g>
+    <g id="i-plus" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></g>
+    <g id="i-check" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.8l4.4 4.4L19 7.4"/></g>
+    <g id="i-chevr" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5.5l6.5 6.5L9 18.5"/></g>
+    <g id="i-chevd" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 9.5l6.5 6.5 6.5-6.5"/></g>
+    <g id="i-props">
+      <circle cx="8.4" cy="9.6" r="4.1" fill="none" stroke="#30D158" stroke-width="1.8"/>
+      <circle cx="15.6" cy="9.6" r="4.1" fill="none" stroke="#BF5AF2" stroke-width="1.8"/>
+      <circle cx="12" cy="15.4" r="4.1" fill="none" stroke="#0A84FF" stroke-width="1.8"/>
+    </g>
+    <g id="i-cell" fill="currentColor">
+      <rect x="1" y="4" width="3" height="4" rx="1" opacity=".5"/><rect x="5.5" y="2.5" width="3" height="5.5" rx="1" opacity=".7"/><rect x="10" y="1" width="3" height="7" rx="1"/>
+    </g>
+    <g id="i-wifi" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+      <path d="M2 4.5a8.5 8.5 0 0112 0M4.4 6.9a5.2 5.2 0 017.2 0"/><circle cx="8" cy="9.4" r="1.2" fill="currentColor" stroke="none"/>
+    </g>
+    <g id="i-batt">
+      <rect x="1" y="1" width="20" height="10" rx="3" fill="none" stroke="currentColor" opacity=".5"/>
+      <rect x="3" y="3" width="13" height="6" rx="1.5" fill="currentColor"/>
+      <path d="M23 4v4a2.2 2.2 0 000-4z" fill="currentColor" opacity=".5"/>
+    </g>
+  </defs>
+</svg>
+
+<!-- =============================================== 1 · EVERYTHING -->
+<div class="unit">
+  <div class="phone">
+    <div class="statusbar">
+      <span class="time">9:41</span>
+      <span style="display:flex;gap:7px;align-items:center;color:#F5F5F7">
+        <svg width="14" height="10" viewBox="0 0 14 9"><use href="#i-cell"/></svg>
+        <svg width="16" height="11" viewBox="0 0 16 11"><use href="#i-wifi"/></svg>
+        <svg width="25" height="12" viewBox="0 0 25 12"><use href="#i-batt"/></svg>
+      </span>
+    </div>
+
+    <div class="evhead">
+      <h1>Everything</h1>
+      <span class="count tab">128</span>
+    </div>
+
+    <div class="evseg seg">
+      <div class="pill on">All</div>
+      <div class="pill">Upcoming</div>
+      <div class="pill">Unfiled</div>
+    </div>
+
+    <div class="rows">
+      <div class="row">
+        <span class="icochip" style="--c:#0A84FF"><svg viewBox="0 0 24 24"><use href="#i-note"/></svg></span>
+        <div class="mid">
+          <div class="title">Quarterly review notes</div>
+          <div class="chips"><span class="chip" style="--c:#0A84FF">Work</span></div>
+        </div>
+        <span class="when tab">14:32</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#BF5AF2"><svg viewBox="0 0 24 24"><use href="#i-task"/></svg></span>
+        <div class="mid">
+          <div class="title">Renew home insurance</div>
+          <div class="chips"><span class="chip" style="--c:#FF453A">Home</span><span class="chip" style="--c:#FFD60A">doing</span></div>
+        </div>
+        <span class="when tab">11:05</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#FFD60A"><svg viewBox="0 0 24 24"><use href="#i-capture"/></svg></span>
+        <div class="mid"><div class="title">call the plumber about the leak</div></div>
+        <span class="when tab">09:12</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#64D2FF"><svg viewBox="0 0 24 24"><use href="#i-event"/></svg></span>
+        <div class="mid">
+          <div class="title">Team standup</div>
+          <div class="chips"><span class="chip" style="--c:#0A84FF">Work</span></div>
+        </div>
+        <span class="when">Yesterday</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#FF453A"><svg viewBox="0 0 24 24"><use href="#i-doc"/></svg></span>
+        <div class="mid">
+          <div class="title">Rental agreement</div>
+          <div class="chips"><span class="chip" style="--c:#FF453A">Home</span></div>
+        </div>
+        <span class="when">Yesterday</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#FF375F"><svg viewBox="0 0 24 24"><use href="#i-person"/></svg></span>
+        <div class="mid">
+          <div class="title">Anna</div>
+          <div class="chips"><span class="chip" style="--c:#FF453A">Home</span></div>
+        </div>
+        <span class="when">Aug 7</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#0A84FF"><svg viewBox="0 0 24 24"><use href="#i-note"/></svg></span>
+        <div class="mid">
+          <div class="title">Physics reading list</div>
+          <div class="chips"><span class="chip" style="--c:#FF453A">Study</span><span class="chip" style="--c:#BF5AF2">physics</span></div>
+        </div>
+        <span class="when">Aug 6</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#BF5AF2"><svg viewBox="0 0 24 24"><use href="#i-task"/></svg></span>
+        <div class="mid">
+          <div class="title">Book dentist</div>
+          <div class="chips"><span class="chip" style="--c:#FF453A">Home</span><span class="chip" style="--c:#30D158">done</span></div>
+        </div>
+        <span class="when">Aug 5</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#30D158"><svg viewBox="0 0 24 24"><use href="#i-sheet"/></svg></span>
+        <div class="mid">
+          <div class="title">Budget 2026</div>
+          <div class="chips"><span class="chip" style="--c:#0A84FF">Work</span></div>
+        </div>
+        <span class="when">Aug 4</span>
+      </div>
+      <div class="row">
+        <span class="icochip" style="--c:#0A84FF"><svg viewBox="0 0 24 24"><use href="#i-note"/></svg></span>
+        <div class="mid">
+          <div class="title">Trip planning</div>
+          <div class="chips"><span class="chip" style="--c:#FFB340">climbing</span></div>
+        </div>
+        <span class="when">Aug 3</span>
+      </div>
+    </div>
+  </div>
+  <div class="caption">Everything — same All / Upcoming / Unfiled slices; kind-colored icon chips, pill segments, tinted value chips</div>
+</div>
+
+<!-- =============================================== 2 · WORKSPACE SWITCHER -->
+<div class="unit">
+  <div class="phone">
+    <div class="dimmed">
+      <div class="ghost" style="position:absolute;top:70px;left:16px;width:210px;height:20px"></div>
+      <div class="ghost" style="position:absolute;top:106px;left:16px;width:320px;height:10px"></div>
+      <div class="ghost" style="position:absolute;top:126px;left:16px;width:280px;height:10px"></div>
+      <div class="ghost" style="position:absolute;top:146px;left:16px;width:300px;height:10px"></div>
+    </div>
+    <div class="sheet" style="height:444px">
+      <div class="grabber"></div>
+      <div class="sectionlabel" style="padding-bottom:10px">Workspace</div>
+
+      <div class="wsrow">
+        <span class="icochip neutral"><svg viewBox="0 0 24 24"><use href="#i-grid"/></svg></span>
+        <div><div class="name">All</div></div>
+      </div>
+
+      <div class="wsrow active">
+        <span class="icochip" style="--c:#FF453A"><svg viewBox="0 0 24 24"><use href="#i-ring"/></svg></span>
+        <div>
+          <div class="name">Home</div>
+          <div class="chips"><span class="chip sm" style="--c:#FF453A"><span class="swatch" style="background:#FF453A"></span>Home</span></div>
+        </div>
+        <span class="check"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span>
+      </div>
+
+      <div class="wsrow">
+        <span class="icochip" style="--c:#0A84FF"><svg viewBox="0 0 24 24"><use href="#i-ring"/></svg></span>
+        <div>
+          <div class="name">Work</div>
+          <div class="chips"><span class="chip sm" style="--c:#0A84FF"><span class="swatch" style="background:#0A84FF"></span>Work</span></div>
+        </div>
+      </div>
+
+      <div class="wsrow">
+        <span class="icochip" style="--c:#30D158"><svg viewBox="0 0 24 24"><use href="#i-ring"/></svg></span>
+        <div>
+          <div class="name">Thesis</div>
+          <div class="chips">
+            <span class="chip sm" style="--c:#FF453A"><span class="swatch" style="background:#FF453A"></span>Study</span>
+            <span class="chip sm" style="--c:#BF5AF2"><svg viewBox="0 0 24 24"><use href="#i-tagdot"/></svg>thesis</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="addrow">
+        <span class="plus"><svg viewBox="0 0 24 24"><use href="#i-plus"/></svg></span>
+        New workspace…
+      </div>
+    </div>
+  </div>
+  <div class="caption">Workspace switcher — solid chips in each workspace's own hue with the ring carved out, the filter as tinted value chips (area with its swatch, subject with the tag), active row checked in accent</div>
+</div>
+
+<!-- =============================================== 3 · NEW WORKSPACE FORM -->
+<div class="unit">
+  <div class="phone">
+    <div class="dimmed">
+      <div class="ghost" style="position:absolute;top:60px;left:16px;width:210px;height:20px"></div>
+    </div>
+    <div class="sheet" style="height:652px">
+      <div class="grabber"></div>
+      <div class="sectionlabel" style="padding-bottom:10px">Workspace</div>
+
+      <div class="wsrow">
+        <span class="icochip neutral"><svg viewBox="0 0 24 24"><use href="#i-grid"/></svg></span>
+        <div><div class="name">All</div></div>
+      </div>
+      <div class="wsrow active">
+        <span class="icochip" style="--c:#FF453A"><svg viewBox="0 0 24 24"><use href="#i-ring"/></svg></span>
+        <div><div class="name">Home</div><div class="chips"><span class="chip sm" style="--c:#FF453A"><span class="swatch" style="background:#FF453A"></span>Home</span></div></div>
+        <span class="check"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span>
+      </div>
+      <div class="wsrow">
+        <span class="icochip" style="--c:#0A84FF"><svg viewBox="0 0 24 24"><use href="#i-ring"/></svg></span>
+        <div><div class="name">Work</div><div class="chips"><span class="chip sm" style="--c:#0A84FF"><span class="swatch" style="background:#0A84FF"></span>Work</span></div></div>
+      </div>
+      <div class="wsrow">
+        <span class="icochip" style="--c:#30D158"><svg viewBox="0 0 24 24"><use href="#i-ring"/></svg></span>
+        <div><div class="name">Thesis</div><div class="chips"><span class="chip sm" style="--c:#FF453A"><span class="swatch" style="background:#FF453A"></span>Study</span><span class="chip sm" style="--c:#BF5AF2"><svg viewBox="0 0 24 24"><use href="#i-tagdot"/></svg>thesis</span></div></div>
+      </div>
+
+      <div style="height:1px;background:rgba(255,255,255,.07);margin:6px 0 16px"></div>
+
+      <div class="field" style="margin-bottom:6px">Climbing</div>
+
+      <div class="pickrow" style="margin-top:2px">
+        <span class="lab">Area</span>
+        <span class="val" style="display:flex;align-items:center;gap:8px">
+          <span class="chip" style="--c:#FFB340"><span class="swatch" style="background:#FFB340"></span>Climbing</span>
+        </span>
+        <span class="chev"><svg viewBox="0 0 24 24"><use href="#i-chevr"/></svg></span>
+      </div>
+      <div class="pickrow">
+        <span class="lab" style="display:flex;align-items:center;gap:9px">
+          Subject
+        </span>
+        <span class="any">Any</span>
+        <span class="chev"><svg viewBox="0 0 24 24"><use href="#i-chevr"/></svg></span>
+      </div>
+
+      <div class="foldrow">
+        <span class="lab">Advanced</span>
+        <span class="chev"><svg viewBox="0 0 24 24"><use href="#i-chevd"/></svg></span>
+      </div>
+
+      <div class="formbtns">
+        <span class="btn-quiet">Cancel</span>
+        <span class="btn-fill">Create</span>
+      </div>
+    </div>
+  </div>
+  <div class="caption">New workspace — Name, then picker rows: Area with its color swatch, Subject with "Any"; the raw query stays folded under Advanced</div>
+</div>
+
+<!-- =============================================== 4 · SETTINGS -->
+<div class="unit">
+  <div class="phone">
+    <div class="dimmed">
+      <div class="ghost" style="position:absolute;top:40px;left:16px;width:210px;height:20px"></div>
+    </div>
+    <div class="sheet" style="height:660px;gap:10px">
+      <div class="grabber"></div>
+      <div style="font-size:22px;font-weight:700;padding-bottom:4px">Settings</div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="icochip" style="--c:#BF5AF2"><svg viewBox="0 0 24 24"><use href="#i-moon"/></svg></span>
+          <span class="lab">Appearance</span>
+        </div>
+        <div class="seg">
+          <div class="pill on">Dark</div>
+          <div class="pill">Light</div>
+          <div class="pill">System</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="icochip" style="--c:#FFD60A"><svg viewBox="0 0 24 24"><use href="#i-spark"/></svg></span>
+          <span class="lab" style="font-weight:400">Suggest properties</span>
+          <span class="toggle"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="icochip" style="--c:#FF453A"><svg viewBox="0 0 24 24"><use href="#i-bell"/></svg></span>
+          <span class="lab" style="font-weight:400">Due reminders</span>
+          <span class="toggle"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="icochip" style="--c:#64D2FF"><svg viewBox="0 0 24 24"><use href="#i-tabs"/></svg></span>
+          <span class="lab">Inactive after</span>
+        </div>
+        <div class="seg">
+          <div class="pill">7 days</div>
+          <div class="pill">14 days</div>
+          <div class="pill on">21 days</div>
+          <div class="pill">Never</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="icochip neutral"><svg viewBox="0 0 24 24"><use href="#i-props"/></svg></span>
+          <span class="lab">Fields</span>
+        </div>
+        <div class="fieldchips">
+          <span class="chip" style="--c:#30D158">area</span>
+          <span class="chip" style="--c:#BF5AF2">status</span>
+          <span class="chip" style="--c:#BF5AF2">due</span>
+          <span class="chip" style="--c:#FF453A">subjects</span>
+          <span class="chip" style="--c:#BF5AF2">project</span>
+          <span class="chip" style="--c:#FFB340">format</span>
+        </div>
+        <div class="addfield">
+          <svg viewBox="0 0 24 24"><use href="#i-plus"/></svg>
+          Add field
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardhead">
+          <span class="icochip" style="--c:#8E8E93"><svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg></span>
+          <span class="lab" style="font-weight:400;color:#C9C9CE">Advanced</span>
+          <span class="chev"><svg viewBox="0 0 24 24"><use href="#i-chevd"/></svg></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">Settings — the same sections in the same order, grouped as cards keyed by solid color chips with carved icons; Fields wears the three-dot properties mark, machinery stays folded under Advanced</div>
+</div>
+
+<!-- =============================================== 5 · FILE -->
+<div class="unit">
+  <div class="phone">
+    <div class="statusbar">
+      <span class="time">9:41</span>
+      <span style="display:flex;gap:7px;align-items:center;color:#F5F5F7">
+        <svg width="14" height="10" viewBox="0 0 14 9"><use href="#i-cell"/></svg>
+        <svg width="16" height="11" viewBox="0 0 16 11"><use href="#i-wifi"/></svg>
+        <svg width="25" height="12" viewBox="0 0 25 12"><use href="#i-batt"/></svg>
+      </span>
+    </div>
+
+    <div class="filehead"><h1>Rental agreement</h1></div>
+    <div class="filemeta">
+      <span class="icochip" style="--c:#FF453A"><svg viewBox="0 0 24 24"><use href="#i-doc"/></svg></span>
+      <span class="chip" style="--c:#FF453A">pdf</span>
+      <span class="openin">Open in…</span>
+    </div>
+
+    <div class="page">
+      <div class="h"></div>
+      <div class="l" style="width:100%"></div>
+      <div class="l" style="width:96%"></div>
+      <div class="l" style="width:99%"></div>
+      <div class="l" style="width:64%"></div>
+      <div class="gap"></div>
+      <div class="l" style="width:100%"></div>
+      <div class="l" style="width:92%"></div>
+      <div class="l" style="width:97%"></div>
+      <div class="l" style="width:44%"></div>
+      <div class="box">
+        <div class="l" style="width:88%"></div>
+        <div class="l" style="width:76%"></div>
+        <div class="l" style="width:82%"></div>
+      </div>
+      <div class="l" style="width:100%"></div>
+      <div class="l" style="width:95%"></div>
+      <div class="l" style="width:58%"></div>
+      <div class="sig"></div>
+      <div class="l" style="width:26%"></div>
+    </div>
+
+    <div class="floatbar">
+      <span class="slot"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg></span>
+      <span class="slot off"><svg viewBox="0 0 24 24"><use href="#i-fwd"/></svg></span>
+      <span class="slot"><svg viewBox="0 0 24 24"><use href="#i-search"/></svg></span>
+      <span class="slot"><svg viewBox="0 0 24 24"><use href="#i-plus"/></svg></span>
+      <span class="slot"><span class="tabcount tab">3</span></span>
+    </div>
+  </div>
+  <div class="caption">File — name, a solid format-colored chip with the glyph carved out, a tinted format chip, Open in…, the preview full-bleed; the bottom bar floats as a detached pill</div>
+</div>
+
+</body>
+</html>

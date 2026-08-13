@@ -154,12 +154,12 @@ struct TemplateSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(verb.title.uppercased())
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: LivType.label, weight: .bold))
                 .kerning(0.6)
                 .foregroundStyle(LivTheme.text3)
             if box.templates.count > 5 {
                 TextField("Search templates…", text: $typed)
-                    .font(.system(size: 16))
+                    .font(.system(size: LivType.title))
                     .foregroundStyle(LivTheme.text)
                     .autocorrectionDisabled(true)
                     .padding(.horizontal, 12)
@@ -175,17 +175,16 @@ struct TemplateSheet: View {
                             dismiss()
                         } label: {
                             HStack(spacing: 10) {
-                                Image(systemName: "doc.text")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(LivTheme.text3)
-                                    .frame(width: 18)
+                                IconChip(
+                                    glyph: LivKind.glyph(of: row),
+                                    color: LivKind.color(of: row), size: 26)
                                 Text(name(row))
-                                    .font(.system(size: 16))
+                                    .font(.system(size: LivType.title))
                                     .foregroundStyle(LivTheme.text)
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                             }
-                            .frame(height: 46)
+                            .frame(height: LivRow.height)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -208,8 +207,5 @@ struct TemplateSheet: View {
         .presentationDragIndicator(.visible)
     }
 
-    private func name(_ row: EntityRow) -> String {
-        let clean = livDisplayTitle(row.title ?? "")
-        return clean.isEmpty ? "Untitled" : clean
-    }
+    private func name(_ row: EntityRow) -> String { livRowTitle(row) }
 }

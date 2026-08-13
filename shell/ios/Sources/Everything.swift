@@ -8,10 +8,14 @@
 // for a word in it. Areas were being asked to carry all of navigation,
 // which is why picking one felt compulsory.
 //
-// Two rules this screen keeps:
-//   1. It IGNORES the workspace lens. A screen called Everything that
-//      hides things is a lie, and this is the one place that is always
-//      complete. Lensed browsing is what Today and Tasks are for.
+// Rules:
+//   1. RETIRED 2026-08-03 (owner, rev 6): this screen now WEARS the
+//      workspace lens like every workspace view — "workspaces define
+//      context consistently via property filtering" outranks the old
+//      "Everything never hides" rule. The always-complete surface is the
+//      All workspace: one switch away, and the LensChip in the header
+//      says when a lens is on. (The old rule's text, for the record: "a
+//      screen called Everything that hides things is a lie.")
 //   2. Unfiled means NO AREA — not "no type". The Inbox's rule keys on
 //      type, which is why a task you hesitated over was missing from every
 //      area AND from the Inbox (the study's §2.6 hole).
@@ -34,6 +38,7 @@ private enum EverythingLens: String, CaseIterable, Identifiable {
 struct EverythingView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var lens: EverythingLens = .all
@@ -44,9 +49,10 @@ struct EverythingView: View {
             Group {
                 HStack(spacing: 8) {
                     SectionLabel("Everything")
+                    if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
                     Spacer(minLength: 0)
                     Text("\(rows.count)")
-                        .font(.system(size: 11).monospacedDigit())
+                        .font(.system(size: LivType.label).monospacedDigit())
                         .foregroundStyle(LivTheme.text3)
                 }
                 .padding(.top, 8)
@@ -67,7 +73,12 @@ struct EverythingView: View {
         .environment(\.defaultMinListRowHeight, 10)
         .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
         .background(LivTheme.canvas)
-        .onAppear { box.refresh() }
+        .onAppear {
+            box.refresh()
+            // The selected slice may have just been hidden by a
+            // workspace switch.
+            if !lenses.contains(lens) { lens = .all }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { box.refresh() }
         }
@@ -81,14 +92,22 @@ struct EverythingView: View {
         }
     }
 
+    /// Unfiled means NO AREA — structurally impossible inside a workspace
+    /// whose query stamps one, so the segment hides there rather than
+    /// promise an always-empty list (audit, 2026-08-04).
+    private var lenses: [EverythingLens] {
+        let stampsArea = workspaces.stampCells.contains { $0.property == "area" }
+        return EverythingLens.allCases.filter { $0 != .unfiled || !stampsArea }
+    }
+
     private var picker: some View {
         HStack(spacing: 2) {
-            ForEach(EverythingLens.allCases) { l in
+            ForEach(lenses) { l in
                 Button {
                     lens = l
                 } label: {
                     Text(l.title)
-                        .font(.system(size: 12, weight: lens == l ? .semibold : .regular))
+                        .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
                         .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text3)
                         .frame(maxWidth: .infinity)
                         .frame(height: 28)
@@ -110,18 +129,15 @@ struct EverythingView: View {
     private func line(_ row: EntityRow) -> some View {
         let chips = chips(row)
         return HStack(spacing: 9) {
-            Image(systemName: glyph(row))
-                .font(.system(size: 12))
-                .foregroundStyle(LivTheme.text3)
-                .frame(width: 22, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel2)
-                )
+            // The carved kind chip: what a thing IS, said in its color
+            // (blueprints, 2026-08-12).
+            IconChip(
+                glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 26)
             VStack(alignment: .leading, spacing: 2) {
                 Text(display(row))
-                    .font(.system(size: 15))
+                    .font(.system(size: LivType.strong))
                     .foregroundStyle(
-                        display(row) == "untitled" ? LivTheme.muted : LivTheme.text
+                        livRowIsUntitled(row) ? LivTheme.muted : LivTheme.text
                     )
                     .lineLimit(1)
                 if !chips.isEmpty {
@@ -133,7 +149,7 @@ struct EverythingView: View {
             Spacer(minLength: 8)
             if let trailing = trailing(row) {
                 Text(trailing)
-                    .font(.system(size: 12).monospacedDigit())
+                    .font(.system(size: LivType.body).monospacedDigit())
                     .foregroundStyle(
                         lens == .upcoming ? LivTheme.text2 : LivTheme.text3)
             }
@@ -160,9 +176,12 @@ struct EverythingView: View {
     /// (properties, options, types, workspaces) are already excluded by the
     /// core, so this screen never shows engine plumbing.
     private func rows(_ lens: EverythingLens) -> [EntityRow] {
+        // The workspace lens applies here since rev 6 — the All workspace
+        // is the complete view.
+        let wsLens = workspaces.activeQuery
         let all = (box.snap?.everything ?? [])
             .compactMap { box.entity($0) }
-            .filter { $0.trashed != true && $0.archived != true }
+            .filter { $0.trashed != true && $0.archived != true && wsLens.matches($0) }
         switch lens {
         case .all:
             return all.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
@@ -208,32 +227,11 @@ struct EverythingView: View {
     /// line, the same rule the desk and the outbox ledger use. Markdown
     /// markers come off for display (livDisplayTitle): a note that starts
     /// "# Trip planning" is titled "Trip planning", never "# Trip planning".
-    private func display(_ row: EntityRow) -> String {
-        if let name = row.title, !name.isEmpty {
-            let clean = livDisplayTitle(name)
-            return clean.isEmpty ? name : clean
-        }
-        let content = (row.cells ?? []).first { $0.property == "content" }?.value
-        let first = content?.split(separator: "\n").first.map(String.init) ?? ""
-        let clean = livDisplayTitle(first)
-        return clean.isEmpty ? "untitled" : clean
-    }
+    private func display(_ row: EntityRow) -> String { livRowTitle(row) }
 
     /// The task test is the shell's own: a typed task OR anything carrying a
     /// status. A capture given a status is a task in Today, in Tasks, and to
     /// the reminder scheduler — it must not wear the scrap icon here.
-    private func glyph(_ row: EntityRow) -> String {
-        let kinds = row.kinds ?? []
-        if kinds.contains("event") { return "calendar" }
-        if kinds.contains("task") || (row.status?.isEmpty == false) {
-            return "checkmark.circle"
-        }
-        if kinds.contains("person") { return "person" }
-        if kinds.contains("link") { return "link" }
-        if (row.cells ?? []).contains(where: { $0.property == "file" }) { return "photo" }
-        if kinds.contains("note") { return "doc.text" }
-        return "circle.dotted"  // a scrap: caught, not yet shaped
-    }
 
     /// Area first — it is the one filing question — then status, then the
     /// first reference value. Three at most; the row must stay one line.
@@ -243,7 +241,10 @@ struct EverythingView: View {
         if let status = row.status, !status.isEmpty { out.append(status) }
         for cell in row.cells ?? [] {
             guard out.count < 3 else { break }
-            guard cell.refTarget != nil else { continue }
+            // Never the TYPE: the carved chip at the head of the row
+            // already says it, and the word "note" beside a blue note
+            // icon is the same fact twice (Today has always skipped it).
+            guard cell.property != "type", cell.refTarget != nil else { continue }
             let value = cell.value ?? ""
             if !value.isEmpty, !out.contains(value) { out.append(value) }
         }

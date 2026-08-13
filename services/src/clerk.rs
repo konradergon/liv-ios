@@ -91,6 +91,17 @@ pub fn assist_enabled(store: &Store) -> bool {
     !matches!(assist_switch(store), Some((_, _, false)))
 }
 
+/// Can the sweep REBUILD a pending draft by this author from the store
+/// alone? True only for the clerk's own proposers, which read the words
+/// and re-derive. A draft from anyone else — a model, another device —
+/// exists only in the draft itself; retracting it loses it (owner,
+/// 2026-08-07).
+pub fn rederivable(author: &Author) -> bool {
+    matches!(author, Author::Proposer(name)
+        if ["dates", "mentions", "priority", "promotion", "dedupe"]
+            .contains(&name.as_str()))
+}
+
 pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
     // `_today` is deliberately unused since the anchor fix: every date the
     // clerk proposes derives from the store alone, so the sweep is a pure
@@ -491,8 +502,7 @@ fn propose_dedupe(store: &Store, proposals: &mut Vec<Proposal>) {
     let url_prop = property_id(store, "url");
 
     let mut ents: Vec<&Entity> = store
-        .entities()
-        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+        .user_entities()
         .collect();
     ents.sort_by_key(|e| e.id);
 

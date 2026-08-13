@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendar — the hour grid (phase 4)</title>
+<style>
+  :root {
+    --canvas:#161618; --surface:#1e1e20; --panel:#232326; --panel2:#2c2c2e;
+    --text:#f5f5f7; --text2:#c9c9ce; --text3:#9a9aa2; --muted:#707078;
+    --border:rgba(255,255,255,.10); --accent:#0a84ff; --green:#30d158;
+    --red:#ff453a; --purple:#bf5af2;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d0d0e; color:var(--text);
+         font:15px/1.45 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+         display:flex; gap:36px; flex-wrap:wrap; justify-content:center; padding:28px 16px; }
+  .note { max-width:320px; color:var(--text3); font-size:13px; }
+  .note h2 { color:var(--text2); font-size:14px; margin-bottom:8px; }
+  .note p { margin-bottom:10px; }
+  .note b { color:var(--text2); font-weight:600; }
+  .phone { width:390px; background:var(--canvas); border:1px solid var(--border);
+           border-radius:38px; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .screen { padding:14px 0 0; }
+  /* header */
+  .head { display:flex; align-items:center; gap:8px; padding:6px 16px 8px; }
+  .month { font-size:15px; font-weight:600; }
+  .lens { display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:500;
+          color:var(--accent); background:rgba(10,132,255,.18); border-radius:999px;
+          height:17px; padding:0 7px; }
+  .grow { flex:1 }
+  .hbtn { color:var(--accent); font-size:12px; font-weight:500; }
+  .chev { color:var(--text2); font-size:13px; padding:0 6px; }
+  /* month grid, compact */
+  .wd { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; padding:6px 16px 2px;
+        font-size:9px; font-weight:600; color:var(--text3); text-align:center; letter-spacing:.3px; }
+  .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; padding:0 16px 8px; }
+  .cell { height:32px; border-radius:7px; display:flex; flex-direction:column;
+          align-items:center; justify-content:center; gap:2px; font-size:12px; color:var(--text2); }
+  .cell.dim { color:var(--muted) }
+  .cell.sel { background:var(--accent); color:#fff; font-weight:600 }
+  .cell.today { color:var(--accent); font-weight:700 }
+  .dots { display:flex; gap:2px }
+  .dot { width:3px; height:3px; border-radius:50%; background:var(--text3) }
+  .cell.sel .dot { background:rgba(255,255,255,.85) }
+  .rule { height:.5px; background:var(--border) }
+  /* all-day band */
+  .band { display:flex; align-items:center; gap:6px; padding:7px 16px; }
+  .bandlab { font-size:9px; font-weight:700; letter-spacing:.5px; color:var(--muted); width:44px; }
+  .pill { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px;
+          border-radius:999px; background:var(--panel2); border:.5px solid var(--border);
+          font-size:11.5px; color:var(--text); }
+  .ring { width:13px; height:13px; border-radius:50%; border:1.5px solid var(--text3) }
+  /* hour grid */
+  .hours { position:relative; height:342px; overflow:hidden; }
+  .hour { position:relative; height:57px; }
+  .hour .lab { position:absolute; left:16px; top:-6px; font-size:10px; color:var(--muted);
+               font-variant-numeric:tabular-nums; }
+  .hour .line { position:absolute; left:56px; right:16px; top:0; height:.5px; background:var(--border); }
+  .half { position:absolute; left:56px; right:16px; top:28.5px; height:.5px;
+          background:rgba(255,255,255,.045); }
+  .block { position:absolute; left:60px; right:18px; border-radius:8px; padding:5px 9px;
+           background:rgba(10,132,255,.20); border:.5px solid rgba(10,132,255,.55);
+           overflow:hidden; }
+  .block .t { font-size:12.5px; font-weight:500; color:var(--text); white-space:nowrap;
+              overflow:hidden; text-overflow:ellipsis; }
+  .block .w { font-size:10px; color:var(--text3); font-variant-numeric:tabular-nums; }
+  .block.task { background:rgba(191,90,242,.18); border-color:rgba(191,90,242,.5) }
+  .block.drag { background:rgba(10,132,255,.34); border-color:var(--accent);
+                box-shadow:0 8px 20px rgba(0,0,0,.45); }
+  .now { position:absolute; left:44px; right:14px; height:1.5px; background:var(--red); }
+  .now::before { content:""; position:absolute; left:-6px; top:-4px; width:10px; height:10px;
+                 border-radius:50%; background:var(--red); }
+  .nowlab { position:absolute; left:8px; transform:translateY(-50%); font-size:9.5px;
+            font-weight:600; color:#fff; background:var(--red); border-radius:4px;
+            padding:1px 4px; font-variant-numeric:tabular-nums; }
+  .ann { margin:10px 16px 14px; padding:8px 10px; border:1px dashed rgba(10,132,255,.5);
+         border-radius:10px; font-size:11.5px; color:var(--accent); background:rgba(10,132,255,.06); }
+  .ghost { position:absolute; left:60px; right:18px; height:57px; border-radius:8px;
+           border:1px dashed rgba(255,255,255,.35); background:rgba(255,255,255,.04);
+           display:flex; align-items:center; justify-content:center;
+           font-size:11px; color:var(--text3); }
+</style>
+</head>
+<body>
+
+<div class="note">
+  <h2>Phase 4 mockup — the day hour grid</h2>
+  <p>The month grid stays (it is the navigator). The day panel below it
+     becomes Apple Calendar's shape: an <b>all-day band</b>, then a
+     scrollable <b>hour grid</b> with timed items as positioned blocks and
+     a red now-line on today.</p>
+  <p><b>Tap an empty hour</b> → an event is created at that hour and opens
+     as a desk tab for naming (the house "capture asks nothing" door, same
+     as today's long-press). <b>Drag a block</b> → its time moves in
+     15-minute steps, committed on release; the duration is preserved.</p>
+  <p>Date-only <b>tasks</b> ride the all-day band keeping their status
+     ring, so checking one off never needs the grid. Timeless events are
+     pills, exactly as now.</p>
+</div>
+
+<div class="phone"><div class="screen">
+
+  <div class="head">
+    <span class="month">August 2026</span>
+    <span class="lens">⌕ Home</span>
+    <span class="grow"></span>
+    <span class="hbtn">Today</span>
+    <span class="chev">‹</span><span class="chev">›</span>
+  </div>
+
+  <div class="wd"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+  <div class="grid">
+    <div class="cell dim">27</div><div class="cell dim">28</div><div class="cell dim">29</div>
+    <div class="cell dim">30</div><div class="cell dim">31</div><div class="cell">1</div><div class="cell">2</div>
+    <div class="cell">3</div><div class="cell sel">4<div class="dots"><span class="dot"></span><span class="dot"></span></div></div>
+    <div class="cell">5<div class="dots"><span class="dot"></span></div></div><div class="cell">6</div>
+    <div class="cell">7</div><div class="cell">8</div><div class="cell">9</div>
+    <div class="cell">10</div><div class="cell">11</div><div class="cell">12</div><div class="cell">13</div>
+    <div class="cell">14</div><div class="cell">15</div><div class="cell">16</div>
+  </div>
+
+  <div class="rule"></div>
+  <div class="band">
+    <span class="bandlab">ALL-DAY</span>
+    <span class="pill">Öland</span>
+    <span class="pill"><span class="ring"></span>Renew passport</span>
+  </div>
+  <div class="rule"></div>
+
+  <div class="hours">
+    <div class="hour"><span class="lab">09:00</span><span class="line"></span><span class="half"></span></div>
+    <div class="hour"><span class="lab">10:00</span><span class="line"></span><span class="half"></span></div>
+    <div class="hour"><span class="lab">11:00</span><span class="line"></span><span class="half"></span></div>
+    <div class="hour"><span class="lab">12:00</span><span class="line"></span><span class="half"></span></div>
+    <div class="hour"><span class="lab">13:00</span><span class="line"></span><span class="half"></span></div>
+    <div class="hour"><span class="lab">14:00</span><span class="line"></span><span class="half"></span></div>
+
+    <!-- a normal block: 09:30–10:30 -->
+    <div class="block" style="top:28px; height:56px;">
+      <div class="t">Surveyor call</div><div class="w">09:30 – 10:30</div>
+    </div>
+    <!-- a task with a time -->
+    <div class="block task" style="top:114px; height:56px;">
+      <div class="t">Send the quote</div><div class="w">11:00 – 12:00</div>
+    </div>
+    <!-- mid-drag -->
+    <div class="block drag" style="top:213px; height:56px;">
+      <div class="t">Dentist</div><div class="w">12:45 – 13:45 · moving</div>
+    </div>
+    <!-- the tap-to-create ghost -->
+    <div class="ghost" style="top:285px;">tap an empty hour → new event here</div>
+
+    <div class="now" style="top:154px;"></div>
+    <div class="nowlab" style="top:154px;">11:45</div>
+  </div>
+
+  <div class="ann">Red line = now (today only, auto-scrolled into view).
+    Blocks snap to 15 minutes. Release commits one setSpan; a refusal just
+    refreshes — nothing half-moves.</div>
+
+</div></div>
+
+</body>
+</html>

@@ -9,6 +9,7 @@
 // the frame, so this body keeps only a SectionLabel-scale header.
 
 import SwiftUI
+import UIKit
 
 struct TasksView: View {
     @EnvironmentObject var model: BoxModel
@@ -67,6 +68,7 @@ struct TasksView: View {
                     }
                 }
             }
+            inNotesSection
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 40)
@@ -244,6 +246,139 @@ struct TasksView: View {
         .listRowBackground(Color.clear)
     }
 
+    // MARK: - "In notes": the checkbox lines (phase 3, owner 2026-08-05)
+
+    /// Every open `- [ ]` line in a live note, straight off the wire's
+    /// projection (services/src/tasks.rs). Deliberately its OWN section,
+    /// not folded into "To do": these lines have no status, and calling
+    /// them To do would muddy what a status means. They wear a square box
+    /// instead of the status ring, so the shape says what they are.
+    ///
+    /// The workspace lens applies to the SOURCE NOTE — a filtered surface
+    /// filters whole (rev 6's consistency rule).
+    private var noteLines: [NoteTaskRow] {
+        let lens = workspaces.activeQuery
+        return (model.snap?.noteTasks ?? []).filter { row in
+            guard let owner = row.entity, let note = model.entity(owner) else { return false }
+            return lens.matches(note)
+        }
+    }
+
+    @ViewBuilder private var inNotesSection: some View {
+        let lines = noteLines
+        if !lines.isEmpty {
+            SectionLabel("In notes", trailing: "\(lines.count)")
+                .padding(.top, 14)
+                .padding(.bottom, 2)
+                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            ForEach(lines) { line in
+                noteLineRow(line)
+            }
+        }
+    }
+
+    private func noteLineRow(_ line: NoteTaskRow) -> some View {
+        let owner = line.entity ?? 0
+        // The wire computes this where the content is — EntityRow.title
+        // would read "Roof project - [ ] call the surveyor - [x] paid…".
+        let source = line.source ?? ""
+        return HStack(spacing: 0) {
+            Button {
+                toggleNoteLine(line)
+            } label: {
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(LivTheme.text3, lineWidth: 1.5)
+                    .frame(width: 16, height: 16)
+                    .frame(width: 31, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Complete \(line.text ?? "")")
+            // Sub-lines ride along, inset — the note's own shape, kept.
+            if (line.indent ?? 0) > 0 {
+                Spacer().frame(width: 14)
+            }
+            Text((line.text ?? "").isEmpty ? "empty line" : (line.text ?? ""))
+                .font(.system(size: LivType.strong))
+                .foregroundStyle((line.text ?? "").isEmpty ? LivTheme.muted : LivTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Button {
+                desk.open(owner)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up.forward")
+                        .font(.system(size: LivType.micro, weight: .semibold))
+                    Text(source.isEmpty ? "note" : source)
+                        .font(.system(size: LivType.caption, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(LivTheme.text3)
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(Capsule().fill(LivTheme.panel2))
+                .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(source.isEmpty ? "the note" : source)")
+        }
+        .frame(minHeight: 40)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                .padding(.leading, 31)
+        }
+        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    /// Check the line: edit THAT NOTE's text — the same write the editor's
+    /// own checkbox makes, through the same pure op (EditOps.toggleTask).
+    /// The save presents the fingerprint the content was read at, so a
+    /// stale view is REFUSED, never mis-landed; a refusal just refreshes.
+    private func toggleNoteLine(_ line: NoteTaskRow) {
+        guard let owner = line.entity, let index = line.line else { return }
+        model.content(owner) { doc in
+            guard let doc, doc.missing != true else { return }
+            // This path re-encodes the WHOLE note through the buffer with
+            // nobody looking at it. The editor guards that with a banner
+            // and a choice; here there is no one to warn, so a note the
+            // buffer cannot hold — a code fence, a callout — must not be
+            // rewritten from a checkbox tap on an unrelated line. Open
+            // the note and the editor will say so properly.
+            guard !SpanText.carriesFormatting(doc.spans ?? []) else {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                return
+            }
+            let text = SpanText.spansToText(doc.spans ?? [])
+            guard let at = EditOps.lineStart(text, line: index),
+                let edit = EditOps.toggleTask(text, at: at)
+            else {
+                // The note moved under us — the snapshot will catch up.
+                model.refresh()
+                return
+            }
+            // A [[…]] token whose target is not in this box must stay
+            // TEXT. Re-encoding with the default "everything is known"
+            // promoted it to a reference, and the core refuses content
+            // that points at nothing — so ticking a box in such a note
+            // failed silently, forever (review, 2026-08-06). The editor
+            // has always passed this closure; this path did not.
+            model.setContent(
+                owner,
+                spansJson: SpanText.json(
+                    SpanText.textToSpans(edit.text, isKnown: { model.entity($0) != nil })),
+                base: doc.fingerprint ?? 0
+            ) { status, _ in
+                if status != 1 { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+                model.refresh()
+            }
+        }
+    }
+
     private func toggleExpanded(_ name: String) {
         if expanded.contains(name) {
             expanded.remove(name)
@@ -257,23 +392,16 @@ struct TasksView: View {
     private func quickAddRow(status: String?) -> some View {
         HStack(spacing: 0) {
             Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: LivType.label, weight: .semibold))
                 .foregroundStyle(LivTheme.muted)
                 .frame(width: 31)  // aligns with the 15pt ring + its 8pt pads
             TextField("Add a task", text: $quickAdd)
-                .font(.system(size: 14))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
                 .focused($quickAddFocused)
                 .submitLabel(.done)
                 .onSubmit { submitQuickAdd(status: status) }
             // The stamp promised before the write (no chip strip here).
-            if !workspaces.stampHint.isEmpty {
-                Text(workspaces.stampHint)
-                    .font(.system(size: 10))
-                    .foregroundStyle(LivTheme.muted)
-                    .lineLimit(1)
-                    .padding(.trailing, 4)
-            }
         }
         .frame(minHeight: 40)
         .overlay(alignment: .bottom) {
@@ -294,9 +422,16 @@ struct TasksView: View {
             if let status { model.set(id, "status", status) }
             // The lens stamps here too (M4) — see WorkspaceModel.stamp.
             workspaces.stamp(id, in: model)
+            // Straight into properties. A new task almost always wants a
+            // date and a field or two next, and hunting for the row you
+            // just typed to tap it is the long way round (owner,
+            // 2026-08-11: "you so often want to set date and a few
+            // properties… should be the standard way"). `as: .record`
+            // because the snapshot has not caught up yet — see open().
+            desk.open(id, as: .record)
         }
         quickAdd = ""
-        quickAddFocused = true  // serial entry
+        quickAddFocused = false
     }
 
     // MARK: rows
@@ -314,7 +449,7 @@ struct TasksView: View {
                 Text(
                     (row.title ?? "").isEmpty ? "untitled task" : (row.title ?? "")
                 )
-                .font(.system(size: 14))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(
                     (row.title ?? "").isEmpty ? LivTheme.muted : LivTheme.text
                 )
@@ -328,7 +463,7 @@ struct TasksView: View {
             Spacer(minLength: 8)
             if let due {
                 Text(due.label)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(.system(size: LivType.label).monospacedDigit())
                     .foregroundStyle(due.danger ? LivTheme.red : LivTheme.text3)
             }
         }
@@ -354,10 +489,10 @@ struct TasksView: View {
                     end: 0, dateOnly: false)
             }
             .tint(LivTheme.accent)
-            Button("Tomorrow") { reschedule(row.id, to: TasksDates.tomorrow()) }
+            Button("Tomorrow") { reschedule(row, to: TasksDates.tomorrow()) }
                 .tint(LivTheme.green)
             if TasksDates.weekend() != TasksDates.tomorrow() {
-                Button("Weekend") { reschedule(row.id, to: TasksDates.weekend()) }
+                Button("Weekend") { reschedule(row, to: TasksDates.weekend()) }
                     .tint(LivTheme.purple)
             }
             Button("Pick") { duePick = TasksDuePick(entity: row.id) }
@@ -387,10 +522,16 @@ struct TasksView: View {
         }
     }
 
-    private func reschedule(_ id: UInt64, to day: Int64) {
+    /// Move the DAY and keep the time of day. It used to overwrite the
+    /// time with nothing, so a task set for 14:00 came back as a bare
+    /// date — which now means it never rings. A task with no time yet
+    /// gets 09:00 (owner, 2026-08-07).
+    private func reschedule(_ row: EntityRow, to day: Int64) {
+        let hhmm: Int64 =
+            (row.dueDateOnly ?? true) ? LivDue.defaultHHMM : ((row.due ?? 0) % 10_000)
         model.setSpan(
-            id, "due", start: Civil.stamp(day: day, hhmm: 0), end: 0,
-            dateOnly: true)
+            row.id, "due",
+            start: Civil.stamp(day: day, hhmm: hhmm), end: 0, dateOnly: false)
     }
 
     /// Trailing due: today shows the time (or "Today"), everything else the
@@ -446,7 +587,7 @@ private struct TasksFilterChip: View {
                     Circle().fill(dot).frame(width: 6, height: 6)
                 }
                 Text(text)
-                    .font(.system(size: 12, weight: selected ? .medium : .regular))
+                    .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
                     .lineLimit(1)
             }
             .foregroundStyle(selected ? LivTheme.accent : LivTheme.text2)
@@ -477,22 +618,12 @@ private enum TasksDates {
     static func weekend() -> Int64 {
         var day = Civil.addDays(Civil.todayDay(), 1)
         for _ in 0..<7 {
-            if weekday(day) == 7 { return day }  // Gregorian: 7 = Saturday
+            if Civil.weekday(day) == 7 { return day }  // Gregorian: 7 = Saturday
             day = Civil.addDays(day, 1)
         }
         return day
     }
 
-    private static func weekday(_ day: Int64) -> Int {
-        var parts = DateComponents()
-        parts.year = Int(day / 10_000)
-        parts.month = Int((day / 100) % 100)
-        parts.day = Int(day % 100)
-        parts.hour = 12  // noon dodges DST-skipped midnights
-        let gregorian = Calendar(identifier: .gregorian)
-        guard let date = gregorian.date(from: parts) else { return 0 }
-        return gregorian.component(.weekday, from: date)
-    }
 }
 
 // MARK: - option hue → semantic token

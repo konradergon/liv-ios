@@ -252,6 +252,31 @@ enum EditOps {
         return (r, ns(text).substring(with: r))
     }
 
+    /// Where a LINE index starts, in characters — nil when the buffer has
+    /// no such line. The bridge between the wire's `note_tasks.line` and
+    /// every op here, which all address the buffer by location: the Tasks
+    /// view toggles a note's line through the SAME toggleTask the
+    /// editor's own checkbox uses, never a second implementation
+    /// (phase 3).
+    static func lineStart(_ text: String, line index: Int) -> Int? {
+        guard index >= 0 else { return nil }
+        if index == 0 { return 0 }
+        // Count newlines, not lineRange hops: lineRange happily walks to
+        // the buffer's end and would answer with a location for a line
+        // that does not exist (the self-check caught it, 2026-08-05).
+        let n = ns(text)
+        var seen = 0
+        var i = 0
+        while i < n.length {
+            if n.character(at: i) == 0x0A {
+                seen += 1
+                if seen == index { return i + 1 }
+            }
+            i += 1
+        }
+        return nil
+    }
+
     /// Tap on a task checkbox: flip it. `location` is anywhere in the line.
     static func toggleTask(_ text: String, at location: Int) -> EditResult? {
         let (r, l) = line(text, at: location)
@@ -334,8 +359,12 @@ enum EditOps {
         }
 
         if verb == .rule {
-            // Insert a --- paragraph after the current line.
-            let insert = (NSMaxRange(whole) == n.length ? "\n---" : "\n---")
+            // Insert a --- paragraph after the current line, and land the
+            // caret on a FRESH line below it: parked at the end of the
+            // --- itself, the next keystroke turned the divider into
+            // "---text" — no longer a rule at all (found live,
+            // 2026-08-05).
+            let insert = "\n---\n"
             let out = n.replacingCharacters(
                 in: NSRange(location: NSMaxRange(whole), length: 0), with: insert)
             return EditResult(
@@ -619,6 +648,32 @@ func livEditorSelfCheck() -> [String] {
     check("task toggles off", b5.text == "a\nb", b5.text)
     let b6 = EditOps.setBlock("- x", selection: NSRange(location: 0, length: 0), verb: .quote)
     check("bullet swaps to quote", b6.text == "> x")
+    // lineStart — the wire's line index → a buffer location (phase 3).
+    check("line 0 starts at 0", EditOps.lineStart("a\nb\nc", line: 0) == 0)
+    check("line 1 after one newline", EditOps.lineStart("a\nb\nc", line: 1) == 2)
+    check("line 2", EditOps.lineStart("a\nb\nc", line: 2) == 4)
+    check("no line 3", EditOps.lineStart("a\nb\nc", line: 3) == nil)
+    check("empty buffer has line 0", EditOps.lineStart("", line: 0) == 0)
+    check("blank middle line counts", EditOps.lineStart("a\n\nc", line: 2) == 3)
+    check("a trailing newline opens one empty line", EditOps.lineStart("a\n", line: 1) == 2)
+    check("but not two", EditOps.lineStart("a\n", line: 2) == nil)
+    check("negative is nothing", EditOps.lineStart("a", line: -1) == nil)
+    check(
+        "a wire line index toggles the right box",
+        {
+            let text = "notes\n- [ ] first\n- [ ] second"
+            guard let at = EditOps.lineStart(text, line: 2),
+                let out = EditOps.toggleTask(text, at: at)
+            else { return false }
+            return out.text == "notes\n- [ ] first\n- [x] second"
+        }())
+
+    let b7 = EditOps.setBlock("line", selection: NSRange(location: 4, length: 0), verb: .rule)
+    check("rule inserts below", b7.text == "line\n---\n", b7.text)
+    check(
+        "caret lands AFTER the rule, on a fresh line",
+        b7.selection == NSRange(location: 9, length: 0),
+        "\(b7.selection)")
 
     // toggleInline
     let i1 = EditOps.toggleInline("pick me", selection: NSRange(location: 5, length: 2), marker: "**")

@@ -4,6 +4,7 @@
 // rides the one BoxModel, act-then-refresh.
 
 import SwiftUI
+import UIKit
 
 // MARK: - DeskHost
 
@@ -14,98 +15,490 @@ struct DeskHost: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
-    @State private var settingsShown = false
-    @State private var switcherShown = false
+    /// The ••• menu's trash leg asks once before it acts.
+    @State private var confirmTrash = false
+    /// Which panel the finger is currently dragging, and how far it has
+    /// moved. nil = no drag in flight.
+    @State private var dragging: PanelDrag?
+
+    /// One panel being dragged: which one, whether the drag OPENS or
+    /// CLOSES it, and the finger's travel so far.
+    struct PanelDrag: Equatable {
+        enum Which { case library, inspector }
+        let which: Which
+        let opening: Bool
+        var amount: CGFloat = 0
+
+        /// Where the drag started from: 0 for an opening drag, 1 for a
+        /// closing one.
+        var base: CGFloat { opening ? 0 : 1 }
+
+        /// Finger travel that makes this panel MORE visible. The library
+        /// comes from the left, so rightward is toward; the properties
+        /// come from the right, so leftward is.
+        var toward: CGFloat { which == .library ? amount : -amount }
+
+        /// 0 = fully off screen, 1 = fully in. `width` is the screen.
+        func progress(_ width: CGFloat) -> CGFloat {
+            guard width > 0 else { return base }
+            return min(1, max(0, base + toward / width))
+        }
+
+        /// The travel that would land the panel exactly at `target`.
+        func amount(for target: CGFloat, width: CGFloat) -> CGFloat {
+            let toward = (target - base) * width
+            return which == .library ? toward : -toward
+        }
+    }
+    /// One transient acknowledgment chip: text, and an optional Undo verb
+    /// (the trash chip carries one; the template chip does not).
+    @State private var chipText: String?
+    @State private var chipUndo: (() -> Void)?
+    /// Closes the double-tap window while a template copy is in flight.
+    @State private var templateBusy = false
+    /// What the ••• is handing to the rest of the phone (phase 7).
+    @State private var share: SharePayload?
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .top) {
             Group {
-                if let tab = desk.activeTab {
-                    switch tab.content {
-                    case .new:
-                        NewTabBody(tabId: tab.id).id(tab.id)
-                    case .entity(let id):
-                        // Keyed by ENTITY: serial captures rewrite this same
-                        // tab with a new entity, and per-entity @State (the
-                        // seeded title) must reseed on that flip.
-                        EntityTabBody(id: id).id(id)
-                    }
+                if let tab = desk.activeTab, case .entity(let id) = tab.content {
+                    // Keyed by ENTITY: serial captures rewrite this same
+                    // tab with a new entity, and per-entity @State (the
+                    // seeded title) must reseed on that flip.
+                    EntityTabBody(id: id).id(id)
                 } else {
-                    // DeskModel keeps a tab alive by invariant; belt anyway.
-                    EmptyHint("No tab open — tap + for one.")
-                        .frame(maxHeight: .infinity)
+                    // An empty desk IS the chooser (rev 6) — no tab holds it.
+                    NewTabChooser(overlay: false, onWorkspace: { desk.workspaceShown = true })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityHidden(anyPanel)
 
-            // The only standing chrome over the note: two quiet circles,
-            // top-right, hovering over the full-bleed text — visible in
-            // every state, editing included (owner, 2026-08-01: the top
-            // actions stay put). Workspace and Settings moved here from
-            // the old persistent top bar, one level back from daily use.
+            // The doors (design/ios.md §6 rev 6): top-left opens the
+            // LIBRARY; top-right, Properties is a FREQUENT action so it
+            // gets its own door, and the ••• holds only the secondary
+            // verbs (duplicate, template, trash). Visible in every state,
+            // writing included.
             HStack(spacing: 8) {
-                if case .entity = desk.activeTab?.content {
+                FloatCircle(
+                    symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
+                ) {
+                    endEditing()
+                    withAnimation(LivMotion.nav) { desk.libraryShown.toggle() }
+                }
+                Spacer()
+                if case .entity(let id) = desk.activeTab?.content {
                     FloatCircle(
-                        symbol: desk.inspectorShown ? "chevron.up" : "chevron.down",
-                        on: desk.inspectorShown, label: "Metadata"
+                        symbol: "info.circle", on: desk.inspectorShown,
+                        label: "Properties"
                     ) {
+                        endEditing()
                         withAnimation(LivMotion.nav) { desk.inspectorShown.toggle() }
                     }
+                    noteMenu(id)
                 }
-                Menu {
-                    // Ruling 6: this COPIES. The note you are writing
-                    // stays exactly where it is; the copy becomes the
-                    // template, so nothing you wrote ever moves.
-                    if case .entity(let entity) = desk.activeTab?.content {
-                        Button {
-                            box.saveAsTemplate(entity)
-                        } label: {
-                            Label("Save as template", systemImage: "doc.on.doc")
-                        }
-                    }
-                    Button {
-                        switcherShown = true
-                    } label: {
-                        Label(workspaces.activeName, systemImage: "square.grid.2x2")
-                    }
-                    Button {
-                        settingsShown = true
-                    } label: {
-                        Label("Settings", systemImage: "gearshape")
-                    }
-                } label: {
-                    FloatCircleLabel(symbol: "ellipsis", on: false)
-                }
-                .accessibilityLabel("More")
             }
-            .padding(.trailing, 12)
+            .padding(.horizontal, 12)
             .padding(.top, 6)
+            // Full-screen panels cover the doors; fade them in the same
+            // motion so the exit slide never shows dead controls.
+            .opacity(anyPanel ? 0 : 1)
+            .accessibilityHidden(anyPanel)
+
+            // The panels, drawn last so they cover doors and body alike.
+            // Mounted while shown OR while a finger is dragging one, and
+            // positioned by that drag — they follow the hand rather than
+            // waiting for it to let go (owner, 2026-08-08).
+            if desk.libraryShown || dragging?.which == .library {
+                LibraryPanel(
+                    onDismiss: {
+                        withAnimation(LivMotion.nav) { desk.libraryShown = false }
+                    },
+                    onWorkspace: { desk.workspaceShown = true },
+                    onSettings: { desk.settingsShown = true }
+                )
+                .offset(x: panelOffset(.library))
+                // Exit transitions render BELOW later siblings without an
+                // explicit z — the panel would vanish behind the desk
+                // instead of sliding out (audit, 2026-08-01).
+                .zIndex(1)
+            }
+            if case .entity(let id) = desk.activeTab?.content,
+                desk.inspectorShown || dragging?.which == .inspector
+            {
+                SidePanel(
+                    edge: .trailing,
+                    onDismiss: {
+                        withAnimation(LivMotion.nav) { desk.inspectorShown = false }
+                    }
+                ) {
+                    EntityInspector(id: id)
+                }
+                .offset(x: panelOffset(.inspector))
+                .zIndex(1)
+            }
+
+            // The New Tab chooser: a full-screen overlay summoned by `+`,
+            // never a tab (rev 6). Drawn over the panels — it is the most
+            // recent ask.
+            if desk.newTabShown {
+                NewTabChooser(
+                    overlay: true, onWorkspace: { desk.workspaceShown = true }
+                )
+                .background(LivTheme.canvas.ignoresSafeArea())
+                // The panels' escape gesture, here too — a full-screen
+                // surface without it is a VoiceOver trap (audit,
+                // 2026-08-04). At the presentation site, so the
+                // empty-desk body (nothing to close into) has no stray
+                // escape.
+                .accessibilityAction(.escape) {
+                    withAnimation(LivMotion.nav) { desk.newTabShown = false }
+                }
+                .transition(.move(edge: .bottom))
+                .zIndex(2)
+            }
         }
         .background(LivTheme.canvas)
-        .sheet(isPresented: $settingsShown) { SettingsSheet() }
-        .sheet(isPresented: $switcherShown) {
+        // The whole desk goes INERT while a drag is latched. This — not
+        // anything at the UIKit layer — is what stops a drag from
+        // pressing the button it started on: disabling a SwiftUI
+        // control mid-press cancels the press, where touch
+        // cancellation, recognizer exclusion and delayed delivery all
+        // failed to reach SwiftUI's forwarding (each tried, each
+        // beaten, 2026-08-09). A tap never latches, so taps are never
+        // disabled.
+        .disabled(dragging != nil)
+        // Both side panels are dragged in from ANYWHERE and back out the
+        // same way, and they FOLLOW the finger (owner, 2026-08-08). The
+        // drag is a real UIKit recognizer (PanelDrag.swift) because of a
+        // flaw the owner caught in the SwiftUI version (2026-08-09):
+        // "dragging over interactive elements should not trigger them."
+        // A simultaneous SwiftUI drag runs alongside every button under
+        // the finger — a drag that started on a library row both moved
+        // the panel and opened Tasks. The recognizer cancels those
+        // touches the instant the drag latches; a plain tap never
+        // latches, so taps still press.
+        .background(
+            PanelDragInstaller(
+                active: { !desk.newTabShown },
+                mayClaim: { dx in claimPanel(dx) != nil },
+                onLatch: { dx in
+                    if let claim = claimPanel(dx) {
+                        endEditing()
+                        dragging = PanelDrag(
+                            which: claim.which, opening: claim.opening, amount: dx)
+                    }
+                },
+                onMove: { dx in dragging?.amount = dx },
+                onEnd: { dx, velocity in settleDrag(dx, velocity) }
+            )
+            .frame(width: 0, height: 0)
+        )
+        // The acknowledgment chip: a verb that changes something you can
+        // no longer see (the copy, the trashed note) says so, briefly.
+        .overlay(alignment: .top) {
+            if let text = chipText {
+                chip(text)
+                    .padding(.top, 56)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(2)
+            }
+        }
+        .confirmationDialog(
+            "Move to Trash?", isPresented: $confirmTrash, titleVisibility: .visible
+        ) {
+            Button("Move to Trash", role: .destructive) {
+                if let tab = desk.activeTab, case .entity(let id) = tab.content {
+                    trashNote(id, tab: tab.id)
+                }
+            }
+        }
+        .sheet(isPresented: $desk.workspaceShown) {
             WorkspaceSwitcher()
                 .environmentObject(box)
                 .environmentObject(workspaces)
+                .environmentObject(desk)
         }
-        // The capture sheet hangs off the HOST, not the .new tab body: the
-        // commit flips that tab to .entity, and a sheet presented from the
-        // replaced body is torn down mid-flow — the eval §5.2/§5.3
-        // vanishing confirmation and dead-ended "Another". The host
-        // outlives the flip, so the sheet shows its saved stage after
-        // EVERY commit and "Another" keeps the sheet alive.
-        .sheet(item: $desk.captureRequest) { req in
-            CaptureSheet(
-                initialVerb: req.verb,
-                openCamera: {
-                    desk.captureRequest = nil
-                    desk.cameraShown = true
-                },
-                onCreated: { id in desk.setContent(req.tabId, entity: id) }
-            )
-            .environmentObject(box)
-            .environmentObject(workspaces)
+        // Hung HERE so they survive whatever closes the library panel
+        // mid-use; MODEL state so a notification tap can dismiss them
+        // (audits 2026-08-04).
+        .sheet(isPresented: $desk.settingsShown) { SettingsSheet() }
+        .sheet(item: $share) { payload in
+            ShareSheet(items: payload.items)
         }
+    }
+
+    /// Any full-screen surface covering the desk body.
+    private var anyPanel: Bool {
+        desk.libraryShown || desk.inspectorShown || desk.newTabShown
+    }
+
+    /// A panel over a live keyboard would sit UNDER it — the keyboard is a
+    /// system window. End editing first; the note's autosave flushes on
+    /// focus loss anyway.
+    private func endEditing() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    // MARK: the note's ••• menu (rev 6: SECONDARY verbs only)
+
+    /// Frequent actions get dedicated UI (owner principle) — Properties
+    /// left this menu for its own door. What remains ACTS on the
+    /// document, rarely: duplicate, template, trash.
+    /// The secondary verbs. Every tab is a document now (Option C), so
+    /// the kind branch that used to hide template/share/export is gone.
+    /// How far off its own edge a panel currently sits. A panel with no
+    /// drag in flight is simply open (0) — the transition handles its
+    /// arrival and departure as before.
+    private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
+        let width = UIScreen.main.bounds.width
+        let shown = which == .library ? desk.libraryShown : desk.inspectorShown
+        let progress = dragging?.which == which
+            ? dragging!.progress(width) : (shown ? 1 : 0)
+        let hidden = (1 - progress) * width
+        return which == .library ? -hidden : hidden
+    }
+
+    /// What a drag moving `dx` would do: which panel, opening or
+    /// closing. nil = nothing to claim in that direction, so the
+    /// recognizer must not latch (and must not cancel any touches).
+    private func claimPanel(
+        _ dx: CGFloat
+    ) -> (which: PanelDrag.Which, opening: Bool)? {
+        if dx > 0 {
+            // Rightward: put the properties away, else summon the library.
+            if desk.inspectorShown { return (.inspector, false) }
+            if !desk.libraryShown { return (.library, true) }
+        } else {
+            // Leftward: put the library away, else summon the properties.
+            if desk.libraryShown { return (.library, false) }
+            if !desk.inspectorShown, case .entity = desk.activeTab?.content {
+                return (.inspector, true)
+            }
+        }
+        return nil
+    }
+
+    /// Let go: finish the journey the finger started, or put it back.
+    /// A flick commits from anywhere; a slow drag commits past halfway.
+    private func settleDrag(_ dx: CGFloat, _ velocity: CGFloat) {
+        guard let live = dragging else { return }
+        let width = UIScreen.main.bounds.width
+        // A real flick is fast: 700pt/s is a sharp throw, well above
+        // the drift a finger has at the end of a deliberate drag. At
+        // 250 a moderate release read as a flick and a 30%% drag flew
+        // open instead of snapping back (found live, 2026-08-09).
+        let flicked = abs(velocity) > 700
+        // Toward-visible is a direction, not a verb: the same rightward
+        // flick that opens the library would re-open a half-closed one.
+        // So the answer is simply "does the panel end up visible" — a
+        // flick answers with its direction, a slow drag with where it
+        // stopped. The first version asked "did the drag commit" and
+        // inverted the slow-close case: a 57% pull away snapped back
+        // open (found live, 2026-08-09).
+        let towardVisible = live.which == .library ? velocity > 0 : velocity < 0
+        let shown = flicked ? towardVisible : live.progress(width) > 0.5
+        withAnimation(LivMotion.nav) {
+            switch live.which {
+            case .library: desk.libraryShown = shown
+            case .inspector: desk.inspectorShown = shown
+            }
+            dragging?.amount = live.amount(for: shown ? 1 : 0, width: width)
+        } completion: {
+            dragging = nil
+        }
+    }
+
+    private func noteMenu(_ id: UInt64) -> some View {
+        let isFile = TabShape.of(box.entity(id)) == .file
+        return Menu {
+            Button {
+                duplicate(id)
+            } label: {
+                // The owner's own name for it — the copy carries the
+                // PROPERTIES, deliberately not the body.
+                Label("Duplicate note", systemImage: "plus.square.on.square")
+            }
+            // A file hands its BYTES to whatever owns the format —
+            // this is the file integration, and it moved here from a
+            // button on the file screen (owner, 2026-08-13). Secondary
+            // verbs live in this menu; the file screen shows the file.
+            if isFile, let facts = FileFacts.of(box.entity(id)), facts.exists {
+                Button {
+                    share = SharePayload(items: [facts.url])
+                } label: {
+                    Label("Open in…", systemImage: "square.and.arrow.up")
+                }
+            }
+            // Template, Share and Export are about MARKDOWN.
+            if !isFile {
+                if LivKind.of(box.entity(id)) != .template {
+                    Button {
+                        saveTemplate(id)
+                    } label: {
+                        Label("Save as template", systemImage: "doc.on.doc")
+                    }
+                }
+                Button {
+                    shareNote(id, asFile: false)
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    shareNote(id, asFile: true)
+                } label: {
+                    Label("Export as Markdown", systemImage: "arrow.down.doc")
+                }
+            }
+            Button(role: .destructive) {
+                confirmTrash = true
+            } label: {
+                Label("Move to Trash", systemImage: "trash")
+            }
+        } label: {
+            FloatCircleLabel(symbol: "ellipsis")
+        }
+        .accessibilityLabel("Note actions")
+    }
+
+    /// Hand this note to the phone as markdown. The content arrives on
+    /// the box's serial queue, so the payload is built FIRST and the
+    /// sheet is presented with it finished — a share sheet that opens
+    /// before it knows what it is sharing has nothing to offer.
+    ///
+    /// `asFile` is the difference between Share and Export: the same
+    /// markdown, handed over as text or as a real .md file so "Save to
+    /// Files" produces markdown rather than a .txt of the same words.
+    /// Neither writes to the box — sharing a note is a READ.
+    private func shareNote(_ id: UInt64, asFile: Bool) {
+        let name = (box.entity(id)?.cells ?? [])
+            .first { $0.property == "name" }?.value ?? ""
+        box.content(id) { doc in
+            guard let doc, doc.missing != true else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            // WITH the display names: an export that renders "[[4155]]"
+            // names nothing an outside reader can resolve, and the
+            // editor's own buffer has always shown the name.
+            let body = SpanText.spansToText(doc.spans ?? []) { [weak box] id in
+                (box?.entity(id)?.cells ?? [])
+                    .first { $0.property == "name" }?.value
+            }
+            // An unnamed note still deserves a title: its own first line,
+            // markers off — the same name it wears everywhere else.
+            let title = name.isEmpty ? livDisplayTitle(body) : name
+            let markdown = NoteExport.markdown(name: title, body: body)
+            guard !markdown.isEmpty else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            if asFile {
+                guard
+                    let payload = SharePayload.file(
+                        markdown, named: NoteExport.filename(title, id: id))
+                else {
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    return
+                }
+                share = payload
+            } else {
+                share = SharePayload.text(markdown)
+            }
+        }
+    }
+
+    /// A fresh note wearing THIS note's property cells — the filing
+    /// context without the body (owner, 2026-08-03). The source is never
+    /// touched; the copy opens as a tab with the caret in it.
+    private func duplicate(_ id: UInt64) {
+        guard !templateBusy else { return }
+        templateBusy = true
+        box.duplicateProperties(of: id) { copy in
+            templateBusy = false
+            guard copy != 0 else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            desk.requestFocus(copy)
+            desk.open(copy)
+        }
+    }
+
+    /// Copies (never moves — ruling 6); the chip is the only trace, since
+    /// the copy itself appears nowhere on screen.
+    private func saveTemplate(_ id: UInt64) {
+        guard !templateBusy else { return }
+        templateBusy = true
+        box.saveAsTemplate(id) { copy in
+            templateBusy = false
+            if copy == 0 {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            } else {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                flash("Saved as template")
+            }
+        }
+    }
+
+    /// Trash closes the tab (a trashed note has no business on the desk)
+    /// and offers Undo on the chip — the box has no restore verb yet, and
+    /// undo-right-after IS restore ONLY while the trash is the last
+    /// transaction. So the order matters: end editing FIRST, which
+    /// flushes any dirty title/body onto the serial lane ahead of the
+    /// trash; a teardown flush after the trash would slip between it and
+    /// the Undo, and the chip would undo the wrong thing (found live,
+    /// 2026-08-02).
+    private func trashNote(_ id: UInt64, tab: UUID) {
+        endEditing()
+        box.trash(id)
+        withAnimation(LivMotion.nav) { desk.close(tab) }
+        flash("Moved to Trash", undo: {
+            box.undo()
+            desk.open(id)
+        })
+    }
+
+    private func flash(_ text: String, undo: (() -> Void)? = nil) {
+        withAnimation(LivMotion.nav) {
+            chipText = text
+            chipUndo = undo
+        }
+        let shown = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + (undo == nil ? 2.0 : 5.0)) {
+            guard chipText == shown else { return }
+            withAnimation(LivMotion.nav) {
+                chipText = nil
+                chipUndo = nil
+            }
+        }
+    }
+
+    private func chip(_ text: String) -> some View {
+        HStack(spacing: 12) {
+            Text(text)
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text)
+            if let undo = chipUndo {
+                Button("Undo") {
+                    undo()
+                    withAnimation(LivMotion.nav) {
+                        chipText = nil
+                        chipUndo = nil
+                    }
+                }
+                .font(.system(size: LivType.body, weight: .semibold))
+                .foregroundStyle(LivTheme.accent)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+        .background(LivTheme.panel2, in: Capsule())
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
     }
 }
 
@@ -131,7 +524,7 @@ struct FloatCircleLabel: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 14, weight: .medium))
+            .font(.system(size: LivType.strong, weight: .medium))
             .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text2)
             .frame(width: 36, height: 36)
             .background(Circle().fill(on ? LivTheme.accent : LivTheme.panel2))
@@ -143,15 +536,21 @@ struct FloatCircleLabel: View {
     }
 }
 
-// MARK: - the new-tab body (the capture door)
+// MARK: - the create chooser (rev 6: a door, never a tab)
 
-/// Verbs, no questions. "Create a note" opens the editor DIRECTLY — no
-/// sheet, no intermediate question (owner, 2026-07-31: the desktop has no
-/// "capture an idea" concept, and a note starts by writing). Task and
-/// event still run through the CaptureSheet, which is where their date and
-/// status live. Photo and Open… hand off to the chrome's flags.
-struct NewTabBody: View {
-    let tabId: UUID
+/// Verbs, no questions. Two of them make a DOCUMENT, which lands as a
+/// tab: "Create a note" opens the editor with the caret in it, and
+/// "From template…" copies one first. The rest make a RECORD or open a
+/// door — a task or event rises as a card over wherever you are, and
+/// never takes a tab (Option C, owner 2026-08-08). So this is a create
+/// menu, not a "new tab" screen; it is the `+` overlay and the empty
+/// desk's own body.
+struct NewTabChooser: View {
+    /// Overlay mode (summoned by `+` over a live desk) carries a close
+    /// band; the empty-desk body has nothing to close into.
+    let overlay: Bool
+    /// Presented by DESKHOST — switching workspace tears this view down.
+    let onWorkspace: () -> Void
 
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
@@ -160,18 +559,28 @@ struct NewTabBody: View {
     @State private var templatesShown = false
 
     var body: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            verb("Create a note", "square.and.pencil", primary: true) { createNote() }
-            verb("From template…", "doc.on.doc") { templatesShown = true }
-            verb("New task", "checkmark.circle") { present(.task) }
-            verb("New event", "calendar") { present(.event) }
-            verb("Photo", "camera") { desk.cameraShown = true }
-            verb("Open…", "magnifyingglass") { desk.searchShown = true }
-            Spacer()
-            Spacer()  // sit the stack a touch above center
+        VStack(spacing: 0) {
+            if overlay {
+                closeBand
+            }
+            VStack(spacing: 8) {
+                Spacer()
+                // Documents first — they are what a tab holds.
+                verb("Create a note", .note, primary: true) { createNote() }
+                verb("From template…", .template) { templatesShown = true }
+                fileDoor
+                // No "Open…" here: the bar below carries search, and the
+                // bar is now always up on this screen. Two doors to one
+                // room is a defect (standing rule 4), and the one that
+                // went is the one that was only reachable from here.
+                Spacer()
+                // The workspace this creation lands in — switchable right
+                // here (owner, 2026-08-03), because the stamp depends on it.
+                workspaceRow
+                Spacer()
+            }
+            .padding(.horizontal, 48)
         }
-        .padding(.horizontal, 48)
         .disabled(creating)
         .sheet(isPresented: $templatesShown) {
             TemplateSheet(verb: .create) { template in
@@ -181,8 +590,70 @@ struct NewTabBody: View {
         }
     }
 
+    /// The file door. It carries its own picker, so it is a view rather
+    /// than a `verb(…)` call; FileImportButton wears the verb dress
+    /// itself.
+    private var fileDoor: some View {
+        FileImportButton()
+    }
+
+    /// The house close band (App.swift's FeatureWindow recipe): the WHOLE
+    /// band closes, not just the glyph, and a downward drag does too.
+    private var closeBand: some View {
+        HStack(spacing: 0) {
+            Button {
+                withAnimation(LivMotion.nav) { desk.newTabShown = false }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: LivType.strong, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(LivMotion.nav) { desk.newTabShown = false }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { g in
+                    if g.translation.height > 40 {
+                        withAnimation(LivMotion.nav) { desk.newTabShown = false }
+                    }
+                }
+        )
+    }
+
+    private var workspaceRow: some View {
+        Button(action: onWorkspace) {
+            HStack(spacing: 8) {
+                LivIcon(
+                    glyph: workspaces.activeId == 0 ? .workspaces : .workspace,
+                    color: LivTheme.text3, size: 17)
+                Text(workspaces.activeName)
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(LivTheme.text2)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: LivType.caption, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Workspace: \(workspaces.activeName). Switch")
+    }
+
     /// A new note from a template: the same landing as "Create a note" —
-    /// this tab becomes the note and the caret is already in it, at the
+    /// the note becomes a tab with the caret already in it, at the
     /// template's {{cursor}} if it named one.
     private func fromTemplate(_ template: UInt64) {
         guard !creating else { return }
@@ -194,13 +665,13 @@ struct NewTabBody: View {
             }
             workspaces.stamp(id, in: box)
             desk.requestFocus(id, caret: caret)
-            desk.setContent(tabId, entity: id)
+            desk.adoptCapture(id)
         }
     }
 
-    /// Birth an empty note and become it: this tab flips to the entity and
-    /// the editor takes the screen with the caret already in it. The
-    /// workspace stamps it exactly as any other creation door does.
+    /// Birth an empty note and land in it: the editor takes the screen
+    /// with the caret already in it. The workspace stamps it exactly as
+    /// any other creation door does.
     private func createNote() {
         guard !creating else { return }
         creating = true
@@ -211,40 +682,32 @@ struct NewTabBody: View {
             }
             workspaces.stamp(id, in: box)
             desk.requestFocus(id)
-            desk.setContent(tabId, entity: id)
+            desk.adoptCapture(id)
         }
     }
 
-    /// The verb rides the request so the sheet opens in ITS mode (§5.5);
-    /// DeskHost presents — this body will not survive the first commit.
-    private func present(_ v: CaptureVerb) {
-        desk.captureRequest = CaptureRequest(verb: v, tabId: tabId)
-    }
-
+    /// A plain glyph, no chip. Carved kind chips were tried here on
+    /// 2026-08-12 and rejected (owner: "color / boxed icons in new tab
+    /// looks bad"). This is a column of five verbs a person reads by
+    /// their words; five colored boxes made it a toy shelf. Kind color
+    /// still marks what a THING is, in the lists — not what a button
+    /// would make.
+    ///
+    /// The GLYPH is still the shared drawing — one table, so the door
+    /// that makes a note shows the same mark the note wears afterwards.
+    /// Only the colour is withheld.
     private func verb(
-        _ label: String, _ icon: String, primary: Bool = false,
+        _ label: String, _ glyph: LivGlyph, primary: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: primary ? .semibold : .regular))
+                LivIcon(
+                    glyph: glyph,
+                    color: primary ? LivTheme.onAccent : LivTheme.text, size: 18)
                 Text(label)
-                    .font(.system(size: 15, weight: primary ? .semibold : .regular))
             }
-            .foregroundStyle(primary ? LivTheme.onAccent : LivTheme.text)
-            .frame(maxWidth: .infinity)
-            .frame(height: 46)
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radius)
-                    .fill(primary ? LivTheme.accent : LivTheme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radius)
-                    .strokeBorder(
-                        primary ? Color.clear : LivTheme.border, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radius))
+            .livVerbFace(primary: primary)
         }
         .buttonStyle(.plain)
     }
@@ -287,15 +750,56 @@ struct EntityTabBody: View {
         }
     }
 
+    /// The template safeguard (rev 6): a template on the desk SAYS so,
+    /// and offers the thing you probably meant — a new note from it.
+    /// Editing stays allowed (a template is a note), but editing-when-
+    /// you-meant-a-copy stops being the silent default.
+    private var isTemplate: Bool {
+        LivKind.of(box.entity(id)) == .template
+    }
+
+    /// A floating pill BETWEEN the doors, in the clearance the editor
+    /// already reserves for them — it pushes nothing (the old banner
+    /// stacked its own band on the editor's door clearance: ~90pt of
+    /// dead space; audit 2026-08-04).
+    private var templatePill: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: LivType.label))
+                .foregroundStyle(LivTheme.text3)
+            Text("Template")
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
+            Button {
+                box.newFromTemplate(id, now: Civil.nowStamp()) { fresh, caret in
+                    guard fresh != 0 else { return }
+                    desk.requestFocus(fresh, caret: caret)
+                    desk.open(fresh)
+                }
+            } label: {
+                Text("New note")
+                    .font(.system(size: LivType.body, weight: .semibold))
+                    .foregroundStyle(LivTheme.accent)
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("New note from this template")
+            .accessibilityHint("Edits to this note change every future copy")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(LivTheme.panel2, in: Capsule())
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+    }
+
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if desk.inspectorShown {
-                EntityInspector(id: id)
-                    // Clear the floating bottom bar — the inspector's
-                    // Undo / Move to Trash row must never rest under it.
-                    .padding(.top, 52)
-                    .padding(.bottom, 76)
-                    .transition(.move(edge: .trailing))
+            if TabShape.of(box.entity(id)) == .file {
+                // A file IS a document you work on — it belongs in a
+                // tab. Liv shows the bytes and never writes them.
+                FileBody(id: id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if box.entity(id) != nil {
                 NoteEditor(
                     id: id,
@@ -312,6 +816,16 @@ struct EntityTabBody: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // In the doors' own band, anchored after the LEFT door — centered
+        // it would graze the right-side pair on narrow screens. No layout
+        // push either way.
+        .overlay(alignment: .topLeading) {
+            if isTemplate {
+                templatePill
+                    .padding(.leading, 64)
+                    .padding(.top, 10)
+            }
+        }
         .onAppear {
             seedTitle()
             // Child onAppear fires before the parent's, so the editor reads
@@ -321,11 +835,14 @@ struct EntityTabBody: View {
                 autoCaret = request.caret
             }
         }
-        .onChange(of: storedName) { _, fresh in
+        .onChange(of: storedName) { old, fresh in
             // The snapshot moved under us (undo, another surface). Reseed
-            // only when the field is not mid-edit, which the comparison
-            // against the live draft already tells us.
-            if title != fresh, title == "" || title == storedName { title = fresh }
+            // unless the user actually edited the draft — compared against
+            // the OLD stored name: `storedName` inside this closure already
+            // reads the new value, so the old guard could only ever fire on
+            // an empty field and an external rename froze the title, which
+            // a later commit then silently reverted (audit, 2026-08-04).
+            if title != fresh, title == "" || title == old { title = fresh }
         }
     }
 
@@ -346,6 +863,12 @@ struct EntityTabBody: View {
     }
 
     private func commitTitle() {
+        // A gone or trashed note takes no name: after a trash, the entity
+        // stops resolving, storedName reads empty, and the equality guard
+        // below would happily write the old name back onto the trashed
+        // note — the stray transaction that broke the chip's Undo
+        // (found live, 2026-08-02).
+        guard let row = box.entity(id), row.trashed != true else { return }
         let stored = storedName
         let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard typed != stored, !typed.isEmpty else {
@@ -353,250 +876,5 @@ struct EntityTabBody: View {
             return
         }
         box.set(id, "name", typed)
-    }
-}
-
-// MARK: - the tab switcher
-
-/// The tab view: it takes the WHOLE screen (owner, 2026-07-29) — top bar
-/// and bottom bar both covered, nothing showing through. Card grid with
-/// previews, ✕ per card, the dashed new-tab card, and the
-/// + | "N tabs" | Done footer, which is the way out.
-struct TabSwitcher: View {
-    @EnvironmentObject var desk: DeskModel
-    @EnvironmentObject var box: BoxModel
-
-    private let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10),
-    ]
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(desk.tabs) { tab in card(tab) }
-                    newTabCard
-                }
-                .padding(16)
-            }
-            footer
-        }
-        .background(LivTheme.canvas.ignoresSafeArea())
-    }
-
-    /// FeatureWindow's header, same 40pt band, same `v`. It is not
-    /// decoration: a ScrollView that touches the top safe area takes it over
-    /// and draws its content THROUGH it, so without a band ahead of it a
-    /// scrolled card row slides under the clock and the Dynamic Island —
-    /// and a ✕ resting behind the Island cannot be tapped, because that
-    /// region belongs to the system. Rule 2 bans the blur that would
-    /// normally sit there. This band absorbs the inset and gives the tab
-    /// view the same way out the feature windows have.
-    private var header: some View {
-        HStack(spacing: 0) {
-            Button { desk.switcherShown = false } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close tabs")
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .contentShape(Rectangle())
-        .onTapGesture { desk.switcherShown = false }
-        .gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { g in
-                    if g.translation.height > 40 { desk.switcherShown = false }
-                }
-        )
-    }
-
-    // MARK: cards
-
-    private func card(_ tab: DeskTab) -> some View {
-        let active = tab.id == desk.activeTabId
-        return Button {
-            desk.focus(tab.id)
-            desk.switcherShown = false
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: 4) {
-                    Text(cardTitle(tab))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(LivTheme.text)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .padding(.top, 8)
-                    Spacer(minLength: 0)
-                    Button {
-                        desk.close(tab.id)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(LivTheme.text3)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close tab")
-                }
-                .padding(.horizontal, 10)
-                Text(cardExcerpt(tab))
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(LivTheme.muted)
-                    .lineLimit(4)
-                    .multilineTextAlignment(.leading)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 2)
-                Spacer(minLength: 4)
-                HStack(spacing: 4) {
-                    Circle().fill(Hue.dot(cardKind(tab))).frame(width: 5, height: 5)
-                    Text(cardKind(tab).uppercased())
-                        .font(.system(size: 8, weight: .semibold))
-                        .kerning(0.5)
-                        .foregroundStyle(LivTheme.text3)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 20)
-                .background(LivTheme.panel)
-            }
-            .frame(height: 150)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(LivTheme.surface))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(
-                        active ? LivTheme.accent : LivTheme.border,
-                        lineWidth: active ? 1.5 : 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var newTabCard: some View {
-        Button {
-            desk.newTab()
-            desk.switcherShown = false
-        } label: {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    LivTheme.border2,
-                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
-                )
-                .frame(height: 150)
-                .overlay(
-                    VStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .medium))
-                        Text("New tab").font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundStyle(LivTheme.text3)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: footer — + | N tabs | Done
-
-    private var footer: some View {
-        HStack {
-            Button {
-                desk.newTab()
-                desk.switcherShown = false
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("New tab")
-            Spacer()
-            Text("\(desk.tabs.count) \(desk.tabs.count == 1 ? "tab" : "tabs")")
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(LivTheme.text3)
-            Spacer()
-            Button {
-                desk.switcherShown = false
-            } label: {
-                Text("Done")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(height: 44)
-                    .padding(.horizontal, 8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 12)
-        // Full screen: no floating bar to clear, just the home indicator
-        // (the safe area already handles that).
-        .padding(.bottom, 4)
-        .overlay(alignment: .top) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-    }
-
-    // MARK: card copy
-
-    private func cardTitle(_ tab: DeskTab) -> String {
-        switch tab.content {
-        case .new:
-            return "New tab"
-        case .entity(let id):
-            let t = box.entity(id)?.title ?? ""
-            guard !t.isEmpty else { return "Untitled" }
-            let clean = livDisplayTitle(t)
-            return clean.isEmpty ? t : clean
-        }
-    }
-
-    /// 3–4 preview lines. Content bodies are not on the wire yet, so the
-    /// honest preview is the property cells.
-    private func cardExcerpt(_ tab: DeskTab) -> String {
-        switch tab.content {
-        case .new:
-            return "Capture an idea, create a task or event, or open something."
-        case .entity(let id):
-            guard let row = box.entity(id) else {
-                return "Not in this box anymore."
-            }
-            var lines: [String] = []
-            for cell in row.cells ?? [] {
-                guard let p = cell.property, !p.isEmpty, p != "name",
-                    let v = cell.value, !v.isEmpty
-                else { continue }
-                lines.append("\(p) · \(v)")
-                if lines.count == 4 { break }
-            }
-            if lines.isEmpty {
-                return (row.contentPrint ?? 0) != 0
-                    ? "Content lives on this entity." : "No details yet."
-            }
-            return lines.joined(separator: "\n")
-        }
-    }
-
-    private func cardKind(_ tab: DeskTab) -> String {
-        switch tab.content {
-        case .new:
-            return "new"
-        case .entity(let id):
-            guard let row = box.entity(id) else { return "missing" }
-            return row.kinds?.first ?? "scrap"
-        }
     }
 }

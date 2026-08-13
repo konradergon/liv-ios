@@ -20,6 +20,61 @@ struct Snapshot: Decodable {
     var workspaces: [WorkspaceRow]?
     /// Saved filters — view entities with a `query` cell (M4).
     var views: [SavedViewRow]?
+    /// The clerk's pending proposals (rev 6: the Properties panel's
+    /// Suggestions). Force-empty on the wire while assist is off.
+    var inbox: [ProposalRow]?
+    /// The assist switch — the consent that gates every clerk proposal.
+    var assist: AssistRow?
+    /// Open checkbox lines inside notes (phase 3) — the Tasks view's
+    /// "In notes" section. A projection: nothing here is stored.
+    var noteTasks: [NoteTaskRow]?
+}
+
+/// One open `- [ ]` line inside a note (phase 3, services/src/tasks.rs).
+/// Every field Optional — the standing law.
+struct NoteTaskRow: Decodable, Identifiable {
+    /// Stable per line, so SwiftUI keeps rows in place across refreshes.
+    var id: String { "\(entity ?? 0).\(line ?? 0)" }
+    /// The note that holds the line.
+    var entity: UInt64? = nil
+    /// What to call that note — computed in Rust, where the content is
+    /// (never EntityRow.title, which flattens the whole body).
+    var source: String? = nil
+    /// Line index in the buffer — the toggle's address.
+    var line: Int? = nil
+    var text: String? = nil
+    var indent: Int? = nil
+}
+
+/// One clerk proposal (mirrors the archived macOS shell's shape). The
+/// fingerprint rides back on accept/reject — a consent is to a PROPOSAL,
+/// never a position, so a stale click is refused, not misapplied.
+struct ProposalRow: Decodable, Identifiable {
+    var id: String { "\(entity ?? 0).\(fingerprint ?? 0)" }
+    var entity: UInt64? = nil
+    var ordinal: UInt32? = nil
+    var fingerprint: UInt64? = nil
+    var reason: String? = nil
+    var author: String? = nil
+    /// The structured writes this proposal makes — the diff's source.
+    var commands: [ProposalCommandRow]? = nil
+}
+
+/// One command of a proposal, for the +/− diff.
+struct ProposalCommandRow: Decodable {
+    var kind: String? = nil  // add | remove | trash | redirect | create | restore
+    var property: String? = nil
+    var value: String? = nil
+    var valueKind: String? = nil
+    var refTarget: UInt64? = nil
+}
+
+/// The assist switch: the entity the toggle writes to, and the switch
+/// property's CURRENT name (survives a definition rename).
+struct AssistRow: Decodable {
+    var id: UInt64? = nil
+    var on: Bool? = nil
+    var prop: String? = nil
 }
 
 /// Optionals carry `= nil` so the memberwise initializer has defaults —
@@ -138,6 +193,11 @@ private struct DistinctWire: Decodable {
 private struct SearchWire: Decodable {
     struct Hit: Decodable { var id: UInt64? }
     var hits: [Hit]?
+    /// How many matched IN TOTAL. The core ranks everything and sends
+    /// the first 200; the shell was throwing this away, so a query
+    /// matching 1,800 things showed 200 and said nothing about the
+    /// other 1,600 (found 2026-08-08).
+    var total: Int?
 }
 
 private struct ProbeWire: Decodable {
@@ -184,7 +244,26 @@ final class BoxModel: ObservableObject {
 
     /// Re-snapshot, keeping the last-used occurrence window (default:
     /// liv_snapshot's current month).
+    /// A read is in the air; and one more was asked for while it was.
+    ///
+    /// One typed task fires createTask, set(name), setSpan(due) and
+    /// stamp — four writes, each scheduling its own full re-read of the
+    /// whole box. Only the last answer is ever seen, so three were
+    /// waste (measured 2026-08-08).
+    ///
+    /// Collapsing them must never lose the LAST one: a read that is
+    /// already in the air may have been taken before the write that
+    /// asked for this one. So a request during a read is remembered and
+    /// re-run when it lands, rather than dropped.
+    private var refreshInFlight = false
+    private var refreshAgain = false
+
     func refresh() {
+        if refreshInFlight {
+            refreshAgain = true
+            return
+        }
+        refreshInFlight = true
         let path = self.path
         let window = self.window
         boxQueue.async {
@@ -196,9 +275,23 @@ final class BoxModel: ObservableObject {
             }
             guard let raw else {
                 self.snapshotFailed()
+                self.refreshLanded()
                 return
             }
             self.applySnapshot(raw)
+            self.refreshLanded()
+        }
+    }
+
+    /// One read finished. If anything asked for another while it was in
+    /// the air, run exactly one more.
+    private func refreshLanded() {
+        DispatchQueue.main.async {
+            self.refreshInFlight = false
+            if self.refreshAgain {
+                self.refreshAgain = false
+                self.refresh()
+            }
         }
     }
 
@@ -448,6 +541,78 @@ final class BoxModel: ObservableObject {
         act("undo") { liv_undo_at(self.path) == 1 }
     }
 
+    // MARK: the clerk's proposals (rev 6 — suggest, never act)
+
+    /// The pending proposals aimed at one entity, off the live snapshot.
+    func proposals(for entity: UInt64) -> [ProposalRow] {
+        (snap?.inbox ?? []).filter { $0.entity == entity }
+    }
+
+    /// Consent to ONE proposal. The fingerprint makes a stale consent a
+    /// refusal (returns 0), never a misapplied write.
+    func accept(_ p: ProposalRow) {
+        act("accept") {
+            liv_accept_at(self.path, p.entity ?? 0, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
+        }
+    }
+
+    /// Decline ONE proposal — persisted; the clerk never re-asks.
+    func reject(_ p: ProposalRow) {
+        act("reject") {
+            liv_reject_at(self.path, p.entity ?? 0, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
+        }
+    }
+
+    /// Consent to a whole group as ONE transaction, one undo — the
+    /// members' fingerprints through liv_accept_group_at (all-or-nothing;
+    /// a stale member refuses the lot).
+    func acceptGroup(_ fingerprints: [UInt64], done: ((Bool) -> Void)? = nil) {
+        let json =
+            (try? String(data: JSONEncoder().encode(fingerprints), encoding: .utf8)) ?? "[]"
+        act("acceptGroup", done) { liv_accept_group_at(self.path, json) == 1 }
+    }
+
+    /// A fresh entity wearing another's property cells — the filing
+    /// context without the body (rev 6, "Duplicate note"). Identity,
+    /// content and the template marker stay behind. Owner rulings
+    /// (2026-08-04): the TYPE copies too (a duplicated task is a task),
+    /// and reference/file cells are SKIPPED — the wire carries their
+    /// display value, and re-adding by display string can silently link
+    /// the wrong entity, which is worse than no link.
+    func duplicateProperties(of source: UInt64, done: ((UInt64) -> Void)? = nil) {
+        guard let row = entity(source) else {
+            done?(0)
+            return
+        }
+        let skip: Set<String> = ["name", "content", "created", "type", Template.property]
+        let skipKinds: Set<String> = ["datetime", "reference", "file"]
+        createNote { copy in
+            guard copy != 0 else {
+                done?(0)
+                return
+            }
+            if let kind = row.kinds?.first, !kind.isEmpty, kind != "note" {
+                self.setType(copy, kind)
+            }
+            for cell in row.cells ?? [] {
+                guard let property = cell.property, let value = cell.value,
+                    !value.isEmpty, !skip.contains(property),
+                    // Datetime copies structurally below; reference/file
+                    // never copy (see above).
+                    !skipKinds.contains(cell.kind ?? "")
+                else { continue }
+                self.addCell(copy, property, value)
+            }
+            if let due = row.due {
+                let property = (row.positionedBy?.isEmpty == false ? row.positionedBy! : "due")
+                self.setSpan(
+                    copy, property, start: due, end: row.dueEnd ?? 0,
+                    dateOnly: row.dueDateOnly ?? false)
+            }
+            done?(copy)
+        }
+    }
+
     // MARK: seam reads (their own payloads, off the snapshot)
 
     /// The status vocabulary offered to a kind, in board order.
@@ -532,10 +697,30 @@ final class BoxModel: ObservableObject {
 
     /// Ranked hit ids for one raw DSL query — the shell already holds each
     /// row; search carries only rank. Parsed in Rust, never re-parsed here.
-    func search(_ query: String, done: @escaping ([UInt64]) -> Void) {
+    // MARK: files — the bytes stay on disk; the box holds a reference
+
+    /// Re-hash the referenced path. The core rewrites the file cell when
+    /// the bytes changed — a changed hash IS the integration, so opening
+    /// a file is how Liv learns Word saved it. Never on a timer.
+    /// `done` gets true when something changed, so the caller can
+    /// refresh rather than guess.
+    func resyncFile(_ id: UInt64, done: ((Bool) -> Void)? = nil) {
+        boxQueue.async {
+            let status = liv_resync_file_at(self.path, id)
+            DispatchQueue.main.async {
+                done?(status == 1)
+                if status == 1 { self.refresh() }
+            }
+        }
+    }
+
+    /// `done` receives the page of ids AND the true total, so a capped
+    /// result can say so instead of quietly looking complete.
+    func search(_ query: String, done: @escaping ([UInt64], Int) -> Void) {
         let path = self.path
         boxQueue.async {
             var ids: [UInt64] = []
+            var total = 0
             if let raw = liv_search_at(path, query) {
                 let json = String(cString: raw)
                 liv_string_free(raw)
@@ -543,8 +728,9 @@ final class BoxModel: ObservableObject {
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 let wire = try? decoder.decode(SearchWire.self, from: Data(json.utf8))
                 ids = (wire?.hits ?? []).compactMap { $0.id }
+                total = wire?.total ?? ids.count
             }
-            DispatchQueue.main.async { done(ids) }
+            DispatchQueue.main.async { done(ids, total) }
         }
     }
 }
@@ -623,12 +809,52 @@ enum Civil {
 
     /// Noon anchor: components-in, components-out within one calendar; noon
     /// dodges the DST-skipped-midnight edge.
-    private static func date(ofDay day: Int64) -> Date? {
+    ///
+    /// This was `private`, so five other files wrote it out again — each
+    /// with its own copy of the noon trick, which is how a real
+    /// daylight-saving bug eventually arrives (owner, 2026-08-07). It is
+    /// the one gregorian calendar in the shell now.
+    static func date(ofDay day: Int64) -> Date? {
         var parts = DateComponents()
         parts.year = Int(day / 10_000)
         parts.month = Int((day / 100) % 100)
         parts.day = Int(day % 100)
         parts.hour = 12
         return gregorian.date(from: parts)
+    }
+
+    /// A packed civil day (+ HHMM) as a real moment, for seeding pickers.
+    static func date(day: Int64, hhmm: Int64) -> Date? {
+        var parts = DateComponents()
+        parts.year = Int(day / 10_000)
+        parts.month = Int((day / 100) % 100)
+        parts.day = Int(day % 100)
+        parts.hour = Int(hhmm / 100)
+        parts.minute = Int(hhmm % 100)
+        return gregorian.date(from: parts)
+    }
+
+    /// The civil day a picker is sitting on.
+    static func day(of date: Date) -> Int64 {
+        let c = gregorian.dateComponents([.year, .month, .day], from: date)
+        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// The clock time a picker is sitting on, packed HHMM.
+    static func hhmm(of date: Date) -> Int64 {
+        let c = gregorian.dateComponents([.hour, .minute], from: date)
+        return Int64((c.hour ?? 0) * 100 + (c.minute ?? 0))
+    }
+
+    /// 1 = Sunday … 7 = Saturday, the Gregorian numbering.
+    static func weekday(_ day: Int64) -> Int {
+        guard let date = date(ofDay: day) else { return 0 }
+        return gregorian.component(.weekday, from: date)
+    }
+
+    /// Whole days from `a` to `b`, signed.
+    static func daysBetween(_ a: Int64, _ b: Int64) -> Int {
+        guard let da = date(ofDay: a), let db = date(ofDay: b) else { return 0 }
+        return gregorian.dateComponents([.day], from: da, to: db).day ?? 0
     }
 }

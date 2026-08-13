@@ -8,9 +8,6 @@
 import SwiftUI
 import UIKit
 
-/// Ink for solid amber fills (the desktop's onYellowInk).
-private let chromeAmberInk = Color(red: 0x3A / 255, green: 0x2A / 255, blue: 0)
-
 // MARK: - features
 
 /// The lens roster. Calendar is a v1 placeholder — its body renders
@@ -30,15 +27,20 @@ enum Feature: String, CaseIterable, Identifiable {
         }
     }
 
-    var icon: String {
+    /// The blueprints' own drawing for each place (Glyph.swift).
+    var glyph: LivGlyph {
         switch self {
-        case .today: return "sun.max"
-        case .everything: return "tray.full"
-        case .inbox: return "tray"
-        case .tasks: return "checkmark.circle"
-        case .calendar: return "calendar"
+        case .today: return .today
+        case .everything: return .everything
+        case .inbox: return .inbox
+        case .tasks: return .tasks
+        case .calendar: return .calendar
         }
     }
+
+    // No per-view hue. The library's rows are bare and colourless
+    // (owner, 2026-08-13); a view is a place, and kind colour is for
+    // things. The drawing alone tells them apart.
 }
 
 // MARK: - desk tabs
@@ -46,36 +48,32 @@ enum Feature: String, CaseIterable, Identifiable {
 struct DeskTab: Identifiable {
     let id: UUID
     var content: DeskTabContent
+    /// When this tab was last USED — opened, focused, or stepped back
+    /// to. A packed civil stamp, the app's one time vocabulary. Tabs
+    /// that go untouched long enough fall out of the grid and into the
+    /// Inactive list; nothing about them is lost, they are just not in
+    /// the way. No default on purpose: every place that mints a tab has
+    /// to say when.
+    var lastUsed: Int64
 }
 
+/// Tabs hold EDITABLE content and nothing else (rev 6): the one case
+/// left after `.new` died — the New Tab screen is an overlay now, never
+/// a tab.
 enum DeskTabContent: Equatable {
-    case new
     case entity(UInt64)
 }
 
-/// One capture-sheet presentation: the verb the door chose and the tab
-/// that receives every entity committed this session (serial captures
-/// reuse it — §6's tab-hygiene rule). The id is fresh per open so the
-/// sheet's initial verb state can never be reused across presentations
-/// (eval §5.5: "New task" opening on Idea mode).
-struct CaptureRequest: Identifiable {
-    let id = UUID()
-    let verb: CaptureVerb
-    let tabId: UUID
-}
-
-/// The chrome's one state object. Boots in Feature view on Today; the
-/// desk keeps at least one tab alive at all times. Entity-tab ids + the
-/// active index ride UserDefaults ("desk.tabs.v1.<workspace>"); ids missing
-/// from the box are dropped LAZILY — the dead tab renders an EmptyHint,
-/// never a crash and never an eager sweep against a box that may still be
-/// opening.
+/// The chrome's one state object. Entity-tab ids + the active index ride
+/// UserDefaults ("desk.tabs.v1.<workspace>"); ids missing from the box
+/// are dropped LAZILY — the dead tab renders an EmptyHint, never a crash
+/// and never an eager sweep against a box that may still be opening.
 ///
 /// M4: ONE tab plane whose open SET is remembered per workspace — never a
-/// second tab bar (that was the old app's three-tab-system debt). Switching
-/// workspace saves the current set and restores that workspace's; a
-/// workspace with no saved set starts with one fresh `.new` tab, because
-/// the desk is never empty.
+/// second tab bar (that was the old app's three-tab-system debt).
+/// Switching workspace saves the current set and restores that
+/// workspace's. Rev 6: the desk MAY be empty — an empty desk shows the
+/// New Tab chooser as its body; the chooser never occupies a tab.
 final class DeskModel: ObservableObject {
     /// The feature window currently covering the chrome (sheet item);
     /// nil = the desk.
@@ -86,15 +84,76 @@ final class DeskModel: ObservableObject {
     }
     @Published var switcherShown = false
     @Published var searchShown = false
-    @Published var gridShown = false
+    /// The library panel (left) is up.
+    @Published var libraryShown = false
     @Published var cameraShown = false
+    /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
+    /// `switcherShown`, the tab view). Model state so open() can dismiss
+    /// them — as DeskHost-local @State they outlived a notification tap
+    /// and the landing tab hid behind them (audit, 2026-08-04).
+    @Published var settingsShown = false
+    @Published var workspaceShown = false
+    /// The workspace sheet should open with the NEW FILTER form already
+    /// composing. Filters are reached from the library panel now; the
+    /// form still lives in the sheet, so this is how the panel asks for
+    /// it without a second copy of the form (standing rule 4).
+    @Published var composeFilter = false
+    /// The New Tab chooser overlay (rev 6): `+` summons it OVER the desk;
+    /// it is a door, never a tab. An empty desk shows the same chooser as
+    /// its body without this flag.
+    @Published var newTabShown = false
     /// The metadata inspector covers the active entity tab's body.
     /// Lifted to the model so DeskHost's floating chevron can drive it;
     /// reset on every tab move — metadata is a visit, not a mode.
     @Published var inspectorShown = UserDefaults.standard.bool(forKey: "desk.boot.inspector")
-    /// The live capture sheet, presented by DeskHost — NOT by the .new tab
-    /// body, which the first commit replaces (eval §5.2/§5.3).
-    @Published var captureRequest: CaptureRequest?
+
+    // MARK: records — a card over where you stand, never a tab (Option C)
+
+    /// The task or event being edited in a card. Presented by whatever
+    /// surface is frontmost, so tapping a task inside Tasks edits it
+    /// WITHOUT leaving Tasks (owner, 2026-08-08).
+    @Published var recordCard: UInt64?
+    /// A card swiped away lives on as a pill above the bottom bar. One
+    /// at a time, like a mail draft: go read a note, tap the pill, and
+    /// you are back where you were. Every record edit saves as you make
+    /// it, so the pill is pure navigation — nothing rides in it.
+    @Published var minimisedRecord: UInt64?
+
+    /// What kind of thing an id points at. Wired at launch from the box;
+    /// nil before the first snapshot, which reads as "document" and is
+    /// the safe answer (a document tab renders a record's name fine, a
+    /// record card cannot render a note).
+    var shapeOf: (UInt64) -> TabShape = { _ in .document }
+
+    /// Put the card away, remembering it.
+    func minimiseRecord() {
+        guard let id = recordCard else { return }
+        recordCard = nil
+        withAnimation(LivMotion.nav) { minimisedRecord = id }
+    }
+
+    /// Bring the pill back to a card.
+    func restoreRecord() {
+        guard let id = minimisedRecord else { return }
+        withAnimation(LivMotion.nav) { minimisedRecord = nil }
+        recordCard = id
+    }
+
+    func dropMinimised() {
+        withAnimation(LivMotion.nav) { minimisedRecord = nil }
+    }
+
+    /// A creation door committed an entity: close the chooser and land
+    /// it. Each door gets its own tab.
+    ///
+    /// This used to carry a LATCH — one tab per capture-sheet session,
+    /// rewritten by each serial commit (§6 tab hygiene). The capture
+    /// sheet is gone (2026-08-12), and with one entity per door there is
+    /// nothing left to reuse a tab for, so the latch went with it.
+    func adoptCapture(_ id: UInt64, as shape: TabShape? = nil) {
+        withAnimation(LivMotion.nav) { newTabShown = false }
+        open(id, as: shape)
+    }
 
     /// A just-born note whose editor should open with the caret already in
     /// it. Deliberately NOT @Published — it is consumed once by the editor
@@ -149,14 +208,65 @@ final class DeskModel: ObservableObject {
         tabs.contains { $0.id == id }
     }
 
+    /// This tab is being used, now. The ONE place a tab's clock is set.
+    func touch(_ tabId: UUID) {
+        guard let i = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        tabs[i].lastUsed = Civil.nowStamp()
+        persist()
+    }
+
+    /// The tabs the grid shows. Inactive tabs are NOT removed from
+    /// `tabs` — they stay in the one array, so closing, de-duplicating,
+    /// pruning, ‹ › and the saved plane all keep working on the whole
+    /// set, and only what is DISPLAYED narrows.
+    ///
+    /// The active tab is never inactive, which is what guarantees this
+    /// is non-empty whenever `tabs` is — and therefore that the empty
+    /// desk still means "no tabs at all", not "none you looked at
+    /// lately".
+    var liveTabs: [DeskTab] {
+        let now = Civil.nowStamp()
+        return tabs.filter {
+            $0.id == activeTabId || !LivTabs.isInactive($0.lastUsed, now: now)
+        }
+    }
+
+    /// Untouched long enough to be out of the way. Most recently used
+    /// first, so the list reads newest-stale to oldest.
+    var inactiveTabs: [DeskTab] {
+        let now = Civil.nowStamp()
+        return tabs
+            .filter {
+                $0.id != activeTabId && LivTabs.isInactive($0.lastUsed, now: now)
+            }
+            .sorted { $0.lastUsed > $1.lastUsed }
+    }
+
+    /// Close every inactive tab at once. Safe without a confirmation and
+    /// without an undo: a tab is device state, so this writes nothing to
+    /// the box — every note, file and capture is still there, in search,
+    /// in Everything, in its workspace. The same reasoning the owner
+    /// already accepted for the silent record-tab prune (2026-08-08).
+    func closeInactive() {
+        for tab in inactiveTabs { close(tab.id) }
+    }
+
     /// Activate a tab, recording history. Every activation path funnels
     /// here so ‹ › always tell the truth.
     func focus(_ tabId: UUID) {
+        // Stamp FIRST and unconditionally: re-opening the tab you are
+        // already on is still using it, and the early return below would
+        // otherwise let the active tab age out from under you.
+        touch(tabId)
         guard tabId != activeTabId else { return }
         if let current = activeTabId { backIds.append(current) }
         forwardIds.removeAll()
         activeTabId = tabId
-        inspectorShown = false
+        if inspectorShown {
+            // In the panel's own motion — a full-screen surface must
+            // never vanish in one frame (audit, 2026-08-04).
+            withAnimation(LivMotion.nav) { inspectorShown = false }
+        }
         objectWillChange.send()
     }
 
@@ -164,7 +274,12 @@ final class DeskModel: ObservableObject {
         while let id = backIds.popLast() {
             guard alive(id) else { continue }
             if let current = activeTabId { forwardIds.append(current) }
+            // ‹ › assign activeTabId directly rather than calling
+            // focus(), so they must stamp for themselves — otherwise
+            // stepping back to a tab and reading it left it ageing.
+            touch(id)
             activeTabId = id
+            leaveChooser()
             objectWillChange.send()
             return
         }
@@ -174,10 +289,19 @@ final class DeskModel: ObservableObject {
         while let id = forwardIds.popLast() {
             guard alive(id) else { continue }
             if let current = activeTabId { backIds.append(current) }
+            touch(id)
             activeTabId = id
+            leaveChooser()
             objectWillChange.send()
             return
         }
+    }
+
+    /// ‹ › move the desk UNDERNEATH the New Tab chooser, which now stays
+    /// on screen with the bar. Asking for a tab means you want to see it.
+    private func leaveChooser() {
+        guard newTabShown else { return }
+        withAnimation(LivMotion.nav) { newTabShown = false }
     }
 
     init() {
@@ -195,17 +319,28 @@ final class DeskModel: ObservableObject {
             restored.indices.contains(active) ? restored[active].id : restored.first?.id
     }
 
-    /// One plane's saved set. Entity ids only — `.new` tabs are moments.
-    /// An empty plane is one fresh `.new` tab: the desk is never empty.
+    /// One plane's saved set. Entity ids only. An empty plane restores as
+    /// genuinely empty — the empty desk shows the chooser (rev 6).
     private static func load(_ key: String) -> ([DeskTab], Int) {
         var restored: [DeskTab] = []
         var active = -1
         if let stored = UserDefaults.standard.dictionary(forKey: key) {
             let ids = (stored["ids"] as? [String] ?? []).compactMap { UInt64($0) }
-            restored = ids.map { DeskTab(id: UUID(), content: .entity($0)) }
+            // The clocks, keyed by ENTITY id — a tab's UUID is minted
+            // fresh every launch, so the entity is the only identity a
+            // saved plane actually has.
+            let used = stored["used"] as? [String: Int] ?? [:]
+            // A plane saved before tabs had clocks counts as used NOW.
+            // Reading a missing stamp as "never used" would sweep every
+            // tab you own on the first launch after the upgrade.
+            let now = Civil.nowStamp()
+            restored = ids.map {
+                DeskTab(
+                    id: UUID(), content: .entity($0),
+                    lastUsed: used[String($0)].map(Int64.init) ?? now)
+            }
             active = stored["active"] as? Int ?? -1
         }
-        if restored.isEmpty { restored = [DeskTab(id: UUID(), content: .new)] }
         return (restored, active)
     }
 
@@ -224,89 +359,186 @@ final class DeskModel: ObservableObject {
             restored.indices.contains(active) ? restored[active].id : restored.first?.id
         featureShown = nil
         switcherShown = false
-        gridShown = false
+        libraryShown = false
+        newTabShown = false
         inspectorShown = false
+        settingsShown = false
         objectWillChange.send()
     }
 
-    /// Focus the tab already holding this entity, or append one. Opening a
-    /// row anywhere lands you at the desk — the desktop's rail→center
-    /// gesture grammar.
-    func open(_ entityId: UInt64) {
+    /// The one door for opening anything, anywhere.
+    ///
+    /// A DOCUMENT lands as a tab at the desk, exactly as before. A
+    /// RECORD (task, event) opens as a card over whatever you are
+    /// looking at and closes nothing — the old behaviour threw you out
+    /// of Tasks on every tap and left an orphan tab behind (owner,
+    /// 2026-08-08, Option C).
+    /// `as` is for a caller that JUST created the entity: the box
+    /// answers before the snapshot lands, so `shapeOf` on a brand-new id
+    /// reads nil and guesses "document" — which is why "New task" used
+    /// to open a markdown editor instead of the task's own card
+    /// (traced 2026-08-11). A creator knows what it made; it says so.
+    func open(_ entityId: UInt64, as shape: TabShape? = nil) {
+        guard (shape ?? shapeOf(entityId)) == .record else {
+            openDocument(entityId)
+            return
+        }
+        openAsCard(entityId)
+    }
+
+    /// A record rises as a card over wherever you stand, and closes
+    /// nothing (Option C).
+    private func openAsCard(_ entityId: UInt64) {
+        minimisedRecord = nil
+        recordCard = entityId
+        withAnimation(LivMotion.nav) { newTabShown = false }
+    }
+
+    /// Land a document as a tab. Everything that used to be `open`.
+    private func openDocument(_ entityId: UInt64) {
+        recordCard = nil
         if let existing = tabs.first(where: { $0.content == .entity(entityId) }) {
             focus(existing.id)
         } else {
-            let tab = DeskTab(id: UUID(), content: .entity(entityId))
+            let tab = DeskTab(
+                id: UUID(), content: .entity(entityId),
+                lastUsed: Civil.nowStamp())
             tabs.append(tab)
             focus(tab.id)
         }
         featureShown = nil
         switcherShown = false
-        gridShown = false
-        // Search and the camera are covers too. A tapped reminder routes
-        // here from anywhere, so leaving these up made the notification
-        // look ignored: the tab was created and focused behind a cover the
-        // user was still looking at, and closing it landed them on a tab
-        // they never picked.
+        // The in-hierarchy overlays animate out in the house motion — a
+        // full-screen surface must never vanish in one frame (audit,
+        // 2026-08-04). The properties panel is here too: focus() skips
+        // its reset when the tab is ALREADY active, so a reminder tap
+        // for the open note would land behind it.
+        withAnimation(LivMotion.nav) {
+            libraryShown = false
+            newTabShown = false
+            inspectorShown = false
+        }
+        // Search, camera, Settings and the workspace switcher are covers
+        // and sheets — UIKit animates their dismissal itself. A tapped
+        // reminder routes here from anywhere, so leaving any of them up
+        // made the notification look ignored: the tab was created and
+        // focused behind a surface the user was still looking at.
         searchShown = false
         cameraShown = false
+        settingsShown = false
+        workspaceShown = false
         persist()
     }
 
+    /// `+`: summon the chooser OVER the desk. It never appends a tab —
+    /// choosing something does (rev 6). On an empty desk the chooser is
+    /// already the body, so there is nothing to summon.
     func newTab() {
-        let tab = DeskTab(id: UUID(), content: .new)
-        tabs.append(tab)
-        focus(tab.id)
         featureShown = nil
-        persist()
+        guard !tabs.isEmpty else { return }
+        withAnimation(LivMotion.nav) { newTabShown = true }
     }
 
-    /// Closing the last tab leaves one fresh .new tab — the desk is never
-    /// empty.
+    /// Closing the last tab leaves the desk empty — the empty desk shows
+    /// the chooser as its body (rev 6).
     func close(_ tabId: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
         tabs.remove(at: index)
         if tabs.isEmpty {
-            let fresh = DeskTab(id: UUID(), content: .new)
-            tabs = [fresh]
-            activeTabId = fresh.id
+            activeTabId = nil
         } else if activeTabId == tabId {
-            activeTabId = tabs[min(index, tabs.count - 1)].id
+            // The nearest tab you have actually been using. Stepping to
+            // the plain index neighbour could land the desk on a
+            // three-week-old note you never asked for.
+            let now = Civil.nowStamp()
+            let fresh = tabs.filter { !LivTabs.isInactive($0.lastUsed, now: now) }
+            let nextDoor = tabs[min(index, tabs.count - 1)]
+            let landing =
+                LivTabs.isInactive(nextDoor.lastUsed, now: now)
+                ? (fresh.max { $0.lastUsed < $1.lastUsed } ?? nextDoor)
+                : nextDoor
+            activeTabId = landing.id
+            touch(landing.id)
         }
-        persist()
-    }
-
-    /// A .new tab became an entity tab (the capture door committed).
-    func setContent(_ tabId: UUID, entity: UInt64) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
-        tabs[index].content = .entity(entity)
         persist()
     }
 
     /// Entity ids only — .new tabs are moments, not state worth restoring.
     /// Always to the CURRENT workspace's key: opening something from search
     /// or the inbox joins the current workspace's set, by construction.
+    /// Old saved tab sets may hold task or event ids from before Option
+    /// C. A record cannot be a tab, so those close quietly the first
+    /// time the box says what they are (owner, 2026-08-08: the app is in
+    /// alpha, delete freely).
+    func pruneRecordTabs() {
+        let doomed = tabs.filter {
+            // ONLY records. A file is a document you work on and keeps
+            // its tab (files, 2026-08-09).
+            if case .entity(let id) = $0.content { return shapeOf(id) == .record }
+            return false
+        }
+        guard !doomed.isEmpty else { return }
+        for tab in doomed { close(tab.id) }
+    }
+
+    /// Rehearsal only (`-desk.boot inactive`): age every tab except the
+    /// active one, so the Inactive list can be seen and photographed
+    /// today. Writes nothing but the same per-device clocks a real week
+    /// of use would.
+    func backdateTabsForRehearsal(days: Int) {
+        let old = Civil.stamp(
+            day: Civil.addDays(Civil.todayDay(), -days), hhmm: 900)
+        for i in tabs.indices where tabs[i].id != activeTabId {
+            tabs[i].lastUsed = old - Int64(i)
+        }
+        persist()
+        objectWillChange.send()
+    }
+
+    /// Self-check only: install a known set of tabs. `tabs` is
+    /// private(set) so the suite cannot reach it, and the alternative —
+    /// opening the setter to everyone — is how a second file starts
+    /// mutating the tab plane.
+    func replaceTabsForSelfCheck(_ fresh: [DeskTab]) {
+        tabs = fresh
+        activeTabId = fresh.last?.id
+    }
+
     private func persist() {
         var ids: [String] = []
+        var used: [String: Int] = [:]
         var active = -1
+        // EVERY tab, inactive ones included. `active` is an index into
+        // the ids array being built here, so filtering any tab out would
+        // both point it at the wrong tab and lose the inactive ones for
+        // good.
         for tab in tabs {
             guard case .entity(let entity) = tab.content else { continue }
             if tab.id == activeTabId { active = ids.count }
             ids.append(String(entity))
+            used[String(entity)] = Int(tab.lastUsed)
         }
         UserDefaults.standard.set(
-            ["ids": ids, "active": active], forKey: persistKey)
+            ["ids": ids, "active": active, "used": used], forKey: persistKey)
     }
+}
+
+/// Which lens row is being picked, and which draft it writes back to.
+struct WorkspacePick: Identifiable {
+    let property: String
+    let forFilter: Bool
+    var id: String { "\(property)-\(forFilter)" }
 }
 
 // MARK: - the workspace switcher (M4)
 
-/// The hub's sheet: All (no lens), every workspace, the saved filters, and
+/// The hub's sheet: All (no lens), every workspace, and
 /// the new-workspace form. Switching swaps the desk's open tabs — one tab
 /// plane, remembered per workspace.
 struct WorkspaceSwitcher: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
+    @EnvironmentObject var desk: DeskModel
     @Environment(\.dismiss) private var dismiss
 
     @State private var composing = false
@@ -319,74 +551,74 @@ struct WorkspaceSwitcher: View {
     @State private var composingFilter = false
     @State private var filterName = ""
     @State private var filterQuery = ""
+    /// The raw query, folded away. A workspace IS its query — that is how
+    /// it is stored — but nobody should have to type one to make one
+    /// (standing rule 5), so the text is the escape hatch, not the door.
+    @State private var advancedShown = false
+    /// Which picker row is open, and whose draft it edits.
+    @State private var picking: WorkspacePick?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SectionLabel("Workspace")
-                    .padding(.bottom, 4)
-                choice(
-                    name: "All", detail: "Everything — no lens, no stamp",
-                    active: workspaces.activeId == 0, icon: "square.grid.2x2"
-                ) {
-                    choose(0)
-                }
-                ForEach(workspaces.workspaces) { ws in
+                // Making a FILTER shows the filter form and nothing else.
+                // This sheet is the workspace switcher, and the form only
+                // borrows it (standing rule 4: one form, one place) — but
+                // a list of workspaces above a filter you are naming is
+                // the wrong screen (owner, 2026-08-13).
+                if !composingFilter {
+                    SectionLabel("Workspace")
+                        .padding(.bottom, 4)
                     choice(
-                        name: ws.display, detail: queryDetail(ws),
-                        active: workspaces.activeId == ws.id, icon: "house",
-                        emoji: ws.emoji
+                        name: "All", lens: LivQuery.empty,
+                        active: workspaces.activeId == 0, glyph: .workspaces
                     ) {
-                        choose(ws.id)
+                        choose(0)
                     }
-                    .contextMenu {
-                        Button {
-                            editing = ws.id
-                            draftName = ws.display
-                            draftQuery = workspaces.query(of: ws.id) ?? ""
+                    ForEach(workspaces.workspaces) { ws in
+                        choice(
+                            name: ws.display, lens: queryLens(ws),
+                            active: workspaces.activeId == ws.id, glyph: .workspace,
+                            emoji: ws.emoji
+                        ) {
+                            choose(ws.id)
+                        }
+                        .contextMenu {
+                            Button {
+                                editing = ws.id
+                                draftName = ws.display
+                                draftQuery = workspaces.query(of: ws.id) ?? ""
+                                composing = true
+                            } label: {
+                                Label("Edit name + query", systemImage: "slider.horizontal.3")
+                            }
+                            Button(role: .destructive) {
+                                workspaces.forgetQuery(ws.id)
+                                if workspaces.activeId == ws.id { choose(0, close: false) }
+                                box.trashWorkspace(ws.id)
+                            } label: {
+                                Label("Trash workspace", systemImage: "trash")
+                            }
+                        }
+                    }
+                    if composing {
+                        newWorkspaceForm
+                    } else {
+                        addRow("New workspace…") {
+                            editing = nil
+                            draftName = ""
+                            draftQuery = ""
                             composing = true
-                        } label: {
-                            Label("Edit name + query", systemImage: "slider.horizontal.3")
-                        }
-                        Button(role: .destructive) {
-                            workspaces.forgetQuery(ws.id)
-                            if workspaces.activeId == ws.id { choose(0, close: false) }
-                            box.trashWorkspace(ws.id)
-                        } label: {
-                            Label("Trash workspace", systemImage: "trash")
                         }
                     }
                 }
-                if composing {
-                    newWorkspaceForm
-                } else {
-                    addRow("New workspace…") {
-                        editing = nil
-                        draftName = ""
-                        draftQuery = ""
-                        composing = true
-                    }
-                }
-
-                SectionLabel("Filters")
-                    .padding(.top, 18)
-                    .padding(.bottom, 4)
-                ForEach(workspaces.filters) { view in
-                    choice(
-                        name: view.display, detail: view.query ?? "",
-                        active: workspaces.activeFilterId == view.id,
-                        icon: "line.3.horizontal.decrease"
-                    ) {
-                        workspaces.activeFilterId =
-                            workspaces.activeFilterId == view.id ? nil : view.id
-                    }
-                }
+                // Filters LIVE in the library panel now; only their form
+                // is still here, opened by the panel's "New filter…".
                 if composingFilter {
+                    SectionLabel("New filter")
+                        .padding(.bottom, 4)
                     newFilterForm
-                } else {
-                    addRow("New filter…") { composingFilter = true }
                 }
-
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -394,11 +626,46 @@ struct WorkspaceSwitcher: View {
         .background(LivTheme.canvas)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        // The SAME picker the properties panel uses, told to report the
+        // choice instead of writing a cell.
+        .onAppear {
+            if desk.composeFilter {
+                composingFilter = true
+                desk.composeFilter = false
+            }
+        }
+        .sheet(item: $picking) { pick in
+            InspectorValueSheet(
+                field: InspectorField.describe(pick.property, in: box.snap),
+                id: 0,
+                current: [],
+                onPick: { value in
+                    let binding = pick.forFilter ? $filterQuery : $draftQuery
+                    binding.wrappedValue = LivQuery.parse(binding.wrappedValue)
+                        .setting(pick.property, to: value)
+                }
+            )
+            .environmentObject(box)
+        }
     }
 
-    /// The lens, read straight off the wire.
-    private func queryDetail(_ ws: WorkspaceRow) -> String {
-        workspaces.query(of: ws.id) ?? "no query"
+    /// The lens, read straight off the wire. A workspace with no query
+    /// shows NOTHING — "no query" was a placeholder standing in for an
+    /// absence the empty line already states (owner, 2026-08-06).
+    private func queryLens(_ ws: WorkspaceRow) -> LivQuery {
+        LivQuery.parse(workspaces.query(of: ws.id) ?? "")
+    }
+
+    /// The VALUES a lens keeps to — the same words the pickers offered.
+    /// Everything else a hand-made query can say (exclusions, presence
+    /// tests, free text) has no chip: a chip is a value, and inventing a
+    /// shorthand for the rest would be the query language again, spelled
+    /// differently. A lens made of those alone shows nothing.
+    private func lensChips(_ lens: LivQuery) -> [String] {
+        lens.terms.compactMap { term in
+            if case .equals(_, let value) = term { return value }
+            return nil
+        }
     }
 
     private func choose(_ id: UInt64, close: Bool = true) {
@@ -407,39 +674,45 @@ struct WorkspaceSwitcher: View {
     }
 
     /// A workspace's own emoji leads its row (the furnished areas each
-    /// carry one); the SF Symbol is the emoji-less fallback.
+    /// carry one); the drawn ring is the emoji-less fallback.
+    ///
+    /// The lens shows as VALUE CHIPS, never as its text. A row used to
+    /// read `area:Work project:Viggo` in mono under the name — the query
+    /// language showing through, which no user ever types (owner,
+    /// 2026-08-11). The raw text is still there, in the folded Advanced
+    /// field where it belongs.
     private func choice(
-        name: String, detail: String, active: Bool, icon: String,
+        name: String, lens: LivQuery, active: Bool, glyph: LivGlyph,
         emoji: String? = nil, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 9) {
                 if let emoji, !emoji.isEmpty {
                     Text(emoji)
-                        .font(.system(size: 13))
+                        .font(.system(size: LivType.body))
                         .frame(width: 18)
                 } else {
-                    Image(systemName: icon)
-                        .font(.system(size: 12))
-                        .foregroundStyle(active ? LivTheme.accent : LivTheme.text3)
-                        .frame(width: 18)
+                    LivIcon(
+                        glyph: glyph,
+                        color: active ? LivTheme.accent : LivTheme.text3, size: 18
+                    )
+                    .frame(width: 18)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(name)
-                        .font(.system(size: 13.5, weight: active ? .semibold : .regular))
+                        .font(.system(size: LivType.body, weight: active ? .semibold : .regular))
                         .foregroundStyle(active ? LivTheme.accent : LivTheme.text)
                         .lineLimit(1)
-                    if !detail.isEmpty {
-                        Text(detail)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(LivTheme.text3)
-                            .lineLimit(1)
+                    if !lensChips(lens).isEmpty {
+                        HStack(spacing: 5) {
+                            ForEach(lensChips(lens), id: \.self) { ValueChip($0) }
+                        }
                     }
                 }
                 Spacer(minLength: 6)
                 if active {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: LivType.label, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                 }
             }
@@ -456,9 +729,9 @@ struct WorkspaceSwitcher: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: LivType.label, weight: .semibold))
                     .frame(width: 18)
-                Text(label).font(.system(size: 13))
+                Text(label).font(.system(size: LivType.body))
                 Spacer()
             }
             .foregroundStyle(LivTheme.accent)
@@ -473,24 +746,21 @@ struct WorkspaceSwitcher: View {
     private var newWorkspaceForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             field("Name", text: $draftName, mono: false)
-            field("Query — e.g. area:Work", text: $draftQuery, mono: true)
-            Text(stampHint(draftQuery))
-                .font(.system(size: 10.5))
-                .foregroundStyle(
-                    LivQuery.parse(draftQuery).stampCells.isEmpty
-                        ? LivTheme.muted : LivTheme.accent)
+            lensRows($draftQuery, forFilter: false)
+            advancedRow($draftQuery)
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") {
                     composing = false
                     editing = nil
+                    advancedShown = false
                 }
-                .font(.system(size: 12))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
                 .buttonStyle(.plain)
                 Button(action: saveWorkspace) {
                     Text(editing == nil ? "Create" : "Save")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.onAccent)
                         .padding(.horizontal, 14)
                         .frame(height: 28)
@@ -505,22 +775,96 @@ struct WorkspaceSwitcher: View {
         .padding(.vertical, 10)
     }
 
+    /// What the lens is made of: pick an area, pick a subject. The two
+    /// the owner named (2026-08-11) — project and people are reachable
+    /// through Advanced and were noise here.
+    ///
+    /// No sentence explains any of this. A grey line under a control is
+    /// a design failure (owner, 2026-08-06), so the row shows the value
+    /// itself and nothing else; the old "stamps area:Work" hint is gone
+    /// with it.
+    @ViewBuilder private func lensRows(
+        _ query: Binding<String>, forFilter: Bool
+    ) -> some View {
+        ForEach(["area", "subjects"], id: \.self) { property in
+            let parsed = LivQuery.parse(query.wrappedValue)
+            let value = parsed.value(of: property)
+            Button {
+                picking = WorkspacePick(property: property, forFilter: forFilter)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(property == "area" ? "Area" : "Subject")
+                        .font(.system(size: LivType.body))
+                        .foregroundStyle(LivTheme.text)
+                    Spacer(minLength: 8)
+                    if let value {
+                        ValueChip(value)
+                    } else {
+                        Text("Any")
+                            .font(.system(size: LivType.body))
+                            .foregroundStyle(LivTheme.text3)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: LivType.caption, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                }
+                .frame(height: LivRow.height)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .top) {
+                if property != "area" {
+                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                }
+            }
+        }
+    }
+
+    /// Folded shut. Open it and the raw text is there, unchanged — the
+    /// pickers edit only their own term, so a hand-made query survives
+    /// being looked at through them.
+    @ViewBuilder private func advancedRow(_ query: Binding<String>) -> some View {
+        Button {
+            withAnimation(LivMotion.nav) { advancedShown.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Text("Advanced")
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.text3)
+                Spacer()
+                Image(systemName: advancedShown ? "chevron.up" : "chevron.down")
+                    .font(.system(size: LivType.caption, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+            }
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+        if advancedShown {
+            field("Query", text: query, mono: true)
+        }
+    }
+
     private var newFilterForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             field("Name", text: $filterName, mono: false)
-            field("Query — e.g. has:due -status:done", text: $filterQuery, mono: true)
-            Text("A filter only filters — it never stamps.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(LivTheme.muted)
+            lensRows($filterQuery, forFilter: true)
+            advancedRow($filterQuery)
             HStack(spacing: 10) {
                 Spacer()
-                Button("Cancel") { composingFilter = false }
-                    .font(.system(size: 12))
-                    .foregroundStyle(LivTheme.text3)
-                    .buttonStyle(.plain)
+                Button("Cancel") {
+                    composingFilter = false
+                    advancedShown = false
+                }
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text3)
+                .buttonStyle(.plain)
                 Button(action: createFilter) {
                     Text("Save")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.onAccent)
                         .padding(.horizontal, 14)
                         .frame(height: 28)
@@ -538,7 +882,7 @@ struct WorkspaceSwitcher: View {
 
     private func field(_ prompt: String, text: Binding<String>, mono: Bool) -> some View {
         TextField(prompt, text: text)
-            .font(.system(size: 13, design: mono ? .monospaced : .default))
+            .font(.system(size: LivType.body, design: mono ? .monospaced : .default))
             .foregroundStyle(LivTheme.text)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -552,14 +896,6 @@ struct WorkspaceSwitcher: View {
     }
 
     /// The honesty line: exactly what a capture in this workspace inherits.
-    private func stampHint(_ query: String) -> String {
-        let parsed = LivQuery.parse(query)
-        let summary = parsed.stampSummary
-        if !summary.isEmpty { return summary }
-        return parsed.isInert
-            ? "Stamps nothing — plain key:value terms are what stamp."
-            : "Filters only — no plain key:value term to stamp."
-    }
 
     private func trimmed(_ s: String) -> String {
         s.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -639,34 +975,46 @@ struct SettingsSheet: View {
     @State private var pathDraft = ""
     @State private var addingField = false
     @State private var fieldDraft = ""
+    @State private var advancedOpen = false
+    /// Dark, light, or follow the system — device state, never a cell.
+    @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
+    /// How long a desk tab may sit untouched before it steps out of the
+    /// grid. Device state too — Settings never writes cells.
+    @AppStorage(LivTabs.key) private var inactiveDays = LivTabs.defaultDays
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Settings")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: LivType.title, weight: .bold))
                     .foregroundStyle(LivTheme.text)
                     .padding(.bottom, 4)
-                SectionLabel("Box")
-                Text(box.path)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(LivTheme.text2)
-                    .textSelection(.enabled)
-                Text("\(box.snap?.entities?.count ?? 0) entities")
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
+                // What a person actually came here to change, first.
+                SectionLabel("Appearance")
+                appearanceRow
+                if box.snap?.assist != nil {
+                    SectionLabel("Suggestions")
+                        .padding(.top, 10)
+                    assistRow
+                }
+                SectionLabel("Reminders")
+                    .padding(.top, 10)
+                notifyRows
+                SectionLabel("Tabs")
+                    .padding(.top, 10)
+                inactiveTabsRow
                 SectionLabel("Fields")
                     .padding(.top, 10)
                 fieldsRow
-                SectionLabel("Notifications")
-                    .padding(.top, 10)
-                notifyRows
-                SectionLabel("Handoff")
-                    .padding(.top, 10)
-                statusCard
-                ledger
-                shipRow
-                satellitePathRow
+                // Everything below is machinery, not preference: the
+                // container path, the entity count, and the whole
+                // phone→desk funnel. It sat at the TOP of this sheet and
+                // read like a debug console (owner, 2026-08-06). One row
+                // now, opened only by someone who came looking.
+                advancedRow
+                if advancedOpen {
+                    advancedBody
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -690,23 +1038,112 @@ struct SettingsSheet: View {
             .filter { !$0.isEmpty }
     }
 
+    /// When a tab goes Inactive. A picker over fixed periods, because a
+    /// user never types a rule (standing rule 5). "Never" turns the
+    /// whole thing off and every tab comes straight back to the grid —
+    /// nothing was ever closed, so it is lossless both ways.
+    private var inactiveTabsRow: some View {
+        Picker("Inactive after", selection: $inactiveDays) {
+            ForEach(LivTabs.choices, id: \.self) { days in
+                Text(LivTabs.label(days)).tag(days)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(minHeight: 30)
+    }
+
+    private var appearanceRow: some View {
+        Picker(
+            "Appearance",
+            selection: Binding(
+                get: { LivAppearance(rawValue: appearance) ?? .dark },
+                set: { appearance = $0.rawValue })
+        ) {
+            ForEach(LivAppearance.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(minHeight: 30)
+    }
+
+    // MARK: the Advanced drawer — machinery, behind one row
+
+    private var advancedRow: some View {
+        Button {
+            withAnimation(LivMotion.nav) { advancedOpen.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Text("Advanced")
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(LivTheme.text2)
+                Spacer()
+                Image(systemName: advancedOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+            }
+            .frame(height: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 16)
+        .overlay(alignment: .top) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5).padding(.top, 16)
+        }
+    }
+
+    @ViewBuilder private var advancedBody: some View {
+        SectionLabel("Handoff")
+        statusCard
+        ledger
+        shipRow
+        satellitePathRow
+        SectionLabel("This box")
+            .padding(.top, 10)
+        HStack(spacing: 10) {
+            Text("\(box.snap?.entities?.count ?? 0) entities")
+                .font(.system(size: LivType.body).monospacedDigit())
+                .foregroundStyle(LivTheme.text3)
+            Spacer()
+            Button("Copy path") { UIPasteboard.general.string = box.path }
+                .font(.system(size: LivType.label, weight: .medium))
+                .foregroundStyle(LivTheme.accent)
+                .buttonStyle(.plain)
+        }
+        .frame(height: 30)
+        Text("Liv \(Self.version)")
+            .font(.system(size: LivType.label).monospacedDigit())
+            .foregroundStyle(LivTheme.muted)
+    }
+
+    private static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "0"
+        let build = info?["CFBundleVersion"] as? String ?? "0"
+        return "\(short) (\(build))"
+    }
+
     @ViewBuilder private var fieldsRow: some View {
         if !fieldNames.isEmpty {
-            Text(fieldNames.joined(separator: " · "))
-                .font(.system(size: 11))
-                .foregroundStyle(LivTheme.text3)
-                .lineLimit(3)
+            // Chips, not a run-on line of names separated by dots. The
+            // vocabulary is data; the app already has a way to show data.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(fieldNames, id: \.self) { ValueChip($0) }
+                }
+                .padding(.vertical, 1)
+            }
         }
         if addingField {
             HStack(spacing: 8) {
                 TextField("Name the new field", text: $fieldDraft)
-                    .font(.system(size: 12))
+                    .font(.system(size: LivType.body))
                     .foregroundStyle(LivTheme.text)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit(createField)
                 Button("Create", action: createField)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: LivType.label, weight: .medium))
                     .foregroundStyle(fieldDraftReady ? LivTheme.accent : LivTheme.muted)
                     .buttonStyle(.plain)
                     .disabled(!fieldDraftReady)
@@ -715,7 +1152,7 @@ struct SettingsSheet: View {
                     fieldDraft = ""
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: LivType.caption, weight: .semibold))
                         .foregroundStyle(LivTheme.text3)
                 }
                 .buttonStyle(.plain)
@@ -735,9 +1172,9 @@ struct SettingsSheet: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Add your own field…")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: LivType.caption, weight: .semibold))
+                    Text("Add field")
+                        .font(.system(size: LivType.body, weight: .medium))
                     Spacer()
                 }
                 .foregroundStyle(LivTheme.accent)
@@ -745,7 +1182,7 @@ struct SettingsSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Add your own field")
+            .accessibilityLabel("Add field")
         }
     }
 
@@ -774,6 +1211,31 @@ struct SettingsSheet: View {
         }
     }
 
+    // The assist switch (rev 6): the consent that gates every clerk
+    // proposal. With it off the sweep is silent and the wire's inbox is
+    // force-empty; with it on, the clerk SUGGESTS (Properties panel's
+    // Suggested section) and only an explicit Accept ever writes. This is
+    // the one Settings row that writes a cell — the switch LIVES in the
+    // box, so the desktop and the phone agree about consent.
+
+    @ViewBuilder private var assistRow: some View {
+        if let assist = box.snap?.assist, let entity = assist.id {
+            Toggle(
+                isOn: Binding(
+                    get: { assist.on ?? false },
+                    set: { on in
+                        box.set(entity, assist.prop ?? "automation", on ? "true" : "false")
+                    })
+            ) {
+                Text("Suggest properties")
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(LivTheme.text)
+            }
+            .tint(LivTheme.accent)
+            .frame(minHeight: 30)
+        }
+    }
+
     // The Notifications section (M5, Notify.swift): master toggle, the two
     // per-kind lead pickers, and the 64-cap honesty line. All DEVICE state
     // (UserDefaults) — Settings never writes cells. Every change rebuilds
@@ -783,34 +1245,22 @@ struct SettingsSheet: View {
     @ViewBuilder private var notifyRows: some View {
         Toggle(isOn: notifyEnabled) {
             Text("Due reminders")
-                .font(.system(size: 13))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
         }
         .tint(LivTheme.accent)
         .frame(minHeight: 30)
         if notify.enabled {
-            leadRow("Tasks", selection: notifyLead(\.taskLead))
-            leadRow("Events", selection: notifyLead(\.eventLead))
-            Text(notifyCountLine)
-                .font(.system(size: 10.5).monospacedDigit())
-                .foregroundStyle(notify.denied ? LivTheme.red : LivTheme.muted)
-        }
-    }
-
-    private func leadRow(_ label: String, selection: Binding<NotifyLead>) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(LivTheme.text2)
-                .frame(width: 44, alignment: .leading)
-            Picker(label, selection: selection) {
-                ForEach(NotifyLead.allCases) { lead in
-                    Text(lead.label).tag(lead)
-                }
+            // One switch, no lead times. A reminder rings when the thing
+            // is due; the two pickers that used to sit here were invented
+            // and governed only the rare timed case (owner, 2026-08-06).
+            // Only speak when something is WRONG.
+            if let line = notifyProblem {
+                Text(line)
+                    .font(.system(size: LivType.label).monospacedDigit())
+                    .foregroundStyle(notify.denied ? LivTheme.red : LivTheme.text3)
             }
-            .pickerStyle(.segmented)
         }
-        .frame(minHeight: 30)
     }
 
     private var notifyEnabled: Binding<Bool> {
@@ -822,28 +1272,14 @@ struct SettingsSheet: View {
             })
     }
 
-    private func notifyLead(
-        _ path: ReferenceWritableKeyPath<Notify, NotifyLead>
-    ) -> Binding<NotifyLead> {
-        Binding(
-            get: { notify[keyPath: path] },
-            set: {
-                notify[keyPath: path] = $0
-                notify.rebuild(snapshot: box.snap, box: box)
-            })
-    }
-
-    /// The honesty line: what the queue actually holds, and the iOS cap
-    /// that bounds it. A denial is stated, never papered over.
-    private var notifyCountLine: String {
-        if notify.denied {
-            return "Notifications are off for Liv in iOS Settings."
-        }
-        var line = "\(notify.scheduledCount) scheduled · iOS caps at 64"
+    /// Says something only when a reminder will NOT arrive: iOS refused
+    /// permission, or the 64-notification cap dropped the far ones.
+    private var notifyProblem: String? {
+        if notify.denied { return "Turned off for Liv in iOS Settings." }
         if notify.droppedCount > 0 {
-            line += " — soonest kept, \(notify.droppedCount) dropped"
+            return "\(notify.droppedCount) beyond iOS's 64-reminder limit won't ring."
         }
-        return line
+        return nil
     }
 
     // The status card: honest counts, or the shipping-off notice.
@@ -858,25 +1294,22 @@ struct SettingsSheet: View {
         VStack(alignment: .leading, spacing: 3) {
             if outbox.satellitePath == nil {
                 Text("Shipping is off — set a satellite folder.")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.text)
-                Text("Captures stay in this phone's own box until a folder is set.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(LivTheme.text3)
             } else {
                 Text(
                     outbox.pendingCount == 0
                         ? "Nothing waiting for your desk"
                         : "\(outbox.pendingCount) drop\(outbox.pendingCount == 1 ? "" : "s") waiting for your desk"
                 )
-                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .font(.system(size: LivType.body, weight: .semibold).monospacedDigit())
                 .foregroundStyle(LivTheme.text)
                 Text(
                     outbox.lastShipDate.map {
                         "Last shipped \(Self.shipDate.string(from: $0))"
                     } ?? "Nothing shipped from this phone yet"
                 )
-                .font(.system(size: 11))
+                .font(.system(size: LivType.label))
                 .foregroundStyle(LivTheme.text3)
             }
         }
@@ -896,8 +1329,8 @@ struct SettingsSheet: View {
 
     @ViewBuilder private var ledger: some View {
         if outbox.entries.isEmpty {
-            Text("Nothing in the ledger yet — captures land here on their way to the desk.")
-                .font(.system(size: 11))
+            Text("Nothing shipped yet")
+                .font(.system(size: LivType.label))
                 .foregroundStyle(LivTheme.muted)
         } else {
             VStack(spacing: 0) {
@@ -914,7 +1347,7 @@ struct SettingsSheet: View {
     private func ledgerRow(_ entry: OutboxEntry) -> some View {
         HStack(spacing: 6) {
             Text(entry.title.isEmpty ? "Untitled" : entry.title)
-                .font(.system(size: 12))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 6)
@@ -932,13 +1365,13 @@ struct SettingsSheet: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "paperplane")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: LivType.label, weight: .semibold))
                 Text("Ship now")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: LivType.body, weight: .semibold))
                 Spacer()
                 if outbox.pendingCount > 0 {
                     Text("\(outbox.pendingCount)")
-                        .font(.system(size: 11).monospacedDigit())
+                        .font(.system(size: LivType.label).monospacedDigit())
                         .foregroundStyle(LivTheme.text3)
                 }
             }
@@ -960,26 +1393,26 @@ struct SettingsSheet: View {
             if let path = outbox.satellitePath {
                 HStack(spacing: 8) {
                     Text(path)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: LivType.label, design: .monospaced))
                         .foregroundStyle(LivTheme.text2)
                         .lineLimit(1)
                         .truncationMode(.head)
                     Spacer(minLength: 6)
                     Button("Clear") { outbox.setSatellitePath(nil) }
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: LivType.label, weight: .medium))
                         .foregroundStyle(LivTheme.accent)
                         .buttonStyle(.plain)
                 }
             }
             HStack(spacing: 8) {
                 TextField("Paste a satellite folder path", text: $pathDraft)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: LivType.label, design: .monospaced))
                     .foregroundStyle(LivTheme.text)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit(setPath)
                 Button("Set", action: setPath)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: LivType.label, weight: .medium))
                     .foregroundStyle(draftReady ? LivTheme.accent : LivTheme.muted)
                     .buttonStyle(.plain)
                     .disabled(!draftReady)
@@ -1033,10 +1466,10 @@ private struct OutboxStateChip: View {
         HStack(spacing: 3) {
             if state == .delivered {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 7.5, weight: .bold))
+                    .font(.system(size: LivType.micro, weight: .bold))
             }
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: LivType.caption, weight: .medium))
                 .lineLimit(1)
         }
         .foregroundStyle(ink)
@@ -1046,79 +1479,72 @@ private struct OutboxStateChip: View {
     }
 }
 
+// MARK: - keyboard watch
+
+/// Is a keyboard on screen? While one is, the bottom bar retires — left
+/// standing, SwiftUI's keyboard avoidance lifts it ABOVE the editor's
+/// formatting row, stacking two bars over the keys (owner, 2026-08-02).
+/// One app-wide watcher, because the answer is a property of the screen,
+/// not of any one text view.
+final class KeyboardWatch: ObservableObject {
+    @Published var up = false
+    private var tokens: [NSObjectProtocol] = []
+
+    init() {
+        let nc = NotificationCenter.default
+        tokens.append(
+            nc.addObserver(
+                forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                withAnimation(LivMotion.nav) { self?.up = true }
+            })
+        tokens.append(
+            nc.addObserver(
+                forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                withAnimation(LivMotion.nav) { self?.up = false }
+            })
+    }
+
+    deinit { tokens.forEach(NotificationCenter.default.removeObserver) }
+}
+
 // MARK: - bottom bar
 
-/// The Obsidian nav row under Liv law: the features menu button far left
-/// (always present — it summons the grid; a chosen feature covers the
-/// whole chrome), then ‹ › search + [tab count], always there. One 46pt
-/// hairline pill on ultra-thin material + the features circle beside it.
+/// ONE horizontal row (owner, 2026-08-01 — the floating pill plus a
+/// separate circle read as fragments). Navigation over the open notes and
+/// the doors that make more of them: ‹ › history, search, new tab, the
+/// tab count. Global features left this bar entirely — they live in the
+/// library panel, behind the top-left door.
 struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
-    /// The proposal count — the app's one in-app badge (amber). 0 until
-    /// assist lands (M2).
-    var inboxBadge: Int = 0
 
     var body: some View {
-        HStack(spacing: 8) {
-            featuresButton
-            HStack(spacing: 0) {
-                navButton("chevron.left", enabled: desk.canGoBack, label: "Back") {
-                    desk.goBack()
-                }
-                navButton("chevron.right", enabled: desk.canGoForward, label: "Forward") {
-                    desk.goForward()
-                }
-                navButton("magnifyingglass", enabled: true, label: "Search") {
-                    desk.searchShown = true
-                }
-                navButton("plus", enabled: true, label: "New tab") {
-                    desk.newTab()
-                }
-                tabCountButton
+        HStack(spacing: 0) {
+            navButton("chevron.left", enabled: desk.canGoBack, label: "Back") {
+                desk.goBack()
             }
-            .padding(.horizontal, 4)
-            .frame(height: 46)
-            .frame(maxWidth: .infinity)
-            // Solid, never a blur: the body must not read through the bar.
-            .background(LivTheme.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+            navButton("chevron.right", enabled: desk.canGoForward, label: "Forward") {
+                desk.goForward()
+            }
+            navButton("magnifyingglass", enabled: true, label: "Search") {
+                desk.searchShown = true
+            }
+            // On an empty desk the chooser IS the body already — a live-
+            // looking + that does nothing is a lie (audit, 2026-08-04).
+            navButton("plus", enabled: !desk.tabs.isEmpty, label: "New tab") {
+                desk.newTab()
+            }
+            tabCountButton
         }
+        .padding(.horizontal, 4)
+        .frame(height: LivRow.height)
+        .frame(maxWidth: .infinity)
+        // Solid, never a blur: the body must not read through the bar.
+        .background(LivTheme.surface, in: Capsule())
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         .padding(.horizontal, 16)
-    }
-
-    /// The `^` of the sketch: always far left, badge-carrying (the inbox
-    /// proposal count surfaces here since Inbox lives behind this menu).
-    private var featuresButton: some View {
-        Button {
-            withAnimation(LivMotion.nav) { desk.gridShown.toggle() }
-        } label: {
-            Image(systemName: "chevron.up")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(desk.gridShown ? LivTheme.accent : LivTheme.text2)
-                .frame(width: 46, height: 46)
-                .background(LivTheme.surface, in: Circle())
-                .overlay(Circle().strokeBorder(
-                    desk.gridShown ? LivTheme.accent : LivTheme.border,
-                    lineWidth: desk.gridShown ? 1 : 0.5))
-                .overlay(alignment: .topTrailing) {
-                    if inboxBadge > 0 { badge }
-                }
-                .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Features")
-    }
-
-    private var badge: some View {
-        Text(inboxBadge > 99 ? "99+" : "\(inboxBadge)")
-            .font(.system(size: 9, weight: .bold).monospacedDigit())
-            .foregroundStyle(chromeAmberInk)
-            .padding(.horizontal, 3.5)
-            .frame(minWidth: 13, minHeight: 13)
-            .background(Capsule().fill(LivTheme.amber))
-            .offset(x: 2, y: -2)
     }
 
     private func navButton(
@@ -1126,7 +1552,7 @@ struct BottomBar: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: LivType.title, weight: .medium))
                 .foregroundStyle(enabled ? LivTheme.text2 : LivTheme.muted.opacity(0.5))
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
@@ -1146,8 +1572,10 @@ struct BottomBar: View {
                 .strokeBorder(LivTheme.text2, lineWidth: 1.5)
                 .frame(width: 20, height: 20)
                 .overlay(
-                    Text(desk.tabs.count > 99 ? "99" : "\(desk.tabs.count)")
-                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                    Text(
+                        desk.liveTabs.count > 99
+                            ? "99" : "\(desk.liveTabs.count)")
+                        .font(.system(size: LivType.micro, weight: .bold).monospacedDigit())
                         .foregroundStyle(LivTheme.text2)
                 )
                 .frame(maxWidth: .infinity)
@@ -1156,94 +1584,5 @@ struct BottomBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Tabs")
-    }
-}
-
-// MARK: - feature grid
-
-/// The `^` menu (ClickUp's "More"): a solid panel pinned to the bottom
-/// edge that COVERS the bar it was summoned from (owner, 2026-07-29). No
-/// blur and no translucency — nothing underneath may read through it. Its
-/// own far-left `v` sits exactly where the `^` sits, so the toggle never
-/// appears to jump. Tap swaps the body or fires the verb, then closes.
-struct FeatureGrid: View {
-    @EnvironmentObject var desk: DeskModel
-
-    private let columns = Array(
-        repeating: GridItem(.flexible(), spacing: 8), count: 3)
-
-    var body: some View {
-        VStack(spacing: 8) {
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(Feature.allCases) { f in
-                    cell(f.title, f.icon, on: desk.featureShown == f) {
-                        desk.featureShown = f
-                    }
-                }
-                cell("Capture", "square.and.pencil", on: false) {
-                    desk.newTab()
-                }
-                cell("Camera", "camera", on: false) {
-                    desk.cameraShown = true
-                }
-            }
-            closeRow
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .frame(maxWidth: .infinity)
-        .background(
-            LivTheme.surface
-                .overlay(alignment: .top) {
-                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                }
-                .ignoresSafeArea(edges: .bottom)
-        )
-    }
-
-    /// 12pt inside the panel's own 16pt gutter = 28pt from the screen edge,
-    /// which is where the bar's `^` circle is (App's 12 + BottomBar's 16).
-    private var closeRow: some View {
-        HStack(spacing: 0) {
-            Button {
-                withAnimation(LivMotion.nav) { desk.gridShown = false }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(LivTheme.panel))
-                    .overlay(Circle().strokeBorder(LivTheme.accent, lineWidth: 1))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Features")
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 12)
-        .padding(.bottom, 4)
-    }
-
-    private func cell(
-        _ label: String, _ icon: String, on: Bool, action: @escaping () -> Void
-    ) -> some View {
-        Button {
-            withAnimation(LivMotion.nav) { desk.gridShown = false }
-            action()
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 17))
-                Text(label).font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(on ? LivTheme.accent : LivTheme.text2)
-            .frame(maxWidth: .infinity)
-            .frame(height: 58)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(on ? LivTheme.accentSoft : LivTheme.panel)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
     }
 }

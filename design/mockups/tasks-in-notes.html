@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tasks — “In notes” mockup (phase 3)</title>
+<style>
+  :root {
+    --canvas:#161618; --surface:#1e1e20; --panel:#232326; --panel2:#2c2c2e;
+    --text:#f5f5f7; --text2:#c9c9ce; --text3:#9a9aa2; --muted:#707078;
+    --border:rgba(255,255,255,.10); --accent:#0a84ff; --green:#30d158;
+    --red:#ff453a; --purple:#bf5af2;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d0d0e; color:var(--text);
+         font:15px/1.45 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+         display:flex; gap:40px; flex-wrap:wrap; justify-content:center;
+         padding:32px 16px; }
+  .note { max-width:340px; color:var(--text3); font-size:13px; }
+  .note h2 { color:var(--text2); font-size:14px; margin-bottom:8px; }
+  .note p { margin-bottom:10px; }
+  .phone { width:390px; background:var(--canvas); border:1px solid var(--border);
+           border-radius:38px; padding:14px 0 22px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .screen { padding:0 16px; }
+  .head { display:flex; align-items:center; gap:8px; padding:18px 0 10px; }
+  .head .label { font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--text3); }
+  .lens { display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:500;
+          color:var(--accent); background:rgba(10,132,255,.18); border-radius:999px;
+          height:17px; padding:0 7px; }
+  .grouphead { display:flex; align-items:center; gap:6px; padding:16px 0 4px; }
+  .dot { width:8px; height:8px; border-radius:50%; }
+  .gname { font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--text3); }
+  .gcount { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .row { display:flex; align-items:center; gap:10px; min-height:44px;
+         border-bottom:.5px solid var(--border); }
+  .ring { width:18px; height:18px; border-radius:50%; border:1.5px solid var(--text3);
+          flex:none; }
+  .ring.done { border-color:var(--green); background:var(--green); position:relative; }
+  .ring.done::after { content:"✓"; position:absolute; inset:0; display:grid;
+                      place-items:center; font-size:11px; color:#08320f; }
+  .box { width:16px; height:16px; border-radius:4px; border:1.5px solid var(--text3); flex:none; }
+  .rtext { flex:1; font-size:14px; color:var(--text); white-space:nowrap;
+           overflow:hidden; text-overflow:ellipsis; }
+  .due { font-size:11px; color:var(--text3); font-variant-numeric:tabular-nums; }
+  .due.hot { color:var(--red); }
+  .src { display:inline-flex; align-items:center; gap:4px; font-size:10.5px;
+         color:var(--text3); background:var(--panel2); border:.5px solid var(--border);
+         border-radius:999px; height:18px; padding:0 8px; flex:none; max-width:120px; }
+  .src::before { content:"↗"; font-size:9px; color:var(--muted); }
+  .src b { font-weight:500; color:var(--text2); white-space:nowrap; overflow:hidden;
+           text-overflow:ellipsis; }
+  .indent { padding-left:22px; }
+  .expander { display:flex; align-items:center; gap:6px; padding:14px 0 4px;
+              color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.6px; }
+  .ann { position:relative; margin:6px 0 0; padding:8px 10px; border:1px dashed rgba(10,132,255,.5);
+         border-radius:10px; font-size:11.5px; color:var(--accent); background:rgba(10,132,255,.06); }
+  .quickadd { display:flex; align-items:center; gap:10px; min-height:40px;
+              color:var(--muted); font-size:14px; border-bottom:.5px solid var(--border); }
+  .plus { width:18px; text-align:center; color:var(--text3); }
+</style>
+</head>
+<body>
+
+<div class="note">
+  <h2>Phase 3 mockup — “In notes” (design/tasks-study.md)</h2>
+  <p>The Tasks view gains one section: every open <code>- [ ]</code> line
+     from live notes, each carrying its source. Checking a row edits the
+     note’s text — the same write the editor’s checkbox makes. Tapping the
+     source chip opens the note as a desk tab.</p>
+  <p>Entity tasks keep everything they have today (status ring, due
+     swipes, chips). Note-lines deliberately have none of that — they are
+     text, and the section says so by shape: square checkbox, no ring, no
+     status.</p>
+</div>
+
+<div class="phone"><div class="screen">
+
+  <div class="head">
+    <span class="label">TASKS</span>
+    <span class="lens">⌕ Home</span>
+    <span style="flex:1"></span>
+    <span class="gcount">12</span>
+  </div>
+
+  <div class="grouphead"><span class="dot" style="background:var(--accent)"></span>
+    <span class="gname">TO DO</span> <span class="gcount">4</span></div>
+
+  <div class="quickadd"><span class="plus">＋</span> Add a task</div>
+
+  <div class="row">
+    <span class="ring"></span>
+    <span class="rtext">Renew passport</span>
+    <span class="due hot">Tue 4 Aug</span>
+  </div>
+  <div class="row">
+    <span class="ring"></span>
+    <span class="rtext">Book dentist</span>
+    <span class="due">Fri 8 Aug</span>
+  </div>
+  <div class="row">
+    <span class="ring"></span>
+    <span class="rtext">Quote for gutters</span>
+  </div>
+
+  <div class="grouphead"><span class="dot" style="background:var(--purple)"></span>
+    <span class="gname">IN NOTES</span> <span class="gcount">3</span></div>
+
+  <div class="row">
+    <span class="box"></span>
+    <span class="rtext">Call the surveyor about the ridge cap</span>
+    <span class="src"><b>Roof project</b></span>
+  </div>
+  <div class="row indent">
+    <span class="box"></span>
+    <span class="rtext">Send him last year’s photos</span>
+    <span class="src"><b>Roof project</b></span>
+  </div>
+  <div class="row">
+    <span class="box"></span>
+    <span class="rtext">Pack rain gear</span>
+    <span class="src"><b>Öland trip</b></span>
+  </div>
+
+  <div class="ann">Checking here toggles the line in the note (CAS-guarded
+    — a stale view refuses and refreshes). Source chip → opens the note.
+    Indented sub-lines ride along, inset. Checked lines don’t project —
+    they live in the note.</div>
+
+  <div class="expander">▸ DONE <span class="gcount">5</span></div>
+
+</div></div>
+
+</body>
+</html>

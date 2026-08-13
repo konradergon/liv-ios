@@ -9,31 +9,20 @@ import Combine
 import Foundation
 import UserNotifications
 
-// MARK: - the per-kind lead time
-
-/// How far before the due moment a reminder fires. Raw value = minutes,
-/// the stored representation — the cases ARE the UserDefaults wire.
-enum NotifyLead: Int, CaseIterable, Identifiable {
-    case atTime = 0
-    case tenMinutes = 10
-    case oneHour = 60
-
-    var id: Int { rawValue }
-
-    var label: String {
-        switch self {
-        case .atTime: return "At time"
-        case .tenMinutes: return "10 min"
-        case .oneHour: return "1 hr"
-        }
-    }
-}
-
 // MARK: - the scheduler
 
 /// The one notification authority: snapshot in, pending queue out, plus
-/// the UNUserNotificationCenter delegate seam. Master toggle + leads are
+/// the UNUserNotificationCenter delegate seam. The master toggle is
 /// DEVICE state (UserDefaults) — never cells; Settings never writes cells.
+///
+/// A reminder rings AT the time the thing is due. There is no lead time
+/// and no separate idea of an all-day reminder (owner, 2026-08-06). The
+/// two lead-time pickers that used to live in Settings were invented,
+/// not specified, and they only ever touched dues that carried a clock
+/// time; everything else rang at a hidden 09:00 that nobody chose and
+/// nobody could change. Both are gone. Where a due still carries no
+/// clock time — an all-day calendar event — the reminder rings at the
+/// start of that day.
 final class Notify: NSObject, ObservableObject {
     static let shared = Notify()
 
@@ -60,8 +49,6 @@ final class Notify: NSObject, ObservableObject {
 
     private enum Keys {
         static let enabled = "notify.enabled"
-        static let taskLead = "notify.lead.task"
-        static let eventLead = "notify.lead.event"
     }
 
     /// Master toggle, default ON — permission is still only ASKED once
@@ -72,27 +59,6 @@ final class Notify: NSObject, ObservableObject {
             objectWillChange.send()
             UserDefaults.standard.set(newValue, forKey: Keys.enabled)
         }
-    }
-
-    /// Defaults per design: tasks 10 min before, events at time.
-    var taskLead: NotifyLead {
-        get { lead(Keys.taskLead, fallback: .tenMinutes) }
-        set { setLead(Keys.taskLead, newValue) }
-    }
-    var eventLead: NotifyLead {
-        get { lead(Keys.eventLead, fallback: .atTime) }
-        set { setLead(Keys.eventLead, newValue) }
-    }
-
-    private func lead(_ key: String, fallback: NotifyLead) -> NotifyLead {
-        guard let raw = UserDefaults.standard.object(forKey: key) as? Int
-        else { return fallback }
-        return NotifyLead(rawValue: raw) ?? fallback
-    }
-
-    private func setLead(_ key: String, _ value: NotifyLead) {
-        objectWillChange.send()
-        UserDefaults.standard.set(value.rawValue, forKey: key)
     }
 
     // MARK: rebuild — snapshot in, pending queue out
@@ -138,25 +104,19 @@ final class Notify: NSObject, ObservableObject {
             let isTask = !isEvent && (kinds.contains("task") || row.status != nil)
             guard isTask || isEvent else { continue }
             if isTask, let status = row.status, completes.contains(status) { continue }
-            // Date-only dues ring at 09:00 sharp; timed ones lead by kind.
+            // It rings when the thing is due. A due with NO clock time
+            // does not ring at all: "a date reminder shouldn't be a
+            // thing" (owner, 2026-08-06). Without this the quick-add
+            // rows, which still write a bare date, rang at midnight —
+            // worse than the hidden 09:00 they replaced (review).
             let dateOnly = row.dueDateOnly ?? (due % 10_000 == 0)
-            let stamp = dateOnly ? Civil.stamp(day: Civil.day(of: due), hhmm: 900) : due
-            guard var fire = Self.date(of: stamp) else { continue }
-            if !dateOnly {
-                let lead = isEvent ? eventLead : taskLead
-                fire = fire.addingTimeInterval(-Double(lead.rawValue) * 60)
-                // A due closer than its lead must not lose its reminder —
-                // clamp to the due moment instead of silently dropping
-                // (due in 5 min with a 10-min lead still rings, at due).
-                if fire <= now, let atDue = Self.date(of: stamp), atDue > now {
-                    fire = atDue
-                }
-            }
+            guard !dateOnly else { continue }
+            guard let fire = Self.date(of: due) else { continue }
             guard fire > now else { continue }  // future only — never re-ring the past
             slots.append(
                 Slot(
                     entity: row.id, title: Self.title(row),
-                    body: Self.body(due: due, dateOnly: dateOnly), fire: fire))
+                    body: Self.body(due: due), fire: fire))
         }
         slots.sort { $0.fire < $1.fire }
         let kept = Array(slots.prefix(64))  // iOS's own budget: the soonest win
@@ -232,25 +192,15 @@ final class Notify: NSObject, ObservableObject {
 
     /// Title = the entity's name, else its first content line (the display
     /// name the rest of the shell shows — a scrap carries no name cell).
-    private static func title(_ row: EntityRow) -> String {
-        // Markers off for display — a reminder must never ring "# Dentist".
-        if let name = row.title, !name.isEmpty {
-            let clean = livDisplayTitle(name)
-            return clean.isEmpty ? name : clean
-        }
-        if let content = row.cells?.first(where: { $0.property == "content" })?.value,
-            let line = content.split(separator: "\n").first, !line.isEmpty
-        {
-            let clean = livDisplayTitle(String(line))
-            return clean.isEmpty ? String(line) : clean
-        }
-        return "Untitled"
-    }
+    private static func title(_ row: EntityRow) -> String { livRowTitle(row) }
 
-    private static func body(due: Int64, dateOnly: Bool) -> String {
-        dateOnly
-            ? "due \(Civil.dayLabel(Civil.day(of: due)))"
-            : "due \(Civil.timeString(due))"
+    /// Only timed dues reach here, so this always names a clock time —
+    /// spelled out rather than routed through the date-aware helper,
+    /// which returns nothing for a stamp ending 0000 and left a reminder
+    /// for a midnight event reading just "due" (review, 2026-08-06).
+    private static func body(due: Int64) -> String {
+        let hhmm = due % 10_000
+        return String(format: "due %02d:%02d", hhmm / 100, hhmm % 100)
     }
 
     /// Packed civil YYYYMMDDHHMM → a wall-clock Date in the current zone.

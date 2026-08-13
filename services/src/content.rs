@@ -114,16 +114,18 @@ pub fn set_content(
 
     // A pending proposal derived from the old words is stale the moment
     // they change: retract it — no refusal recorded — and let the next
-    // sweep re-derive from the words that are actually there. Exactly
-    // the shapes the clerk emits: a proposer's single AddCell on this
-    // entity.
+    // sweep re-derive from the words that are actually there. ONLY the
+    // sweep's own proposers qualify: their drafts are pure functions of
+    // the words. Anything else (a model's suggested title, a draft from
+    // another device) cannot be rebuilt — retracting those here meant
+    // typing one character silently destroyed them (owner, 2026-08-07).
     let stale: Vec<usize> = session
         .store()
         .pending()
         .iter()
         .enumerate()
         .filter(|(_, p)| {
-            matches!(&p.author, Author::Proposer(_))
+            crate::clerk::rederivable(&p.author)
                 && matches!(
                     p.commands.as_slice(),
                     [Command::AddCell { entity, .. }] if *entity == id
@@ -895,8 +897,7 @@ pub fn rename_value(
             // or `rename_value("name", …)` corrupts the lookups themselves
             // (the P19 review).
             for entity in store
-                .entities()
-                .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+                .user_entities()
             {
                 for cell in entity.cells.iter().filter(|c| c.property == property) {
                     if matches!(&cell.value, Value::Text(t) if t == old) {
@@ -1669,4 +1670,200 @@ fn parse_civil_single(raw: &str) -> Option<DateTime> {
             Some(DateTime::at(year, month, day, hour, minute))
         }
     }
+}
+
+
+// MARK: the display name — what a LIST calls this entity
+
+/// The name to SHOW for an entity: its name cell, else the first
+/// non-empty line of its content with the block marker taken off, else
+/// `#id`.
+///
+/// This is what every list in every shell wants, and until 2026-08-07
+/// the snapshot handed them `liv_views::summary` instead — the whole
+/// body flattened into one line, so a daily note read as
+/// "Thu 6 Aug ## Today - [ ] milk ## Notes" everywhere it appeared.
+/// `summary` still exists and still means what it says; it is simply not
+/// the answer to "what is this called" (owner, 2026-08-07).
+pub fn display_name(store: &Store, entity: &Entity) -> String {
+    match entity.get(props::CONTENT) {
+        Some(Value::RichText(rich)) => source_name(store, entity, rich),
+        _ => source_name(store, entity, &RichText::default()),
+    }
+}
+
+/// The note's own display name: the name cell, else its FIRST non-empty
+/// line with any block marker stripped. Never a whole-body summary.
+pub(crate) fn source_name(store: &Store, entity: &Entity, rich: &RichText) -> String {
+    if let Some(Value::Text(name)) = entity.get(props::NAME) {
+        if !name.trim().is_empty() {
+            return name.clone();
+        }
+    }
+    let mut text = String::new();
+    let mut block = Block::Body;
+    let mut started = false;
+    for span in &rich.spans {
+        match span {
+            Span::Break(next) => {
+                if started {
+                    let line = strip_marker(&block, &text);
+                    if !line.is_empty() {
+                        return line;
+                    }
+                    text.clear();
+                }
+                block = next.clone();
+                started = true;
+            }
+            Span::Text(t) => {
+                text.push_str(&t.text);
+                started = true;
+            }
+            Span::Ref(target) => {
+                text.push_str(&crate::tasks::name_of(store, *target));
+                started = true;
+            }
+        }
+    }
+    let line = strip_marker(&block, &text);
+    if line.is_empty() {
+        format!("#{}", entity.id)
+    } else {
+        line
+    }
+}
+
+/// One line, ALL syntax off — block markers, inline markers, reference
+/// tokens. "Syntax must never appear in a title" (owner, 2026-08-07).
+/// The rules mirror the iOS editor's scanner (EditorStyle.swift
+/// MarkScan.shape / .inline) to the letter, so the stored title and the
+/// live editor preview never disagree about the same line.
+fn strip_marker(block: &Block, text: &str) -> String {
+    if let Some(words) = crate::tasks::task_words(block, text) {
+        return words;
+    }
+    let line = strip_block_marker(text.trim());
+    strip_inline(line).trim().to_string()
+}
+
+/// The block marker, matched precisely — a greedy leading-character trim
+/// mangled a line STARTING with bold ("**Bold start** rest" became
+/// "Bold start** rest") and kept the brackets of a checked box.
+fn strip_block_marker(line: &str) -> &str {
+    let b = line.as_bytes();
+    // A rule line (3+ of - * _, nothing else) has no words at all.
+    if let Some(&first) = b.first() {
+        if matches!(first, b'-' | b'*' | b'_') {
+            let run = b.iter().take_while(|c| **c == first).count();
+            if run >= 3 && b[run..].iter().all(|c| matches!(c, b' ' | b'\t')) {
+                return "";
+            }
+        }
+    }
+    // Heading: 1-6 hashes then a space. "#errands" is the user's text.
+    let hashes = b.iter().take_while(|c| **c == b'#').count();
+    if (1..=6).contains(&hashes) && b.get(hashes) == Some(&b' ') {
+        return line[hashes + 1..].trim_start();
+    }
+    // A checkbox, either state (the OPEN state was already taken by
+    // task_words; this catches "- [x] " so a done line keeps its words).
+    if b.len() >= 6
+        && b[0] == b'-'
+        && b[1] == b' '
+        && b[2] == b'['
+        && matches!(b[3], b' ' | b'x' | b'X')
+        && b[4] == b']'
+        && b[5] == b' '
+    {
+        return line[6..].trim_start();
+    }
+    // Bullet: "- " or "* ".
+    if b.len() >= 2 && matches!(b[0], b'-' | b'*') && b[1] == b' ' {
+        return line[2..].trim_start();
+    }
+    // Ordered: up to four digits then ". ".
+    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
+    if (1..=4).contains(&digits) && b.get(digits) == Some(&b'.') && b.get(digits + 1) == Some(&b' ')
+    {
+        return line[digits + 2..].trim_start();
+    }
+    // Quote: ">" with or without its space.
+    if b.first() == Some(&b'>') {
+        let skip = if b.get(1) == Some(&b' ') { 2 } else { 1 };
+        return line[skip..].trim_start();
+    }
+    line
+}
+
+/// Inline markers off, words kept. Pairs must close on the same line —
+/// an unclosed marker is literal text. `code` wins over everything
+/// inside it. A named reference token reads as its name; a nameless one
+/// stays as typed (there is nothing better to show). All markers are
+/// ASCII, so byte scanning is UTF-8 safe.
+fn strip_inline(line: &str) -> String {
+    let b = line.as_bytes();
+    let find = |pat: &[u8], from: usize| -> Option<usize> {
+        (from..b.len().saturating_sub(pat.len() - 1)).find(|&j| &b[j..j + pat.len()] == pat)
+    };
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'`' {
+            if let Some(close) = find(b"`", i + 1) {
+                out.extend_from_slice(&b[i + 1..close]);
+                i = close + 1;
+                continue;
+            }
+        }
+        if c == b'[' && b.get(i + 1) == Some(&b'[') {
+            let digits_end = (i + 2..b.len()).find(|&j| !b[j].is_ascii_digit()).unwrap_or(b.len());
+            let digits = &line[i + 2..digits_end];
+            if !digits.is_empty() && digits.parse::<u64>().is_ok() {
+                if b.get(digits_end) == Some(&b']') && b.get(digits_end + 1) == Some(&b']') {
+                    out.extend_from_slice(&b[i..digits_end + 2]); // nameless: as typed
+                    i = digits_end + 2;
+                    continue;
+                }
+                if b.get(digits_end) == Some(&b'|') {
+                    if let Some(close) = find(b"]]", digits_end + 1) {
+                        out.extend_from_slice(&b[digits_end + 1..close]); // the name
+                        i = close + 2;
+                        continue;
+                    }
+                }
+            }
+        }
+        if c == b'*' && b.get(i + 1) == Some(&b'*') {
+            if let Some(close) = find(b"**", i + 2) {
+                if close > i + 2 {
+                    out.extend_from_slice(&b[i + 2..close]);
+                    i = close + 2;
+                    continue;
+                }
+            }
+        }
+        if c == b'*' {
+            if let Some(close) = find(b"*", i + 1) {
+                if close > i + 1 && b.get(close + 1) != Some(&b'*') {
+                    out.extend_from_slice(&b[i + 1..close]);
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        if c == b'~' && b.get(i + 1) == Some(&b'~') {
+            if let Some(close) = find(b"~~", i + 2) {
+                if close > i + 2 {
+                    out.extend_from_slice(&b[i + 2..close]);
+                    i = close + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| line.to_string())
 }

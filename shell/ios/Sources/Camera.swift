@@ -350,7 +350,7 @@ struct CameraFlow: View {
                 dismiss()
             } label: {
                 Text("Done")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.onAccent)
                     .padding(.horizontal, 14)
                     .frame(height: 30)
@@ -367,7 +367,7 @@ struct CameraFlow: View {
     {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: LivType.strong, weight: .medium))
                 .foregroundStyle(.white)
                 .frame(width: 32, height: 32)
                 .background(cameraChromeFill, in: Circle())
@@ -386,7 +386,7 @@ struct CameraFlow: View {
                     openURL(url)
                 }
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: LivType.body, weight: .semibold))
             .foregroundStyle(LivTheme.accent)
         }
         .padding(.bottom, 12)
@@ -414,7 +414,7 @@ struct CameraFlow: View {
                         }
                     }
                 }
-                .frame(height: 46)
+                .frame(height: LivRow.height)
                 .onChange(of: shots.count) { _, _ in
                     if let last = shots.last {
                         withAnimation { proxy.scrollTo(last.id) }
@@ -422,7 +422,7 @@ struct CameraFlow: View {
                 }
             }
             TextField("Caption", text: $caption)
-                .font(.system(size: 13))
+                .font(.system(size: LivType.body))
                 .textFieldStyle(.plain)
                 .submitLabel(.done)
                 .onSubmit { commitCaption() }
@@ -455,7 +455,7 @@ struct CameraFlow: View {
                 } else {
                     LivTheme.panel2.overlay(
                         Image(systemName: "photo")
-                            .font(.system(size: 13))
+                            .font(.system(size: LivType.body))
                             .foregroundStyle(LivTheme.muted)
                     )
                 }
@@ -476,12 +476,6 @@ struct CameraFlow: View {
     private var chipRow: some View {
         HStack(spacing: 6) {
             // What the active workspace already put on this shot (M4).
-            if !workspaces.stampHint.isEmpty {
-                Text(workspaces.stampHint)
-                    .font(.system(size: 10))
-                    .foregroundStyle(LivTheme.muted)
-                    .lineLimit(1)
-            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
                     ForEach(applied[target] ?? []) { chip in
@@ -503,9 +497,9 @@ struct CameraFlow: View {
                             systemName: applyAll
                                 ? "checkmark.square.fill" : "square"
                         )
-                        .font(.system(size: 11))
+                        .font(.system(size: LivType.label))
                         Text("Apply to all (\(shots.count))")
-                            .font(.system(size: 11).monospacedDigit())
+                            .font(.system(size: LivType.label).monospacedDigit())
                             .lineLimit(1)
                     }
                     .foregroundStyle(
@@ -527,14 +521,14 @@ struct CameraFlow: View {
             if adding == .area {
                 HStack(spacing: 6) {
                     Text("Area")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.text2)
                     Spacer()
                     Button {
                         adding = nil
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: LivType.label, weight: .semibold))
                             .foregroundStyle(LivTheme.text3)
                     }
                     .buttonStyle(.plain)
@@ -545,7 +539,7 @@ struct CameraFlow: View {
                         "New \(adding?.label.lowercased() ?? "value")",
                         text: $chipText
                     )
-                    .font(.system(size: 13))
+                    .font(.system(size: LivType.body))
                     .textFieldStyle(.plain)
                     .submitLabel(.done)
                     .onSubmit { applyChip(chipText) }
@@ -557,7 +551,7 @@ struct CameraFlow: View {
                     )
                     Button { applyChip(chipText) } label: {
                         Text("Add")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: LivType.body, weight: .semibold))
                             .foregroundStyle(LivTheme.accent)
                     }
                     .buttonStyle(.plain)
@@ -565,7 +559,7 @@ struct CameraFlow: View {
                         adding = nil
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: LivType.label, weight: .semibold))
                             .foregroundStyle(LivTheme.text3)
                     }
                     .buttonStyle(.plain)
@@ -635,7 +629,7 @@ struct CameraFlow: View {
                         Circle().strokeBorder(.white, lineWidth: 3)
                             .frame(width: 62, height: 62)
                         Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 19))
+                            .font(.system(size: LivType.display))
                             .foregroundStyle(.white)
                     }
                     .contentShape(Circle())

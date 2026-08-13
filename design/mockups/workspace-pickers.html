@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspaces and filters — pickers, not a query</title>
+<style>
+  :root{
+    --canvas:#161618; --surface:#1E1E20; --panel:#232326; --panel2:#2C2C2E;
+    --text:#F5F5F7; --text2:#C9C9CE; --text3:#9A9AA2; --muted:#8E8E93;
+    --border:rgba(255,255,255,.10); --border2:rgba(255,255,255,.16);
+    --accent:#0A84FF; --red:#FF453A;
+    --micro:10.5px; --caption:12px; --label:13px; --body:15px;
+    --strong:16px; --title:18px; --display:22px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0d0d0e;color:var(--text);
+       font:var(--body)/1.45 -apple-system,"SF Pro Text","Helvetica Neue",sans-serif;
+       padding:28px 16px;display:flex;flex-wrap:wrap;gap:34px;justify-content:center}
+  .col{display:flex;flex-direction:column;gap:10px;align-items:center;max-width:400px}
+  .cap{color:var(--text3);font-size:var(--caption);text-align:left;max-width:390px}
+  .cap b{color:var(--text2);font-weight:600}
+  .tag{font-size:var(--micro);letter-spacing:.6px;font-weight:700;text-transform:uppercase;
+       color:var(--muted);align-self:flex-start}
+  .tag.bad{color:var(--red)} .tag.good{color:#30D158}
+  .phone{width:390px;background:var(--canvas);border:1px solid var(--border);
+         border-radius:30px;overflow:hidden}
+  .sheet{background:var(--surface);border-radius:22px 22px 0 0;padding:0 16px 18px}
+  .grab{width:36px;height:5px;border-radius:3px;background:var(--panel2);margin:8px auto 12px}
+  .seclabel{font-size:var(--label);font-weight:600;letter-spacing:.4px;color:var(--text2);
+            text-transform:uppercase;padding:14px 0 4px}
+  .row{display:flex;align-items:center;gap:10px;height:54px;border-top:.5px solid var(--border)}
+  .row:first-of-type{border-top:none}
+  .row .g{width:18px;text-align:center;color:var(--text3);font-size:var(--label)}
+  .row .k{font-size:var(--body);color:var(--text)}
+  .row .v{margin-left:auto;font-size:var(--body);color:var(--text3);display:flex;
+          align-items:center;gap:7px}
+  .row .v .chev{font-size:var(--caption);color:var(--text3)}
+  .row.accent .k{color:var(--accent)}
+  .pill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;
+        border-radius:999px;background:rgba(10,132,255,.16);color:var(--accent);
+        font-size:var(--caption);font-weight:500}
+  .dot{width:7px;height:7px;border-radius:50%}
+  .field{height:44px;border-radius:10px;background:var(--panel);border:.5px solid var(--border);
+         display:flex;align-items:center;padding:0 11px;color:var(--muted);
+         font-size:var(--body);margin-bottom:8px}
+  .field.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--label)}
+  .btns{display:flex;justify-content:flex-end;align-items:center;gap:12px;padding-top:6px}
+  .cancel{color:var(--text3);font-size:var(--body)}
+  .create{background:var(--accent);color:#fff;font-size:var(--body);font-weight:600;
+          padding:0 15px;height:30px;border-radius:999px;display:flex;align-items:center}
+  .hint{font-size:var(--label);color:var(--accent);padding-top:2px}
+  .adv{display:flex;align-items:center;gap:7px;color:var(--text3);font-size:var(--label);
+       height:42px;border-top:.5px solid var(--border);margin-top:8px}
+  .note{border-left:2px solid var(--accent);padding:2px 0 2px 10px;color:var(--text2);
+        font-size:var(--caption);margin-top:6px}
+  h2{font-size:var(--title);margin:2px 0 2px;align-self:flex-start}
+</style>
+</head>
+<body>
+
+<div class="col">
+  <div class="tag bad">Now</div>
+  <div class="phone"><div class="sheet">
+    <div class="grab"></div>
+    <div class="seclabel">Workspace</div>
+    <div class="row"><div class="g">▦</div><div class="k">All</div></div>
+    <div class="row"><div class="g" style="color:var(--accent)">⌂</div>
+      <div class="k" style="color:var(--accent)">Home</div>
+      <div class="v" style="color:var(--accent)">✓</div></div>
+    <div style="height:10px"></div>
+    <div class="field">Name</div>
+    <div class="field mono">Query</div>
+    <div class="btns"><div class="cancel">Cancel</div><div class="create">Create</div></div>
+    <div class="seclabel">Filters</div>
+    <div class="row accent"><div class="g">+</div><div class="k">New filter…</div></div>
+  </div></div>
+  <div class="cap">
+    <b>Two problems.</b> "Query" asks you to type a language nobody documented — the
+    standing rule is that a user never types one. And Filters live inside the workspace
+    sheet, which is not what they are: a filter is not a workspace.
+  </div>
+</div>
+
+<div class="col">
+  <div class="tag good">Proposed — the form</div>
+  <div class="phone"><div class="sheet">
+    <div class="grab"></div>
+    <div class="seclabel">New workspace</div>
+    <div class="field" style="color:var(--text)">Studies</div>
+
+    <div class="seclabel">Shows</div>
+    <div class="row"><div class="g">◔</div><div class="k">Area</div>
+      <div class="v"><span class="pill"><span class="dot" style="background:#30D158"></span>Studies</span><span class="chev">›</span></div></div>
+    <div class="row"><div class="g">◕</div><div class="k">Subjects</div>
+      <div class="v"><span class="pill"><span class="dot" style="background:#BF5AF2"></span>Thesis</span><span class="chev">›</span></div></div>
+
+    <div class="adv"><span>Advanced</span><span style="margin-left:auto">⌄</span></div>
+
+    <div class="btns"><div class="cancel">Cancel</div><div class="create">Create</div></div>
+  </div></div>
+  <div class="cap">
+    <b>Pick, don't type.</b> Each row opens the same value picker the properties panel
+    already uses, so the choices are the areas and subjects that exist in your box —
+    no spelling, no syntax. "Any" means the workspace does not care about that one.
+    <div class="note">The typed query still exists, folded under <b>Advanced</b>. It is
+    how the workspace is stored, and it stays reachable — just not the way in.</div>
+  </div>
+</div>
+
+<div class="col">
+  <div class="tag good">Proposed — where filters live</div>
+  <div class="phone"><div style="padding:0 16px 18px">
+    <div style="height:14px"></div>
+    <div class="seclabel">Views</div>
+    <div class="row"><div class="g">☀</div><div class="k">Today</div></div>
+    <div class="row"><div class="g">▤</div><div class="k">Inbox</div></div>
+    <div class="seclabel">Home</div>
+    <div class="row"><div class="g">▦</div><div class="k">Calendar</div></div>
+    <div class="row"><div class="g">✓</div><div class="k">Tasks</div></div>
+    <div class="row"><div class="g">▤</div><div class="k">Everything</div></div>
+    <div class="seclabel">Filters</div>
+    <div class="row"><div class="g">◔</div><div class="k">Due this week</div>
+      <div class="v"><span class="dot" style="background:var(--accent)"></span></div></div>
+    <div class="row"><div class="g">◔</div><div class="k">Unfiled photos</div></div>
+    <div class="row accent"><div class="g">+</div><div class="k">New filter…</div></div>
+  </div></div>
+  <div class="cap">
+    <b>Filters move to the global panel</b>, under the views — which is where the
+    blueprint puts saved views, and where you already go to change what you are looking
+    at. The dot marks the one that is on. They leave the workspace sheet entirely.
+    <div class="note">This also fills the panel, which is about 40% empty today.</div>
+  </div>
+</div>
+
+</body>
+</html>

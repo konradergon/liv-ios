@@ -50,6 +50,43 @@ struct LivQuery: Equatable {
 
     static let empty = LivQuery(raw: "", terms: [])
 
+    /// The value a picker shows for one property — the first `key:value`
+    /// term naming it, or nil for "Any". Only `equals` counts: a lens
+    /// built from pickers is made of the one stamping shape.
+    func value(of property: String) -> String? {
+        for term in terms {
+            if case .equals(let p, let v) = term,
+                p.compare(property, options: .caseInsensitive) == .orderedSame
+            {
+                return v
+            }
+        }
+        return nil
+    }
+
+    /// Put a picked value back into the raw text, replacing whatever that
+    /// property said before and leaving every other term exactly as it
+    /// was typed. Editing through the pickers therefore never rewrites
+    /// an advanced query someone hand-made — it only touches its own row.
+    func setting(_ property: String, to value: String?) -> String {
+        var kept = LivQuery.tokenize(raw).filter { token in
+            guard let (key, _) = LivQuery.splitQualifier(token) else { return true }
+            return key.compare(property, options: .caseInsensitive) != .orderedSame
+        }
+        if let value, !value.trimmingCharacters(in: .whitespaces).isEmpty {
+            kept.append(LivQuery.term(property, value))
+        }
+        return kept.joined(separator: " ")
+    }
+
+    /// `key:value`, quoted when the value has a space — the spelling the
+    /// core's DSL and `parse` above both already understand.
+    static func term(_ property: String, _ value: String) -> String {
+        let needsQuotes = value.contains(" ") || value.contains("\"")
+        let clean = value.replacingOccurrences(of: "\"", with: "")
+        return needsQuotes ? "\(property):\"\(clean)\"" : "\(property):\(clean)"
+    }
+
     /// The five understood shapes, quote-aware, in the core DSL's spelling:
     ///
     ///   key:value          equality (STAMPS)
@@ -209,7 +246,7 @@ struct LivQuery: Equatable {
 
     /// A `"` toggles quoting; whitespace splits only outside quotes. So
     /// `project:"Big Thing"` is ONE token whose value keeps its space.
-    private static func tokenize(_ raw: String) -> [String] {
+    static func tokenize(_ raw: String) -> [String] {
         var out: [String] = []
         var current = ""
         var quoted = false
@@ -229,7 +266,7 @@ struct LivQuery: Equatable {
 
     /// Split on the FIRST colon. An empty key or value is not a qualifier —
     /// `:x`, `x:`, and a bare word all fall through to `.ignored`.
-    private static func splitQualifier(_ token: String) -> (String, String)? {
+    static func splitQualifier(_ token: String) -> (String, String)? {
         guard let i = token.firstIndex(of: ":") else { return nil }
         let key = String(token[token.startIndex..<i])
         let value = String(token[token.index(after: i)...])
@@ -438,10 +475,9 @@ struct LensChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 8, weight: .semibold))
+            LivIcon(glyph: .filter, color: LivTheme.accent, size: 12)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: LivType.caption, weight: .medium))
                 .lineLimit(1)
         }
         .foregroundStyle(LivTheme.accent)

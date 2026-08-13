@@ -126,13 +126,27 @@ fn binary_pool(title: &str) -> Option<&'static str> {
 }
 
 /// Which landing pool an entity projects into — None = box-only (WORKING
-/// plumbing, workspaces, unrouted scraps, messages v0, unknown binaries).
+/// plumbing, workspaces, unrouted captures, messages v0, unknown
+/// binaries).
+///
+/// Resolving `daily-note` costs a full scan of the store, so a caller
+/// looping over every entity must resolve it ONCE and use
+/// `pool_of_with`. Doing it per entity made the whole projection
+/// quadratic: measured 12 ms at 500 entities, 195 ms at 4,000, and it
+/// runs on every snapshot (services/tests/scale.rs, 2026-08-08).
 pub fn pool_of(store: &Store, entity: &Entity) -> Option<&'static str> {
+    pool_of_with(store, entity, property_id(store, "daily-note"))
+}
+
+/// `pool_of` with the `daily-note` property already resolved.
+pub fn pool_of_with(
+    store: &Store, entity: &Entity, daily: Option<Id>,
+) -> Option<&'static str> {
     if entity.trashed || entity.has(props::WORKING, &Value::Bool(true)) {
         return None;
     }
     // A daily note beats its `note` type — it has its own landing folder.
-    if let Some(daily) = property_id(store, "daily-note") {
+    if let Some(daily) = daily {
         if entity.get(daily).is_some() {
             return Some("daily");
         }
@@ -260,10 +274,12 @@ pub fn expected_files(store: &Store) -> Vec<VaultFile> {
     let mut entities: Vec<&Entity> = store.entities().collect();
     entities.sort_by_key(|e| e.id);
 
+    // Resolved once, not once per entity — see pool_of's note.
+    let daily = property_id(store, "daily-note");
     let mut used: HashMap<String, u32> = HashMap::new();
     let mut out = Vec::new();
     for entity in entities {
-        let Some(pool) = pool_of(store, entity) else { continue };
+        let Some(pool) = pool_of_with(store, entity, daily) else { continue };
         let title = match entity.get(props::NAME) {
             Some(Value::Text(name)) => name.clone(),
             _ => String::new(),

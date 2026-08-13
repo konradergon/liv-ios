@@ -19,7 +19,7 @@
 //! - Past occurrences of a series are not debts: nothing here accumulates
 //!   what yesterday's expansion would have shown.
 
-use liv_core::{props, DateTime, Entity, Id, Store, Value};
+use liv_core::{DateTime, Entity, Id, Store, Value};
 
 use crate::dates::{add_days, day_of, days_in_month, parts, weekday, WEEKDAYS};
 use crate::property_id;
@@ -99,8 +99,7 @@ pub fn occurrences_anchored(
     let to = if day_of(to).civil > cap.civil { cap } else { day_of(to) };
 
     let mut series: Vec<(&Entity, Rule, DateTime, Id)> = store
-        .entities()
-        .filter(|e| !e.trashed && !e.has(props::WORKING, &Value::Bool(true)))
+        .user_entities()
         .filter_map(|e| {
             let rule = match e.get(recurrence_prop)? {
                 Value::Text(text) => parse(text)?,

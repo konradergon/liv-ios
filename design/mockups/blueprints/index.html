@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liv — UI improvement blueprints</title>
+<style>
+  :root{--canvas:#161618;--surface:#1E1E20;--text:#F5F5F7;--text2:#C9C9CE;
+        --text3:#9A9AA2;--border:rgba(255,255,255,.10);--accent:#0A84FF}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0d0d0e;color:var(--text);
+       font:15px/1.5 -apple-system,"SF Pro Text","Helvetica Neue",sans-serif;
+       max-width:680px;margin:0 auto;padding:40px 20px}
+  h1{font-size:22px;margin-bottom:4px}
+  .sub{color:var(--text3);font-size:13px;margin-bottom:28px}
+  a.card{display:block;background:var(--surface);border:.5px solid var(--border);
+         border-radius:12px;padding:16px;margin-bottom:12px;text-decoration:none;
+         color:var(--text)}
+  a.card:hover{background:#232326}
+  .t{font-size:16px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .dot{width:10px;height:10px;border-radius:50%}
+  .d{color:var(--text3);font-size:13px;margin-top:4px;padding-left:20px}
+</style>
+</head>
+<body>
+<h1>Liv — UI improvement blueprints</h1>
+<div class="sub">Five groups, one design language. Dark, ClickUp/Google surface feel.
+Structure unchanged — polish only. No app code was changed.</div>
+
+<a class="card" href="home-views.html">
+  <div class="t"><span class="dot" style="background:#FF9F0A"></span>Home & views</div>
+  <div class="d">Library panel · Today · Inbox</div>
+</a>
+<a class="card" href="tasks-record.html">
+  <div class="t"><span class="dot" style="background:#BF5AF2"></span>Tasks & records</div>
+  <div class="d">Tasks · record card · due sheet · properties panel</div>
+</a>
+<a class="card" href="calendar-create.html">
+  <div class="t"><span class="dot" style="background:#64D2FF"></span>Calendar & create</div>
+  <div class="d">Month + day grid · create menu</div>
+</a>
+<a class="card" href="editor-search.html">
+  <div class="t"><span class="dot" style="background:#0A84FF"></span>Editor & search</div>
+  <div class="d">Note editor · link picker · search · tabs + Inactive</div>
+</a>
+<a class="card" href="icon-style.html">
+  <div class="t"><span class="dot" style="background:#FF375F"></span>Icon style — your pick</div>
+  <div class="d">Boxed vs bare icons · person initial vs silhouette</div>
+</a>
+<a class="card" href="browse-settings.html">
+  <div class="t"><span class="dot" style="background:#30D158"></span>Browse & settings</div>
+  <div class="d">Everything · workspace switcher · settings · files</div>
+</a>
+</body>
+</html>

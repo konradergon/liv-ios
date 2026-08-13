@@ -67,6 +67,8 @@ pub mod props {
     /// On types.
     pub const EXPECTED: Id = 7;
     /// On types.
+    /// RESERVED, no longer seeded (T2, 2026-08-09): early boxes carry
+    /// these three definitions, so the ids can never be reused.
     pub const DEFAULT_VIEW: Id = 8;
     /// On saved queries and views.
     pub const QUERY: Id = 9;

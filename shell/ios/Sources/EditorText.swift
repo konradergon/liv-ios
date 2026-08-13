@@ -24,6 +24,14 @@ extension NSAttributedString.Key {
     static let livTaskBox = NSAttributedString.Key("liv.taskBox")
     /// On a whole `[[id|Name]]` token. Value: NSNumber (the target id).
     static let livRef = NSAttributedString.Key("liv.ref")
+    /// On the dashes of a `---` line. Value: NSNumber(true). The glyphs
+    /// go clear and the layout manager draws a rule across the line —
+    /// the same trick the checkbox uses, so the buffer stays plain text.
+    static let livRule = NSAttributedString.Key("liv.rule")
+    /// On the single "-" or "*" of a bullet line. Value: NSNumber(true).
+    /// Same clear-ink trick again: a list marker should read as a point,
+    /// not as a hyphen (owner, 2026-08-11).
+    static let livBullet = NSAttributedString.Key("liv.bullet")
 }
 
 // MARK: - the bridge
@@ -47,9 +55,13 @@ final class EditorBridge: ObservableObject {
 
     /// Put the picker away without touching the text — the brackets stay
     /// as typed, which is what they are: literal characters.
+    /// Order matters: suppression reads the OPEN link's range, so it must
+    /// run before the link is cleared — the other way around, suppression
+    /// was always nil and the picker reopened on the very next keystroke
+    /// (audit, 2026-08-04).
     func dismissLink() {
-        openLink = nil
         coordinator?.suppressLink()
+        openLink = nil
     }
 
     /// Jump to a heading and put the caret at its start.
@@ -67,6 +79,25 @@ private enum EditorFont {
     static let body = UIFont.systemFont(ofSize: 16)
     static let mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let codeInline = UIFont.monospacedSystemFont(ofSize: 14.5, weight: .regular)
+
+    /// Where a hyphen's ink centre sits, measured DOWN from the line's
+    /// top, for the body font. Read off the font itself so the drawn
+    /// rule lands exactly where the literal dashes show when the caret
+    /// reveals them — anchoring at half the line height drew the rule
+    /// about 1.5pt below the dashes (owner, 2026-08-07).
+    static let ruleCenterFromTop: CGFloat = {
+        var ch: UniChar = 0x2D  // '-'
+        var glyph = CGGlyph(0)
+        guard CTFontGetGlyphsForCharacters(body as CTFont, &ch, &glyph, 1) else {
+            return body.lineHeight / 2
+        }
+        var g = glyph
+        let ink = CTFontGetBoundingRectsForGlyphs(body as CTFont, .default, &g, nil, 1)
+        guard ink.height > 0 else { return body.lineHeight / 2 }
+        // Glyph space measures UP from the baseline; the fragment
+        // measures DOWN from its top.
+        return body.ascender - ink.midY
+    }()
 
     static func heading(_ level: Int) -> UIFont {
         switch level {
@@ -98,9 +129,14 @@ private enum EditorFont {
 
 enum MarkStyler {
     /// Restyle `charRange` (expanded to whole paragraphs) in place. Pure
-    /// function of the text — no caret, no state. Line-local by design, so
+    /// function of the text plus ONE piece of caret state: `revealing`,
+    /// the paragraph the caret sits in. A divider on that line shows its
+    /// literal dashes — "putting the cursor on a separator should make
+    /// it appear as ---" (owner, 2026-08-07). Line-local by design, so
     /// the typing path never rescans the document.
-    static func apply(to storage: NSTextStorage, in charRange: NSRange) {
+    static func apply(
+        to storage: NSTextStorage, in charRange: NSRange, revealing: NSRange? = nil
+    ) {
         let n = storage.string as NSString
         guard n.length > 0 else { return }
         let safe = NSRange(
@@ -119,7 +155,10 @@ enum MarkStyler {
 
         n.enumerateSubstrings(in: range, options: [.byLines, .substringNotRequired]) {
             _, lineRange, _, _ in
-            style(line: n.substring(with: lineRange), at: lineRange.location, storage: storage)
+            style(
+                line: n.substring(with: lineRange), at: lineRange.location,
+                storage: storage,
+                revealed: revealing.map { NSLocationInRange(lineRange.location, $0) } ?? false)
         }
     }
 
@@ -139,15 +178,31 @@ enum MarkStyler {
         return UInt64(digits)
     }
 
-    private static func style(line: String, at base: Int, storage: NSTextStorage) {
+    private static func style(
+        line: String, at base: Int, storage: NSTextStorage, revealed: Bool = false
+    ) {
         let shape = MarkScan.shape(line)
         let lineLen = (line as NSString).length
 
         func abs(_ r: NSRange) -> NSRange { NSRange(location: base + r.location, length: r.length) }
-        func dim(_ r: NSRange) {
+        /// A marker is greyed, NEVER resized. It used to be set to 12pt
+        /// mono, which made it a different size from the text it belongs
+        /// to and — because a line's height follows its tallest font —
+        /// changed the LINE's metrics (owner, 2026-08-11: "the # before
+        /// titles should be same font/size as the header text"; "the
+        /// hyphen is slightly moved up"; "generated things move when
+        /// created… should appear exactly where the source is").
+        ///
+        /// A freshly generated "- [ ] " is 100% marker, so the whole
+        /// line was 12pt mono: 14.13pt tall instead of body's 18.84.
+        /// The line shrank the moment the marker appeared, every line
+        /// below jumped, and the drawn box — anchored to BODY metrics —
+        /// no longer matched the risen hyphen. Typing one character
+        /// brought the body font back and everything moved again.
+        func dim(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             storage.addAttributes(
-                [.font: EditorFont.mono, .foregroundColor: LivInk.muted], range: abs(r))
+                [.font: font, .foregroundColor: LivInk.muted], range: abs(r))
         }
 
         var contentFont = EditorFont.body
@@ -157,8 +212,18 @@ enum MarkStyler {
             storage.addAttribute(
                 .font, value: contentFont,
                 range: abs(NSRange(location: 0, length: lineLen)))
+            // The hash wears the heading's own font, so it sits on the
+            // same baseline at the same size as the words beside it.
+            dim(shape.marker, font: contentFont)
+        case .bullet:
             dim(shape.marker)
-        case .bullet, .ordered:
+            // The dash's ink goes clear and a point is drawn in its
+            // place; the trailing space keeps its width, so the text
+            // still starts exactly where the source says it does.
+            storage.addAttributes(
+                [.foregroundColor: UIColor.clear, .livBullet: NSNumber(value: true)],
+                range: abs(NSRange(location: shape.indent, length: 1)))
+        case .ordered:
             dim(shape.marker)
         case .task(let checked):
             dim(NSRange(location: 0, length: shape.marker.length))
@@ -189,7 +254,40 @@ enum MarkStyler {
                 storage.addAttribute(.foregroundColor, value: LivInk.text2, range: abs(content))
             }
         case .rule:
-            dim(NSRange(location: 0, length: lineLen))
+            // A divider is a LINE, not three grey dashes — except under
+            // the caret, where it is EDITABLE and shows its source, the
+            // same way every other marker stays visible (owner,
+            // 2026-08-07). Off the caret: clear the ink (widths kept,
+            // buffer untouched) and let the layout manager draw the rule
+            // — the checkbox's own mechanism.
+            //
+            // The hidden form must not wrap. A run of 50+ dashes wrapped
+            // onto a second row whose characters are invisible, so the
+            // note showed the rule followed by a blank gap nobody could
+            // explain (review, 2026-08-06). The characters are invisible
+            // anyway, so clipping them costs nothing.
+            if revealed {
+                // Muted ink, BODY font — not the small marker font. A
+                // font change resizes the line, so the page jumped ~2pt
+                // every time the caret entered or left the divider, and
+                // the drawn rule could never sit where the dashes sat
+                // (found measuring, 2026-08-07).
+                storage.addAttribute(
+                    .foregroundColor, value: LivInk.muted,
+                    range: abs(NSRange(location: 0, length: lineLen)))
+            } else {
+                let ruleStyle = NSMutableParagraphStyle()
+                ruleStyle.lineSpacing = 2
+                ruleStyle.lineBreakMode = .byClipping
+                let whole = NSRange(location: 0, length: lineLen)
+                storage.addAttributes(
+                    [
+                        .foregroundColor: UIColor.clear,
+                        .livRule: NSNumber(value: true),
+                        .paragraphStyle: ruleStyle,
+                    ],
+                    range: abs(whole))
+            }
         case .body:
             break
         }
@@ -251,16 +349,64 @@ final class LivLayoutManager: NSLayoutManager {
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
         let charRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        storage.enumerateAttribute(.livRule, in: charRange) { value, range, _ in
+            guard (value as? NSNumber)?.boolValue == true else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = boundingRect(forGlyphRange: glyphs, in: container)
+            rect.origin.x += origin.x
+            rect.origin.y += origin.y
+            // Full width of the text container, not of the three dashes:
+            // a divider divides the page.
+            //
+            // Anchored to the TOP of the line, not its middle. Every
+            // styled paragraph carries lineSpacing 2, and TextKit adds
+            // that 2pt to the bottom of a line only when another line
+            // follows it — so the moment you pressed Return after a
+            // hand-typed `---` the box grew and the rule dropped 1pt
+            // (owner, 2026-08-06). The top of the line does not move.
+            // x and width must measure from the same edge. They did not:
+            // x started at the container edge while the width subtracted
+            // the text's own side padding, so the rule poked 3pt past the
+            // text on the left and stopped 7pt short on the right
+            // (review, 2026-08-06).
+            let inset: CGFloat = 2
+            let line = CGRect(
+                x: origin.x + container.lineFragmentPadding + inset,
+                y: rect.minY + EditorFont.ruleCenterFromTop - 0.5,
+                width: container.size.width - container.lineFragmentPadding * 2 - inset * 2,
+                height: 1)
+            LivInk.muted.setFill()
+            UIBezierPath(rect: line).fill()
+        }
+        storage.enumerateAttribute(.livBullet, in: charRange) { value, range, _ in
+            guard (value as? NSNumber) != nil else { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = boundingRect(forGlyphRange: glyphs, in: container)
+            rect.origin.x += origin.x
+            rect.origin.y += origin.y
+            // Centred on the line's own height, exactly as the box is —
+            // markers carry the body font now, so the two agree.
+            let side: CGFloat = 5
+            let dot = CGRect(
+                x: rect.midX - side / 2,
+                y: rect.minY + EditorFont.body.lineHeight / 2 - side / 2,
+                width: side, height: side)
+            LivInk.text2.setFill()
+            UIBezierPath(ovalIn: dot).fill()
+        }
         storage.enumerateAttribute(.livTaskBox, in: charRange) { value, range, _ in
             guard let checked = (value as? NSNumber)?.boolValue else { return }
             let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var rect = boundingRect(forGlyphRange: glyphs, in: container)
             rect.origin.x += origin.x
             rect.origin.y += origin.y
-            // A 15pt box, vertically centered on the glyph line.
+            // A 15pt box, centred on the line's own height rather than
+            // on the glyph box — same lineSpacing trap as the rule above.
             let side: CGFloat = 15
             let box = CGRect(
-                x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
+                x: rect.midX - side / 2,
+                y: rect.minY + EditorFont.body.lineHeight / 2 - side / 2,
+                width: side, height: side)
             let path = UIBezierPath(roundedRect: box, cornerRadius: 4.5)
             if checked {
                 LivInk.accent.setFill()
@@ -287,9 +433,28 @@ final class LivLayoutManager: NSLayoutManager {
 
 final class MarkdownTextView: UITextView {
     /// Clearance for the floating circles the title starts below.
-    private static let titleTop: CGFloat = 54
+    /// Clearance above the title, measured from the top of the text
+    /// view. It has to clear the floating circles the desk hangs over
+    /// the note — at 54 the title sat about 8pt under them, which read
+    /// as crowded (owner, 2026-08-10: "titles in documents could still
+    /// use some breathing room").
+    private static let titleTop: CGFloat = 78
     private static let gutter: CGFloat = 15
-    private static let titleGap: CGFloat = 6
+    /// Between the title and the first line of the note. At 6 the note
+    /// began almost against its own name.
+    private static let titleGap: CGFloat = 20
+    /// Embedded in a record card there is no floating bottom bar to
+    /// clear and no title to reserve room for — the card supplies both.
+    private static let embeddedTop: CGFloat = 4
+    private static let embeddedBottom: CGFloat = 8
+
+    /// A NOTE shows its title inside this scroll view. A record's notes
+    /// do not: the name is edited above them by the card, and a second
+    /// name field would be a lie about what you were editing. The flag
+    /// is `let` — a view cannot grow or lose a title mid-life, and
+    /// making it settable would invite exactly the inset mutation during
+    /// layout that once blanked the whole document.
+    let showsTitle: Bool
 
     /// The note's title, living INSIDE this scroll view (owner,
     /// 2026-08-01 — Obsidian's layout). A UITextView is a UIScrollView, so
@@ -301,7 +466,7 @@ final class MarkdownTextView: UITextView {
         let v = UITextView()
         v.isScrollEnabled = false
         v.backgroundColor = .clear
-        v.font = .systemFont(ofSize: 26, weight: .bold)
+        v.font = .systemFont(ofSize: LivType.hero, weight: .bold)
         v.textColor = LivInk.text
         v.textContainerInset = .zero
         v.textContainer.lineFragmentPadding = 0
@@ -315,7 +480,7 @@ final class MarkdownTextView: UITextView {
     /// The derived title, in grey, when no name cell exists.
     let titlePrompt: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: 26, weight: .bold)
+        l.font = .systemFont(ofSize: LivType.hero, weight: .bold)
         l.textColor = LivInk.muted
         l.numberOfLines = 3
         l.lineBreakMode = .byTruncatingTail
@@ -323,7 +488,8 @@ final class MarkdownTextView: UITextView {
         return l
     }()
 
-    init() {
+    init(showsTitle: Bool = true) {
+        self.showsTitle = showsTitle
         let storage = NSTextStorage()
         let layout = LivLayoutManager()
         let container = NSTextContainer(
@@ -335,8 +501,13 @@ final class MarkdownTextView: UITextView {
         backgroundColor = .clear
         font = EditorFont.body
         textColor = LivInk.text
-        keyboardDismissMode = .interactive
-        alwaysBounceVertical = true
+        // Both of these belong to a view that scrolls ITSELF. Embedded,
+        // the card's own ScrollView owns the swipe-to-dismiss
+        // (scrollDismissesKeyboard) and there is nothing to bounce —
+        // setting them here and undoing them in makeUIView was two
+        // declarations of one thing.
+        keyboardDismissMode = showsTitle ? .interactive : .none
+        alwaysBounceVertical = showsTitle
         // Two hyphens must stay two hyphens — smart dashes would eat the
         // "---" rule (and any -- ) as it is typed. Smart quotes stay on;
         // nothing parses quote characters.
@@ -346,12 +517,23 @@ final class MarkdownTextView: UITextView {
         // scroll clear of the floating bottom bar hovering over the text.
         // The TOP inset is recomputed per layout to hold the title.
         textContainerInset = UIEdgeInsets(
-            top: Self.titleTop + 32 + Self.titleGap, left: 10, bottom: 110, right: 10)
+            top: showsTitle ? Self.titleTop + Self.titleFloor + Self.titleGap : Self.embeddedTop,
+            // Embedded, the text must line up with the card's name field
+            // and every inspector row, which sit at 16. The container
+            // adds its own 5pt lineFragmentPadding, so 11 + 5 = 16.
+            left: showsTitle ? 10 : 11,
+            bottom: showsTitle ? 110 : Self.embeddedBottom,
+            right: showsTitle ? 10 : 11)
         self.textContainer.lineFragmentPadding = 5
-        accessibilityLabel = "Note content"
-        accessibilityIdentifier = "note.editor"
-        addSubview(titleView)
-        addSubview(titlePrompt)
+        // A record card is presented OVER a live note tab, so both text
+        // views exist at once. One identifier for two live elements
+        // makes every scripted check of the editor a coin flip.
+        accessibilityLabel = showsTitle ? "Note content" : "Notes"
+        accessibilityIdentifier = showsTitle ? "note.editor" : "record.notes"
+        if showsTitle {
+            addSubview(titleView)
+            addSubview(titlePrompt)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -362,13 +544,17 @@ final class MarkdownTextView: UITextView {
     /// layoutSubviews, and the whole document silently stops drawing
     /// (found live — the note went blank). Layout only positions; this
     /// runs from the update path instead.
-    private var titleHeight: CGFloat = 32
+    /// The title's minimum height — one line of LivType.hero. Shared
+    /// with the initial inset above, which used to repeat the literal.
+    static let titleFloor: CGFloat = 32
+    private var titleHeight: CGFloat = MarkdownTextView.titleFloor
 
     func refreshTitleLayout() {
+        guard showsTitle else { return }
         let width = max(bounds.width - Self.gutter * 2, 1)
         let fitted = titleView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude))
-        let height = max(fitted.height, 32)
+        let height = max(fitted.height, Self.titleFloor)
         guard abs(height - titleHeight) > 0.5 else {
             placeTitle(width: width)
             return
@@ -388,6 +574,7 @@ final class MarkdownTextView: UITextView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        guard showsTitle else { return }
         placeTitle(width: max(bounds.width - Self.gutter * 2, 1))
     }
 }
@@ -415,12 +602,22 @@ struct MarkdownEditor: UIViewRepresentable {
     var onOutline: () -> Void
     /// The toolbar's template key — NoteEditor presents the picker.
     var onTemplate: () -> Void
+    /// A note carries its title inside the scroll view; a record's notes
+    /// are titled by the card above them.
+    var showsTitle: Bool = true
+    /// EMBEDDED: the text view stops scrolling itself and grows to its
+    /// content, so it can sit inside the card's own ScrollView. Two
+    /// scroll views nested is the fight that has bitten this codebase
+    /// before (HourGridDrag, PanelDrag); the answer here is to have only
+    /// one — the card's.
+    var embedded: Bool = false
 
     func makeUIView(context: Context) -> MarkdownTextView {
-        let view = MarkdownTextView()
+        let view = MarkdownTextView(showsTitle: showsTitle)
+        view.isScrollEnabled = !embedded
         view.delegate = context.coordinator
         context.coordinator.install(on: view)
-        view.titleView.delegate = context.coordinator.title
+        if showsTitle { view.titleView.delegate = context.coordinator.title }
         bridge.coordinator = context.coordinator
         return view
     }
@@ -428,16 +625,18 @@ struct MarkdownEditor: UIViewRepresentable {
     func updateUIView(_ view: MarkdownTextView, context: Context) {
         context.coordinator.parent = self
         view.isEditable = editable
-        view.titleView.isEditable = editable
-        if view.titleView.text != title {
-            view.titleView.text = title
-            view.setNeedsLayout()
+        if view.showsTitle {
+            view.titleView.isEditable = editable
+            if view.titleView.text != title {
+                view.titleView.text = title
+                view.setNeedsLayout()
+            }
+            if view.titlePrompt.text != titlePrompt {
+                view.titlePrompt.text = titlePrompt
+            }
+            view.titlePrompt.isHidden = !title.isEmpty
+            view.refreshTitleLayout()
         }
-        if view.titlePrompt.text != titlePrompt {
-            view.titlePrompt.text = titlePrompt
-        }
-        view.titlePrompt.isHidden = !title.isEmpty
-        view.refreshTitleLayout()
         if view.text != text {
             // Programmatic set (load, conflict swap, re-apply): keep the
             // caret sane. Styling arrives via the storage delegate — every
@@ -454,6 +653,20 @@ struct MarkdownEditor: UIViewRepresentable {
         if focused, !view.isFirstResponder, view.window != nil, editable {
             view.becomeFirstResponder()
         }
+    }
+
+    /// How tall the text wants to be. Only asked when embedded; a
+    /// full-screen note keeps its own scrolling and fills what it is
+    /// given. A floor keeps an empty notes field tappable.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context
+    ) -> CGSize? {
+        guard embedded else { return nil }
+        let width = proposal.width ?? uiView.bounds.width
+        guard width > 0 else { return nil }
+        let fitted = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: max(fitted.height, 88))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -506,7 +719,8 @@ struct MarkdownEditor: UIViewRepresentable {
             // (§6 rev 3; this reverses rev 2's hidden-Aa model, which the
             // owner tried and rejected). It appears and hides with the
             // keyboard's own animation, so nothing ever jolts on its own.
-            view.inputAccessoryView = EditorToolbar { [weak self] verb in
+            view.inputAccessoryView = EditorToolbar(embedded: !view.showsTitle) {
+                [weak self] verb in
                 self?.perform(verb)
             }
             // Checkbox taps: the recognizer only RECEIVES touches that land
@@ -533,13 +747,53 @@ struct MarkdownEditor: UIViewRepresentable {
             apply(around: editedRange, to: textStorage)
         }
 
+        /// The paragraph whose divider is currently shown as dashes
+        /// because the caret is on it. nil = no divider revealed.
+        private var revealedRule: NSRange?
+
+        /// Reveal follows the caret: entering a divider line restyles it
+        /// to its literal dashes, leaving restyles it back to a drawn
+        /// line. One runloop hop — the selection callback fires inside
+        /// the edit cycle, where storage edits are not safe (the same
+        /// rule setOpenLink documents below).
+        private func updateRuleReveal(_ textView: UITextView) {
+            let n = textView.text as NSString
+            var fresh: NSRange?
+            let sel = textView.selectedRange
+            if sel.length == 0, n.length > 0 {
+                let para = n.paragraphRange(
+                    for: NSRange(location: min(sel.location, n.length), length: 0))
+                var lineRange = para
+                if lineRange.length > 0,
+                    n.character(at: NSMaxRange(lineRange) - 1) == 0x0A
+                {
+                    lineRange.length -= 1
+                }
+                if case .rule = MarkScan.shape(n.substring(with: lineRange)).block {
+                    fresh = para
+                }
+            }
+            guard fresh != revealedRule else { return }
+            let stale = revealedRule
+            revealedRule = fresh
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let view = self.view else { return }
+                for range in [stale, self.revealedRule].compactMap({ $0 }) {
+                    MarkStyler.apply(
+                        to: view.textStorage, in: range, revealing: self.revealedRule)
+                }
+            }
+        }
+
         /// Widened one character each side: a return that SPLITS a line
         /// edits only the newline, but both halves need restyling.
         private func apply(around range: NSRange, to storage: NSTextStorage) {
             let n = (storage.string as NSString).length
             let lo = max(0, min(range.location, n) - 1)
             let hi = min(n, NSMaxRange(range) + 1)
-            MarkStyler.apply(to: storage, in: NSRange(location: lo, length: hi - lo))
+            MarkStyler.apply(
+                to: storage, in: NSRange(location: lo, length: hi - lo),
+                revealing: revealedRule)
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -557,6 +811,7 @@ struct MarkdownEditor: UIViewRepresentable {
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             trackLink(in: textView)
+            updateRuleReveal(textView)
         }
 
         // MARK: the [[ picker
@@ -940,50 +1195,101 @@ enum StyleVerb {
 /// bottom bar; this row covers nothing else and moves only with the
 /// keyboard. The dismiss key is pinned at the right so the way out never
 /// scrolls away.
-final class EditorToolbar: UIInputView {
+final class EditorToolbar: UIInputView, UIScrollViewDelegate {
+    private let embedded: Bool
+
     private let onVerb: (StyleVerb) -> Void
 
-    init(onVerb: @escaping (StyleVerb) -> Void) {
+    /// Embedded in a record card, two of the advanced verbs have no
+    /// door: Outline scrolls a view whose scrolling is switched off, and
+    /// Template would land a document's boilerplate in a task. A menu
+    /// item that does nothing is a lie, so they are not offered there.
+    init(embedded: Bool = false, onVerb: @escaping (StyleVerb) -> Void) {
+        self.embedded = embedded
         self.onVerb = onVerb
         super.init(
             frame: CGRect(x: 0, y: 0, width: 0, height: 46), inputViewStyle: .keyboard)
         allowsSelfSizing = true
-        backgroundColor = LivInk.surface
+        // TRANSPARENT (owner, 2026-08-03 — Notesnook): with no background
+        // color, `.keyboard` style supplies the system keyboard's own
+        // material, so the row reads as part of the keyboard rather than
+        // a bar over it. Known delta from rule 2 ("nothing reads
+        // through"): with a hardware keyboard the material samples the
+        // note behind it — accepted by the owner's explicit ask.
+        backgroundColor = nil
 
-        let hairline = UIView()
-        hairline.backgroundColor = LivInk.border
-        hairline.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hairline)
-
+        // The DAILY set rides the row; everything else lives behind `+`
+        // (phase 2, owner 2026-08-05 — Notesnook's shape: a short row of
+        // buttons and the + for more advanced options).
         let keys: [(String, String, StyleVerb)] = [
             ("arrow.uturn.backward", "Undo", .undo),
             ("arrow.uturn.forward", "Redo", .redo),
-            ("link", "Link", .link),
             ("textformat.size", "Heading", .heading),
             ("bold", "Bold", .bold),
             ("italic", "Italic", .italic),
-            ("strikethrough", "Strikethrough", .strike),
-            ("chevron.left.forwardslash.chevron.right", "Code", .code),
             ("checkmark.square", "Task list", .task),
             ("list.bullet", "Bulleted list", .bullet),
-            ("list.number", "Numbered list", .ordered),
-            ("text.quote", "Quote", .quote),
             ("increase.indent", "Indent", .indent),
             ("decrease.indent", "Outdent", .outdent),
+        ]
+        // The + menu: inserts and the rarer marks. Same verbs, same
+        // handlers — only the door moved.
+        var advanced: [(String, String, StyleVerb)] = [
+            ("link", "Link", .link),
+            ("doc.on.doc", "Template", .template),
+            ("list.number", "Numbered list", .ordered),
+            ("text.quote", "Quote", .quote),
+            ("strikethrough", "Strikethrough", .strike),
+            ("chevron.left.forwardslash.chevron.right", "Code", .code),
             ("minus", "Divider", .rule),
             ("list.bullet.indent", "Outline", .outline),
-            ("doc.on.doc", "Insert template", .template),
         ]
+        if embedded {
+            advanced.removeAll { $0.2 == .template || $0.2 == .outline }
+        }
+        let plus = UIButton(type: .system)
+        plus.setImage(
+            UIImage(
+                systemName: "plus",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)),
+            for: .normal)
+        plus.tintColor = LivInk.accent
+        plus.accessibilityLabel = "Insert"
+        plus.showsMenuAsPrimaryAction = true
+        plus.menu = UIMenu(children: advanced.map { (symbol, title, verb) in
+            UIAction(title: title, image: UIImage(systemName: symbol)) { [onVerb] _ in
+                onVerb(verb)
+            }
+        })
+        NSLayoutConstraint.activate([
+            plus.widthAnchor.constraint(greaterThanOrEqualToConstant: 46)
+        ])
         let middle = UIStackView(
-            arrangedSubviews: keys.map { (symbol, access, verb) in
-                key(symbol, access) { [weak self] in self?.onVerb(verb) }
-            })
+            arrangedSubviews: [plus]
+                + keys.map { (symbol, access, verb) in
+                    key(symbol, access) { [weak self] in self?.onVerb(verb) }
+                })
         middle.axis = .horizontal
         middle.spacing = 0
         middle.translatesAutoresizingMaskIntoConstraints = false
 
         let scroller = UIScrollView()
         scroller.showsHorizontalScrollIndicator = false
+        scroller.showsVerticalScrollIndicator = false
+        // This row scrolls HORIZONTALLY only. Without these, the scroll
+        // view's automatic safe-area inset (added while the keyboard
+        // animates through the home-indicator zone) makes the content
+        // taller than the frame and the keys wiggle vertically.
+        scroller.alwaysBounceVertical = false
+        scroller.contentInsetAdjustmentBehavior = .never
+        // The constraints below already make the content exactly as tall
+        // as the frame, and the two flags above already refuse a vertical
+        // bounce — and the row STILL drifted vertically (owner, twice).
+        // So the axis is nailed shut in the one place nothing can argue
+        // with: every scroll event puts y back to zero.
+        scroller.delegate = self
+        // A drag that starts vertical must not drift the row at all.
+        scroller.isDirectionalLockEnabled = true
         scroller.translatesAutoresizingMaskIntoConstraints = false
         scroller.addSubview(middle)
 
@@ -997,11 +1303,8 @@ final class EditorToolbar: UIInputView {
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
+        // No hairline: the keyboard material IS the separation now.
         NSLayoutConstraint.activate([
-            hairline.topAnchor.constraint(equalTo: topAnchor),
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.heightAnchor.constraint(equalToConstant: 0.5),
             row.topAnchor.constraint(equalTo: topAnchor, constant: 0.5),
             row.bottomAnchor.constraint(equalTo: bottomAnchor),
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -1016,6 +1319,15 @@ final class EditorToolbar: UIInputView {
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    /// The vertical lock. Belt over braces: whatever nudges y — an inset
+    /// the system adds while the keyboard animates, a rubber-band from a
+    /// diagonal flick — is undone in the same frame.
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView.contentOffset.y != 0 {
+            scrollView.contentOffset.y = 0
+        }
+    }
 
     private func key(
         _ symbol: String, _ access: String, action: @escaping () -> Void

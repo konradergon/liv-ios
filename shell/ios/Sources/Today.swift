@@ -1,10 +1,11 @@
-// liv iOS — Today (design/ios.md §6). The day at a glance: 7-day strip,
-// 2×2 count tiles, one merged agenda (events by civil time, then dues,
-// then the inline quick-add ghost row), the captured-today strip. Reads
-// ride the snapshot window [today-1, today+7]; every act goes through
-// the one BoxModel, act-then-refresh.
-// The chrome owns the top bar, settings, and the bottom bar; a row tap
-// opens the entity as a Desk tab (desk.open) — no navigation stack here.
+// liv iOS — Today (design/ios.md §6; rebuilt phase 5, owner-approved
+// mockup 2026-08-05). Today answers "WHAT NOW?": what is late, what is
+// happening, what is left. One column — the 7-day strip, the LATE strip
+// (always visible when it has rows), the day as a single now-aware
+// timeline, one "N done" line, the quick-add ghost, and one honest
+// captured line that jumps to the Inbox. Reads ride the snapshot window
+// [today-1, today+7]; every act goes through the one BoxModel.
+// A row tap opens the entity as a Desk tab — no navigation stack here.
 
 import SwiftUI
 
@@ -18,6 +19,17 @@ private struct TodayAgendaItem: Identifiable {
     let stamp: Int64
     let occurrence: Bool
     var id: String { key }
+    /// The stored flag decides. Guessing from a 0000 stamp made a real
+    /// midnight event read as all-day (review, 2026-08-06); the stamp is
+    /// only consulted when the core did not say.
+    var allDay: Bool { row.dueDateOnly ?? (stamp % 10_000 == 0) }
+}
+
+/// The row whose exact date and time is being picked (sheet item) — the
+/// arbitrary-time door is everywhere a date can be set (owner, phase 5).
+private struct TodayDuePick: Identifiable {
+    let entity: UInt64
+    var id: UInt64 { entity }
 }
 
 // MARK: - the screen
@@ -30,72 +42,80 @@ struct TodayView: View {
 
     @State private var selectedDay = Civil.todayDay()
     /// The task status vocabulary, board order; `completes` drives the
-    /// ring and the overdue predicate.
+    /// ring, the LATE predicate and the done-collapse.
     @State private var taskOptions: [StatusOption] = []
-    @State private var showOverdue = false
-    @State private var capturedExpanded = false
+    @State private var doneExpanded = false
+    @State private var duePick: TodayDuePick?
 
     var body: some View {
         let today = Civil.todayDay()
+        let now = Civil.nowStamp()
         let doneNames = Set(
             taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let items = agenda(for: selectedDay)
-        let overdue = overdueRows(today: today, doneNames: doneNames)
-        let captured = capturedRows(today: today)
+        let all = agenda(for: selectedDay)
+        let allDay = all.filter(\.allDay)
+        let timedOpen = all.filter { !$0.allDay && !isDone($0.row, doneNames) }
+        let done = all.filter { !$0.allDay && isDone($0.row, doneNames) }
+        let late = lateRows(today: today, doneNames: doneNames)
+        let captured = capturedTodayCount(today: today)
+        // The timeline knows the time (today only): what passed dims,
+        // the next thing up is lit.
+        let onToday = selectedDay == today
+        let passed = onToday ? timedOpen.filter { $0.stamp < now } : []
+        let ahead = onToday ? timedOpen.filter { $0.stamp >= now } : timedOpen
+        let nextKey = onToday ? ahead.first?.key : nil
 
         List {
             Group {
-                HStack(spacing: 8) {
-                    SectionLabel("Today · " + Civil.dayLabel(today))
-                    // Why the list is short — never a mystery (M4).
-                    if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
-                    if box.busyRetrying { ProgressView().scaleEffect(0.7) }
-                }
-                .padding(.top, 8)
+                header(today: today, left: timedOpen.count + late.count)
                 TodayDateStrip(selected: $selectedDay, today: today)
                     .padding(.vertical, 6)
-                countTiles(
-                    today: today,
-                    todayCount: selectedDay == today
-                        ? items.count : agenda(for: today).count,
-                    overdueCount: overdue.count,
-                    capturedTotal: capturedTotal)
-                if showOverdue && !overdue.isEmpty {
-                    SectionLabel(
-                        "Overdue", trailing: "Hide",
-                        trailingAction: { showOverdue = false }
-                    )
-                    .padding(.top, 14).padding(.bottom, 2)
-                    ForEach(overdue) { row in
-                        overdueLine(row, doneNames: doneNames, today: today)
+
+                if !late.isEmpty {
+                    lateHeader(late.count)
+                    ForEach(late) { row in
+                        lateLine(row, today: today, doneNames: doneNames)
                     }
                 }
+
+                if !allDay.isEmpty {
+                    SectionLabel("All-day")
+                        .padding(.top, 14).padding(.bottom, 4)
+                    allDayBand(allDay, doneNames: doneNames)
+                }
+
                 SectionLabel(
-                    selectedDay == today
-                        ? "Agenda · today"
-                        : "Agenda · \(Civil.dayLabel(selectedDay))",
-                    trailing: items.isEmpty ? nil : "\(items.count)"
+                    onToday ? "Today" : Civil.dayLabel(selectedDay),
+                    trailing: timedOpen.isEmpty ? nil : "\(timedOpen.count)"
                 )
                 .padding(.top, 14).padding(.bottom, 2)
-                if items.isEmpty {
+                if timedOpen.isEmpty && done.isEmpty && allDay.isEmpty {
                     EmptyHint("Nothing scheduled")
-                } else {
-                    ForEach(items) { item in
-                        agendaLine(item, doneNames: doneNames, today: today)
+                }
+                ForEach(passed) { item in
+                    timedLine(item, dimmed: true, next: false, doneNames: doneNames)
+                }
+                if onToday, !timedOpen.isEmpty || !done.isEmpty {
+                    nowLine(now)
+                }
+                ForEach(ahead) { item in
+                    timedLine(
+                        item, dimmed: false, next: item.key == nextKey,
+                        doneNames: doneNames)
+                }
+                if !done.isEmpty {
+                    doneCollapse(done.count)
+                    if doneExpanded {
+                        ForEach(done) { item in
+                            timedLine(
+                                item, dimmed: true, next: false,
+                                doneNames: doneNames)
+                        }
                     }
                 }
                 TodayQuickAddRow(day: selectedDay)
-                if !captured.isEmpty {
-                    SectionLabel(
-                        "Captured today",
-                        trailing: capturedExpanded
-                            ? "Hide" : "Show \(captured.count)",
-                        trailingAction: { capturedExpanded.toggle() }
-                    )
-                    .padding(.top, 14).padding(.bottom, 2)
-                    if capturedExpanded {
-                        ForEach(captured) { row in capturedLine(row) }
-                    }
+                if captured > 0 {
+                    capturedFooter(captured)
                 }
             }
             .listRowInsets(
@@ -109,6 +129,12 @@ struct TodayView: View {
         .environment(\.defaultMinListRowHeight, 10)
         .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
         .background(LivTheme.canvas)
+        .sheet(item: $duePick) { pick in
+            DetailDueSheet(
+                model: box, id: pick.entity,
+                property: dueProperty(box.entity(pick.entity)))
+            .presentationDetents([.medium])
+        }
         .onAppear {
             loadWindow()
             box.statusOptions(kind: "task") { taskOptions = $0 }
@@ -118,155 +144,277 @@ struct TodayView: View {
         }
     }
 
-    // MARK: tiles
+    // MARK: header + section furniture
 
-    private func countTiles(
-        today: Int64, todayCount: Int, overdueCount: Int, capturedTotal: Int
-    ) -> some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 8),
-                GridItem(.flexible(), spacing: 8),
-            ],
-            spacing: 8
-        ) {
-            CountTile(count: todayCount, label: "Today") {
-                selectedDay = today
-            }
-            CountTile(
-                count: overdueCount, label: "Overdue",
-                danger: overdueCount > 0
-            ) {
-                showOverdue.toggle()
-            }
-            CountTile(count: upcomingCount(today: today), label: "Upcoming 7d") {
-                selectedDay = Civil.addDays(today, 1)
-            }
-            CountTile(count: capturedTotal, label: "Captured") {
-                capturedExpanded.toggle()
+    private func header(today: Int64, left: Int) -> some View {
+        HStack(spacing: 8) {
+            SectionLabel("Today · " + Civil.dayLabel(today))
+            // Why the list is short — never a mystery (M4).
+            if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
+            if box.busyRetrying { ProgressView().scaleEffect(0.7) }
+            Spacer()
+            if left > 0 {
+                Text("\(left) left")
+                    .font(.system(size: LivType.label).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
             }
         }
-        .padding(.top, 2)
+        .padding(.top, 8)
+    }
+
+    /// LATE means only what can still be DONE: incomplete tasks whose day
+    /// has passed (owner ruling, phase 5). A past event is not late — it
+    /// happened.
+    private func lateHeader(_ count: Int) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(LivTheme.red).frame(width: 7, height: 7)
+            Text("LATE")
+                .font(.system(size: LivType.label, weight: .bold))
+                .kerning(0.6)
+                .foregroundStyle(LivTheme.red)
+            Text("\(count) task\(count == 1 ? "" : "s")")
+                .font(.system(size: LivType.caption).monospacedDigit())
+                .foregroundStyle(LivTheme.muted)
+            Spacer()
+        }
+        .padding(.top, 14).padding(.bottom, 2)
+    }
+
+    private func nowLine(_ now: Int64) -> some View {
+        HStack(spacing: 6) {
+            Text(Civil.timeString(now))
+                .font(.system(size: LivType.micro, weight: .bold).monospacedDigit())
+                .foregroundStyle(LivTheme.onAccent)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 4).fill(LivTheme.red))
+            Rectangle().fill(LivTheme.red).frame(height: 1.5)
+        }
+        .frame(height: 18)
+        .accessibilityHidden(true)
+    }
+
+    private func doneCollapse(_ count: Int) -> some View {
+        Button {
+            doneExpanded.toggle()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: doneExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: LivType.micro, weight: .semibold))
+                Text("\(count) done today")
+                    .font(.system(size: LivType.body).monospacedDigit())
+                Spacer()
+            }
+            .foregroundStyle(LivTheme.muted)
+            .frame(minHeight: 38)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+
+    /// One honest line, not a tile that disagrees with its own section:
+    /// today's captures, and the door to the place that routes them.
+    private func capturedFooter(_ count: Int) -> some View {
+        Button {
+            desk.featureShown = .inbox
+        } label: {
+            HStack(spacing: 6) {
+                Text("\(count) captured today")
+                    .font(.system(size: LivType.body).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
+                Text("· Route them")
+                    .font(.system(size: LivType.body, weight: .semibold))
+                    .foregroundStyle(LivTheme.accent)
+                Spacer()
+            }
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
     }
 
     // MARK: rows — a tap opens the entity as a Desk tab
 
-    @ViewBuilder
-    private func agendaLine(
-        _ item: TodayAgendaItem, doneNames: Set<String>, today: Int64
+    /// A late task: ring, title, the day it was due (red), and one-tap
+    /// Today. Swipe: Tomorrow / Pick (the arbitrary date-and-time door).
+    private func lateLine(
+        _ row: EntityRow, today: Int64, doneNames: Set<String>
     ) -> some View {
-        TodayRow(
-            row: item.row,
-            occurrence: item.occurrence,
-            done: isDone(item.row, doneNames),
-            toggle: !item.occurrence && isTask(item.row)
-                ? { toggleStatus(item.row.id) } : nil,
-            trailing: Civil.timeString(item.stamp),
-            danger: isOverdue(item.row, doneNames: doneNames, today: today)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { desk.open(item.row.id) }
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            if !item.occurrence { rescheduleButtons(item.row) }
-        }
-        .swipeActions(edge: .trailing) {
-            if !item.occurrence {
-                Button(role: .destructive) {
-                    box.trash(item.row.id)
-                } label: {
-                    Label("Trash", systemImage: "trash")
-                }
+        HStack(spacing: 8) {
+            StatusRing(done: false) { toggleStatus(row.id) }
+            Text(displayTitle(row))
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Text(Civil.dayLabel(Civil.day(of: row.due ?? 0)))
+                .font(.system(size: LivType.caption).monospacedDigit())
+                .foregroundStyle(LivTheme.red)
+            Button {
+                reschedule(row, toDay: today)
+            } label: {
+                Text("Today")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.accent)
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(Capsule().fill(LivTheme.panel2))
+                    .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+                    .contentShape(Capsule())
             }
+            .buttonStyle(.borderless)
         }
-    }
-
-    /// An overdue line reads its DAY, not a time — "14:00" three days late
-    /// says nothing.
-    @ViewBuilder
-    private func overdueLine(
-        _ row: EntityRow, doneNames: Set<String>, today: Int64
-    ) -> some View {
-        TodayRow(
-            row: row,
-            occurrence: false,
-            done: isDone(row, doneNames),
-            toggle: isTask(row) ? { toggleStatus(row.id) } : nil,
-            trailing: Civil.dayLabel(Civil.day(of: row.due ?? 0)),
-            danger: true
-        )
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
         .onTapGesture { desk.open(row.id) }
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            rescheduleButtons(row)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
         }
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                box.trash(row.id)
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            rescheduleSwipe(row)
         }
     }
 
-    @ViewBuilder
-    private func capturedLine(_ row: EntityRow) -> some View {
-        TodayCapturedRow(row: row)
-            .contentShape(Rectangle())
-            .onTapGesture { desk.open(row.id) }
-            .swipeActions(edge: .trailing) {
-                Button(role: .destructive) {
-                    box.trash(row.id)
-                } label: {
-                    Label("Trash", systemImage: "trash")
+    /// A timed line: time, the Calendar's colour for its kind (purple
+    /// task, blue event, grey note), title, context chips — never the
+    /// row's own type.
+    private func timedLine(
+        _ item: TodayAgendaItem, dimmed: Bool, next: Bool,
+        doneNames: Set<String>
+    ) -> some View {
+        let row = item.row
+        let task = livCanTick(row)
+        let done = isDone(row, doneNames)
+        let chips = contextChips(row)
+        return HStack(spacing: 8) {
+            Text(Civil.timeString(item.stamp))
+                .font(.system(size: LivType.label).monospacedDigit())
+                .foregroundStyle(dimmed ? LivTheme.muted : LivTheme.text3)
+                .frame(width: 40, alignment: .leading)
+            // ONE mark, in a fixed column so every title starts at the
+            // same place. The coloured vertical bar is gone (owner,
+            // 2026-08-08) — it said "task or event" a third time. This
+            // slot never doubles up either: a tickable row shows its
+            // ring and nothing else, and the kind glyph appears only
+            // where the row had no mark at all (an event, a note, a
+            // file), drawn bare so it sits at the ring's weight.
+            Group {
+                if item.occurrence {
+                    Image(systemName: "repeat")
+                        .font(.system(size: LivType.caption, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                } else if task {
+                    StatusRing(done: done, compact: true) { toggleStatus(row.id) }
+                } else {
+                    LivIcon(
+                        glyph: LivKind.glyph(of: row),
+                        color: LivKind.color(of: row), size: 17)
                 }
             }
+            .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayTitle(row))
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(
+                        dimmed || done ? LivTheme.muted : LivTheme.text)
+                    .lineLimit(1)
+                if !chips.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(chips, id: \.self) { ValueChip($0) }
+                    }
+                }
+            }
+            Spacer(minLength: 6)
+        }
+        .frame(minHeight: 44)
+        .background(next ? LivTheme.accentSoft.opacity(0.4) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { desk.open(row.id) }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if !item.occurrence { rescheduleSwipe(row) }
+        }
     }
 
-    @ViewBuilder
-    private func rescheduleButtons(_ row: EntityRow) -> some View {
-        let property = row.positionedBy ?? "due"
-        Button {
-            box.setSpan(
-                row.id, property,
-                start: Civil.stamp(day: Civil.todayDay(), hhmm: 1800),
-                end: 0, dateOnly: false)
-        } label: {
-            Label("18:00", systemImage: "sun.max")
+    /// The all-day band: pills; a timeless TASK keeps its ring (checking
+    /// it off must never require hunting).
+    private func allDayBand(
+        _ items: [TodayAgendaItem], doneNames: Set<String>
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(items) { item in
+                    HStack(spacing: 5) {
+                        if item.occurrence {
+                            Image(systemName: "repeat")
+                                .font(.system(size: LivType.micro, weight: .semibold))
+                                .foregroundStyle(LivTheme.text3)
+                        } else if !livCanTick(item.row) {
+                            LivIcon(
+                                glyph: LivKind.glyph(of: item.row),
+                                color: LivKind.color(of: item.row), size: 14)
+                        } else if livCanTick(item.row) {
+                            StatusRing(
+                                done: isDone(item.row, doneNames), compact: true
+                            ) {
+                                toggleStatus(item.row.id)
+                            }
+                        }
+                        Button {
+                            desk.open(item.row.id)
+                        } label: {
+                            Text(displayTitle(item.row))
+                                .font(.system(size: LivType.body))
+                                .foregroundStyle(
+                                    isDone(item.row, doneNames)
+                                        ? LivTheme.text3 : LivTheme.text)
+                                .lineLimit(1)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(Capsule().fill(LivTheme.panel2))
+                    .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+                }
+            }
         }
-        .tint(LivTheme.accent)
+    }
+
+    /// Tomorrow keeps the span AND the time of day; Pick opens the real
+    /// date-and-time editor. (The old swipe wrote end:0 + dateOnly:true —
+    /// "Tomorrow" on a two-hour meeting destroyed both, phase-5 recon.)
+    @ViewBuilder private func rescheduleSwipe(_ row: EntityRow) -> some View {
         Button {
-            box.setSpan(
-                row.id, property,
-                start: Civil.stamp(
-                    day: Civil.addDays(Civil.todayDay(), 1), hhmm: 0),
-                end: 0, dateOnly: true)
+            reschedule(row, toDay: Civil.addDays(Civil.todayDay(), 1))
         } label: {
             Label("Tomorrow", systemImage: "arrow.turn.up.right")
         }
         .tint(LivTheme.green)
-        // On a Friday, Weekend IS tomorrow — one option, not two.
-        if Self.nextWeekend(after: Civil.todayDay()) != Civil.addDays(Civil.todayDay(), 1) {
-            Button {
-                box.setSpan(
-                    row.id, property,
-                    start: Civil.stamp(
-                        day: Self.nextWeekend(after: Civil.todayDay()), hhmm: 0),
-                    end: 0, dateOnly: true)
-            } label: {
-                Label("Weekend", systemImage: "beach.umbrella")
-            }
-            .tint(LivTheme.purple)
+        Button {
+            duePick = TodayDuePick(entity: row.id)
+        } label: {
+            Label("Pick", systemImage: "calendar")
         }
+        .tint(LivTheme.accent)
     }
 
     // MARK: snapshot slices
 
-    /// The lens (M4): the active workspace's query, run client-side over
-    /// the rows the phone already holds. An inert query costs one branch.
+    /// The lens (M4) + the archived filter Today always lacked (recon,
+    /// phase 5 — Tasks and Everything both had it).
     private var datedRows: [EntityRow] {
         let lens = workspaces.activeQuery
         return (box.snap?.dated ?? []).compactMap { box.entity($0) }
-            .filter { $0.trashed != true && lens.matches($0) }
+            .filter {
+                $0.trashed != true && $0.archived != true && lens.matches($0)
+            }
     }
 
     private func dueRows(on day: Int64) -> [EntityRow] {
@@ -276,71 +424,48 @@ struct TodayView: View {
         }
     }
 
-    /// Events (kind "event") by time, then tasks/dues by time; occurrences
-    /// merge into the event block, deduped against a series that is itself
-    /// dated on the day.
+    /// One time-ordered timeline — events and tasks interleave by clock,
+    /// the way the day actually runs (the old view kept them in separate
+    /// blocks). Occurrences merge in, deduped against a series dated on
+    /// the day itself.
     private func agenda(for day: Int64) -> [TodayAgendaItem] {
-        let rows = dueRows(on: day)
-        var events: [TodayAgendaItem] = []
-        var tasks: [TodayAgendaItem] = []
-        for row in rows {
-            let item = TodayAgendaItem(
+        var items = dueRows(on: day).map { row in
+            TodayAgendaItem(
                 key: "e\(row.id)", row: row, stamp: row.due ?? 0,
                 occurrence: false)
-            if row.kinds?.contains("event") == true {
-                events.append(item)
-            } else {
-                tasks.append(item)
-            }
         }
-        let dayIds = Set(rows.map(\.id))
+        let dayIds = Set(items.map(\.row.id))
+        // The lens applies to occurrence SERIES rows too — a filtered
+        // surface filters whole.
+        let lens = workspaces.activeQuery
         for occ in box.snap?.occurrences ?? [] {
             guard let series = occ.series, let civil = occ.civil,
                 Civil.day(of: civil) == day, !dayIds.contains(series),
-                let row = box.entity(series), row.trashed != true
+                let row = box.entity(series), row.trashed != true,
+                row.archived != true, lens.matches(row)
             else { continue }
-            events.append(
+            items.append(
                 TodayAgendaItem(
                     key: "o\(series)-\(civil)", row: row, stamp: civil,
                     occurrence: true))
         }
-        let byTime: (TodayAgendaItem, TodayAgendaItem) -> Bool = {
+        return items.sorted {
             $0.stamp != $1.stamp ? $0.stamp < $1.stamp : $0.row.id < $1.row.id
         }
-        return events.sorted(by: byTime) + tasks.sorted(by: byTime)
     }
 
-    /// Overdue = dated, day strictly before today, status not a completing
-    /// one (no status counts as open).
-    private func overdueRows(today: Int64, doneNames: Set<String>)
-        -> [EntityRow]
-    {
+    /// LATE = incomplete TASKS whose day has passed (owner ruling). Not
+    /// events, not notes — a thing is late only if it can still be done.
+    private func lateRows(today: Int64, doneNames: Set<String>) -> [EntityRow] {
         datedRows.filter { row in
-            guard let due = row.due else { return false }
+            guard row.kinds?.contains("task") == true, let due = row.due
+            else { return false }
             return Civil.day(of: due) < today && !isDone(row, doneNames)
         }
-        .sorted { ($0.due ?? 0) < ($1.due ?? 0) }
+        .sorted { ($0.due ?? 0) > ($1.due ?? 0) }
     }
 
-    private func upcomingCount(today: Int64) -> Int {
-        let horizon = Civil.addDays(today, 7)
-        return datedRows.filter { row in
-            guard let due = row.due else { return false }
-            let d = Civil.day(of: due)
-            return d > today && d <= horizon
-        }.count
-    }
-
-    /// The Captured tile counts what the lens shows — a tile that disagrees
-    /// with the section under it is worse than no tile.
-    private var capturedTotal: Int {
-        let lens = workspaces.activeQuery
-        return (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
-            .filter { $0.trashed != true && lens.matches($0) }
-            .count
-    }
-
-    private func capturedRows(today: Int64) -> [EntityRow] {
+    private func capturedTodayCount(today: Int64) -> Int {
         let lens = workspaces.activeQuery
         return (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
             .filter { row in
@@ -349,26 +474,55 @@ struct TodayView: View {
                 }
                 return Civil.day(of: created) == today && lens.matches(row)
             }
-            .sorted { ($0.created ?? 0) > ($1.created ?? 0) }
+            .count
     }
 
     // MARK: predicates + acts
 
-    /// The reference shell's task test: the kind, or any status at all.
-    private func isTask(_ row: EntityRow) -> Bool {
-        row.kinds?.contains("task") == true || row.status != nil
-    }
 
     private func isDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
         row.status.map { doneNames.contains($0) } ?? false
     }
 
-    private func isOverdue(
-        _ row: EntityRow, doneNames: Set<String>, today: Int64
-    ) -> Bool {
-        guard let due = row.due else { return false }
-        return Civil.day(of: due) < today && !isDone(row, doneNames)
+    private func displayTitle(_ row: EntityRow) -> String { livRowTitle(row) }
+
+    /// Context, never the row's own type: the type cell is a reference
+    /// too, and it is the FIRST cell written — so the naive "first ref"
+    /// chip read "task" on every task (recon, phase 5).
+    private func contextChips(_ row: EntityRow) -> [String] {
+        var out: [String] = []
+        for cell in row.cells ?? [] {
+            guard cell.property != "type", cell.refTarget != nil,
+                let value = cell.value, !value.isEmpty
+            else { continue }
+            if !out.contains(value) { out.append(value) }
+            if out.count == 2 { break }
+        }
+        return out
     }
+
+    private func dueProperty(_ row: EntityRow?) -> String {
+        let name = row?.positionedBy ?? "due"
+        return name.isEmpty ? "due" : name
+    }
+
+    /// Move the DAY, keep everything else: the time of day survives, and
+    /// a span's end shifts by the same number of days.
+    private func reschedule(_ row: EntityRow, toDay day: Int64) {
+        let start = row.due ?? Civil.stamp(day: day, hhmm: 0)
+        let hhmm = start % 10_000
+        var end: Int64 = 0
+        if let e = row.dueEnd, e > 0 {
+            let delta = Civil.daysBetween(Civil.day(of: start), day)
+            end = Civil.stamp(
+                day: Civil.addDays(Civil.day(of: e), delta), hhmm: e % 10_000)
+        }
+        box.setSpan(
+            row.id, dueProperty(row),
+            start: Civil.stamp(day: day, hhmm: hhmm), end: end,
+            dateOnly: row.dueDateOnly ?? (hhmm == 0))
+    }
+
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
@@ -393,23 +547,6 @@ struct TodayView: View {
             from: Civil.stamp(day: Civil.addDays(today, -1), hhmm: 0),
             to: Civil.stamp(day: Civil.addDays(today, 7), hhmm: 2359))
     }
-
-    /// Next Saturday, strictly ahead — a weekend reschedule issued ON a
-    /// weekend means the next one.
-    private static func nextWeekend(after day: Int64) -> Int64 {
-        var parts = DateComponents()
-        parts.year = Int(day / 10_000)
-        parts.month = Int((day / 100) % 100)
-        parts.day = Int(day % 100)
-        parts.hour = 12
-        let cal = Calendar(identifier: .gregorian)
-        guard let date = cal.date(from: parts) else {
-            return Civil.addDays(day, 1)
-        }
-        let weekday = cal.component(.weekday, from: date)  // 1=Sun … 7=Sat
-        let ahead = (7 - weekday) % 7
-        return Civil.addDays(day, ahead == 0 ? 7 : ahead)
-    }
 }
 
 // MARK: - the 7-day strip
@@ -430,12 +567,12 @@ private struct TodayDateStrip: View {
                 } label: {
                     VStack(spacing: 2) {
                         Text(Civil.weekdayLetter(day))
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: LivType.micro, weight: .semibold))
                             .foregroundStyle(
                                 isSelected ? LivTheme.onAccent : LivTheme.text3)
                         Text("\(Civil.dayNumber(day))")
                             .font(
-                                .system(size: 13, weight: .semibold)
+                                .system(size: LivType.body, weight: .semibold)
                                     .monospacedDigit()
                             )
                             .foregroundStyle(
@@ -462,64 +599,6 @@ private struct TodayDateStrip: View {
     }
 }
 
-// MARK: - rows
-
-/// The compact agenda row: leading slot (ring / repeat / calendar), title,
-/// first reference chip, trailing time — 42pt, hairline underneath.
-private struct TodayRow: View {
-    let row: EntityRow
-    let occurrence: Bool
-    let done: Bool
-    let toggle: (() -> Void)?
-    let trailing: String
-    let danger: Bool
-
-    private var title: String {
-        let t = row.title ?? ""
-        return t.isEmpty ? "Untitled" : t
-    }
-
-    private var refValue: String? {
-        row.cells?.first {
-            $0.kind == "reference" && ($0.value?.isEmpty == false)
-        }?.value
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if occurrence {
-                Image(systemName: "repeat")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 31)
-            } else if let toggle {
-                StatusRing(done: done, action: toggle)
-            } else {
-                Image(systemName: "calendar")
-                    .font(.system(size: 11))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 31)
-            }
-            Text(title)
-                .font(.system(size: 13))
-                .foregroundStyle(done ? LivTheme.text3 : LivTheme.text)
-                .lineLimit(1)
-            if let refValue { ValueChip(refValue) }
-            Spacer(minLength: 6)
-            if !trailing.isEmpty {
-                Text(trailing)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(danger ? LivTheme.red : LivTheme.text3)
-            }
-        }
-        .frame(minHeight: 42)
-        .contentShape(Rectangle())
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-    }
-}
-
 /// The inline quick-add ghost row (eval §4.1 — ClickUp's context-inheriting
 /// "New" row): a name typed under a day becomes a task DUE that day,
 /// date-only, no picker — tap, type, return = a dated task, 3 gestures.
@@ -527,6 +606,7 @@ private struct TodayRow: View {
 private struct TodayQuickAddRow: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
+    @EnvironmentObject var desk: DeskModel
     let day: Int64
 
     @State private var text = ""
@@ -543,7 +623,7 @@ private struct TodayQuickAddRow: View {
                 .frame(width: 15, height: 15)
                 .frame(width: 31)
             TextField("New for \(Civil.dayLabel(day))…", text: $text)
-                .font(.system(size: 13))
+                .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
                 .textInputAutocapitalization(.never)  // capture-verbatim law
                 .autocorrectionDisabled(true)
@@ -551,13 +631,6 @@ private struct TodayQuickAddRow: View {
                 .onSubmit(submit)
             // No post-save chip strip here, so the stamp is promised
             // BEFORE the write rather than shown after it.
-            if !workspaces.stampHint.isEmpty {
-                Text(workspaces.stampHint)
-                    .font(.system(size: 10))
-                    .foregroundStyle(LivTheme.muted)
-                    .lineLimit(1)
-                    .padding(.trailing, 4)
-            }
         }
         .frame(minHeight: 44)
         .contentShape(Rectangle())
@@ -577,51 +650,24 @@ private struct TodayQuickAddRow: View {
         box.createTask { id in
             guard id != 0 else { return }
             box.set(id, "name", name)
+            // 09:00, not a bare date: a task with no clock time has no
+            // moment to ring at, and this row is the commonest way one is
+            // made (owner, 2026-08-07).
             box.setSpan(
-                id, "due", start: Civil.stamp(day: day, hhmm: 0),
-                end: 0, dateOnly: true)
+                id, "due", start: Civil.stamp(day: day, hhmm: LivDue.defaultHHMM),
+                end: 0, dateOnly: false)
             // The active workspace stamps here too (M4) — otherwise a task
             // added while looking at Work lacks Work's cells and vanishes
             // from the very list it was typed into. The row's hint says so
             // before the write.
             workspaces.stamp(id, in: box)
+            // Into properties, the standard way a task is made (owner,
+            // 2026-08-11). The day is already set from the row it was
+            // typed under; what is usually wanted next is everything
+            // else. `as: .record` — the snapshot has not caught up.
+            desk.open(id, as: .record)
             text = ""
-            focused = true
-        }
-    }
-}
-
-/// A captured scrap: muted dot, title, capture time. Untyped on purpose —
-/// routing happens in the Inbox, not here.
-private struct TodayCapturedRow: View {
-    let row: EntityRow
-
-    private var title: String {
-        let t = row.title ?? ""
-        return t.isEmpty ? "Untitled" : t
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(LivTheme.muted)
-                .frame(width: 5, height: 5)
-                .frame(width: 31)
-            Text(title)
-                .font(.system(size: 13))
-                .foregroundStyle(LivTheme.text2)
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            if let created = row.created {
-                Text(Civil.timeString(created))
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
-            }
-        }
-        .frame(minHeight: 40)
-        .contentShape(Rectangle())
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            focused = false
         }
     }
 }
