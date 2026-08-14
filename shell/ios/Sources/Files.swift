@@ -103,7 +103,7 @@ struct FileBody: View {
             } else if let row = box.entity(id), let facts = FileFacts.of(row) {
                 body(row, facts)
             } else {
-                EmptyHint("This file is not in the box anymore.")
+                EmptyHint("This file was deleted.")
                     .frame(maxHeight: .infinity)
             }
         }

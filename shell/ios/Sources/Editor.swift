@@ -839,7 +839,7 @@ struct NoteEditor: View {
                 "This note carries desk formatting this editor can't keep. "
                     + "Saving replaces it with what you see here.") }
             if !writing, model.saveFailed {
-                notice("The box refused this save. It will try again.")
+                notice("Could not save. It will try again.")
             }
             editor
         }
@@ -1008,7 +1008,7 @@ struct NoteEditor: View {
             Text("This changed elsewhere")
                 .font(.system(size: LivType.strong, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
-            Text("The box's version is shown. Your edit is kept.")
+            Text("The saved version is shown. Your edit is kept.")
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
             HStack(spacing: 8) {

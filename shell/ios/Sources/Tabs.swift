@@ -581,7 +581,7 @@ struct TabCard: View {
     /// 3–4 preview lines. Content bodies are not on the wire yet, so the
     /// honest preview is the property cells.
     private var excerpt: String {
-        guard let row else { return "Not in this box anymore." }
+        guard let row else { return "Deleted" }
         var lines: [String] = []
         for cell in row.cells ?? [] {
             guard let p = cell.property, !p.isEmpty, p != "name",

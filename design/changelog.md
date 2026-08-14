@@ -1,5 +1,28 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-14 — Settings loses its drawer, and the app stops saying "box"
+
+Owner: *"remove settings advanced drawer too"* and, asked in the same
+breath: *"btw, what is box? why should users know about it?"*
+
+- **The Advanced drawer is DELETED from Settings**, and everything it
+  was the only door to went with it (rule 6): the handoff status card,
+  the Pending/Shipped/Delivered ledger, "Ship now", the satellite path
+  row, the entity count, "Copy path" and the version line — about 200
+  lines, plus `OutboxStateChip` and the date formatter that only it
+  used. Settings is Appearance · Suggestions · Reminders · Tabs · Fields.
+- **What that costs:** nothing in the app can set a satellite path any
+  more, so the phone→desk handoff is OFF until it gets a door someone
+  would want to open. The Outbox model still tracks every write, so
+  nothing is lost — it just has nowhere to go. Recoverable from git when
+  the handoff is designed properly.
+- **"box" and "entity" left the interface.** They are OUR words — the
+  append-only log the app writes to, and a row in it — and they had
+  leaked into eight strings a person actually reads. Now: "This was
+  deleted." · "This file was deleted." · "Search everything you have." ·
+  "Search" · "Deleted" · "Could not save. It will try again." · "The
+  saved version is shown. Your edit is kept."
+
 ## 2026-08-14 — no query, anywhere a person can see one
 
 Owner: *"remove all 'Query' functionality. we will replace it with

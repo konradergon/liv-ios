@@ -83,7 +83,7 @@ struct EntityInspector: View {
             if let row = box.entity(id) {
                 list(row)
             } else {
-                EmptyHint("This entity is gone.")
+                EmptyHint("This was deleted.")
                     .frame(maxHeight: .infinity, alignment: .top)
             }
         }
@@ -691,7 +691,7 @@ struct EntityDetailView: View {
                     EntityInspector(id: id)
                 }
             } else {
-                EmptyHint("This entity is gone.")
+                EmptyHint("This was deleted.")
                     .frame(maxHeight: .infinity, alignment: .top)
             }
         }

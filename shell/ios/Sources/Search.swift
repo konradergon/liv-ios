@@ -122,7 +122,7 @@ struct SearchView: View {
             }
             if trimmed.isEmpty {
                 ScrollView {
-                    EmptyHint("Search the box.").padding(.top, 40)
+                    EmptyHint("Search everything you have.").padding(.top, 40)
                 }
             } else if hits.isEmpty {
                 // Zero results: the Create row IS the empty state, at the
@@ -261,7 +261,7 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
-            TextField("Search the box", text: $query)
+            TextField("Search", text: $query)
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
                 .focused($focused)
