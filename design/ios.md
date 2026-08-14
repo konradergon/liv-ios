@@ -890,6 +890,11 @@ serves both platforms; the difference lives in the shell.
 the same file wore different icons in two lists. It lives in `LivKind`
 now (§15).
 
+**No query is ever shown or typed** (owner, 2026-08-14). The Advanced
+field is deleted from both forms; a workspace and a filter are made of
+pickers — a name, an area, a subject. The grammar remains as the
+invisible storage the core reads, and is due to be replaced.
+
 **Markdown is not a foreign format** (owner, 2026-08-13). A .md added
 through any door becomes a NOTE, with its words in the box; only formats
 Liv cannot be is a file. `NoteBytes` (Files.swift) holds the list, which

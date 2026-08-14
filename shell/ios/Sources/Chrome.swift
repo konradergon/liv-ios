@@ -558,7 +558,6 @@ struct WorkspaceSwitcher: View {
     /// The raw query, folded away. A workspace IS its query — that is how
     /// it is stored — but nobody should have to type one to make one
     /// (standing rule 5), so the text is the escape hatch, not the door.
-    @State private var advancedShown = false
     /// Which picker row is open, and whose draft it edits.
     @State private var picking: WorkspacePick?
 
@@ -594,7 +593,7 @@ struct WorkspaceSwitcher: View {
                                 draftQuery = workspaces.query(of: ws.id) ?? ""
                                 composing = true
                             } label: {
-                                Label("Edit name + query", systemImage: "slider.horizontal.3")
+                                Label("Edit workspace", systemImage: "slider.horizontal.3")
                             }
                             Button(role: .destructive) {
                                 workspaces.forgetQuery(ws.id)
@@ -749,15 +748,13 @@ struct WorkspaceSwitcher: View {
 
     private var newWorkspaceForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            field("Name", text: $draftName, mono: false)
+            field("Name", text: $draftName)
             lensRows($draftQuery, forFilter: false)
-            advancedRow($draftQuery)
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") {
                     composing = false
                     editing = nil
-                    advancedShown = false
                 }
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
@@ -824,44 +821,14 @@ struct WorkspaceSwitcher: View {
         }
     }
 
-    /// Folded shut. Open it and the raw text is there, unchanged — the
-    /// pickers edit only their own term, so a hand-made query survives
-    /// being looked at through them.
-    @ViewBuilder private func advancedRow(_ query: Binding<String>) -> some View {
-        Button {
-            withAnimation(LivMotion.nav) { advancedShown.toggle() }
-        } label: {
-            HStack(spacing: 6) {
-                Text("Advanced")
-                    .font(.system(size: LivType.label))
-                    .foregroundStyle(LivTheme.text3)
-                Spacer()
-                Image(systemName: advancedShown ? "chevron.up" : "chevron.down")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-            }
-            .frame(height: 40)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .top) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-        if advancedShown {
-            field("Query", text: query, mono: true)
-        }
-    }
-
     private var newFilterForm: some View {
         VStack(alignment: .leading, spacing: 8) {
-            field("Name", text: $filterName, mono: false)
+            field("Name", text: $filterName)
             lensRows($filterQuery, forFilter: true)
-            advancedRow($filterQuery)
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") {
                     composingFilter = false
-                    advancedShown = false
                 }
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
@@ -884,9 +851,11 @@ struct WorkspaceSwitcher: View {
         .padding(.vertical, 10)
     }
 
-    private func field(_ prompt: String, text: Binding<String>, mono: Bool) -> some View {
+    /// One dress, one font. The mono variant existed for the raw query
+    /// field, which is gone (owner, 2026-08-14).
+    private func field(_ prompt: String, text: Binding<String>) -> some View {
         TextField(prompt, text: text)
-            .font(.system(size: LivType.body, design: mono ? .monospaced : .default))
+            .font(.system(size: LivType.body))
             .foregroundStyle(LivTheme.text)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()

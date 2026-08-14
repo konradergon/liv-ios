@@ -1,5 +1,33 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-14 — no query, anywhere a person can see one
+
+Owner: *"remove all 'Query' functionality. we will replace it with
+something better. for instance when creating new workspace, remove the
+'advanced' section completely. we should not have advanced features
+until the friendly features work as intended. it is supposed to be
+primarily designed a user friendly app."*
+
+- **The Advanced row is DELETED** from the new-workspace form and from
+  the new-filter form, and with it the only field in the app that ever
+  showed or accepted query text. `advancedShown` and the field helper's
+  mono variant went too — the mono dress existed for that one field.
+- **"Edit name + query" is now "Edit workspace"**, and it opens the same
+  form: a name, an area, a subject.
+- A workspace is made of pickers now and nothing else. Both forms are
+  Name · Area · Subject · Cancel/Create.
+
+**What is left, and why.** `LivQuery` survives as the invisible STORAGE
+behind a workspace's lens — the cell the core reads to decide what a
+workspace shows and what it stamps. Deleting it today would leave every
+workspace filtering nothing, which is not the friendlier app; it is no
+app. Nothing constructs it but the pickers, nothing displays it, and it
+is ready to be replaced by whatever comes next.
+
+Settings still has an Advanced drawer. That one is machinery — the box's
+path on disk, the entity count, the phone-to-desk funnel — not a feature
+with a grammar. Say the word if it should go too.
+
 ## 2026-08-14 — a caret stays a caret
 
 Owner: *"Creating stuff with the toolbar (like boxes), still selects
