@@ -482,22 +482,25 @@ struct WorkspaceButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            // One ink and one height with the glyphs either side of it,
+            // so the top row reads as ONE row of controls rather than a
+            // text button between two pairs of blobs.
+            HStack(spacing: 7) {
                 LivIcon(
                     glyph: workspaces.activeId == 0 ? .workspaces : .workspace,
-                    color: LivTheme.text3, size: 17)
+                    color: LivTheme.text2, size: 18)
                 Text(workspaces.activeName)
                     .font(.system(size: LivType.body))
                     .foregroundStyle(LivTheme.text2)
                     .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: LivType.caption, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: LivType.micro, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
             // Capped so a long name never reaches the doors either side.
             .frame(maxWidth: 170)
-            .frame(height: 40)
+            .frame(height: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

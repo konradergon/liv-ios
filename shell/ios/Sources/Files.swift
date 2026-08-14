@@ -371,39 +371,11 @@ private enum Pick {
     case file(path: String, name: String)
 }
 
-/// The system file picker, lowered to the librarian verb.
-struct FileImportButton: View {
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var desk: DeskModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-    @State private var picking = false
-
-    var body: some View {
-        // Wears the create menu's face, it does not imitate it. The
-        // imitation lost the border and vanished in light mode
-        // (owner, 2026-08-10).
-        Button {
-            picking = true
-        } label: {
-            HStack(spacing: 8) {
-                // The drawn file page, not Apple's folder: three verbs
-                // in one menu drawn in two different languages is what
-                // the icon system exists to stop.
-                LivIcon(glyph: .file(.other), color: LivTheme.text, size: 18)
-                Text("Add a file")
-            }
-            .livVerbFace()
-        }
-        .buttonStyle(.plain)
-        .fileImporter(
-            isPresented: $picking, allowedContentTypes: [.item],
-            allowsMultipleSelection: true
-        ) { result in
-            guard case .success(let urls) = result else { return }
-            adopt(urls)
-        }
-    }
-
+/// The import, lowered to one function. It was a BUTTON (the New Tab
+/// page's file door); that page is gone (owner, 2026-08-13) and the door
+/// is a row in the `+` menu, so the picker itself is presented by
+/// whoever hosts the menu and this is the part that was worth keeping.
+enum FileImport {
     /// Each pick lands as its own entity, stamped by the active
     /// workspace exactly as every other creation door stamps — so things
     /// dropped while standing in a project arrive already filed. The
@@ -411,7 +383,9 @@ struct FileImportButton: View {
     ///
     /// Markdown becomes a NOTE (NoteBytes); everything else is copied in
     /// and referenced as a file.
-    private func adopt(_ urls: [URL]) {
+    static func adopt(
+        _ urls: [URL], box: BoxModel, workspaces: WorkspaceModel, desk: DeskModel
+    ) {
         DispatchQueue.global(qos: .userInitiated).async {
             let picks: [Pick] = urls.compactMap { url in
                 let name = url.lastPathComponent

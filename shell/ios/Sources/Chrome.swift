@@ -98,10 +98,15 @@ final class DeskModel: ObservableObject {
     /// form still lives in the sheet, so this is how the panel asks for
     /// it without a second copy of the form (standing rule 4).
     @Published var composeFilter = false
-    /// The New Tab chooser overlay (rev 6): `+` summons it OVER the desk;
-    /// it is a door, never a tab. An empty desk shows the same chooser as
-    /// its body without this flag.
-    @Published var newTabShown = false
+    /// The one menu on screen, or nil (Menu.swift). Every menu in the
+    /// app rides this: the `+` that makes things, the note's •••, and
+    /// the editor's insert menu.
+    @Published var menu: LivMenu?
+
+    /// How to build the create menu. Set by DeskHost, which owns the
+    /// verbs — the same shape as `shapeOf` above, and the reason the
+    /// model can offer a menu it has no way to build itself.
+    var newTabMenu: (() -> LivMenu)?
     /// The metadata inspector covers the active entity tab's body.
     /// Lifted to the model so DeskHost's floating chevron can drive it;
     /// reset on every tab move — metadata is a visit, not a mode.
@@ -151,7 +156,7 @@ final class DeskModel: ObservableObject {
     /// sheet is gone (2026-08-12), and with one entity per door there is
     /// nothing left to reuse a tab for, so the latch went with it.
     func adoptCapture(_ id: UInt64, as shape: TabShape? = nil) {
-        withAnimation(LivMotion.nav) { newTabShown = false }
+        menu = nil
         open(id, as: shape)
     }
 
@@ -297,11 +302,11 @@ final class DeskModel: ObservableObject {
         }
     }
 
-    /// ‹ › move the desk UNDERNEATH the New Tab chooser, which now stays
-    /// on screen with the bar. Asking for a tab means you want to see it.
+    /// ‹ › move the desk UNDERNEATH whatever menu is up. Asking for a
+    /// tab means you want to see it.
     private func leaveChooser() {
-        guard newTabShown else { return }
-        withAnimation(LivMotion.nav) { newTabShown = false }
+        guard menu != nil else { return }
+        menu = nil
     }
 
     init() {
@@ -360,7 +365,7 @@ final class DeskModel: ObservableObject {
         featureShown = nil
         switcherShown = false
         libraryShown = false
-        newTabShown = false
+        menu = nil
         inspectorShown = false
         settingsShown = false
         objectWillChange.send()
@@ -391,7 +396,7 @@ final class DeskModel: ObservableObject {
     private func openAsCard(_ entityId: UInt64) {
         minimisedRecord = nil
         recordCard = entityId
-        withAnimation(LivMotion.nav) { newTabShown = false }
+        menu = nil
     }
 
     /// Land a document as a tab. Everything that used to be `open`.
@@ -415,7 +420,7 @@ final class DeskModel: ObservableObject {
         // for the open note would land behind it.
         withAnimation(LivMotion.nav) {
             libraryShown = false
-            newTabShown = false
+            menu = nil
             inspectorShown = false
         }
         // Search, camera, Settings and the workspace switcher are covers
@@ -430,13 +435,12 @@ final class DeskModel: ObservableObject {
         persist()
     }
 
-    /// `+`: summon the chooser OVER the desk. It never appends a tab —
-    /// choosing something does (rev 6). On an empty desk the chooser is
-    /// already the body, so there is nothing to summon.
+    /// `+`: the create MENU, sliding up over whatever you are looking at
+    /// (owner, 2026-08-13). It never appends a tab — choosing something
+    /// does. The full-screen page this used to summon is deleted.
     func newTab() {
         featureShown = nil
-        guard !tabs.isEmpty else { return }
-        withAnimation(LivMotion.nav) { newTabShown = true }
+        menu = newTabMenu?()
     }
 
     /// Closing the last tab leaves the desk empty — the empty desk shows

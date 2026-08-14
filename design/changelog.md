@@ -1,5 +1,169 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-14 — a caret stays a caret
+
+Owner: *"Creating stuff with the toolbar (like boxes), still selects
+them. It is broken since they get deleted as you start typing."*
+
+**The block verbs handed back the whole rewritten line SELECTED.** Tap
+"task list" on the line you are writing and `- [ ] ` arrived on screen
+selected, so the next letter you typed replaced it — the box you had
+just asked for vanished as you began writing. The same for bullet,
+numbered, heading, quote and both indents: six verbs, one line of code.
+
+`EditOps.landing(_:whole:newBlock:)` is now the one rule for where the
+caret goes after a block rewrite. With an EMPTY caret the rewritten
+block is one line and only its PREFIX changed, so the caret moves by
+exactly what the marker added or took away and never leaves its own
+line. With a real SELECTION the block still comes back selected, which
+is what makes a second tap toggle the same lines off.
+
+**A sweep found the same bug in two paths the first fix missed**, and
+both are now covered by the one rule:
+
+- **A SELECTION was still widened to the whole line**, marker included,
+  so selecting one word and tapping "bulleted list" armed the next
+  keystroke to wipe the line. It keeps the words you had now, carried by
+  what the marker did in front of them. Widening was never needed for
+  the toggle-back it was justified by: `setBlock` derives whole lines
+  from `selection.location`, so a narrow selection toggles the same
+  lines off — asserted.
+- **A caret INSIDE the old marker landed inside the new one.** Put the
+  caret at the start of `1. go` and tap "task list": it sat between `[`
+  and the space, where the next letter turned the box back into a
+  bullet. A point never lands inside a marker now, only at its far side.
+
+**Assertions in `-editor.selfcheck 1`**, and they were checked the
+only way that means anything: with the fix disabled they fail, five of
+them, reporting exactly the reported bug (`{0, 6}` — the whole `- [ ] `
+selected). With it in place they pass. Verified on the simulator too:
+tapping the box key then typing "milk" leaves `- [ ] Box testmilk`,
+where it used to leave `milk`.
+
+**The separator landed one line too low.** The rule always inserted
+BELOW the current line — right when you are standing on a line of text,
+wrong in the ordinary way people ask for one: press Return, tap the key,
+and the empty line you were standing on stayed above the rule while the
+rule appeared a line further down. On a BLANK line the rule now TAKES
+that line, terminator and all (replacing the line without its newline
+left the newline behind as a second empty line — caught by an assertion
+mid-fix). Four assertions cover it, and with the old code they fail
+showing exactly the symptom: `a⏎⏎---⏎⏎b` where it should be `a⏎---⏎b`.
+
+**Found in the same sweep, NOT fixed** (different defects, the owner's
+call):
+- The toolbar's "numbered list" always writes `1.`, even directly under
+  a `2.` — it numbers from the line's index inside the rewritten block,
+  while the Return key continues the list properly. One grammar, two
+  answers.
+- An inline verb (bold/italic/strike) over a selection that CROSSES a
+  line has no unwrap: every tap adds another pair of markers instead of
+  removing the ones it added.
+
+## 2026-08-14 — the timeline gets its two gestures
+
+Owner: *"Hold down (adds box), then drag the box, then release to create
+and edit like you do now. Hold down on existing item should make it
+possible to trash."*
+
+- **Hold on empty grid places a BOX.** It appears at the quarter hour
+  under the finger, follows the finger while it is down, and the event
+  is written on RELEASE — with its properties up and the caret in the
+  name. Nothing is written until you let go.
+- **Hold on an existing block lifts it, and a BIN appears** at the foot
+  of the timeline. Drop the block on it and the thing is trashed, soft
+  and undoable; drop it anywhere else and it just lands at its new time,
+  exactly as before. This is the timeline's delete, which it has never
+  had — the question left open on 2026-08-13.
+- The press recogniser now begins ANYWHERE on the grid rather than only
+  on a block. That made one guard load-bearing, and it is new: the
+  recognizer lives on the WINDOW, so it is offered every touch in the
+  app, and a touch on the month grid (or on a sheet over the calendar)
+  converts into the scrolled content's coordinates as some positive y
+  deep inside a 24-hour column — where it would silently start placing a
+  box. `scroll.bounds` IS the visible window into that content, so one
+  containment test keeps the gesture inside the grid it belongs to. The
+  same test closes the collision a review raised on 2026-08-13.
+
+Driven on the simulator, against the box, every leg:
+hold-on-empty draws the box · release writes `new event` at the placed
+minute and raises the card focused · hold-on-block lifts it and the bin
+appears ("17:30 – 18:30 · moving" over "Drop to trash") · dragging
+elsewhere writes `set due` 17:30 → 18:30 · dropping on the bin writes
+`{"Trash":{"entity":4311}}`. The drop test needed the drop point and the
+bin's frame printed to be sure they were in the same coordinate space —
+they are, both in window space.
+
+## 2026-08-14 — one menu, three doors
+
+Owner, pointing at Notesnook: *"implement one reusable slide-up menu
+component and reuse it for all three, with variations for placement and
+slide direction."*
+
+`Menu.swift` is the component: a scrim, a panel, rows of glyph + label
+(+ chevron, + destructive). `LivMenu` says where it comes from —
+`.bottom` slides up, `.top` slides down — and `.livMenu(_:active:)`
+draws it. `active` is the record card's own rule: only the surface in
+FRONT draws it, so a menu asked for from inside a card does not appear
+behind the card.
+
+It replaced three different mechanisms that all looked different:
+
+- **The toolbar's `+`** was a UIKit `UIMenu` — the one popup that could
+  never follow the house motion. It slides up now, titled "Insert". The
+  keyboard is resigned through UIKit first, or its accessory row stands
+  over the menu sliding up underneath it.
+- **The note's `•••`** was a SwiftUI `Menu`. It slides DOWN from the top
+  now, from under the button that opened it.
+- **New Tab was a whole PAGE.** It is deleted — `NewTabChooser`, its
+  close band, its verb dress and `FileImportButton` with it. The three
+  verbs are a menu that slides up from the bar that summoned them, and
+  the empty desk is empty, with a line saying the + below makes a tab.
+  `FileImport.adopt` is what survives of the file door: the picker is
+  presented by whoever hosts the menu.
+
+**It really slides**, and that took measuring. The first build used
+`.transition(.move(edge:))` on an `if` and an `.animation(value:)` on
+the modified content: the panel appeared and vanished with no travel at
+all. Recording the simulator and pulling frames every 40ms showed the
+card jumping between two positions in one frame. It is an OFFSET now —
+the panel is mounted first, measures its own height, and is animated
+home from exactly one panel off screen, with `withAnimation` asked for
+explicitly at the state change rather than left to a modifier on a view
+that does not move. The same frames now show it travelling through
+2314 → 2133 → 1984 → 1972.
+
+**The top row, final shape.** The two icon buttons wear the SYSTEM's
+bordered circle — `.buttonStyle(.bordered)` with `.buttonBorderShape(
+.circle)` and only the tint from the app (owner, 2026-08-14: "should not
+be fully transparent / have a button shape … use default appkit look").
+Hand-drawn discs, then nothing at all, then the platform's own.
+
+**The (i) PROPERTIES door is DELETED.** The properties panel is dragged
+in from the right edge, from anywhere, and dragged back out the same
+way — a button beside that gesture was a second door to one room
+(standing rule 4). Verified after removal: the drag still opens it on a
+live note.
+
+**The top row was uniform first**, and that was the second half of the ask
+(I read it as the menu's rows first — wrong). The three floating
+controls wore filled grey circles around a bare text button in the
+middle: four controls in two dresses. They are PLAIN glyphs now, one
+size, one ink, in 44pt targets, the way a navigation bar's are, and the
+workspace button sits between them in the same ink at the same height
+with a small chevron DOWN (it opens something below it, not to the
+right). `on` is the accent glyph where it used to be a filled disc.
+
+**The panels are uniform.** Same corner radius, same paddings, grabber
+on the attached edge whichever way it comes from, and the safe area kept
+as SPACE INSIDE the card — the top sheet's first row used to sit under
+the clock.
+
+`desk.newTabShown` is gone; `desk.menu` replaces it everywhere,
+including the bottom bar's retire rule (the bar was drawn after the
+desk, so a menu hosted inside DeskHost came up underneath it and lost
+its last row — the host moved to the root view).
+
 ## 2026-08-13 — nothing between the month and the timeline
 
 Owner: *"remove the 'ALL DAY' row in calendar. there should be no row

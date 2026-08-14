@@ -862,7 +862,7 @@ struct NoteEditor: View {
         // Dismissing HERE (not on every resign) keeps picker-row taps
         // working — they too resign focus for a moment (audit,
         // 2026-08-04). The typed [[ token stays as text, as always.
-        .onChange(of: desk.libraryShown || desk.inspectorShown || desk.newTabShown
+        .onChange(of: desk.libraryShown || desk.inspectorShown || desk.menu != nil
             || desk.recordCard != nil) { _, up in
             if up { bridge.dismissLink() }
         }
@@ -893,6 +893,7 @@ struct NoteEditor: View {
             editable: model.loaded && !model.missing,
             bridge: bridge, onOpenRef: onOpenRef,
             onLink: { linkShown = true },
+            onInsert: { insertMenu() },
             onOutline: { outlineShown = true },
             onTemplate: { templatesShown = true },
             showsTitle: showsTitle, embedded: embedded
@@ -932,6 +933,26 @@ struct NoteEditor: View {
     /// What was here before: a four-row picker of its own, with its own
     /// search, its own create row and its own list style. A second
     /// search screen is a second thing to keep true (standing rule 4).
+    /// The `+` menu: what a note can have PUT INTO it that is not a
+    /// keystroke. Two rows today, and the place anything advanced lands
+    /// later (the owner named maths). Slides up, like every other menu
+    /// summoned from the bottom of the screen.
+    private func insertMenu() {
+        focused = false
+        desk.menu = LivMenu(
+            id: "insert",
+            from: .bottom,
+            title: "Insert",
+            items: [
+                LivMenuItem(label: "From template…", glyph: .template) {
+                    templatesShown = true
+                },
+                LivMenuItem(label: "Outline", symbol: "list.bullet.indent") {
+                    outlineShown = true
+                },
+            ])
+    }
+
     private var linkSearchSheet: some View {
         SearchView(
             onPick: { id, name in bridge.placeLink(id: id, name: name) },

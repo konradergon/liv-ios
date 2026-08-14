@@ -84,6 +84,9 @@ struct RecordCard: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .presentationBackground(LivTheme.surface)
+            // A card is the surface in FRONT while it is up, so it hosts
+            // the menu the embedded editor asks for (Menu.swift).
+            .livMenu($desk.menu)
             .environmentObject(box)
             .environmentObject(desk)
             .environmentObject(workspaces)

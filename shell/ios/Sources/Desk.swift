@@ -58,6 +58,13 @@ struct DeskHost: View {
     @State private var templateBusy = false
     /// What the ••• is handing to the rest of the phone (phase 7).
     @State private var share: SharePayload?
+    /// The file picker, opened by the `+` menu's file row.
+    @State private var picking = false
+    /// Guards the create doors against a double tap while a write is in
+    /// flight.
+    @State private var creating = false
+    /// The template picker, opened from the `+` menu.
+    @State private var templatesShown = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -68,18 +75,23 @@ struct DeskHost: View {
                     // seeded title) must reseed on that flip.
                     EntityTabBody(id: id).id(id)
                 } else {
-                    // An empty desk IS the chooser (rev 6) — no tab holds it.
-                    NewTabChooser(overlay: false, onWorkspace: { desk.workspaceShown = true })
+                    // An empty desk is EMPTY. It used to be the New Tab
+                    // page; that page is gone (owner, 2026-08-13) and its
+                    // three verbs live in the `+` menu on the bar below.
+                    EmptyHint("No tabs. The + below makes one.")
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityHidden(anyPanel)
 
             // The doors (design/ios.md §6 rev 6): top-left opens the
-            // LIBRARY; top-right, Properties is a FREQUENT action so it
-            // gets its own door, and the ••• holds only the secondary
-            // verbs (duplicate, template, trash). Visible in every state,
-            // writing included.
+            // LIBRARY, top-right the ••• holds the secondary verbs.
+            //
+            // The (i) PROPERTIES door is gone (owner, 2026-08-14). The
+            // properties panel is dragged in from the right edge, from
+            // anywhere, which is the gesture that opens it today and the
+            // one that closes it — a button beside it was a second door
+            // to one room (standing rule 4).
             HStack(spacing: 8) {
                 FloatCircle(
                     symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
@@ -89,13 +101,6 @@ struct DeskHost: View {
                 }
                 Spacer()
                 if case .entity(let id) = desk.activeTab?.content {
-                    FloatCircle(
-                        symbol: "info.circle", on: desk.inspectorShown,
-                        label: "Properties"
-                    ) {
-                        endEditing()
-                        withAnimation(LivMotion.nav) { desk.inspectorShown.toggle() }
-                    }
                     noteMenu(id)
                 }
             }
@@ -151,27 +156,22 @@ struct DeskHost: View {
                 .zIndex(1)
             }
 
-            // The New Tab chooser: a full-screen overlay summoned by `+`,
-            // never a tab (rev 6). Drawn over the panels — it is the most
-            // recent ask.
-            if desk.newTabShown {
-                NewTabChooser(
-                    overlay: true, onWorkspace: { desk.workspaceShown = true }
-                )
-                .background(LivTheme.canvas.ignoresSafeArea())
-                // The panels' escape gesture, here too — a full-screen
-                // surface without it is a VoiceOver trap (audit,
-                // 2026-08-04). At the presentation site, so the
-                // empty-desk body (nothing to close into) has no stray
-                // escape.
-                .accessibilityAction(.escape) {
-                    withAnimation(LivMotion.nav) { desk.newTabShown = false }
-                }
-                .transition(.move(edge: .bottom))
-                .zIndex(2)
-            }
         }
         .background(LivTheme.canvas)
+        .onAppear { desk.newTabMenu = createMenu }
+        .fileImporter(
+            isPresented: $picking, allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            FileImport.adopt(urls, box: box, workspaces: workspaces, desk: desk)
+        }
+        .sheet(isPresented: $templatesShown) {
+            TemplateSheet(verb: .create) { template in
+                fromTemplate(template.id)
+            }
+            .environmentObject(box)
+        }
         // The whole desk goes INERT while a drag is latched. This — not
         // anything at the UIKit layer — is what stops a drag from
         // pressing the button it started on: disabling a SwiftUI
@@ -193,7 +193,7 @@ struct DeskHost: View {
         // latches, so taps still press.
         .background(
             PanelDragInstaller(
-                active: { !desk.newTabShown },
+                active: { desk.menu == nil },
                 mayClaim: { dx in claimPanel(dx) != nil },
                 onLatch: { dx in
                     if let claim = claimPanel(dx) {
@@ -243,7 +243,7 @@ struct DeskHost: View {
 
     /// Any full-screen surface covering the desk body.
     private var anyPanel: Bool {
-        desk.libraryShown || desk.inspectorShown || desk.newTabShown
+        desk.libraryShown || desk.inspectorShown
     }
 
     /// The PROPERTIES panel is up, or a finger is bringing it in. The one
@@ -330,57 +330,121 @@ struct DeskHost: View {
         }
     }
 
+     /// The note's secondary verbs, sliding DOWN from the top — from
+    /// under the button that opened them (owner, 2026-08-13). It was a
+    /// SwiftUI `Menu`, which is a fourth look for the same idea; now it
+    /// is the one menu, pointed the other way.
     private func noteMenu(_ id: UInt64) -> some View {
-        let isFile = TabShape.of(box.entity(id)) == .file
-        return Menu {
-            Button {
-                duplicate(id)
-            } label: {
-                // The owner's own name for it — the copy carries the
-                // PROPERTIES, deliberately not the body.
-                Label("Duplicate note", systemImage: "plus.square.on.square")
-            }
-            // A file hands its BYTES to whatever owns the format —
-            // this is the file integration, and it moved here from a
-            // button on the file screen (owner, 2026-08-13). Secondary
-            // verbs live in this menu; the file screen shows the file.
-            if isFile, let facts = FileFacts.of(box.entity(id)), facts.exists {
-                Button {
-                    share = SharePayload(items: [facts.url])
-                } label: {
-                    Label("Open in…", systemImage: "square.and.arrow.up")
-                }
-            }
-            // Template, Share and Export are about MARKDOWN.
-            if !isFile {
-                if LivKind.of(box.entity(id)) != .template {
-                    Button {
-                        saveTemplate(id)
-                    } label: {
-                        Label("Save as template", systemImage: "doc.on.doc")
-                    }
-                }
-                Button {
-                    shareNote(id, asFile: false)
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-                Button {
-                    shareNote(id, asFile: true)
-                } label: {
-                    Label("Export as Markdown", systemImage: "arrow.down.doc")
-                }
-            }
-            Button(role: .destructive) {
-                confirmTrash = true
-            } label: {
-                Label("Move to Trash", systemImage: "trash")
-            }
+        Button {
+            endEditing()
+            desk.menu = noteVerbs(id)
         } label: {
             FloatCircleLabel(symbol: "ellipsis")
         }
+        .livTopButton()
         .accessibilityLabel("Note actions")
     }
+
+    private func noteVerbs(_ id: UInt64) -> LivMenu {
+        let row = box.entity(id)
+        let isFile = TabShape.of(row) == .file
+        var items: [LivMenuItem] = [
+            // The owner's own name for it — the copy carries the
+            // PROPERTIES, deliberately not the body.
+            LivMenuItem(label: "Duplicate note", symbol: "plus.square.on.square") {
+                duplicate(id)
+            }
+        ]
+        // A file hands its BYTES to whatever owns the format. Template,
+        // Share and Export are about MARKDOWN, so a file has none.
+        if isFile, let facts = FileFacts.of(row), facts.exists {
+            items.append(
+                LivMenuItem(label: "Open in…", symbol: "square.and.arrow.up") {
+                    share = SharePayload(items: [facts.url])
+                })
+        }
+        if !isFile {
+            if LivKind.of(row) != .template {
+                items.append(
+                    LivMenuItem(label: "Save as template", symbol: "doc.on.doc") {
+                        saveTemplate(id)
+                    })
+            }
+            items.append(
+                LivMenuItem(label: "Share", symbol: "square.and.arrow.up") {
+                    shareNote(id, asFile: false)
+                })
+            items.append(
+                LivMenuItem(label: "Export as Markdown", symbol: "arrow.down.doc") {
+                    shareNote(id, asFile: true)
+                })
+        }
+        items.append(
+            LivMenuItem(label: "Move to Trash", symbol: "trash", destructive: true) {
+                confirmTrash = true
+            })
+        return LivMenu(id: "note-verbs", from: .top, items: items)
+    }
+
+    /// A new note from a template: the same landing as "Create a note" —
+    /// the note becomes a tab with the caret already in it, at the
+    /// template's {{cursor}} if it named one.
+    private func fromTemplate(_ template: UInt64) {
+        guard !creating else { return }
+        creating = true
+        box.newFromTemplate(template, now: Civil.nowStamp()) { id, caret in
+            guard id != 0 else {
+                creating = false
+                return
+            }
+            creating = false
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id, caret: caret)
+            desk.adoptCapture(id)
+        }
+    }
+
+    /// Birth an empty note and land in it: the editor takes the screen
+    /// with the caret already in it. The workspace stamps it exactly as
+    /// any other creation door does.
+    private func createNote() {
+        guard !creating else { return }
+        creating = true
+        box.createNote { id in
+            guard id != 0 else {
+                creating = false
+                return
+            }
+            creating = false
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.adoptCapture(id)
+        }
+    }
+
+    /// The create menu, sliding up from the bar that summoned it. These
+    /// three verbs were a whole full-screen PAGE until 2026-08-13.
+    ///
+    /// PLAIN glyphs, no colour: carved kind chips were tried here on
+    /// 2026-08-12 and rejected (owner: "color / boxed icons in new tab
+    /// looks bad"). Kind colour marks what a THING is, in the lists —
+    /// never what a button would make.
+    private func createMenu() -> LivMenu {
+        LivMenu(
+            id: "create",
+            from: .bottom,
+            title: "New",
+            items: [
+                LivMenuItem(label: "Create a note", glyph: .note) { createNote() },
+                LivMenuItem(label: "From template…", glyph: .template) {
+                    templatesShown = true
+                },
+                LivMenuItem(label: "Add a file", glyph: .file(.other)) {
+                    picking = true
+                },
+            ])
+    }
+
 
     /// Hand this note to the phone as markdown. The content arrives on
     /// the box's serial queue, so the payload is built FIRST and the
@@ -532,180 +596,38 @@ struct FloatCircle: View {
         Button(action: action) {
             FloatCircleLabel(symbol: symbol, on: on)
         }
-        .buttonStyle(.plain)
+        .livTopButton(on: on)
         .accessibilityLabel(label)
     }
 }
 
+extension View {
+    /// The top row's button dress: the SYSTEM's own bordered circle
+    /// (owner, 2026-08-14: "should not be fully transparent / have a
+    /// button shape … use default appkit look").
+    ///
+    /// It was a hand-drawn disc in `panel2` with a hairline, then — for
+    /// one build — nothing at all, which read as a glyph loose on the
+    /// page. This is neither: `.bordered` gives the platform's own
+    /// material and its own pressed state, and the app supplies only the
+    /// tint.
+    func livTopButton(on: Bool = false) -> some View {
+        buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .tint(on ? LivTheme.accent : LivTheme.text2)
+    }
+}
+
+/// The glyph inside a top-row button. The SHAPE is the system's
+/// (`livTopButton`); this is only what goes in it.
 struct FloatCircleLabel: View {
     let symbol: String
     var on: Bool = false
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: LivType.strong, weight: .medium))
-            .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text2)
-            .frame(width: 36, height: 36)
-            .background(Circle().fill(on ? LivTheme.accent : LivTheme.panel2))
-            .overlay(
-                Circle().strokeBorder(on ? Color.clear : LivTheme.border, lineWidth: 0.5)
-            )
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
-    }
-}
-
-// MARK: - the create chooser (rev 6: a door, never a tab)
-
-/// Verbs, no questions. Two of them make a DOCUMENT, which lands as a
-/// tab: "Create a note" opens the editor with the caret in it, and
-/// "From template…" copies one first. The rest make a RECORD or open a
-/// door — a task or event rises as a card over wherever you are, and
-/// never takes a tab (Option C, owner 2026-08-08). So this is a create
-/// menu, not a "new tab" screen; it is the `+` overlay and the empty
-/// desk's own body.
-struct NewTabChooser: View {
-    /// Overlay mode (summoned by `+` over a live desk) carries a close
-    /// band; the empty-desk body has nothing to close into.
-    let overlay: Bool
-    /// Presented by DESKHOST — switching workspace tears this view down.
-    let onWorkspace: () -> Void
-
-    @EnvironmentObject var desk: DeskModel
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-    @State private var creating = false
-    @State private var templatesShown = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if overlay {
-                closeBand
-            }
-            VStack(spacing: 8) {
-                Spacer()
-                // Documents first — they are what a tab holds.
-                verb("Create a note", .note, primary: true) { createNote() }
-                verb("From template…", .template) { templatesShown = true }
-                fileDoor
-                // No "Open…" here: the bar below carries search, and the
-                // bar is now always up on this screen. Two doors to one
-                // room is a defect (standing rule 4), and the one that
-                // went is the one that was only reachable from here.
-                // The workspace this creation lands in is named at the
-                // TOP of the screen now, in the one button DeskHost
-                // floats over everything — not a second row down here.
-                Spacer()
-            }
-            .padding(.horizontal, 48)
-        }
-        .disabled(creating)
-        .sheet(isPresented: $templatesShown) {
-            TemplateSheet(verb: .create) { template in
-                fromTemplate(template.id)
-            }
-            .environmentObject(box)
-        }
-    }
-
-    /// The file door. It carries its own picker, so it is a view rather
-    /// than a `verb(…)` call; FileImportButton wears the verb dress
-    /// itself.
-    private var fileDoor: some View {
-        FileImportButton()
-    }
-
-    /// The house close band (App.swift's FeatureWindow recipe): the WHOLE
-    /// band closes, not just the glyph, and a downward drag does too.
-    private var closeBand: some View {
-        HStack(spacing: 0) {
-            Button {
-                withAnimation(LivMotion.nav) { desk.newTabShown = false }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: LivType.strong, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(LivMotion.nav) { desk.newTabShown = false }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { g in
-                    if g.translation.height > 40 {
-                        withAnimation(LivMotion.nav) { desk.newTabShown = false }
-                    }
-                }
-        )
-    }
-
-    /// A new note from a template: the same landing as "Create a note" —
-    /// the note becomes a tab with the caret already in it, at the
-    /// template's {{cursor}} if it named one.
-    private func fromTemplate(_ template: UInt64) {
-        guard !creating else { return }
-        creating = true
-        box.newFromTemplate(template, now: Civil.nowStamp()) { id, caret in
-            guard id != 0 else {
-                creating = false
-                return
-            }
-            workspaces.stamp(id, in: box)
-            desk.requestFocus(id, caret: caret)
-            desk.adoptCapture(id)
-        }
-    }
-
-    /// Birth an empty note and land in it: the editor takes the screen
-    /// with the caret already in it. The workspace stamps it exactly as
-    /// any other creation door does.
-    private func createNote() {
-        guard !creating else { return }
-        creating = true
-        box.createNote { id in
-            guard id != 0 else {
-                creating = false
-                return
-            }
-            workspaces.stamp(id, in: box)
-            desk.requestFocus(id)
-            desk.adoptCapture(id)
-        }
-    }
-
-    /// A plain glyph, no chip. Carved kind chips were tried here on
-    /// 2026-08-12 and rejected (owner: "color / boxed icons in new tab
-    /// looks bad"). This is a column of five verbs a person reads by
-    /// their words; five colored boxes made it a toy shelf. Kind color
-    /// still marks what a THING is, in the lists — not what a button
-    /// would make.
-    ///
-    /// The GLYPH is still the shared drawing — one table, so the door
-    /// that makes a note shows the same mark the note wears afterwards.
-    /// Only the colour is withheld.
-    private func verb(
-        _ label: String, _ glyph: LivGlyph, primary: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                LivIcon(
-                    glyph: glyph,
-                    color: primary ? LivTheme.onAccent : LivTheme.text, size: 18)
-                Text(label)
-            }
-            .livVerbFace(primary: primary)
-        }
-        .buttonStyle(.plain)
+            .font(.system(size: LivType.title, weight: .regular))
     }
 }
 

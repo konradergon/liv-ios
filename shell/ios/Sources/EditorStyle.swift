@@ -359,24 +359,95 @@ enum EditOps {
         }
 
         if verb == .rule {
-            // Insert a --- paragraph after the current line, and land the
-            // caret on a FRESH line below it: parked at the end of the
-            // --- itself, the next keystroke turned the divider into
-            // "---text" — no longer a rule at all (found live,
-            // 2026-08-05).
-            let insert = "\n---\n"
-            let out = n.replacingCharacters(
-                in: NSRange(location: NSMaxRange(whole), length: 0), with: insert)
+            // A --- paragraph, with the caret on a FRESH line below it:
+            // parked at the end of the --- itself, the next keystroke
+            // turned the divider into "---text" — no longer a rule at
+            // all (found live, 2026-08-05).
+            //
+            // On a BLANK line the rule TAKES that line. Inserting below
+            // it left the empty line you were standing on above the
+            // rule, so the divider appeared one line down from where you
+            // asked for it — which is the ordinary way to ask for one:
+            // press Return, then tap the key (owner, 2026-08-14).
+            let blank = n.substring(with: whole)
+                .trimmingCharacters(in: .whitespaces).isEmpty
+            // WITH its newline: the line range stops short of the
+            // terminator, so replacing a blank line without it left the
+            // terminator behind as a second empty line.
+            let raw = n.lineRange(for: NSRange(location: whole.location, length: 0))
+            let at = blank ? raw : NSRange(location: NSMaxRange(whole), length: 0)
+            let insert = blank ? "---\n" : "\n---\n"
+            let out = n.replacingCharacters(in: at, with: insert)
             return EditResult(
                 text: out,
-                selection: NSRange(location: NSMaxRange(whole) + (insert as NSString).length, length: 0))
+                selection: NSRange(
+                    location: at.location + (insert as NSString).length, length: 0))
         }
 
         let newBlock = replaced.joined(separator: "\n")
         let out = n.replacingCharacters(in: whole, with: newBlock)
         return EditResult(
             text: out,
-            selection: NSRange(location: whole.location, length: (newBlock as NSString).length))
+            selection: landing(
+                selection, whole: whole, lines: lines, replaced: replaced))
+    }
+
+    /// Where the caret — or the selection — lands after a block rewrite.
+    ///
+    /// The rule: whatever the user had, they keep, CARRIED by what the
+    /// markers did to the text in front of it. A caret stays a caret. A
+    /// selection stays the same words.
+    ///
+    /// Two failures this exists to end, both the same complaint (owner,
+    /// 2026-08-14: "they get deleted as you start typing"):
+    ///
+    ///  1. The verbs used to hand back the whole rewritten block
+    ///     SELECTED. Tap "task list" on the line you are writing and
+    ///     `- [ ] ` arrived selected, so the next letter replaced it.
+    ///     Select one word and tap it and the selection silently grew to
+    ///     the entire line, marker included — one keystroke wiped the
+    ///     line. Widening was never needed for the toggle-back either:
+    ///     `setBlock` derives whole lines from `selection.location`, so a
+    ///     narrow selection carried forward toggles exactly the same
+    ///     lines off.
+    ///  2. Moving a point by the block's delta is right only for a point
+    ///     in the line's CONTENT. A caret inside the marker being
+    ///     replaced landed inside the marker just written — put the
+    ///     caret at the start of `1. go`, tap "task list", and it sat
+    ///     between `[` and the space, where the next letter turned the
+    ///     box back into a bullet. Hence the FLOOR: a point never lands
+    ///     inside a marker, only at its far side.
+    ///
+    /// Markers and indent only ever change a line's PREFIX, so a point
+    /// moves by the deltas of the lines above it plus its own.
+    private static func landing(
+        _ selection: NSRange, whole: NSRange, lines: [String], replaced: [String]
+    ) -> NSRange {
+        func moved(_ offset: Int) -> Int {
+            var oldStart = whole.location
+            var newStart = whole.location
+            for (i, line) in lines.enumerated() {
+                let old = ns(line)
+                let new = ns(i < replaced.count ? replaced[i] : line)
+                let last = i == lines.count - 1
+                // The point is on THIS line (the last line owns anything
+                // past its end, which is where a block-end caret sits).
+                if offset <= oldStart + old.length || last {
+                    let within = offset - oldStart
+                    let prefix = MarkScan.shape(new as String).marker.length
+                    let floor = max(prefix, MarkScan.shape(new as String).indent)
+                    let carried = within + (new.length - old.length)
+                    return newStart + min(max(floor, carried), new.length)
+                }
+                oldStart += old.length + 1  // the newline
+                newStart += new.length + 1
+            }
+            return newStart
+        }
+        let start = moved(selection.location)
+        guard selection.length > 0 else { return NSRange(location: start, length: 0) }
+        let end = moved(NSMaxRange(selection))
+        return NSRange(location: start, length: max(0, end - start))
     }
 
     /// Inline verbs: wrap the selection, unwrap it if already wrapped, or
@@ -438,7 +509,8 @@ enum EditOps {
         let out = n.replacingCharacters(in: whole, with: newBlock)
         return EditResult(
             text: out,
-            selection: NSRange(location: whole.location, length: (newBlock as NSString).length))
+            selection: landing(
+                selection, whole: whole, lines: lines, replaced: replaced))
     }
 
     enum BlockVerb: Equatable { case headingCycle, bullet, ordered, task, quote, rule }
@@ -650,6 +722,63 @@ func livEditorSelfCheck() -> [String] {
     check("task toggles off", b5.text == "a\nb", b5.text)
     let b6 = EditOps.setBlock("- x", selection: NSRange(location: 0, length: 0), verb: .quote)
     check("bullet swaps to quote", b6.text == "> x")
+
+    // A CARET stays a caret. The block verbs used to hand back the whole
+    // rewritten line SELECTED, so the marker they had just added was
+    // replaced by the next letter typed — the box you asked for vanished
+    // as you started writing (owner, 2026-08-14).
+    let c1 = EditOps.setBlock("", selection: NSRange(location: 0, length: 0), verb: .task)
+    check("task on an empty line inserts the box", c1.text == "- [ ] ", c1.text)
+    check(
+        "and leaves a CARET after it, selecting nothing",
+        c1.selection == NSRange(location: 6, length: 0), "\(c1.selection)")
+    let c2 = EditOps.setBlock("hello", selection: NSRange(location: 5, length: 0), verb: .bullet)
+    check("bullet keeps the caret at the end of the words", c2.text == "- hello"
+        && c2.selection == NSRange(location: 7, length: 0), "\(c2.selection)")
+    let c3 = EditOps.setBlock("- hello", selection: NSRange(location: 7, length: 0), verb: .bullet)
+    check("toggling the bullet off walks the caret back", c3.text == "hello"
+        && c3.selection == NSRange(location: 5, length: 0), "\(c3.selection)")
+    let c4 = EditOps.setBlock(
+        "one\ntwo", selection: NSRange(location: 4, length: 0), verb: .quote)
+    check("the caret lands on ITS line, not the first", c4.text == "one\n> two"
+        && c4.selection == NSRange(location: 6, length: 0), "\(c4.selection)")
+    let c5 = EditOps.indent("x", selection: NSRange(location: 1, length: 0), out: false)
+    check("indent moves the caret with the text", c5.selection == NSRange(location: 3, length: 0),
+        "\(c5.selection)")
+    // A caret INSIDE the marker being replaced must not land inside the
+    // marker just written — it did, and the next letter unmade the box.
+    let c6 = EditOps.setBlock("1. go", selection: NSRange(location: 0, length: 0), verb: .task)
+    check(
+        "a caret in the old marker lands AFTER the new one",
+        c6.text == "- [ ] go" && c6.selection == NSRange(location: 6, length: 0),
+        "\(c6.text) \(c6.selection)")
+    let c7 = EditOps.setBlock(
+        "- [ ] go", selection: NSRange(location: 3, length: 0), verb: .bullet)
+    check(
+        "and never before the marker either",
+        c7.text == "- go" && c7.selection == NSRange(location: 2, length: 0),
+        "\(c7.text) \(c7.selection)")
+
+    // A SELECTION keeps the words it had, carried by the marker — it is
+    // NOT widened to the whole line, which used to put the marker inside
+    // the selection so one keystroke wiped the line.
+    let c8 = EditOps.setBlock(
+        "pick me", selection: NSRange(location: 5, length: 2), verb: .bullet)
+    check(
+        "a selected word stays that word",
+        c8.text == "- pick me" && c8.selection == NSRange(location: 7, length: 2),
+        "\(c8.text) \(c8.selection)")
+    // …and toggling back still works from the carried selection, which
+    // is why widening was never needed.
+    let c9 = EditOps.setBlock(c8.text, selection: c8.selection, verb: .bullet)
+    check("the carried selection toggles the line back off", c9.text == "pick me", c9.text)
+    let c10 = EditOps.setBlock(
+        "a\nb", selection: NSRange(location: 0, length: 3), verb: .task)
+    check("two lines still become tasks from a selection", c10.text == "- [ ] a\n- [ ] b", c10.text)
+    check(
+        "and the selection still spans both",
+        c10.selection.length > 0 && NSMaxRange(c10.selection) <= (c10.text as NSString).length,
+        "\(c10.selection)")
     // lineStart — the wire's line index → a buffer location (phase 3).
     check("line 0 starts at 0", EditOps.lineStart("a\nb\nc", line: 0) == 0)
     check("line 1 after one newline", EditOps.lineStart("a\nb\nc", line: 1) == 2)
@@ -676,6 +805,21 @@ func livEditorSelfCheck() -> [String] {
         "caret lands AFTER the rule, on a fresh line",
         b7.selection == NSRange(location: 9, length: 0),
         "\(b7.selection)")
+    // On a BLANK line the rule takes the line it was asked for, rather
+    // than appearing one line further down with the empty line left
+    // above it (owner, 2026-08-14).
+    let b8 = EditOps.setBlock("line\n", selection: NSRange(location: 5, length: 0), verb: .rule)
+    check("a rule on a blank line takes that line", b8.text == "line\n---\n", b8.text)
+    check(
+        "and still leaves the caret below it",
+        b8.selection == NSRange(location: 9, length: 0), "\(b8.selection)")
+    let b9 = EditOps.setBlock("", selection: NSRange(location: 0, length: 0), verb: .rule)
+    check("a rule in an empty note starts at the top", b9.text == "---\n", b9.text)
+    let b10 = EditOps.setBlock(
+        "a\n\nb", selection: NSRange(location: 2, length: 0), verb: .rule)
+    check(
+        "a rule on a blank line between two lines", b10.text == "a\n---\nb",
+        b10.text.replacingOccurrences(of: "\n", with: "⏎"))
 
     // toggleInline
     let i1 = EditOps.toggleInline("pick me", selection: NSRange(location: 5, length: 2), marker: "**")

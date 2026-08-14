@@ -918,6 +918,17 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 17. One menu (rev 19, owner 2026-08-14)
+
+Every menu in the app is `LivMenu` + `.livMenu(_:active:)`
+(Menu.swift). The only variation is the edge it comes from: `.bottom`
+slides up (the create menu, the editor's insert menu), `.top` slides
+down (the note's ••• verbs, from under its own button). A UIKit UIMenu,
+a SwiftUI Menu and a full-screen New Tab page all died for it.
+
+`active` follows RecordCardHost's rule — the surface in front draws the
+menu — and the host lives at the ROOT, above the bottom bar.
+
 ## 16. The link door (rev 18, owner 2026-08-13)
 
 Creating a link opens SEARCH. The toolbar's Link key and typing `[[`

@@ -58,6 +58,15 @@ struct CalendarView: View {
     /// The block currently in the air, and where its start sits now. Live
     /// only — the write happens when the finger lifts.
     @State private var lifted: LiftedBlock?
+    /// The box being PLACED: minutes from midnight, while the finger is
+    /// down on empty grid. It is not in the box yet and nothing has been
+    /// written — letting go is what writes it.
+    @State private var placing: Int?
+    /// The finger is over the bin, so the lifted block will be trashed.
+    @State private var trashArmed = false
+    /// Where the bin sits, in WINDOW space, so the drag (which reports
+    /// the finger in the same space) can tell when it is over it.
+    @State private var trashZone: CGRect = .zero
     /// A new event being NAMED in the grid. Nothing is written until the
     /// name is submitted: tapping an hour used to create an untitled
     /// event and throw you into the note editor to name it (owner,
@@ -457,6 +466,12 @@ struct CalendarView: View {
             // all.
             hourGrid(timed: timed, today: today, doneNames: doneNames)
         }
+        // The bin rides OVER the foot of the timeline while something is
+        // in the air, and takes no space when nothing is.
+        .overlay(alignment: .bottom) {
+            if lifted != nil { trashZone_ }
+        }
+        .animation(LivMotion.nav, value: lifted != nil)
     }
 
     // MARK: the hour grid
@@ -515,6 +530,13 @@ struct CalendarView: View {
                         ForEach(frames) { frame in
                             block(frame, doneNames: doneNames)
                         }
+                        // The box being placed, drawn exactly like the
+                        // block it is about to become — no text: it has
+                        // no name yet, and naming happens in the
+                        // properties (owner, 2026-08-13).
+                        if let minutes = placing {
+                            placedBox(minutes, width: geo.size.width)
+                        }
                         if selectedDay == today {
                             nowLine(nowMinutes)
                         }
@@ -528,7 +550,8 @@ struct CalendarView: View {
                             onLift: { id in
                                 lifted = LiftedBlock(id: id, minutes: startMinutes(id, frames))
                             },
-                            onMove: { id, dy in
+                            onMove: { id, dy, where_ in
+                                trashArmed = overTrash(where_)
                                 guard let frame = frames.first(where: { $0.item.row.id == id })
                                 else { return }
                                 lifted = LiftedBlock(
@@ -536,16 +559,37 @@ struct CalendarView: View {
                                     minutes: CalClock.dragged(
                                         start: frame.item.stamp, duration: frame.length, by: dy))
                             },
-                            onDrop: { id, dy in
+                            onDrop: { id, dy, where_ in
                                 lifted = nil
+                                let onTrash = overTrash(where_)
+                                trashArmed = false
                                 guard let frame = frames.first(where: { $0.item.row.id == id })
                                 else { return }
+                                // Dropped on the bin: the item goes, soft
+                                // and undoable like every trash here.
+                                if onTrash {
+                                    UINotificationFeedbackGenerator()
+                                        .notificationOccurred(.success)
+                                    box.trash(id)
+                                    loadWindow()
+                                    return
+                                }
                                 let landed = CalClock.dragged(
                                     start: frame.item.stamp, duration: frame.length, by: dy)
                                 guard landed != frame.start else { return }
                                 commitMove(frame.item, minutes: landed, length: frame.length)
                             },
-                            onCancel: { lifted = nil }
+                            onCancel: {
+                                lifted = nil
+                                trashArmed = false
+                                placing = nil
+                            },
+                            onPlace: { minutes in placing = minutes },
+                            onPlaceMove: { minutes in placing = minutes },
+                            onPlaceDrop: { minutes in
+                                placing = nil
+                                create(on: selectedDay, minutes: minutes, allDay: false)
+                            }
                         )
                         .frame(width: 0, height: 0)
                     }
@@ -576,6 +620,65 @@ struct CalendarView: View {
                 }
             }
         }
+    }
+
+    /// The box under the finger while a new event is being placed.
+    private func placedBox(_ minutes: Int, width: CGFloat) -> some View {
+        let unit = CalClock.hourHeight / 60
+        return RoundedRectangle(cornerRadius: 8)
+            .fill(LivKind.event.color.opacity(0.28))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(LivKind.event.color, lineWidth: 1.5)
+            )
+            .overlay(alignment: .topLeading) {
+                Text(CalClock.range(minutes, 60))
+                    .font(.system(size: LivType.caption).monospacedDigit())
+                    .foregroundStyle(LivTheme.text2)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 5)
+            }
+            .frame(
+                width: max(40, width - CalClock.lane - 18),
+                height: CalClock.hourHeight - 2)
+            .offset(x: CalClock.lane, y: CGFloat(minutes) * unit)
+            .allowsHitTesting(false)
+    }
+
+    /// The bin, shown only while a block is in the air (owner,
+    /// 2026-08-14: "hold down on existing item should make it possible to
+    /// trash"). Drop a block on it and the block goes; drop it anywhere
+    /// else and it just lands at its new time. It measures itself in
+    /// WINDOW space because the drag reports the finger there.
+    private var trashZone_: some View {
+        HStack(spacing: 8) {
+            Image(systemName: trashArmed ? "trash.fill" : "trash")
+                .font(.system(size: LivType.title, weight: .medium))
+            Text("Drop to trash")
+                .font(.system(size: LivType.body, weight: .medium))
+        }
+        .foregroundStyle(trashArmed ? LivTheme.onAccent : LivTheme.red)
+        .frame(maxWidth: .infinity)
+        .frame(height: 56)
+        .background(
+            RoundedRectangle(cornerRadius: LivTheme.radius)
+                .fill(trashArmed ? LivTheme.red : LivTheme.red.opacity(0.14))
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { trashZone = geo.frame(in: .global) }
+                    .onChange(of: geo.frame(in: .global)) { _, f in trashZone = f }
+            }
+        )
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .allowsHitTesting(false)
+    }
+
+    private func overTrash(_ point: CGPoint) -> Bool {
+        trashZone != .zero && trashZone.contains(point)
     }
 
     /// A tap in the grid: on a block it opens that block, on empty space
@@ -1210,9 +1313,19 @@ struct HourGridDrag: UIViewRepresentable {
 
     let targets: [Target]
     let onLift: (UInt64) -> Void
-    let onMove: (UInt64, CGFloat) -> Void
-    let onDrop: (UInt64, CGFloat) -> Void
+    /// `where` is in WINDOW space, for anything positioned against the
+    /// screen rather than against the grid's own scrolled content — the
+    /// trash zone is.
+    let onMove: (UInt64, CGFloat, CGPoint) -> Void
+    let onDrop: (UInt64, CGFloat, CGPoint) -> Void
     let onCancel: () -> Void
+    /// The same press, landing on EMPTY grid: a box is placed at that
+    /// minute, dragged while the finger is down, and written on release
+    /// (owner, 2026-08-14). `nil` minutes on drop = the press was
+    /// cancelled.
+    let onPlace: (Int) -> Void
+    let onPlaceMove: (Int) -> Void
+    let onPlaceDrop: (Int) -> Void
 
     func makeUIView(context: Context) -> HourGridDragHost {
         let host = HourGridDragHost()
@@ -1226,6 +1339,9 @@ struct HourGridDrag: UIViewRepresentable {
         context.coordinator.onMove = onMove
         context.coordinator.onDrop = onDrop
         context.coordinator.onCancel = onCancel
+        context.coordinator.onPlace = onPlace
+        context.coordinator.onPlaceMove = onPlaceMove
+        context.coordinator.onPlaceDrop = onPlaceDrop
         host.attachIfNeeded()
     }
 
@@ -1234,9 +1350,12 @@ struct HourGridDrag: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var targets: [Target] = []
         var onLift: (UInt64) -> Void = { _ in }
-        var onMove: (UInt64, CGFloat) -> Void = { _, _ in }
-        var onDrop: (UInt64, CGFloat) -> Void = { _, _ in }
+        var onMove: (UInt64, CGFloat, CGPoint) -> Void = { _, _, _ in }
+        var onDrop: (UInt64, CGFloat, CGPoint) -> Void = { _, _, _ in }
         var onCancel: () -> Void = {}
+        var onPlace: (Int) -> Void = { _ in }
+        var onPlaceMove: (Int) -> Void = { _ in }
+        var onPlaceDrop: (Int) -> Void = { _ in }
 
         /// The view whose coordinate space the target rects are in (the
         /// grid's content), and the scroll view to suspend mid-lift.
@@ -1245,6 +1364,9 @@ struct HourGridDrag: UIViewRepresentable {
 
         private var lifted: UInt64?
         private var origin: CGPoint = .zero
+        /// The minutes of the box being PLACED, while the finger is down
+        /// on empty grid.
+        private var placing: Int?
 
         /// Where the finger is, in the SAME space the rects were computed
         /// in — the grid's content view, not the window.
@@ -1253,9 +1375,21 @@ struct HourGridDrag: UIViewRepresentable {
             return g.location(in: content)
         }
 
+        /// The press begins anywhere on the VISIBLE grid — on a block to
+        /// lift it, on empty space to place a new one.
+        ///
+        /// The visible test is not optional. This recognizer lives on the
+        /// WINDOW (see the host), so it is offered every touch in the
+        /// app; converting a touch on the month grid — or on a sheet over
+        /// the calendar — into the scrolled content's coordinates lands
+        /// it at some positive y deep inside a 24-hour column, where it
+        /// would silently start placing a box. `scroll.bounds` IS the
+        /// visible window into that content, so this is the one line that
+        /// keeps the gesture inside the grid it belongs to.
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-            guard let p = point(g) else { return false }
-            return targets.contains { $0.rect.contains(p) }
+            guard let p = point(g), let scroll else { return false }
+            guard scroll.bounds.contains(g.location(in: scroll)) else { return false }
+            return targets.contains { $0.rect.contains(p) } || true
         }
 
         /// MUST be true. Refusing simultaneity here starved the scroll
@@ -1271,28 +1405,45 @@ struct HourGridDrag: UIViewRepresentable {
         @objc func handle(_ press: UILongPressGestureRecognizer) {
             switch press.state {
             case .began:
-                guard let p = point(press),
-                    let hit = targets.first(where: { $0.rect.contains(p) })
-                else {
+                guard let p = point(press) else {
                     press.state = .failed
                     return
                 }
-                lifted = hit.id
                 origin = p
-                // The scroll must not compete while a block is in the air.
+                // The scroll must not compete while anything is in the air.
                 scroll?.isScrollEnabled = false
-                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                onLift(hit.id)
+                if let hit = targets.first(where: { $0.rect.contains(p) }) {
+                    lifted = hit.id
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    onLift(hit.id)
+                } else {
+                    let minutes = Self.minutes(at: p.y)
+                    placing = minutes
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    onPlace(minutes)
+                }
             case .changed:
-                guard let id = lifted, let p = point(press) else { return }
-                onMove(id, p.y - origin.y)
+                guard let p = point(press) else { return }
+                if let id = lifted {
+                    onMove(id, p.y - origin.y, press.location(in: nil))
+                } else if placing != nil {
+                    let minutes = Self.minutes(at: p.y)
+                    placing = minutes
+                    onPlaceMove(minutes)
+                }
             case .ended:
                 let id = lifted
+                let placed = placing
                 let dy = point(press).map { $0.y - origin.y }
+                let where_ = press.location(in: nil)
                 release()
-                if let id, let dy { onDrop(id, dy) }
+                if let id, let dy {
+                    onDrop(id, dy, where_)
+                } else if let placed {
+                    onPlaceDrop(placed)
+                }
             case .cancelled, .failed:
-                let had = lifted != nil
+                let had = lifted != nil || placing != nil
                 release()
                 if had { onCancel() }
             default:
@@ -1303,6 +1454,14 @@ struct HourGridDrag: UIViewRepresentable {
         private func release() {
             scroll?.isScrollEnabled = true
             lifted = nil
+            placing = nil
+        }
+
+        /// The grid DRAWS per hour; a press LANDS on the quarter hour —
+        /// the same 15-minute step the tap and the block drag use.
+        static func minutes(at y: CGFloat) -> Int {
+            let unit = CalClock.hourHeight / 60
+            return max(0, min(24 * 60 - 60, CalClock.snap(Int(y / unit))))
         }
     }
 }

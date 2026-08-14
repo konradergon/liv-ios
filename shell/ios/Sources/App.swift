@@ -129,7 +129,9 @@ struct RootView: View {
                     .padding(.bottom, 62)
                     .zIndex(2)
             }
-            if !desk.libraryShown && !desk.inspectorShown && !keyboard.up {
+            if !desk.libraryShown && !desk.inspectorShown && !keyboard.up
+                && desk.menu == nil
+            {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
@@ -141,6 +143,11 @@ struct RootView: View {
             }
         }
         .background(LivTheme.canvas.ignoresSafeArea())
+        // The one menu is hosted HERE, above the bottom bar — the bar is
+        // drawn after the desk, so a menu hosted inside DeskHost came up
+        // underneath it and lost its last row. The card hosts its own
+        // when a card is the surface in front.
+        .livMenu($desk.menu, active: desk.recordCard == nil)
         // Only when nothing covers the desk — see RecordCardHost.
         .recordCardHost(
             active: desk.featureShown == nil && !desk.searchShown

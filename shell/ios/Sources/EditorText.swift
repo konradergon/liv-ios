@@ -602,6 +602,8 @@ struct MarkdownEditor: UIViewRepresentable {
     var onOpenRef: (UInt64) -> Void
     /// The toolbar's link key — NoteEditor presents SEARCH.
     var onLink: () -> Void
+    /// The toolbar's `+` — NoteEditor raises the insert menu.
+    var onInsert: () -> Void
     /// The toolbar's outline key — NoteEditor presents the sheet.
     var onOutline: () -> Void
     /// The toolbar's template key — NoteEditor presents the picker.
@@ -1075,6 +1077,13 @@ struct MarkdownEditor: UIViewRepresentable {
                 // Straight to search — no "[[" typed into the note first.
                 // The whole token is written when something is picked.
                 parent.onLink()
+            case .insert:
+                // Put the keyboard away FIRST, through UIKit — the
+                // toolbar is the keyboard's own accessory view, and a
+                // SwiftUI focus binding leaves it standing over the menu
+                // that is sliding up underneath it.
+                view.resignFirstResponder()
+                parent.onInsert()
             case .outline:
                 parent.onOutline()
             case .template:
@@ -1203,7 +1212,7 @@ final class TitleDelegate: NSObject, UITextViewDelegate {
 
 /// Everything the editor can do to text, one verb each.
 enum StyleVerb {
-    case undo, redo, link
+    case undo, redo, link, insert
     case heading, bold, italic, strike, code
     case task, bullet, ordered, quote, indent, outdent, rule
     case outline, template, dismiss
@@ -1270,14 +1279,11 @@ final class EditorToolbar: UIInputView, UIScrollViewDelegate {
         // a view whose scrolling is switched off, and Template would land
         // a document's boilerplate in a task. A menu item that does
         // nothing is a lie, so the `+` itself goes away there.
-        var advanced: [(String, String, StyleVerb)] = [
-            ("doc.on.doc", "Template", .template),
-            ("list.bullet.indent", "Outline", .outline),
-        ]
-        if embedded { advanced.removeAll() }
-
+        // The `+` opens the app's ONE menu, sliding up (Menu.swift). It
+        // was a UIKit UIMenu — a fourth look for the same idea, and the
+        // only one that could not follow the house motion.
         var keys: [UIView] = []
-        if !advanced.isEmpty {
+        if !embedded {
             let plus = UIButton(type: .system)
             plus.setImage(
                 UIImage(
@@ -1287,12 +1293,8 @@ final class EditorToolbar: UIInputView, UIScrollViewDelegate {
                 for: .normal)
             plus.tintColor = LivInk.accent
             plus.accessibilityLabel = "Insert"
-            plus.showsMenuAsPrimaryAction = true
-            plus.menu = UIMenu(children: advanced.map { (symbol, title, verb) in
-                UIAction(title: title, image: UIImage(systemName: symbol)) { [onVerb] _ in
-                    onVerb(verb)
-                }
-            })
+            plus.addAction(
+                UIAction { [onVerb] _ in onVerb(.insert) }, for: .touchUpInside)
             NSLayoutConstraint.activate([
                 plus.widthAnchor.constraint(greaterThanOrEqualToConstant: 46)
             ])
