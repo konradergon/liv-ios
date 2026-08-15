@@ -243,10 +243,12 @@ struct LibraryPanel: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Its own foot, in the one tone that shows against the ground in
-        // BOTH schemes — and deliberately not the desk's floating
-        // capsule: two places, two silhouettes.
-        .background(LivTheme.panel.ignoresSafeArea(edges: .bottom))
+        // NO fill. It had a grey one for a few hours, on the theory that
+        // a place wants its own foot; on screen that is a slab of tone
+        // around a single row, saying nothing (owner, 2026-08-15: "what
+        // is the grey area towards the bottom in library? looks off").
+        // The hairline is the whole job: Settings is pinned, and a line
+        // says so.
         .overlay(alignment: .top) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
         }

@@ -43,6 +43,11 @@ The second half of "a place stands on the floor", after a design pass
 that proposed three treatments and judged them through the owner's eye,
 the constitution and the builder's.
 
+*(The bottom band's grey fill was removed the same evening — "what is
+the grey area towards the bottom in library? looks off". It was a slab
+of tone around one row, saying nothing; the hairline already says
+Settings is pinned.)*
+
 **The library owns its own chrome now.** It had a 52pt HOLE in its list,
 reserved for the desk's floating workspace button — the thing a layer
 does, not a place — and the rows slid under that button on unpainted
