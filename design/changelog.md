@@ -1,5 +1,58 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the syntax shows only where you are
+
+Owner: *"have markdown syntax (like ~) hidden when out of focus, only
+showing the rendering."*
+
+**Markers get NO GLYPHS off the caret's line.** Not clear ink — that
+leaves the width behind as a gap. `LivLayoutManager` is its own
+`NSLayoutManagerDelegate` now and answers `shouldGenerateGlyphs` with
+`.null` for anything carrying the new `.livHidden` attribute, so the
+characters stay in the buffer and take no space at all. Put the caret on
+the line and they come back, dimmed and editable: what you can type is
+always what you can see.
+
+Hidden: the inline pairs (`**`, `*`, `~~`, backtick), a heading's hash,
+a quote's angle, a task's leading `- `, and a link's brackets and id —
+`[[4102|Anna]]` reads as **Anna**.
+
+KEPT, on purpose: a bullet's dash, a task's `[ ]` and a rule's dashes,
+because the dot, the box and the line are DRAWN into those rects and a
+rect with no glyphs has no size; and an ordered list's number, because
+the number IS the rendering.
+
+**The reveal generalised.** It already existed for one thing — a divider
+swapped its drawn line for its dashes under the caret — and now every
+marker does the same. It follows every paragraph the SELECTION touches,
+not just its anchor, or dragging a selection handle upward re-flowed the
+line you started from mid-gesture.
+
+**Three real defects, caught by reading rather than by luck.** A review
+pass over the plan found them and the first bit immediately:
+- **The indent is not syntax.** Hiding a task's `- ` from offset 0 took
+  the leading spaces with it, so an indented task snapped to the margin
+  whenever the caret was elsewhere. It hides from `shape.indent` now.
+- **A line that is ONLY a marker keeps it.** Tap Heading on an empty
+  line and walk away and the hash would vanish into a 30pt blank band
+  you could neither see nor explain — the exact failure the rule's own
+  comment records. A marker with no content is the only thing left to
+  show.
+- **The reveal is asked for when focus ARRIVES too**, not only when it
+  leaves. The one path that focuses without moving the selection would
+  have left you typing into a line whose markers were hidden.
+
+**And one crash, which named its own cause.** Invalidating glyphs from
+inside the styler crashed on the first keystroke: "attempted layout
+while textStorage is editing". Attributes alone do not rebuild glyphs,
+so the invalidation is real work — it just belongs on the next runloop
+hop, the same rule the reveal and the link picker already follow.
+
+**Known and left**: a task's text and a bullet's text no longer share an
+exact left edge (the task's `- ` is gone, the bullet's dash is still
+holding the dot's rect). Making list markers hang in a common gutter is
+a paragraph-indent change, not a colour or a glyph one.
+
 ## 2026-08-15 — the palette comes from the icon, and it is measured
 
 Owner, after a three-way side-by-side: *"i suggest you have a near black

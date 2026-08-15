@@ -954,6 +954,13 @@ where the caret is, over the `[[query` when one is being typed.
 `[[` picker is deleted. "Create …" in that screen makes the thing and
 links to it in one tap.
 
+**Syntax is shown only on the caret's line** (rev 19, owner 2026-08-15).
+Markers off that line are given NULL glyphs by LivLayoutManager's
+delegate — present in the buffer, zero width on screen. What is drawn in
+a marker's place (the bullet dot, the task box, the rule) keeps its
+rect, and an ordered list's number keeps its width because the number is
+the rendering. The reveal covers every paragraph the selection touches.
+
 The keyboard toolbar is GROUPED, Notesnook's shape: a hairline between
 runs of keys, most-used first — undo/redo · bold italic strike · link ·
 heading task bullet numbered · indent outdent · quote code divider. The

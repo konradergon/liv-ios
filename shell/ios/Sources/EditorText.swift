@@ -32,6 +32,9 @@ extension NSAttributedString.Key {
     /// Same clear-ink trick again: a list marker should read as a point,
     /// not as a hyphen (owner, 2026-08-11).
     static let livBullet = NSAttributedString.Key("liv.bullet")
+    /// Syntax that is not on the caret's line: kept in the buffer, given
+    /// NO glyphs at all, so the line reads as what it MEANS.
+    static let livHidden = NSAttributedString.Key("liv.hidden")
 }
 
 // MARK: - the bridge
@@ -148,6 +151,21 @@ enum MarkStyler {
 
         storage.beginEditing()
         defer { storage.endEditing() }
+        // Attributes alone do not rebuild GLYPHS, and hiding syntax is a
+        // glyph decision (LivLayoutManager's delegate). Asked for on the
+        // next hop, never here: this runs inside the storage's edit
+        // transaction, and touching layout there is a hard crash —
+        // "attempted layout while textStorage is editing" (measured,
+        // 2026-08-15). The same rule the reveal and the link picker
+        // already follow.
+        DispatchQueue.main.async {
+            for manager in storage.layoutManagers {
+                manager.invalidateGlyphs(
+                    forCharacterRange: range, changeInLength: 0,
+                    actualCharacterRange: nil)
+                manager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            }
+        }
 
         let para = NSMutableParagraphStyle()
         para.lineSpacing = 2
@@ -207,6 +225,44 @@ enum MarkStyler {
                 [.font: font, .foregroundColor: LivInk.muted], range: abs(r))
         }
 
+        /// Syntax OFF the caret's line has no glyphs at all — not clear
+        /// ink, which would leave its width behind as a gap (owner,
+        /// 2026-08-15: "have markdown syntax hidden when out of focus,
+        /// only showing the rendering"). On the caret's line the same
+        /// characters are dimmed and editable, so what you can type is
+        /// always what you can see.
+        ///
+        /// This is only for syntax with NOTHING drawn in its place. A
+        /// bullet's dash, a task's brackets and a rule's dashes keep
+        /// their width on purpose: the dot, the box and the line are
+        /// drawn INTO those rects (LivLayoutManager), and a rect with no
+        /// glyphs has no size. An ordered list's number keeps its width
+        /// because the number IS the rendering.
+        /// The marker WITHOUT its leading whitespace: the indent is not
+        /// syntax, it is the nesting, and hiding it flattened every
+        /// indented list line to the margin.
+        func markBlock(_ font: UIFont = EditorFont.body) {
+            mark(
+                NSRange(
+                    location: shape.indent,
+                    length: max(0, shape.marker.length - shape.indent)),
+                font: font)
+        }
+
+        func mark(_ r: NSRange, font: UIFont = EditorFont.body) {
+            guard r.length > 0 else { return }
+            // A marker with NO content is the only thing there is to
+            // show. Hidden, it leaves a line-height blank band — an H1's
+            // hash alone is a 30pt gap you cannot explain or select
+            // (the rule's own comment records the same failure).
+            if revealed || r.length >= lineLen {
+                dim(r, font: font)
+            } else {
+                storage.addAttributes(
+                    [.font: font, .livHidden: NSNumber(value: true)], range: abs(r))
+            }
+        }
+
         var contentFont = EditorFont.body
         switch shape.block {
         case .heading(let level):
@@ -216,7 +272,7 @@ enum MarkStyler {
                 range: abs(NSRange(location: 0, length: lineLen)))
             // The hash wears the heading's own font, so it sits on the
             // same baseline at the same size as the words beside it.
-            dim(shape.marker, font: contentFont)
+            markBlock(contentFont)
         case .bullet:
             dim(shape.marker)
             // The dash's ink goes clear and a point is drawn in its
@@ -228,7 +284,16 @@ enum MarkStyler {
         case .ordered:
             dim(shape.marker)
         case .task(let checked):
-            dim(NSRange(location: 0, length: shape.marker.length))
+            // The leading "- " has nothing drawn in its place, so it
+            // goes; the brackets keep their width for the box.
+            if let box = shape.box {
+                mark(
+                    NSRange(
+                        location: shape.indent, length: box.location - shape.indent))
+                dim(NSRange(location: box.location, length: shape.marker.length - box.location))
+            } else {
+                dim(NSRange(location: 0, length: shape.marker.length))
+            }
             if let box = shape.box {
                 // The glyphs keep their widths; the ink goes clear and the
                 // layout manager draws the box in their rect.
@@ -249,7 +314,7 @@ enum MarkStyler {
                 }
             }
         case .quote:
-            dim(shape.marker)
+            markBlock()
             let content = NSRange(
                 location: shape.marker.length, length: lineLen - shape.marker.length)
             if content.length > 0 {
@@ -297,7 +362,7 @@ enum MarkStyler {
         for run in MarkScan.inline(line, from: shape.marker.length) {
             switch run {
             case .marker(let r):
-                dim(r)
+                mark(r)
             case .bold(let r):
                 if r.length > 0 {
                     storage.addAttribute(
@@ -329,7 +394,18 @@ enum MarkStyler {
                 // The link reads as a value: name (or id) in accent, the
                 // bracket/id plumbing dimmed. The livRef attribute is what
                 // makes a tap open the target (phase 2).
-                dim(whole)
+                // A link reads as its NAME. The brackets and the id are
+                // the storage, and off the caret's line they are not
+                // shown at all.
+                if let name, name.length > 0, !revealed {
+                    mark(NSRange(location: whole.location, length: name.location - whole.location))
+                    mark(
+                        NSRange(
+                            location: NSMaxRange(name),
+                            length: NSMaxRange(whole) - NSMaxRange(name)))
+                } else {
+                    dim(whole)
+                }
                 if let id = refId(line, whole) {
                     storage.addAttribute(
                         .livRef, value: NSNumber(value: id), range: abs(whole))
@@ -346,7 +422,46 @@ enum MarkStyler {
 
 // MARK: - the layout manager: draws the task checkboxes
 
-final class LivLayoutManager: NSLayoutManager {
+final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
+    /// Characters carrying `.livHidden` produce NULL glyphs: not drawn,
+    /// and — the whole point — taking no width. Clearing their ink would
+    /// leave the gap behind, which is what "hidden" must not mean.
+    ///
+    /// An attribute change does not invalidate GLYPHS on its own, only
+    /// layout, so `MarkStyler.apply` invalidates them by hand; without
+    /// that the syntax hides and reveals only where the text also
+    /// changed.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager,
+        shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+        properties props: UnsafePointer<NSLayoutManager.GlyphProperty>,
+        characterIndexes: UnsafePointer<Int>,
+        font: UIFont,
+        forGlyphRange glyphRange: NSRange
+    ) -> Int {
+        guard let storage = textStorage else { return 0 }
+        var edited = false
+        var out = [NSLayoutManager.GlyphProperty](
+            repeating: NSLayoutManager.GlyphProperty(rawValue: 0), count: glyphRange.length)
+        for i in 0..<glyphRange.length {
+            out[i] = props[i]
+            let index = characterIndexes[i]
+            guard index < storage.length else { continue }
+            if storage.attribute(.livHidden, at: index, effectiveRange: nil) != nil {
+                out[i] = .null
+                edited = true
+            }
+        }
+        guard edited else { return 0 }
+        out.withUnsafeBufferPointer { buffer in
+            setGlyphs(
+                glyphs, properties: buffer.baseAddress!,
+                characterIndexes: characterIndexes, font: font,
+                forGlyphRange: glyphRange)
+        }
+        return glyphRange.length
+    }
+
     override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
@@ -494,6 +609,7 @@ final class MarkdownTextView: UITextView {
         self.showsTitle = showsTitle
         let storage = NSTextStorage()
         let layout = LivLayoutManager()
+        layout.delegate = layout
         let container = NSTextContainer(
             size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
@@ -753,31 +869,31 @@ struct MarkdownEditor: UIViewRepresentable {
             apply(around: editedRange, to: textStorage)
         }
 
-        /// The paragraph whose divider is currently shown as dashes
-        /// because the caret is on it. nil = no divider revealed.
+        /// The paragraph the caret is in — the ONE line that shows its
+        /// markdown. nil = none (no caret, or the editor is not first
+        /// responder), and then the whole note reads as what it means.
         private var revealedRule: NSRange?
 
-        /// Reveal follows the caret: entering a divider line restyles it
-        /// to its literal dashes, leaving restyles it back to a drawn
-        /// line. One runloop hop — the selection callback fires inside
-        /// the edit cycle, where storage edits are not safe (the same
-        /// rule setOpenLink documents below).
+        /// Reveal follows the caret. It used to follow it only onto a
+        /// DIVIDER, because the divider was the only thing that had a
+        /// drawn form to swap for its source; now every marker does
+        /// (owner, 2026-08-15). One runloop hop — the selection callback
+        /// fires inside the edit cycle, where storage edits are not safe
+        /// (the same rule setOpenLink documents below).
         private func updateRuleReveal(_ textView: UITextView) {
             let n = textView.text as NSString
             var fresh: NSRange?
             let sel = textView.selectedRange
-            if sel.length == 0, n.length > 0 {
-                let para = n.paragraphRange(
-                    for: NSRange(location: min(sel.location, n.length), length: 0))
-                var lineRange = para
-                if lineRange.length > 0,
-                    n.character(at: NSMaxRange(lineRange) - 1) == 0x0A
-                {
-                    lineRange.length -= 1
-                }
-                if case .rule = MarkScan.shape(n.substring(with: lineRange)).block {
-                    fresh = para
-                }
+            if textView.isFirstResponder, n.length > 0 {
+                // Every paragraph the selection TOUCHES, not the
+                // anchor's: dragging a selection handle upward moves
+                // `location`, so anchoring on it made the line you
+                // started from collapse and the line you reached expand
+                // while the handles were still down.
+                let clamped = NSRange(
+                    location: min(sel.location, n.length),
+                    length: min(sel.length, n.length - min(sel.location, n.length)))
+                fresh = n.paragraphRange(for: clamped)
             }
             guard fresh != revealedRule else { return }
             let stale = revealedRule
@@ -788,6 +904,12 @@ struct MarkdownEditor: UIViewRepresentable {
                     MarkStyler.apply(
                         to: view.textStorage, in: range, revealing: self.revealedRule)
                 }
+                // Embedded in a record card the editor is MEASURED, not
+                // scrolled, and a reveal can change how a line wraps
+                // without changing a character — so the card is told to
+                // measure again, or the extra line is clipped with no
+                // way to reach it.
+                view.invalidateIntrinsicContentSize()
             }
         }
 
@@ -959,10 +1081,20 @@ struct MarkdownEditor: UIViewRepresentable {
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.focused = true
+            // Symmetric with didEndEditing: the reveal is asked for when
+            // focus ARRIVES too, because the one path that focuses
+            // without moving the selection (updateUIView's
+            // becomeFirstResponder) would otherwise leave the caret's
+            // own line hidden while you typed into it.
+            updateRuleReveal(textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.focused = false
+            // Out of focus, nothing is revealed: the note is only what it
+            // means. updateRuleReveal reads isFirstResponder, so this is
+            // asking it again once the responder has gone.
+            updateRuleReveal(textView)
         }
 
         /// Inline formatting rides the SELECTION menu: it exists exactly
