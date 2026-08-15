@@ -20,16 +20,17 @@ import SwiftUI
 
 // MARK: - the slide-over container
 
-/// The properties panel: the desk's OWN layer, and it looks like one
-/// (owner, 2026-08-15: "the property panel … really is a panel belonging
-/// to desk").
+/// ONE recipe for both surfaces again (owner, 2026-08-15: "maybe we
+/// should keep properties stalled on the right not as a card for
+/// simplification's sake, and have the base appearance same as
+/// library"). Full screen, the app's own ground, no radius, no shadow,
+/// no inset — the properties panel stands on the right, it does not
+/// float over anything.
 ///
-/// A CARD over the note, not a screen of its own: it starts below the
-/// desk's top band, so the doors and the workspace name stay lit above
-/// it and you can see the thing it describes is still there; it carries
-/// the `surface` fill, a rounded leading corner and a shadow, so it
-/// reads as laid ON the desk rather than as a place you went to. The
-/// library takes the opposite treatment — see LibraryPlace below.
+/// The two still differ where it costs nothing: the LIBRARY pushes the
+/// desk off screen (it is a place) and the PROPERTIES panel slides over
+/// a desk that stays put (it is the desk's). That is motion, not paint,
+/// and paint waits for the surface pass.
 ///
 /// NO close button. It had a 40pt band of its own holding one chevron,
 /// then rode the first row, where it landed almost inside the title
@@ -37,25 +38,43 @@ import SwiftUI
 /// buttons"). A panel is DRAGGED back — the gesture the owner asked for
 /// on 2026-08-08, and the same one that opens it. The escape action
 /// below is what remains for anyone not using a finger.
-struct SidePanel<Content: View>: View {
+struct SidePanel<Band: View, Content: View>: View {
     let onDismiss: () -> Void
+    /// What sits in the panel's own top band, beside the pinned
+    /// workspace button that floats over every surface. Usually nothing
+    /// — see the EmptyView init below.
+    let band: Band
     @ViewBuilder let content: Content
 
+    init(
+        onDismiss: @escaping () -> Void,
+        @ViewBuilder band: () -> Band,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.onDismiss = onDismiss
+        self.band = band()
+        self.content = content()
+    }
+
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.top, 10)
-            .background(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: LivTheme.radiusLg,
-                    bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 0,
-                    style: .continuous
-                )
-                .fill(LivTheme.surface)
-                .ignoresSafeArea(edges: .bottom)
-            )
-            .shadow(color: .black.opacity(0.35), radius: 18, x: -6, y: 0)
-            .padding(.top, LivRow.topChrome)
+        VStack(spacing: 0) {
+            // The band both panels own: the same 56pt the desk's chrome
+            // owns, so the tops line up and nothing a panel draws lands
+            // under the workspace name floating above it.
+            HStack(spacing: 0) {
+                band
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: LivRow.topChrome)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            }
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(LivTheme.canvas.ignoresSafeArea())
         // VoiceOver's two-finger scrub, Voice Control's escape.
         .accessibilityAction(.escape, onDismiss)
         // No .transition: DeskHost positions these with an offset that
@@ -64,24 +83,9 @@ struct SidePanel<Content: View>: View {
     }
 }
 
-/// The library: a PLACE, the desk's peer — not a panel of it (owner,
-/// 2026-08-15: "the left 'panel' is really a separate main place of the
-/// app, the other being desk").
-///
-/// So it wears the app's own GROUND, the same `canvas` the desk stands
-/// on, edge to edge and corner to corner: two rooms on one floor. No
-/// card fill, no rounded corner, no shadow — nothing that would say
-/// "something laid over something else". It arrives by pushing the desk
-/// out of the way (rev 23), which is the motion half of the same idea.
-struct LibraryPlace<Content: View>: View {
-    let onDismiss: () -> Void
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(LivTheme.canvas.ignoresSafeArea())
-            .accessibilityAction(.escape, onDismiss)
+extension SidePanel where Band == EmptyView {
+    init(onDismiss: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.init(onDismiss: onDismiss, band: { EmptyView() }, content: content)
     }
 }
 
@@ -111,9 +115,8 @@ struct LibraryPanel: View {
     private let workspaceViews: [Feature] = [.calendar, .tasks, .everything]
 
     var body: some View {
-        LibraryPlace(onDismiss: onDismiss) {
+        SidePanel(onDismiss: onDismiss, band: { backChevron }) {
             VStack(spacing: 0) {
-                topBand
                 // A view opens IN here (owner, 2026-08-15: "do the views
                 // opening inside the library"). It is not a window over
                 // the desk any anymore: you are in the library, looking
@@ -196,33 +199,20 @@ struct LibraryPanel: View {
         }
     }
 
-    /// The library's OWN top band — the same 56pt the desk's chrome
-    /// owns, so the two rooms' tops line up, and the pinned workspace
-    /// button lands inside a band this place paints rather than over a
-    /// hole cut in its list. Empty on purpose: the button is the only
-    /// thing that belongs here.
-    private var topBand: some View {
-        HStack(spacing: 0) {
-            // Back to the library's own list. Only there is anything to
-            // go back FROM — on the list itself the band is empty, and
-            // the workspace button floats in the middle of it.
-            if desk.featureShown != nil {
-                Button { desk.featureShown = nil } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: LivType.strong, weight: .semibold))
-                        .foregroundStyle(LivTheme.text2)
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back to the library")
+    /// Back to the library's own list. Only there is anything to go
+    /// back FROM — on the list itself the band is empty, and the
+    /// workspace button floats in the middle of it.
+    @ViewBuilder private var backChevron: some View {
+        if desk.featureShown != nil {
+            Button { desk.featureShown = nil } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: LivType.strong, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
             }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: LivRow.topChrome)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to the library")
         }
     }
 

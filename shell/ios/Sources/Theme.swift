@@ -169,68 +169,82 @@ enum LivMotion {
 
 /// The same tokens at the UIColor level, for the UIKit text stack (the
 /// markdown editor draws with TextKit, which never sees SwiftUI Color).
+///
+/// These MIRROR LivTheme's values exactly; when one moves, the other
+/// moves in the same change.
 enum LivInk {
-    // These MIRROR LivTheme's values exactly; when one moves, the other
-    // moves in the same change (the editor draws in TextKit, which never
-    // sees a SwiftUI Color).
-    static let accent = hex(0xB9ADFF, light: 0x4939C0)
-    static let onAccent = hex(0x08070A, light: 0xFFFFFF)
-    static let surface = hex(0x141118, light: 0xFFFFFF)
-    static let panel2 = hex(0x262130, light: 0xE9E5F0)
-    static let text = hex(0xFFFFFF, light: 0x14121A)
-    static let text2 = hex(0xDCD6E8, light: 0x3C3648)
-    static let text3 = hex(0xB4ACC4, light: 0x534D65)
-    static let muted = hex(0xB4ACC4, light: 0x534D65)
-    static let border = hex(0xFFFFFF, 0.10, light: 0x000000, lightAlpha: 0.12)
+    static let accent = UIColor.tintColor
+    static let onAccent = UIColor.white
+    static let surface = UIColor.secondarySystemBackground
+    static let panel2 = UIColor.tertiarySystemFill
+    static let text = UIColor.label
+    static let text2 = UIColor.secondaryLabel
+    static let text3 = UIColor.tertiaryLabel
+    static let muted = UIColor.secondaryLabel
+    static let border = UIColor.separator
     /// Style-panel key fill — kept for any full-size key surface.
-    static let keyFill = hex(0x262130, light: 0xE9E5F0)
+    static let keyFill = UIColor.tertiarySystemFill
 }
 
 enum LivTheme {
-    // The one accent: the system blue, in each scheme's own shade.
-    static let accent = solid(0xB9ADFF, light: 0x4939C0)
-    static let accentSoft = tint(accent)
-    /// The violet arm ONE STEP DOWN from the accent. A note is the app's
-    /// default thing, so it wears the accent's family — but chrome and
-    /// content saying the same word was the old palette's flaw, and the
-    /// icon's own arms are exactly this: one hue, light to dark.
-    static let noteViolet = solid(0xA796FF, light: 0x352A93)
-    static let onAccent = solid(0x08070A, light: 0xFFFFFF)
+    // SYSTEM COLOURS, on purpose (owner, 2026-08-15: "revert colors and
+    // faces to as system like as possible… we should do the surface
+    // appearance last and thoroughly").
+    //
+    // What this replaces: a palette derived from the app icon — a violet
+    // accent, a near-black ground, a hand-mixed kind set, all measured to
+    // a 7:1 floor. It was not wrong, it was EARLY: a bespoke surface
+    // pays off once the app's shapes have settled, and until then it is
+    // a second thing to keep true on every screen. The system's own
+    // semantic colours cost nothing to keep true, adapt to light, dark,
+    // increased contrast and accessibility tints for free, and read as
+    // "an iOS app" rather than as a look someone chose in a hurry.
+    //
+    // The names below stay. When the surface pass comes, it changes the
+    // right-hand side of these lines and nothing else — which is the
+    // whole reason colour lives in a type here (standing rule 3).
 
-    // Elevation is tonal — canvas behind everything, surface for cards,
-    // panel for wells, panel2 for chips/small fills. Light inverts the
-    // ramp: white canvas, grouped greys for wells.
-    // The GROUND is not the card. In light both of these were #FFFFFF,
-    // so a card laid on the ground had nothing but its shadow to say so
-    // — and the library, which stands ON the ground, looked identical to
-    // the properties panel, which floats above it (owner, 2026-08-15).
-    // The grouped-grey ground is iOS's own convention for exactly this.
-    static let canvas = solid(0x08070A, light: 0xF5F4F9)
-    static let surface = solid(0x141118, light: 0xFFFFFF)
-    static let panel = solid(0x1C1822, light: 0xF4F2F8)
-    static let panel2 = solid(0x262130, light: 0xE9E5F0)
+    /// The app's tint: the system's, which follows the device.
+    static let accent = Color.accentColor
+    static let accentSoft = Color.accentColor.opacity(0.15)
+    /// A note's own colour. PURPLE, not the tint's own blue family: a
+    /// thing and the chrome that acts on it must never say the same
+    /// word, and the palette self-check holds us to it.
+    static let noteViolet = Color(.systemPurple)
+    /// Ink ON the tint — a filled button, a lit toggle. White on the
+    /// light-blue dark-mode tint reads at 3.2:1, so the dark scheme puts
+    /// black there instead and both clear the floor.
+    static let onAccent = Color(
+        UIColor { $0.userInterfaceStyle == .light ? .white : .black })
 
-    // The four text tiers + hairlines.
-    static let text = solid(0xFFFFFF, light: 0x14121A)
-    static let text2 = solid(0xDCD6E8, light: 0x3C3648)
-    static let text3 = solid(0xB4ACC4, light: 0x534D65)
-    // #707078 read at 3.7:1 against the canvas — under the 4.5:1
-    // readability minimum. #8E8E93 clears it on both canvases.
-    static let muted = solid(0xB4ACC4, light: 0x534D65)
-    static let border = solid(0xFFFFFF, 0.10, light: 0x000000, lightAlpha: 0.12)
-    static let border2 = solid(0xFFFFFF, 0.16, light: 0x000000, lightAlpha: 0.18)
+    // Elevation, the system's ramp: the ground behind everything, the
+    // secondary background for wells and cards, fills for chips.
+    static let canvas = Color(.systemBackground)
+    static let surface = Color(.secondarySystemBackground)
+    static let panel = Color(.secondarySystemBackground)
+    static let panel2 = Color(.tertiarySystemFill)
+
+    // The four text tiers + hairlines, the system's own.
+    static let text = Color(.label)
+    static let text2 = Color(.secondaryLabel)
+    static let text3 = Color(.tertiaryLabel)
+    static let muted = Color(.secondaryLabel)
+    static let border = Color(.separator)
+    static let border2 = Color(.opaqueSeparator)
 
     // The semantic set — the ONLY value colors (O2: VALUE_HEX retired),
-    // each in its scheme's own shade.
-    static let green = solid(0x57E39A, light: 0x0B5C36)
-    static let red = solid(0xFF7A8A, light: 0x9C1E2F)
-    static let amber = solid(0xFFB020, light: 0x6B4900)
-    static let purple = solid(0xFF6FA8, light: 0x97214A)
+    // each the system's shade of that word.
+    static let green = Color(.systemGreen)
+    static let red = Color(.systemRed)
+    static let amber = Color(.systemOrange)
+    /// Indigo, kept under the old name's slot: a TASK's colour, one
+    /// step from a note's purple.
+    static let purple = Color(.systemIndigo)
     // The rest of the KIND language (blueprints, 2026-08-12).
-    static let teal = solid(0xFFB020, light: 0x6B4900)
-    static let orange = solid(0xFFD27A, light: 0x5F4A0E)
-    static let pink = solid(0xFF9EC4, light: 0x8B2F57)
-    static let yellow = solid(0xFFE08A, light: 0x5C4E12)
+    static let teal = Color(.systemTeal)
+    static let orange = Color(.systemOrange)
+    static let pink = Color(.systemPink)
+    static let yellow = Color(.systemYellow)
 
     /// A tint that is a COLOUR, not a translucency.
     ///

@@ -76,13 +76,16 @@ struct DeskHost: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 6)
-            // The doors belong to the desk and leave with it — fading
-            // early, because their path crosses the pinned workspace
-            // button and two labels on one line is the defect the owner
-            // named the same day.
-            .offset(x: desk.deskShift)
+            // PINNED, like the workspace button between them: the
+            // library door has to stay reachable with the properties
+            // panel up (owner, 2026-08-15: "that button should be
+            // visible with the property card open"), and the panel
+            // covers the whole screen again. They fade only as the
+            // LIBRARY arrives — that is the one surface where the desk
+            // itself is gone.
             .opacity(1 - desk.deskTravel)
-            .accessibilityHidden(anyPanel)
+            .accessibilityHidden(desk.libraryShown)
+            .zIndex(3)
 
             // The workspace, top CENTRE, between the doors — on the desk,
             // full or empty, and OVER the library panel, which

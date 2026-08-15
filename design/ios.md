@@ -934,6 +934,30 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 24. The system's surface, until ours is earned (rev 27, owner 2026-08-16)
+
+Owner: *"revert colors and faces to as system like as possible. we
+should do the surface appearance last and thoroughly."*
+
+**Colour is the system's semantic set.** `LivTheme` and `LivInk` resolve
+to `systemBackground`, `secondarySystemBackground`, `label`,
+`secondaryLabel`, `tertiaryLabel`, `separator`, `tintColor` and the
+system hues. The icon-derived palette of rev 20 is withdrawn — not
+wrong, early. The token NAMES stay: when the surface pass comes it
+changes the right-hand side of those lines and nothing else, which is
+what colour-in-a-type is for (standing rule 3).
+
+**One panel recipe.** Rev 25's split (a card for the properties panel, a
+place for the library) is withdrawn too: both are full-height panels on
+the app's ground, both carry the same 56pt band. The distinction that
+survives is MOTION — the library pushes the desk away, the properties
+panel curtains over it — because it costs nothing and it is true.
+
+**The contrast rule follows the palette.** Ink 4.5:1 on the ground; ink
+on the tint 3:1; marks are not held to a contrast floor at all, but no
+two kinds may LOOK ALIKE (a colour distance, both schemes). When the
+palette is ours again, ink goes back to 7:1 and marks gain a 3:1 floor.
+
 ## 23. A view opens in the library (rev 26, owner 2026-08-15)
 
 Owner: *"do the views opening inside the library."*

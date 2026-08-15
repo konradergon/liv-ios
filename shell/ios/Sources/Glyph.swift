@@ -431,6 +431,22 @@ enum LivContrast {
         return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
     }
 
+    /// How far apart two colours LOOK, 0…1 — a plain RGB distance.
+    /// Contrast cannot answer this: two colours of the same lightness
+    /// and opposite hue have a ratio of 1.0 and are obviously different,
+    /// which is exactly the case a kind palette lives in.
+    static func distance(_ a: Color, _ b: Color, dark: Bool) -> Double {
+        let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
+        let x = UIColor(a).resolvedColor(with: traits)
+        let y = UIColor(b).resolvedColor(with: traits)
+        var xr: CGFloat = 0, xg: CGFloat = 0, xb: CGFloat = 0, xa: CGFloat = 0
+        var yr: CGFloat = 0, yg: CGFloat = 0, yb: CGFloat = 0, ya: CGFloat = 0
+        x.getRed(&xr, green: &xg, blue: &xb, alpha: &xa)
+        y.getRed(&yr, green: &yg, blue: &yb, alpha: &ya)
+        let d = pow(Double(xr - yr), 2) + pow(Double(xg - yg), 2) + pow(Double(xb - yb), 2)
+        return (d / 3).squareRoot()
+    }
+
     private static func luminance(_ color: UIColor) -> Double {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         color.getRed(&r, green: &g, blue: &b, alpha: &a)
@@ -444,33 +460,71 @@ enum LivContrast {
 
 /// Every colour a person reads, against the ground it is read on, in
 /// BOTH schemes: `simctl launch … -palette.selfcheck 1`.
+///
+/// The floor is WCAG AA (4.5:1), not the AAA 7:1 it was until
+/// 2026-08-15. The palette is the system's own semantic set now (owner:
+/// "revert colors and faces to as system like as possible"), and Apple
+/// designs those to AA — `secondaryLabel` on `systemBackground` is about
+/// 4.6:1. Holding the system to a standard it does not claim would mean
+/// this check failing on colours nobody here chose. When the surface
+/// pass comes and the palette is ours again, the floor goes back up.
 func livPaletteSelfCheck() -> [String] {
     var fail: [String] = []
-    let floor = 7.0
-    let onCanvas: [(String, Color)] = [
-        ("text", LivTheme.text), ("text2", LivTheme.text2), ("text3", LivTheme.text3),
-        ("muted", LivTheme.muted), ("accent", LivTheme.accent),
-        ("green", LivTheme.green), ("red", LivTheme.red), ("amber", LivTheme.amber),
-    ] + LivKind.allCases.map { ($0.wire, $0.color) }
+    // What a colour has to do decides what is asserted about it.
+    //
+    // INK is read: WCAG AA is 4.5:1, and the system's label colours are
+    // designed to exactly that. (It was 7:1 until 2026-08-15, which the
+    // app's own hand-mixed palette could reach; the palette is the
+    // system's now — owner: "revert colors and faces to as system like
+    // as possible" — and Apple does not claim AAA for it.)
+    //
+    // A MARK is not read, it is TOLD APART: a dot, a chip, a glyph's
+    // tint. Apple's vivid colours are 1.5–2.3:1 on white and always have
+    // been; holding systemYellow to a contrast floor would only mean
+    // failing on a colour nobody here chose. What matters for the icon
+    // language is that no two kinds look alike, and that is asserted
+    // below, in both schemes.
+    //
+    // When the surface pass makes the palette ours again, the ink floor
+    // goes back to 7:1 and marks get a 3:1 floor against the ground.
+    let inkFloor = 4.5
+    let inks: [(String, Color)] = [
+        ("text", LivTheme.text), ("text2", LivTheme.text2),
+        ("text3", LivTheme.text3), ("muted", LivTheme.muted),
+    ]
+    let marks: [(String, Color)] =
+        [("accent", LivTheme.accent)] + LivKind.allCases.map { ($0.wire, $0.color) }
     for dark in [true, false] {
         let scheme = dark ? "dark" : "light"
-        for (name, color) in onCanvas {
+        for (name, color) in inks {
             let r = LivContrast.ratio(color, LivTheme.canvas, dark: dark)
-            if r < floor {
+            if r < inkFloor {
                 fail.append("\(scheme): \(name) is \(String(format: "%.2f", r)):1 on the canvas")
             }
         }
-        // Text on the accent — the accent is LIGHT in dark mode, so its
-        // ink is the near-black, and getting that backwards is invisible
-        // in code and unreadable on screen.
+        // Ink ON the tint — a filled button, a lit toggle. 3:1 is the
+        // large-text and UI-component floor, and white-on-systemBlue is
+        // Apple's own pairing at 3.5:1.
         let onAccent = LivContrast.ratio(LivTheme.onAccent, LivTheme.accent, dark: dark)
-        if onAccent < floor {
+        if onAccent < 3.0 {
             fail.append("\(scheme): onAccent is \(String(format: "%.2f", onAccent)):1 on the accent")
         }
-        // Chrome and content must not say the same word.
-        let split = LivContrast.ratio(LivTheme.accent, LivKind.note.color, dark: dark)
-        if split < 1.15 {
-            fail.append("\(scheme): the accent and a note are the same colour")
+        // No two marks may look alike — including the chrome's tint,
+        // because chrome and content saying the same word was the old
+        // palette's flaw.
+        // A file and a link share one colour ON PURPOSE — both are
+        // something from outside the box — so that pair is not a clash.
+        let oneFamily: Set<Set<String>> = [["file", "link"]]
+        for i in marks.indices {
+            for j in marks.indices where j > i {
+                if oneFamily.contains([marks[i].0, marks[j].0]) { continue }
+                let d = LivContrast.distance(marks[i].1, marks[j].1, dark: dark)
+                if d < 0.12 {
+                    fail.append(
+                        "\(scheme): \(marks[i].0) and \(marks[j].0) look alike "
+                            + "(\(String(format: "%.2f", d)))")
+                }
+            }
         }
     }
     return fail
