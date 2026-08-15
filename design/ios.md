@@ -954,6 +954,23 @@ where the caret is, over the `[[query` when one is being typed.
 `[[` picker is deleted. "Create …" in that screen makes the thing and
 links to it in one tap.
 
+**Lists hang in one gutter** (rev 20, owner 2026-08-15: "do the list
+gutter alignment"). Every list line's words start at the same left
+edge — 23pt in, the width of the 15pt checkbox plus a space — and a
+wrapped line carries on under those words. The marker is not moved: what
+is still visible of it is measured and kerned out to the gutter's width
+on its last character, so the drawn dot and box stay exactly where their
+glyphs are. Nesting is one gutter per level (`firstLineHeadIndent`), and
+the two source spaces that carry a level are collapsed to nothing so a
+level is never indented twice.
+
+Two things TextKit taught us here, both measured on the simulator:
+`firstLineHeadIndent` is honoured only while a line's FIRST glyph is
+real, so a task's leading `- ` is collapsed (ink cleared, width kerned
+away) rather than hidden with null glyphs; and one negative kern for a
+run collapses only its last character, because an advance clamps at
+zero — each character pays for itself.
+
 **Syntax is shown only on the caret's line** (rev 19, owner 2026-08-15).
 Markers off that line are given NULL glyphs by LivLayoutManager's
 delegate — present in the buffer, zero width on screen. What is drawn in

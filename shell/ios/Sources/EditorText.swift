@@ -85,6 +85,17 @@ private enum EditorFont {
     static let mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let codeInline = UIFont.monospacedSystemFont(ofSize: 14.5, weight: .regular)
 
+    /// The list GUTTER: every list line's words start this far in, and a
+    /// line that wraps carries on under its words rather than under its
+    /// marker. Wide enough for the widest thing that hangs there — a
+    /// checkbox, which is drawn at 15pt — with a space after it.
+    static let listGutter: CGFloat = 23
+    /// One level of nesting is one gutter: a nested item's marker hangs
+    /// exactly where its parent's words start. The buffer nests with two
+    /// spaces per level (Editor's codec); those spaces carry no width of
+    /// their own — the paragraph's indent does the nesting.
+    static let indentUnit = 2
+
     /// Where a hyphen's ink centre sits, measured DOWN from the line's
     /// top, for the body font. Read off the font itself so the drawn
     /// rule lands exactly where the literal dashes show when the caret
@@ -249,6 +260,77 @@ enum MarkStyler {
                 font: font)
         }
 
+        /// The width of a stretch of the line, in the body font.
+        func width(_ r: NSRange, _ font: UIFont = EditorFont.body) -> CGFloat {
+            guard r.length > 0 else { return 0 }
+            let text = (line as NSString).substring(with: r) as NSString
+            return text.size(withAttributes: [.font: font]).width
+        }
+
+        /// Take a stretch of source OUT of the line's width without
+        /// taking it out of the line: the ink goes clear and the run's
+        /// own width is kerned away on its last character, so the pen
+        /// comes back to where the run began.
+        ///
+        /// This is not a second way to hide syntax — `mark` still owns
+        /// that. It is the ONE case hiding cannot serve: TextKit honours
+        /// a paragraph's `firstLineHeadIndent` only while the line's
+        /// first glyph is real, so a list line that began with NULL
+        /// glyphs was laid out against `headIndent` instead and its text
+        /// sat one whole gutter right of its neighbours' (measured on
+        /// the simulator, 2026-08-15).
+        /// Each character pays for ITSELF: one negative kern for the
+        /// whole run is clamped at a zero advance and collapses only the
+        /// last character's worth (measured — a task's "- " lost 4.2 of
+        /// its 11.4 points that way).
+        func collapse(_ r: NSRange, font: UIFont = EditorFont.body) {
+            guard r.length > 0 else { return }
+            storage.addAttributes(
+                [.font: font, .foregroundColor: UIColor.clear], range: abs(r))
+            for i in r.location..<NSMaxRange(r) {
+                let one = NSRange(location: i, length: 1)
+                storage.addAttribute(
+                    .kern, value: NSNumber(value: Double(-width(one, font))),
+                    range: abs(one))
+            }
+        }
+
+        /// Hang the marker in a GUTTER: the words of every list line
+        /// start at one left edge whatever the marker is, and a line
+        /// that wraps carries on under its own words instead of under
+        /// its marker (owner, 2026-08-15: "do the list gutter
+        /// alignment").
+        ///
+        /// The marker is not moved — it is PADDED. Whatever of it is
+        /// still visible (the dot's cleared dash, a task's box, an
+        /// ordered number) is measured, and the difference to the gutter
+        /// is added as kerning on its last character. So the drawn dot
+        /// and box stay exactly where their glyphs are, and the words
+        /// after them line up.
+        ///
+        /// Nesting is the paragraph's indent, one gutter per level; the
+        /// two source spaces that carry a level are collapsed, or every
+        /// level would be indented twice — once by the style and once by
+        /// its own spaces.
+        func gutter(_ visible: NSRange, font: UIFont = EditorFont.body) {
+            guard visible.length > 0 else { return }
+            let level = shape.indent / EditorFont.indentUnit
+            let base = CGFloat(level) * EditorFont.listGutter
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 2
+            paragraph.firstLineHeadIndent = base
+            paragraph.headIndent = base + EditorFont.listGutter
+            storage.addAttribute(
+                .paragraphStyle, value: paragraph,
+                range: abs(NSRange(location: 0, length: lineLen)))
+            collapse(NSRange(location: 0, length: shape.indent), font: font)
+            let pad = EditorFont.listGutter - width(visible, font)
+            guard pad > 0.5 else { return }
+            storage.addAttribute(
+                .kern, value: NSNumber(value: Double(pad)),
+                range: abs(NSRange(location: NSMaxRange(visible) - 1, length: 1)))
+        }
+
         func mark(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             // A marker with NO content is the only thing there is to
@@ -281,16 +363,27 @@ enum MarkStyler {
             storage.addAttributes(
                 [.foregroundColor: UIColor.clear, .livBullet: NSNumber(value: true)],
                 range: abs(NSRange(location: shape.indent, length: 1)))
+            gutter(NSRange(location: shape.indent, length: shape.marker.length - shape.indent))
         case .ordered:
             dim(shape.marker)
+            gutter(NSRange(location: shape.indent, length: shape.marker.length - shape.indent))
         case .task(let checked):
             // The leading "- " has nothing drawn in its place, so it
             // goes; the brackets keep their width for the box.
             if let box = shape.box {
-                mark(
-                    NSRange(
-                        location: shape.indent, length: box.location - shape.indent))
+                let lead = NSRange(
+                    location: shape.indent, length: box.location - shape.indent)
+                if revealed {
+                    dim(lead)
+                } else {
+                    collapse(lead)
+                }
                 dim(NSRange(location: box.location, length: shape.marker.length - box.location))
+                // Only what is still VISIBLE counts toward the gutter:
+                // on the caret's line the leading "- " is showing and
+                // takes part of it, off the line it is collapsed away.
+                let from = revealed ? shape.indent : box.location
+                gutter(NSRange(location: from, length: shape.marker.length - from))
             } else {
                 dim(NSRange(location: 0, length: shape.marker.length))
             }
@@ -502,7 +595,9 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             rect.origin.x += origin.x
             rect.origin.y += origin.y
             // Centred on the line's own height, exactly as the box is —
-            // markers carry the body font now, so the two agree.
+            // markers carry the body font now, so the two agree. Its X
+            // is the dash's own, and the dash starts at the gutter's
+            // left edge because the paragraph's indent put it there.
             let side: CGFloat = 5
             let dot = CGRect(
                 x: rect.midX - side / 2,
@@ -518,7 +613,9 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             rect.origin.x += origin.x
             rect.origin.y += origin.y
             // A 15pt box, centred on the line's own height rather than
-            // on the glyph box — same lineSpacing trap as the rule above.
+            // on the glyph box — same lineSpacing trap as the rule
+            // above. Its X is the brackets' own; the collapsed "- "
+            // before them leaves them at the gutter's left edge.
             let side: CGFloat = 15
             let box = CGRect(
                 x: rect.midX - side / 2,

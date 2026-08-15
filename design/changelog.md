@@ -1,5 +1,37 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — one gutter for every list
+
+Owner: *"do the list gutter alignment."*
+
+**Every list line's words start at the same left edge**, whatever hangs
+in front of them — a dot, a checkbox, a number. The marker is not moved,
+it is PADDED: whatever of it is still visible is measured and the
+difference to the gutter (23pt, the width of a 15pt checkbox and a
+space) is added as kerning on the marker's last character. A line that
+wraps carries on under its own words, not under its marker.
+
+**Nesting is one gutter per level**, so a nested item's marker hangs
+exactly where its parent's words start. The two source spaces that carry
+a level are collapsed to nothing, or every level would be indented
+twice — once by the paragraph style and once by its own spaces.
+
+**Why hiding could not do that collapsing.** Measured on the simulator:
+TextKit honours a paragraph's `firstLineHeadIndent` only while the
+line's first glyph is real. A task line starting with NULL glyphs (the
+hidden `- `) was laid out against `headIndent` instead, and its text sat
+one whole gutter right of its neighbours' — the "known and left" note
+from the batch below, explained. So a task's `- ` is now COLLAPSED
+rather than hidden: ink cleared, width kerned away, first glyph real.
+`mark` still owns hiding; this is the one case it cannot serve.
+
+Also measured: one negative kern for a whole run collapses only its last
+character, because an advance is clamped at zero. Each character pays
+for itself.
+
+Numbers past 9 (`10. `) are wider than the gutter and push their own
+text ~2pt right; left as is.
+
 ## 2026-08-15 — the syntax shows only where you are
 
 Owner: *"have markdown syntax (like ~) hidden when out of focus, only
@@ -51,7 +83,8 @@ hop, the same rule the reveal and the link picker already follow.
 **Known and left**: a task's text and a bullet's text no longer share an
 exact left edge (the task's `- ` is gone, the bullet's dash is still
 holding the dot's rect). Making list markers hang in a common gutter is
-a paragraph-indent change, not a colour or a glyph one.
+a paragraph-indent change, not a colour or a glyph one. *(Done in the
+batch above.)*
 
 ## 2026-08-15 — the palette comes from the icon, and it is measured
 
