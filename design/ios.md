@@ -934,6 +934,37 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 20. The three surfaces are one strip (rev 23, owner 2026-08-15)
+
+Owner: *"Now the left and right panels are like curtains. Better would
+be if when you open them you 'swipe away' from the previous view, as if
+it sits on the left / right off screen."*
+
+The panels used to slide in over a stationary desk. Now the desk travels
+too, exactly one screen in the opposite direction, so the three surfaces
+read as one strip — **library | desk | properties** — and opening a
+panel scrolls the strip rather than dropping a curtain.
+
+One number does it. `DeskModel.panelProgress(_:)` (0 off screen, 1 home)
+already drove the panel's own offset; `deskShift` is the same progress
+turned around, and everything that belongs to the desk reads it: the
+body, the doors, the bottom bar and the minimised pill. The drag moved
+from DeskHost's `@State` onto the model for exactly that reason — the
+bar is drawn by RootView, one level up.
+
+Three things this change had to get right:
+
+- **The workspace button does not travel.** It is the one control that
+  belongs to the whole strip, and the 2026-08-13 ruling stands: it stays
+  visible while you swipe into the library.
+- **The doors fade over the first third of the journey** (`deskTravel`).
+  They ride the desk, so their path crosses the pinned workspace button;
+  fading early means a door never prints itself over the workspace name.
+- **The bottom bar leaves with the desk instead of popping.** It used to
+  be dropped from the hierarchy the moment a panel was shown — halfway
+  through the desk's journey. Now it simply rides off screen, and only
+  the keyboard and the one menu still take it away.
+
 ## 19. Nothing inert on screen (rev 22, owner 2026-08-15)
 
 Owner: *"Irrelevant properties should be hidden from the user. General

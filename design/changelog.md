@@ -1,5 +1,25 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the panels stop being curtains
+
+Owner: *"Now the left and right panels are like curtains. Better would
+be if when you open them you 'swipe away' from the previous view, as if
+it sits on the left / right off screen."*
+
+The desk now travels with the panel — one screen, the other way — so the
+library, the desk and the properties panel read as one strip you scroll
+instead of two curtains over a fixed stage. The panel's own progress
+drives both offsets, so they cannot disagree by a pixel; the drag moved
+onto DeskModel because the bottom bar, which is the desk's furniture, is
+drawn one level up in RootView.
+
+The details that make it read right: the workspace button stays pinned
+(it belongs to the whole strip, and that ruling is a fortnight old); the
+two doors fade over the first third of the journey, because their path
+crosses that pinned button and two labels on one line is the defect from
+the same morning; and the bottom bar rides off screen with the desk
+rather than being dropped from the hierarchy halfway through the slide.
+
 ## 2026-08-15 — a row with nothing in it is not a row
 
 Owner: *"Have all 'none for this kind' in properties out of view.

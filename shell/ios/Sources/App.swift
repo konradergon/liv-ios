@@ -122,17 +122,27 @@ struct RootView: View {
             // way out of one, and its `+` is what the empty desk's hint
             // points at. The pill follows the bar, since it is
             // positioned against it.
-            if let id = desk.minimisedRecord, !desk.libraryShown, !keyboard.up {
+            if let id = desk.minimisedRecord, !keyboard.up {
                 MinimisedRecordPill(id: id)
                     .padding(.bottom, 62)
+                    // Furniture of the desk, so it leaves with the desk
+                    // rather than hanging over the panel that replaced
+                    // it (owner, 2026-08-15).
+                    .offset(x: desk.deskShift)
+                    .accessibilityHidden(desk.deskShift != 0)
                     .zIndex(2)
             }
-            if !desk.libraryShown && !desk.inspectorShown && !keyboard.up
-                && desk.menu == nil
-            {
+            if !keyboard.up && desk.menu == nil {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
+                    // The bar is the desk's, and LEAVES WITH IT. It used
+                    // to be dropped the moment a panel was shown, which
+                    // now reads as the bar popping out halfway through
+                    // the desk's journey; travelling off screen with the
+                    // desk is the same disappearance, told honestly.
+                    .offset(x: desk.deskShift)
+                    .accessibilityHidden(desk.deskShift != 0)
                     // The extra offset carries it past the bottom safe
                     // area; the z keeps the exit above the opaque desk
                     // (audit, 2026-08-01). Both are pure translations.

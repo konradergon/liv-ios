@@ -107,6 +107,76 @@ final class DeskModel: ObservableObject {
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
     var newTabMenu: (() -> LivMenu)?
+    /// One panel being dragged: which one, whether the drag OPENS or
+    /// CLOSES it, and the finger's travel so far. It lives on the MODEL
+    /// rather than in DeskHost because the bottom bar — which belongs to
+    /// the desk and travels with it — is drawn by RootView, one level up.
+    struct PanelDrag: Equatable {
+        enum Which { case library, inspector }
+        let which: Which
+        let opening: Bool
+        var amount: CGFloat = 0
+
+        /// Where the drag started from: 0 for an opening drag, 1 for a
+        /// closing one.
+        var base: CGFloat { opening ? 0 : 1 }
+
+        /// Finger travel that makes this panel MORE visible. The library
+        /// comes from the left, so rightward is toward; the properties
+        /// come from the right, so leftward is.
+        var toward: CGFloat { which == .library ? amount : -amount }
+
+        /// 0 = fully off screen, 1 = fully in. `width` is the screen.
+        func progress(_ width: CGFloat) -> CGFloat {
+            guard width > 0 else { return base }
+            return min(1, max(0, base + toward / width))
+        }
+
+        /// The travel that would land the panel exactly at `target`.
+        func amount(for target: CGFloat, width: CGFloat) -> CGFloat {
+            let toward = (target - base) * width
+            return which == .library ? toward : -toward
+        }
+    }
+
+    /// Which panel the finger is currently dragging. nil = none.
+    @Published var panelDrag: PanelDrag?
+
+    /// How far IN a panel is: 0 fully off screen, 1 fully home. ONE
+    /// answer, because three things read it — the panel's own offset,
+    /// the desk's travel, and the doors' fade — and a pixel of
+    /// disagreement between them is visible.
+    func panelProgress(_ which: PanelDrag.Which) -> CGFloat {
+        let shown = which == .library ? libraryShown : inspectorShown
+        guard panelDrag?.which == which else { return shown ? 1 : 0 }
+        return panelDrag!.progress(UIScreen.main.bounds.width)
+    }
+
+    /// The desk's own travel. The three surfaces are ONE STRIP — library,
+    /// desk, properties — so a panel does not drop a curtain over the
+    /// desk: the desk swipes away and the panel takes the screen it
+    /// leaves (owner, 2026-08-15: "when you open them you 'swipe away'
+    /// from the previous view, as if it sits on the left / right off
+    /// screen").
+    ///
+    /// The library pushes the desk RIGHT, the properties pull it LEFT,
+    /// each by exactly the screen the panel covers, so panel and desk
+    /// are locked together at every point of the drag. Both progresses
+    /// in one expression: only one panel can move at a time, and the
+    /// subtraction stays honest if that ever stops being true.
+    var deskShift: CGFloat {
+        (panelProgress(.library) - panelProgress(.inspector))
+            * UIScreen.main.bounds.width
+    }
+
+    /// How far the desk has travelled, as a fraction of the screen.
+    /// The doors ride the desk, so they would slide THROUGH the pinned
+    /// workspace button on the way out; they fade over the first third
+    /// of the journey instead, and are gone before they reach it.
+    var deskTravel: CGFloat {
+        min(1, abs(deskShift) / max(1, UIScreen.main.bounds.width) * 3)
+    }
+
     /// The metadata inspector covers the active entity tab's body.
     /// Lifted to the model so DeskHost's floating chevron can drive it;
     /// reset on every tab move — metadata is a visit, not a mode.

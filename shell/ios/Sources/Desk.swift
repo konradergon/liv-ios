@@ -17,39 +17,10 @@ struct DeskHost: View {
 
     /// The ••• menu's trash leg asks once before it acts.
     @State private var confirmTrash = false
-    /// Which panel the finger is currently dragging, and how far it has
-    /// moved. nil = no drag in flight.
-    @State private var dragging: PanelDrag?
+    /// The drag lives on the model now (the bar reads it too); this is
+    /// the short name for it in here.
+    private typealias PanelDrag = DeskModel.PanelDrag
 
-    /// One panel being dragged: which one, whether the drag OPENS or
-    /// CLOSES it, and the finger's travel so far.
-    struct PanelDrag: Equatable {
-        enum Which { case library, inspector }
-        let which: Which
-        let opening: Bool
-        var amount: CGFloat = 0
-
-        /// Where the drag started from: 0 for an opening drag, 1 for a
-        /// closing one.
-        var base: CGFloat { opening ? 0 : 1 }
-
-        /// Finger travel that makes this panel MORE visible. The library
-        /// comes from the left, so rightward is toward; the properties
-        /// come from the right, so leftward is.
-        var toward: CGFloat { which == .library ? amount : -amount }
-
-        /// 0 = fully off screen, 1 = fully in. `width` is the screen.
-        func progress(_ width: CGFloat) -> CGFloat {
-            guard width > 0 else { return base }
-            return min(1, max(0, base + toward / width))
-        }
-
-        /// The travel that would land the panel exactly at `target`.
-        func amount(for target: CGFloat, width: CGFloat) -> CGFloat {
-            let toward = (target - base) * width
-            return which == .library ? toward : -toward
-        }
-    }
     /// One transient acknowledgment chip: text, and an optional Undo verb
     /// (the trash chip carries one; a plain acknowledgment does not).
     @State private var chipText: String?
@@ -80,6 +51,7 @@ struct DeskHost: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .offset(x: desk.deskShift)
             .accessibilityHidden(anyPanel)
 
             // The doors (design/ios.md §6 rev 6): top-left opens the
@@ -104,9 +76,12 @@ struct DeskHost: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 6)
-            // Full-screen panels cover the doors; fade them in the same
-            // motion so the exit slide never shows dead controls.
-            .opacity(anyPanel ? 0 : 1)
+            // The doors belong to the desk and leave with it — fading
+            // early, because their path crosses the pinned workspace
+            // button and two labels on one line is the defect the owner
+            // named the same day.
+            .offset(x: desk.deskShift)
+            .opacity(1 - desk.deskTravel)
             .accessibilityHidden(anyPanel)
 
             // The workspace, top CENTRE, between the doors — on the desk,
@@ -125,7 +100,7 @@ struct DeskHost: View {
             // Mounted while shown OR while a finger is dragging one, and
             // positioned by that drag — they follow the hand rather than
             // waiting for it to let go (owner, 2026-08-08).
-            if desk.libraryShown || dragging?.which == .library {
+            if desk.libraryShown || desk.panelDrag?.which == .library {
                 LibraryPanel(
                     onDismiss: {
                         withAnimation(LivMotion.nav) { desk.libraryShown = false }
@@ -140,7 +115,7 @@ struct DeskHost: View {
                 .zIndex(1)
             }
             if case .entity(let id) = desk.activeTab?.content,
-                desk.inspectorShown || dragging?.which == .inspector
+                desk.inspectorShown || desk.panelDrag?.which == .inspector
             {
                 SidePanel(
                     edge: .trailing,
@@ -172,7 +147,7 @@ struct DeskHost: View {
         // failed to reach SwiftUI's forwarding (each tried, each
         // beaten, 2026-08-09). A tap never latches, so taps are never
         // disabled.
-        .disabled(dragging != nil)
+        .disabled(desk.panelDrag != nil)
         // Both side panels are dragged in from ANYWHERE and back out the
         // same way, and they FOLLOW the finger (owner, 2026-08-08). The
         // drag is a real UIKit recognizer (PanelDrag.swift) because of a
@@ -190,11 +165,11 @@ struct DeskHost: View {
                 onLatch: { dx in
                     if let claim = claimPanel(dx) {
                         endEditing()
-                        dragging = PanelDrag(
+                        desk.panelDrag = PanelDrag(
                             which: claim.which, opening: claim.opening, amount: dx)
                     }
                 },
-                onMove: { dx in dragging?.amount = dx },
+                onMove: { dx in desk.panelDrag?.amount = dx },
                 onEnd: { dx, velocity in settleDrag(dx, velocity) }
             )
             .frame(width: 0, height: 0)
@@ -242,7 +217,7 @@ struct DeskHost: View {
     /// surface the workspace button steps aside for: it describes this
     /// note, and the workspace is not one of its facts.
     private var inspectorUp: Bool {
-        desk.inspectorShown || dragging?.which == .inspector
+        desk.inspectorShown || desk.panelDrag?.which == .inspector
     }
 
     /// A panel over a live keyboard would sit UNDER it — the keyboard is a
@@ -264,11 +239,7 @@ struct DeskHost: View {
     /// drag in flight is simply open (0) — the transition handles its
     /// arrival and departure as before.
     private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
-        let width = UIScreen.main.bounds.width
-        let shown = which == .library ? desk.libraryShown : desk.inspectorShown
-        let progress = dragging?.which == which
-            ? dragging!.progress(width) : (shown ? 1 : 0)
-        let hidden = (1 - progress) * width
+        let hidden = (1 - desk.panelProgress(which)) * UIScreen.main.bounds.width
         return which == .library ? -hidden : hidden
     }
 
@@ -295,7 +266,7 @@ struct DeskHost: View {
     /// Let go: finish the journey the finger started, or put it back.
     /// A flick commits from anywhere; a slow drag commits past halfway.
     private func settleDrag(_ dx: CGFloat, _ velocity: CGFloat) {
-        guard let live = dragging else { return }
+        guard let live = desk.panelDrag else { return }
         let width = UIScreen.main.bounds.width
         // A real flick is fast: 700pt/s is a sharp throw, well above
         // the drift a finger has at the end of a deliberate drag. At
@@ -316,9 +287,9 @@ struct DeskHost: View {
             case .library: desk.libraryShown = shown
             case .inspector: desk.inspectorShown = shown
             }
-            dragging?.amount = live.amount(for: shown ? 1 : 0, width: width)
+            desk.panelDrag?.amount = live.amount(for: shown ? 1 : 0, width: width)
         } completion: {
-            dragging = nil
+            desk.panelDrag = nil
         }
     }
 
