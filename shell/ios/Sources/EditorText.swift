@@ -814,8 +814,6 @@ struct MarkdownEditor: UIViewRepresentable {
     var onLink: () -> Void
     /// The toolbar's `+` — NoteEditor raises the insert menu.
     var onInsert: () -> Void
-    /// The toolbar's outline key — NoteEditor presents the sheet.
-    var onOutline: () -> Void
     /// A note carries its title inside the scroll view; a record's notes
     /// are titled by the card above them.
     var showsTitle: Bool = true
@@ -1309,8 +1307,6 @@ struct MarkdownEditor: UIViewRepresentable {
                 // that is sliding up underneath it.
                 view.resignFirstResponder()
                 parent.onInsert()
-            case .outline:
-                parent.onOutline()
             case .dismiss:
                 view.resignFirstResponder()
             }
@@ -1438,7 +1434,7 @@ enum StyleVerb {
     case undo, redo, link, insert
     case heading, bold, italic, strike, code
     case task, bullet, ordered, quote, indent, outdent, rule
-    case outline, dismiss
+    case dismiss
 }
 
 /// One row directly above the keyboard, horizontally scrollable — the

@@ -578,13 +578,19 @@ struct TabCard: View {
         age.map { "\(kind.uppercased()) · \($0)D" } ?? kind.uppercased()
     }
 
-    /// 3–4 preview lines. Content bodies are not on the wire yet, so the
-    /// honest preview is the property cells.
+    /// 3–4 preview lines, made of the property cells the entity actually
+    /// holds — including its content, which the snapshot flattens onto
+    /// the wire.
+    ///
+    /// "type" is skipped: the card's own kind dot and its footer already
+    /// say it, so a preview whose first line reads "type · note" spends
+    /// its most valuable line repeating the two things beside it (owner,
+    /// 2026-08-15). Today and Everything skip it the same way.
     private var excerpt: String {
         guard let row else { return "Deleted" }
         var lines: [String] = []
         for cell in row.cells ?? [] {
-            guard let p = cell.property, !p.isEmpty, p != "name",
+            guard let p = cell.property, !p.isEmpty, p != "name", p != "type",
                 let v = cell.value, !v.isEmpty
             else { continue }
             lines.append("\(p) · \(v)")

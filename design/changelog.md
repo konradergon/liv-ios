@@ -20,6 +20,20 @@ more than this one row: three tests, in order — can you act on it here;
 does it become actable from something you can do here; does it tell you
 something you want to know. Anything failing all three does not appear.
 
+**A sweep of the whole shell against the rule** found one more thing the
+user sees and four dead things behind it. Seen: every tab card's preview
+opened with `type · note`, spending its best line repeating the kind dot
+beside it and the kind footer below it — `type` is skipped now, the way
+Today and Everything already skipped it. Dead: `EntityDetailView`, a
+73-line pushed wrapper nothing has pushed since the desk took the title;
+`displayName`, no callers; the picker's "Nothing to choose from.", which
+needs a closed vocabulary with zero options — not representable; and the
+`StyleVerb.outline` key plumbing, orphaned when Outline moved into the
+`+` menu. Eight candidates were argued down and kept, among them the
+library's Filters heading (its band is never empty), the editor's `+`
+(it opens a real menu), and the ••• door on a deleted note (Share and
+Export are the last way to get that text out).
+
 ## 2026-08-15 — templates leave, and messages stop shouting over the workspace
 
 Owner, over a screenshot of a template note: *"the message is on top of

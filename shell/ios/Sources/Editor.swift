@@ -903,7 +903,6 @@ struct NoteEditor: View {
             bridge: bridge, onOpenRef: onOpenRef,
             onLink: { linkShown = true },
             onInsert: { insertMenu() },
-            onOutline: { outlineShown = true },
             showsTitle: showsTitle, embedded: embedded
         )
         .frame(

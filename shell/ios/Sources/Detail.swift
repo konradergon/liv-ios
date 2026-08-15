@@ -3,8 +3,8 @@
 // status menu, one compact row per property, trash + undo. Add-property
 // moved behind the Settings door (§10 — schema growth is not daily use);
 // the Details chip row still adds values for the fixed fields.
-// The Desk body owns the title; EntityDetailView stays as a thin pushed
-// wrapper (title + inspector) for the NavigationStack callers. Content
+// The Desk body owns the title; the inspector is hosted by the desk's
+// right-hand panel and by a record card, and nothing pushes it. Content
 // editing waits for M2 (CAS). Rows 40pt+, hairline separators, no cards.
 
 import SwiftUI
@@ -403,15 +403,6 @@ struct EntityInspector: View {
         }
     }
 
-    /// The item's own name, or the derived title every list shows, or a
-    /// grey "Untitled". The bare `#id` the core emits for an entity with
-    /// nothing at all reads as "Untitled" here — an id is a fine label in
-    /// a list of many, and no label at all above a single item.
-    private func displayName(_ row: EntityRow) -> String {
-        let derived = livRowTitle(row)
-        return derived == "#\(row.id)" ? "Untitled" : derived
-    }
-
     /// "Created Tue 4 Aug 18:52", or nothing if the box never said.
     private func createdLine(_ row: EntityRow) -> String? {
         let raw = (row.cells ?? [])
@@ -591,8 +582,7 @@ struct InspectorValueSheet: View {
                         row("Create \u{201C}\(trimmed)\u{201D}", accent: true) { add(trimmed) }
                     }
                     if all.isEmpty && trimmed.isEmpty {
-                        EmptyHint(
-                            field.closed ? "Nothing to choose from." : "Type to create one.")
+                        EmptyHint("Type to create one.")
                     }
                 }
             }
@@ -672,82 +662,6 @@ struct InspectorValueSheet: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
         }
-    }
-}
-
-// MARK: - the pushed wrapper (title + inspector; Today/Tasks/Search still push it)
-
-struct EntityDetailView: View {
-    let id: UInt64
-
-    @EnvironmentObject var box: BoxModel
-
-    @State private var title = ""
-    @State private var titleSeeded = false
-    @FocusState private var titleFocused: Bool
-
-    init(id: UInt64) {
-        self.id = id
-    }
-
-    var body: some View {
-        Group {
-            if box.entity(id) != nil {
-                VStack(alignment: .leading, spacing: 0) {
-                    titleField
-                        .padding(.horizontal, 16)
-                    EntityInspector(id: id)
-                }
-            } else {
-                EmptyHint("This was deleted.")
-                    .frame(maxHeight: .infinity, alignment: .top)
-            }
-        }
-        .background(LivTheme.canvas)
-        .navigationBarTitleDisplayMode(.inline)
-        .tint(LivTheme.accent)
-        .onAppear { seedTitle() }
-        .onChange(of: box.entity(id)?.title) {
-            // The snapshot moved under us (undo, another surface): reseed
-            // unless the caret is in the field — a draft never loses.
-            if !titleFocused {
-                titleSeeded = false
-                seedTitle()
-            }
-        }
-    }
-
-    private var titleField: some View {
-        TextField("Untitled", text: $title, axis: .vertical)
-            .font(.system(size: LivType.title, weight: .semibold))
-            .foregroundStyle(LivTheme.text)
-            .lineLimit(1...3)
-            .focused($titleFocused)
-            .submitLabel(.done)
-            .onSubmit { commitTitle() }
-            .onChange(of: titleFocused) {
-                if !titleFocused { commitTitle() }
-            }
-            .padding(.vertical, 8)
-    }
-
-    private func seedTitle() {
-        guard !titleSeeded else { return }
-        title = box.entity(id)?.title ?? ""
-        titleSeeded = true
-    }
-
-    private func commitTitle() {
-        // Never onto a gone or trashed note (same guard as the desk's
-        // title commit — a post-trash commit re-writes the old name).
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = row.title ?? ""
-        let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard typed != stored, !typed.isEmpty else {
-            title = stored  // an emptied field reverts, never erases the name
-            return
-        }
-        box.set(id, "name", typed)
     }
 }
 
