@@ -1,5 +1,32 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the + works on an empty desk
+
+Owner, from the phone, over a screenshot of a workspace with no tabs
+reading "No tabs. The + below makes one.": *"no it doesn't."*
+
+**The + was DISABLED whenever the desk had no tabs.** One argument in
+BottomBar: `enabled: !desk.tabs.isEmpty`. A new workspace, or one whose
+last tab you closed, could not be given a tab from the bar at all.
+
+The guard was right when it was written (2026-08-04): back then an empty
+desk's BODY was the New Tab page, so a + that summoned it was a second
+door to the room you were standing in. That page was deleted on
+2026-08-13 and its `guard !tabs.isEmpty` inside `newTab()` went with it —
+but the button's own `enabled:` did not. The empty desk then started
+pointing at the button, so the guard became exactly the lie it had been
+written to prevent.
+
+Everything downstream was already fine: the create menu builds on an
+empty desk and its host is active there. Enabling the button is the
+whole fix. The tab switcher's own + and its dashed New Tab card never
+carried the guard, which is why the bug looked like "only that one
+button is dead".
+
+**The comments that hid it are corrected too.** Five files still said
+the empty desk shows the New Tab chooser as its body. Prose that
+describes a deleted screen is how a stale guard survives a deletion.
+
 ## 2026-08-15 — one gutter for every list
 
 Owner: *"do the list gutter alignment."*

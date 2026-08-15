@@ -124,13 +124,10 @@ struct RootView: View {
             // editor's formatting row, two bars deep (owner,
             // 2026-08-02).
             //
-            // It does NOT retire for the New Tab chooser any more
-            // (owner, 2026-08-10). The chooser had a bar when it was the
-            // empty desk's body and none when summoned by `+` — the same
-            // screen, furnished two ways depending on how you got there.
-            // Drawing over the chooser is what we want: the bar is the
-            // way back to your tabs. The pill follows the bar, since it
-            // is positioned against it.
+            // It does NOT retire for an EMPTY desk: the bar is the only
+            // way out of one, and its `+` is what the empty desk's hint
+            // points at. The pill follows the bar, since it is
+            // positioned against it.
             if let id = desk.minimisedRecord, !desk.libraryShown, !keyboard.up {
                 MinimisedRecordPill(id: id)
                     .padding(.bottom, 62)
@@ -317,7 +314,7 @@ struct RootView: View {
             {
                 desk.open(hit)
             }
-        // rev 6: the chooser overlay (or the empty desk's own body).
+        // The create menu, from the bar's `+`.
         case "newtab": desk.newTab()
         case "switcher":
             for id in newest.prefix(3).reversed() { desk.open(id) }

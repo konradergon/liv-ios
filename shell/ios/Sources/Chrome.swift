@@ -72,8 +72,8 @@ enum DeskTabContent: Equatable {
 /// M4: ONE tab plane whose open SET is remembered per workspace — never a
 /// second tab bar (that was the old app's three-tab-system debt).
 /// Switching workspace saves the current set and restores that
-/// workspace's. Rev 6: the desk MAY be empty — an empty desk shows the
-/// New Tab chooser as its body; the chooser never occupies a tab.
+/// workspace's. The desk MAY be empty: an empty desk shows a hint
+/// pointing at the bar's `+`, which is the only way back to a tab.
 final class DeskModel: ObservableObject {
     /// The feature window currently covering the chrome (sheet item);
     /// nil = the desk.
@@ -148,8 +148,8 @@ final class DeskModel: ObservableObject {
         withAnimation(LivMotion.nav) { minimisedRecord = nil }
     }
 
-    /// A creation door committed an entity: close the chooser and land
-    /// it. Each door gets its own tab.
+    /// A creation door committed an entity: close the menu and land it.
+    /// Each door gets its own tab.
     ///
     /// This used to carry a LATCH — one tab per capture-sheet session,
     /// rewritten by each serial commit (§6 tab hygiene). The capture
@@ -325,7 +325,7 @@ final class DeskModel: ObservableObject {
     }
 
     /// One plane's saved set. Entity ids only. An empty plane restores as
-    /// genuinely empty — the empty desk shows the chooser (rev 6).
+    /// genuinely empty — the empty desk shows its hint, and the `+`.
     private static func load(_ key: String) -> ([DeskTab], Int) {
         var restored: [DeskTab] = []
         var active = -1
@@ -443,8 +443,8 @@ final class DeskModel: ObservableObject {
         menu = newTabMenu?()
     }
 
-    /// Closing the last tab leaves the desk empty — the empty desk shows
-    /// the chooser as its body (rev 6).
+    /// Closing the last tab leaves the desk empty — and an empty desk is
+    /// empty: a hint, and the `+` that ends it.
     func close(_ tabId: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
         tabs.remove(at: index)
@@ -1249,9 +1249,15 @@ struct BottomBar: View {
             navButton("magnifyingglass", enabled: true, label: "Search") {
                 desk.searchShown = true
             }
-            // On an empty desk the chooser IS the body already — a live-
-            // looking + that does nothing is a lie (audit, 2026-08-04).
-            navButton("plus", enabled: !desk.tabs.isEmpty, label: "New tab") {
+            // ALWAYS live. It was disabled on an empty desk, back when
+            // the empty desk's body WAS the New Tab chooser and a second
+            // door to it would have been a lie (audit, 2026-08-04). That
+            // page is gone (2026-08-13) and the empty desk now points at
+            // this button — "No tabs. The + below makes one." — so the
+            // guard became the lie it was written to prevent: a
+            // workspace with no tabs could not be given one at all
+            // (owner, 2026-08-15, from the phone).
+            navButton("plus", enabled: true, label: "New tab") {
                 desk.newTab()
             }
             tabCountButton

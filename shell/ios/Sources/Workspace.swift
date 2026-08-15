@@ -470,12 +470,12 @@ final class WorkspaceModel: ObservableObject {
 
 /// The workspace you are standing in, and the door to change it. ONE
 /// button, at the top centre of everything (owner, 2026-08-13): the desk,
-/// the New Tab chooser, and — drawn over it — the library panel, because
-/// the panel is exactly where you go to change what you are looking at
-/// and watching the name vanish as you swipe in was backwards.
+/// full or empty, and — drawn over it — the library panel, because the
+/// panel is exactly where you go to change what you are looking at and
+/// watching the name vanish as you swipe in was backwards.
 ///
 /// It used to be a row at the foot of the panel and another at the foot
-/// of New Tab; both are gone, this is the one.
+/// of the New Tab page; both are gone, this is the one.
 struct WorkspaceButton: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     let action: () -> Void

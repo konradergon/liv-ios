@@ -458,8 +458,8 @@ func livTabsSelfCheck() -> [String] {
     check("only the untouched middle tab is inactive", aged.inactiveTabs.count == 1, "\(aged.inactiveTabs.count)")
 
     // INVARIANT 2: live is never empty while tabs is not. This is what
-    // keeps "the empty desk IS the chooser" meaning "no tabs at all",
-    // rather than "none you opened lately".
+    // keeps "the empty desk" meaning "no tabs at all", rather than
+    // "none you opened lately".
     check("live non-empty while tabs non-empty", !aged.liveTabs.isEmpty)
 
     // And the tab you are on survives the bulk close even at 90 days.

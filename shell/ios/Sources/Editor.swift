@@ -857,7 +857,7 @@ struct NoteEditor: View {
             if let autoCaret { bridge.scroll(to: autoCaret) }
         }
         .onDisappear { model.stop() }
-        // A panel or the chooser sliding over a live [[ picker would
+        // A panel or a menu sliding over a live [[ picker would
         // strand it: the keyboard resigns but the picker floats on.
         // Dismissing HERE (not on every resign) keeps picker-row taps
         // working — they too resign focus for a moment (audit,

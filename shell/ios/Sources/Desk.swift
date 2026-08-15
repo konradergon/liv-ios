@@ -112,7 +112,7 @@ struct DeskHost: View {
             .accessibilityHidden(anyPanel)
 
             // The workspace, top CENTRE, between the doors — on the desk,
-            // on the New Tab chooser, and OVER the library panel, which
+            // full or empty, and OVER the library panel, which
             // is why it is drawn last with the highest z (owner,
             // 2026-08-13: "it should remain visible as you swipe into the
             // global panel"). It hides only under the PROPERTIES panel,

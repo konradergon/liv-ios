@@ -945,6 +945,15 @@ a SwiftUI Menu and a full-screen New Tab page all died for it.
 `active` follows RecordCardHost's rule — the surface in front draws the
 menu — and the host lives at the ROOT, above the bottom bar.
 
+**An empty desk is empty, and the bar's `+` is the way out of it** (rev
+20, owner 2026-08-15, from the phone: "no it doesn't"). §6 rev 6's rule
+5 above — "an EMPTY desk shows the same chooser as its body" — is
+HISTORY: that page died with rev 19. The empty desk now shows a hint
+that points at the `+`, so the `+` must always be live. It was disabled
+whenever `desk.tabs.isEmpty` — correct while the body WAS the chooser,
+and a dead end the moment it was not: a new workspace could not be given
+a tab at all. The switcher's own `+` never carried that guard.
+
 ## 16. The link door (rev 18, owner 2026-08-13)
 
 Creating a link opens SEARCH. The toolbar's Link key and typing `[[`
