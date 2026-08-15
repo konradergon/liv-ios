@@ -67,17 +67,8 @@ struct DeskHost: View {
                     symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
                 ) {
                     endEditing()
-                    withAnimation(LivMotion.nav) { desk.libraryShown.toggle() }
+                    goToLibrary()
                 }
-                // The door leaves the WHOLE desk, and the properties card
-                // is a layer OF the desk: with the card up this stayed
-                // lit in the band above it, and tapping it parked the
-                // library invisibly behind the card while the desk slid
-                // out from under both (found on the simulator,
-                // 2026-08-15). The ••• stays live — its verbs act on the
-                // very note the card describes.
-                .opacity(1 - desk.curtain)
-                .disabled(desk.curtain > 0)
                 Spacer()
                 if case .entity(let id) = desk.activeTab?.content {
                     noteMenu(id)
@@ -113,11 +104,9 @@ struct DeskHost: View {
             // Mounted while shown OR while a finger is dragging one, and
             // positioned by that drag — they follow the hand rather than
             // waiting for it to let go (owner, 2026-08-08).
-            if desk.libraryShown || desk.panelDrag?.which == .library {
+            if desk.libraryDrawn || desk.panelDrag?.which == .library {
                 LibraryPanel(
-                    onDismiss: {
-                        withAnimation(LivMotion.nav) { desk.libraryShown = false }
-                    },
+                    onDismiss: { desk.setLibrary(false) },
                     onWorkspace: { desk.workspaceShown = true },
                     onSettings: { desk.settingsShown = true }
                 )
@@ -205,8 +194,8 @@ struct DeskHost: View {
                 }
             }
         }
-        .sheet(isPresented: $desk.workspaceShown) {
-            WorkspaceSwitcher()
+        .livTopSheet(isPresented: $desk.workspaceShown) {
+            WorkspaceSwitcher(onClose: { desk.workspaceShown = false })
                 .environmentObject(box)
                 .environmentObject(workspaces)
                 .environmentObject(desk)
@@ -223,6 +212,29 @@ struct DeskHost: View {
     /// Any full-screen surface covering the desk body.
     private var anyPanel: Bool {
         desk.libraryShown || desk.inspectorShown
+    }
+
+    /// The library door. It stays LIT with the properties card up
+    /// (owner, 2026-08-15: "that button should be visible with the
+    /// property card open") and it means one thing wherever you press
+    /// it: GO TO THE LIBRARY. With the card up that means putting the
+    /// card away first — it is a layer of the desk, and the desk is
+    /// about to leave — and then sliding. Tapping it used to park the
+    /// library invisibly behind the card.
+    private func goToLibrary() {
+        endEditing()
+        guard !desk.libraryShown else {
+            desk.setLibrary(false)
+            return
+        }
+        guard desk.inspectorShown else {
+            desk.setLibrary(true)
+            return
+        }
+        withAnimation(LivMotion.nav) { desk.inspectorShown = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+            desk.setLibrary(true)
+        }
     }
 
     /// A panel over a live keyboard would sit UNDER it — the keyboard is a
@@ -289,7 +301,7 @@ struct DeskHost: View {
         let shown = flicked ? towardVisible : live.progress(width) > 0.5
         withAnimation(LivMotion.nav) {
             switch live.which {
-            case .library: desk.libraryShown = shown
+            case .library: desk.setLibrary(shown, animated: false)
             case .inspector: desk.inspectorShown = shown
             }
             desk.panelDrag?.amount = live.amount(for: shown ? 1 : 0, width: width)

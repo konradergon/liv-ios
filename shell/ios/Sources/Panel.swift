@@ -114,6 +114,30 @@ struct LibraryPanel: View {
         LibraryPlace(onDismiss: onDismiss) {
             VStack(spacing: 0) {
                 topBand
+                // A view opens IN here (owner, 2026-08-15: "do the views
+                // opening inside the library"). It is not a window over
+                // the desk any anymore: you are in the library, looking
+                // at Today, and the desk is parked where you left it.
+                if let feature = desk.featureShown {
+                    Group {
+                        switch feature {
+                        case .today: TodayView()
+                        case .everything: EverythingView()
+                        case .inbox: InboxView()
+                        case .tasks: TasksView()
+                        case .calendar: CalendarView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    list
+                }
+            }
+        }
+    }
+
+    private var list: some View {
+        VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         SectionLabel("All workspaces")
@@ -169,7 +193,6 @@ struct LibraryPanel: View {
                     .padding(.top, 8)
                 }
                 bottomBand
-            }
         }
     }
 
@@ -179,15 +202,31 @@ struct LibraryPanel: View {
     /// hole cut in its list. Empty on purpose: the button is the only
     /// thing that belongs here.
     private var topBand: some View {
-        Color.clear
-            .frame(height: LivRow.topChrome)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        HStack(spacing: 0) {
+            // Back to the library's own list. Only there is anything to
+            // go back FROM — on the list itself the band is empty, and
+            // the workspace button floats in the middle of it.
+            if desk.featureShown != nil {
+                Button { desk.featureShown = nil } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: LivType.strong, weight: .semibold))
+                        .foregroundStyle(LivTheme.text2)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to the library")
             }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: LivRow.topChrome)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
     }
 
     private func open(_ feature: Feature) {
-        onDismiss()
         desk.featureShown = feature
     }
 

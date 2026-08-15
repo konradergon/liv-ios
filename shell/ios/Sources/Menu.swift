@@ -42,6 +42,139 @@ struct LivMenu: Identifiable {
     let items: [LivMenuItem]
 }
 
+// MARK: - a sheet from the TOP
+
+/// A whole SCREEN of content, arriving from the top edge — the same
+/// motion, scrim and card the one menu wears, for the one surface that
+/// is too big to be a list of rows: the workspace switcher.
+///
+/// It comes from the top because its BUTTON is at the top (owner,
+/// 2026-08-15: "clicking on workspace has a card come in at the bottom,
+/// but since the button is on top it would be more convenient have it
+/// appearing at top also"). A `.sheet` cannot do that — on iPhone a
+/// sheet only ever comes up from the bottom — so it is drawn here, in
+/// the hierarchy, exactly as the menu is.
+extension View {
+    func livTopSheet<Sheet: View>(
+        isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Sheet
+    ) -> some View {
+        modifier(LivTopSheetHost(isPresented: isPresented, sheet: content))
+    }
+}
+
+struct LivTopSheetHost<Sheet: View>: ViewModifier {
+    @Binding var isPresented: Bool
+    @ViewBuilder let sheet: () -> Sheet
+
+    /// Measured, so the closed position is exactly one card off screen —
+    /// a guessed offset slides the wrong distance and reads as a jump.
+    @State private var height: CGFloat = 520
+    /// The content's own height, so the card is as tall as what is in it.
+    @State private var content: CGFloat = 200
+    @State private var shown = false
+    @State private var drawn = false
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if drawn {
+                ZStack(alignment: .top) {
+                    Rectangle()
+                        .fill(Color.black.opacity(shown ? 0.4 : 0))
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { isPresented = false }
+                    card
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear
+                                    .onAppear { height = geo.size.height }
+                                    .onChange(of: geo.size.height) { _, h in height = h }
+                            }
+                        )
+                        .offset(y: shown ? 0 : -height)
+                }
+                .ignoresSafeArea()
+                .accessibilityAction(.escape) { isPresented = false }
+            }
+        }
+        .onChange(of: isPresented) { _, _ in sync() }
+        .onAppear(perform: sync)
+    }
+
+    /// Mount first, THEN slide — the menu's own rule.
+    private func sync() {
+        if isPresented {
+            drawn = true
+            shown = false
+            DispatchQueue.main.async {
+                withAnimation(LivMotion.nav) { shown = true }
+            }
+        } else if drawn {
+            withAnimation(LivMotion.nav) { shown = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                if !isPresented { drawn = false }
+            }
+        }
+    }
+
+    /// The same card the menu wears, hanging from the top: square against
+    /// the edge it is attached to, rounded on the side facing the content,
+    /// the grabber on the bottom, and the safe area kept as space inside.
+    private var card: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0).frame(height: 4)
+            // Hugs its content, and scrolls only once the content is
+            // taller than the cap — a four-row switcher hanging down 86%
+            // of the screen is a wall, not a card.
+            ScrollView {
+                sheet()
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: LivSheetHeight.self, value: geo.size.height)
+                        }
+                    )
+            }
+            .frame(height: min(content, UIScreen.main.bounds.height * 0.72))
+            .onPreferenceChange(LivSheetHeight.self) { content = $0 }
+            Capsule()
+                .fill(LivTheme.panel2)
+                .frame(width: 36, height: 5)
+                .padding(.vertical, 8)
+        }
+        .padding(.top, LivSafeArea.top)
+        .background(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0, bottomLeadingRadius: LivTheme.radiusLg,
+                bottomTrailingRadius: LivTheme.radiusLg, topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(LivTheme.surface)
+        )
+    }
+}
+
+/// The measured height of a top sheet's content.
+private struct LivSheetHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 200
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// The window's own insets, in one place — the menu and the top sheet
+/// both keep the safe area as SPACE inside the card rather than bleeding
+/// past it (a top sheet whose first row sits under the clock is broken).
+enum LivSafeArea {
+    static var top: CGFloat { insets?.top ?? 0 }
+    static var bottom: CGFloat { insets?.bottom ?? 0 }
+    private static var insets: UIEdgeInsets? {
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        return scene?.keyWindow?.safeAreaInsets
+    }
+}
+
 // MARK: - the host
 
 extension View {
@@ -154,23 +287,17 @@ struct LivMenuHost: ViewModifier {
         .frame(maxWidth: .infinity)
         // The safe area on the attached edge, kept as SPACE inside the
         // card rather than ignored.
-        .padding(up ? .bottom : .top, safeInset(up))
+        .padding(up ? .bottom : .top, up ? LivSafeArea.bottom : LivSafeArea.top)
         .background(
             UnevenRoundedRectangle(
-                topLeadingRadius: up ? 22 : 0, bottomLeadingRadius: up ? 0 : 22,
-                bottomTrailingRadius: up ? 0 : 22, topTrailingRadius: up ? 22 : 0,
+                topLeadingRadius: up ? LivTheme.radiusLg : 0,
+                bottomLeadingRadius: up ? 0 : LivTheme.radiusLg,
+                bottomTrailingRadius: up ? 0 : LivTheme.radiusLg,
+                topTrailingRadius: up ? LivTheme.radiusLg : 0,
                 style: .continuous
             )
             .fill(LivTheme.surface)
         )
-    }
-
-    /// The window's own inset on that edge — the home indicator below,
-    /// the clock and notch above.
-    private func safeInset(_ up: Bool) -> CGFloat {
-        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        let insets = scene?.keyWindow?.safeAreaInsets
-        return up ? (insets?.bottom ?? 0) : (insets?.top ?? 0)
     }
 
     private var grabber: some View {

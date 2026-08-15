@@ -934,6 +934,39 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 23. A view opens in the library (rev 26, owner 2026-08-15)
+
+Owner: *"do the views opening inside the library."*
+
+The five views were full-screen covers over the desk. They open INSIDE
+the library now, which is what makes the library a place rather than a
+menu of places: you are in it, looking at Today, with the desk parked
+beside you. Consequences, all of them wanted:
+
+- The desk keeps its state while you are in a view, and the swipe back
+  to it is the same swipe as ever.
+- `FeatureWindow` is deleted; the library's own top band carries the
+  back chevron, and the root's record-card host draws cards raised from
+  a view (verified: a task tapped in Today raises its card over the
+  library).
+- `deskInFront` no longer counts `featureShown` — a view is not a cover.
+- `DeskModel.show(_:)` is the one door into a view: it opens the view
+  AND the library, because going to a view means going to the library.
+
+**The library's motion.** `setLibrary(_:)` mounts the place one beat
+before it moves (`libraryDrawn` → `libraryShown`), because a view
+inserted at its final offset has nowhere to travel from and SwiftUI
+falls back to a fade — the rule the one menu learned in rev 19.
+
+**The library door is always visible**, including under the properties
+card, and always means "go to the library": with the card up it puts the
+card away first, then slides.
+
+**The workspace switcher hangs from its own button** (`livTopSheet`,
+Menu.swift) rather than rising from the bottom as a sheet. Same motion,
+scrim and card as the one menu; it hugs its content up to 72% of the
+screen.
+
 ## 22. Two places, one layer (rev 25, owner 2026-08-15)
 
 Owner: *"the left 'panel' is really a separate main place of the app,

@@ -1,5 +1,42 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the views move into the library
+
+Owner: *"do the views opening inside the library. also, clicking on the
+library button doesn't literally move in quickly like it should but
+rather fades in. that button should be visible with the property card
+open. also, clicking on workspace has a card come in at the bottom, but
+since the button is on top it would be more convenient have it appearing
+at top also."*
+
+**A view is a thing you look at IN the library.** Today, Inbox,
+Calendar, Tasks and Everything opened as full-screen covers over the
+desk; now they open inside the library, which is a place. The desk stays
+parked to the right exactly where you left it, and swiping back to it
+leaves the view where IT was. The library's top band grows a back
+chevron while a view is open. `FeatureWindow` — the cover and its
+header — is deleted.
+
+**The door slides, it does not fade.** The library was mounted and
+offset in the same frame, and a view inserted at its final position has
+nowhere to travel from, so SwiftUI fell back to a fade. It is mounted
+one beat BEFORE it moves now (`libraryDrawn`, then `libraryShown`), the
+same rule the one menu learned in rev 19. `setLibrary(_:)` is the single
+door: the button, a settled drag and every internal jump all go through
+it, so the mount and the motion cannot disagree.
+
+**The door stays visible with the properties card up**, and it means one
+thing wherever you press it: go to the library. With the card up that
+now puts the card away first — it is a layer of the desk, and the desk
+is about to leave — and then slides. This morning's fix hid the button
+instead; hiding a door is a worse answer than making it work.
+
+**The workspace card comes from the top**, from under the button that
+opens it. A `.sheet` cannot do that on iPhone, so it is drawn in the
+hierarchy with the same motion, scrim and card the one menu wears
+(`livTopSheet`). It hugs its content and scrolls only past 72% of the
+screen — four rows hanging down 86% of the screen is a wall, not a card.
+
 ## 2026-08-15 — the library gets its own bands (and one broken door)
 
 The second half of "a place stands on the floor", after a design pass

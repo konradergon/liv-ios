@@ -75,8 +75,12 @@ enum DeskTabContent: Equatable {
 /// workspace's. The desk MAY be empty: an empty desk shows a hint
 /// pointing at the bar's `+`, which is the only way back to a tab.
 final class DeskModel: ObservableObject {
-    /// The feature window currently covering the chrome (sheet item);
-    /// nil = the desk.
+    /// The view open INSIDE the library — Today, Inbox, Calendar, Tasks,
+    /// Everything — or nil for the library's own list of them. It is not
+    /// a window over the desk any more (owner, 2026-08-15: "do the views
+    /// opening inside the library"): a view is a thing you look at in
+    /// the library, which is a place, and the desk stays parked beside
+    /// it exactly where you left it.
     @Published var featureShown: Feature?
     @Published private(set) var tabs: [DeskTab]
     @Published var activeTabId: UUID? {
@@ -84,8 +88,52 @@ final class DeskModel: ObservableObject {
     }
     @Published var switcherShown = false
     @Published var searchShown = false
-    /// The library panel (left) is up.
-    @Published var libraryShown = false
+    /// The library place (left) is up.
+    @Published private(set) var libraryShown = false
+    /// The library is MOUNTED. It goes up before `libraryShown` and comes
+    /// down after it, so the slide has a frame to start from: a view
+    /// inserted and offset in the same frame has nowhere to travel from,
+    /// and SwiftUI falls back to a fade (owner, 2026-08-15: "clicking on
+    /// the library button doesn't literally move in quickly like it
+    /// should but rather fades in"). The one menu learned this first
+    /// (Menu.swift's `sync`).
+    @Published private(set) var libraryDrawn = false
+
+    /// Go to the library, or come back to the desk. THE door — the
+    /// button, a settled drag and every internal jump all land here, so
+    /// the mount and the motion can never disagree.
+    func setLibrary(_ open: Bool, animated: Bool = true) {
+        guard open != libraryShown else { return }
+        if open {
+            libraryDrawn = true
+            guard animated else {
+                libraryShown = true
+                return
+            }
+            // Mount first, THEN slide.
+            DispatchQueue.main.async { [self] in
+                withAnimation(LivMotion.nav) { libraryShown = true }
+            }
+        } else {
+            if animated {
+                withAnimation(LivMotion.nav) { libraryShown = false }
+            } else {
+                libraryShown = false
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                [self] in
+                if !libraryShown { libraryDrawn = false }
+            }
+        }
+    }
+
+    /// Open a VIEW in the library, from anywhere — a library row, a
+    /// notification, the rehearsal hook. Going to a view means going to
+    /// the library, so this is the only place that says both.
+    func show(_ feature: Feature) {
+        featureShown = feature
+        setLibrary(true)
+    }
     @Published var cameraShown = false
     /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
     /// `switcherShown`, the tab view). Model state so open() can dismiss
@@ -153,9 +201,12 @@ final class DeskModel: ObservableObject {
     /// latched a panel behind the calendar window and published 58
     /// times, and the calendar re-rendered on every one of them — the
     /// owner's "minicalendar lags when dragged".
+    /// A view is no longer one of these: it opens INSIDE the library
+    /// (2026-08-15), which is a place on the strip, not a cover — the
+    /// swipe back to the desk has to keep working while you are in one.
     var deskInFront: Bool {
-        featureShown == nil && !searchShown && !switcherShown && !cameraShown
-            && !settingsShown && !workspaceShown
+        !searchShown && !switcherShown && !cameraShown && !settingsShown
+            && !workspaceShown
     }
 
     /// How far IN a panel is: 0 fully off screen, 1 fully home. ONE
@@ -445,7 +496,7 @@ final class DeskModel: ObservableObject {
             restored.indices.contains(active) ? restored[active].id : restored.first?.id
         featureShown = nil
         switcherShown = false
-        libraryShown = false
+        setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
         settingsShown = false
@@ -499,8 +550,8 @@ final class DeskModel: ObservableObject {
         // 2026-08-04). The properties panel is here too: focus() skips
         // its reset when the tab is ALREADY active, so a reminder tap
         // for the open note would land behind it.
+        setLibrary(false)
         withAnimation(LivMotion.nav) {
-            libraryShown = false
             menu = nil
             inspectorShown = false
         }
@@ -624,7 +675,10 @@ struct WorkspaceSwitcher: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @EnvironmentObject var desk: DeskModel
-    @Environment(\.dismiss) private var dismiss
+    /// How this closes. It hangs from the workspace button now (a top
+    /// sheet in the hierarchy), so there is no sheet environment to
+    /// dismiss — the presenter hands it the way out.
+    var onClose: () -> Void
 
     @State private var composing = false
     /// nil while composing a NEW workspace; the id being edited otherwise.
@@ -643,8 +697,7 @@ struct WorkspaceSwitcher: View {
     @State private var picking: WorkspacePick?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 // Making a FILTER shows the filter form and nothing else.
                 // This sheet is the workspace switcher, and the form only
                 // borrows it (standing rule 4: one form, one place) — but
@@ -703,13 +756,12 @@ struct WorkspaceSwitcher: View {
                         .padding(.bottom, 4)
                     newFilterForm
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
         }
-        .background(LivTheme.canvas)
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        // No .presentationDetents: it is not a sheet any more. It hangs
+        // from the workspace button at the top (LivTopSheetHost), which
+        // sizes itself to this content and scrolls only when it must.
         // The SAME picker the properties panel uses, told to report the
         // choice instead of writing a cell.
         .onAppear {
@@ -754,7 +806,7 @@ struct WorkspaceSwitcher: View {
 
     private func choose(_ id: UInt64, close: Bool = true) {
         workspaces.setActive(id)
-        if close { dismiss() }
+        if close { onClose() }
     }
 
     /// A workspace's own emoji leads its row (the furnished areas each
