@@ -1,5 +1,42 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — templates leave, and messages stop shouting over the workspace
+
+Owner, over a screenshot of a template note: *"the message is on top of
+each other. also remove templates completely. it should be added later
+when we have decided a good way to implement them."*
+
+**Templates are removed from the shell, whole.** Two files, three menu
+rows, the pill, the picker, the `-template.selfcheck` suite (eight
+suites now), the furnishing pass that seeded three built-ins, and
+everything that existed only to serve them: `LivKind.template`, its
+glyph, the entire DASHED stroke pass in the icon language, and
+`LivTheme.gray`. `{{cursor}}` was the only reason a focus request
+carried a caret, so `consumeFocus` is a plain Bool again. Five
+mentions survive on purpose, all about OLD boxes.
+
+Nothing in the Rust core moved. There was never a template verb in the C
+ABI — a template was a note wearing one `template` cell, written with
+the ordinary verbs — so the core keeps whatever it kept.
+
+**What your box keeps.** The three seeded notes (Daily note, Meeting,
+Person) and anything you saved as a template are ordinary notes now,
+`{{date}}` and all. The marker cell stays on disk, stays hidden in the
+properties panel, and is still skipped by Duplicate note so a copy
+cannot spread it. Nothing was rewritten and nothing was trashed.
+
+**The overlap was three bugs, not one.** The pill printed itself across
+the workspace name because it was placed against the two door circles
+back when nothing sat between them; the workspace button moved to the
+top centre on 2026-08-13 and landed on it — and, being drawn later at a
+higher z, it also swallowed the pill's taps. The pill dies with
+templates, but the box-fault banner and the editor's own notices
+(conflict, flattening, save-failed) do exactly the same thing and
+survive. So the fix is a rule, not a deletion: `LivRow.topChrome` (56pt)
+is the band the doors and the workspace button own, and everything that
+speaks starts below it. The number was already there, written out by
+hand in one place; it is a token now (standing rule 3).
+
 ## 2026-08-15 — the + works on an empty desk
 
 Owner, from the phone, over a screenshot of a workspace with no tabs

@@ -307,9 +307,9 @@ func livRowIsUntitled(_ row: EntityRow) -> Bool {
 /// all. Today and the calendar each had their own private copy of this.
 ///
 /// This is deliberately NOT `LivKind.of(row) == .task`. They answer
-/// different questions: the kind says what a thing IS, and gives event,
-/// file and template precedence, while this asks only whether there is a
-/// status to close. An event with a status is still an event — teal, with
+/// different questions: the kind says what a thing IS, and gives event
+/// and file precedence, while this asks only whether there is a status
+/// to close. An event with a status is still an event — teal, with
 /// a ring on it.
 func livCanTick(_ row: EntityRow) -> Bool {
     row.kinds?.contains("task") == true || row.status != nil

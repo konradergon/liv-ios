@@ -25,19 +25,17 @@ import SwiftUI
 
 // MARK: - what a thing is
 
-/// The eight kinds the app draws. A kind carries its colour and its
+/// The seven kinds the app draws. A kind carries its colour and its
 /// glyph together, because a thing that is purple in one list and blue
 /// in the next is the exact defect this type exists to prevent.
 enum LivKind: CaseIterable {
-    case note, task, event, file, link, person, template, capture
+    case note, task, event, file, link, person, capture
 
     /// The ONE classifier. Order is the priority: a file is a file
-    /// whatever else it says, a template is a blank to start from before
-    /// it is a note, and anything unshaped is a capture.
+    /// whatever else it says, and anything unshaped is a capture.
     static func of(_ row: EntityRow?) -> LivKind {
         guard let row else { return .capture }
         if FileFacts.of(row) != nil { return .file }
-        if isTemplate(row) { return .template }
         let kinds = row.kinds ?? []
         if kinds.contains("event") { return .event }
         // A status is what makes a thing a task, with or without the word.
@@ -46,15 +44,6 @@ enum LivKind: CaseIterable {
         if kinds.contains("link") { return .link }
         if kinds.contains("note") { return .note }
         return .capture
-    }
-
-    /// A template is marked by a CELL, not by a kind — the copy carries
-    /// the `template` property (Template.swift). Two private copies of
-    /// this test had already grown, in Desk and in Detail.
-    private static func isTemplate(_ row: EntityRow) -> Bool {
-        (row.cells ?? []).contains {
-            $0.property == Template.property && !($0.value ?? "").isEmpty
-        }
     }
 
     /// The name a snapshot uses, for the few places that hold a kind
@@ -71,7 +60,6 @@ enum LivKind: CaseIterable {
         case .file: return "file"
         case .link: return "link"
         case .person: return "person"
-        case .template: return "template"
         case .capture: return "capture"
         }
     }
@@ -86,7 +74,6 @@ enum LivKind: CaseIterable {
         case .event: return LivTheme.teal
         case .file, .link: return LivTheme.orange
         case .person: return LivTheme.pink
-        case .template: return LivTheme.gray
         case .capture: return LivTheme.yellow  // caught, not yet shaped
         }
     }
@@ -101,7 +88,6 @@ enum LivKind: CaseIterable {
         case .event: return .event
         case .link: return .link
         case .person: return .person
-        case .template: return .template
         case .capture: return .capture
         case .file: return .file(row.flatMap(FileFacts.of)?.fileClass ?? .other)
         }
@@ -118,7 +104,7 @@ enum LivKind: CaseIterable {
 /// symbols; those are arrows and punctuation, not part of this language.
 enum LivGlyph: Equatable {
     // Things.
-    case note, task, event, person, link, capture, template
+    case note, task, event, person, link, capture
     case file(FileFacts.Class)
     // Places — the library's rows.
     case today, inbox, calendar, tasks, everything
@@ -130,17 +116,9 @@ enum LivGlyph: Equatable {
 /// filled: that is what makes the carve read as punched out of the chip.
 struct GlyphShape: Shape {
     let glyph: LivGlyph
-    /// The dashed pass. Empty for every glyph but the template, whose
-    /// outline is dashed while its lines are not.
-    var part: Part = .solid
-
-    enum Part { case solid, dashed }
 
     /// A 24-space stroke of 2 at this size, so weight scales with the icon.
     static func lineWidth(_ size: CGFloat) -> CGFloat { size / 12 }
-    static func dash(_ size: CGFloat) -> [CGFloat] {
-        [size * 2.6 / 24, size * 2.9 / 24]
-    }
 
     func path(in rect: CGRect) -> Path {
         var pen = Pen(rect)
@@ -149,18 +127,9 @@ struct GlyphShape: Shape {
     }
 
     private func draw(_ pen: inout Pen) {
-        if part == .dashed {
-            // The one dashed outline in the set.
-            if glyph == .template { pen.box(5, 3.75, 14, 16.5, 3) }
-            return
-        }
         switch glyph {
         case .note:
             pen.box(5, 3.75, 14, 16.5, 3)
-            pen.line(8.5, 9, 15.5, 9)
-            pen.line(8.5, 13, 13.5, 13)
-        case .template:
-            // Outline drawn by the dashed pass; the writing is solid.
             pen.line(8.5, 9, 15.5, 9)
             pen.line(8.5, 13, 13.5, 13)
         case .task, .tasks:
@@ -391,16 +360,9 @@ struct LivIcon: View {
     var body: some View {
         let stroke = StrokeStyle(
             lineWidth: GlyphShape.lineWidth(size), lineCap: .round, lineJoin: .round)
-        ZStack {
-            GlyphShape(glyph: glyph).stroke(color, style: stroke)
-            GlyphShape(glyph: glyph, part: .dashed)
-                .stroke(
-                    color,
-                    style: StrokeStyle(
-                        lineWidth: GlyphShape.lineWidth(size), lineCap: .round,
-                        lineJoin: .round, dash: GlyphShape.dash(size)))
-        }
-        .frame(width: size, height: size)
+        GlyphShape(glyph: glyph)
+            .stroke(color, style: stroke)
+            .frame(width: size, height: size)
         .accessibilityHidden(true)  // the row's text carries the name
     }
 }
@@ -541,13 +503,6 @@ func livGlyphSelfCheck() -> [String] {
         ("link", row(7, kinds: ["link"]), .link),
         ("nothing at all", row(8), .capture),
         (
-            "template beats note",
-            row(
-                9, kinds: ["note"],
-                cells: [CellRow(property: Template.property, value: "Weekly")]),
-            .template
-        ),
-        (
             // A file is marked by a cell of KIND "file" (FileFacts.of),
             // not by a property name — the first draft of this test got
             // that wrong and the check caught it.
@@ -565,8 +520,7 @@ func livGlyphSelfCheck() -> [String] {
         if LivKind.glyph(of: r) != want.glyph(r) { fail.append("\(name): glyph ≠ kind's") }
     }
 
-    // 2. Every kind has its own colour and its own glyph; a template
-    //    that looks like a note is the whole point of drawing it dashed.
+    // 2. Every kind has its own colour and its own glyph.
     var seen: [LivGlyph] = []
     for kind in LivKind.allCases {
         let g = kind.glyph(nil)
@@ -584,19 +538,18 @@ func livGlyphSelfCheck() -> [String] {
     ]
     let drawn: [LivGlyph] =
         [
-            .note, .task, .event, .person, .link, .capture, .template,
+            .note, .task, .event, .person, .link, .capture,
             .today, .inbox, .calendar, .tasks, .everything,
             .filter, .settings, .workspace, .workspaces, .plus,
         ] + fileClasses.map { LivGlyph.file($0) }
     for glyph in drawn {
-        let solid = GlyphShape(glyph: glyph).path(in: box)
-        let dashed = GlyphShape(glyph: glyph, part: .dashed).path(in: box)
-        if solid.isEmpty && dashed.isEmpty { fail.append("\(glyph): draws nothing") }
-        for (part, path) in [("solid", solid), ("dashed", dashed)] where !path.isEmpty {
+        let path = GlyphShape(glyph: glyph).path(in: box)
+        if path.isEmpty { fail.append("\(glyph): draws nothing") }
+        if !path.isEmpty {
             // 1pt of slack: a stroke sits half outside its own path.
             let b = path.boundingRect
             if b.minX < -1 || b.minY < -1 || b.maxX > 25 || b.maxY > 25 {
-                fail.append("\(glyph) \(part): \(b) leaves the box")
+                fail.append("\(glyph): \(b) leaves the box")
             }
         }
     }

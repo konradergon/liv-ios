@@ -89,8 +89,7 @@ struct SearchView: View {
         case .file: return 3
         case .person: return 4
         case .link: return 5
-        case .template: return 6
-        case .capture: return 7
+        case .capture: return 6
         }
     }
 

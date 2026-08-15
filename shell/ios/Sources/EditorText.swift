@@ -71,9 +71,6 @@ final class EditorBridge: ObservableObject {
 
     /// Jump to a heading and put the caret at its start.
     func scroll(to location: Int) { coordinator?.scroll(to: location) }
-
-    /// Drop text in at the caret (a template's resolved body).
-    func insert(_ text: String) { coordinator?.insert(text) }
 }
 
 // MARK: - fonts
@@ -819,8 +816,6 @@ struct MarkdownEditor: UIViewRepresentable {
     var onInsert: () -> Void
     /// The toolbar's outline key — NoteEditor presents the sheet.
     var onOutline: () -> Void
-    /// The toolbar's template key — NoteEditor presents the picker.
-    var onTemplate: () -> Void
     /// A note carries its title inside the scroll view; a record's notes
     /// are titled by the card above them.
     var showsTitle: Bool = true
@@ -1142,7 +1137,8 @@ struct MarkdownEditor: UIViewRepresentable {
         }
 
         /// Insert at the caret, through the system API so undo registers
-        /// and the storage delegate styles what arrived.
+        /// and the storage delegate styles what arrived. The link door's
+        /// one use: a picked thing with no `[[` being typed lands here.
         func insert(_ text: String) {
             guard let view else { return }
             let sel = view.selectedRange
@@ -1315,8 +1311,6 @@ struct MarkdownEditor: UIViewRepresentable {
                 parent.onInsert()
             case .outline:
                 parent.onOutline()
-            case .template:
-                parent.onTemplate()
             case .dismiss:
                 view.resignFirstResponder()
             }
@@ -1444,7 +1438,7 @@ enum StyleVerb {
     case undo, redo, link, insert
     case heading, bold, italic, strike, code
     case task, bullet, ordered, quote, indent, outdent, rule
-    case outline, template, dismiss
+    case outline, dismiss
 }
 
 /// One row directly above the keyboard, horizontally scrollable — the
@@ -1500,13 +1494,12 @@ final class EditorToolbar: UIInputView, UIScrollViewDelegate {
                 ("minus", "Divider", .rule),
             ],
         ]
-        // Behind the `+`: what is NOT universal. Template and Outline are
-        // Liv's own tools rather than ways to shape text, and this is
-        // where anything advanced lands later (the owner named maths).
+        // Behind the `+`: what is NOT universal. Outline is Liv's own
+        // tool rather than a way to shape text, and this is where
+        // anything advanced lands later (the owner named maths).
         //
-        // Embedded in a record card, neither has a door: Outline scrolls
-        // a view whose scrolling is switched off, and Template would land
-        // a document's boilerplate in a task. A menu item that does
+        // Embedded in a record card it has no door — Outline scrolls a
+        // view whose scrolling is switched off. A menu item that does
         // nothing is a lie, so the `+` itself goes away there.
         // The `+` opens the app's ONE menu, sliding up (Menu.swift). It
         // was a UIKit UIMenu — a fourth look for the same idea, and the

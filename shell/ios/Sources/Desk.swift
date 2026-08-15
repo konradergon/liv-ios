@@ -51,11 +51,11 @@ struct DeskHost: View {
         }
     }
     /// One transient acknowledgment chip: text, and an optional Undo verb
-    /// (the trash chip carries one; the template chip does not).
+    /// (the trash chip carries one; a plain acknowledgment does not).
     @State private var chipText: String?
     @State private var chipUndo: (() -> Void)?
-    /// Closes the double-tap window while a template copy is in flight.
-    @State private var templateBusy = false
+    /// Closes the double-tap window while a copy is in flight.
+    @State private var copying = false
     /// What the ••• is handing to the rest of the phone (phase 7).
     @State private var share: SharePayload?
     /// The file picker, opened by the `+` menu's file row.
@@ -63,8 +63,6 @@ struct DeskHost: View {
     /// Guards the create doors against a double tap while a write is in
     /// flight.
     @State private var creating = false
-    /// The template picker, opened from the `+` menu.
-    @State private var templatesShown = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -166,12 +164,6 @@ struct DeskHost: View {
             guard case .success(let urls) = result else { return }
             FileImport.adopt(urls, box: box, workspaces: workspaces, desk: desk)
         }
-        .sheet(isPresented: $templatesShown) {
-            TemplateSheet(verb: .create) { template in
-                fromTemplate(template.id)
-            }
-            .environmentObject(box)
-        }
         // The whole desk goes INERT while a drag is latched. This — not
         // anything at the UIKit layer — is what stops a drag from
         // pressing the button it started on: disabling a SwiftUI
@@ -212,7 +204,7 @@ struct DeskHost: View {
         .overlay(alignment: .top) {
             if let text = chipText {
                 chip(text)
-                    .padding(.top, 56)
+                    .padding(.top, LivRow.topChrome)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(2)
             }
@@ -265,9 +257,9 @@ struct DeskHost: View {
 
     /// Frequent actions get dedicated UI (owner principle) — Properties
     /// left this menu for its own door. What remains ACTS on the
-    /// document, rarely: duplicate, template, trash.
+    /// document, rarely: duplicate, share, trash.
     /// The secondary verbs. Every tab is a document now (Option C), so
-    /// the kind branch that used to hide template/share/export is gone.
+    /// the kind branch that used to hide share/export is gone.
     /// How far off its own edge a panel currently sits. A panel with no
     /// drag in flight is simply open (0) — the transition handles its
     /// arrival and departure as before.
@@ -355,8 +347,8 @@ struct DeskHost: View {
                 duplicate(id)
             }
         ]
-        // A file hands its BYTES to whatever owns the format. Template,
-        // Share and Export are about MARKDOWN, so a file has none.
+        // A file hands its BYTES to whatever owns the format. Share and
+        // Export are about MARKDOWN, so a file has none.
         if isFile, let facts = FileFacts.of(row), facts.exists {
             items.append(
                 LivMenuItem(label: "Open in…", symbol: "square.and.arrow.up") {
@@ -364,12 +356,6 @@ struct DeskHost: View {
                 })
         }
         if !isFile {
-            if LivKind.of(row) != .template {
-                items.append(
-                    LivMenuItem(label: "Save as template", symbol: "doc.on.doc") {
-                        saveTemplate(id)
-                    })
-            }
             items.append(
                 LivMenuItem(label: "Share", symbol: "square.and.arrow.up") {
                     shareNote(id, asFile: false)
@@ -384,24 +370,6 @@ struct DeskHost: View {
                 confirmTrash = true
             })
         return LivMenu(id: "note-verbs", from: .top, items: items)
-    }
-
-    /// A new note from a template: the same landing as "Create a note" —
-    /// the note becomes a tab with the caret already in it, at the
-    /// template's {{cursor}} if it named one.
-    private func fromTemplate(_ template: UInt64) {
-        guard !creating else { return }
-        creating = true
-        box.newFromTemplate(template, now: Civil.nowStamp()) { id, caret in
-            guard id != 0 else {
-                creating = false
-                return
-            }
-            creating = false
-            workspaces.stamp(id, in: box)
-            desk.requestFocus(id, caret: caret)
-            desk.adoptCapture(id)
-        }
     }
 
     /// Birth an empty note and land in it: the editor takes the screen
@@ -436,9 +404,6 @@ struct DeskHost: View {
             title: "New",
             items: [
                 LivMenuItem(label: "Create a note", glyph: .note) { createNote() },
-                LivMenuItem(label: "From template…", glyph: .template) {
-                    templatesShown = true
-                },
                 LivMenuItem(label: "Add a file", glyph: .file(.other)) {
                     picking = true
                 },
@@ -497,32 +462,16 @@ struct DeskHost: View {
     /// context without the body (owner, 2026-08-03). The source is never
     /// touched; the copy opens as a tab with the caret in it.
     private func duplicate(_ id: UInt64) {
-        guard !templateBusy else { return }
-        templateBusy = true
+        guard !copying else { return }
+        copying = true
         box.duplicateProperties(of: id) { copy in
-            templateBusy = false
+            copying = false
             guard copy != 0 else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
             desk.requestFocus(copy)
             desk.open(copy)
-        }
-    }
-
-    /// Copies (never moves — ruling 6); the chip is the only trace, since
-    /// the copy itself appears nowhere on screen.
-    private func saveTemplate(_ id: UInt64) {
-        guard !templateBusy else { return }
-        templateBusy = true
-        box.saveAsTemplate(id) { copy in
-            templateBusy = false
-            if copy == 0 {
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
-            } else {
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                flash("Saved as template")
-            }
         }
     }
 
@@ -652,7 +601,6 @@ struct EntityTabBody: View {
     @EnvironmentObject var box: BoxModel
     @State private var title = ""
     @State private var titleSeeded = false
-    @State private var autoCaret: Int?
     /// Set once, in onAppear, for a note born a moment ago.
     @State private var autoFocus = false
     @FocusState private var titleFocused: Bool
@@ -676,49 +624,6 @@ struct EntityTabBody: View {
         }
     }
 
-    /// The template safeguard (rev 6): a template on the desk SAYS so,
-    /// and offers the thing you probably meant — a new note from it.
-    /// Editing stays allowed (a template is a note), but editing-when-
-    /// you-meant-a-copy stops being the silent default.
-    private var isTemplate: Bool {
-        LivKind.of(box.entity(id)) == .template
-    }
-
-    /// A floating pill BETWEEN the doors, in the clearance the editor
-    /// already reserves for them — it pushes nothing (the old banner
-    /// stacked its own band on the editor's door clearance: ~90pt of
-    /// dead space; audit 2026-08-04).
-    private var templatePill: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "doc.on.doc")
-                .font(.system(size: LivType.label))
-                .foregroundStyle(LivTheme.text3)
-            Text("Template")
-                .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.text2)
-            Button {
-                box.newFromTemplate(id, now: Civil.nowStamp()) { fresh, caret in
-                    guard fresh != 0 else { return }
-                    desk.requestFocus(fresh, caret: caret)
-                    desk.open(fresh)
-                }
-            } label: {
-                Text("New note")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("New note from this template")
-            .accessibilityHint("Edits to this note change every future copy")
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(LivTheme.panel2, in: Capsule())
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-    }
-
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             if TabShape.of(box.entity(id)) == .file {
@@ -736,29 +641,18 @@ struct EntityTabBody: View {
                     onOpenRef: { target in
                         if box.entity(target) != nil { desk.open(target) }
                     },
-                    autoFocus: autoFocus, autoCaret: autoCaret
+                    autoFocus: autoFocus
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // In the doors' own band, anchored after the LEFT door — centered
-        // it would graze the right-side pair on narrow screens. No layout
-        // push either way.
-        .overlay(alignment: .topLeading) {
-            if isTemplate {
-                templatePill
-                    .padding(.leading, 64)
-                    .padding(.top, 10)
-            }
-        }
         .onAppear {
             seedTitle()
             // Child onAppear fires before the parent's, so the editor reads
             // this through onChange, not its own onAppear.
-            if let request = desk.consumeFocus(id) {
+            if desk.consumeFocus(id) {
                 autoFocus = true
-                autoCaret = request.caret
             }
         }
         .onChange(of: storedName) { old, fresh in

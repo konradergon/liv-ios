@@ -146,9 +146,6 @@ struct EntityInspector: View {
                     ForEach(row.kinds ?? [], id: \.self) {
                         ValueChip($0, hue: LivKind.named($0).color)
                     }
-                    if LivKind.of(row) == .template {
-                        ValueChip("template", hue: LivKind.template.color)
-                    }
                     Spacer(minLength: 0)
                 }
                 .padding(.bottom, 4)
@@ -376,7 +373,7 @@ struct EntityInspector: View {
     /// properties (owner, 2026-08-01). "type" and "created" are FACTS,
     /// not fields: nothing in this app can retype an entity or move its
     /// birthday, and the type already shows as a chip at the top
-    /// (owner, 2026-08-06). The template marker is a chip too.
+    /// (owner, 2026-08-06).
     private func skipSet(_ row: EntityRow) -> Set<String> {
         Set(
             [
@@ -385,7 +382,9 @@ struct EntityInspector: View {
                 // tab's own header. A row you cannot edit is a lie about
                 // what this list is for (owner, 2026-08-06).
                 "file", "format",
-                Template.property, dueProperty(row),
+                // Templates left the app (2026-08-15); an older box may
+                // still carry the marker cell, and it is not a field.
+                "template", dueProperty(row),
             ] + InspectorField.core)
     }
 
@@ -497,8 +496,8 @@ struct EntityInspector: View {
         }
     }
 
-    // The verbs left this panel (owner, 2026-08-02): Save as template and
-    // Move to Trash act on the DOCUMENT, so they live in the desk's •••
+    // The verbs left this panel (owner, 2026-08-02): Move to Trash and
+    // the rest act on the DOCUMENT, so they live in the desk's •••
     // menu; this panel only describes. The old Undo went with them — it
     // was the box-level "undo last transaction", which read as a
     // property-undo here and wasn't one.

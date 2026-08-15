@@ -835,8 +835,8 @@ nothing when tapped is a lie about what the list is for.
 Supersedes §11's record TAB. The shape rule survives; where it opens
 changed.
 
-**A tab holds a document.** Notes, templates, and untyped captures.
-Nothing else, ever.
+**A tab holds a document.** Notes and untyped captures. Nothing else,
+ever.
 
 **A record is edited where you stand.** Tapping a task or event anywhere
 raises a card over the current surface and closes nothing. The card's
@@ -934,6 +934,41 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 18. Templates left, and messages got their own band (rev 21, owner 2026-08-15)
+
+Owner, over a screenshot of a template note whose pill printed itself
+across the workspace name: *"the message is on top of each other. also
+remove templates completely. it should be added later when we have
+decided a good way to implement them."*
+
+**Templates are gone from the shell.** Both files (Template.swift,
+TemplateSheet.swift), the create menu's "From template…", the ••• menu's
+"Save as template", the editor `+`'s "From template…", the template
+pill, the `-template.selfcheck` suite (eight suites now, not nine), the
+furnishing pass that seeded three built-in templates, and — because they
+existed for nothing else — `LivKind.template`, its glyph, the whole
+DASHED stroke pass in the icon language, and `LivTheme.gray`. The caret
+leg of the focus request went too: `{{cursor}}` was its only caller, so
+`consumeFocus` is a Bool again.
+
+Nothing in `core/`, `services/`, `views/` or `ffi/` changed — there was
+never a template verb in the C ABI; a template was a note wearing one
+`template` cell, written with the ordinary verbs.
+
+**What an older box keeps.** The three seeded notes (Daily note,
+Meeting, Person) and anything saved as a template are now ORDINARY
+notes, `{{date}}` and all. The marker cell survives on disk, stays
+hidden in the properties panel, and is still skipped by Duplicate note,
+so a copy never spreads it. Nothing is rewritten and nothing is trashed.
+
+**One band for anything that speaks.** `LivRow.topChrome` (56pt) is the
+band the two doors and the workspace button own; every message starts
+below it. The template pill was one of THREE things that printed into
+that band — the box-fault banner and the editor's own notices (conflict,
+flattening, save-failed) did the same, and both survive templates. They
+are fixed by the same constant, which is now a token instead of a
+number repeated in prose (standing rule 3).
+
 ## 17. One menu (rev 19, owner 2026-08-14)
 
 Every menu in the app is `LivMenu` + `.livMenu(_:active:)`
@@ -990,7 +1025,7 @@ the rendering. The reveal covers every paragraph the selection touches.
 The keyboard toolbar is GROUPED, Notesnook's shape: a hairline between
 runs of keys, most-used first — undo/redo · bold italic strike · link ·
 heading task bullet numbered · indent outdent · quote code divider. The
-`+` holds only what is NOT universal (Template, Outline; maths later).
+`+` holds only what is NOT universal (Outline today; maths later).
 
 The token is built in ONE place, `SpanText.token`. `EditOps.completeLink`
 used to build its own and spaced only `]]`, which leaked a bracket per
@@ -1013,8 +1048,8 @@ repeat mark, the search magnifier.
 this?", and the enum carries the colour AND the glyph. Two tables had
 disagreed — the colour asked `kinds.first`, the glyph asked
 `kinds.contains` plus status — so a task filed as `["note","task"]` drew
-a tick on a blue square. Priority: file > template > event >
-task-or-any-status > person > link > note > capture.
+a tick on a blue square. Priority: file > event > task-or-any-status >
+person > link > note > capture.
 
 **The library panel is the exception**: its rows are bare, colourless
 and large (26pt, text2). A view is a place to go, not a thing you own,

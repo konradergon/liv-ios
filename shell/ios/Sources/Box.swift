@@ -573,8 +573,10 @@ final class BoxModel: ObservableObject {
     }
 
     /// A fresh entity wearing another's property cells — the filing
-    /// context without the body (rev 6, "Duplicate note"). Identity,
-    /// content and the template marker stay behind. Owner rulings
+    /// context without the body (rev 6, "Duplicate note"). Identity and
+    /// content stay behind, and so does a `template` cell: the feature
+    /// is gone (2026-08-15) but boxes written before it went carry the
+    /// marker, and a copy must not spread it. Owner rulings
     /// (2026-08-04): the TYPE copies too (a duplicated task is a task),
     /// and reference/file cells are SKIPPED — the wire carries their
     /// display value, and re-adding by display string can silently link
@@ -584,7 +586,7 @@ final class BoxModel: ObservableObject {
             done?(0)
             return
         }
-        let skip: Set<String> = ["name", "content", "created", "type", Template.property]
+        let skip: Set<String> = ["name", "content", "created", "type", "template"]
         let skipKinds: Set<String> = ["datetime", "reference", "file"]
         createNote { copy in
             guard copy != 0 else {

@@ -9,7 +9,8 @@ with these rulings (none built yet — blueprints only):
   menu was rejected, and "task and event don't belong in new tab" took
   away its only door. Recoverable from git if a capture redesign ever
   wants its parts (property offer chips, the workspace stamp chip, the
-  undo toast). The create menu is note / template / file.
+  undo toast). The create menu is note / file (templates left the app
+  on 2026-08-15).
 - **Raw query text must never show as a value.** A workspace row shows
   colored value chips (area in its hue, subject in its hue), never
   "area:Study subject:thesis" in mono. Mono query text lives only
@@ -211,9 +212,11 @@ Run `build.sh` from `shell/ios`, never from `Sources` (it fails with a
 confusing lstat error). Simulator 8E699FF6 — NEVER the owner's 00E539E0.
 
     xcrun simctl launch --console-pty <udid> app.liv.ios \
-      -spans.selfcheck 1 -workspace.selfcheck 1 -template.selfcheck 1 \
-      -calendar.selfcheck 1 -share.selfcheck 1
-    # -editor.selfcheck 1 in a separate launch; six in one truncates
+      -spans.selfcheck 1 -workspace.selfcheck 1 -calendar.selfcheck 1 \
+      -share.selfcheck 1 -tabs.selfcheck 1 -glyph.selfcheck 1 \
+      -palette.selfcheck 1 -editor.selfcheck 1
+    # EIGHT suites since templates left (2026-08-15); there is no
+    # -template.selfcheck any more, and its silence is not a failure
 
 `--console` hangs; use `--console-pty` under `timeout 15`.
 

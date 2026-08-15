@@ -39,8 +39,8 @@ enum TabShape {
     /// to `.document` and opened as an empty markdown editor over a real
     /// file (shipped bug, found 2026-08-08).
     ///
-    /// Then: a note, a template, and an untyped CAPTURE (no kinds at
-    /// all, its title derived from its own first line) are documents.
+    /// Then: a note and an untyped CAPTURE (no kinds at all, its title
+    /// derived from its own first line) are documents.
     /// Everything with a declared type that isn't a note is a record.
     static func of(_ row: EntityRow?) -> TabShape {
         if FileFacts.of(row) != nil { return .file }
@@ -74,7 +74,7 @@ struct RecordCard: View {
     var body: some View {
         // The same focus request a new note claims: "New task" must land
         // you typing the name, not looking at an empty field.
-        RecordBody(id: id, autoFocus: desk.consumeFocus(id) != nil, inCard: true)
+        RecordBody(id: id, autoFocus: desk.consumeFocus(id), inCard: true)
             // A card is a NEW view per record. Following a [[link]] from
             // one record to another only reassigns desk.recordCard, so
             // without this SwiftUI reuses the view and the embedded

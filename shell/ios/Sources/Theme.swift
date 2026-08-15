@@ -151,6 +151,12 @@ enum LivRow {
     static let height: CGFloat = 54
     /// A row carrying a title and a second line under it.
     static let tall: CGFloat = 58
+    /// The band the top chrome owns: the two door circles and the
+    /// workspace button centred between them. ANYTHING that speaks at
+    /// the top of the screen — a banner, a notice, an acknowledgment —
+    /// starts below this, or it lands on the workspace's own name
+    /// (owner, 2026-08-15: "the message is on top of each other").
+    static let topChrome: CGFloat = 56
 }
 
 enum LivMotion {
@@ -217,7 +223,6 @@ enum LivTheme {
     static let orange = solid(0xFFD27A, light: 0x5F4A0E)
     static let pink = solid(0xFF9EC4, light: 0x8E3059)
     static let yellow = solid(0xFFE08A, light: 0x5C4E12)
-    static let gray = solid(0xB9B2C6, light: 0x555063)
 
     /// A tint that is a COLOUR, not a translucency.
     ///

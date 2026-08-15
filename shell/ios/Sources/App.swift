@@ -32,12 +32,6 @@ struct LivApp: App {
             print("WS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("WS-SELFCHECK \($0)") }
         }
-        // Template resolution, same door: `-template.selfcheck 1`.
-        if UserDefaults.standard.bool(forKey: "template.selfcheck") {
-            let failures = livTemplateSelfCheck()
-            print("TPL-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
-            failures.forEach { print("TPL-SELFCHECK \($0)") }
-        }
         // The day grid's clock arithmetic (Calendar.swift), same door:
         // `-calendar.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "calendar.selfcheck") {
@@ -258,6 +252,9 @@ struct RootView: View {
         .onChange(of: workspaces.activeId) { _, id in
             desk.adopt(workspace: id)
         }
+        // Below the doors' band, like every other thing that speaks:
+        // centred at the very top it printed itself over the workspace
+        // name (owner, 2026-08-15).
         .overlay(alignment: .top) {
             if let fault = box.boxFault {
                 Text(fault)
@@ -265,7 +262,7 @@ struct RootView: View {
                     .foregroundStyle(LivTheme.onAccent)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(LivTheme.red, in: Capsule())
-                    .padding(.top, 4)
+                    .padding(.top, LivRow.topChrome)
             }
         }
     }

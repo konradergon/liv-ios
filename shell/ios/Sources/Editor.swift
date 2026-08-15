@@ -786,8 +786,6 @@ struct NoteEditor: View {
     /// A note created a moment ago: open with the caret already in it, so
     /// "Create a note" lands you writing, not looking at a blank screen.
     var autoFocus: Bool = false
-    /// Where a template's {{cursor}} asked the caret to land.
-    var autoCaret: Int? = nil
     /// A note owns its title line; a record's notes are titled by the
     /// card above them (owner, 2026-08-10: "there is already a note
     /// editor — can this and other app mechanisms be reused?").
@@ -803,7 +801,6 @@ struct NoteEditor: View {
     @StateObject private var model = NoteEditorModel()
     @StateObject private var bridge = EditorBridge()
     @State private var outlineShown = false
-    @State private var templatesShown = false
     /// The link door: search, presented to pick what to link to.
     @State private var linkShown = false
     /// Plain state, not @FocusState — the UIKit text view reports focus
@@ -834,27 +831,17 @@ struct NoteEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if model.conflicted { banner }
-            if !writing, model.flattens { notice(
-                "This note carries desk formatting this editor can't keep. "
-                    + "Saving replaces it with what you see here.") }
-            if !writing, model.saveFailed {
-                notice("Could not save. It will try again.")
-            }
+            notices
             editor
         }
         .animation(LivMotion.nav, value: writing)
         .onAppear {
             model.attach(box: box, id: id)
-            if autoFocus {
-                focused = true
-                if let autoCaret { bridge.scroll(to: autoCaret) }
-            }
+            if autoFocus { focused = true }
         }
         .onChange(of: autoFocus) { _, now in
             guard now else { return }
             focused = true
-            if let autoCaret { bridge.scroll(to: autoCaret) }
         }
         .onDisappear { model.stop() }
         // A panel or a menu sliding over a live [[ picker would
@@ -878,6 +865,28 @@ struct NoteEditor: View {
         .onReceive(box.$snap) { _ in model.snapshotArrived() }
     }
 
+    /// Everything this note has to SAY, in one band that starts below
+    /// the top chrome — a notice laid out at y=0 runs straight under the
+    /// doors and prints itself over the workspace's name (owner,
+    /// 2026-08-15: "the message is on top of each other"). Embedded in a
+    /// record card there is no chrome above, so there is no clearance.
+    @ViewBuilder private var notices: some View {
+        let flattens = !writing && model.flattens
+        let failed = !writing && model.saveFailed
+        if model.conflicted || flattens || failed {
+            VStack(alignment: .leading, spacing: 6) {
+                if model.conflicted { banner }
+                if flattens {
+                    notice(
+                        "This note carries desk formatting this editor can't keep. "
+                            + "Saving replaces it with what you see here.")
+                }
+                if failed { notice("Could not save. It will try again.") }
+            }
+            .padding(.top, embedded ? 0 : LivRow.topChrome)
+        }
+    }
+
     // MARK: the buffer — full-bleed, no card, no chrome of its own
 
     /// No placeholder, no "Write…", no instructional text (owner,
@@ -895,7 +904,6 @@ struct NoteEditor: View {
             onLink: { linkShown = true },
             onInsert: { insertMenu() },
             onOutline: { outlineShown = true },
-            onTemplate: { templatesShown = true },
             showsTitle: showsTitle, embedded: embedded
         )
         .frame(
@@ -912,15 +920,6 @@ struct NoteEditor: View {
             linkSearchSheet
         }
         .sheet(isPresented: $outlineShown) { outlineSheet }
-        .sheet(isPresented: $templatesShown) {
-            TemplateSheet(verb: .insert) { template in
-                box.templateBody(template.id, now: Civil.nowStamp()) { body in
-                    guard !body.isEmpty else { return }
-                    bridge.insert(body)
-                }
-            }
-            .environmentObject(box)
-        }
     }
 
     // MARK: the link door
@@ -934,7 +933,7 @@ struct NoteEditor: View {
     /// search, its own create row and its own list style. A second
     /// search screen is a second thing to keep true (standing rule 4).
     /// The `+` menu: what a note can have PUT INTO it that is not a
-    /// keystroke. Two rows today, and the place anything advanced lands
+    /// keystroke. One row today, and the place anything advanced lands
     /// later (the owner named maths). Slides up, like every other menu
     /// summoned from the bottom of the screen.
     private func insertMenu() {
@@ -944,9 +943,6 @@ struct NoteEditor: View {
             from: .bottom,
             title: "Insert",
             items: [
-                LivMenuItem(label: "From template…", glyph: .template) {
-                    templatesShown = true
-                },
                 LivMenuItem(label: "Outline", symbol: "list.bullet.indent") {
                     outlineShown = true
                 },
