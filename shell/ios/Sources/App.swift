@@ -161,10 +161,10 @@ struct RootView: View {
         // underneath it and lost its last row. The card hosts its own
         // when a card is the surface in front.
         .livMenu($desk.menu, active: desk.recordCard == nil)
-        // Only when nothing covers the desk — see RecordCardHost.
-        .recordCardHost(
-            active: desk.featureShown == nil && !desk.searchShown
-                && !desk.switcherShown && !desk.cameraShown)
+        // Only when nothing covers the desk — see RecordCardHost. The
+        // same question the window's panel drag asks, so it is asked in
+        // one place (standing rule 4).
+        .recordCardHost(active: desk.deskInFront)
         // Set on the WINDOW, not with preferredColorScheme. A sheet is a
         // separate presentation with its own root, so it never inherited
         // the scheme: flipping the appearance FROM Settings changed the

@@ -1,5 +1,41 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the mini calendar stops rebuilding the world
+
+Owner: *"minicalendar lags when dragged."* Measured before touching
+anything, on one 1.2-second drag of the month grid:
+
+| | before | after |
+|---|---|---|
+| CalendarView body rebuilds | 98 | **0** |
+| day cells built | 12,348 | **0** |
+| full snapshot passes (`itemsByDay`) | 98 | **0** |
+
+**Two causes, both real.**
+
+*The screen rebuilt itself on every touch-move.* The drag offset was
+`@State` on CalendarView, so each frame re-ran the whole body: the day
+buckets over the entire box, three month grids of 42 cells each, and the
+hour grid below. The pager is its own view now and owns that offset, and
+the grid is a value: `CalCell`/`CalMonth` are decided when the month or
+the snapshot moves, and `MonthGridView` is `Equatable` over them, so
+SwiftUI skips all 126 cells while only an offset is moving. The data
+model is the fix; the skip is a consequence of it, not a trick.
+
+*The desk was dragging its panels behind the calendar.* The panel drag
+is a recognizer on the WINDOW, and its own installer warns that it
+"would otherwise drag panels invisibly behind a full-screen view" — but
+it was only ever told about the menu. A sideways drag of the mini
+calendar latched a panel behind the calendar window and published 58
+times, and the calendar re-rendered on every one. `DeskModel.deskInFront`
+now answers "is the desk the surface in front" in one place, for the
+recognizer and for the record card alike.
+
+Five new assertions in the calendar self-check pin the shape the skip
+depends on — six weeks, 31 days in August, no dots on an empty month,
+same month equal, next month not. The instrumentation that produced the
+numbers is deleted, as its own comment promised.
+
 ## 2026-08-15 — the panels stop being curtains
 
 Owner: *"Now the left and right panels are like curtains. Better would

@@ -142,6 +142,22 @@ final class DeskModel: ObservableObject {
     /// Which panel the finger is currently dragging. nil = none.
     @Published var panelDrag: PanelDrag?
 
+    /// The desk is the surface in FRONT — nothing full-screen covers it.
+    ///
+    /// The panel drag is a recognizer on the WINDOW, so it sees touches
+    /// inside a feature window, search, the tab switcher, the camera and
+    /// every sheet as well. Its own installer says so ("the window
+    /// recognizer would otherwise drag panels invisibly behind a
+    /// full-screen view") but it was only ever told about the menu.
+    /// Measured 2026-08-15: one sideways drag of the mini calendar
+    /// latched a panel behind the calendar window and published 58
+    /// times, and the calendar re-rendered on every one of them — the
+    /// owner's "minicalendar lags when dragged".
+    var deskInFront: Bool {
+        featureShown == nil && !searchShown && !switcherShown && !cameraShown
+            && !settingsShown && !workspaceShown
+    }
+
     /// How far IN a panel is: 0 fully off screen, 1 fully home. ONE
     /// answer, because three things read it — the panel's own offset,
     /// the desk's travel, and the doors' fade — and a pixel of

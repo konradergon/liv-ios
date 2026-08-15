@@ -934,6 +934,31 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 21. A frame of dragging moves one number (rev 24, owner 2026-08-15)
+
+Owner: *"minicalendar lags when dragged."*
+
+**The rule this leaves behind: what a finger changes must be the ONLY
+thing that changes.** The mini calendar's drag offset was `@State` on
+the whole calendar screen, so a touch-move rebuilt the day buckets, 126
+day cells and the hour grid — 98 times in a 1.2-second drag, 12,348
+cells (measured). Now:
+
+- `MonthPagerView` owns the offset, so a frame re-runs one small body.
+- `CalCell` / `CalMonth` are values decided when the month or the
+  snapshot moves; `MonthGridView` is `Equatable` over them, so the grid
+  is skipped entirely while the strip slides.
+- The calendar self-check pins that shape, because the skip is only as
+  true as the data model behind it.
+
+**And a defect the measurement exposed.** The panel drag is a
+recognizer on the WINDOW. Its installer already warned that it "would
+otherwise drag panels invisibly behind a full-screen view", but it was
+told only about the menu — so dragging the mini calendar was also
+dragging the desk's panels behind the calendar window, 58 publishes
+deep. `DeskModel.deskInFront` is now the one answer to "is the desk the
+surface in front", read by that recognizer and by the record-card host.
+
 ## 20. The three surfaces are one strip (rev 23, owner 2026-08-15)
 
 Owner: *"Now the left and right panels are like curtains. Better would

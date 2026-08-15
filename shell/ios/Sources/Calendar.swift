@@ -29,6 +29,52 @@ private struct CalendarDayItem: Identifiable {
     var allDay: Bool { row.dueDateOnly ?? (stamp % 10_000 == 0) }
 }
 
+// MARK: - the month grid's data, decided before it is drawn
+
+/// One cell of the month grid, already decided: the number, whether it
+/// belongs to the month, and the colours of its dots. Everything the
+/// cell draws and nothing else, so a cell rebuilds when its DAY changes
+/// and not because a finger moved.
+private struct CalCell: Equatable {
+    let day: Int64
+    let number: Int
+    let inMonth: Bool
+    let isToday: Bool
+    let count: Int
+    /// Up to three, in kind colour (owner, 2026-08-13).
+    let dots: [Color]
+}
+
+/// One month's six weeks, ready to draw.
+private struct CalMonth: Equatable {
+    let month: Int64
+    let cells: [CalCell]
+}
+
+/// Build one month from the day buckets. Runs when the MONTH or the
+/// SNAPSHOT moves — never per frame of a drag, which is the whole point
+/// of the type (measured 2026-08-15: a 1.2s drag rebuilt 12,348 cells).
+private func calMonth(
+    _ month: Int64, today: Int64, byDay: [Int64: [CalendarDayItem]]
+) -> CalMonth {
+    let start = CalGrid.gridStart(month)
+    var cells: [CalCell] = []
+    cells.reserveCapacity(42)
+    for i in 0..<42 {
+        let day = Civil.addDays(start, i)
+        let items = byDay[day] ?? []
+        cells.append(
+            CalCell(
+                day: day,
+                number: Civil.dayNumber(day),
+                inMonth: CalGrid.firstOfMonth(day) == month,
+                isToday: day == today,
+                count: items.count,
+                dots: items.prefix(3).map { LivKind.color(of: $0.row) }))
+    }
+    return CalMonth(month: month, cells: cells)
+}
+
 // MARK: - the screen
 
 /// A block held by the drag, mid-flight.
@@ -37,6 +83,7 @@ private struct LiftedBlock: Equatable {
     /// Minutes-of-day where its start currently sits.
     let minutes: Int
 }
+
 
 struct CalendarView: View {
     @EnvironmentObject var box: BoxModel
@@ -72,11 +119,10 @@ struct CalendarView: View {
     /// event and throw you into the note editor to name it (owner,
     /// 2026-08-06 — "setting names of calendar items should be done in
     /// calendar", and an event is not a document).
-    /// Which way the last month change went, so the grid slides the way
-    /// the finger did. +1 forward, -1 back.
-    @State private var monthStep = 1
-    /// How far the month grid has been dragged sideways, live.
-    @State private var monthDrag: CGFloat = 0
+    /// A page asked for by ‹ ›, Today or a month-away jump. The pager
+    /// consumes it, slides, and hands the month back on landing — the
+    /// drag itself lives down there, not here.
+    @State private var pageRequest = 0
     /// One month's width, learned from the layout, so the chevrons can
     /// slide by exactly one page too.
     @State private var pageWidth: CGFloat = 0
@@ -187,7 +233,6 @@ struct CalendarView: View {
         } else if home == CalGrid.addMonths(monthFirst, 1) {
             page(1)
         } else {
-            monthDrag = 0
             monthFirst = home
         }
     }
@@ -212,98 +257,11 @@ struct CalendarView: View {
     private func step(_ n: Int, animated: Bool = true) {
         let moved = CalGrid.addMonths(monthFirst, n)
         let today = Civil.todayDay()
-        monthStep = n
         let land = {
             monthFirst = moved
             selectedDay = CalGrid.firstOfMonth(today) == moved ? today : moved
         }
         if animated { withAnimation(LivMotion.nav, land) } else { land() }
-    }
-
-    // MARK: the pager — three months side by side, the middle one shown
-    //
-    // The grid FOLLOWS the finger (owner, 2026-08-10: "not the
-    // drag+swipe, which is nicer"). A fire-on-release swipe told you
-    // nothing until it was over; this shows the next month arriving
-    // while you are still deciding, and lets you change your mind by
-    // sliding back. The neighbours are real grids, so what slides in is
-    // what you get. ‹ › and Today drive the SAME path — one page(), one
-    // place the settle rule lives.
-
-    private func monthPager(
-        today: Int64, byDay: [Int64: [CalendarDayItem]]
-    ) -> some View {
-        GeometryReader { geo in
-            let span = geo.size.width
-            HStack(spacing: 0) {
-                ForEach(-1...1, id: \.self) { n in
-                    monthGrid(
-                        CalGrid.addMonths(monthFirst, n),
-                        today: today, byDay: byDay
-                    )
-                    .padding(.horizontal, 16)
-                    .frame(width: span)
-                }
-            }
-            .offset(x: -span + monthDrag)
-            .contentShape(Rectangle())
-            .gesture(monthDragGesture(span: span))
-            .onAppear { pageWidth = span }
-            .onChange(of: span) { _, w in pageWidth = w }
-        }
-        .frame(height: CalGrid.gridHeight)
-        .clipped()
-    }
-
-    /// Follow the finger, then settle. A flick commits from anywhere; a
-    /// slow drag commits past a third of the way — the panel drag's own
-    /// rule, so the two gestures in this app agree about what a
-    /// deliberate pull means.
-    private func monthDragGesture(span: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 14)
-            .onChanged { g in
-                // Vertical wins: the day panel below scrolls, and a
-                // finger drifting down must not drag the month sideways.
-                guard abs(g.translation.width) > abs(g.translation.height)
-                else { return }
-                monthDrag = g.translation.width
-            }
-            .onEnded { g in
-                let dx = monthDrag
-                guard dx != 0 else { return }
-                let velocity = g.velocity.width
-                let flicked = abs(velocity) > CalGrid.flickToPage
-                let towards = flicked ? velocity : dx
-                guard flicked || abs(dx) > span / 3 else {
-                    withAnimation(LivMotion.nav) { monthDrag = 0 }
-                    return
-                }
-                page(towards < 0 ? 1 : -1, over: span)
-            }
-    }
-
-    /// Slide one month along, then swap the middle grid underneath
-    /// without a second animation. Both the chevrons and the drag land
-    /// here.
-    private func page(_ n: Int, over width: CGFloat? = nil) {
-        let span = width ?? pageWidth
-        guard span > 0 else {
-            step(n)
-            return
-        }
-        monthStep = n
-        withAnimation(LivMotion.nav) { monthDrag = CGFloat(-n) * span }
-        // When the slide lands, the neighbour IS the month — move the
-        // data under it and zero the offset in one un-animated beat, so
-        // nothing is seen to jump back.
-        DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
-            var instant = Transaction()
-            instant.disablesAnimations = true
-            withTransaction(instant) {
-                step(n, animated: false)
-                monthDrag = 0
-            }
-        }
     }
 
     // MARK: the grid — 6 fixed weeks, Mon-first, ~40pt cells
@@ -319,84 +277,46 @@ struct CalendarView: View {
         }
     }
 
-    /// Draws the six weeks of ONE month — whichever it is handed, so the
-    /// pager can render the neighbours with the same code.
-    private func monthGrid(
-        _ month: Int64, today: Int64, byDay: [Int64: [CalendarDayItem]]
+    // MARK: the pager — three months side by side, the middle one shown
+    //
+    // The grid FOLLOWS the finger (owner, 2026-08-10: "not the
+    // drag+swipe, which is nicer"). A fire-on-release swipe told you
+    // nothing until it was over; this shows the next month arriving
+    // while you are still deciding, and lets you change your mind by
+    // sliding back. The neighbours are real grids, so what slides in is
+    // what you get. ‹ › and Today drive the SAME path — one page(), one
+    // place the settle rule lives.
+    //
+    // The pager is its own VIEW, and that is the fix for "minicalendar
+    // lags when dragged" (owner, 2026-08-15). The drag used to be
+    // @State on this screen, so every touch-move re-ran this whole
+    // body: the day buckets, 126 day cells and the hour grid below,
+    // 98 times in a 1.2-second drag (measured). With the offset held
+    // one level down, a frame moves an offset and nothing else.
+
+    private func monthPager(
+        today: Int64, byDay: [Int64: [CalendarDayItem]]
     ) -> some View {
-        let start = CalGrid.gridStart(month)
-        return VStack(spacing: CalGrid.rowGap) {
-            ForEach(0..<6, id: \.self) { week in
-                HStack(spacing: CalGrid.rowGap) {
-                    ForEach(0..<7, id: \.self) { col in
-                        let day = Civil.addDays(start, week * 7 + col)
-                        dayCell(
-                            day, month: month, today: today,
-                            items: byDay[day] ?? [])
-                    }
-                }
-            }
-        }
+        MonthPagerView(
+            months: (-1...1).map {
+                calMonth(CalGrid.addMonths(monthFirst, $0), today: today, byDay: byDay)
+            },
+            selected: selectedDay,
+            onSelect: { selectedDay = $0 },
+            onHold: { createEvent(on: $0) },
+            onPage: { step($0, animated: false) },
+            request: $pageRequest,
+            width: $pageWidth)
     }
 
-    /// Today ringed accent, the selected day filled; both = filled wins
-    /// (the 7-day strip's rule). Long-press = the event door.
-    ///
-    /// The dots take the KIND colour of what is in the day (owner,
-    /// 2026-08-13: "apply the kind colors everywhere"). They were neutral
-    /// ink on the rule that "the calendar says WHEN, never what kind" —
-    /// which the blueprints reverse: three grey dots said only "busy",
-    /// and the same three in teal, purple and orange say what the day
-    /// holds without opening it. On the SELECTED day they go back to one
-    /// ink: the cell is filled accent, and colour on colour is unreadable.
-    private func dayCell(
-        _ day: Int64, month: Int64, today: Int64, items: [CalendarDayItem]
-    ) -> some View {
-        let inMonth = CalGrid.firstOfMonth(day) == month
-        let isToday = day == today
-        let isSelected = day == selectedDay
-        let count = items.count
-        return VStack(spacing: 3) {
-            Text("\(Civil.dayNumber(day))")
-                .font(
-                    .system(size: LivType.body, weight: isToday ? .semibold : .regular)
-                        .monospacedDigit()
-                )
-                .foregroundStyle(
-                    isSelected
-                        ? LivTheme.onAccent
-                        : inMonth ? LivTheme.text : LivTheme.muted)
-            HStack(spacing: 2.5) {
-                ForEach(0..<3, id: \.self) { i in
-                    Circle()
-                        .fill(
-                            i < min(count, 3)
-                                ? (isSelected
-                                    ? LivTheme.onAccent
-                                    : LivKind.color(of: items[i].row))
-                                : Color.clear
-                        )
-                        .frame(width: 4, height: 4)
-                }
-            }
+    /// ‹ ›, Today and a month-away jump all ask the pager to slide; the
+    /// pager owns the motion and calls `onPage` when it lands.
+    private func page(_ n: Int) {
+        guard pageWidth > 0 else {
+            step(n)
+            return
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: CalGrid.cellHeight)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .fill(isSelected ? LivTheme.accent : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .strokeBorder(
-                    isToday && !isSelected ? LivTheme.accent : Color.clear,
-                    lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { selectedDay = day }
-        .onLongPressGesture(minimumDuration: 0.45) { createEvent(on: day) }
-        .accessibilityLabel(Civil.dayLabel(day))
-        .accessibilityValue(count == 0 ? "" : "\(count) items")
+        pageRequest = n
     }
 
     /// Long-press a month cell: an event on that day, at 09:00. It used
@@ -936,6 +856,190 @@ struct CalendarView: View {
     }
 }
 
+// MARK: - the pager and the grid, as views of their own
+
+/// Three months side by side, the middle one shown, following the
+/// finger. It owns the drag OFFSET — the one value a touch-move
+/// changes — so a frame of dragging re-runs this body and nothing
+/// above it (owner, 2026-08-15: "minicalendar lags when dragged").
+private struct MonthPagerView: View {
+    let months: [CalMonth]
+    let selected: Int64
+    let onSelect: (Int64) -> Void
+    let onHold: (Int64) -> Void
+    /// The slide landed: the screen above moves the month under us, with
+    /// animations off, in the same beat the offset returns to zero.
+    let onPage: (Int) -> Void
+    /// ‹ ›, Today and a month-away jump ask for a page through this.
+    @Binding var request: Int
+    /// One month's width, learned from the layout and read by the screen
+    /// above to know whether a slide is possible at all.
+    @Binding var width: CGFloat
+
+    @State private var drag: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let span = geo.size.width
+            HStack(spacing: 0) {
+                ForEach(months, id: \.month) { month in
+                    MonthGridView(
+                        month: month, selected: selected,
+                        onSelect: onSelect, onHold: onHold
+                    )
+                    // Equatable: while the finger moves, the months and
+                    // the selection are unchanged, so SwiftUI skips all
+                    // 126 cells and just re-places the strip.
+                    .equatable()
+                    .padding(.horizontal, 16)
+                    .frame(width: span)
+                }
+            }
+            .offset(x: -span + drag)
+            .contentShape(Rectangle())
+            .gesture(gesture(span: span))
+            .onAppear { width = span }
+            .onChange(of: span) { _, w in width = w }
+            .onChange(of: request) { _, n in
+                guard n != 0 else { return }
+                request = 0
+                slide(n, over: span)
+            }
+        }
+        .frame(height: CalGrid.gridHeight)
+        .clipped()
+    }
+
+    /// Follow the finger, then settle. A flick commits from anywhere; a
+    /// slow drag commits past a third of the way — the panel drag's own
+    /// rule, so the two gestures in this app agree about what a
+    /// deliberate pull means.
+    private func gesture(span: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 14)
+            .onChanged { g in
+                // Vertical wins: the day panel below scrolls, and a
+                // finger drifting down must not drag the month sideways.
+                guard abs(g.translation.width) > abs(g.translation.height)
+                else { return }
+                drag = g.translation.width
+            }
+            .onEnded { g in
+                let dx = drag
+                guard dx != 0 else { return }
+                let velocity = g.velocity.width
+                let flicked = abs(velocity) > CalGrid.flickToPage
+                let towards = flicked ? velocity : dx
+                guard flicked || abs(dx) > span / 3 else {
+                    withAnimation(LivMotion.nav) { drag = 0 }
+                    return
+                }
+                slide(towards < 0 ? 1 : -1, over: span)
+            }
+    }
+
+    /// Slide one month along, then swap the middle grid underneath
+    /// without a second animation. Both the chevrons and the drag land
+    /// here.
+    private func slide(_ n: Int, over span: CGFloat) {
+        guard span > 0 else {
+            onPage(n)
+            return
+        }
+        withAnimation(LivMotion.nav) { drag = CGFloat(-n) * span }
+        // When the slide lands, the neighbour IS the month — move the
+        // data under it and zero the offset in one un-animated beat, so
+        // nothing is seen to jump back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) {
+                onPage(n)
+                drag = 0
+            }
+        }
+    }
+}
+
+/// Six weeks of one month, drawn from cells decided in advance.
+/// Equatable on purpose: its inputs are values, so SwiftUI can skip the
+/// whole grid while only the strip's offset is moving.
+private struct MonthGridView: View, Equatable {
+    let month: CalMonth
+    let selected: Int64
+    let onSelect: (Int64) -> Void
+    let onHold: (Int64) -> Void
+
+    /// The closures are the same code every time; only the data decides.
+    static func == (a: MonthGridView, b: MonthGridView) -> Bool {
+        a.month == b.month && a.selected == b.selected
+    }
+
+    var body: some View {
+        VStack(spacing: CalGrid.rowGap) {
+            ForEach(0..<6, id: \.self) { week in
+                HStack(spacing: CalGrid.rowGap) {
+                    ForEach(0..<7, id: \.self) { col in
+                        cell(month.cells[week * 7 + col])
+                    }
+                }
+            }
+        }
+    }
+
+    /// Today ringed accent, the selected day filled; both = filled wins
+    /// (the 7-day strip's rule). Long-press = the event door.
+    ///
+    /// The dots take the KIND colour of what is in the day (owner,
+    /// 2026-08-13: "apply the kind colors everywhere"). They were neutral
+    /// ink on the rule that "the calendar says WHEN, never what kind" —
+    /// which the blueprints reverse: three grey dots said only "busy",
+    /// and the same three in teal, purple and orange say what the day
+    /// holds without opening it. On the SELECTED day they go back to one
+    /// ink: the cell is filled accent, and colour on colour is unreadable.
+    private func cell(_ c: CalCell) -> some View {
+        let isSelected = c.day == selected
+        return VStack(spacing: 3) {
+            Text("\(c.number)")
+                .font(
+                    .system(size: LivType.body, weight: c.isToday ? .semibold : .regular)
+                        .monospacedDigit()
+                )
+                .foregroundStyle(
+                    isSelected
+                        ? LivTheme.onAccent
+                        : c.inMonth ? LivTheme.text : LivTheme.muted)
+            HStack(spacing: 2.5) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(
+                            i < c.dots.count
+                                ? (isSelected ? LivTheme.onAccent : c.dots[i])
+                                : Color.clear
+                        )
+                        .frame(width: 4, height: 4)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: CalGrid.cellHeight)
+        .background(
+            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                .fill(isSelected ? LivTheme.accent : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                .strokeBorder(
+                    c.isToday && !isSelected ? LivTheme.accent : Color.clear,
+                    lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect(c.day) }
+        .onLongPressGesture(minimumDuration: 0.45) { onHold(c.day) }
+        .accessibilityLabel(Civil.dayLabel(c.day))
+        .accessibilityValue(c.count == 0 ? "" : "\(c.count) items")
+    }
+}
+
 // MARK: - month math (packed civil days; Civil's private helpers re-derived)
 
 /// Components-in, components-out within one Gregorian calendar — a stamp
@@ -1274,6 +1378,29 @@ func livCalendarSelfCheck() -> [String] {
         CalLayout.slots([(720, 60), (540, 60)])[0] == CalLayout.Slot(column: 0, columns: 1))
 
     check("range label", CalClock.range(570, 60) == "09:30 – 10:30", CalClock.range(570, 60))
+
+    // The month grid's DATA, which is what keeps a sideways drag cheap:
+    // the cells are decided before they are drawn, so the grid can be
+    // Equatable and SwiftUI can skip all 126 of them while only an
+    // offset moves (owner, 2026-08-15: "minicalendar lags when
+    // dragged"). Measured that day: 12,348 cell builds per drag before,
+    // 0 after. These pin the shape the skip depends on.
+    // Packed civil DAYS here (YYYYMMDD), not stamps — Civil.todayDay's
+    // vocabulary, which the grid speaks.
+    let august = CalGrid.firstOfMonth(2_026_08_15)
+    let empty = calMonth(august, today: 2_026_08_15, byDay: [:])
+    check("a month is six weeks", empty.cells.count == 42, "\(empty.cells.count)")
+    check(
+        "August has 31 days in the month",
+        empty.cells.filter(\.inMonth).count == 31,
+        "\(empty.cells.filter(\.inMonth).count)")
+    check("an empty month has no dots", empty.cells.allSatisfy { $0.dots.isEmpty })
+    check(
+        "the same month twice is equal — this is the skip",
+        calMonth(august, today: 2_026_08_15, byDay: [:]) == empty)
+    check(
+        "a different month is not equal",
+        calMonth(CalGrid.addMonths(august, 1), today: 2_026_08_15, byDay: [:]) != empty)
 
     return failures
 }

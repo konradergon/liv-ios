@@ -164,7 +164,7 @@ struct DeskHost: View {
         // latches, so taps still press.
         .background(
             PanelDragInstaller(
-                active: { desk.menu == nil },
+                active: { desk.deskInFront && desk.menu == nil },
                 mayClaim: { dx in claimPanel(dx) != nil },
                 onLatch: { dx in
                     if let claim = claimPanel(dx) {
