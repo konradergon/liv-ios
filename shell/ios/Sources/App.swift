@@ -125,29 +125,23 @@ struct RootView: View {
             if let id = desk.minimisedRecord, !keyboard.up {
                 MinimisedRecordPill(id: id)
                     .padding(.bottom, 62)
-                    // Furniture of the desk, so it leaves with the desk
-                    // rather than hanging over the panel that replaced
-                    // it (owner, 2026-08-15).
-                    .offset(x: desk.deskShift)
-                    .opacity(1 - desk.curtain)
-                    .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
+                    // Painted above the panels, so it fades under
+                    // whichever curtain is coming down over it.
+                    .opacity(1 - max(desk.curtain, desk.libraryCurtain))
+                    .accessibilityHidden(desk.curtain > 0 || desk.libraryCurtain > 0)
                     .zIndex(2)
             }
             if !keyboard.up && desk.menu == nil {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
-                    // The bar is the desk's, and LEAVES WITH IT. It used
-                    // to be dropped the moment a panel was shown, which
-                    // now reads as the bar popping out halfway through
-                    // the desk's journey; travelling off screen with the
-                    // desk is the same disappearance, told honestly.
-                    .offset(x: desk.deskShift)
-                    // Under the properties curtain it fades, because the
-                    // bar is drawn above the panels and the curtain has
-                    // no way to cover it.
-                    .opacity(1 - desk.curtain)
-                    .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
+                    // The bar is drawn above the panels, so no curtain
+                    // can cover it: it fades by how far the nearer one
+                    // has come down. It used to be dropped from the
+                    // hierarchy the moment a panel was shown, which read
+                    // as a pop halfway through the motion.
+                    .opacity(1 - max(desk.curtain, desk.libraryCurtain))
+                    .accessibilityHidden(desk.curtain > 0 || desk.libraryCurtain > 0)
                     // The extra offset carries it past the bottom safe
                     // area; the z keeps the exit above the opaque desk
                     // (audit, 2026-08-01). Both are pure translations.

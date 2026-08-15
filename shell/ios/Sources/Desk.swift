@@ -51,7 +51,6 @@ struct DeskHost: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .offset(x: desk.deskShift)
             .accessibilityHidden(anyPanel)
 
             // The doors (design/ios.md §6 rev 6): top-left opens the
@@ -76,14 +75,14 @@ struct DeskHost: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 6)
-            // PINNED, like the workspace button between them: the
-            // library door has to stay reachable with the properties
-            // panel up (owner, 2026-08-15: "that button should be
-            // visible with the property card open"), and the panel
-            // covers the whole screen again. They fade only as the
-            // LIBRARY arrives — that is the one surface where the desk
-            // itself is gone.
-            .opacity(1 - desk.deskTravel)
+            // Pinned, like the workspace button between them: the
+            // library door stays reachable with the properties panel up
+            // (owner, 2026-08-15: "that button should be visible with
+            // the property card open"). They are painted above the
+            // panels, so a curtain cannot cover them — they fade by
+            // exactly how far the LIBRARY's curtain has come down, since
+            // that is the one that lands on top of them.
+            .opacity(1 - desk.libraryCurtain)
             .accessibilityHidden(desk.libraryShown)
             .zIndex(3)
 

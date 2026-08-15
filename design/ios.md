@@ -934,6 +934,20 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 25. Both panels are curtains (rev 28, owner 2026-08-16)
+
+Owner: *"make library a curtain like before. i want to rethink what ive
+told you today, more later."*
+
+Rev 23's strip — the library pushing the desk a screen sideways — is
+withdrawn. Both panels slide over a desk that does not move. Nothing
+travels, so `deskShift`/`deskTravel` are deleted; the chrome painted
+above the panels fades by the progress of the curtain that covers it
+(`libraryCurtain`, `curtain`).
+
+The rest of 2026-08-15's surface work is on hold at the owner's word,
+pending a rethink.
+
 ## 24. The system's surface, until ours is earned (rev 27, owner 2026-08-16)
 
 Owner: *"revert colors and faces to as system like as possible. we

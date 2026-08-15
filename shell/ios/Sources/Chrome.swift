@@ -157,8 +157,8 @@ final class DeskModel: ObservableObject {
     var newTabMenu: (() -> LivMenu)?
     /// One panel being dragged: which one, whether the drag OPENS or
     /// CLOSES it, and the finger's travel so far. It lives on the MODEL
-    /// rather than in DeskHost because the bottom bar — which belongs to
-    /// the desk and travels with it — is drawn by RootView, one level up.
+    /// because the bottom bar and the pill, which fade under a curtain,
+    /// are drawn by RootView, one level up.
     struct PanelDrag: Equatable {
         enum Which { case library, inspector }
         let which: Which
@@ -219,36 +219,17 @@ final class DeskModel: ObservableObject {
         return panelDrag!.progress(UIScreen.main.bounds.width)
     }
 
-    /// The desk's own travel, and the reason the two panels do not move
-    /// alike (owner, 2026-08-15).
+    /// BOTH panels are curtains: each slides over a desk that stays
+    /// exactly where it is (owner, 2026-08-16: "make library a curtain
+    /// like before. i want to rethink what ive told you today").
     ///
-    /// The LIBRARY is a different PLACE, so it and the desk are one
-    /// strip: opening it pushes the desk a whole screen right, and the
-    /// desk sits off screen to the right the whole time it is open —
-    /// "swipe away from the previous view, as if it sits on the left /
-    /// right off screen".
-    ///
-    /// The PROPERTIES panel is about the note you are already looking
-    /// at, so it stays a CURTAIN: it slides over a desk that does not
-    /// move ("maybe having properties panel behave like a curtain
-    /// though"). Hence one term here, not two.
-    var deskShift: CGFloat {
-        panelProgress(.library) * UIScreen.main.bounds.width
-    }
-
-    /// How far the properties CURTAIN has come down, 0…1. Whatever is
-    /// drawn above the panels — the workspace button, the bottom bar,
-    /// the minimised pill — fades by exactly this, because the curtain
-    /// cannot cover what is painted on top of it.
+    /// The strip — the library pushing the desk a whole screen sideways
+    /// — is withdrawn along with the surface work it belonged to. The
+    /// desk never moves now, so nothing that belongs to the desk travels
+    /// either; the chrome painted ABOVE the panels simply fades by how
+    /// far the curtain over it has come down.
+    var libraryCurtain: CGFloat { panelProgress(.library) }
     var curtain: CGFloat { panelProgress(.inspector) }
-
-    /// How far the desk has travelled, as a fraction of the screen.
-    /// The doors ride the desk, so they would slide THROUGH the pinned
-    /// workspace button on the way out; they fade over the first third
-    /// of the journey instead, and are gone before they reach it.
-    var deskTravel: CGFloat {
-        min(1, abs(deskShift) / max(1, UIScreen.main.bounds.width) * 3)
-    }
 
     /// The metadata inspector covers the active entity tab's body.
     /// Lifted to the model so DeskHost's floating chevron can drive it;
