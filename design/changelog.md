@@ -1,5 +1,54 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the palette comes from the icon, and it is measured
+
+Owner, after a three-way side-by-side: *"i suggest you have a near black
+background and use a violet like in one of the arms in the logo. i
+thought of the modus themes because of their contrast, which is way
+higher than you have made here."*
+
+**The two top buttons are one button now.** They wore the system's
+`.bordered` circle, which sizes itself to its LABEL — so the wide
+hamburger came out a visibly bigger circle than the narrow ••• — and
+fills itself from the tint, so both floated in a lighter grey than the
+bar they belong with (owner, 2026-08-15: "should be made of the same
+thing"). They are the bottom bar's own recipe now: `LivTheme.surface`, a
+hairline, and a fixed 40pt circle around a fixed 22pt glyph. Measured
+after: both fills 104px wide, and the fill is byte-identical to the
+bar's.
+
+**The colours are the app icon's.** It is three arms of dots, each one
+hue running light to dark — VIOLET, PINK, AMBER — and the app now uses
+them the same way: violet for chrome and notes, pink for tasks and
+people, amber for events, files and captures. There is no blue and no
+cyan anywhere, because there is none in the mark. The set it replaces
+was Apple's system colours, which is the "generated" look in one line:
+every phone owner reads them as the default.
+
+**Built to a contrast FLOOR, which is what the Modus themes were brought
+here for.** Ground `#08070A`, text `#FFFFFF` — 20:1. Every colour a
+person reads clears **7:1 in both schemes**, most past 10: accent violet
+10.0 (was 4.95 — the worst thing on screen), note violet 8.1, task pink
+7.7, event amber 11.0, file gold 14.1, secondary text 9.2.
+
+- **`livPaletteSelfCheck` measures it** (`-palette.selfcheck 1`), because
+  a floor nobody measures is a wish. It walks every token and every kind
+  against the ground it is read on, in dark AND light, and it caught a
+  real mistake on its first run: the light accent and the light note
+  violet were the same colour to within 6%.
+- **Chrome and content stopped saying the same word.** A note used to BE
+  the accent. It is now the violet arm one step down — the icon's own
+  logic — and the check refuses to let them collapse together again.
+- **Tints are colours now, not translucency.** `LivTheme.tint` mixes a
+  hue into the ground once and returns an opaque colour. The Today pill,
+  the calendar's blocks, the LATE band and the trash bar were
+  `.opacity(0.14…0.36)` over whatever happened to be behind them — the
+  hue drifted and nothing was ever chosen.
+- **The value-dot set** was Apple's semantic five (purple, green, amber,
+  red, blue). It is five steps around the icon's arms now.
+- **Light mode was re-derived too**, not lightened by accident: white
+  ground, the same three arms darkened until each clears 7:1.
+
 ## 2026-08-14 — Settings loses its drawer, and the app stops saying "box"
 
 Owner: *"remove settings advanced drawer too"* and, asked in the same

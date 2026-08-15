@@ -532,6 +532,17 @@ Surfaces (bodies; mockups in the artifact):
 
 ## 7. Visual design
 
+**The palette is the app icon's, to a measured floor (rev 18, owner
+2026-08-15).** Three arms — violet, pink, amber — used as three hue
+families: violet is chrome and notes, pink is tasks and people, amber is
+events, files and captures. No blue, no cyan, no green in the kinds;
+none is in the mark. Every colour clears 7:1 against its own ground in
+both schemes, asserted by `-palette.selfcheck 1`. Soft fills are opaque
+tints mixed into the ground (`LivTheme.tint`), never `.opacity` over
+whatever is behind. The accent and the note tone are one step apart on
+the same arm, and the check refuses to let them merge.
+
+
 Structure from ClickUp mobile; soul, tokens, and density from Liv:
 
 - ThemeSpec token system ports 1:1 (`UIColor(dynamicProvider:)`) —

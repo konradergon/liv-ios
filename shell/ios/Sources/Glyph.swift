@@ -81,7 +81,7 @@ enum LivKind: CaseIterable {
     /// a kind's colour.
     var color: Color {
         switch self {
-        case .note: return LivTheme.accent
+        case .note: return LivTheme.noteViolet
         case .task: return LivTheme.purple
         case .event: return LivTheme.teal
         case .file, .link: return LivTheme.orange
@@ -452,6 +452,66 @@ struct PropertiesMark: View {
             .frame(width: 8.2 * s, height: 8.2 * s)
             .offset(x: (x - 12) * s, y: (y - 12) * s)
     }
+}
+
+// MARK: - the contrast floor, measured
+
+/// WCAG relative luminance, then the ratio. The palette is built to a
+/// FLOOR (7:1, the Modus themes' bar, which the owner brought them here
+/// for) and a floor nobody measures is a wish: the set this replaced had
+/// six colours under it, including the accent behind every link and
+/// button label at 4.95:1.
+enum LivContrast {
+    static func ratio(_ a: Color, _ b: Color, dark: Bool) -> Double {
+        let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
+        let la = luminance(UIColor(a).resolvedColor(with: traits))
+        let lb = luminance(UIColor(b).resolvedColor(with: traits))
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    private static func luminance(_ color: UIColor) -> Double {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        func c(_ v: CGFloat) -> Double {
+            let v = Double(v)
+            return v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * c(r) + 0.7152 * c(g) + 0.0722 * c(b)
+    }
+}
+
+/// Every colour a person reads, against the ground it is read on, in
+/// BOTH schemes: `simctl launch … -palette.selfcheck 1`.
+func livPaletteSelfCheck() -> [String] {
+    var fail: [String] = []
+    let floor = 7.0
+    let onCanvas: [(String, Color)] = [
+        ("text", LivTheme.text), ("text2", LivTheme.text2), ("text3", LivTheme.text3),
+        ("muted", LivTheme.muted), ("accent", LivTheme.accent),
+        ("green", LivTheme.green), ("red", LivTheme.red), ("amber", LivTheme.amber),
+    ] + LivKind.allCases.map { ($0.wire, $0.color) }
+    for dark in [true, false] {
+        let scheme = dark ? "dark" : "light"
+        for (name, color) in onCanvas {
+            let r = LivContrast.ratio(color, LivTheme.canvas, dark: dark)
+            if r < floor {
+                fail.append("\(scheme): \(name) is \(String(format: "%.2f", r)):1 on the canvas")
+            }
+        }
+        // Text on the accent — the accent is LIGHT in dark mode, so its
+        // ink is the near-black, and getting that backwards is invisible
+        // in code and unreadable on screen.
+        let onAccent = LivContrast.ratio(LivTheme.onAccent, LivTheme.accent, dark: dark)
+        if onAccent < floor {
+            fail.append("\(scheme): onAccent is \(String(format: "%.2f", onAccent)):1 on the accent")
+        }
+        // Chrome and content must not say the same word.
+        let split = LivContrast.ratio(LivTheme.accent, LivKind.note.color, dark: dark)
+        if split < 1.15 {
+            fail.append("\(scheme): the accent and a note are the same colour")
+        }
+    }
+    return fail
 }
 
 // MARK: - self-check (`simctl launch … -glyph.selfcheck 1`)

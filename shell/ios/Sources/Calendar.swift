@@ -155,7 +155,7 @@ struct CalendarView: View {
                     .frame(height: 26)
                     .background(
                         Capsule().fill(
-                            onToday ? LivTheme.accent : LivTheme.accent.opacity(0.16))
+                            onToday ? LivTheme.accent : LivTheme.accentSoft)
                     )
                     .overlay(
                         Capsule().strokeBorder(
@@ -626,7 +626,7 @@ struct CalendarView: View {
     private func placedBox(_ minutes: Int, width: CGFloat) -> some View {
         let unit = CalClock.hourHeight / 60
         return RoundedRectangle(cornerRadius: 8)
-            .fill(LivKind.event.color.opacity(0.28))
+            .fill(LivTheme.tint(LivKind.event.color, 0.3))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(LivKind.event.color, lineWidth: 1.5)
@@ -662,7 +662,7 @@ struct CalendarView: View {
         .frame(height: 56)
         .background(
             RoundedRectangle(cornerRadius: LivTheme.radius)
-                .fill(trashArmed ? LivTheme.red : LivTheme.red.opacity(0.14))
+                .fill(trashArmed ? LivTheme.red : LivTheme.tint(LivTheme.red, 0.18))
         )
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
@@ -824,10 +824,7 @@ struct CalendarView: View {
     /// event and a draft can never disagree.
     private func blockFill(_ ink: Color, _ amount: Double) -> some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(LivTheme.canvas)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8).fill(ink.opacity(amount))
-            )
+            .fill(LivTheme.tint(ink, amount))
     }
 
 

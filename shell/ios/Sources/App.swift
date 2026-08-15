@@ -66,6 +66,13 @@ struct LivApp: App {
             print("GLYPH-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("GLYPH-SELFCHECK \($0)") }
         }
+        // The palette's contrast floor (Glyph.swift), same door:
+        // `-palette.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "palette.selfcheck") {
+            let failures = livPaletteSelfCheck()
+            print("PALETTE-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("PALETTE-SELFCHECK \($0)") }
+        }
         // The markdown scan + edit operations (EditorStyle.swift), same
         // door: `simctl launch … -editor.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "editor.selfcheck") {

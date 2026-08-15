@@ -330,7 +330,7 @@ struct TodayView: View {
             Spacer(minLength: 6)
         }
         .frame(minHeight: 44)
-        .background(next ? LivTheme.accentSoft.opacity(0.4) : Color.clear)
+        .background(next ? LivTheme.tint(LivTheme.accent, 0.12) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture { desk.open(row.id) }
         .overlay(alignment: .bottom) {

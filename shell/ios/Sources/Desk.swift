@@ -602,20 +602,24 @@ struct FloatCircle: View {
 }
 
 extension View {
-    /// The top row's button dress: the SYSTEM's own bordered circle
-    /// (owner, 2026-08-14: "should not be fully transparent / have a
-    /// button shape … use default appkit look").
+    /// The top row's button dress: the SAME material as the bottom bar
+    /// (owner, 2026-08-15: "should be made of the same thing"), on a
+    /// circle of one FIXED size.
     ///
-    /// It was a hand-drawn disc in `panel2` with a hairline, then — for
-    /// one build — nothing at all, which read as a glyph loose on the
-    /// page. This is neither: `.bordered` gives the platform's own
-    /// material and its own pressed state, and the app supplies only the
-    /// tint.
+    /// It wore the system's `.bordered` circle for a day. Two faults,
+    /// both visible in a screenshot: that style sizes itself to its
+    /// LABEL, so the wide hamburger came out a bigger circle than the
+    /// narrow •••; and its fill is derived from the tint, so the two
+    /// buttons floated in a lighter grey than the bar they belong with.
+    /// One surface, one hairline, one size — the bar's own recipe.
     func livTopButton(on: Bool = false) -> some View {
-        buttonStyle(.bordered)
-            .buttonBorderShape(.circle)
-            .controlSize(.large)
-            .tint(on ? LivTheme.accent : LivTheme.text2)
+        buttonStyle(.plain)
+            .frame(width: 40, height: 40)
+            .background(on ? LivTheme.accent : LivTheme.surface, in: Circle())
+            .overlay(
+                Circle().strokeBorder(
+                    on ? Color.clear : LivTheme.border, lineWidth: 0.5))
+            .contentShape(Circle())
     }
 }
 
@@ -628,6 +632,10 @@ struct FloatCircleLabel: View {
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: LivType.title, weight: .regular))
+            .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text2)
+            // A FIXED square, so a wide glyph and a narrow one come out
+            // the same button.
+            .frame(width: 22, height: 22)
     }
 }
 

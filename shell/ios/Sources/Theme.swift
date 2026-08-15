@@ -1,9 +1,21 @@
 // liv iOS — tokens (design/ios.md §7). Dark is the house look; a LIGHT
 // twin arrived 2026-08-07 (owner: "add light mode") — every token is a
 // dark/light pair resolved by the system's appearance machinery, and a
-// Settings row picks Dark, Light, or System. The lake-green identity
-// stays retired; the system blue is the one accent; amber stays
-// reserved app-wide for AI presence.
+// Settings row picks Dark, Light, or System.
+//
+// THE PALETTE COMES FROM THE APP ICON (owner, 2026-08-15). The icon is
+// three arms of dots, each one hue running light to dark: VIOLET, PINK,
+// AMBER. The app uses them the same way — violet for chrome and notes,
+// pink for tasks and people, amber for events, files and captures. There
+// is no blue and no cyan anywhere, because there is none in the mark.
+//
+// And it is built to a CONTRAST FLOOR, the one thing worth taking from
+// the Modus themes (owner brought them for exactly this): every colour
+// here clears 7:1 against the ground it sits on, in BOTH schemes. The
+// old set was Apple's system colours, where six of thirteen sat under
+// that and the accent — every link and every button label — was the
+// worst thing on screen at 4.95:1. `livPaletteSelfCheck` measures it now
+// rather than trusting anyone's eye.
 
 import SwiftUI
 import UIKit
@@ -152,55 +164,83 @@ enum LivMotion {
 /// The same tokens at the UIColor level, for the UIKit text stack (the
 /// markdown editor draws with TextKit, which never sees SwiftUI Color).
 enum LivInk {
-    static let accent = hex(0x0A84FF, light: 0x007AFF)
-    static let onAccent = hex(0xFFFFFF)
-    static let surface = hex(0x1E1E20, light: 0xFFFFFF)
-    static let panel2 = hex(0x2C2C2E, light: 0xE5E5EA)
-    static let text = hex(0xF5F5F7, light: 0x1C1C1E)
-    static let text2 = hex(0xC9C9CE, light: 0x3A3A3C)
-    static let text3 = hex(0x9A9AA2, light: 0x6E6E73)
-    static let muted = hex(0x8E8E93)
+    static let accent = hex(0xB9ADFF, light: 0x4B3BC4)
+    static let onAccent = hex(0x08070A, light: 0xFFFFFF)
+    static let surface = hex(0x141118, light: 0xFFFFFF)
+    static let panel2 = hex(0x262130, light: 0xE9E5F0)
+    static let text = hex(0xFFFFFF, light: 0x14121A)
+    static let text2 = hex(0xDCD6E8, light: 0x3C3648)
+    static let text3 = hex(0xB4ACC4, light: 0x5C5570)
+    static let muted = hex(0xB4ACC4, light: 0x5C5570)
     static let border = hex(0xFFFFFF, 0.10, light: 0x000000, lightAlpha: 0.12)
     /// Style-panel key fill — kept for any full-size key surface.
-    static let keyFill = hex(0x2C2C2E, light: 0xE5E5EA)
+    static let keyFill = hex(0x262130, light: 0xE9E5F0)
 }
 
 enum LivTheme {
     // The one accent: the system blue, in each scheme's own shade.
-    static let accent = solid(0x0A84FF, light: 0x007AFF)
-    static let accentSoft = solid(0x0A84FF, 0.18, light: 0x007AFF)
-    static let onAccent = solid(0xFFFFFF)
+    static let accent = solid(0xB9ADFF, light: 0x4B3BC4)
+    static let accentSoft = tint(accent)
+    /// The violet arm ONE STEP DOWN from the accent. A note is the app's
+    /// default thing, so it wears the accent's family — but chrome and
+    /// content saying the same word was the old palette's flaw, and the
+    /// icon's own arms are exactly this: one hue, light to dark.
+    static let noteViolet = solid(0xA796FF, light: 0x352A93)
+    static let onAccent = solid(0x08070A, light: 0xFFFFFF)
 
     // Elevation is tonal — canvas behind everything, surface for cards,
     // panel for wells, panel2 for chips/small fills. Light inverts the
     // ramp: white canvas, grouped greys for wells.
-    static let canvas = solid(0x161618, light: 0xFFFFFF)
-    static let surface = solid(0x1E1E20, light: 0xFFFFFF)
-    static let panel = solid(0x242426, light: 0xF2F2F7)
-    static let panel2 = solid(0x2C2C2E, light: 0xE5E5EA)
+    static let canvas = solid(0x08070A, light: 0xFFFFFF)
+    static let surface = solid(0x141118, light: 0xFFFFFF)
+    static let panel = solid(0x1C1822, light: 0xF4F2F8)
+    static let panel2 = solid(0x262130, light: 0xE9E5F0)
 
     // The four text tiers + hairlines.
-    static let text = solid(0xF5F5F7, light: 0x1C1C1E)
-    static let text2 = solid(0xC9C9CE, light: 0x3A3A3C)
-    static let text3 = solid(0x9A9AA2, light: 0x6E6E73)
+    static let text = solid(0xFFFFFF, light: 0x14121A)
+    static let text2 = solid(0xDCD6E8, light: 0x3C3648)
+    static let text3 = solid(0xB4ACC4, light: 0x5C5570)
     // #707078 read at 3.7:1 against the canvas — under the 4.5:1
     // readability minimum. #8E8E93 clears it on both canvases.
-    static let muted = solid(0x8E8E93)
+    static let muted = solid(0xB4ACC4, light: 0x5C5570)
     static let border = solid(0xFFFFFF, 0.10, light: 0x000000, lightAlpha: 0.12)
     static let border2 = solid(0xFFFFFF, 0.16, light: 0x000000, lightAlpha: 0.18)
 
     // The semantic set — the ONLY value colors (O2: VALUE_HEX retired),
     // each in its scheme's own shade.
-    static let green = solid(0x30D158, light: 0x34C759)
-    static let red = solid(0xFF453A, light: 0xFF3B30)
-    static let amber = solid(0xFFB340, light: 0xF5A623)
-    static let purple = solid(0xBF5AF2, light: 0xAF52DE)
+    static let green = solid(0x57E39A, light: 0x0B5C36)
+    static let red = solid(0xFF7A8A, light: 0x9E1F30)
+    static let amber = solid(0xFFB020, light: 0x6B4900)
+    static let purple = solid(0xFF6FA8, light: 0xA32450)
     // The rest of the KIND language (blueprints, 2026-08-12).
-    static let teal = solid(0x64D2FF, light: 0x32ADE6)
-    static let orange = solid(0xFF9F0A, light: 0xFF9500)
-    static let pink = solid(0xFF375F, light: 0xFF2D55)
-    static let yellow = solid(0xFFD60A, light: 0xFFCC00)
-    static let gray = solid(0x98989D, light: 0x8E8E93)
+    static let teal = solid(0xFFB020, light: 0x6B4900)
+    static let orange = solid(0xFFD27A, light: 0x5F4A0E)
+    static let pink = solid(0xFF9EC4, light: 0x8E3059)
+    static let yellow = solid(0xFFE08A, light: 0x5C4E12)
+    static let gray = solid(0xB9B2C6, light: 0x555063)
+
+    /// A tint that is a COLOUR, not a translucency.
+    ///
+    /// Soft fills used to be `accent.opacity(0.16)` and friends, which is
+    /// the machine-made look in one line: the hue drifts with whatever is
+    /// behind it, and nothing was ever chosen. This mixes the hue INTO
+    /// the ground once and hands back an opaque colour, per scheme.
+    static func tint(_ color: Color, _ amount: CGFloat = 0.22) -> Color {
+        Color(
+            UIColor { traits in
+                let ink = UIColor(color).resolvedColor(with: traits)
+                let ground = UIColor(canvas).resolvedColor(with: traits)
+                var ir: CGFloat = 0, ig: CGFloat = 0, ib: CGFloat = 0, ia: CGFloat = 0
+                var gr: CGFloat = 0, gg: CGFloat = 0, gb: CGFloat = 0, ga: CGFloat = 0
+                ink.getRed(&ir, green: &ig, blue: &ib, alpha: &ia)
+                ground.getRed(&gr, green: &gg, blue: &gb, alpha: &ga)
+                return UIColor(
+                    red: gr + (ir - gr) * amount,
+                    green: gg + (ig - gg) * amount,
+                    blue: gb + (ib - gb) * amount,
+                    alpha: 1)
+            })
+    }
 
     static let radius: CGFloat = 10
     static let radiusSm: CGFloat = 6
@@ -237,9 +277,13 @@ enum Hue {
         return h
     }
 
+    /// Five steps around the icon's three arms — violet, pink, amber and
+    /// the light ends of two of them. It used to be Apple's semantic five
+    /// (purple, green, amber, red, blue), which put a green and a system
+    /// blue on screen that exist nowhere in the mark.
     private static let set: [Color] = [
-        LivTheme.purple, LivTheme.green, LivTheme.amber, LivTheme.red,
-        LivTheme.accent,
+        LivTheme.noteViolet, LivTheme.purple, LivTheme.amber, LivTheme.pink,
+        LivTheme.orange,
     ]
 
     /// A display string's dot color — stable per string, semantic set only.
