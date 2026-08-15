@@ -21,8 +21,6 @@ struct TasksView: View {
     @State private var filter: TasksFilter = .all
     /// Names of completes-groups the user opened; default = collapsed.
     @State private var expanded: Set<String> = []
-    @State private var quickAdd = ""
-    @FocusState private var quickAddFocused: Bool
     /// The row whose "Pick" swipe verb is choosing a date (sheet item).
     @State private var duePick: TasksDuePick?
 
@@ -44,7 +42,6 @@ struct TasksView: View {
         let hue: Color?
         let isNoStatus: Bool
         var rows: [EntityRow]
-        var hostsQuickAdd = false
     }
 
     // MARK: body
@@ -59,9 +56,6 @@ struct TasksView: View {
             }
             ForEach(groups) { group in
                 groupHeader(group)
-                if group.hostsQuickAdd {
-                    quickAddRow(status: group.isNoStatus ? nil : group.name)
-                }
                 if !group.completes || expanded.contains(group.name) {
                     ForEach(group.rows) { row in
                         taskRow(row)
@@ -74,8 +68,12 @@ struct TasksView: View {
         .environment(\.defaultMinListRowHeight, 40)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
-        .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
+        // Room under the last row for the add button to sit over.
+        .contentMargins(.bottom, 88, for: .scrollContent)
         .background(LivTheme.canvas.ignoresSafeArea())
+        .overlay(alignment: .bottomTrailing) {
+            LivAddButton(label: "New task") { addTask() }
+        }
         .sheet(item: $duePick) { p in
             DetailDueSheet(model: model, id: p.entity, property: "due")
                 .presentationDetents([.medium])
@@ -183,20 +181,9 @@ struct TasksView: View {
                 name: "No status", completes: false, hue: nil, isNoStatus: true,
                 rows: sortRows(rest)))
 
-        // Quick-add lives at the top of the first non-completes group — under
-        // a status filter, that filter's own group (none if it completes).
-        let hostIndex: Int?
-        switch filter {
-        case .status(let s):
-            hostIndex = groups.firstIndex { $0.name == s && !$0.completes }
-        default:
-            hostIndex = groups.firstIndex { !$0.completes }
-        }
-        if let hostIndex { groups[hostIndex].hostsQuickAdd = true }
-
-        return groups.enumerated().compactMap { i, group in
-            group.rows.isEmpty && i != hostIndex ? nil : group
-        }
+        // An empty group is not a group. Quick-add used to hold one
+        // open to host itself; the add button is outside the list now.
+        return groups.filter { !$0.rows.isEmpty }
     }
 
     private func matchesFilter(_ row: EntityRow) -> Bool {
@@ -387,51 +374,26 @@ struct TasksView: View {
         }
     }
 
-    // MARK: quick-add
+    // MARK: add
 
-    private func quickAddRow(status: String?) -> some View {
-        HStack(spacing: 0) {
-            Image(systemName: "plus")
-                .font(.system(size: LivType.label, weight: .semibold))
-                .foregroundStyle(LivTheme.muted)
-                .frame(width: 31)  // aligns with the 15pt ring + its 8pt pads
-            TextField("Add a task", text: $quickAdd)
-                .font(.system(size: LivType.strong))
-                .foregroundStyle(LivTheme.text)
-                .focused($quickAddFocused)
-                .submitLabel(.done)
-                .onSubmit { submitQuickAdd(status: status) }
-            // The stamp promised before the write (no chip strip here).
-        }
-        .frame(minHeight: 40)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.leading, 31)
-        }
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-    }
-
-    private func submitQuickAdd(status: String?) {
-        let text = quickAdd.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    /// A task, straight into its properties with the caret in the title
+    /// — the app's one create rule (owner, 2026-08-13: "naming of items
+    /// should be done in properties"). It used to be a row inside the
+    /// list, under whichever group happened to host it; it is the button
+    /// at the bottom right now (owner, 2026-08-16).
+    ///
+    /// No status is set: the list is grouped BY status, and choosing one
+    /// for you would file the task before you had said anything about
+    /// it. The properties card has the row.
+    private func addTask() {
         model.createTask { id in
             guard id != 0 else { return }  // failure already surfaced by the model
-            model.set(id, "name", text)
-            if let status { model.set(id, "status", status) }
             // The lens stamps here too (M4) — see WorkspaceModel.stamp.
             workspaces.stamp(id, in: model)
-            // Straight into properties. A new task almost always wants a
-            // date and a field or two next, and hunting for the row you
-            // just typed to tap it is the long way round (owner,
-            // 2026-08-11: "you so often want to set date and a few
-            // properties… should be the standard way"). `as: .record`
-            // because the snapshot has not caught up yet — see open().
+            desk.requestFocus(id)
+            // `as: .record` because the snapshot has not caught up yet.
             desk.open(id, as: .record)
         }
-        quickAdd = ""
-        quickAddFocused = false
     }
 
     // MARK: rows

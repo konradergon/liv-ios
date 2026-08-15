@@ -1,5 +1,74 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — one add button, bottom right
+
+Owner: *"The row for adding items in Tasks and Today should be a button
+towards bottom right very similar to the screenshot i added."* (The
+screenshot did not arrive in the message; this is the ordinary
+bottom-right round key, and it is easy to reshape once it does.)
+
+Today and Tasks each carried an inline "type a name here" row — a row
+that looked like a list item, sat wherever the list happened to put it
+(Tasks' hung inside whichever group came first, and held that group open
+even when empty), and asked for a name before the thing existed. Both
+are gone. `LivAddButton` is the one key: 56pt, accent, bottom right, and
+pressing it makes the thing and opens its properties with the caret in
+the title — the app's one create rule since 2026-08-13.
+
+In Today it makes a task DUE on the day you are looking at, at 09:00. In
+Tasks it sets no status: that list is grouped BY status, and choosing
+one for you would file the task before you had said anything about it.
+
+## 2026-08-16 — both panels are curtains again
+
+Owner: *"make library a curtain like before. i want to rethink what ive
+told you today, more later."*
+
+The strip is withdrawn: the library slides over a desk that stays
+exactly where it is, the same as the properties panel. Nothing travels
+any more — not the desk, not the doors, not the bar, not the pill — so
+`deskShift` and `deskTravel` are gone. What is painted ABOVE the panels
+(the two doors, the workspace name, the bar, the pill) fades by how far
+the curtain over it has come down; the doors watch the library's, the
+workspace name the properties panel's.
+
+Held here for the rethink.
+
+## 2026-08-16 — the surface goes back to the system's
+
+Owner: *"maybe we should keep properties stalled on the right not as a
+card for simplification's sake, and have the base appearance same as
+library. revert colors and faces to as system like as possible. we
+should do the surface appearance last and thoroughly."*
+
+**One panel recipe again.** The properties panel stands on the right,
+full height, on the same ground as the library — no card, no radius, no
+shadow, no top inset. `LibraryPlace` is gone; `SidePanel` draws both,
+and both carry the same 56pt top band so nothing they draw lands under
+the workspace name floating above them. The two still differ in MOTION,
+which costs nothing.
+
+**The palette is the system's.** Every token now resolves to a system
+semantic colour: `systemBackground`, `secondarySystemBackground`,
+`label`/`secondaryLabel`/`tertiaryLabel`, `separator`, the app tint, and
+the system hues for the kind language. What it replaces — a palette
+derived from the app icon, measured to a 7:1 floor — was not wrong, it
+was EARLY: a bespoke surface pays off once the shapes have settled, and
+until then it is a second thing to keep true on every screen. The names
+stay, so the surface pass changes the right-hand side of those lines and
+nothing else.
+
+**The palette self-check changed with it.** INK is read, so 4.5:1 (WCAG
+AA) on the ground; ink on the tint 3:1 (Apple's own white-on-blue is
+3.5:1); MARKS — dots, chips, glyph tints — are not read but told apart,
+so no two kinds may look alike, measured as a colour distance in both
+schemes. A file and a link share one colour on purpose and are exempted
+by name.
+
+**The library door is pinned now**, beside the workspace button, so it
+stays reachable with the properties panel open even though that panel
+covers the screen again.
+
 ## 2026-08-15 — the views move into the library
 
 Owner: *"do the views opening inside the library. also, clicking on the

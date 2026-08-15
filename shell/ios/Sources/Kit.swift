@@ -323,6 +323,35 @@ func livCanTick(_ row: EntityRow) -> Bool {
 /// mode that passed, since surface (#1E1E20) reads against canvas
 /// (#161618). In light mode both are #FFFFFF — the border IS the shape —
 /// so the button had no shape at all (owner, 2026-08-10).
+/// The one ADD button: a round accent key at the bottom RIGHT of a list
+/// (owner, 2026-08-16, pointing at a screenshot). It replaces the inline
+/// "type a name here" row that Today and Tasks each carried — a row that
+/// looked like a list item, sat wherever the list happened to put it,
+/// and asked for a name before anything existed.
+///
+/// Pressing it makes the thing and opens its properties with the caret
+/// in the title, which is the app's one create rule (owner, 2026-08-13:
+/// "naming of items should be done in properties").
+struct LivAddButton: View {
+    var label: String = "Add"
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(LivTheme.onAccent)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(LivTheme.accent))
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 20)
+        .padding(.bottom, 24)
+        .accessibilityLabel(label)
+    }
+}
+
 struct LivVerbFace: ViewModifier {
     var primary = false
 

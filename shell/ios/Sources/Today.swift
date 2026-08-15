@@ -113,7 +113,6 @@ struct TodayView: View {
                         }
                     }
                 }
-                TodayQuickAddRow(day: selectedDay)
                 if captured > 0 {
                     capturedFooter(captured)
                 }
@@ -127,8 +126,12 @@ struct TodayView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
+        // Room under the last row for the add button to sit over.
+        .contentMargins(.bottom, 88, for: .scrollContent)
         .background(LivTheme.canvas)
+        .overlay(alignment: .bottomTrailing) {
+            LivAddButton(label: "New task") { addTask(on: selectedDay) }
+        }
         .sheet(item: $duePick) { pick in
             DetailDueSheet(
                 model: box, id: pick.entity,
@@ -141,6 +144,27 @@ struct TodayView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
+        }
+    }
+
+    /// A task DUE on the day you are looking at, straight into its
+    /// properties with the caret in the title — the app's one create
+    /// rule (owner, 2026-08-13). The name is typed there now, not into a
+    /// ghost row in the list.
+    private func addTask(on day: Int64) {
+        box.createTask { id in
+            guard id != 0 else { return }
+            // 09:00, not a bare date: a task with no clock time has no
+            // moment to ring at (owner, 2026-08-07).
+            box.setSpan(
+                id, "due", start: Civil.stamp(day: day, hhmm: LivDue.defaultHHMM),
+                end: 0, dateOnly: false)
+            // The active workspace stamps here too (M4) — otherwise a
+            // task added while looking at Work lacks Work's cells and
+            // vanishes from the very list it was made in.
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.open(id, as: .record)
         }
     }
 
@@ -595,79 +619,6 @@ private struct TodayDateStrip: View {
                 }
                 .buttonStyle(.plain)
             }
-        }
-    }
-}
-
-/// The inline quick-add ghost row (eval §4.1 — ClickUp's context-inheriting
-/// "New" row): a name typed under a day becomes a task DUE that day,
-/// date-only, no picker — tap, type, return = a dated task, 3 gestures.
-/// The field clears only on create success and keeps focus for serial adds.
-private struct TodayQuickAddRow: View {
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-    @EnvironmentObject var desk: DeskModel
-    let day: Int64
-
-    @State private var text = ""
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            // Dashed StatusRing ghost — a task that isn't yet.
-            RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(
-                    LivTheme.muted,
-                    style: StrokeStyle(lineWidth: 1.5, dash: [2.5])
-                )
-                .frame(width: 15, height: 15)
-                .frame(width: 31)
-            TextField("New for \(Civil.dayLabel(day))…", text: $text)
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text)
-                .textInputAutocapitalization(.never)  // capture-verbatim law
-                .autocorrectionDisabled(true)
-                .focused($focused)
-                .onSubmit(submit)
-            // No post-save chip strip here, so the stamp is promised
-            // BEFORE the write rather than shown after it.
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
-        .onTapGesture { focused = true }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-    }
-
-    /// Create only on real text; on success (id != 0) name + due land as
-    /// their own acts and the trailing refresh surfaces the row above.
-    /// A refused create keeps the draft — the field never clears on failure.
-    private func submit() {
-        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let day = self.day
-        box.createTask { id in
-            guard id != 0 else { return }
-            box.set(id, "name", name)
-            // 09:00, not a bare date: a task with no clock time has no
-            // moment to ring at, and this row is the commonest way one is
-            // made (owner, 2026-08-07).
-            box.setSpan(
-                id, "due", start: Civil.stamp(day: day, hhmm: LivDue.defaultHHMM),
-                end: 0, dateOnly: false)
-            // The active workspace stamps here too (M4) — otherwise a task
-            // added while looking at Work lacks Work's cells and vanishes
-            // from the very list it was typed into. The row's hint says so
-            // before the write.
-            workspaces.stamp(id, in: box)
-            // Into properties, the standard way a task is made (owner,
-            // 2026-08-11). The day is already set from the row it was
-            // typed under; what is usually wanted next is everything
-            // else. `as: .record` — the snapshot has not caught up.
-            desk.open(id, as: .record)
-            text = ""
-            focused = false
         }
     }
 }
