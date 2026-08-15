@@ -153,8 +153,10 @@ struct EntityInspector: View {
                     .padding(.top, 18)
                     .padding(.bottom, 2)
                 dueRow(row)
-                DetailHairline()
-                statusRow(row)
+                if showsStatus(row) {
+                    DetailHairline()
+                    statusRow(row)
+                }
                 SectionLabel("Filing")
                     .padding(.top, 22)
                     .padding(.bottom, 2)
@@ -319,23 +321,30 @@ struct EntityInspector: View {
 
     // MARK: status
 
+    /// Whether there is a status row at all. A kind with no status
+    /// vocabulary and no status set has NOTHING here — no value to read
+    /// and nothing to choose — so the row goes rather than explaining
+    /// its own emptiness (owner, 2026-08-15: "when user can't interact
+    /// with something it shouldn't be there unless it's locally dynamic
+    /// or important for clarity"). It used to say "none for this kind",
+    /// which is a sentence about the app, not about the note.
+    private func showsStatus(_ row: EntityRow) -> Bool {
+        !options.isEmpty || !(row.status ?? "").isEmpty
+    }
+
     /// An empty scoped vocabulary (untyped scraps) must never render a
     /// live-looking Menu with zero items — a silent no-op (eval §5.4).
-    /// Disabled-with-explainer instead; with a vocabulary, the whole row
-    /// is the menu (full-width target, like the due row).
+    /// A status already SET is still shown, read-only: it is the user's
+    /// own data, and hiding data is worse than showing a chip that does
+    /// not open. With a vocabulary, the whole row is the menu (full-width
+    /// target, like the due row).
     @ViewBuilder private func statusRow(_ row: EntityRow) -> some View {
         Group {
             if options.isEmpty {
                 HStack {
                     DetailRowLabel("status")
                     Spacer(minLength: 12)
-                    if let status = row.status, !status.isEmpty {
-                        ValueChip(status)  // display-only; nothing to change it to
-                    } else {
-                        Text("none for this kind")
-                            .font(.system(size: LivType.strong))
-                            .foregroundStyle(LivTheme.muted)
-                    }
+                    ValueChip(row.status ?? "")  // display-only; nothing to change it to
                 }
                 .frame(minHeight: LivRow.height)
             } else {

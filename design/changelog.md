@@ -1,5 +1,25 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — a row with nothing in it is not a row
+
+Owner: *"Have all 'none for this kind' in properties out of view.
+Irrelevant properties should be hidden from the user. General rule: when
+user can't interact with something it shouldn't be there unless it's
+locally dynamic or important for clarity."*
+
+**The status row disappears when there is nothing in it.** A kind with
+no status vocabulary and no status set had a full row that read "none
+for this kind" — a sentence about the app, not about the note. It is
+gone, and its hairline with it. A status that IS set still shows, as a
+read-only chip: that is the user's own data, and hiding data is a
+different mistake. A kind with a vocabulary is unchanged — the whole row
+is still the menu.
+
+**The rule is now written down** (design/ios.md §19), because it decides
+more than this one row: three tests, in order — can you act on it here;
+does it become actable from something you can do here; does it tell you
+something you want to know. Anything failing all three does not appear.
+
 ## 2026-08-15 — templates leave, and messages stop shouting over the workspace
 
 Owner, over a screenshot of a template note: *"the message is on top of

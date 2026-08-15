@@ -934,6 +934,34 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 19. Nothing inert on screen (rev 22, owner 2026-08-15)
+
+Owner: *"Irrelevant properties should be hidden from the user. General
+rule: when user can't interact with something it shouldn't be there
+unless it's locally dynamic or important for clarity."*
+
+Three tests, in order. A piece of UI appears only if it passes one:
+
+1. **Actable here.** The user can do something with it, in this state.
+2. **Locally dynamic.** It cannot be acted on yet, but it becomes
+   actable from something the user can do in this same view — the bar's
+   ‹ › light up as soon as there is history to walk.
+3. **Clarity.** It carries something the user wants to know: a value
+   they filed, a date, an error, a count. A fact is allowed to be inert
+   — the created line at the foot of the properties panel is deliberately
+   not a row, because it cannot be changed.
+
+Failing all three, it does not appear at all. The first casualty is the
+properties panel's status row for a kind with no status vocabulary and
+no status set: it used to say "none for this kind", which explains the
+app to someone who asked about their note. A status already SET still
+shows, read-only — that is the user's data, and hiding data is the
+opposite mistake.
+
+This is the same instinct as the older rulings it now generalises:
+"facts you cannot change are not rows" (2026-08-06) and "a menu item
+that does nothing is a lie" (the editor's `+` in an embedded card).
+
 ## 18. Templates left, and messages got their own band (rev 21, owner 2026-08-15)
 
 Owner, over a screenshot of a template note whose pill printed itself
