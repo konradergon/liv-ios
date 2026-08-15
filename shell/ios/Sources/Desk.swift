@@ -92,7 +92,11 @@ struct DeskHost: View {
             // which is about this note and not about the app.
             WorkspaceButton { desk.workspaceShown = true }
                 .padding(.top, 6)
-                .opacity(inspectorUp ? 0 : 1)
+                // Drawn ABOVE the panels, so the properties curtain
+                // cannot cover it — it fades by exactly how far that
+                // curtain has come down instead of blinking out when
+                // the drag starts.
+                .opacity(1 - desk.curtain)
                 .accessibilityHidden(inspectorUp)
                 .zIndex(3)
 

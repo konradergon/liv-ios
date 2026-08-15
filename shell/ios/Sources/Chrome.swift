@@ -152,22 +152,28 @@ final class DeskModel: ObservableObject {
         return panelDrag!.progress(UIScreen.main.bounds.width)
     }
 
-    /// The desk's own travel. The three surfaces are ONE STRIP — library,
-    /// desk, properties — so a panel does not drop a curtain over the
-    /// desk: the desk swipes away and the panel takes the screen it
-    /// leaves (owner, 2026-08-15: "when you open them you 'swipe away'
-    /// from the previous view, as if it sits on the left / right off
-    /// screen").
+    /// The desk's own travel, and the reason the two panels do not move
+    /// alike (owner, 2026-08-15).
     ///
-    /// The library pushes the desk RIGHT, the properties pull it LEFT,
-    /// each by exactly the screen the panel covers, so panel and desk
-    /// are locked together at every point of the drag. Both progresses
-    /// in one expression: only one panel can move at a time, and the
-    /// subtraction stays honest if that ever stops being true.
+    /// The LIBRARY is a different PLACE, so it and the desk are one
+    /// strip: opening it pushes the desk a whole screen right, and the
+    /// desk sits off screen to the right the whole time it is open —
+    /// "swipe away from the previous view, as if it sits on the left /
+    /// right off screen".
+    ///
+    /// The PROPERTIES panel is about the note you are already looking
+    /// at, so it stays a CURTAIN: it slides over a desk that does not
+    /// move ("maybe having properties panel behave like a curtain
+    /// though"). Hence one term here, not two.
     var deskShift: CGFloat {
-        (panelProgress(.library) - panelProgress(.inspector))
-            * UIScreen.main.bounds.width
+        panelProgress(.library) * UIScreen.main.bounds.width
     }
+
+    /// How far the properties CURTAIN has come down, 0…1. Whatever is
+    /// drawn above the panels — the workspace button, the bottom bar,
+    /// the minimised pill — fades by exactly this, because the curtain
+    /// cannot cover what is painted on top of it.
+    var curtain: CGFloat { panelProgress(.inspector) }
 
     /// How far the desk has travelled, as a fraction of the screen.
     /// The doors ride the desk, so they would slide THROUGH the pinned

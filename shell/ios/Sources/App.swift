@@ -129,7 +129,8 @@ struct RootView: View {
                     // rather than hanging over the panel that replaced
                     // it (owner, 2026-08-15).
                     .offset(x: desk.deskShift)
-                    .accessibilityHidden(desk.deskShift != 0)
+                    .opacity(1 - desk.curtain)
+                    .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
                     .zIndex(2)
             }
             if !keyboard.up && desk.menu == nil {
@@ -142,7 +143,11 @@ struct RootView: View {
                     // the desk's journey; travelling off screen with the
                     // desk is the same disappearance, told honestly.
                     .offset(x: desk.deskShift)
-                    .accessibilityHidden(desk.deskShift != 0)
+                    // Under the properties curtain it fades, because the
+                    // bar is drawn above the panels and the curtain has
+                    // no way to cover it.
+                    .opacity(1 - desk.curtain)
+                    .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
                     // The extra offset carries it past the bottom safe
                     // area; the z keeps the exit above the opaque desk
                     // (audit, 2026-08-01). Both are pure translations.

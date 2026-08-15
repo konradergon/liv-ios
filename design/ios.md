@@ -940,17 +940,27 @@ Owner: *"Now the left and right panels are like curtains. Better would
 be if when you open them you 'swipe away' from the previous view, as if
 it sits on the left / right off screen."*
 
-The panels used to slide in over a stationary desk. Now the desk travels
-too, exactly one screen in the opposite direction, so the three surfaces
-read as one strip — **library | desk | properties** — and opening a
-panel scrolls the strip rather than dropping a curtain.
+**The two panels move differently, on purpose** (owner, same day:
+"maybe having properties panel behave like a curtain though").
 
-One number does it. `DeskModel.panelProgress(_:)` (0 off screen, 1 home)
-already drove the panel's own offset; `deskShift` is the same progress
-turned around, and everything that belongs to the desk reads it: the
-body, the doors, the bottom bar and the minimised pill. The drag moved
-from DeskHost's `@State` onto the model for exactly that reason — the
-bar is drawn by RootView, one level up.
+- The **LIBRARY is a different place.** It and the desk are one strip:
+  opening it pushes the desk a full screen to the right, and the desk
+  sits off screen for as long as the library is up. You swipe away from
+  what you were looking at.
+- The **PROPERTIES panel is about the note you are already looking at**,
+  so it stays a CURTAIN: it slides over a desk that does not move. Push
+  and pull cannot both be right for a surface that describes the thing
+  underneath it.
+
+One number does each. `DeskModel.panelProgress(_:)` (0 off screen, 1
+home) drives the panel's own offset; `deskShift` is the library's
+progress turned around, read by everything that belongs to the desk —
+the body, the doors, the bottom bar, the minimised pill; `curtain` is
+the properties' progress, read by everything drawn ABOVE the panels,
+which the curtain cannot cover and which therefore fades by exactly how
+far it has come down: the workspace button, the bar, the pill. The drag
+moved from DeskHost's `@State` onto the model because the bar is drawn
+by RootView, one level up.
 
 Three things this change had to get right:
 

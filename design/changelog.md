@@ -6,12 +6,20 @@ Owner: *"Now the left and right panels are like curtains. Better would
 be if when you open them you 'swipe away' from the previous view, as if
 it sits on the left / right off screen."*
 
-The desk now travels with the panel — one screen, the other way — so the
-library, the desk and the properties panel read as one strip you scroll
-instead of two curtains over a fixed stage. The panel's own progress
-drives both offsets, so they cannot disagree by a pixel; the drag moved
-onto DeskModel because the bottom bar, which is the desk's furniture, is
-drawn one level up in RootView.
+The desk now travels with the LIBRARY — one screen to the right — so the
+library and the desk read as one strip you scroll rather than a curtain
+over a fixed stage. The PROPERTIES panel stays a curtain, by the owner's
+second thought the same day ("maybe having properties panel behave like
+a curtain though"), and it is the right split: the library is a
+different place to be, the properties are about the note already under
+them. The panel's own progress drives both the panel and the desk, so
+they cannot disagree by a pixel; the drag moved onto DeskModel because
+the bottom bar, which is the desk's furniture, is drawn one level up in
+RootView.
+
+Whatever is painted ABOVE the panels cannot be covered by a curtain, so
+the workspace button, the bar and the pill fade by exactly how far the
+curtain has come down — no more blinking out the instant a drag latches.
 
 The details that make it read right: the workspace button stays pinned
 (it belongs to the whole strip, and that ruling is a fortnight old); the
