@@ -934,6 +934,34 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 22. Two places, one layer (rev 25, owner 2026-08-15)
+
+Owner: *"the left 'panel' is really a separate main place of the app,
+the other being desk. how can we make it more like so and less visually
+like the property panel, which really is a panel belonging to desk."*
+
+The three-zone model of §6 rev 6 called both of them panels, and one
+`SidePanel` recipe drew both. They are not the same kind of thing:
+
+|  | the LIBRARY | the PROPERTIES panel |
+|---|---|---|
+| what it is | a PLACE, the desk's peer | a LAYER of the desk |
+| ground | `canvas` — the floor the desk stands on | `surface` — a card on top |
+| edges | corner to corner, no radius, no shadow | rounded leading corner (`radiusLg`), shadow |
+| top | full height | starts below the desk's top band, which stays lit |
+| motion | pushes the desk off screen (rev 23) | a curtain over a desk that does not move |
+| leaving | swipe back, or the door | swipe back |
+
+`LibraryPlace` and `SidePanel` are the two recipes (Panel.swift). The
+rule to keep: **a place stands on the app's ground; a layer floats on
+`surface` and never covers the chrome of what it belongs to.**
+
+Still open, and the owner's to decide: whether a view (Today, Tasks,
+Calendar…) should open INSIDE the library's cell rather than as a
+full-screen cover over the desk. That is the version where the library
+is fully a place — you would be in it, not visiting it — and it is a
+structural change, not a paint one.
+
 ## 21. A frame of dragging moves one number (rev 24, owner 2026-08-15)
 
 Owner: *"minicalendar lags when dragged."*

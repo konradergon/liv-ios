@@ -92,12 +92,12 @@ struct DeskHost: View {
             // which is about this note and not about the app.
             WorkspaceButton { desk.workspaceShown = true }
                 .padding(.top, 6)
-                // Drawn ABOVE the panels, so the properties curtain
-                // cannot cover it — it fades by exactly how far that
-                // curtain has come down instead of blinking out when
-                // the drag starts.
-                .opacity(1 - desk.curtain)
-                .accessibilityHidden(inspectorUp)
+                // It stays lit under BOTH panels now. The properties
+                // card starts below this whole band (SidePanel), so the
+                // desk's chrome is visible above it — that is what says
+                // the card belongs to the desk. It used to fade out
+                // under the properties panel, from when that panel
+                // covered the screen edge to edge.
                 .zIndex(3)
 
             // The panels, drawn last so they cover doors and body alike.
@@ -122,7 +122,6 @@ struct DeskHost: View {
                 desk.inspectorShown || desk.panelDrag?.which == .inspector
             {
                 SidePanel(
-                    edge: .trailing,
                     onDismiss: {
                         withAnimation(LivMotion.nav) { desk.inspectorShown = false }
                     }
@@ -215,13 +214,6 @@ struct DeskHost: View {
     /// Any full-screen surface covering the desk body.
     private var anyPanel: Bool {
         desk.libraryShown || desk.inspectorShown
-    }
-
-    /// The PROPERTIES panel is up, or a finger is bringing it in. The one
-    /// surface the workspace button steps aside for: it describes this
-    /// note, and the workspace is not one of its facts.
-    private var inspectorUp: Bool {
-        desk.inspectorShown || desk.panelDrag?.which == .inspector
     }
 
     /// A panel over a live keyboard would sit UNDER it — the keyboard is a

@@ -1,5 +1,33 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — a place stands on the floor, a layer lies on the desk
+
+Owner: *"the left 'panel' is really a separate main place of the app,
+the other being desk. how can we make it more like so and less visually
+like the property panel, which really is a panel belonging to desk."*
+
+They looked identical because they WERE identical: one `SidePanel`
+recipe drew both — full screen, `surface` fill, no edges. Two things
+that mean different things cannot share one recipe (standing rule 4
+cuts the other way here), so the recipe is now two.
+
+**The library is a place.** `LibraryPlace`: the app's own ground
+(`canvas`, the floor the desk stands on), corner to corner, no fill of
+its own, no radius, no shadow. Two rooms on one floor. It already
+arrives by pushing the desk off screen (rev 23) — the motion said this
+first; now the surface says it too.
+
+**The properties panel is the desk's layer.** `SidePanel`: a CARD.
+`surface` fill, a rounded leading corner (`LivTheme.radiusLg`, the
+menus' 22), a shadow, and — the strongest signal — it starts BELOW the
+desk's top band, so the library door, the workspace name and the •••
+stay lit above it and you can see the desk it is lying on. It arrives as
+a curtain, which is the motion half of the same idea.
+
+The workspace button no longer fades under it. It faded from when that
+panel covered the screen edge to edge; the card does not reach that
+band, so there is nothing to fade for.
+
 ## 2026-08-15 — the mini calendar stops rebuilding the world
 
 Owner: *"minicalendar lags when dragged."* Measured before touching

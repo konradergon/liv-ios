@@ -20,18 +20,60 @@ import SwiftUI
 
 // MARK: - the slide-over container
 
-/// One panel recipe for both edges: full screen, solid surface (rule 2:
-/// nothing reads through), content under the safe areas it owns.
+/// The properties panel: the desk's OWN layer, and it looks like one
+/// (owner, 2026-08-15: "the property panel … really is a panel belonging
+/// to desk").
+///
+/// A CARD over the note, not a screen of its own: it starts below the
+/// desk's top band, so the doors and the workspace name stay lit above
+/// it and you can see the thing it describes is still there; it carries
+/// the `surface` fill, a rounded leading corner and a shadow, so it
+/// reads as laid ON the desk rather than as a place you went to. The
+/// library takes the opposite treatment — see LibraryPlace below.
 ///
 /// NO close button. It had a 40pt band of its own holding one chevron,
-/// then rode the first row, where in the properties panel it landed
-/// almost inside the title (owner, 2026-08-10: "you probably should get
-/// rid of the collapse buttons"). A panel is DRAGGED back — the gesture
-/// the owner asked for on 2026-08-08, and the same one that opens it.
-/// The escape action below is what remains for anyone not using a
-/// finger. `edge` is still needed: it tells the drag which way home is.
+/// then rode the first row, where it landed almost inside the title
+/// (owner, 2026-08-10: "you probably should get rid of the collapse
+/// buttons"). A panel is DRAGGED back — the gesture the owner asked for
+/// on 2026-08-08, and the same one that opens it. The escape action
+/// below is what remains for anyone not using a finger.
 struct SidePanel<Content: View>: View {
-    let edge: HorizontalEdge
+    let onDismiss: () -> Void
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 10)
+            .background(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: LivTheme.radiusLg,
+                    bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 0,
+                    style: .continuous
+                )
+                .fill(LivTheme.surface)
+                .ignoresSafeArea(edges: .bottom)
+            )
+            .shadow(color: .black.opacity(0.35), radius: 18, x: -6, y: 0)
+            .padding(.top, LivRow.topChrome)
+        // VoiceOver's two-finger scrub, Voice Control's escape.
+        .accessibilityAction(.escape, onDismiss)
+        // No .transition: DeskHost positions these with an offset that
+        // follows the finger, and a transition on top of it would move
+        // the panel twice (owner, 2026-08-08).
+    }
+}
+
+/// The library: a PLACE, the desk's peer — not a panel of it (owner,
+/// 2026-08-15: "the left 'panel' is really a separate main place of the
+/// app, the other being desk").
+///
+/// So it wears the app's own GROUND, the same `canvas` the desk stands
+/// on, edge to edge and corner to corner: two rooms on one floor. No
+/// card fill, no rounded corner, no shadow — nothing that would say
+/// "something laid over something else". It arrives by pushing the desk
+/// out of the way (rev 23), which is the motion half of the same idea.
+struct LibraryPlace<Content: View>: View {
     let onDismiss: () -> Void
     @ViewBuilder let content: Content
 
@@ -39,14 +81,9 @@ struct SidePanel<Content: View>: View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.top, 6)
-            .background(LivTheme.surface.ignoresSafeArea())
-        // VoiceOver's two-finger scrub, Voice Control's escape.
-        .accessibilityAction(.escape, onDismiss)
-        // No .transition: DeskHost positions these with an offset that
-        // follows the finger, and a transition on top of it would move
-        // the panel twice (owner, 2026-08-08).
+            .background(LivTheme.canvas.ignoresSafeArea())
+            .accessibilityAction(.escape, onDismiss)
     }
-
 }
 
 // MARK: - the library (left)
@@ -75,7 +112,7 @@ struct LibraryPanel: View {
     private let workspaceViews: [Feature] = [.calendar, .tasks, .everything]
 
     var body: some View {
-        SidePanel(edge: .leading, onDismiss: onDismiss) {
+        LibraryPlace(onDismiss: onDismiss) {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {

@@ -249,6 +249,10 @@ enum LivTheme {
 
     static let radius: CGFloat = 10
     static let radiusSm: CGFloat = 6
+    /// A surface laid OVER another one — the slide-up menus, the
+    /// properties card. Big enough to read as a separate sheet at a
+    /// glance, which is the whole job of it.
+    static let radiusLg: CGFloat = 22
 }
 
 // MARK: - Hue — the stable value→dot assignment
