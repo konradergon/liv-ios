@@ -1,5 +1,39 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-15 — the library gets its own bands (and one broken door)
+
+The second half of "a place stands on the floor", after a design pass
+that proposed three treatments and judged them through the owner's eye,
+the constitution and the builder's.
+
+**The library owns its own chrome now.** It had a 52pt HOLE in its list,
+reserved for the desk's floating workspace button — the thing a layer
+does, not a place — and the rows slid under that button on unpainted
+ground as soon as you scrolled. It has a real top band instead, the same
+56pt the desk's chrome owns, closed with a full-width hairline. Its foot
+is its own too: a solid band under Settings, deliberately not the desk's
+floating capsule. Two places, two silhouettes.
+
+**No lines between the rows.** A hairline between rows is what a FORM
+does — it is what `DetailHairline` means one screen to the right — and
+this is a list of places to go, held apart by its section labels. The
+old ones were also inset 16pt on both sides, which `interface.md` bans
+by name ("Dividers are full-width or absent").
+
+**A broken door, mine, from this morning.** With the properties card up
+the library door stayed lit in the band above it, and tapping it parked
+the library invisibly behind the card while the desk slid out from under
+both. It goes dark with the curtain now. The ••• stays live: its verbs
+act on the very note the card describes.
+
+**Light mode had no ground.** `canvas` and `surface` were both #FFFFFF,
+so in light the library (which stands on the ground) and the properties
+card (which floats above it) were the same white — the whole change was
+invisible there. The ground is a grouped grey now, and because the light
+inks had zero headroom left, five tokens moved a shade darker to keep
+the 7:1 floor. The palette self-check is what caught it, on the first
+launch after the change.
+
 ## 2026-08-15 — a place stands on the floor, a layer lies on the desk
 
 Owner: *"the left 'panel' is really a separate main place of the app,

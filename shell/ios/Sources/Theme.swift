@@ -170,14 +170,17 @@ enum LivMotion {
 /// The same tokens at the UIColor level, for the UIKit text stack (the
 /// markdown editor draws with TextKit, which never sees SwiftUI Color).
 enum LivInk {
-    static let accent = hex(0xB9ADFF, light: 0x4B3BC4)
+    // These MIRROR LivTheme's values exactly; when one moves, the other
+    // moves in the same change (the editor draws in TextKit, which never
+    // sees a SwiftUI Color).
+    static let accent = hex(0xB9ADFF, light: 0x4939C0)
     static let onAccent = hex(0x08070A, light: 0xFFFFFF)
     static let surface = hex(0x141118, light: 0xFFFFFF)
     static let panel2 = hex(0x262130, light: 0xE9E5F0)
     static let text = hex(0xFFFFFF, light: 0x14121A)
     static let text2 = hex(0xDCD6E8, light: 0x3C3648)
-    static let text3 = hex(0xB4ACC4, light: 0x5C5570)
-    static let muted = hex(0xB4ACC4, light: 0x5C5570)
+    static let text3 = hex(0xB4ACC4, light: 0x534D65)
+    static let muted = hex(0xB4ACC4, light: 0x534D65)
     static let border = hex(0xFFFFFF, 0.10, light: 0x000000, lightAlpha: 0.12)
     /// Style-panel key fill — kept for any full-size key surface.
     static let keyFill = hex(0x262130, light: 0xE9E5F0)
@@ -185,7 +188,7 @@ enum LivInk {
 
 enum LivTheme {
     // The one accent: the system blue, in each scheme's own shade.
-    static let accent = solid(0xB9ADFF, light: 0x4B3BC4)
+    static let accent = solid(0xB9ADFF, light: 0x4939C0)
     static let accentSoft = tint(accent)
     /// The violet arm ONE STEP DOWN from the accent. A note is the app's
     /// default thing, so it wears the accent's family — but chrome and
@@ -197,7 +200,12 @@ enum LivTheme {
     // Elevation is tonal — canvas behind everything, surface for cards,
     // panel for wells, panel2 for chips/small fills. Light inverts the
     // ramp: white canvas, grouped greys for wells.
-    static let canvas = solid(0x08070A, light: 0xFFFFFF)
+    // The GROUND is not the card. In light both of these were #FFFFFF,
+    // so a card laid on the ground had nothing but its shadow to say so
+    // — and the library, which stands ON the ground, looked identical to
+    // the properties panel, which floats above it (owner, 2026-08-15).
+    // The grouped-grey ground is iOS's own convention for exactly this.
+    static let canvas = solid(0x08070A, light: 0xF5F4F9)
     static let surface = solid(0x141118, light: 0xFFFFFF)
     static let panel = solid(0x1C1822, light: 0xF4F2F8)
     static let panel2 = solid(0x262130, light: 0xE9E5F0)
@@ -205,23 +213,23 @@ enum LivTheme {
     // The four text tiers + hairlines.
     static let text = solid(0xFFFFFF, light: 0x14121A)
     static let text2 = solid(0xDCD6E8, light: 0x3C3648)
-    static let text3 = solid(0xB4ACC4, light: 0x5C5570)
+    static let text3 = solid(0xB4ACC4, light: 0x534D65)
     // #707078 read at 3.7:1 against the canvas — under the 4.5:1
     // readability minimum. #8E8E93 clears it on both canvases.
-    static let muted = solid(0xB4ACC4, light: 0x5C5570)
+    static let muted = solid(0xB4ACC4, light: 0x534D65)
     static let border = solid(0xFFFFFF, 0.10, light: 0x000000, lightAlpha: 0.12)
     static let border2 = solid(0xFFFFFF, 0.16, light: 0x000000, lightAlpha: 0.18)
 
     // The semantic set — the ONLY value colors (O2: VALUE_HEX retired),
     // each in its scheme's own shade.
     static let green = solid(0x57E39A, light: 0x0B5C36)
-    static let red = solid(0xFF7A8A, light: 0x9E1F30)
+    static let red = solid(0xFF7A8A, light: 0x9C1E2F)
     static let amber = solid(0xFFB020, light: 0x6B4900)
-    static let purple = solid(0xFF6FA8, light: 0xA32450)
+    static let purple = solid(0xFF6FA8, light: 0x97214A)
     // The rest of the KIND language (blueprints, 2026-08-12).
     static let teal = solid(0xFFB020, light: 0x6B4900)
     static let orange = solid(0xFFD27A, light: 0x5F4A0E)
-    static let pink = solid(0xFF9EC4, light: 0x8E3059)
+    static let pink = solid(0xFF9EC4, light: 0x8B2F57)
     static let yellow = solid(0xFFE08A, light: 0x5C4E12)
 
     /// A tint that is a COLOUR, not a translucency.

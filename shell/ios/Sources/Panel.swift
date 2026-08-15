@@ -80,7 +80,6 @@ struct LibraryPlace<Content: View>: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.top, 6)
             .background(LivTheme.canvas.ignoresSafeArea())
             .accessibilityAction(.escape, onDismiss)
     }
@@ -114,17 +113,14 @@ struct LibraryPanel: View {
     var body: some View {
         LibraryPlace(onDismiss: onDismiss) {
             VStack(spacing: 0) {
+                topBand
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // Clearance for the workspace button, which floats
-                        // OVER this panel at the top centre.
                         SectionLabel("All workspaces")
-                            .padding(.top, 52)
+                            .padding(.top, 10)
                             .padding(.bottom, 2)
-                        ForEach(Array(globalViews.enumerated()), id: \.element.id) { i, feature in
-                            row(
-                                feature.title, glyph: feature.glyph, divided: i > 0
-                            ) {
+                        ForEach(globalViews) { feature in
+                            row(feature.title, glyph: feature.glyph) {
                                 open(feature)
                             }
                         }
@@ -138,10 +134,8 @@ struct LibraryPanel: View {
                         SectionLabel("This workspace")
                             .padding(.top, 22)
                             .padding(.bottom, 2)
-                        ForEach(Array(workspaceViews.enumerated()), id: \.element.id) { i, feature in
-                            row(
-                                feature.title, glyph: feature.glyph, divided: i > 0
-                            ) {
+                        ForEach(workspaceViews) { feature in
+                            row(feature.title, glyph: feature.glyph) {
                                 open(feature)
                             }
                         }
@@ -154,11 +148,10 @@ struct LibraryPanel: View {
                             .padding(.top, 18)
                             .padding(.bottom, 2)
                         Group {
-                            ForEach(Array(workspaces.filters.enumerated()), id: \.element.id) { i, view in
+                            ForEach(workspaces.filters) { view in
                                 row(
                                     view.display,
                                     glyph: .filter,
-                                    divided: i > 0,
                                     on: workspaces.activeFilterId == view.id
                                 ) {
                                     workspaces.activeFilterId =
@@ -166,10 +159,7 @@ struct LibraryPanel: View {
                                     onDismiss()
                                 }
                             }
-                            row(
-                                "New filter…", glyph: .plus,
-                                divided: !workspaces.filters.isEmpty
-                            ) {
+                            row("New filter…", glyph: .plus) {
                                 desk.composeFilter = true
                                 onWorkspace()
                             }
@@ -181,6 +171,19 @@ struct LibraryPanel: View {
                 bottomBand
             }
         }
+    }
+
+    /// The library's OWN top band — the same 56pt the desk's chrome
+    /// owns, so the two rooms' tops line up, and the pinned workspace
+    /// button lands inside a band this place paints rather than over a
+    /// hole cut in its list. Empty on purpose: the button is the only
+    /// thing that belongs here.
+    private var topBand: some View {
+        Color.clear
+            .frame(height: LivRow.topChrome)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            }
     }
 
     private func open(_ feature: Feature) {
@@ -200,16 +203,22 @@ struct LibraryPanel: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Its own foot, in the one tone that shows against the ground in
+        // BOTH schemes — and deliberately not the desk's floating
+        // capsule: two places, two silhouettes.
+        .background(LivTheme.panel.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
         }
     }
 
-    /// One list row. `divided` draws the hairline on its TOP edge — a
-    /// line separates two neighbours, so the first row of a section
-    /// never draws one and no line is ever left floating over the gap
-    /// before the next section (owner, 2026-08-07: "placement of
-    /// separators makes no sense").
+    /// One list row. NO hairline: a line between rows is what a FORM
+    /// does — it is what DetailHairline means one screen to the right —
+    /// and this is a list of places to go, held apart by its section
+    /// labels. The inset lines it used to draw also broke the
+    /// constitution's own rule (interface.md: "Dividers are full-width
+    /// or absent").
     /// The library's icons are BARE, colourless and large (owner,
     /// 2026-08-13). They wore carved chips in their own hues for a day;
     /// a column of seven coloured boxes read as a toy shelf next to the
@@ -218,7 +227,6 @@ struct LibraryPanel: View {
     /// a place, not a thing.
     private func row(
         _ label: String, glyph: LivGlyph, detail: String? = nil,
-        divided: Bool = false,
         /// A lens TOGGLE rather than a place to go: the dot says it is on.
         on: Bool = false,
         action: @escaping () -> Void
@@ -245,10 +253,5 @@ struct LibraryPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .top) {
-            if divided {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
-            }
-        }
     }
 }

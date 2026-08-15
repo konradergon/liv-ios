@@ -69,6 +69,15 @@ struct DeskHost: View {
                     endEditing()
                     withAnimation(LivMotion.nav) { desk.libraryShown.toggle() }
                 }
+                // The door leaves the WHOLE desk, and the properties card
+                // is a layer OF the desk: with the card up this stayed
+                // lit in the band above it, and tapping it parked the
+                // library invisibly behind the card while the desk slid
+                // out from under both (found on the simulator,
+                // 2026-08-15). The ••• stays live — its verbs act on the
+                // very note the card describes.
+                .opacity(1 - desk.curtain)
+                .disabled(desk.curtain > 0)
                 Spacer()
                 if case .entity(let id) = desk.activeTab?.content {
                     noteMenu(id)
