@@ -424,8 +424,10 @@ struct DeskHost: View {
     private func createRecord(event: Bool) {
         guard !creating else { return }
         creating = true
+        // The day the surface in front is looking at, or today's.
         let stamp = Civil.stamp(
-            day: Civil.todayDay(), hhmm: Int64(LivDue.defaultHHMM))
+            day: desk.contextDay ?? Civil.todayDay(),
+            hhmm: Int64(LivDue.defaultHHMM))
         let landed: (UInt64) -> Void = { id in
             creating = false
             guard id != 0 else {

@@ -129,9 +129,6 @@ struct TodayView: View {
         // Room under the last row for the add button to sit over.
         .contentMargins(.bottom, 88, for: .scrollContent)
         .background(LivTheme.canvas)
-        .overlay(alignment: .bottomTrailing) {
-            LivAddButton(label: "New task") { addTask(on: selectedDay) }
-        }
         .sheet(item: $duePick) { pick in
             DetailDueSheet(
                 model: box, id: pick.entity,
@@ -145,27 +142,10 @@ struct TodayView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
-    }
-
-    /// A task DUE on the day you are looking at, straight into its
-    /// properties with the caret in the title — the app's one create
-    /// rule (owner, 2026-08-13). The name is typed there now, not into a
-    /// ghost row in the list.
-    private func addTask(on day: Int64) {
-        box.createTask { id in
-            guard id != 0 else { return }
-            // 09:00, not a bare date: a task with no clock time has no
-            // moment to ring at (owner, 2026-08-07).
-            box.setSpan(
-                id, "due", start: Civil.stamp(day: day, hhmm: LivDue.defaultHHMM),
-                end: 0, dateOnly: false)
-            // The active workspace stamps here too (M4) — otherwise a
-            // task added while looking at Work lacks Work's cells and
-            // vanishes from the very list it was made in.
-            workspaces.stamp(id, in: box)
-            desk.requestFocus(id)
-            desk.open(id, as: .record)
-        }
+        // The bar's create key inherits the day you are looking at.
+        .onAppear { desk.contextDay = selectedDay }
+        .onChange(of: selectedDay) { _, day in desk.contextDay = day }
+        .onDisappear { desk.contextDay = nil }
     }
 
     // MARK: header + section furniture

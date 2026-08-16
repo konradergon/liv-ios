@@ -1,5 +1,35 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — one create key, and it never leaves
+
+Owner: *"don't have the create dynamically disappear. later on we should
+make these things appear in the same place as notes (i think)."*
+
+**The bar's `+` is always there.** It was stepping aside whenever a view
+was open, so the app's create key came and went with the surface — a key
+you cannot learn is worse than a key in an odd place. It only vanished
+to avoid a second `+` on screen, and that is now solved the other way:
+the floating create keys in Today and Tasks are deleted, along with the
+two `addTask` verbs behind them. One create door in the whole app.
+
+**It inherits the day you are looking at.** That was the one thing the
+floating keys knew that the bar's did not. Today and the calendar
+publish their selected day (`DeskModel.contextDay`); a task or event
+made from the bar is due that day at 09:00, and today's day when no
+surface has one. Verified against the box: with Thu 20 Aug selected,
+`+` → Task wrote `due 2026-08-20 09:00`.
+
+**A found bug behind it.** `+` was closing the open view before showing
+its menu, which destroyed the very day it was about to inherit — a task
+made while looking at Thursday came out due today. The create menu now
+leaves the surface alone; opening the new record closes it a moment
+later anyway.
+
+**Recorded, not built.** The owner's second sentence is a direction for
+later: a new task or event should eventually open *where a note opens* —
+in the desk, as a tab — rather than in the record card. Nothing in this
+batch moves toward it.
+
 ## 2026-08-17 — a view opens where you stand, and the bar stays
 
 Owner: *"idk how the views should open. one idea is to have it open
@@ -23,7 +53,8 @@ for it, so no row hides under it.
 **One `+` at a time.** A view has its own create key, bottom right,
 which knows the day you are looking at; the bar's `+` steps aside while
 one is open. Two plus signs on one screen was the confusion the owner
-named on the floor.
+named on the floor. *(Superseded the same day — see the entry above: the
+bar's key stays and the floating ones are gone.)*
 
 ## 2026-08-16 — the library is for filters, the workspace and Settings
 

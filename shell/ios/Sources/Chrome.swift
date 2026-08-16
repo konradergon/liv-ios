@@ -158,6 +158,14 @@ final class DeskModel: ObservableObject {
     /// the editor's insert menu.
     @Published var menu: LivMenu?
 
+    /// The day the surface in front is looking at, or nil when the
+    /// surface has no day of its own. The bar's create key reads it, so
+    /// a task made while looking at Thursday is due Thursday — the one
+    /// thing the views' own floating keys knew that the bar's did not
+    /// (owner, 2026-08-17). Set by Today and the calendar as their
+    /// selection moves; cleared when they leave.
+    var contextDay: Int64?
+
     /// How to build the create menu. Set by DeskHost, which owns the
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
@@ -558,8 +566,13 @@ final class DeskModel: ObservableObject {
     /// `+`: the create MENU, sliding up over whatever you are looking at
     /// (owner, 2026-08-13). It never appends a tab — choosing something
     /// does. The full-screen page this used to summon is deleted.
+    ///
+    /// It leaves the surface in front ALONE. Closing the open view here
+    /// made the key destroy the very thing that gives it its day, so a
+    /// task made while looking at Thursday came out due today
+    /// (2026-08-17); `open` closes the view a moment later anyway, once
+    /// the new record exists.
     func newTab() {
-        featureShown = nil
         menu = newTabMenu?()
     }
 
@@ -1385,14 +1398,16 @@ struct BottomBar: View {
             // guard became the lie it was written to prevent: a
             // workspace with no tabs could not be given one at all
             // (owner, 2026-08-15, from the phone).
-            // While a VIEW is open it keeps its own create key, bottom
-            // right, which knows the day you are looking at (owner,
-            // 2026-08-16). Two `+` on one screen is the confusion the
-            // owner named; the one that knows more wins.
-            if desk.featureShown == nil {
-                navButton("plus", enabled: true, label: "New") {
-                    desk.newTab()
-                }
+            // ALWAYS HERE (owner, 2026-08-17: "don't have the create
+            // dynamically disappear"). A key that comes and goes with
+            // the surface is a key you cannot learn — and it was only
+            // vanishing to avoid a second `+` on the same screen, which
+            // is now solved the other way: the views' own floating keys
+            // are gone and this is the one create door in the app. It
+            // still knows the day you are looking at, through
+            // `desk.contextDay`.
+            navButton("plus", enabled: true, label: "New") {
+                desk.newTab()
             }
         }
         .padding(.horizontal, 4)

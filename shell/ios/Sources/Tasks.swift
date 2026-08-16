@@ -71,9 +71,6 @@ struct TasksView: View {
         // Room under the last row for the add button to sit over.
         .contentMargins(.bottom, 88, for: .scrollContent)
         .background(LivTheme.canvas.ignoresSafeArea())
-        .overlay(alignment: .bottomTrailing) {
-            LivAddButton(label: "New task") { addTask() }
-        }
         .sheet(item: $duePick) { p in
             DetailDueSheet(model: model, id: p.entity, property: "due")
                 .presentationDetents([.medium])
@@ -371,28 +368,6 @@ struct TasksView: View {
             expanded.remove(name)
         } else {
             expanded.insert(name)
-        }
-    }
-
-    // MARK: add
-
-    /// A task, straight into its properties with the caret in the title
-    /// — the app's one create rule (owner, 2026-08-13: "naming of items
-    /// should be done in properties"). It used to be a row inside the
-    /// list, under whichever group happened to host it; it is the button
-    /// at the bottom right now (owner, 2026-08-16).
-    ///
-    /// No status is set: the list is grouped BY status, and choosing one
-    /// for you would file the task before you had said anything about
-    /// it. The properties card has the row.
-    private func addTask() {
-        model.createTask { id in
-            guard id != 0 else { return }  // failure already surfaced by the model
-            // The lens stamps here too (M4) — see WorkspaceModel.stamp.
-            workspaces.stamp(id, in: model)
-            desk.requestFocus(id)
-            // `as: .record` because the snapshot has not caught up yet.
-            desk.open(id, as: .record)
         }
     }
 

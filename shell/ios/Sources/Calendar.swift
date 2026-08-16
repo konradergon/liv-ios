@@ -156,6 +156,10 @@ struct CalendarView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
+        // The bar's create key inherits the day you are looking at.
+        .onAppear { desk.contextDay = selectedDay }
+        .onChange(of: selectedDay) { _, day in desk.contextDay = day }
+        .onDisappear { desk.contextDay = nil }
     }
 
     // MARK: header — month title, Today, prev/next
