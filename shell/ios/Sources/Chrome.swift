@@ -1363,6 +1363,13 @@ struct BottomBar: View {
             navButton("magnifyingglass", enabled: true, label: "Search") {
                 desk.searchShown = true
             }
+            tabCountButton
+            // FAR RIGHT, and it makes ANY object (owner, 2026-08-16:
+            // "maybe have the + button at far right and make it support
+            // adding any object with properties"). The corner is where a
+            // thumb goes and where every app puts its create key; the
+            // four things it can make are Note, Task, Event and File.
+            //
             // ALWAYS live. It was disabled on an empty desk, back when
             // the empty desk's body WAS the New Tab chooser and a second
             // door to it would have been a lie (audit, 2026-08-04). That
@@ -1371,10 +1378,9 @@ struct BottomBar: View {
             // guard became the lie it was written to prevent: a
             // workspace with no tabs could not be given one at all
             // (owner, 2026-08-15, from the phone).
-            navButton("plus", enabled: true, label: "New tab") {
+            navButton("plus", enabled: true, label: "New") {
                 desk.newTab()
             }
-            tabCountButton
         }
         .padding(.horizontal, 4)
         .frame(height: LivRow.height)

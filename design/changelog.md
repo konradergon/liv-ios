@@ -1,5 +1,31 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — the + moves right and makes anything
+
+Owner: *"maybe have the + button at far right and make it support adding
+any object with properties. tabs still hold documents though."*
+
+On the reverted shape — desk, library, one bar — two small changes.
+
+**The + is the last key in the bar**, in the corner where a thumb goes
+and where every app puts its create key. Order is now ‹ › search, tabs,
++.
+
+**It makes any object**: Note · Task · Event · File. Where each one
+LANDS is decided by what it is, which is the owner's own second clause:
+a note and a file become TABS, because a tab holds a document; a task
+and an event rise as CARDS with the caret in the name, because a
+record's facts fill a card and not a screen (the 2026-08-07 ruling,
+untouched). One door, two landings.
+
+A task or event made here is dated TODAY at 09:00 — the bar has no day
+of its own to inherit, and a task with no clock time has no moment to
+ring at. The card's due row is one tap away for anything else.
+
+This supersedes 2026-08-12's "task and event don't belong in new tab":
+that was aimed at the full-screen New Tab page and its four-way chooser,
+both long deleted, and neither is what this is.
+
 ## 2026-08-16 — the floor was built, tried, and reverted
 
 Owner: *"the app is a mess now. revert the whole thing."*
