@@ -1,0 +1,660 @@
+<title>Liv — the floor</title>
+
+<style>
+  /* ---------- tokens -------------------------------------------------
+     Dark-first: the bare :root carries the dark page, because the thing
+     being shown is a dark app and the wall around it should not shout.
+     A light viewer gets a paper wall; the phones stay dark either way,
+     because that is the product, not the chrome. */
+  :root {
+    --wall: #0E0F12;
+    --panel: #16181D;
+    --line: #23262E;
+    --ink: #E9EBF1;
+    --ink2: #A2A9B8;
+    --ink3: #767E90;
+    --tint: #4C9DFF;
+    --ok: #30D158;
+    --warn: #FF9F0A;
+    --strike: #FF6961;
+
+    /* the app's own system palette, used INSIDE the phones only */
+    --ios-bg: #000000;
+    --ios-surface: #1C1C1E;
+    --ios-fill: #2C2C2E;
+    --ios-sep: #38383A;
+    --ios-label: #FFFFFF;
+    --ios-label2: #98989F;
+    --ios-label3: #68686E;
+    --ios-blue: #0A84FF;
+    --ios-indigo: #5E5CE6;
+    --ios-purple: #BF5AF2;
+    --ios-teal: #40C8E0;
+    --ios-orange: #FF9F0A;
+    --ios-pink: #FF6482;
+    --ios-yellow: #FFD426;
+    --ios-red: #FF6961;
+
+    --frame-w: 288px;
+    --frame-h: 604px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --wall: #F2F1EE;
+      --panel: #FFFFFF;
+      --line: #DFDDD8;
+      --ink: #16181D;
+      --ink2: #4C525F;
+      --ink3: #767E90;
+      --tint: #0A63D4;
+    }
+  }
+  :root[data-theme="light"] {
+    --wall: #F2F1EE;
+    --panel: #FFFFFF;
+    --line: #DFDDD8;
+    --ink: #16181D;
+    --ink2: #4C525F;
+    --ink3: #767E90;
+    --tint: #0A63D4;
+  }
+  :root[data-theme="dark"] {
+    --wall: #0E0F12;
+    --panel: #16181D;
+    --line: #23262E;
+    --ink: #E9EBF1;
+    --ink2: #A2A9B8;
+    --ink3: #767E90;
+    --tint: #4C9DFF;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--wall);
+    color: var(--ink);
+    font: 400 16px/1.55 ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 48px 24px 96px; }
+
+  /* ---------- page chrome ---------- */
+  .eyebrow {
+    font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink3);
+  }
+  h1 {
+    font: 700 clamp(28px, 4vw, 40px)/1.1 -apple-system, system-ui, sans-serif;
+    letter-spacing: -0.02em; margin: 14px 0 0; text-wrap: balance; max-width: 20ch;
+  }
+  .lede { max-width: 62ch; color: var(--ink2); margin: 16px 0 0; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  h2 {
+    font: 650 22px/1.2 -apple-system, system-ui, sans-serif;
+    letter-spacing: -0.01em; margin: 0;
+  }
+  .act { margin-top: 72px; border-top: 1px solid var(--line); padding-top: 28px; }
+  .act-head { display: flex; flex-direction: column; gap: 8px; max-width: 66ch; }
+  .act-head p { margin: 0; color: var(--ink2); }
+
+  .rail {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--frame-w), 1fr));
+    gap: 40px 32px; margin-top: 32px; align-items: start;
+  }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 12px; }
+  figcaption { color: var(--ink2); font-size: 14.5px; line-height: 1.5; }
+  figcaption b { color: var(--ink); font-weight: 600; display: block; margin-bottom: 2px; }
+
+  /* ---------- the phone ---------- */
+  .phone {
+    width: var(--frame-w); height: var(--frame-h);
+    background: var(--ios-bg); color: var(--ios-label);
+    border-radius: 34px; border: 1px solid #303338;
+    box-shadow: 0 18px 40px rgba(0,0,0,.45), inset 0 0 0 3px #0A0B0D;
+    overflow: hidden; position: relative;
+    font: 400 13px/1.35 -apple-system, system-ui, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  .status {
+    height: 30px; flex: none; display: flex; align-items: center;
+    justify-content: space-between; padding: 0 20px;
+    font: 600 11px/1 -apple-system, system-ui, sans-serif; color: var(--ios-label);
+  }
+  .notch {
+    position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+    width: 88px; height: 22px; border-radius: 12px; background: #0A0B0D;
+  }
+  .topbar {
+    height: 42px; flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; border-bottom: 1px solid var(--ios-sep);
+  }
+  .circlebtn {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--ios-surface);
+    display: grid; place-items: center; color: var(--ios-label2); font-size: 12px; flex: none;
+  }
+  .ws { flex: 1; text-align: center; color: var(--ios-label2); font-size: 12.5px; }
+  .ws i { font-style: normal; color: var(--ios-label); }
+
+  .screen { flex: 1; overflow: hidden; position: relative; padding: 10px 0 0; }
+  .sec {
+    font: 600 9.5px/1 -apple-system, system-ui, sans-serif; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ios-label3); padding: 12px 14px 6px;
+  }
+  .row {
+    display: flex; align-items: center; gap: 9px; padding: 9px 14px;
+    border-bottom: 1px solid var(--ios-sep);
+  }
+  .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .r { color: var(--ios-label2); font-size: 11.5px; flex: none; }
+  .row .r.late { color: var(--ios-red); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .box {
+    width: 14px; height: 14px; border-radius: 4px; border: 1.6px solid var(--ios-blue); flex: none;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 20px;
+    background: var(--ios-fill); color: var(--ios-label2); font-size: 10px;
+  }
+  .glyph { width: 17px; color: var(--ios-label2); text-align: center; flex: none; font-size: 13px; }
+
+  /* the bar */
+  .bar {
+    flex: none; height: 52px; display: flex; align-items: stretch;
+    border-top: 1px solid var(--ios-sep); background: rgba(28,28,30,.92);
+  }
+  .bar .b {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; color: var(--ios-label3); font-size: 9px;
+  }
+  .bar .b .ic { font-size: 15px; line-height: 1; }
+  .bar .b.on { color: var(--ios-blue); }
+  .oldbar {
+    position: absolute; left: 14px; right: 14px; bottom: 12px; height: 40px;
+    border-radius: 20px; background: var(--ios-surface); border: 1px solid var(--ios-sep);
+    display: flex; align-items: center; justify-content: space-around;
+    color: var(--ios-label2); font-size: 14px;
+  }
+  .key {
+    position: absolute; right: 14px; bottom: 66px; width: 46px; height: 46px;
+    border-radius: 50%; background: var(--ios-blue); color: #fff;
+    display: grid; place-items: center; font-size: 24px; font-weight: 300;
+    box-shadow: 0 6px 16px rgba(10,132,255,.4);
+  }
+  .key.low { bottom: 20px; }
+
+  /* overlays */
+  .card {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 62%;
+    background: var(--ios-surface); border-radius: 16px 16px 0 0;
+    border-top: 1px solid var(--ios-sep); padding: 8px 0 0;
+    box-shadow: 0 -14px 30px rgba(0,0,0,.5);
+  }
+  .grab { width: 34px; height: 4px; border-radius: 2px; background: var(--ios-fill); margin: 2px auto 8px; }
+  .cardtitle { padding: 2px 16px 8px; font: 600 17px/1.2 -apple-system, system-ui; }
+  .menu {
+    position: absolute; left: 0; right: 0; bottom: 0; background: var(--ios-surface);
+    border-radius: 16px 16px 0 0; border-top: 1px solid var(--ios-sep);
+    box-shadow: 0 -14px 30px rgba(0,0,0,.5); padding-bottom: 6px;
+  }
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+  .note-title { padding: 14px 16px 4px; font: 700 19px/1.2 -apple-system, system-ui; }
+  .note-body { padding: 0 16px; color: var(--ios-label2); font-size: 12.5px; line-height: 1.6; }
+
+  /* calendar bits */
+  .cal { padding: 4px 10px 0; }
+  .caltop { display: flex; align-items: center; gap: 6px; padding: 4px 4px 8px; font-size: 12.5px; }
+  .caltop .m { font-weight: 600; }
+  .caltop .sp { flex: 1; }
+  .pill { background: var(--ios-blue); color: #fff; border-radius: 12px; padding: 2px 9px; font-size: 10.5px; font-weight: 600; }
+  .grid7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+  .grid7 .d { font-size: 10.5px; color: var(--ios-label2); padding: 4px 0; border-radius: 6px; position: relative; }
+  .grid7 .d.out { color: var(--ios-label3); }
+  .grid7 .d.sel { background: var(--ios-blue); color: #fff; font-weight: 600; }
+  .grid7 .hd { font-size: 8.5px; color: var(--ios-label3); text-transform: uppercase; letter-spacing: .04em; }
+  .dots { display: flex; gap: 2px; justify-content: center; height: 4px; margin-top: 1px; }
+  .dots i { width: 3px; height: 3px; border-radius: 50%; display: block; }
+  .hours { margin-top: 6px; border-top: 1px solid var(--ios-sep); }
+  .hour { display: flex; gap: 8px; padding: 0 10px; height: 30px; align-items: flex-start; }
+  .hour .h { font-size: 9px; color: var(--ios-label3); width: 30px; padding-top: 1px; }
+  .hour .lane { flex: 1; border-top: 1px solid var(--ios-sep); height: 100%; position: relative; }
+  .block {
+    position: absolute; left: 2px; right: 6px; top: 3px; height: 24px; border-radius: 5px;
+    background: rgba(64,200,224,.22); border-left: 2.5px solid var(--ios-teal);
+    font-size: 10px; padding: 3px 6px; color: var(--ios-label);
+  }
+  .now { position: absolute; left: 40px; right: 8px; height: 1px; background: var(--ios-red); }
+  .now::before {
+    content: "13:05"; position: absolute; left: -34px; top: -7px; font-size: 8px;
+    background: var(--ios-red); color: #fff; border-radius: 3px; padding: 1px 3px;
+  }
+
+  /* ---------- annotations ---------- */
+  .notes { margin-top: 28px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .note {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+  }
+  .note h3 { margin: 0 0 6px; font: 600 14px/1.3 -apple-system, system-ui; }
+  .note p { margin: 0; color: var(--ink2); font-size: 14px; }
+
+  .gone { margin-top: 24px; }
+  .gone ul { margin: 10px 0 0; padding-left: 18px; color: var(--ink2); }
+  .gone li { margin: 4px 0; }
+  .gone code {
+    font: 500 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  .decisions { margin-top: 40px; display: grid; gap: 14px; }
+  .dec {
+    display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: start;
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--tint);
+    border-radius: 12px; padding: 16px 18px;
+  }
+  .dec .n {
+    font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--tint);
+    padding-top: 3px;
+  }
+  .dec h3 { margin: 0 0 4px; font: 600 15.5px/1.35 -apple-system, system-ui; }
+  .dec p { margin: 0; color: var(--ink2); font-size: 14px; }
+  .dec p b { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--ink3); font-size: 13px; }
+  @media (max-width: 640px) { .page { padding: 32px 16px 64px; } }
+</style>
+
+<div class="page">
+  <p class="eyebrow">Liv · proposal · 16 August 2026</p>
+  <h1>The floor</h1>
+  <p class="lede">
+    Today a note is somewhere you <strong>are</strong>, and a task is somewhere you
+    <strong>visit</strong>. This puts one view always under you — Today, Calendar, Tasks, Find —
+    and lets notes lie over it. Nothing here is built. It is drawn so you can look at it and say
+    yes, no, or not like that.
+  </p>
+
+  <!-- ACT 1 -->
+  <section class="act">
+    <div class="act-head">
+      <h2>1 · What it looks like now</h2>
+      <p>The desk holds notes. Everything else is behind the door at the top left.</p>
+    </div>
+    <div class="rail">
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn">☰</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn">•••</div>
+          </div>
+          <div class="screen">
+            <div class="note-title">Roof project</div>
+            <div class="note-body">
+              Quote came in at 42k, valid to the end of the month. Ask about the flashing
+              detail before signing anything.<br><br>— call back Thursday
+            </div>
+          </div>
+          <div class="oldbar"><span>‹</span><span>›</span><span>⌕</span><span>+</span><span>▣ 2</span></div>
+        </div>
+        <figcaption>
+          <b>The desk</b>
+          A note fills the screen and the bar is about tabs. To reach the calendar you open the
+          door, pick a room, and come back out again.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn" style="opacity:.35">☰</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn" style="opacity:.35">•••</div>
+          </div>
+          <div class="screen">
+            <div class="sec">All workspaces</div>
+            <div class="row"><span class="glyph">☀</span><span class="t">Today</span></div>
+            <div class="row"><span class="glyph">▤</span><span class="t">Inbox</span></div>
+            <div class="sec">This workspace</div>
+            <div class="row"><span class="glyph">▦</span><span class="t">Calendar</span></div>
+            <div class="row"><span class="glyph">☑</span><span class="t">Tasks</span></div>
+            <div class="row"><span class="glyph">▥</span><span class="t">Everything</span></div>
+            <div class="sec">Filters</div>
+            <div class="row"><span class="glyph">+</span><span class="t">New filter…</span></div>
+          </div>
+          <div class="bar" style="background:transparent;border-top:1px solid var(--ios-sep)">
+            <div class="b"><span class="ic">⚙</span><span>Settings</span></div>
+          </div>
+        </div>
+        <figcaption>
+          <b>The library</b>
+          A list of doors. This is the part that reads like a file sidebar: the app's other half
+          lives one navigation layer down.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ACT 2 -->
+  <section class="act">
+    <div class="act-head">
+      <h2>2 · The floor</h2>
+      <p>
+        One view is always under you. You never go to the calendar — you are on it, or you are
+        standing on something else. The bar names the four floors and how many things you have open.
+      </p>
+    </div>
+    <div class="rail">
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn" style="visibility:hidden">☰</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn" style="visibility:hidden">•••</div>
+          </div>
+          <div class="screen">
+            <div class="sec" style="color:var(--ios-red)">● Late · 2</div>
+            <div class="row"><span class="box"></span><span class="t">Ring tandläkaren</span><span class="r late">Wed 12</span></div>
+            <div class="row"><span class="box"></span><span class="t">Send the roof quote on</span><span class="r late">Sat 8</span></div>
+            <div class="sec">Today · Sun 16 Aug</div>
+            <div class="row"><span class="dot" style="background:var(--ios-teal)"></span><span class="t">Dentist</span><span class="r">14:30</span></div>
+            <div class="row"><span class="box"></span><span class="t">Pay the deposit</span><span class="r">09:00</span></div>
+            <div class="row"><span class="dot" style="background:var(--ios-purple)"></span><span class="t">Read Anna's draft</span><span class="r">—</span></div>
+            <div class="sec">Caught today · 3</div>
+            <div class="row"><span class="glyph" style="color:var(--ios-yellow)">◔</span><span class="t">Route them</span><span class="r">→</span></div>
+          </div>
+          <div class="key">+</div>
+          <div class="bar">
+            <div class="b on"><span class="ic">☀</span><span>Today</span></div>
+            <div class="b"><span class="ic">▦</span><span>Calendar</span></div>
+            <div class="b"><span class="ic">☑</span><span>Tasks</span></div>
+            <div class="b"><span class="ic">⌕</span><span>Find</span></div>
+            <div class="b"><span class="ic">▣</span><span>Open 2</span></div>
+          </div>
+        </div>
+        <figcaption>
+          <b>Today, as the ground</b>
+          The floor keeps its day and its scroll. The workspace name still sits at the top centre and
+          still narrows everything under it.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn" style="visibility:hidden">☰</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn" style="visibility:hidden">•••</div>
+          </div>
+          <div class="screen">
+            <div class="cal">
+              <div class="caltop"><span class="m">August 2026</span><span class="sp"></span><span class="pill">Today</span><span style="color:var(--ios-label2)">‹ ›</span></div>
+              <div class="grid7">
+                <span class="hd">M</span><span class="hd">T</span><span class="hd">W</span><span class="hd">T</span><span class="hd">F</span><span class="hd">S</span><span class="hd">S</span>
+                <span class="d out">27</span><span class="d out">28</span><span class="d">29</span><span class="d">30</span><span class="d">31</span><span class="d">1</span><span class="d">2</span>
+                <span class="d">3</span><span class="d">4</span><span class="d">5</span><span class="d">6</span><span class="d">7</span><span class="d">8</span><span class="d">9</span>
+                <span class="d">10</span><span class="d">11</span><span class="d">12</span><span class="d">13</span><span class="d">14</span><span class="d">15</span><span class="d sel">16</span>
+                <span class="d">17</span><span class="d">18</span><span class="d">19</span><span class="d">20</span><span class="d">21</span><span class="d">22</span><span class="d">23</span>
+              </div>
+              <div class="dots"><i style="background:var(--ios-teal)"></i><i style="background:var(--ios-orange)"></i></div>
+            </div>
+            <div class="hours">
+              <div class="hour"><span class="h">12:00</span><span class="lane"></span></div>
+              <div class="hour"><span class="h">13:00</span><span class="lane"><span class="now"></span></span></div>
+              <div class="hour"><span class="h">14:00</span><span class="lane"><span class="block">Dentist · 14:30</span></span></div>
+              <div class="hour"><span class="h">15:00</span><span class="lane"></span></div>
+              <div class="hour"><span class="h">16:00</span><span class="lane"></span></div>
+            </div>
+          </div>
+          <div class="key">+</div>
+          <div class="bar">
+            <div class="b"><span class="ic">☀</span><span>Today</span></div>
+            <div class="b on"><span class="ic">▦</span><span>Calendar</span></div>
+            <div class="b"><span class="ic">☑</span><span>Tasks</span></div>
+            <div class="b"><span class="ic">⌕</span><span>Find</span></div>
+            <div class="b"><span class="ic">▣</span><span>Open 2</span></div>
+          </div>
+        </div>
+        <figcaption>
+          <b>Calendar, one tap from anywhere</b>
+          It opens on the day you left it. Dragging an hour still makes an event and raises its
+          properties — unchanged, just one tap closer.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn" style="visibility:hidden">☰</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn" style="visibility:hidden">•••</div>
+          </div>
+          <div class="screen">
+            <div style="display:flex;gap:6px;padding:8px 12px 4px;overflow:hidden">
+              <span class="chip" style="background:rgba(10,132,255,.18);color:var(--ios-blue)">All</span>
+              <span class="chip">● todo</span>
+              <span class="chip">● doing</span>
+              <span class="chip">● done</span>
+            </div>
+            <div class="sec">Todo · 4</div>
+            <div class="row"><span class="box"></span><span class="t">Pay the deposit</span><span class="r">Today</span></div>
+            <div class="row"><span class="box"></span><span class="t">Ring tandläkaren</span><span class="r late">Wed 12</span></div>
+            <div class="row"><span class="box"></span><span class="t">Read Anna's draft</span><span class="r">—</span></div>
+            <div class="row"><span class="box"></span><span class="t">Roof project · flashing</span><span class="r">Fri 21</span></div>
+            <div class="sec">Doing · 1</div>
+            <div class="row"><span class="box" style="border-color:var(--ios-orange)"></span><span class="t">Move the boxes</span><span class="r">—</span></div>
+            <div class="sec">Done · 13</div>
+          </div>
+          <div class="key">+</div>
+          <div class="bar">
+            <div class="b"><span class="ic">☀</span><span>Today</span></div>
+            <div class="b"><span class="ic">▦</span><span>Calendar</span></div>
+            <div class="b on"><span class="ic">☑</span><span>Tasks</span></div>
+            <div class="b"><span class="ic">⌕</span><span>Find</span></div>
+            <div class="b"><span class="ic">▣</span><span>Open 2</span></div>
+          </div>
+        </div>
+        <figcaption>
+          <b>Tasks</b>
+          Grouped by status, as now. Step 4 of the plan would let it list <em>anything</em> carrying a
+          status — a note you marked "doing" is work in progress.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ACT 3 -->
+  <section class="act">
+    <div class="act-head">
+      <h2>3 · Things you open lie over the floor</h2>
+      <p>
+        A note is still a tab. It covers the floor while you write, and closing it puts you back on
+        the ground rather than on an empty desk.
+      </p>
+    </div>
+    <div class="rail">
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn">✕</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn">•••</div>
+          </div>
+          <div class="screen">
+            <div class="note-title">Roof project</div>
+            <div class="note-body">
+              Quote came in at 42k, valid to the end of the month. Ask about the flashing detail
+              before signing anything.<br><br>— call back Thursday
+            </div>
+          </div>
+          <div class="key">+</div>
+          <div class="bar">
+            <div class="b"><span class="ic">☀</span><span>Today</span></div>
+            <div class="b"><span class="ic">▦</span><span>Calendar</span></div>
+            <div class="b"><span class="ic">☑</span><span>Tasks</span></div>
+            <div class="b"><span class="ic">⌕</span><span>Find</span></div>
+            <div class="b on"><span class="ic">▣</span><span>Open 2</span></div>
+          </div>
+        </div>
+        <figcaption>
+          <b>A note, open</b>
+          Same editor, same tabs. The bar says which floor you will land on when you close it, and
+          <em>Open</em> is lit because you are standing on something.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn" style="visibility:hidden">☰</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn" style="visibility:hidden">•••</div>
+          </div>
+          <div class="screen">
+            <div class="sec">Today · Sun 16 Aug</div>
+            <div class="row"><span class="dot" style="background:var(--ios-teal)"></span><span class="t">Dentist</span><span class="r">14:30</span></div>
+            <div class="row"><span class="box"></span><span class="t">Pay the deposit</span><span class="r">09:00</span></div>
+            <div class="card">
+              <div class="grab"></div>
+              <div class="cardtitle">Pay the deposit</div>
+              <div style="padding:0 16px 8px"><span class="chip">● task</span></div>
+              <div class="sec">Schedule</div>
+              <div class="row"><span class="dot" style="background:var(--ios-teal)"></span><span class="t">due</span><span class="r">Sun 16 Aug 09:00</span></div>
+              <div class="row"><span class="dot" style="background:var(--ios-blue)"></span><span class="t">status</span><span class="chip">todo</span></div>
+              <div class="sec">Filing</div>
+              <div class="row"><span class="dot" style="background:var(--ios-orange)"></span><span class="t">area</span><span class="r">Home</span></div>
+              <div class="row"><span class="dot" style="background:var(--ios-indigo)"></span><span class="t">project</span><span class="r">Roof</span></div>
+            </div>
+          </div>
+          <div class="bar">
+            <div class="b on"><span class="ic">☀</span><span>Today</span></div>
+            <div class="b"><span class="ic">▦</span><span>Calendar</span></div>
+            <div class="b"><span class="ic">☑</span><span>Tasks</span></div>
+            <div class="b"><span class="ic">⌕</span><span>Find</span></div>
+            <div class="b"><span class="ic">▣</span><span>Open 2</span></div>
+          </div>
+        </div>
+        <figcaption>
+          <b>A task stays a card</b>
+          Its facts fill a card, not a screen — your own ruling from 7 August. Swipe it down and you
+          are back on the list you tapped it in, with the row still there.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="notch"></div>
+          <div class="status"><span>9:41</span><span>▮▮▮</span></div>
+          <div class="topbar">
+            <div class="circlebtn">✕</div>
+            <div class="ws">◯ <i>Home</i> ⌄</div>
+            <div class="circlebtn">•••</div>
+          </div>
+          <div class="screen">
+            <div class="note-title">Roof project</div>
+            <div class="note-body">Quote came in at 42k, valid to the end of the month.</div>
+            <div class="scrim"></div>
+            <div class="menu">
+              <div class="grab"></div>
+              <div class="sec">New</div>
+              <div class="row"><span class="glyph" style="color:var(--ios-purple)">▤</span><span class="t">Note</span></div>
+              <div class="row"><span class="glyph" style="color:var(--ios-indigo)">☑</span><span class="t">Task</span></div>
+              <div class="row"><span class="glyph" style="color:var(--ios-teal)">▦</span><span class="t">Event</span></div>
+              <div class="row" style="border-bottom:none"><span class="glyph" style="color:var(--ios-orange)">▣</span><span class="t">File</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption>
+          <b>One create key, everywhere</b>
+          The button you asked for on Saturday, promoted to the root. It fills in context: on Today
+          the task is due that day, on a calendar day that day, inside a note just the workspace.
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="notes">
+      <div class="note">
+        <h3>Make a task while reading a note</h3>
+        <p>Press the key, Task, type the name. The card is over your note; swipe it down and you are
+        in the same sentence. No travel at all.</p>
+      </div>
+      <div class="note">
+        <h3>Check what is due today</h3>
+        <p>Tap Today. One tap from anywhere, opening on the day you left it, scrolled where you left
+        it.</p>
+      </div>
+      <div class="note">
+        <h3>Work a project</h3>
+        <p>Pick the lens at the top centre. All four floors narrow to it: Today its due things,
+        Calendar its dates, Tasks its tasks, Find its notes.</p>
+      </div>
+    </div>
+
+    <div class="gone">
+      <h2 style="font-size:17px">What this deletes</h2>
+      <ul>
+        <li>The library — not shrunk, deleted. Once the views are the ground it is a list of doors to
+          rooms you are already in.</li>
+        <li>The empty desk and its <code>No tabs</code> hint. Close your last note and you land on
+          Today.</li>
+        <li>The minimised card pill: a second tab plane, one item deep.</li>
+        <li>The back and forward arrows, which are the most Obsidian thing in the app.</li>
+        <li><code>Everything</code> as a separate view — it becomes <em>Find</em> with an empty field.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- decisions -->
+  <section class="act">
+    <div class="act-head">
+      <h2>4 · What needs your word</h2>
+      <p>Each of these touches a ruling you made earlier, so none of it moves until you answer.</p>
+    </div>
+    <div class="decisions">
+      <div class="dec">
+        <span class="n">01</span>
+        <div>
+          <h3>The one key costs a tap on Today and Tasks. Take it?</h3>
+          <p><b>Recommended: yes.</b> Today the button makes a task in one press; with four verbs it
+          is press, Task, type. One key that behaves the same everywhere is worth one tap on two
+          screens, and it buys a create door that works from inside a note.</p>
+        </div>
+      </div>
+      <div class="dec">
+        <span class="n">02</span>
+        <div>
+          <h3>Should Tasks list anything with a status, not just tasks?</h3>
+          <p><b>Recommended: yes.</b> A note you marked "doing" is work in progress. The calendar has
+          always worked this way — it lists anything with a date — and nobody has complained.</p>
+        </div>
+      </div>
+      <div class="dec">
+        <span class="n">03</span>
+        <div>
+          <h3>Where do saved filters live once the library is gone?</h3>
+          <p><b>Recommended: under the workspace name at the top centre.</b> That button is the one
+          thing on screen that says what you are looking at, which is exactly what a filter changes.
+          It reverses where you put them on 11 August, so it needs your word.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Drawn from design/kinds-are-peers.md · nothing built · Liv, 16 August 2026
+  </footer>
+</div>

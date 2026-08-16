@@ -8,6 +8,15 @@
 >
 > Status: **proposal**. Nothing here is built. Written 2026-08-16.
 
+## Mockups
+
+Eight phone frames of the floor, drawn 2026-08-16: today's shape, the
+three floors, a note lying over one, a task's card, and the create key's
+menu, ending with the three decisions.
+
+- In the repo: `design/mockups/the-floor.html` (open it in a browser).
+- Published (private): https://claude.ai/code/artifact/59aa7414-a021-46be-8a51-434d5b08e98e
+
 ## The floor — the design pass's answer, and the one I now recommend
 
 *Produced 2026-08-16 by four independent architectures judged through
