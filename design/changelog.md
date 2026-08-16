@@ -1,5 +1,21 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — the library is for filters, the workspace and Settings
+
+Owner, settling yesterday's flag: *"library is for filters, workspace
+and settings."*
+
+The five view rows are gone from the library. They are the bar's own key
+now — Go to: Today · Inbox · Calendar · Tasks · Everything · Docs — and
+two doors to one room is what standing rule 4 exists to stop. What is
+left behind the left door is what the owner named: the saved filters and
+their form, and Settings at the foot.
+
+The WORKSPACE has no row there either: the pinned button at the top
+centre has been its one door since 2026-08-13, and adding a second one
+would be the same mistake in the same panel. The library is where its
+filters live.
+
 ## 2026-08-16 — the bar's fourth key becomes "where you look"
 
 Owner: *"Maybe the tab view button should be replaced with a menu for

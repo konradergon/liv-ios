@@ -109,11 +109,6 @@ struct LibraryPanel: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
-    /// The two bands (rev 6): global views see the whole box; workspace
-    /// views wear the active workspace's lens.
-    private let globalViews: [Feature] = [.today, .inbox]
-    private let workspaceViews: [Feature] = [.calendar, .tasks, .everything]
-
     var body: some View {
         SidePanel(onDismiss: onDismiss, band: { backChevron }) {
             VStack(spacing: 0) {
@@ -143,36 +138,22 @@ struct LibraryPanel: View {
         VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        SectionLabel("All workspaces")
-                            .padding(.top, 10)
-                            .padding(.bottom, 2)
-                        ForEach(globalViews) { feature in
-                            row(feature.title, glyph: feature.glyph) {
-                                open(feature)
-                            }
-                        }
-
-                        // Not the workspace's NAME any more — the button
-                        // floating above this panel says that, and saying
-                        // it twice on one screen is what the calendar's
-                        // date row was doing. These two labels say the
-                        // thing the name never did: which lists ignore the
-                        // workspace and which wear it.
-                        SectionLabel("This workspace")
-                            .padding(.top, 22)
-                            .padding(.bottom, 2)
-                        ForEach(workspaceViews) { feature in
-                            row(feature.title, glyph: feature.glyph) {
-                                open(feature)
-                            }
-                        }
-                        // Saved filters live HERE, not inside the workspace
-                        // sheet — a filter is not a workspace, and this is
-                        // where you already come to change what you are
-                        // looking at (owner, 2026-08-11). The band is
-                        // absent until there is one to show.
+                        // THE VIEWS ARE NOT HERE ANY MORE (owner,
+                        // 2026-08-16: "library is for filters, workspace
+                        // and settings"). They are the bar's own key —
+                        // Go to: Today, Inbox, Calendar, Tasks,
+                        // Everything, Docs — and two doors to one room is
+                        // what standing rule 4 exists to stop.
+                        //
+                        // Saved filters stay: a filter is not a
+                        // workspace, and this is where you come to change
+                        // what you are looking at (owner, 2026-08-11).
+                        // The WORKSPACE itself has no row here either —
+                        // the pinned button at the top centre is its one
+                        // door (owner, 2026-08-13), and this panel is
+                        // where its filters and the app's settings live.
                         SectionLabel("Filters")
-                            .padding(.top, 18)
+                            .padding(.top, 10)
                             .padding(.bottom, 2)
                         Group {
                             ForEach(workspaces.filters) { view in
@@ -214,10 +195,6 @@ struct LibraryPanel: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back to the library")
         }
-    }
-
-    private func open(_ feature: Feature) {
-        desk.featureShown = feature
     }
 
     /// Pinned below the scroll (rev 6): the app's own door. "Where you
