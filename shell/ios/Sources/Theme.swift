@@ -151,10 +151,6 @@ enum LivRow {
     static let height: CGFloat = 54
     /// A row carrying a title and a second line under it.
     static let tall: CGFloat = 58
-    /// The floor bar's own height, without the home indicator's room
-    /// (which the bar adds as padding inside itself). The create key and
-    /// the floors both stand clear of it, so it is one number.
-    static let barHeight: CGFloat = 52
     /// The band the top chrome owns: the two door circles and the
     /// workspace button centred between them. ANYTHING that speaks at
     /// the top of the screen — a banner, a notice, an acknowledgment —

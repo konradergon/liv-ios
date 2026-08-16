@@ -40,7 +40,7 @@ struct TodayView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var selectedDay = FloorMemory.shared.day
+    @State private var selectedDay = Civil.todayDay()
     /// The task status vocabulary, board order; `completes` drives the
     /// ring, the LATE predicate and the done-collapse.
     @State private var taskOptions: [StatusOption] = []
@@ -129,7 +129,9 @@ struct TodayView: View {
         // Room under the last row for the add button to sit over.
         .contentMargins(.bottom, 88, for: .scrollContent)
         .background(LivTheme.canvas)
-
+        .overlay(alignment: .bottomTrailing) {
+            LivAddButton(label: "New task") { addTask(on: selectedDay) }
+        }
         .sheet(item: $duePick) { pick in
             DetailDueSheet(
                 model: box, id: pick.entity,
@@ -143,9 +145,27 @@ struct TodayView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
-        // The floor remembers where it was; standing on it again lands
-        // you on the same day (2026-08-16).
-        .onChange(of: selectedDay) { _, day in FloorMemory.shared.day = day }
+    }
+
+    /// A task DUE on the day you are looking at, straight into its
+    /// properties with the caret in the title — the app's one create
+    /// rule (owner, 2026-08-13). The name is typed there now, not into a
+    /// ghost row in the list.
+    private func addTask(on day: Int64) {
+        box.createTask { id in
+            guard id != 0 else { return }
+            // 09:00, not a bare date: a task with no clock time has no
+            // moment to ring at (owner, 2026-08-07).
+            box.setSpan(
+                id, "due", start: Civil.stamp(day: day, hhmm: LivDue.defaultHHMM),
+                end: 0, dateOnly: false)
+            // The active workspace stamps here too (M4) — otherwise a
+            // task added while looking at Work lacks Work's cells and
+            // vanishes from the very list it was made in.
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.open(id, as: .record)
+        }
     }
 
     // MARK: header + section furniture
@@ -222,7 +242,7 @@ struct TodayView: View {
     /// today's captures, and the door to the place that routes them.
     private func capturedFooter(_ count: Int) -> some View {
         Button {
-            desk.inboxShown = true
+            desk.featureShown = .inbox
         } label: {
             HStack(spacing: 6) {
                 Text("\(count) captured today")

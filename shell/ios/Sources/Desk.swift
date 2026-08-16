@@ -37,16 +37,17 @@ struct DeskHost: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // The desk is what you have OPEN, lying over the floor
-            // (2026-08-16). It is only ever drawn with a tab to draw:
-            // there is no empty desk any more, because closing the last
-            // thing puts you back on the floor.
             Group {
                 if let tab = desk.activeTab, case .entity(let id) = tab.content {
                     // Keyed by ENTITY: serial captures rewrite this same
                     // tab with a new entity, and per-entity @State (the
                     // seeded title) must reseed on that flip.
                     EntityTabBody(id: id).id(id)
+                } else {
+                    // An empty desk is EMPTY. It used to be the New Tab
+                    // page; that page is gone (owner, 2026-08-13) and its
+                    // three verbs live in the `+` menu on the bar below.
+                    EmptyHint("No tabs. The + below makes one.")
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -60,16 +61,12 @@ struct DeskHost: View {
             // anywhere, which is the gesture that opens it today and the
             // one that closes it — a button beside it was a second door
             // to one room (standing rule 4).
-            // ONE door: the note's ••• . The library's door went with
-            // the library (2026-08-16), and the workspace button is
-            // drawn by RootView now, over the floor as well as this.
             HStack(spacing: 8) {
-                // Close what you have open and land back on the floor —
-                // the desk's own way out, where the library's door used
-                // to be.
-                FloatCircle(symbol: "xmark", on: false, label: "Close") {
+                FloatCircle(
+                    symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
+                ) {
                     endEditing()
-                    if let tab = desk.activeTab { desk.close(tab.id) }
+                    goToLibrary()
                 }
                 Spacer()
                 if case .entity(let id) = desk.activeTab?.content {
@@ -78,14 +75,51 @@ struct DeskHost: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 6)
-            // Painted above the panel, which cannot cover them, so they
-            // fade by how far its curtain has come down.
-            .opacity(1 - desk.curtain)
-            .accessibilityHidden(desk.inspectorShown)
+            // Pinned, like the workspace button between them: the
+            // library door stays reachable with the properties panel up
+            // (owner, 2026-08-15: "that button should be visible with
+            // the property card open"). They are painted above the
+            // panels, so a curtain cannot cover them — they fade by
+            // exactly how far the LIBRARY's curtain has come down, since
+            // that is the one that lands on top of them.
+            .opacity(1 - desk.libraryCurtain)
+            .accessibilityHidden(desk.libraryShown)
             .zIndex(3)
 
+            // The workspace, top CENTRE, between the doors — on the desk,
+            // full or empty, and OVER the library panel, which
+            // is why it is drawn last with the highest z (owner,
+            // 2026-08-13: "it should remain visible as you swipe into the
+            // global panel"). It hides only under the PROPERTIES panel,
+            // which is about this note and not about the app.
+            WorkspaceButton { desk.workspaceShown = true }
+                .padding(.top, 6)
+                // It stays lit under BOTH panels now. The properties
+                // card starts below this whole band (SidePanel), so the
+                // desk's chrome is visible above it — that is what says
+                // the card belongs to the desk. It used to fade out
+                // under the properties panel, from when that panel
+                // covered the screen edge to edge.
+                .zIndex(3)
+
+            // The panels, drawn last so they cover doors and body alike.
+            // Mounted while shown OR while a finger is dragging one, and
+            // positioned by that drag — they follow the hand rather than
+            // waiting for it to let go (owner, 2026-08-08).
+            if desk.libraryDrawn || desk.panelDrag?.which == .library {
+                LibraryPanel(
+                    onDismiss: { desk.setLibrary(false) },
+                    onWorkspace: { desk.workspaceShown = true },
+                    onSettings: { desk.settingsShown = true }
+                )
+                .offset(x: panelOffset(.library))
+                // Exit transitions render BELOW later siblings without an
+                // explicit z — the panel would vanish behind the desk
+                // instead of sliding out (audit, 2026-08-01).
+                .zIndex(1)
+            }
             if case .entity(let id) = desk.activeTab?.content,
-                desk.inspectorShown || desk.panelDrag != nil
+                desk.inspectorShown || desk.panelDrag?.which == .inspector
             {
                 SidePanel(
                     onDismiss: {
@@ -94,7 +128,7 @@ struct DeskHost: View {
                 ) {
                     EntityInspector(id: id)
                 }
-                .offset(x: panelOffset)
+                .offset(x: panelOffset(.inspector))
                 .zIndex(1)
             }
 
@@ -132,9 +166,10 @@ struct DeskHost: View {
                 active: { desk.deskInFront && desk.menu == nil },
                 mayClaim: { dx in claimPanel(dx) != nil },
                 onLatch: { dx in
-                    if let opening = claimPanel(dx) {
+                    if let claim = claimPanel(dx) {
                         endEditing()
-                        desk.panelDrag = PanelDrag(opening: opening, amount: dx)
+                        desk.panelDrag = PanelDrag(
+                            which: claim.which, opening: claim.opening, amount: dx)
                     }
                 },
                 onMove: { dx in desk.panelDrag?.amount = dx },
@@ -176,8 +211,33 @@ struct DeskHost: View {
         }
     }
 
-    /// The properties panel covers the desk body.
-    private var anyPanel: Bool { desk.inspectorShown }
+    /// Any full-screen surface covering the desk body.
+    private var anyPanel: Bool {
+        desk.libraryShown || desk.inspectorShown
+    }
+
+    /// The library door. It stays LIT with the properties card up
+    /// (owner, 2026-08-15: "that button should be visible with the
+    /// property card open") and it means one thing wherever you press
+    /// it: GO TO THE LIBRARY. With the card up that means putting the
+    /// card away first — it is a layer of the desk, and the desk is
+    /// about to leave — and then sliding. Tapping it used to park the
+    /// library invisibly behind the card.
+    private func goToLibrary() {
+        endEditing()
+        guard !desk.libraryShown else {
+            desk.setLibrary(false)
+            return
+        }
+        guard desk.inspectorShown else {
+            desk.setLibrary(true)
+            return
+        }
+        withAnimation(LivMotion.nav) { desk.inspectorShown = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+            desk.setLibrary(true)
+        }
+    }
 
     /// A panel over a live keyboard would sit UNDER it — the keyboard is a
     /// system window. End editing first; the note's autosave flushes on
@@ -194,22 +254,32 @@ struct DeskHost: View {
     /// document, rarely: duplicate, share, trash.
     /// The secondary verbs. Every tab is a document now (Option C), so
     /// the kind branch that used to hide share/export is gone.
-    /// How far off its own edge the properties panel currently sits. No
-    /// drag in flight means it is simply open (0) or away (a screen).
-    private var panelOffset: CGFloat {
-        (1 - desk.curtain) * UIScreen.main.bounds.width
+    /// How far off its own edge a panel currently sits. A panel with no
+    /// drag in flight is simply open (0) — the transition handles its
+    /// arrival and departure as before.
+    private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
+        let hidden = (1 - desk.panelProgress(which)) * UIScreen.main.bounds.width
+        return which == .library ? -hidden : hidden
     }
 
-    /// What a drag moving `dx` would do: open or close the properties
-    /// panel. nil = nothing to claim in that direction, so the
+    /// What a drag moving `dx` would do: which panel, opening or
+    /// closing. nil = nothing to claim in that direction, so the
     /// recognizer must not latch (and must not cancel any touches).
-    /// There is only one panel left to claim since the library went.
-    private func claimPanel(_ dx: CGFloat) -> Bool? {
-        if dx > 0 { return desk.inspectorShown ? false : nil }
-        guard !desk.inspectorShown, case .entity = desk.activeTab?.content else {
-            return nil
+    private func claimPanel(
+        _ dx: CGFloat
+    ) -> (which: PanelDrag.Which, opening: Bool)? {
+        if dx > 0 {
+            // Rightward: put the properties away, else summon the library.
+            if desk.inspectorShown { return (.inspector, false) }
+            if !desk.libraryShown { return (.library, true) }
+        } else {
+            // Leftward: put the library away, else summon the properties.
+            if desk.libraryShown { return (.library, false) }
+            if !desk.inspectorShown, case .entity = desk.activeTab?.content {
+                return (.inspector, true)
+            }
         }
-        return true
+        return nil
     }
 
     /// Let go: finish the journey the finger started, or put it back.
@@ -229,10 +299,13 @@ struct DeskHost: View {
         // stopped. The first version asked "did the drag commit" and
         // inverted the slow-close case: a 57% pull away snapped back
         // open (found live, 2026-08-09).
-        let towardVisible = velocity < 0
+        let towardVisible = live.which == .library ? velocity > 0 : velocity < 0
         let shown = flicked ? towardVisible : live.progress(width) > 0.5
         withAnimation(LivMotion.nav) {
-            desk.inspectorShown = shown
+            switch live.which {
+            case .library: desk.setLibrary(shown, animated: false)
+            case .inspector: desk.inspectorShown = shown
+            }
             desk.panelDrag?.amount = live.amount(for: shown ? 1 : 0, width: width)
         } completion: {
             desk.panelDrag = nil

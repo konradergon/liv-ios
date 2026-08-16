@@ -1,5 +1,13 @@
 # Tasks and the calendar are not additions
 
+> **REJECTED, 2026-08-16.** Both answers below were BUILT and both were
+> rejected by the owner on sight: the four-floor version as "a precursor
+> to a sloppy version of clickup", and the one-page-three-arrangements
+> version as "the app is a mess now". The code is reverted (`0cad7a4`,
+> `4a729b6` — recoverable from git). Kept because the QUESTION is still
+> open and still right, and because the next attempt should start by
+> reading why these two failed rather than by rediscovering them.
+
 > Owner, 2026-08-16: *"If notes, tasks, and calendar items are all
 > first-class objects with properties, why should 'notes' live in the
 > main workspace while tasks and calendar items are tucked away in a

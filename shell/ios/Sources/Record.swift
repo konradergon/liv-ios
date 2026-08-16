@@ -93,6 +93,52 @@ struct RecordCard: View {
     }
 }
 
+/// The pill a minimised card leaves behind. One at a time.
+struct MinimisedRecordPill: View {
+    let id: UInt64
+    @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var box: BoxModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                desk.restoreRecord()
+            } label: {
+                HStack(spacing: 8) {
+                    IconChip(
+                        glyph: LivKind.glyph(of: box.entity(id)),
+                        color: LivKind.color(of: box.entity(id)), size: 22,
+                        on: LivTheme.panel2)
+                    Text(box.entity(id).map(livRowTitle) ?? "Untitled")
+                        .font(.system(size: LivType.body, weight: .medium))
+                        .foregroundStyle(LivTheme.text)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button {
+                desk.dropMinimised()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: LivType.caption, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 2)
+        .frame(height: 38)
+        .background(Capsule().fill(LivTheme.panel2))
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+}
 
 /// Attach to every surface that can be standing when a record opens.
 ///
@@ -111,7 +157,7 @@ struct RecordCardHost: ViewModifier {
         content.sheet(
             isPresented: Binding(
                 get: { active && desk.recordCard != nil },
-                set: { if !$0 { desk.dismissRecord() } })
+                set: { if !$0 { desk.minimiseRecord() } })
         ) {
             if let id = desk.recordCard {
                 RecordCard(id: id)
@@ -202,6 +248,7 @@ struct RecordBody: View {
         Button(role: .destructive) {
             box.trash(id)
             desk.recordCard = nil
+            desk.minimisedRecord = nil
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "trash")

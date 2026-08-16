@@ -46,19 +46,6 @@ enum LivKind: CaseIterable {
         return .capture
     }
 
-    /// What the create key says it will make, here.
-    var newLabel: String {
-        switch self {
-        case .note: return "New note"
-        case .task: return "New task"
-        case .event: return "New event"
-        case .file: return "Add a file"
-        case .person: return "New person"
-        case .link: return "New link"
-        case .capture: return "New"
-        }
-    }
-
     /// The name a snapshot uses, for the few places that hold a kind
     /// string and no row (a search group header, a wire field).
     static func named(_ kind: String) -> LivKind {

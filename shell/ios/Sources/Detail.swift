@@ -994,9 +994,7 @@ private struct DetailCellGroup: Identifiable {
     }
 }
 
-/// Not private: the Things list prints a due date the same way the
-/// properties panel does — one formatter, one wording (rule 4).
-enum DetailFmt {
+private enum DetailFmt {
     private static let gregorian = Calendar(identifier: .gregorian)
 
     /// The wire's datetime display ("YYYY-MM-DD[ HH:MM][ -> …]") redrawn

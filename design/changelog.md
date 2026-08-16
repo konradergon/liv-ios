@@ -1,79 +1,29 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
-## 2026-08-16 — one page, three arrangements
+## 2026-08-16 — the floor was built, tried, and reverted
 
-Owner, on the four-floor version: *"the ux is kind of confusing. the '+'
-looks like its part of the page you're viewing yet it always creates
-notes. 'Open' isn't a page yet it seems like one. it overall feels like
-a precursor to a sloppy version of clickup."* All three are fair, and
-all three are now answered.
+Owner: *"the app is a mess now. revert the whole thing."*
 
-**One page for your things, arranged three ways.** Today / Tasks /
-Everything were three tabs; they are one place — **Things** — with a
-segmented control: **Date · Status · All**. The same objects, ordered
-differently, is not three places. Four tabs of lists was the ClickUp
-shape; this is not.
+Both floor commits are reverted (`0cad7a4`, `4a729b6`). The app is back
+to the desk and the library, in the system palette, exactly as it was
+before the experiment: the bar is ‹ › search + tabs, the views live
+behind the left door, and the tab plane is the desk.
 
-**The bar holds only places**: Things · Calendar · Find · Desk. The
-Desk is a real page now — the grid of what you have open — so pressing
-it while you are reading puts the grid back, and pressing it from
-anywhere else brings back what you were reading. "Open (n)", which was a
-state pretending to be a page, is gone, and so is the separate
-full-screen tab switcher: the Desk floor IS the switcher, inactive row
-and all.
+What was tried, in order, and what the owner said to each:
 
-**The create key belongs to the page it sits on.** A floating + over a
-list means "add to this list" everywhere else in the world. Tap it now
-and you get the page's own kind — a task on Things, an event on the
-calendar, a note on Find, the Desk and on All — made at once, with its
-properties open and the caret in the name. HOLD it for the other three
-kinds. It says what it will make, too: the label is "New task" or "New
-event", not "New".
+1. **Four floors** — Today · Calendar · Tasks · Find · Open (n) on the
+   bar, notes lying over them, the library deleted. *"the ux is kind of
+   confusing… it overall feels like a precursor to a sloppy version of
+   clickup."*
+2. **One page, three arrangements** — Things (Date · Status · All),
+   Calendar, Find, Desk; the create key made the page's own kind.
+   *"the app is a mess now."*
 
-## 2026-08-16 — THE FLOOR
-
-Owner: *"build everything. it needs testing for me to judge anything."*
-
-The design is design/kinds-are-peers.md and the mockups are
-design/mockups/the-floor.html. What shipped:
-
-**One view is always under you.** Today, Calendar, Tasks and Find are
-the ground, chosen from the bar — `LivFloor`, four cases, `desk.floor`,
-remembered across launches and NOT per workspace. Switching workspace
-narrows every floor; it no longer sends you somewhere else.
-
-**Things you open lie over the floor.** A note or a file is still a tab,
-drawn by DeskHost over the ground. Close the last one and you land on
-the floor: there is no empty desk any more, and no `No tabs` hint. The
-bar's fifth key stands you back on what you had open; pressed again it
-opens the grid.
-
-**One create key.** Bottom right, on every surface: Note · Task · Event ·
-File. It fills in from where you stand — on Today or the calendar the
-day you are looking at, at 09:00 — and everything it makes lands in its
-properties with the caret in the name. The two per-view add buttons and
-the bar's `+` are gone.
-
-**Tasks lists anything carrying a status**, not only things typed
-"task" (owner's decision 2). The calendar has always listed anything
-with a date; this was the last drawer that sorted by type.
-
-**Find replaces Everything and the search cover.** One screen: a field,
-and with nothing typed, everything you have, newest first.
-
-**The library is deleted**, along with the back and forward arrows, the
-minimised-card pill, `EverythingView`, the empty-desk hint, the search
-cover, the `Feature` enum, the library door, the library arm of the
-panel drag, and the tab-history that fed ‹ ›. Saved filters and Settings
-moved under the workspace button's own sheet (owner's decision 3).
-
-**One thing found the hard way.** The root view's own modifiers and
-branches were not seeing the model change — a menu raised from the
-create key never drew, and the Open key lit without standing you on
-anything. Every layer is its own small view now, observing the model
-itself: FloorLayer, OpenLayer, WorkspaceLayer, CreateKeyLayer,
-MenuLayer, BarLayer. That is also why `KeyboardWatch` gained a shared
-instance: three layers ask it the same question.
+The design note (design/kinds-are-peers.md) and the mockups
+(design/mockups/the-floor.html) are kept, marked REJECTED. The question
+they were written for is still open and still good: a task and a note
+are the same kind of object, and the app does not show that. Two answers
+have now been tried and rejected — that is worth more than the code was.
 
 ## 2026-08-16 — the divider stops flashing under Bold
 
