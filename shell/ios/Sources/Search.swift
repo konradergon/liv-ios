@@ -22,12 +22,17 @@ struct SearchView: View {
     var onPick: ((UInt64, String) -> Void)? = nil
     /// What was already typed at the door — the `[[kit` in the note.
     var seed: String = ""
+    /// FIND, the floor: no Cancel (there is nothing to close — it is the
+    /// ground), and an empty field shows everything you have, newest
+    /// first. The same screen still serves as the link picker, where it
+    /// is a sheet with a Cancel and an onPick.
+    var isFloor: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.dismiss) private var dismissSheet
-    @State private var query = ""
+    @State private var query = FloorMemory.shared.query
     /// Raw ranked ids from the core, before the workspace lens.
     @State private var rawHits: [UInt64] = []
     /// How many matched in total. The core sends the first 200; without
@@ -39,6 +44,12 @@ struct SearchView: View {
 
     private var trimmed: String {
         query.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Find is a floor, and a floor remembers where it was.
+    private func remember() {
+        guard isFloor else { return }
+        FloorMemory.shared.query = query
     }
 
     /// The lens (M4), applied to the CORE's ranked ids — rank order is
@@ -97,16 +108,18 @@ struct SearchView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 pill
-                Button {
-                    close()
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: LivType.body, weight: .medium))
-                        .foregroundStyle(LivTheme.accent)
-                        .contentShape(Rectangle())
+                if !isFloor {
+                    Button {
+                        close()
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: LivType.body, weight: .medium))
+                            .foregroundStyle(LivTheme.accent)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close search")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close search")
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -119,7 +132,13 @@ struct SearchView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
             }
-            if trimmed.isEmpty {
+            if trimmed.isEmpty, isFloor {
+                // Everything you have, newest first. This is what used
+                // to be its own view (Everything); a field with nothing
+                // typed in it is the same question with no filter, so it
+                // is the same screen (2026-08-16).
+                everything
+            } else if trimmed.isEmpty {
                 ScrollView {
                     EmptyHint("Search everything you have.").padding(.top, 40)
                 }
@@ -192,8 +211,10 @@ struct SearchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(LivTheme.canvas.ignoresSafeArea())
+        .onChange(of: query) { _, _ in remember() }
         .onAppear {
             box.refresh()  // hits render off the entity index
+            if !query.isEmpty { kick(debounce: false) }
             if query.isEmpty, !seed.isEmpty {
                 query = seed
                 kick(debounce: false)
@@ -216,10 +237,34 @@ struct SearchView: View {
     }
 
     private func close() {
-        if onPick != nil {
-            dismissSheet()
-        } else {
-            desk.searchShown = false
+        if onPick != nil { dismissSheet() }
+    }
+
+    /// Everything in the box the lens allows, newest first. No groups,
+    /// no chips: the field above is the only control, and the order is
+    /// the one question this list answers.
+    private var everything: some View {
+        let lens = workspaces.activeQuery
+        let rows = (box.snap?.entities ?? [])
+            .filter { row in
+                guard row.trashed != true else { return false }
+                guard workspaces.lensOn, !lens.isInert else { return true }
+                return lens.matches(row)
+            }
+            .sorted { $0.id > $1.id }
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(rows.prefix(200)) { row in
+                    Button {
+                        open(row.id)
+                    } label: {
+                        SearchHitRow(row: row).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 88)
         }
     }
 

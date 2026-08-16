@@ -155,7 +155,7 @@ struct TabSwitcher: View {
 
     private var newTabCard: some View {
         Button {
-            desk.newTab()
+            desk.createHere()
             desk.switcherShown = false
         } label: {
             RoundedRectangle(cornerRadius: 12)
@@ -182,7 +182,7 @@ struct TabSwitcher: View {
     private var footer: some View {
         HStack {
             Button {
-                desk.newTab()
+                desk.createHere()
                 desk.switcherShown = false
             } label: {
                 Image(systemName: "plus")

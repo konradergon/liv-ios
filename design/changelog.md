@@ -1,5 +1,50 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — THE FLOOR
+
+Owner: *"build everything. it needs testing for me to judge anything."*
+
+The design is design/kinds-are-peers.md and the mockups are
+design/mockups/the-floor.html. What shipped:
+
+**One view is always under you.** Today, Calendar, Tasks and Find are
+the ground, chosen from the bar — `LivFloor`, four cases, `desk.floor`,
+remembered across launches and NOT per workspace. Switching workspace
+narrows every floor; it no longer sends you somewhere else.
+
+**Things you open lie over the floor.** A note or a file is still a tab,
+drawn by DeskHost over the ground. Close the last one and you land on
+the floor: there is no empty desk any more, and no `No tabs` hint. The
+bar's fifth key stands you back on what you had open; pressed again it
+opens the grid.
+
+**One create key.** Bottom right, on every surface: Note · Task · Event ·
+File. It fills in from where you stand — on Today or the calendar the
+day you are looking at, at 09:00 — and everything it makes lands in its
+properties with the caret in the name. The two per-view add buttons and
+the bar's `+` are gone.
+
+**Tasks lists anything carrying a status**, not only things typed
+"task" (owner's decision 2). The calendar has always listed anything
+with a date; this was the last drawer that sorted by type.
+
+**Find replaces Everything and the search cover.** One screen: a field,
+and with nothing typed, everything you have, newest first.
+
+**The library is deleted**, along with the back and forward arrows, the
+minimised-card pill, `EverythingView`, the empty-desk hint, the search
+cover, the `Feature` enum, the library door, the library arm of the
+panel drag, and the tab-history that fed ‹ ›. Saved filters and Settings
+moved under the workspace button's own sheet (owner's decision 3).
+
+**One thing found the hard way.** The root view's own modifiers and
+branches were not seeing the model change — a menu raised from the
+create key never drew, and the Open key lit without standing you on
+anything. Every layer is its own small view now, observing the model
+itself: FloorLayer, OpenLayer, WorkspaceLayer, CreateKeyLayer,
+MenuLayer, BarLayer. That is also why `KeyboardWatch` gained a shared
+instance: three layers ask it the same question.
+
 ## 2026-08-16 — the divider stops flashing under Bold
 
 Owner: *"Toolbar insertion of '\*\*\*\*' has a separator flash briefly.

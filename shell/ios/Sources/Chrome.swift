@@ -8,39 +8,55 @@
 import SwiftUI
 import UIKit
 
-// MARK: - features
+// MARK: - the floor
 
-/// The lens roster. Calendar is a v1 placeholder — its body renders
-/// EmptyHint("Calendar arrives with M3.") until M3.
-enum Feature: String, CaseIterable, Identifiable {
-    case today, everything, inbox, tasks, calendar
+/// Where each floor WAS when you left it. Plain and unobserved on
+/// purpose: a floor reads it when it is built and writes it as you move,
+/// and publishing any of this on DeskModel would re-render the world on
+/// every drag — the exact cost the calendar paid on 2026-08-15 (rev 24).
+final class FloorMemory {
+    static let shared = FloorMemory()
+    /// The day Today and the calendar are looking at.
+    var day: Int64 = Civil.todayDay()
+    /// The month the calendar's grid is anchored to.
+    var month: Int64 = CalGrid.firstOfMonth(Civil.todayDay())
+    /// Tasks' status chip, nil = All.
+    var taskFilter: String?
+    /// What is typed into Find.
+    var query = ""
+    private init() {}
+}
+
+
+/// The ground under everything (owner, 2026-08-16: "Calendar, Tasks,
+/// etc. should be like a central part of the app and not just
+/// 'additions'"). One of these is always beneath you; notes and files
+/// lie OVER it as tabs, and closing the last one puts you back on it.
+/// There is no empty desk any more.
+enum LivFloor: String, CaseIterable, Identifiable {
+    case today, calendar, tasks, find
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .today: return "Today"
-        case .everything: return "Everything"
-        case .inbox: return "Inbox"
-        case .tasks: return "Tasks"
         case .calendar: return "Calendar"
+        case .tasks: return "Tasks"
+        case .find: return "Find"
         }
     }
 
-    /// The blueprints' own drawing for each place (Glyph.swift).
-    var glyph: LivGlyph {
+    /// The bar's own icons are the SYSTEM's, like the rest of the
+    /// surface until the design pass (owner, 2026-08-16).
+    var symbol: String {
         switch self {
-        case .today: return .today
-        case .everything: return .everything
-        case .inbox: return .inbox
-        case .tasks: return .tasks
-        case .calendar: return .calendar
+        case .today: return "sun.max"
+        case .calendar: return "calendar"
+        case .tasks: return "checklist"
+        case .find: return "magnifyingglass"
         }
     }
-
-    // No per-view hue. The library's rows are bare and colourless
-    // (owner, 2026-08-13); a view is a place, and kind colour is for
-    // things. The drawing alone tells them apart.
 }
 
 // MARK: - desk tabs
@@ -75,65 +91,53 @@ enum DeskTabContent: Equatable {
 /// workspace's. The desk MAY be empty: an empty desk shows a hint
 /// pointing at the bar's `+`, which is the only way back to a tab.
 final class DeskModel: ObservableObject {
-    /// The view open INSIDE the library — Today, Inbox, Calendar, Tasks,
-    /// Everything — or nil for the library's own list of them. It is not
-    /// a window over the desk any more (owner, 2026-08-15: "do the views
-    /// opening inside the library"): a view is a thing you look at in
-    /// the library, which is a place, and the desk stays parked beside
-    /// it exactly where you left it.
-    @Published var featureShown: Feature?
+    /// Which floor is under you. Never nil: something is always there,
+    /// which is what makes "there is no empty desk" true by
+    /// construction rather than by guard. Device state, remembered
+    /// across launches and NOT per workspace — switching workspace
+    /// narrows what you see, it does not send you somewhere else.
+    @Published var floor: LivFloor = LivFloor(
+        rawValue: UserDefaults.standard.string(forKey: "desk.floor") ?? "") ?? .today
+    {
+        didSet { UserDefaults.standard.set(floor.rawValue, forKey: "desk.floor") }
+    }
+    /// An open thing (a note, a file) covers the floor right now.
+    @Published private(set) var standingOnOpen = false
+    /// The inbox, which is not a floor — it is where the day's catches
+    /// wait, reached from Today's own line about them.
+    @Published var inboxShown = false
     @Published private(set) var tabs: [DeskTab]
     @Published var activeTabId: UUID? {
         didSet { persist() }
     }
     @Published var switcherShown = false
-    @Published var searchShown = false
-    /// The library place (left) is up.
-    @Published private(set) var libraryShown = false
-    /// The library is MOUNTED. It goes up before `libraryShown` and comes
-    /// down after it, so the slide has a frame to start from: a view
-    /// inserted and offset in the same frame has nowhere to travel from,
-    /// and SwiftUI falls back to a fade (owner, 2026-08-15: "clicking on
-    /// the library button doesn't literally move in quickly like it
-    /// should but rather fades in"). The one menu learned this first
-    /// (Menu.swift's `sync`).
-    @Published private(set) var libraryDrawn = false
-
-    /// Go to the library, or come back to the desk. THE door — the
-    /// button, a settled drag and every internal jump all land here, so
-    /// the mount and the motion can never disagree.
-    func setLibrary(_ open: Bool, animated: Bool = true) {
-        guard open != libraryShown else { return }
-        if open {
-            libraryDrawn = true
-            guard animated else {
-                libraryShown = true
-                return
-            }
-            // Mount first, THEN slide.
-            DispatchQueue.main.async { [self] in
-                withAnimation(LivMotion.nav) { libraryShown = true }
-            }
-        } else {
-            if animated {
-                withAnimation(LivMotion.nav) { libraryShown = false }
-            } else {
-                libraryShown = false
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
-                [self] in
-                if !libraryShown { libraryDrawn = false }
-            }
+    /// Stand on a floor. Whatever was open stays open — the bar's
+    /// Open key brings it back.
+    func stand(on floor: LivFloor) {
+        withAnimation(LivMotion.nav) {
+            standingOnOpen = false
+            self.floor = floor
         }
+        menu = nil
     }
 
-    /// Open a VIEW in the library, from anywhere — a library row, a
-    /// notification, the rehearsal hook. Going to a view means going to
-    /// the library, so this is the only place that says both.
-    func show(_ feature: Feature) {
-        featureShown = feature
-        setLibrary(true)
+    /// Stand on the thing you have open. With nothing open there is
+    /// nothing to stand on, so this opens the grid instead — which is
+    /// also what a second press does, because the first press has
+    /// already brought your note back.
+    func standOnOpen() {
+        guard activeTabId != nil else {
+            switcherShown = true
+            return
+        }
+        if standingOnOpen {
+            switcherShown = true
+            return
+        }
+        withAnimation(LivMotion.nav) { standingOnOpen = true }
+        menu = nil
     }
+
     @Published var cameraShown = false
     /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
     /// `switcherShown`, the tab view). Model state so open() can dismiss
@@ -159,9 +163,9 @@ final class DeskModel: ObservableObject {
     /// CLOSES it, and the finger's travel so far. It lives on the MODEL
     /// because the bottom bar and the pill, which fade under a curtain,
     /// are drawn by RootView, one level up.
+    /// The PROPERTIES panel being dragged — the only panel left since
+    /// the library was demolished (2026-08-16).
     struct PanelDrag: Equatable {
-        enum Which { case library, inspector }
-        let which: Which
         let opening: Bool
         var amount: CGFloat = 0
 
@@ -169,10 +173,9 @@ final class DeskModel: ObservableObject {
         /// closing one.
         var base: CGFloat { opening ? 0 : 1 }
 
-        /// Finger travel that makes this panel MORE visible. The library
-        /// comes from the left, so rightward is toward; the properties
-        /// come from the right, so leftward is.
-        var toward: CGFloat { which == .library ? amount : -amount }
+        /// Finger travel that makes the panel MORE visible: it comes
+        /// from the right, so leftward is toward.
+        var toward: CGFloat { -amount }
 
         /// 0 = fully off screen, 1 = fully in. `width` is the screen.
         func progress(_ width: CGFloat) -> CGFloat {
@@ -182,8 +185,7 @@ final class DeskModel: ObservableObject {
 
         /// The travel that would land the panel exactly at `target`.
         func amount(for target: CGFloat, width: CGFloat) -> CGFloat {
-            let toward = (target - base) * width
-            return which == .library ? toward : -toward
+            -(target - base) * width
         }
     }
 
@@ -201,35 +203,21 @@ final class DeskModel: ObservableObject {
     /// latched a panel behind the calendar window and published 58
     /// times, and the calendar re-rendered on every one of them — the
     /// owner's "minicalendar lags when dragged".
-    /// A view is no longer one of these: it opens INSIDE the library
-    /// (2026-08-15), which is a place on the strip, not a cover — the
-    /// swipe back to the desk has to keep working while you are in one.
+    /// Nothing full-screen covers what you are standing on. Find is no
+    /// longer one of these — it is a FLOOR now, not a cover.
     var deskInFront: Bool {
-        !searchShown && !switcherShown && !cameraShown && !settingsShown
-            && !workspaceShown
+        !switcherShown && !cameraShown && !settingsShown && !workspaceShown
+            && !inboxShown
     }
 
-    /// How far IN a panel is: 0 fully off screen, 1 fully home. ONE
-    /// answer, because three things read it — the panel's own offset,
-    /// the desk's travel, and the doors' fade — and a pixel of
+    /// How far down the properties CURTAIN is: 0 fully off screen, 1
+    /// fully home. One answer, because the panel's own offset and the
+    /// fade of everything painted above it both read it, and a pixel of
     /// disagreement between them is visible.
-    func panelProgress(_ which: PanelDrag.Which) -> CGFloat {
-        let shown = which == .library ? libraryShown : inspectorShown
-        guard panelDrag?.which == which else { return shown ? 1 : 0 }
-        return panelDrag!.progress(UIScreen.main.bounds.width)
+    var curtain: CGFloat {
+        guard let drag = panelDrag else { return inspectorShown ? 1 : 0 }
+        return drag.progress(UIScreen.main.bounds.width)
     }
-
-    /// BOTH panels are curtains: each slides over a desk that stays
-    /// exactly where it is (owner, 2026-08-16: "make library a curtain
-    /// like before. i want to rethink what ive told you today").
-    ///
-    /// The strip — the library pushing the desk a whole screen sideways
-    /// — is withdrawn along with the surface work it belonged to. The
-    /// desk never moves now, so nothing that belongs to the desk travels
-    /// either; the chrome painted ABOVE the panels simply fades by how
-    /// far the curtain over it has come down.
-    var libraryCurtain: CGFloat { panelProgress(.library) }
-    var curtain: CGFloat { panelProgress(.inspector) }
 
     /// The metadata inspector covers the active entity tab's body.
     /// Lifted to the model so DeskHost's floating chevron can drive it;
@@ -242,34 +230,16 @@ final class DeskModel: ObservableObject {
     /// surface is frontmost, so tapping a task inside Tasks edits it
     /// WITHOUT leaving Tasks (owner, 2026-08-08).
     @Published var recordCard: UInt64?
-    /// A card swiped away lives on as a pill above the bottom bar. One
-    /// at a time, like a mail draft: go read a note, tap the pill, and
-    /// you are back where you were. Every record edit saves as you make
-    /// it, so the pill is pure navigation — nothing rides in it.
-    @Published var minimisedRecord: UInt64?
-
     /// What kind of thing an id points at. Wired at launch from the box;
     /// nil before the first snapshot, which reads as "document" and is
     /// the safe answer (a document tab renders a record's name fine, a
     /// record card cannot render a note).
     var shapeOf: (UInt64) -> TabShape = { _ in .document }
 
-    /// Put the card away, remembering it.
-    func minimiseRecord() {
-        guard let id = recordCard else { return }
-        recordCard = nil
-        withAnimation(LivMotion.nav) { minimisedRecord = id }
-    }
-
-    /// Bring the pill back to a card.
-    func restoreRecord() {
-        guard let id = minimisedRecord else { return }
-        withAnimation(LivMotion.nav) { minimisedRecord = nil }
-        recordCard = id
-    }
-
-    func dropMinimised() {
-        withAnimation(LivMotion.nav) { minimisedRecord = nil }
+    /// Put the card away. It saves as you type, so there is nothing to
+    /// keep: the list you raised it from is still under it.
+    func dismissRecord() {
+        withAnimation(LivMotion.nav) { recordCard = nil }
     }
 
     /// A creation door committed an entity: close the menu and land it.
@@ -302,10 +272,6 @@ final class DeskModel: ObservableObject {
         return true
     }
 
-    /// Tab-activation history for the bar's ‹ › — device state, not cells.
-    private var backIds: [UUID] = []
-    private var forwardIds: [UUID] = []
-
     /// The workspace whose tab set is currently on the plane. 0 = "All".
     private(set) var workspaceId: UInt64 = 0
 
@@ -317,13 +283,6 @@ final class DeskModel: ObservableObject {
 
     var activeTab: DeskTab? {
         tabs.first { $0.id == activeTabId }
-    }
-
-    var canGoBack: Bool { backIds.contains { alive($0) } }
-    var canGoForward: Bool { forwardIds.contains { alive($0) } }
-
-    private func alive(_ id: UUID) -> Bool {
-        tabs.contains { $0.id == id }
     }
 
     /// This tab is being used, now. The ONE place a tab's clock is set.
@@ -377,8 +336,6 @@ final class DeskModel: ObservableObject {
         // otherwise let the active tab age out from under you.
         touch(tabId)
         guard tabId != activeTabId else { return }
-        if let current = activeTabId { backIds.append(current) }
-        forwardIds.removeAll()
         activeTabId = tabId
         if inspectorShown {
             // In the panel's own motion — a full-screen surface must
@@ -386,40 +343,6 @@ final class DeskModel: ObservableObject {
             withAnimation(LivMotion.nav) { inspectorShown = false }
         }
         objectWillChange.send()
-    }
-
-    func goBack() {
-        while let id = backIds.popLast() {
-            guard alive(id) else { continue }
-            if let current = activeTabId { forwardIds.append(current) }
-            // ‹ › assign activeTabId directly rather than calling
-            // focus(), so they must stamp for themselves — otherwise
-            // stepping back to a tab and reading it left it ageing.
-            touch(id)
-            activeTabId = id
-            leaveChooser()
-            objectWillChange.send()
-            return
-        }
-    }
-
-    func goForward() {
-        while let id = forwardIds.popLast() {
-            guard alive(id) else { continue }
-            if let current = activeTabId { backIds.append(current) }
-            touch(id)
-            activeTabId = id
-            leaveChooser()
-            objectWillChange.send()
-            return
-        }
-    }
-
-    /// ‹ › move the desk UNDERNEATH whatever menu is up. Asking for a
-    /// tab means you want to see it.
-    private func leaveChooser() {
-        guard menu != nil else { return }
-        menu = nil
     }
 
     init() {
@@ -470,14 +393,13 @@ final class DeskModel: ObservableObject {
         persist()  // the OUTGOING key — persistKey still points at it
         workspaceId = id
         let (restored, active) = Self.load(persistKey)
-        backIds = []
-        forwardIds = []
         tabs = restored
         activeTabId =
             restored.indices.contains(active) ? restored[active].id : restored.first?.id
-        featureShown = nil
+        // The FLOOR does not move when the workspace does — you asked to
+        // see other things, not to be sent somewhere else. It simply
+        // narrows: every floor wears the lens (2026-08-16).
         switcherShown = false
-        setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
         settingsShown = false
@@ -507,7 +429,6 @@ final class DeskModel: ObservableObject {
     /// A record rises as a card over wherever you stand, and closes
     /// nothing (Option C).
     private func openAsCard(_ entityId: UInt64) {
-        minimisedRecord = nil
         recordCard = entityId
         menu = nil
     }
@@ -524,35 +445,30 @@ final class DeskModel: ObservableObject {
             tabs.append(tab)
             focus(tab.id)
         }
-        featureShown = nil
         switcherShown = false
-        // The in-hierarchy overlays animate out in the house motion — a
-        // full-screen surface must never vanish in one frame (audit,
-        // 2026-08-04). The properties panel is here too: focus() skips
-        // its reset when the tab is ALREADY active, so a reminder tap
-        // for the open note would land behind it.
-        setLibrary(false)
+        inboxShown = false
+        // Opening a document means standing on it — the floor stays
+        // where it is, underneath (2026-08-16).
         withAnimation(LivMotion.nav) {
+            standingOnOpen = true
             menu = nil
             inspectorShown = false
         }
-        // Search, camera, Settings and the workspace switcher are covers
+        // The camera, Settings and the workspace switcher are covers
         // and sheets — UIKit animates their dismissal itself. A tapped
         // reminder routes here from anywhere, so leaving any of them up
         // made the notification look ignored: the tab was created and
         // focused behind a surface the user was still looking at.
-        searchShown = false
         cameraShown = false
         settingsShown = false
         workspaceShown = false
         persist()
     }
 
-    /// `+`: the create MENU, sliding up over whatever you are looking at
-    /// (owner, 2026-08-13). It never appends a tab — choosing something
-    /// does. The full-screen page this used to summon is deleted.
-    func newTab() {
-        featureShown = nil
+    /// The create KEY's menu, sliding up over whatever you are looking
+    /// at (owner, 2026-08-13; promoted to the root 2026-08-16). It never
+    /// appends a tab — choosing something does.
+    func createHere() {
         menu = newTabMenu?()
     }
 
@@ -730,12 +646,42 @@ struct WorkspaceSwitcher: View {
                         }
                     }
                 }
-                // Filters LIVE in the library panel now; only their form
-                // is still here, opened by the panel's "New filter…".
+                // FILTERS live here now, under the one button that says
+                // what you are looking at — which is exactly what a
+                // filter changes (owner, 2026-08-16; it reverses the
+                // 2026-08-11 placement, whose reason — "this is where
+                // you already come to change what you are looking at" —
+                // now points at this button, the library having gone).
                 if composingFilter {
                     SectionLabel("New filter")
                         .padding(.bottom, 4)
                     newFilterForm
+                } else {
+                    SectionLabel("Filters")
+                        .padding(.top, 18)
+                        .padding(.bottom, 4)
+                    ForEach(workspaces.filters) { view in
+                        choice(
+                            name: view.display,
+                            lens: LivQuery.parse(view.query ?? ""),
+                            active: workspaces.activeFilterId == view.id, glyph: .filter
+                        ) {
+                            workspaces.activeFilterId =
+                                workspaces.activeFilterId == view.id ? nil : view.id
+                            onClose()
+                        }
+                    }
+                    addRow("New filter…") { composingFilter = true }
+                    // Settings, pinned at the foot of the one sheet that
+                    // is about the app rather than about a thing. It was
+                    // the library's last row.
+                    SectionLabel("App")
+                        .padding(.top, 18)
+                        .padding(.bottom, 4)
+                    addRow("Settings…") {
+                        onClose()
+                        desk.settingsShown = true
+                    }
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1320,6 +1266,10 @@ struct SettingsSheet: View {
 /// One app-wide watcher, because the answer is a property of the screen,
 /// not of any one text view.
 final class KeyboardWatch: ObservableObject {
+    /// One watcher for the whole app: three layers ask the same
+    /// question, and three notification subscriptions to answer it is
+    /// three answers that can disagree.
+    static let shared = KeyboardWatch()
     @Published var up = false
     private var tokens: [NSObjectProtocol] = []
 
@@ -1345,83 +1295,67 @@ final class KeyboardWatch: ObservableObject {
 // MARK: - bottom bar
 
 /// ONE horizontal row (owner, 2026-08-01 — the floating pill plus a
-/// separate circle read as fragments). Navigation over the open notes and
-/// the doors that make more of them: ‹ › history, search, new tab, the
-/// tab count. Global features left this bar entirely — they live in the
-/// library panel, behind the top-left door.
-struct BottomBar: View {
+/// THE FLOOR BAR (owner, 2026-08-16: "Calendar, Tasks, etc. should be
+/// like a central part of the app and not just 'additions'").
+///
+/// Four floors and the things you have open. A floor is not a place you
+/// travel to — one of them is always under you, and this says which.
+/// The fifth key stands you back on what you had open; pressed again it
+/// opens the grid, because by then the first press has already brought
+/// your note back.
+///
+/// What was here before: ‹ › history, a magnifier and a `+`. The arrows
+/// were the most Obsidian thing in the app, the magnifier is a floor now
+/// (Find), and the `+` became the one create key at the bottom right.
+struct FloorBar: View {
     @EnvironmentObject var desk: DeskModel
 
     var body: some View {
         HStack(spacing: 0) {
-            navButton("chevron.left", enabled: desk.canGoBack, label: "Back") {
-                desk.goBack()
+            ForEach(LivFloor.allCases) { floor in
+                key(
+                    floor.symbol, floor.title,
+                    on: !desk.standingOnOpen && desk.floor == floor
+                ) {
+                    desk.stand(on: floor)
+                }
             }
-            navButton("chevron.right", enabled: desk.canGoForward, label: "Forward") {
-                desk.goForward()
+            key(
+                "square.on.square", desk.tabs.isEmpty ? "Open" : "Open \(desk.liveTabs.count)",
+                on: desk.standingOnOpen
+            ) {
+                desk.standOnOpen()
             }
-            navButton("magnifyingglass", enabled: true, label: "Search") {
-                desk.searchShown = true
-            }
-            // ALWAYS live. It was disabled on an empty desk, back when
-            // the empty desk's body WAS the New Tab chooser and a second
-            // door to it would have been a lie (audit, 2026-08-04). That
-            // page is gone (2026-08-13) and the empty desk now points at
-            // this button — "No tabs. The + below makes one." — so the
-            // guard became the lie it was written to prevent: a
-            // workspace with no tabs could not be given one at all
-            // (owner, 2026-08-15, from the phone).
-            navButton("plus", enabled: true, label: "New tab") {
-                desk.newTab()
-            }
-            tabCountButton
         }
-        .padding(.horizontal, 4)
-        .frame(height: LivRow.height)
+        .frame(height: LivRow.barHeight)
         .frame(maxWidth: .infinity)
-        // Solid, never a blur: the body must not read through the bar.
-        .background(LivTheme.surface, in: Capsule())
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
-        .padding(.horizontal, 16)
+        .padding(.bottom, LivSafeArea.bottom)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+        .ignoresSafeArea(edges: .bottom)
     }
 
-    private func navButton(
-        _ icon: String, enabled: Bool, label: String, action: @escaping () -> Void
+    private func key(
+        _ symbol: String, _ label: String, on: Bool, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: LivType.title, weight: .medium))
-                .foregroundStyle(enabled ? LivTheme.text2 : LivTheme.muted.opacity(0.5))
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .contentShape(Rectangle())
+            VStack(spacing: 3) {
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .regular))
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(on ? LivTheme.accent : LivTheme.text3)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(on ? [.isSelected] : [])
     }
 
-    /// The Obsidian tab square: the open-tab count inside its own outline.
-    private var tabCountButton: some View {
-        Button {
-            desk.switcherShown = true
-        } label: {
-            RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(LivTheme.text2, lineWidth: 1.5)
-                .frame(width: 20, height: 20)
-                .overlay(
-                    Text(
-                        desk.liveTabs.count > 99
-                            ? "99" : "\(desk.liveTabs.count)")
-                        .font(.system(size: LivType.micro, weight: .bold).monospacedDigit())
-                        .foregroundStyle(LivTheme.text2)
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Tabs")
-    }
 }

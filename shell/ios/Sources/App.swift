@@ -87,6 +87,111 @@ struct LivApp: App {
     }
 }
 
+/// THE FLOOR: one of the four, always under you (2026-08-16).
+private struct FloorLayer: View {
+    @EnvironmentObject var desk: DeskModel
+
+    var body: some View {
+        Group {
+            switch desk.floor {
+            case .today: TodayView()
+            case .calendar: CalendarView()
+            case .tasks: TasksView()
+            case .find: SearchView(isFloor: true)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Below the band the workspace name owns, above the bar it
+        // stands on: the floor is the ground BETWEEN the two pieces of
+        // chrome, never under them.
+        .padding(.top, LivRow.topChrome)
+        .accessibilityHidden(desk.standingOnOpen)
+    }
+}
+
+/// What you have OPEN, lying over the floor. Only ever drawn with
+/// something to draw — closing the last thing puts you back on the
+/// floor rather than on an empty desk.
+private struct OpenLayer: View {
+    @EnvironmentObject var desk: DeskModel
+
+    var body: some View {
+        if desk.standingOnOpen, desk.activeTab != nil {
+            DeskHost()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
+        }
+    }
+}
+
+/// The workspace, top CENTRE, over floor and desk alike: the one thing
+/// on screen that says what you are looking at, and every floor wears
+/// it.
+private struct WorkspaceLayer: View {
+    @EnvironmentObject var desk: DeskModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            WorkspaceButton { desk.workspaceShown = true }
+                .padding(.top, 6)
+            Spacer(minLength: 0)
+        }
+        .opacity(1 - desk.curtain)
+    }
+}
+
+/// The ONE create key, on every surface (owner, 2026-08-16). What it
+/// makes and what it inherits is RootView's `createMenu`.
+private struct CreateKeyLayer: View {
+    @EnvironmentObject var desk: DeskModel
+    @ObservedObject var keyboard = KeyboardWatch.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                LivAddButton(label: "New") { desk.createHere() }
+            }
+        }
+        .padding(.bottom, LivRow.barHeight + LivSafeArea.bottom)
+        .opacity(hidden ? 0 : 1 - desk.curtain)
+        .allowsHitTesting(!hidden)
+    }
+
+    private var hidden: Bool {
+        keyboard.up || desk.recordCard != nil || desk.menu != nil
+    }
+}
+
+/// The floor bar, retiring under a keyboard and under a menu.
+private struct BarLayer: View {
+    @EnvironmentObject var desk: DeskModel
+    @ObservedObject var keyboard = KeyboardWatch.shared
+
+    var body: some View {
+        if !keyboard.up && desk.menu == nil {
+            FloorBar()
+                .opacity(1 - desk.curtain)
+                .accessibilityHidden(desk.curtain > 0)
+                .transition(.move(edge: .bottom))
+        }
+    }
+}
+
+/// The one menu's host, as a VIEW. It observes the model itself, so a
+/// menu raised from anywhere is drawn even when the root around it does
+/// not rebuild.
+private struct MenuLayer: View {
+    @EnvironmentObject var desk: DeskModel
+
+    var body: some View {
+        Color.clear
+            .allowsHitTesting(desk.menu != nil)
+            .livMenu($desk.menu, active: desk.recordCard == nil)
+    }
+}
+
 struct RootView: View {
     /// Dark, light, or follow the system (Settings → Appearance).
     @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
@@ -95,66 +200,40 @@ struct RootView: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var keyboard = KeyboardWatch()
     @State private var bootApplied = false
     /// The furnishing pass runs once per launch, on the FIRST decoded
     /// snapshot. Cross-launch idempotence is Furnish's presence guards,
     /// never this flag (it only stops re-entry from the refreshes the
     /// pass itself triggers).
     @State private var furnished = false
+    /// The file picker, opened by the create key's File row.
+    @State private var picking = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // No persistent top bar (owner, 2026-07-31): the note takes the
-            // screen; Workspace and Settings live behind the desk's floating
-            // ••• (DeskHost). The body is the desk, edge to edge.
-            bodyView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // The bar retires while a PANEL is up — RootView draws it
-            // after the desk, so left alone it would float over the
-            // panel it should be behind. It also retires while a
-            // keyboard is up: keyboard avoidance would park it above the
-            // editor's formatting row, two bars deep (owner,
-            // 2026-08-02).
-            //
-            // It does NOT retire for an EMPTY desk: the bar is the only
-            // way out of one, and its `+` is what the empty desk's hint
-            // points at. The pill follows the bar, since it is
-            // positioned against it.
-            if let id = desk.minimisedRecord, !keyboard.up {
-                MinimisedRecordPill(id: id)
-                    .padding(.bottom, 62)
-                    // Painted above the panels, so it fades under
-                    // whichever curtain is coming down over it.
-                    .opacity(1 - max(desk.curtain, desk.libraryCurtain))
-                    .accessibilityHidden(desk.curtain > 0 || desk.libraryCurtain > 0)
-                    .zIndex(2)
-            }
-            if !keyboard.up && desk.menu == nil {
-                BottomBar()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                    // The bar is drawn above the panels, so no curtain
-                    // can cover it: it fades by how far the nearer one
-                    // has come down. It used to be dropped from the
-                    // hierarchy the moment a panel was shown, which read
-                    // as a pop halfway through the motion.
-                    .opacity(1 - max(desk.curtain, desk.libraryCurtain))
-                    .accessibilityHidden(desk.curtain > 0 || desk.libraryCurtain > 0)
-                    // The extra offset carries it past the bottom safe
-                    // area; the z keeps the exit above the opaque desk
-                    // (audit, 2026-08-01). Both are pure translations.
-                    .transition(.move(edge: .bottom).combined(with: .offset(y: 40)))
-                    .zIndex(1)
-            }
+            // Each layer is its OWN view, observing the model itself.
+            // As modifiers and branches on the root they missed the
+            // changes that raise a menu or stand you on a note — the
+            // root is rebuilt rarely, and a layer that only the root
+            // reads is a layer that does not move (found on the
+            // simulator, 2026-08-16).
+            FloorLayer()
+            OpenLayer()
+                .zIndex(1)
+            WorkspaceLayer()
+                .zIndex(3)
+            CreateKeyLayer()
+                .zIndex(2)
+            MenuLayer()
+                .zIndex(4)
+            BarLayer()
+                .zIndex(2)
         }
         .background(LivTheme.canvas.ignoresSafeArea())
         // The one menu is hosted HERE, above the bottom bar — the bar is
         // drawn after the desk, so a menu hosted inside DeskHost came up
         // underneath it and lost its last row. The card hosts its own
         // when a card is the surface in front.
-        .livMenu($desk.menu, active: desk.recordCard == nil)
         // Only when nothing covers the desk — see RecordCardHost. The
         // same question the window's panel drag asks, so it is asked in
         // one place (standing rule 4).
@@ -165,7 +244,15 @@ struct RootView: View {
         // whole app except the Settings sheet you were standing in, until
         // you closed it (owner, 2026-08-08). The window override reaches
         // every presentation there is.
+        .fileImporter(
+            isPresented: $picking, allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            FileImport.adopt(urls, box: box, workspaces: workspaces, desk: desk)
+        }
         .onAppear {
+            desk.newTabMenu = createMenu
             (LivAppearance(rawValue: appearance) ?? .dark).applyToWindows()
             // The tab plane learns what an id IS (Option C). Reading the
             // live snapshot each time means the answer is never stale —
@@ -189,18 +276,14 @@ struct RootView: View {
                 .environmentObject(box)
                 .environmentObject(desk)
         }
-        .fullScreenCover(isPresented: $desk.searchShown) {
-            SearchView()
+        // The inbox is not a floor — it is where the day's catches wait,
+        // reached from Today's own line about them.
+        .fullScreenCover(isPresented: $desk.inboxShown) {
+            InboxView()
                 .environmentObject(box)
                 .environmentObject(desk)
                 .environmentObject(workspaces)
-                // Search can open a task too, and it is a cover.
                 .recordCardHost(active: true)
-                .overlay(alignment: .bottom) {
-                    if let id = desk.minimisedRecord {
-                        MinimisedRecordPill(id: id).padding(.bottom, 10)
-                    }
-                }
         }
         .fullScreenCover(isPresented: $desk.cameraShown) {
             CameraFlow(onDone: { ids in
@@ -270,6 +353,68 @@ struct RootView: View {
         }
     }
 
+    /// The four floors. Each is built fresh when you stand on it and
+    /// remembers where it was through FloorMemory — publishing that
+    /// state on the model would re-render the world on every drag, which
+    /// is the bug the calendar already paid for (design/ios.md rev 24).
+    @ViewBuilder private var floorBody: some View {
+        switch desk.floor {
+        case .today: TodayView()
+        case .calendar: CalendarView()
+        case .tasks: TasksView()
+        case .find: SearchView(isFloor: true)
+        }
+    }
+
+    /// What the create key makes, and what it inherits from where you
+    /// are standing: on Today or the calendar, the day you are looking
+    /// at; anywhere else, just the workspace.
+    private func createMenu() -> LivMenu {
+        LivMenu(
+            id: "create",
+            from: .bottom,
+            title: "New",
+            items: [
+                LivMenuItem(label: "Note", glyph: .note) { newNote() },
+                LivMenuItem(label: "Task", glyph: .task) { newRecord(event: false) },
+                LivMenuItem(label: "Event", glyph: .event) { newRecord(event: true) },
+                LivMenuItem(label: "File", glyph: .file(.other)) { picking = true },
+            ])
+    }
+
+    /// A note lands as a TAB, with the caret in it.
+    private func newNote() {
+        box.createNote { id in
+            guard id != 0 else { return }
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.open(id)
+        }
+    }
+
+    /// A task or an event lands as a CARD, with the caret in its name —
+    /// the app's one create rule (owner, 2026-08-13). Both inherit the
+    /// day you are standing on.
+    private func newRecord(event: Bool) {
+        let day = FloorMemory.shared.day
+        let stamp = Civil.stamp(day: day, hhmm: Int64(LivDue.defaultHHMM))
+        let landed: (UInt64) -> Void = { id in
+            guard id != 0 else { return }
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.open(id, as: .record)
+        }
+        if event {
+            box.createEvent(dueCivil: stamp, dateOnly: false, done: landed)
+        } else {
+            box.createTask { id in
+                guard id != 0 else { return }
+                box.setSpan(id, "due", start: stamp, end: 0, dateOnly: false)
+                landed(id)
+            }
+        }
+    }
+
     /// The outbox resolves ledger titles through the live box. A scrap
     /// carries no name cell (capture writes content only), so fall back to
     /// its first content line — the display name the rest of the shell shows.
@@ -294,13 +439,11 @@ struct RootView: View {
             .sorted { $0.id > $1.id }
             .map(\.id)
         switch state {
-        case "grid", "library": desk.setLibrary(true)
-        case "search": desk.searchShown = true
-        case "today": desk.show(.today)
-        case "tasks": desk.show(.tasks)
-        case "inbox": desk.show(.inbox)
-        case "calendar": desk.show(.calendar)
-        case "everything": desk.show(.everything)
+        case "search", "find", "everything": desk.stand(on: .find)
+        case "today": desk.stand(on: .today)
+        case "tasks": desk.stand(on: .tasks)
+        case "calendar": desk.stand(on: .calendar)
+        case "inbox": desk.inboxShown = true
         case "desk": if let id = newest.first { desk.open(id) }
         // Open one NAMED entity, for looking at a specific note without
         // driving the whole UI to reach it: `-desk.boot open -desk.open
@@ -314,8 +457,8 @@ struct RootView: View {
             {
                 desk.open(hit)
             }
-        // The create menu, from the bar's `+`.
-        case "newtab": desk.newTab()
+        // The create menu, from the key at the bottom right.
+        case "newtab": desk.createHere()
         case "switcher":
             for id in newest.prefix(3).reversed() { desk.open(id) }
             desk.switcherShown = true
@@ -331,9 +474,5 @@ struct RootView: View {
     }
 
     /// The body IS the desk — features and the tab view are windows over
-    /// it, never a mode.
-    private var bodyView: some View {
-        DeskHost()
-    }
 }
 

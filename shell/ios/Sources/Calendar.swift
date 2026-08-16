@@ -97,8 +97,8 @@ struct CalendarView: View {
     @State private var wasOn: Int64?
 
     /// First day of the shown month (packed civil), the grid's anchor.
-    @State private var monthFirst = CalGrid.firstOfMonth(Civil.todayDay())
-    @State private var selectedDay = Civil.todayDay()
+    @State private var monthFirst = FloorMemory.shared.month
+    @State private var selectedDay = FloorMemory.shared.day
     /// The task status vocabulary — the ring writes the `completes`-marked
     /// option, never a hardcoded "done" (same as Today).
     @State private var taskOptions: [StatusOption] = []
@@ -156,6 +156,8 @@ struct CalendarView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
+        .onChange(of: selectedDay) { _, day in FloorMemory.shared.day = day }
+        .onChange(of: monthFirst) { _, month in FloorMemory.shared.month = month }
     }
 
     // MARK: header — month title, Today, prev/next
@@ -1045,7 +1047,9 @@ private struct MonthGridView: View, Equatable {
 /// Components-in, components-out within one Gregorian calendar — a stamp
 /// never round-trips through a timezone. Noon anchor dodges the
 /// DST-skipped-midnight edge (Civil's own rule).
-private enum CalGrid {
+/// Month arithmetic. Not private: FloorMemory anchors the calendar's
+/// grid, so it needs the same first-of-month the grid uses.
+enum CalGrid {
     /// One day cell, and the six-week grid it lives in. The pager needs
     /// the grid's height as a NUMBER (a GeometryReader has none of its
     /// own), so it lives here rather than as a literal in two places.

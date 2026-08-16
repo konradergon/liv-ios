@@ -849,7 +849,7 @@ struct NoteEditor: View {
         // Dismissing HERE (not on every resign) keeps picker-row taps
         // working — they too resign focus for a moment (audit,
         // 2026-08-04). The typed [[ token stays as text, as always.
-        .onChange(of: desk.libraryShown || desk.inspectorShown || desk.menu != nil
+        .onChange(of: !desk.standingOnOpen || desk.inspectorShown || desk.menu != nil
             || desk.recordCard != nil) { _, up in
             if up { bridge.dismissLink() }
         }

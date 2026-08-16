@@ -934,6 +934,39 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 26. The floor (rev 29, owner 2026-08-16)
+
+Owner: *"build everything. it needs testing for me to judge anything."*
+The design note is design/kinds-are-peers.md; the mockups are
+design/mockups/the-floor.html.
+
+**The model.** A `LivFloor` — today, calendar, tasks, find — is always
+under you (`desk.floor`, device state, remembered across launches, not
+per workspace). Things you OPEN lie over it as tabs
+(`desk.standingOnOpen`, `desk.stand(on:)`, `desk.standOnOpen()`).
+Records still rise as cards over wherever you stand: the 2026-08-07
+ruling holds.
+
+**The bar** is Today · Calendar · Tasks · Find · Open (n). The fifth key
+stands you on the open thing; pressed again it opens the grid. There is
+no back or forward: browser furniture was the most Obsidian thing in the
+app.
+
+**The create key** is at the root, bottom right, on every surface. Note ·
+Task · Event · File, filled in from where you stand.
+
+**Deleted:** the library and its door, `EverythingView`, the search
+cover, the minimised-record pill, the tab history behind ‹ ›, the
+`Feature` enum, the empty-desk hint. Filters and Settings live under the
+workspace button.
+
+**A SwiftUI lesson, paid for on the simulator.** Layers written as
+modifiers or branches on the root view did not re-render when the model
+changed — the menu never drew and the Open key lit without doing
+anything, while child views like the bar updated fine. Every layer is
+now its own small view with its own `@EnvironmentObject`. If a layer
+ever stops moving again, that is the first thing to check.
+
 ## 25. Both panels are curtains (rev 28, owner 2026-08-16)
 
 Owner: *"make library a curtain like before. i want to rethink what ive
