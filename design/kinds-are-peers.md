@@ -8,6 +8,90 @@
 >
 > Status: **proposal**. Nothing here is built. Written 2026-08-16.
 
+## The floor — the design pass's answer, and the one I now recommend
+
+*Produced 2026-08-16 by four independent architectures judged through
+four lenses. Scores were close (6.5 / 6.25 / 6.0 / 5.75), so read the
+reasoning rather than the numbers; the synthesis below takes the
+strongest shape and grafts the best of the losers into it.*
+
+*Read from the code on `konrad/rewrite-mac`, not run on the simulator. Nothing below changes the core, a verb, or the snapshot.*
+
+## What is wrong
+
+In the model a note and a task are the same thing: an object with properties. On screen a note is somewhere you **stand** and a task is something you **fetch** — you open a door, pick a room from a list, and only then can you see one or make one. The bar proves it: the `+` offers "Create a note" and "Add a file" and nothing else (`Desk.swift:390-401`), so a task can only be born inside the room that lists it (`Today.swift:150`, `Tasks.swift:388`) and an event only by tapping an hour in the calendar (`Calendar.swift:345`).
+
+## The answer: **the floor**
+
+Three nouns, each with exactly one home.
+
+**The floor.** One view is always under you: **Today, Calendar, Tasks, Find**. It is the ground, not a room. It keeps its day, its scroll and its filter. You never "go to" the calendar — you are on it, or you are standing on something else. This is not a new mode: there is no toggle and no way to be off it. The Inbox stops being a place and becomes a band at the top of Today, drawn only when it has something, still ignoring the workspace filter (Today already links to it, `Today.swift:245`).
+
+**Open things.** Notes, captures, files. They lie over the floor as tabs, exactly as today. Close the last one and you land on the floor. There is no empty desk any more.
+
+**Records.** Tasks, events, people. A card over wherever you stand, exactly as today. The card is not a lesser container, it is the right size: a task's content is six facts and a decision, a note's content is the thing itself. That difference is real and should stay. What was wrong was never the card — it was having to travel to a room to reach a task at all.
+
+**The bar becomes the floors:** Today · Calendar · Tasks · Find · Open (n). Back and forward go. They are browser furniture and the most Obsidian thing in the app.
+
+**One create key.** One round accent key, bottom right, on every surface — the button you asked for on Saturday, promoted to the root. Its menu is Note · Task · Event · File. It fills in from where you stand: on Today, due that day at 09:00; on a calendar day, that day; inside a note, just the workspace. Whatever you make lands in its properties with the caret in the name — the app's one create rule since 13 August.
+
+**The library is deleted**, not shrunk. Once the views are the ground, it is a list of doors to rooms you are already in.
+
+## Why not the other three
+
+**Views become tabs beside your notes.** That makes them equal, not central. Reaching the calendar becomes hunting a card in a grid that also holds your notes; a view can be closed and then has to be recovered from a menu; each workspace grows its own Calendar with its own remembered week. It is also Obsidian's own model — panes that hold anything — which is the direction you are steering away from.
+
+**One list with three arrangements (Date / Status / Everything).** The idea underneath is right and I am stealing it below. As an architecture it deletes the words "Calendar" and "Tasks" and replaces them with a rule the user has to learn. You asked for those two to be central; dissolving them is not the same move. Its first shippable step is also the failure it warns about — three screens under a shared header.
+
+**A task gets a full screen like a note.** This is the one you rejected on 7 August, and the code still quotes you (`Record.swift:57`). A fresh task has no notes, so that screen is a name, six rows, an "Add notes" button and two thirds of nothing. It also fills the plane you use for hour-long notes with ten-second things.
+
+## What I am taking from them
+
+1. **"A list shows the things that carry what it arranges by."** The calendar already works this way — it keys on `due` with no kind filter (`Calendar.swift:789`), so a note you gave a due date is already on it. Tasks is the last real drawer in the app: `kinds.contains("task")` at `Tasks.swift:161`. Step 4 removes it.
+2. **Hoist the views' state.** `selectedDay`, `monthFirst`, the Tasks filter, Everything's lens are all local to the view, and the library throws them away every time it closes — a live defect today. The floor needs them anyway. Keep them off the published model, or the mini-calendar's drag lag comes straight back.
+3. **The minimised pill is a second tab plane, one item deep.** It goes. With a floor under everything, a card you swipe away leaves you on the list you tapped it in, with the row still there.
+4. **The resting state must be a view, never an empty notes plane.**
+
+## Shipping order
+
+**Step 1 — one create key. One day.**
+One 56pt accent key, bottom right, on every surface. Menu: Note · Task · Event · File, context filled. Every verb already exists in `Box.swift`.
+*Deletes:* the bar's `+` slot and the words "new tab" with it (this is a create key, not a tab door); `newTab()`; the two per-view add buttons at `Today.swift:133` and `Tasks.swift:75`, which become the one key in the same corner.
+*After this you can make a task or an event from inside a note, without leaving it.* That alone answers most of your question.
+
+**Step 2 — Find replaces Everything and search.**
+One surface: a field with, when empty, everything newest first. It exists to free the bar slot the floor needs, and it deletes a view. Ships inside today's library, so it stands alone.
+*Deletes:* `EverythingView` and its All / Upcoming / Unfiled picker; the bar's separate magnifier. "Upcoming" is what Today and the calendar are for; "Unfiled" comes back as a seeded saved filter.
+
+**Step 3 — the floor.** The big one, two to three days.
+Bar becomes Today · Calendar · Tasks · Find · Open (n). One floor is always mounted and keeps its state. The left-edge swipe, freed by the library, opens **Open** — a button and a swipe to one place, the way the library door already worked. If making it follow the finger costs more than a day, ship it snapping and fix it after.
+*Deletes:* `LibraryPanel` and its list; `featureShown`, `show(_:)`, `setLibrary`, `libraryShown`, `libraryDrawn`, `libraryCurtain`, the library arm of `claimPanel`; the top-left door; ‹ › and `backIds`/`forwardIds`/`goBack`/`goForward`/`leaveChooser`; `EmptyHint("No tabs…")` and the empty-desk state; `minimisedRecord`, `restoreRecord`, `dropMinimised`, `MinimisedRecordPill`; the "All workspaces" / "This workspace" labels; `featureShown = nil` inside `adopt(workspace:)`, so switching workspace stops evicting you; the four per-view lens chips, because the workspace button at top centre says it once.
+
+**Step 4 — Tasks stops being a drawer.**
+Tasks lists anything with a status. The calendar already lists anything with a date. Then a note you gave a due date and a status is in all three places, because of what you put on it — the model showing through on screen, which is the whole point.
+*Deletes:* the kind filter at `Tasks.swift:161`.
+
+## Five situations, after step 3
+
+1. **Make a task while reading a note.** Press the key, Task, type the name. The card is over your note. Swipe it down and you are in the same sentence. No travel at all.
+2. **Check what is due today.** Tap Today. One tap from anywhere, and it opens on the day you left it, scrolled where you left it.
+3. **Put an event in a slot.** Tap Calendar, tap the hour. The block is already in the slot behind the card, and the caret is in the name. Unchanged from today, one tap closer.
+4. **Find a note from three weeks ago.** Tap Find, type. Empty field is everything, newest first.
+5. **Work a project.** Pick the lens at top centre. All four floors narrow to it: Today its due things, Calendar its dates, Tasks its tasks, Find its notes. One lens, four views, no query typed.
+
+## Three decisions only you can make
+
+**1. The one key costs a tap on Today and Tasks. Take it?**
+Today the key makes a task in one press. With four verbs it is press, Task, type. *Recommended: yes.* One key with one behaviour everywhere is worth one tap on two screens, and it buys a create door that works from every screen including inside a note. It also touches your 12 August word — *"task and event don't belong in new tab"*. That was aimed at the full-screen New Tab page and the old Idea/Task/Event/Photo chooser, both since deleted, and §13 already says the create menu's New task should open the card with the caret in the name. But it is your ruling, so say it. If you'd rather not spend the tap, keep the per-view key and the complaint stays half fixed.
+
+**2. Should Tasks show anything with a status, not just tasks?**
+*Recommended: yes.* A note you marked "In progress" is work in progress. The calendar has always worked this way and nobody has complained. Say no and Tasks stays the one screen in the app that sorts by type instead of by what you filed.
+
+**3. Where do saved filters live once the library is gone?**
+*Recommended: under the workspace button at top centre, as a second band in the sheet that is already there.* That button is the one thing on screen that says what you are looking at, which is exactly what a filter changes. This reverses your 11 August placement ("a filter is not a workspace"), and the reason you gave then — "this is where you already come to change what you are looking at" — now points at the top-centre button instead of the library. Needs your word.
+
+---
+
 ## The diagnosis, in one paragraph
 
 In the model every entity is the same thing: cells. On screen it is not.
@@ -22,7 +106,24 @@ feature bolted to a notes app.
 It is not the object model that is wrong. It is that one kind got the
 main surface and the rest got a drawer.
 
-## The recommendation: **a tab can hold a view**
+## SUPERSEDED, 2026-08-16 — read §"The floor" below first
+
+A four-architecture design pass (four proposals, sixteen judgements
+through the owner's eye, the constitution, the builder and a sceptic)
+came back AFTER this note was written and argued the recommendation
+below is the weakest of the four. Its argument, which I accept:
+
+> Views as tabs beside your notes makes them **equal, not central**.
+> Reaching the calendar becomes hunting a card in a grid that also holds
+> your notes; a view can be closed and then has to be recovered; each
+> workspace grows its own Calendar with its own remembered week. It is
+> also Obsidian's own model — panes that hold anything — which is the
+> direction the owner is steering away from.
+
+The rest of this section is kept as written, because the reasoning that
+led to it is worth reading beside the thing that beat it.
+
+## The first recommendation (superseded): **a tab can hold a view**
 
 Today, Tasks, Calendar, Everything and any saved filter open as TABS,
 beside your notes, in the same plane, remembered per workspace like
