@@ -94,10 +94,10 @@ private struct FloorLayer: View {
     var body: some View {
         Group {
             switch desk.floor {
-            case .today: TodayView()
+            case .things: ThingsView()
             case .calendar: CalendarView()
-            case .tasks: TasksView()
             case .find: SearchView(isFloor: true)
+            case .desk: DeskFloor()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -151,7 +151,10 @@ private struct CreateKeyLayer: View {
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                LivAddButton(label: "New") { desk.createHere() }
+                LivAddButton(
+                    label: desk.floor.makes(desk.arrangement).newLabel,
+                    action: { desk.createDefault() },
+                    onHold: { desk.createHere() })
             }
         }
         .padding(.bottom, LivRow.barHeight + LivSafeArea.bottom)
@@ -253,6 +256,14 @@ struct RootView: View {
         }
         .onAppear {
             desk.newTabMenu = createMenu
+            desk.createDefaultVerb = { kind in
+                switch kind {
+                case .task: newRecord(event: false)
+                case .event: newRecord(event: true)
+                case .file: picking = true
+                default: newNote()
+                }
+            }
             (LivAppearance(rawValue: appearance) ?? .dark).applyToWindows()
             // The tab plane learns what an id IS (Option C). Reading the
             // live snapshot each time means the answer is never stale —
@@ -268,13 +279,6 @@ struct RootView: View {
         }
         .onChange(of: appearance) { _, fresh in
             (LivAppearance(rawValue: fresh) ?? .dark).applyToWindows()
-        }
-        // The tab view takes the whole screen too (owner, 2026-07-29) — top
-        // bar and bottom bar both covered. Its own footer carries Done.
-        .fullScreenCover(isPresented: $desk.switcherShown) {
-            TabSwitcher()
-                .environmentObject(box)
-                .environmentObject(desk)
         }
         // The inbox is not a floor — it is where the day's catches wait,
         // reached from Today's own line about them.
@@ -353,22 +357,9 @@ struct RootView: View {
         }
     }
 
-    /// The four floors. Each is built fresh when you stand on it and
-    /// remembers where it was through FloorMemory — publishing that
-    /// state on the model would re-render the world on every drag, which
-    /// is the bug the calendar already paid for (design/ios.md rev 24).
-    @ViewBuilder private var floorBody: some View {
-        switch desk.floor {
-        case .today: TodayView()
-        case .calendar: CalendarView()
-        case .tasks: TasksView()
-        case .find: SearchView(isFloor: true)
-        }
-    }
-
-    /// What the create key makes, and what it inherits from where you
-    /// are standing: on Today or the calendar, the day you are looking
-    /// at; anywhere else, just the workspace.
+    /// The key's TAP makes the page's own kind (LivFloor.makes). This
+    /// is its HOLD: the other three, for when the page's own kind is
+    /// not what you meant.
     private func createMenu() -> LivMenu {
         LivMenu(
             id: "create",
@@ -440,9 +431,12 @@ struct RootView: View {
             .map(\.id)
         switch state {
         case "search", "find", "everything": desk.stand(on: .find)
-        case "today": desk.stand(on: .today)
-        case "tasks": desk.stand(on: .tasks)
+        case "today", "things": desk.stand(on: .things)
+        case "tasks":
+            desk.arrangement = .status
+            desk.stand(on: .things)
         case "calendar": desk.stand(on: .calendar)
+        case "grid", "desk": desk.stand(on: .desk)
         case "inbox": desk.inboxShown = true
         case "desk": if let id = newest.first { desk.open(id) }
         // Open one NAMED entity, for looking at a specific note without
@@ -461,14 +455,14 @@ struct RootView: View {
         case "newtab": desk.createHere()
         case "switcher":
             for id in newest.prefix(3).reversed() { desk.open(id) }
-            desk.switcherShown = true
+            desk.stand(on: .desk)
         // Rehearsal for the Inactive list: open a handful of tabs and
         // BACKDATE all but the active one, because nobody can wait three
         // weeks to look at a screen (2026-08-10).
         case "inactive":
             for id in newest.prefix(7).reversed() { desk.open(id) }
             desk.backdateTabsForRehearsal(days: 30)
-            desk.switcherShown = true
+            desk.stand(on: .desk)
         default: break
         }
     }

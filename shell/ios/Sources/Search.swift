@@ -219,7 +219,9 @@ struct SearchView: View {
                 query = seed
                 kick(debounce: false)
             }
-            DispatchQueue.main.async { focused = true }
+            // A FLOOR does not grab the keyboard: landing on Find
+            // would hide the bar you just used to get here.
+            if !isFloor { DispatchQueue.main.async { focused = true } }
         }
         .onChange(of: query) { _, _ in kick(debounce: true) }
     }

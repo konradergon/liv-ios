@@ -34,16 +34,16 @@ final class FloorMemory {
 /// lie OVER it as tabs, and closing the last one puts you back on it.
 /// There is no empty desk any more.
 enum LivFloor: String, CaseIterable, Identifiable {
-    case today, calendar, tasks, find
+    case things, calendar, find, desk
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .today: return "Today"
+        case .things: return "Things"
         case .calendar: return "Calendar"
-        case .tasks: return "Tasks"
         case .find: return "Find"
+        case .desk: return "Desk"
         }
     }
 
@@ -51,10 +51,41 @@ enum LivFloor: String, CaseIterable, Identifiable {
     /// surface until the design pass (owner, 2026-08-16).
     var symbol: String {
         switch self {
-        case .today: return "sun.max"
+        case .things: return "circle.grid.2x2"
         case .calendar: return "calendar"
-        case .tasks: return "checklist"
         case .find: return "magnifyingglass"
+        case .desk: return "square.on.square"
+        }
+    }
+
+    /// What the create key makes HERE. The key belongs to the page it
+    /// sits on — a floating + over a list means "add to this list"
+    /// everywhere else in the world, and ours opened a four-way menu
+    /// instead (owner, 2026-08-16: "the '+' looks like its part of the
+    /// page you're viewing yet it always creates notes"). Hold it for
+    /// the other kinds.
+    func makes(_ arrangement: LivArrangement) -> LivKind {
+        switch self {
+        case .calendar: return .event
+        case .desk, .find: return .note
+        case .things: return arrangement == .all ? .note : .task
+        }
+    }
+}
+
+/// ONE list of your things, arranged three ways (owner, 2026-08-16,
+/// after the four-tab version read as "a precursor to a sloppy version
+/// of ClickUp"). Not three screens: one screen, re-sorted.
+enum LivArrangement: String, CaseIterable, Identifiable {
+    case date, status, all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .date: return "Date"
+        case .status: return "Status"
+        case .all: return "All"
         }
     }
 }
@@ -97,9 +128,18 @@ final class DeskModel: ObservableObject {
     /// across launches and NOT per workspace — switching workspace
     /// narrows what you see, it does not send you somewhere else.
     @Published var floor: LivFloor = LivFloor(
-        rawValue: UserDefaults.standard.string(forKey: "desk.floor") ?? "") ?? .today
+        rawValue: UserDefaults.standard.string(forKey: "desk.floor") ?? "") ?? .things
     {
         didSet { UserDefaults.standard.set(floor.rawValue, forKey: "desk.floor") }
+    }
+
+    /// How Things is arranged right now. Remembered like the floor.
+    @Published var arrangement: LivArrangement = LivArrangement(
+        rawValue: UserDefaults.standard.string(forKey: "desk.arrangement") ?? "") ?? .date
+    {
+        didSet {
+            UserDefaults.standard.set(arrangement.rawValue, forKey: "desk.arrangement")
+        }
     }
     /// An open thing (a note, a file) covers the floor right now.
     @Published private(set) var standingOnOpen = false
@@ -110,37 +150,30 @@ final class DeskModel: ObservableObject {
     @Published var activeTabId: UUID? {
         didSet { persist() }
     }
-    @Published var switcherShown = false
-    /// Stand on a floor. Whatever was open stays open — the bar's
-    /// Open key brings it back.
+    /// Go to a place. THE DESK is a place like the others — it holds
+    /// what you have open — so pressing it while you are reading
+    /// something puts the grid back, and pressing it from anywhere else
+    /// brings you back to what you were reading (owner, 2026-08-16:
+    /// "'Open' isn't a page yet it seems like one").
     func stand(on floor: LivFloor) {
         withAnimation(LivMotion.nav) {
-            standingOnOpen = false
+            if floor == .desk {
+                if self.floor == .desk {
+                    standingOnOpen.toggle()
+                } else {
+                    standingOnOpen = activeTabId != nil
+                }
+            } else {
+                standingOnOpen = false
+            }
             self.floor = floor
         }
         menu = nil
     }
 
-    /// Stand on the thing you have open. With nothing open there is
-    /// nothing to stand on, so this opens the grid instead — which is
-    /// also what a second press does, because the first press has
-    /// already brought your note back.
-    func standOnOpen() {
-        guard activeTabId != nil else {
-            switcherShown = true
-            return
-        }
-        if standingOnOpen {
-            switcherShown = true
-            return
-        }
-        withAnimation(LivMotion.nav) { standingOnOpen = true }
-        menu = nil
-    }
-
     @Published var cameraShown = false
     /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
-    /// `switcherShown`, the tab view). Model state so open() can dismiss
+    /// the Desk floor). Model state so open() can dismiss
     /// them — as DeskHost-local @State they outlived a notification tap
     /// and the landing tab hid behind them (audit, 2026-08-04).
     @Published var settingsShown = false
@@ -206,7 +239,7 @@ final class DeskModel: ObservableObject {
     /// Nothing full-screen covers what you are standing on. Find is no
     /// longer one of these — it is a FLOOR now, not a cover.
     var deskInFront: Bool {
-        !switcherShown && !cameraShown && !settingsShown && !workspaceShown
+        !cameraShown && !settingsShown && !workspaceShown && !inboxShown
             && !inboxShown
     }
 
@@ -399,7 +432,6 @@ final class DeskModel: ObservableObject {
         // The FLOOR does not move when the workspace does — you asked to
         // see other things, not to be sent somewhere else. It simply
         // narrows: every floor wears the lens (2026-08-16).
-        switcherShown = false
         menu = nil
         inspectorShown = false
         settingsShown = false
@@ -445,7 +477,6 @@ final class DeskModel: ObservableObject {
             tabs.append(tab)
             focus(tab.id)
         }
-        switcherShown = false
         inboxShown = false
         // Opening a document means standing on it — the floor stays
         // where it is, underneath (2026-08-16).
@@ -465,11 +496,18 @@ final class DeskModel: ObservableObject {
         persist()
     }
 
-    /// The create KEY's menu, sliding up over whatever you are looking
-    /// at (owner, 2026-08-13; promoted to the root 2026-08-16). It never
-    /// appends a tab — choosing something does.
+    /// The create key's HOLD: the four kinds, for when the page's own
+    /// kind is not what you meant.
     func createHere() {
         menu = newTabMenu?()
+    }
+
+    /// The create key's TAP: the page's own kind, made at once. Set by
+    /// RootView, which owns the verbs.
+    var createDefaultVerb: ((LivKind) -> Void)?
+
+    func createDefault() {
+        createDefaultVerb?(floor.makes(arrangement))
     }
 
     /// Closing the last tab leaves the desk empty — and an empty desk is
@@ -1294,19 +1332,14 @@ final class KeyboardWatch: ObservableObject {
 
 // MARK: - bottom bar
 
-/// ONE horizontal row (owner, 2026-08-01 — the floating pill plus a
-/// THE FLOOR BAR (owner, 2026-08-16: "Calendar, Tasks, etc. should be
-/// like a central part of the app and not just 'additions'").
+/// THE BAR: four PLACES, and nothing that is not a place (owner,
+/// 2026-08-16: "'Open' isn't a page yet it seems like one").
 ///
-/// Four floors and the things you have open. A floor is not a place you
-/// travel to — one of them is always under you, and this says which.
-/// The fifth key stands you back on what you had open; pressed again it
-/// opens the grid, because by then the first press has already brought
-/// your note back.
-///
-/// What was here before: ‹ › history, a magnifier and a `+`. The arrows
-/// were the most Obsidian thing in the app, the magnifier is a floor now
-/// (Find), and the `+` became the one create key at the bottom right.
+/// Things · Calendar · Find · Desk. Things is one list of what you have,
+/// arranged by date, by status or not at all; the Desk holds what you
+/// have open, as a grid you can stand on. A place is not somewhere you
+/// travel to and come back from — one of them is always under you, and
+/// this says which.
 struct FloorBar: View {
     @EnvironmentObject var desk: DeskModel
 
@@ -1314,17 +1347,13 @@ struct FloorBar: View {
         HStack(spacing: 0) {
             ForEach(LivFloor.allCases) { floor in
                 key(
-                    floor.symbol, floor.title,
-                    on: !desk.standingOnOpen && desk.floor == floor
+                    floor.symbol,
+                    floor == .desk && !desk.tabs.isEmpty
+                        ? "Desk \(desk.liveTabs.count)" : floor.title,
+                    on: desk.floor == floor
                 ) {
                     desk.stand(on: floor)
                 }
-            }
-            key(
-                "square.on.square", desk.tabs.isEmpty ? "Open" : "Open \(desk.liveTabs.count)",
-                on: desk.standingOnOpen
-            ) {
-                desk.standOnOpen()
             }
         }
         .frame(height: LivRow.barHeight)

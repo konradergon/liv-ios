@@ -1,5 +1,35 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — one page, three arrangements
+
+Owner, on the four-floor version: *"the ux is kind of confusing. the '+'
+looks like its part of the page you're viewing yet it always creates
+notes. 'Open' isn't a page yet it seems like one. it overall feels like
+a precursor to a sloppy version of clickup."* All three are fair, and
+all three are now answered.
+
+**One page for your things, arranged three ways.** Today / Tasks /
+Everything were three tabs; they are one place — **Things** — with a
+segmented control: **Date · Status · All**. The same objects, ordered
+differently, is not three places. Four tabs of lists was the ClickUp
+shape; this is not.
+
+**The bar holds only places**: Things · Calendar · Find · Desk. The
+Desk is a real page now — the grid of what you have open — so pressing
+it while you are reading puts the grid back, and pressing it from
+anywhere else brings back what you were reading. "Open (n)", which was a
+state pretending to be a page, is gone, and so is the separate
+full-screen tab switcher: the Desk floor IS the switcher, inactive row
+and all.
+
+**The create key belongs to the page it sits on.** A floating + over a
+list means "add to this list" everywhere else in the world. Tap it now
+and you get the page's own kind — a task on Things, an event on the
+calendar, a note on Find, the Desk and on All — made at once, with its
+properties open and the caret in the name. HOLD it for the other three
+kinds. It says what it will make, too: the label is "New task" or "New
+event", not "New".
+
 ## 2026-08-16 — THE FLOOR
 
 Owner: *"build everything. it needs testing for me to judge anything."*

@@ -335,6 +335,9 @@ func livCanTick(_ row: EntityRow) -> Bool {
 struct LivAddButton: View {
     var label: String = "Add"
     let action: () -> Void
+    /// Held down: the other kinds, for when the page's own kind is not
+    /// what you meant (owner, 2026-08-16).
+    var onHold: (() -> Void)?
 
     var body: some View {
         Button(action: action) {
@@ -346,9 +349,14 @@ struct LivAddButton: View {
                 .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
         }
         .buttonStyle(.plain)
+        .onLongPressGesture(minimumDuration: 0.4) {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            onHold?()
+        }
         .padding(.trailing, 20)
         .padding(.bottom, 24)
         .accessibilityLabel(label)
+        .accessibilityHint(onHold == nil ? "" : "Hold for other kinds")
     }
 }
 

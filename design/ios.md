@@ -934,6 +934,24 @@ tab is one full-bleed scroller), settles by where you stopped or a real
 flick (700pt/s), and honours `-drag.off 1`.
 
 
+## 27. One page, three arrangements (rev 30, owner 2026-08-16)
+
+Owner, on rev 29: *"the ux is kind of confusing… it overall feels like a
+precursor to a sloppy version of clickup."*
+
+- **Things** is one place with `LivArrangement` — Date, Status, All — on
+  a segmented control. Today, Tasks and Everything were three tabs of
+  the same objects; they are three orderings now.
+- **The bar holds only places**: Things · Calendar · Find · Desk. The
+  Desk is the grid of what you have open, and standing on a note is a
+  state OF that place — `stand(on: .desk)` toggles between the grid and
+  the thing you were reading. The full-screen tab switcher is deleted;
+  the Desk floor carries the grid and the inactive row.
+- **The create key is the page's own.** `LivFloor.makes(_:)` decides what
+  a tap makes — task on Things (note on All), event on Calendar, note on
+  Find and the Desk — and the key wears that kind's word. Holding it
+  opens the four-kind menu, which is all the key used to do.
+
 ## 26. The floor (rev 29, owner 2026-08-16)
 
 Owner: *"build everything. it needs testing for me to judge anything."*
