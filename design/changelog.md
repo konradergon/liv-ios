@@ -1,5 +1,24 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — the bar's fourth key becomes "where you look"
+
+Owner: *"Maybe the tab view button should be replaced with a menu for
+different views like calendar… and also 'docs' or 'notes', bringing up
+the tabs."*
+
+The tab-count square is gone. In its place, a key that opens ONE menu —
+**Go to**: Today · Inbox · Calendar · Tasks · Everything · **Docs (n)**.
+The count did not disappear with the square; it moved onto the Docs row,
+which is what the square counted: the things you have open.
+
+The bar now reads ‹ › search, views, +.
+
+**One thing to settle.** The library's left door lists the same five
+views. Two doors to one room is the thing standing rule 4 exists to
+stop, so one of the lists should go: either the library keeps only the
+filters, the workspace and Settings, or this menu drops the five views
+and stays a Docs key. Not decided here — flagged for the owner.
+
 ## 2026-08-16 — the + moves right and makes anything
 
 Owner: *"maybe have the + button at far right and make it support adding

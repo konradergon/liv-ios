@@ -1363,7 +1363,7 @@ struct BottomBar: View {
             navButton("magnifyingglass", enabled: true, label: "Search") {
                 desk.searchShown = true
             }
-            tabCountButton
+            viewsButton
             // FAR RIGHT, and it makes ANY object (owner, 2026-08-16:
             // "maybe have the + button at far right and make it support
             // adding any object with properties"). The corner is where a
@@ -1409,25 +1409,47 @@ struct BottomBar: View {
     }
 
     /// The Obsidian tab square: the open-tab count inside its own outline.
-    private var tabCountButton: some View {
+    /// WHERE YOU LOOK, in one key (owner, 2026-08-16: "the tab view
+    /// button should be replaced with a menu for different views like
+    /// calendar… and also 'docs' or 'notes', bringing up the tabs").
+    ///
+    /// It replaces the tab-count square. The count did not disappear
+    /// with it: it moved onto the Docs row, which is what the square
+    /// counted — the things you have open.
+    private var viewsButton: some View {
         Button {
-            desk.switcherShown = true
+            desk.menu = viewsMenu()
         } label: {
-            RoundedRectangle(cornerRadius: 5)
-                .strokeBorder(LivTheme.text2, lineWidth: 1.5)
-                .frame(width: 20, height: 20)
-                .overlay(
-                    Text(
-                        desk.liveTabs.count > 99
-                            ? "99" : "\(desk.liveTabs.count)")
-                        .font(.system(size: LivType.micro, weight: .bold).monospacedDigit())
-                        .foregroundStyle(LivTheme.text2)
-                )
+            Image(systemName: "square.grid.2x2")
+                .font(.system(size: LivType.title, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Tabs")
+        .accessibilityLabel("Views")
+    }
+
+    /// The five views, then DOCS — the tab grid, under the word for what
+    /// it holds. Docs is last and counted because it is the one row that
+    /// is about what YOU have open rather than about what the box holds.
+    private func viewsMenu() -> LivMenu {
+        // The library's own order, so the two lists never disagree:
+        // what ignores the workspace first, then what wears it.
+        let order: [Feature] = [.today, .inbox, .calendar, .tasks, .everything]
+        var items: [LivMenuItem] = order.map { feature in
+            LivMenuItem(label: feature.title, glyph: feature.glyph) {
+                desk.show(feature)
+            }
+        }
+        items.append(
+            LivMenuItem(
+                label: desk.liveTabs.isEmpty ? "Docs" : "Docs (\(desk.liveTabs.count))",
+                symbol: "square.on.square"
+            ) {
+                desk.switcherShown = true
+            })
+        return LivMenu(id: "views", from: .bottom, title: "Go to", items: items)
     }
 }
