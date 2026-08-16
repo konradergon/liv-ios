@@ -1,5 +1,30 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-16 — the divider stops flashing under Bold
+
+Owner: *"Toolbar insertion of '\*\*\*\*' has a separator flash briefly.
+Should only make a separator show if you literally type '\*\*\*\*' and set
+cursor elsewhere."*
+
+Bold on an empty line writes `****`, and four asterisks ARE a thematic
+break. It should still have been shown as text, because the caret was
+sitting in it — syntax shows on the caret's line. Two things stopped
+that:
+
+- **A zero-length reveal revealed nothing.** `paragraphRange(for:)`
+  hands back an empty range for an empty LAST line, and
+  `NSLocationInRange` says an empty range contains nothing. So the one
+  line the caret was certainly on counted as un-revealed. `reveals(_:
+  line:)` is now its own function with seven assertions in the editor
+  self-check.
+- **The styling ran before the caret moved.** A toolbar edit replaces
+  the text and then sets the selection, so the restyle inside the
+  replace judged the new line by where the caret used to be. It is told
+  where the caret is GOING, first.
+
+Typing `****` and putting the cursor elsewhere still draws a divider —
+that is the half the owner asked to keep.
+
 ## 2026-08-16 — one add button, bottom right
 
 Owner: *"The row for adding items in Tasks and Today should be a button

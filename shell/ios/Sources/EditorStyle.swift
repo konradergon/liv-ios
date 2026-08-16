@@ -905,5 +905,26 @@ func livEditorSelfCheck() -> [String] {
         SpanText.textToSpans("see [[999]]", isKnown: { $0 == 999 })
             == [.text("see ", marks: 0), .ref(999)])
 
+    // WHICH LINE THE CARET IS ON. The reveal decides whether a line
+    // shows its markers or its rendering, and it was blind to the one
+    // case that matters most: an EMPTY last line, whose paragraph range
+    // is zero-length, and which NSLocationInRange says contains nothing.
+    // Bold on such a line writes "****" — a thematic break — and the
+    // divider flashed until the caret landed (owner, 2026-08-16).
+    let line = NSRange(location: 10, length: 5)
+    check("a caret inside the line reveals it", MarkStyler.reveals(NSRange(location: 12, length: 0), line: line))
+    check("a caret at the line's start reveals it", MarkStyler.reveals(NSRange(location: 10, length: 0), line: line))
+    check("a caret at the line's end reveals it", MarkStyler.reveals(NSRange(location: 15, length: 0), line: line))
+    check(
+        "a caret past the line does not",
+        !MarkStyler.reveals(NSRange(location: 16, length: 0), line: line))
+    check(
+        "a caret before the line does not",
+        !MarkStyler.reveals(NSRange(location: 9, length: 0), line: line))
+    check(
+        "a paragraph range covering the line reveals it",
+        MarkStyler.reveals(NSRange(location: 10, length: 6), line: line))
+    check("no caret reveals nothing", !MarkStyler.reveals(nil, line: line))
+
     return failures
 }

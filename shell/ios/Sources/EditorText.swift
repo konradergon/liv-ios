@@ -186,8 +186,28 @@ enum MarkStyler {
             style(
                 line: n.substring(with: lineRange), at: lineRange.location,
                 storage: storage,
-                revealed: revealing.map { NSLocationInRange(lineRange.location, $0) } ?? false)
+                revealed: MarkStyler.reveals(revealing, line: lineRange))
         }
+    }
+
+    /// Is this line the caret's? A line is revealed when the revealed
+    /// paragraph range starts it — and, the case this was blind to, when
+    /// that range is EMPTY and sits inside the line.
+    ///
+    /// `paragraphRange(for:)` hands back a zero-length range for an
+    /// empty last line, and `NSLocationInRange` says a zero-length range
+    /// contains nothing. So the one line where a caret was certainly
+    /// sitting counted as un-revealed: tapping Bold on an empty last
+    /// line wrote `****`, which is a THEMATIC BREAK, and the divider
+    /// flashed for a frame until the selection landed and restyled it
+    /// (owner, 2026-08-16: "Toolbar insertion of '****' has a separator
+    /// flash briefly").
+    static func reveals(_ revealing: NSRange?, line: NSRange) -> Bool {
+        guard let r = revealing else { return false }
+        if r.length == 0 {
+            return r.location >= line.location && r.location <= NSMaxRange(line)
+        }
+        return NSLocationInRange(line.location, r)
     }
 
     /// The digits inside a `[[…]]` token — the same grammar the codec
@@ -1243,6 +1263,14 @@ struct MarkdownEditor: UIViewRepresentable {
                 let end = textView.position(from: start, offset: replaced.length),
                 let range = textView.textRange(from: start, to: end)
             else { return }
+            // Where the caret is GOING, before the edit that moves it:
+            // the storage delegate styles inside `replace`, and with the
+            // old reveal it would judge the new line by a caret that has
+            // not arrived yet. This is the other half of the `****`
+            // flash (owner, 2026-08-16).
+            let after = result.text as NSString
+            revealedRule = after.paragraphRange(
+                for: NSRange(location: min(result.selection.location, after.length), length: 0))
             textView.replace(range, withText: with)
             let n = (textView.text as NSString).length
             textView.selectedRange = NSRange(
