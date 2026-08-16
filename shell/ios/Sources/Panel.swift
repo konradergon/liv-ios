@@ -110,27 +110,13 @@ struct LibraryPanel: View {
     @EnvironmentObject var workspaces: WorkspaceModel
 
     var body: some View {
-        SidePanel(onDismiss: onDismiss, band: { backChevron }) {
-            VStack(spacing: 0) {
-                // A view opens IN here (owner, 2026-08-15: "do the views
-                // opening inside the library"). It is not a window over
-                // the desk any anymore: you are in the library, looking
-                // at Today, and the desk is parked where you left it.
-                if let feature = desk.featureShown {
-                    Group {
-                        switch feature {
-                        case .today: TodayView()
-                        case .everything: EverythingView()
-                        case .inbox: InboxView()
-                        case .tasks: TasksView()
-                        case .calendar: CalendarView()
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    list
-                }
-            }
+        // A view does NOT open in here any more (owner, 2026-08-16:
+        // "library is for filters, workspace and settings", and
+        // 2026-08-17: "one idea is to have it open where you stand").
+        // The library is filters and Settings; a view opens over
+        // whatever you were looking at, with the bar still under it.
+        SidePanel(onDismiss: onDismiss) {
+            list
         }
     }
 
@@ -177,23 +163,6 @@ struct LibraryPanel: View {
                     .padding(.top, 8)
                 }
                 bottomBand
-        }
-    }
-
-    /// Back to the library's own list. Only there is anything to go
-    /// back FROM — on the list itself the band is empty, and the
-    /// workspace button floats in the middle of it.
-    @ViewBuilder private var backChevron: some View {
-        if desk.featureShown != nil {
-            Button { desk.featureShown = nil } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: LivType.strong, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to the library")
         }
     }
 

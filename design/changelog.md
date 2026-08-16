@@ -1,5 +1,30 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — a view opens where you stand, and the bar stays
+
+Owner: *"idk how the views should open. one idea is to have it open
+where you stand. if the bar should be visible or not is the question."*
+
+Both answered, and they answer each other.
+
+**Where you stand.** A view covers what you were looking at, in place,
+and leaves by the chevron at its top or by pressing its own row again
+(the row is ticked while you are in it). It used to travel into the
+library — which was odd the moment the library became filters and
+Settings: you pressed a key at the bottom and a panel arrived from the
+left carrying something that had nothing to do with the panel.
+
+**The bar stays.** A view with no bar under it is a cul-de-sac: you must
+close it before you can go anywhere, and the app's one navigation
+surface disappears at exactly the moment you are navigating. With the
+bar there, the next place is one key away. The view keeps 58pt of room
+for it, so no row hides under it.
+
+**One `+` at a time.** A view has its own create key, bottom right,
+which knows the day you are looking at; the bar's `+` steps aside while
+one is open. Two plus signs on one screen was the confusion the owner
+named on the floor.
+
 ## 2026-08-16 — the library is for filters, the workspace and Settings
 
 Owner, settling yesterday's flag: *"library is for filters, workspace

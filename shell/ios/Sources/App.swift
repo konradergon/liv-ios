@@ -111,6 +111,13 @@ struct RootView: View {
             bodyView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            // A VIEW, opened where you stand: it covers what you were
+            // looking at and the bar stays under it, lit on the key you
+            // pressed (owner, 2026-08-17). Leaving is the band at its
+            // top, or the same key again.
+            FeatureLayer()
+                .zIndex(1)
+
             // The bar retires while a PANEL is up — RootView draws it
             // after the desk, so left alone it would float over the
             // panel it should be behind. It also retires while a
@@ -334,6 +341,71 @@ struct RootView: View {
     /// it, never a mode.
     private var bodyView: some View {
         DeskHost()
+    }
+}
+
+/// A view, over whatever you were looking at. Its own 40pt band carries
+/// the way out, the way every full-screen surface in this app does; the
+/// BAR is still below it, so the next place is one key away instead of
+/// a close-then-open.
+private struct FeatureLayer: View {
+    @EnvironmentObject var box: BoxModel
+    @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var workspaces: WorkspaceModel
+
+    var body: some View {
+        if let feature = desk.featureShown {
+            VStack(spacing: 0) {
+                band(feature)
+                Group {
+                    switch feature {
+                    case .today: TodayView()
+                    case .everything: EverythingView()
+                    case .inbox: InboxView()
+                    case .tasks: TasksView()
+                    case .calendar: CalendarView()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(LivTheme.canvas.ignoresSafeArea(edges: .top))
+            // The bar floats over this, so the view keeps its own room
+            // for it: a last row under the bar is a row you cannot read
+            // or reach.
+            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
+            .transition(.move(edge: .bottom))
+        }
+    }
+
+    /// The band: a chevron down, and the view's own name so you can see
+    /// where you are without reading the list under it. Dragging it down
+    /// closes, like every other full-screen surface here.
+    private func band(_ feature: Feature) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                withAnimation(LivMotion.nav) { desk.featureShown = nil }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: LivType.strong, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close \(feature.title)")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { g in
+                    if g.translation.height > 40 {
+                        withAnimation(LivMotion.nav) { desk.featureShown = nil }
+                    }
+                }
+        )
     }
 }
 

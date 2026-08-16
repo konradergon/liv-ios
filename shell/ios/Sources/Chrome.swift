@@ -127,12 +127,19 @@ final class DeskModel: ObservableObject {
         }
     }
 
-    /// Open a VIEW in the library, from anywhere — a library row, a
-    /// notification, the rehearsal hook. Going to a view means going to
-    /// the library, so this is the only place that says both.
+    /// Open a VIEW where you stand (owner, 2026-08-17: "one idea is to
+    /// have it open where you stand"). It covers what you were looking
+    /// at and leaves the BAR underneath — the bar is how you got here
+    /// and how you leave, and a view that hides it is a cul-de-sac.
+    ///
+    /// It used to travel into the library, which was odd once the
+    /// library became filters and Settings: you pressed a key at the
+    /// bottom and a panel arrived from the left carrying something that
+    /// had nothing to do with the panel.
     func show(_ feature: Feature) {
-        featureShown = feature
-        setLibrary(true)
+        withAnimation(LivMotion.nav) { featureShown = feature }
+        setLibrary(false)
+        menu = nil
     }
     @Published var cameraShown = false
     /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
@@ -1378,8 +1385,14 @@ struct BottomBar: View {
             // guard became the lie it was written to prevent: a
             // workspace with no tabs could not be given one at all
             // (owner, 2026-08-15, from the phone).
-            navButton("plus", enabled: true, label: "New") {
-                desk.newTab()
+            // While a VIEW is open it keeps its own create key, bottom
+            // right, which knows the day you are looking at (owner,
+            // 2026-08-16). Two `+` on one screen is the confusion the
+            // owner named; the one that knows more wins.
+            if desk.featureShown == nil {
+                navButton("plus", enabled: true, label: "New") {
+                    desk.newTab()
+                }
             }
         }
         .padding(.horizontal, 4)
@@ -1439,8 +1452,19 @@ struct BottomBar: View {
         // what ignores the workspace first, then what wears it.
         let order: [Feature] = [.today, .inbox, .calendar, .tasks, .everything]
         var items: [LivMenuItem] = order.map { feature in
-            LivMenuItem(label: feature.title, glyph: feature.glyph) {
-                desk.show(feature)
+            LivMenuItem(
+                label: desk.featureShown == feature
+                    ? "\(feature.title) ✓" : feature.title,
+                glyph: feature.glyph
+            ) {
+                // The same row twice is the way back: press Calendar
+                // while you are in the calendar and you are on the desk
+                // again, where you were.
+                if desk.featureShown == feature {
+                    withAnimation(LivMotion.nav) { desk.featureShown = nil }
+                } else {
+                    desk.show(feature)
+                }
             }
         }
         items.append(
