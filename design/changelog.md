@@ -1,5 +1,49 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — global actions below, the whole app in the sidebar
+
+Owner: *"The ultimate goal is to clearly separate global actions from
+global navigation/state, while keeping the individual views focused on
+their own content."* — and: *"the main problem with our first layout was
+treating Docs as the primary view."*
+
+**The bar is four keys: ‹ › search +.** The views key is gone from it.
+It is Safari's bar now — a floating capsule of Liquid Glass (iOS 26's
+`glassEffect`, a material capsule below that), which reverses
+2026-08-01's "solid, never a blur": the reason then was that a body
+reading through the bar looked like a bug, and Liquid Glass is the
+platform's own answer to exactly that. It still steps aside while the
+keyboard is up.
+
+**The sidebar is the app's primary menu.** Views · Docs (with the count
+the tab square used to carry) · Today · Inbox, then This workspace ·
+Calendar · Tasks · Everything, then Filters, then Settings at the foot.
+A dot marks where you are. This is the deliberate reversal of yesterday
+— the views were briefly a key on the bar — and the split is now the one
+the owner drew: **global ACTIONS below, global STATE and view selection
+on the left.**
+
+**Docs is a view like the others**, first in the list because it is
+where the words are. Pressed from another view it takes you back to the
+desk; pressed while you are already on the desk it opens the grid of
+what you have open — the list that row counts.
+
+**A view now lives inside the desk, under the doors.** It used to be a
+layer above everything, which was fine while the bar could reach every
+view; with the menu on the left, a view that covered the library door
+was a cul-de-sac. So the library door and the workspace button float
+over a view exactly as they do over a note, in the same place, and the
+view's band keeps only the way out. The ••• is a document's menu, so it
+stays hidden over a view.
+
+**Answering the owner's question — no per-view create shortcut.** All
+creation goes through the one `+`. The tab grid's "New tab" tile is not
+a second door: it summons that same create menu. `LivAddButton`, the
+floating key Today and Tasks carried for one day, is deleted.
+
+**Open:** the grid still says "3 tabs" while the sidebar row says "Docs
+3" — one thing, two words, and the owner's word is Docs.
+
 ## 2026-08-17 — one link mechanism, two doors, both directions
 
 Owner: *"'Add notes…' in properties (as with tasks). There is already an

@@ -1362,13 +1362,45 @@ final class KeyboardWatch: ObservableObject {
     deinit { tokens.forEach(NotificationCenter.default.removeObserver) }
 }
 
+/// The bar's surface: Liquid Glass where the phone has it (iOS 26), a
+/// material capsule where it does not. One place, because the bar is not
+/// the only thing that will want it.
+///
+/// Glass brings its own edge and shading, so nothing is stacked on top
+/// of it — the border and drop shadow the solid capsule needed would
+/// read as a second, duller rim.
+struct LivGlassCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: .capsule)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+        }
+    }
+}
+
 // MARK: - bottom bar
 
-/// ONE horizontal row (owner, 2026-08-01 — the floating pill plus a
-/// separate circle read as fragments). Navigation over the open notes and
-/// the doors that make more of them: ‹ › history, search, new tab, the
-/// tab count. Global features left this bar entirely — they live in the
-/// library panel, behind the top-left door.
+/// FOUR GLOBAL KEYS: ‹ › history, search, create (owner, 2026-08-17).
+///
+/// The separation the owner drew: **global ACTIONS live here; global
+/// STATE and which view you are in live in the left sidebar.** So the
+/// views key is gone from this bar — the sidebar is the app's primary
+/// menu now, and this bar is four things you can do from anywhere,
+/// wherever you happen to be.
+///
+/// It is Safari's bar, deliberately: a floating capsule of glass that
+/// the page passes under. That reverses "solid, never a blur" from
+/// 2026-08-01 — the reason then was that a body reading through the bar
+/// looked like a bug; Liquid Glass is the platform's own answer to
+/// exactly that, and the owner asked for it by name.
+///
+/// It also gets out of the way: while the keyboard is up the bar is not
+/// drawn at all (App.swift), because a row of navigation over a
+/// half-typed sentence is noise.
 struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
 
@@ -1383,7 +1415,6 @@ struct BottomBar: View {
             navButton("magnifyingglass", enabled: true, label: "Search") {
                 desk.searchShown = true
             }
-            viewsButton
             // FAR RIGHT, and it makes ANY object (owner, 2026-08-16:
             // "maybe have the + button at far right and make it support
             // adding any object with properties"). The corner is where a
@@ -1413,10 +1444,7 @@ struct BottomBar: View {
         .padding(.horizontal, 4)
         .frame(height: LivRow.height)
         .frame(maxWidth: .infinity)
-        // Solid, never a blur: the body must not read through the bar.
-        .background(LivTheme.surface, in: Capsule())
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+        .modifier(LivGlassCapsule())
         .padding(.horizontal, 16)
     }
 
@@ -1436,59 +1464,4 @@ struct BottomBar: View {
         .accessibilityLabel(label)
     }
 
-    /// The Obsidian tab square: the open-tab count inside its own outline.
-    /// WHERE YOU LOOK, in one key (owner, 2026-08-16: "the tab view
-    /// button should be replaced with a menu for different views like
-    /// calendar… and also 'docs' or 'notes', bringing up the tabs").
-    ///
-    /// It replaces the tab-count square. The count did not disappear
-    /// with it: it moved onto the Docs row, which is what the square
-    /// counted — the things you have open.
-    private var viewsButton: some View {
-        Button {
-            desk.menu = viewsMenu()
-        } label: {
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: LivType.title, weight: .medium))
-                .foregroundStyle(LivTheme.text2)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Views")
-    }
-
-    /// The five views, then DOCS — the tab grid, under the word for what
-    /// it holds. Docs is last and counted because it is the one row that
-    /// is about what YOU have open rather than about what the box holds.
-    private func viewsMenu() -> LivMenu {
-        // The library's own order, so the two lists never disagree:
-        // what ignores the workspace first, then what wears it.
-        let order: [Feature] = [.today, .inbox, .calendar, .tasks, .everything]
-        var items: [LivMenuItem] = order.map { feature in
-            LivMenuItem(
-                label: desk.featureShown == feature
-                    ? "\(feature.title) ✓" : feature.title,
-                glyph: feature.glyph
-            ) {
-                // The same row twice is the way back: press Calendar
-                // while you are in the calendar and you are on the desk
-                // again, where you were.
-                if desk.featureShown == feature {
-                    withAnimation(LivMotion.nav) { desk.featureShown = nil }
-                } else {
-                    desk.show(feature)
-                }
-            }
-        }
-        items.append(
-            LivMenuItem(
-                label: desk.liveTabs.isEmpty ? "Docs" : "Docs (\(desk.liveTabs.count))",
-                symbol: "square.on.square"
-            ) {
-                desk.switcherShown = true
-            })
-        return LivMenu(id: "views", from: .bottom, title: "Go to", items: items)
-    }
 }

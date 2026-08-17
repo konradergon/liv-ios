@@ -109,12 +109,21 @@ struct LibraryPanel: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
+    /// The two bands: global views see the whole box; workspace views
+    /// wear the active workspace's lens.
+    private let globalViews: [Feature] = [.today, .inbox]
+    private let workspaceViews: [Feature] = [.calendar, .tasks, .everything]
+
     var body: some View {
-        // A view does NOT open in here any more (owner, 2026-08-16:
-        // "library is for filters, workspace and settings", and
-        // 2026-08-17: "one idea is to have it open where you stand").
-        // The library is filters and Settings; a view opens over
-        // whatever you were looking at, with the bar still under it.
+        // THE APP'S PRIMARY MENU (owner, 2026-08-17). Which view you are
+        // in is global STATE, so it lives here; the bar below holds
+        // global ACTIONS and nothing else. The views were briefly a key
+        // on that bar (2026-08-16) — this is the deliberate reversal,
+        // and the bar is four keys lighter for it.
+        //
+        // A view still opens WHERE YOU STAND: picking one here closes
+        // the panel and the view arrives over what you were looking at,
+        // with the bar still under it.
         SidePanel(onDismiss: onDismiss) {
             list
         }
@@ -124,22 +133,57 @@ struct LibraryPanel: View {
         VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // THE VIEWS ARE NOT HERE ANY MORE (owner,
-                        // 2026-08-16: "library is for filters, workspace
-                        // and settings"). They are the bar's own key —
-                        // Go to: Today, Inbox, Calendar, Tasks,
-                        // Everything, Docs — and two doors to one room is
-                        // what standing rule 4 exists to stop.
-                        //
-                        // Saved filters stay: a filter is not a
-                        // workspace, and this is where you come to change
-                        // what you are looking at (owner, 2026-08-11).
-                        // The WORKSPACE itself has no row here either —
-                        // the pinned button at the top centre is its one
-                        // door (owner, 2026-08-13), and this panel is
-                        // where its filters and the app's settings live.
-                        SectionLabel("Filters")
+                        // DOCS IS A VIEW LIKE THE OTHERS (owner,
+                        // 2026-08-17: "the main problem with our first
+                        // layout was treating Docs as the primary
+                        // view"). It leads because it is where the words
+                        // are, but it sits in the same list as Today and
+                        // the calendar, and it carries the count the
+                        // bar's tab square used to: what you have open.
+                        SectionLabel("Views")
                             .padding(.top, 10)
+                            .padding(.bottom, 2)
+                        row(
+                            "Docs", glyph: .note,
+                            detail: desk.liveTabs.isEmpty ? nil : "\(desk.liveTabs.count)",
+                            on: desk.featureShown == nil
+                        ) {
+                            docs()
+                        }
+                        ForEach(globalViews) { feature in
+                            row(
+                                feature.title, glyph: feature.glyph,
+                                on: desk.featureShown == feature
+                            ) {
+                                open(feature)
+                            }
+                        }
+
+                        // Not the workspace's NAME: the button floating
+                        // above this panel says that. These two labels
+                        // say the thing the name never did — which lists
+                        // ignore the workspace, and which wear it.
+                        SectionLabel("This workspace")
+                            .padding(.top, 22)
+                            .padding(.bottom, 2)
+                        ForEach(workspaceViews) { feature in
+                            row(
+                                feature.title, glyph: feature.glyph,
+                                on: desk.featureShown == feature
+                            ) {
+                                open(feature)
+                            }
+                        }
+
+                        // Saved filters live HERE, not inside the
+                        // workspace sheet — a filter is not a workspace,
+                        // and this is where you already come to change
+                        // what you are looking at (owner, 2026-08-11).
+                        // The WORKSPACE itself has no row: the pinned
+                        // button at the top centre is its one door
+                        // (owner, 2026-08-13).
+                        SectionLabel("Filters")
+                            .padding(.top, 22)
                             .padding(.bottom, 2)
                         Group {
                             ForEach(workspaces.filters) { view in
@@ -164,6 +208,28 @@ struct LibraryPanel: View {
                 }
                 bottomBand
         }
+    }
+
+    /// A view opens where you stand, and the panel gets out of the way.
+    /// Pressing the row you are already on is the way back to the desk —
+    /// the same gesture the bar's menu had, kept because it is the only
+    /// exit that does not ask you to find a chevron.
+    private func open(_ feature: Feature) {
+        if desk.featureShown == feature {
+            docs()
+        } else {
+            desk.show(feature)
+        }
+    }
+
+    /// Docs: the desk itself. Pressed while you are ALREADY on the desk
+    /// it opens the grid of what you have open — the list this row
+    /// counts. One row, one place, and the second press is the list.
+    private func docs() {
+        let onDesk = desk.featureShown == nil
+        withAnimation(LivMotion.nav) { desk.featureShown = nil }
+        onDismiss()
+        if onDesk { desk.switcherShown = true }
     }
 
     /// Pinned below the scroll (rev 6): the app's own door. "Where you

@@ -53,6 +53,15 @@ struct DeskHost: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityHidden(anyPanel)
 
+            // A VIEW, opened where you stand (owner, 2026-08-17). It
+            // lives HERE, inside the desk, rather than at the root: the
+            // panels and the doors above it are the app's global
+            // furniture, and a view that covered them was a view you had
+            // to close before you could choose another one — with the
+            // sidebar as the primary menu, that is a cul-de-sac.
+            FeatureLayer()
+                .zIndex(0.5)
+
             // The doors (design/ios.md §6 rev 6): top-left opens the
             // LIBRARY, top-right the ••• holds the secondary verbs.
             //
@@ -69,7 +78,10 @@ struct DeskHost: View {
                     goToLibrary()
                 }
                 Spacer()
-                if case .entity(let id) = desk.activeTab?.content {
+                // The ••• is the open DOCUMENT's menu — share, export,
+                // trash. A view is not a document, so over a view there
+                // is nothing for it to act on.
+                if case .entity(let id) = desk.activeTab?.content, desk.featureShown == nil {
                     noteMenu(id)
                 }
             }

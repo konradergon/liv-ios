@@ -111,13 +111,6 @@ struct RootView: View {
             bodyView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // A VIEW, opened where you stand: it covers what you were
-            // looking at and the bar stays under it, lit on the key you
-            // pressed (owner, 2026-08-17). Leaving is the band at its
-            // top, or the same key again.
-            FeatureLayer()
-                .zIndex(1)
-
             // The bar retires while a PANEL is up — RootView draws it
             // after the desk, so left alone it would float over the
             // panel it should be behind. It also retires while a
@@ -348,7 +341,7 @@ struct RootView: View {
 /// the way out, the way every full-screen surface in this app does; the
 /// BAR is still below it, so the next place is one key away instead of
 /// a close-then-open.
-private struct FeatureLayer: View {
+struct FeatureLayer: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
@@ -377,11 +370,15 @@ private struct FeatureLayer: View {
         }
     }
 
-    /// The band: a chevron down, and the view's own name so you can see
-    /// where you are without reading the list under it. Dragging it down
-    /// closes, like every other full-screen surface here.
+    /// The band: the way out, on the RIGHT. The left of this strip
+    /// belongs to the desk's own library door and the workspace button,
+    /// which are painted over this layer (Desk.swift) so that the app's
+    /// primary menu and its global state are in ONE place on every
+    /// surface (owner, 2026-08-17). Dragging the band down closes, like
+    /// every other full-screen surface here.
     private func band(_ feature: Feature) -> some View {
         HStack(spacing: 8) {
+            Spacer(minLength: 0)
             Button {
                 withAnimation(LivMotion.nav) { desk.featureShown = nil }
             } label: {
@@ -393,7 +390,6 @@ private struct FeatureLayer: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close \(feature.title)")
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .frame(height: 40)
