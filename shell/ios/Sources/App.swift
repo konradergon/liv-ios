@@ -371,25 +371,19 @@ struct FeatureLayer: View {
             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
             .safeAreaInset(edge: .top) { LivTopScrim() }
             .ignoresSafeArea(edges: .top)
-            // The band is gone: closing is the glass chevron in the top
-            // row, where the ••• sits on the desk, and a drag DOWN
-            // anywhere in that band still does it.
-            .gesture(
-                DragGesture(minimumDistance: 24)
-                    .onEnded { g in
-                        if g.startLocation.y < LivRow.topInset && g.translation.height > 40 {
-                            withAnimation(LivMotion.nav) { desk.featureShown = nil }
-                        }
-                    }
-            )
-            // IN from the right, OUT downwards. Coming from the menu
-            // you travel rightwards into the view — usually as part of
-            // the strip's own move, which is why picking a row does not
-            // animate this layer as well (DeskModel.show). Leaving is
-            // the glass chevron in the top row or a drag DOWN in that
-            // band, so the view leaves the way the finger sends it.
-            .transition(
-                .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .bottom)))
+            // FROM THE RIGHT, AND BACK TO THE RIGHT — never over or off
+            // the notes (owner, 2026-08-17: "Each state should be
+            // treated equally as something opening on the right, and the
+            // notes should remain separate").
+            //
+            // Docs is a state like Today or the calendar, not the ground
+            // the others sit on: there is no closing a view, only going
+            // somewhere else, and every somewhere-else arrives the same
+            // way. Picked from the menu the strip's own travel is the
+            // whole motion, which is why this layer is not animated then
+            // (DeskModel.show); this transition is for the cases with no
+            // panel open — a notification, a boot flag.
+            .transition(.move(edge: .trailing))
         }
     }
 }

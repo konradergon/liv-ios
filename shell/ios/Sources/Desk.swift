@@ -90,15 +90,14 @@ struct DeskHost: View {
                 }
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
-                // trash. A view is not a document, so over a view this
-                // corner holds the way OUT of the view instead: one
-                // place, one glass circle, whichever surface is in front
-                // (owner, 2026-08-17).
-                if let feature = desk.featureShown {
-                    FloatCircle(symbol: "chevron.down", label: "Close \(feature.title)") {
-                        withAnimation(LivMotion.nav) { desk.featureShown = nil }
-                    }
-                } else if case .entity(let id) = desk.activeTab?.content {
+                // trash — so it belongs to Docs and to nothing else.
+                //
+                // There is no "close the view" key any more (owner,
+                // 2026-08-17): a view is not a lid over the notes, it is
+                // one of the states in the menu, and the way out of one
+                // state is to pick another — including Docs. The chevron
+                // and the drag-down band it replaced are both gone.
+                if desk.featureShown == nil, case .entity(let id) = desk.activeTab?.content {
                     noteMenu(id)
                 }
             }

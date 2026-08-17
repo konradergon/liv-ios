@@ -1,5 +1,40 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — every state opens on the right, and Docs is one of them
+
+Owner: *"Some views still open above the notes and then slide down, which
+makes the different states in the left panel feel inconsistent. Each
+state should be treated equally as something opening on the right, and
+the notes should remain separate."* — and: the status-bar corners beside
+the camera should not be grey.
+
+**There is no closing a view any more.** A view was a lid: it arrived
+over the notes and slid down off them, which made Docs the ground and
+the other five states things stacked on it. Now every state is one of
+the menu's rows and the way out of one is to pick another — including
+Docs. The glass chevron and the drag-down band are both gone, so the top
+row over a view is the library door and the workspace, and nothing else;
+the ••• belongs to Docs, which is the only state with a document in it.
+
+**The transition is lateral in both directions** (`.move(edge:
+.trailing)`). Picked from the menu, the strip's own travel is still the
+whole motion — this layer is not animated then — so what is left is the
+case with no panel open: a notification or a boot flag, which now slides
+in from the right like everything else.
+
+**The corners.** Verified on the simulator in all six states — desk,
+menu, Today, calendar, search, tab grid: the pixel beside the camera is
+the same as the body's, so every surface already reaches into that band
+after yesterday's `ignoresSafeArea` work. The grey the owner is seeing is
+the build on the phone, which is three commits behind (the device has
+been unreachable to `devicectl` since the links batch); if it survives
+this build, it is a device-only difference and needs a screenshot.
+
+**Kept, deliberately:** the notes stay mounted behind an open view
+rather than being swapped out. It costs nothing on screen — nothing
+slides over or off them now — and it keeps the editor's caret and scroll
+where you left them.
+
 ## 2026-08-17 — the menu is one list, under the same fading top
 
 Owner: *"in the left sidebar it is opaque at the top (do the same as you
