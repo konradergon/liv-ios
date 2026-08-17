@@ -48,6 +48,14 @@ Links section puts one there in two taps: `+ Link…`, type a title,
 real editor); the owner's reason is that the real editor already exists,
 one screen up.
 
+**Also, because the new cost test found it:** the three tests in
+`services/tests/scale.rs` measured their two box sizes at different
+moments, so a scheduler hiccup — or the other tests in the same file —
+could move a ratio without anything being slower. Reproduced on a clean
+tree: one run in three failed. They now build both boxes once and
+measure them in interleaved rounds, taking the best round. Same bounds,
+same guarantees, no random failures in five full-workspace runs.
+
 **Open, flagged not decided:** whether "Links" is the right word when
 `link` is also a KIND (a URL bookmark) in this app; and whether a link
 to a trashed thing should come back when the thing is restored (today it

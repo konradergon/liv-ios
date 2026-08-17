@@ -7,9 +7,17 @@
 //! looks. Measured before the fix: 12 ms at 500 entities, 195 ms at
 //! 4,000, on every snapshot, on a machine much faster than a phone.
 //!
-//! This test asserts the SHAPE, not a wall-clock number: doubling the
+//! These tests assert the SHAPE, not a wall-clock number: doubling the
 //! box must not much more than double the work. A ratio survives slow
 //! CI machines and a debug build; a millisecond budget does not.
+//!
+//! **How the ratio is measured** (2026-08-17). Timing the small box, then
+//! the large one, and dividing was fragile: the two numbers came from
+//! different moments, so one scheduler hiccup — including the other tests
+//! in this file, which run at the same time — moved the ratio without
+//! anything being slower. Both boxes are now built ONCE and then measured
+//! in interleaved rounds, and the reported ratio is the best round. A
+//! hiccup now has to land in the same place in every round to be seen.
 
 use liv_core::*;
 use liv_services::{content, seed_if_fresh};
@@ -25,9 +33,32 @@ fn boxed(name: &str) -> (std::path::PathBuf, Session) {
     (path, session)
 }
 
-/// Build `n` notes and time one file projection over them.
-fn cost(n: usize) -> Duration {
-    let (path, mut session) = boxed(&format!("n{n}"));
+fn time(work: impl Fn()) -> Duration {
+    let start = Instant::now();
+    work();
+    start.elapsed()
+}
+
+/// The best of `rounds` interleaved measurements of the same two reads.
+/// Both closures must already have their boxes built — building inside a
+/// round would time the build.
+fn best_ratio(rounds: usize, small: impl Fn() -> Duration, large: impl Fn() -> Duration) -> f64 {
+    (0..rounds)
+        .map(|_| {
+            let s = time(|| {
+                small();
+            });
+            let l = time(|| {
+                large();
+            });
+            l.as_secs_f64() / s.as_secs_f64().max(1e-9)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Build `n` notes, each with a line of content.
+fn notes(name: &str, n: usize) -> (std::path::PathBuf, Session) {
+    let (path, mut session) = boxed(name);
     let now = DateTime::date(2026, 8, 8);
     for _ in 0..n {
         let id = content::create_note(&mut session, now).unwrap();
@@ -39,35 +70,33 @@ fn cost(n: usize) -> Duration {
         )
         .unwrap();
     }
-    // Best of three: a cold cache or a scheduler hiccup must not fail a
-    // build. The quadratic shape this guards against is a 3-4x jump per
-    // doubling, far outside that noise.
-    let store = session.store();
-    let best = (0..3)
-        .map(|_| {
-            let start = Instant::now();
-            let files = liv_services::vault::expected_files(store);
-            assert_eq!(files.len(), n, "every note projects one file");
-            start.elapsed()
-        })
-        .min()
-        .unwrap();
-    let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    best
+    (path, session)
 }
 
 #[test]
 fn the_file_projection_stays_linear_in_box_size() {
-    let small = cost(400);
-    let large = cost(800);
+    let (small_path, small_box) = notes("n400", 400);
+    let (large_path, large_box) = notes("n800", 800);
+    let project = |session: &Session, n: usize| {
+        time(|| {
+            let files = liv_services::vault::expected_files(session.store());
+            assert_eq!(files.len(), n, "every note projects one file");
+        })
+    };
     // Linear would be ~2x. Quadratic was ~3.3x here and worse as the box
     // grows. 2.6x leaves room for constant per-run overhead at these
     // small sizes without letting a scan back in.
-    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    let ratio = best_ratio(
+        5,
+        || project(&small_box, 400),
+        || project(&large_box, 800),
+    );
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
     assert!(
         ratio < 2.6,
-        "doubling the box multiplied the work by {ratio:.2}x \
-         ({small:?} -> {large:?}); something is scanning the store per entity"
+        "doubling the box multiplied the work by {ratio:.2}x; \
+         something is scanning the store per entity"
     );
 }
 
@@ -81,33 +110,30 @@ fn name_lookup_stays_flat_as_the_box_grows() {
     // cost must not follow the box. With the old scan, 4x the entities
     // made the same thousand lookups ~4x slower; with the index the
     // box's size is irrelevant.
-    fn lookups(box_size: usize) -> Duration {
-        let (path, mut session) = boxed(&format!("lookup{box_size}"));
+    fn plain(name: &str, box_size: usize) -> (std::path::PathBuf, Session) {
+        let (path, mut session) = boxed(name);
         let now = DateTime::date(2026, 8, 9);
         for _ in 0..box_size {
             content::create_note(&mut session, now).unwrap();
         }
-        let store = session.store();
-        let best = (0..3)
-            .map(|_| {
-                let start = Instant::now();
-                for _ in 0..1_000 {
-                    assert!(liv_services::property_id(store, "due").is_some());
-                }
-                start.elapsed()
-            })
-            .min()
-            .unwrap();
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-        best
+        (path, session)
     }
-    let small = lookups(400);
-    let large = lookups(1600);
-    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    let (small_path, small_box) = plain("lookup400", 400);
+    let (large_path, large_box) = plain("lookup1600", 1600);
+    let lookups = |session: &Session| {
+        time(|| {
+            for _ in 0..1_000 {
+                assert!(liv_services::property_id(session.store(), "due").is_some());
+            }
+        })
+    };
+    let ratio = best_ratio(5, || lookups(&small_box), || lookups(&large_box));
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
     assert!(
         ratio < 2.5,
-        "a 4x larger box multiplied the same lookups by {ratio:.2}x \
-         ({small:?} -> {large:?}); property_id is scanning the store again"
+        "a 4x larger box multiplied the same lookups by {ratio:.2}x; \
+         property_id is scanning the store again"
     );
 }
 
@@ -121,8 +147,8 @@ fn reading_links_stays_flat_as_the_box_grows() {
     // The hub keeps the SAME five links in both boxes; everything else
     // in the box links elsewhere, so the index is large either way. A
     // scan of every body would make the 4x box ~4x slower.
-    fn reads(box_size: usize) -> Duration {
-        let (path, mut session) = boxed(&format!("links{box_size}"));
+    fn chain(name: &str, box_size: usize) -> (std::path::PathBuf, Session, Id) {
+        let (path, mut session) = boxed(name);
         let now = DateTime::date(2026, 8, 17);
         let hub = content::create_note(&mut session, now).unwrap();
         let mut previous = hub;
@@ -141,32 +167,30 @@ fn reading_links_stays_flat_as_the_box_grows() {
                 previous = id;
             }
         }
-        let store = session.store();
-        // Best of FIVE: this test shares a machine with the two above,
-        // and a scheduler hiccup in the middle of a 500-read run is the
-        // only thing that has ever moved the ratio.
-        let best = (0..5)
-            .map(|_| {
-                let start = Instant::now();
-                for _ in 0..500 {
-                    assert_eq!(liv_services::links::links(store, hub).inbound.len(), 5);
-                }
-                start.elapsed()
-            })
-            .min()
-            .unwrap();
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-        best
+        (path, session, hub)
     }
-    let small = reads(200);
-    let large = reads(800);
-    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    let (small_path, small_box, small_hub) = chain("links200", 200);
+    let (large_path, large_box, large_hub) = chain("links800", 800);
+    let reads = |session: &Session, hub: Id| {
+        time(|| {
+            for _ in 0..500 {
+                assert_eq!(liv_services::links::links(session.store(), hub).inbound.len(), 5);
+            }
+        })
+    };
+    let ratio = best_ratio(
+        5,
+        || reads(&small_box, small_hub),
+        || reads(&large_box, large_hub),
+    );
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
     // The shape this guards against — walking every body — is ~4x per 4x
     // box, and was measured at 7x when the hub's own link count grew with
-    // the box. 3x leaves room for a loaded machine without letting it in.
+    // the box.
     assert!(
-        ratio < 3.0,
-        "a 4x larger box multiplied the same link reads by {ratio:.2}x \
-         ({small:?} -> {large:?}); links() is following the box, not the entity"
+        ratio < 2.5,
+        "a 4x larger box multiplied the same link reads by {ratio:.2}x; \
+         links() is following the box, not the entity"
     );
 }
