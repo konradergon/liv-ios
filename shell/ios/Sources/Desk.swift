@@ -51,6 +51,12 @@ struct DeskHost: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // TO THE VERY TOP: the words run under the clock and the
+            // battery, with the three glass controls floating over them
+            // (owner, 2026-08-17). What must not land under the buttons
+            // keeps `LivRow.topInset` for itself.
+            .overlay(alignment: .top) { LivTopScrim() }
+            .ignoresSafeArea(edges: .top)
             // The strip: the surface in front waits off screen to the
             // right for as long as the menu is open (owner, 2026-08-17).
             .offset(x: desk.deskShift)
@@ -84,9 +90,15 @@ struct DeskHost: View {
                 }
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
-                // trash. A view is not a document, so over a view there
-                // is nothing for it to act on.
-                if case .entity(let id) = desk.activeTab?.content, desk.featureShown == nil {
+                // trash. A view is not a document, so over a view this
+                // corner holds the way OUT of the view instead: one
+                // place, one glass circle, whichever surface is in front
+                // (owner, 2026-08-17).
+                if let feature = desk.featureShown {
+                    FloatCircle(symbol: "chevron.down", label: "Close \(feature.title)") {
+                        withAnimation(LivMotion.nav) { desk.featureShown = nil }
+                    }
+                } else if case .entity(let id) = desk.activeTab?.content {
                     noteMenu(id)
                 }
             }
@@ -199,7 +211,7 @@ struct DeskHost: View {
         .overlay(alignment: .top) {
             if let text = chipText {
                 chip(text)
-                    .padding(.top, LivRow.topChrome)
+                    .padding(.top, LivRow.topInset)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(2)
             }
@@ -611,23 +623,21 @@ struct FloatCircle: View {
 }
 
 extension View {
-    /// The top row's button dress: the SAME material as the bottom bar
-    /// (owner, 2026-08-15: "should be made of the same thing"), on a
-    /// circle of one FIXED size.
+    /// The top row's button dress: the SAME surface as the bottom bar
+    /// (owner, 2026-08-15: "should be made of the same thing"; 2026-08-17:
+    /// "make all top buttons have a liquid glass style like the bar"), on
+    /// a circle of one FIXED size.
     ///
     /// It wore the system's `.bordered` circle for a day. Two faults,
     /// both visible in a screenshot: that style sizes itself to its
     /// LABEL, so the wide hamburger came out a bigger circle than the
     /// narrow •••; and its fill is derived from the tint, so the two
     /// buttons floated in a lighter grey than the bar they belong with.
-    /// One surface, one hairline, one size — the bar's own recipe.
+    /// One surface, one size — the bar's own recipe, which is now glass.
     func livTopButton(on: Bool = false) -> some View {
         buttonStyle(.plain)
             .frame(width: 40, height: 40)
-            .background(on ? LivTheme.accent : LivTheme.surface, in: Circle())
-            .overlay(
-                Circle().strokeBorder(
-                    on ? Color.clear : LivTheme.border, lineWidth: 0.5))
+            .livGlass(in: Circle(), tinted: on)
             .contentShape(Circle())
     }
 }

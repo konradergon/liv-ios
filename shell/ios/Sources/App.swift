@@ -268,7 +268,7 @@ struct RootView: View {
                     .foregroundStyle(LivTheme.onAccent)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(LivTheme.red, in: Capsule())
-                    .padding(.top, LivRow.topChrome)
+                    .padding(.top, LivRow.topInset)
             }
         }
     }
@@ -352,7 +352,6 @@ struct FeatureLayer: View {
     var body: some View {
         if let feature = desk.featureShown {
             VStack(spacing: 0) {
-                band(feature)
                 Group {
                     switch feature {
                     case .today: TodayView()
@@ -367,51 +366,31 @@ struct FeatureLayer: View {
             .background(LivTheme.canvas.ignoresSafeArea(edges: .top))
             // The bar floats over this, so the view keeps its own room
             // for it: a last row under the bar is a row you cannot read
-            // or reach.
+            // or reach. The three glass controls at the top are the same
+            // bargain, one band up.
             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
+            .safeAreaInset(edge: .top) { LivTopScrim() }
+            .ignoresSafeArea(edges: .top)
+            // The band is gone: closing is the glass chevron in the top
+            // row, where the ••• sits on the desk, and a drag DOWN
+            // anywhere in that band still does it.
+            .gesture(
+                DragGesture(minimumDistance: 24)
+                    .onEnded { g in
+                        if g.startLocation.y < LivRow.topInset && g.translation.height > 40 {
+                            withAnimation(LivMotion.nav) { desk.featureShown = nil }
+                        }
+                    }
+            )
             // IN from the right, OUT downwards. Coming from the menu
             // you travel rightwards into the view — usually as part of
             // the strip's own move, which is why picking a row does not
             // animate this layer as well (DeskModel.show). Leaving is
-            // the band's chevron or a drag DOWN on it, so the view
-            // leaves the way the finger sends it.
+            // the glass chevron in the top row or a drag DOWN in that
+            // band, so the view leaves the way the finger sends it.
             .transition(
                 .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .bottom)))
         }
-    }
-
-    /// The band: the way out, on the RIGHT. The left of this strip
-    /// belongs to the desk's own library door and the workspace button,
-    /// which are painted over this layer (Desk.swift) so that the app's
-    /// primary menu and its global state are in ONE place on every
-    /// surface (owner, 2026-08-17). Dragging the band down closes, like
-    /// every other full-screen surface here.
-    private func band(_ feature: Feature) -> some View {
-        HStack(spacing: 8) {
-            Spacer(minLength: 0)
-            Button {
-                withAnimation(LivMotion.nav) { desk.featureShown = nil }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: LivType.strong, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close \(feature.title)")
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { g in
-                    if g.translation.height > 40 {
-                        withAnimation(LivMotion.nav) { desk.featureShown = nil }
-                    }
-                }
-        )
     }
 }
 

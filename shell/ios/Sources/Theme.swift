@@ -157,6 +157,14 @@ enum LivRow {
     /// starts below this, or it lands on the workspace's own name
     /// (owner, 2026-08-15: "the message is on top of each other").
     static let topChrome: CGFloat = 56
+
+    /// The same band measured from the very top of the SCREEN. Surfaces
+    /// run under the status bar now (owner, 2026-08-17: "the screen
+    /// should also extend to the very top where time and battery
+    /// indicators are and all the top buttons should float above"), so
+    /// anything that must clear the floating buttons has to clear the
+    /// clock as well.
+    static var topInset: CGFloat { LivSafeArea.top + topChrome }
 }
 
 enum LivMotion {

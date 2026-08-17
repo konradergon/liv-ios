@@ -66,7 +66,11 @@ struct SidePanel<Band: View, Content: View>: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
-            .frame(height: LivRow.topChrome)
+            // From the very top of the SCREEN: a panel runs under the
+            // clock like every other surface, and its first row starts
+            // below the glass controls floating over it (owner,
+            // 2026-08-17).
+            .frame(height: LivRow.topInset)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(LivTheme.border).frame(height: 0.5)
             }
@@ -75,6 +79,7 @@ struct SidePanel<Band: View, Content: View>: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LivTheme.canvas.ignoresSafeArea())
+        .ignoresSafeArea(edges: .top)
         // VoiceOver's two-finger scrub, Voice Control's escape.
         .accessibilityAction(.escape, onDismiss)
         // No .transition: DeskHost positions these with an offset that

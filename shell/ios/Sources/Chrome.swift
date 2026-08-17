@@ -1329,23 +1329,72 @@ final class KeyboardWatch: ObservableObject {
     deinit { tokens.forEach(NotificationCenter.default.removeObserver) }
 }
 
-/// The bar's surface: Liquid Glass where the phone has it (iOS 26), a
-/// material capsule where it does not. One place, because the bar is not
-/// the only thing that will want it.
+/// The app's ONE floating surface: Liquid Glass where the phone has it
+/// (iOS 26), a material where it does not. The bar wears it, and so does
+/// every button at the top of the screen (owner, 2026-08-17: "make all
+/// top buttons have a liquid glass style like the bar").
 ///
 /// Glass brings its own edge and shading, so nothing is stacked on top
-/// of it — the border and drop shadow the solid capsule needed would
-/// read as a second, duller rim.
-struct LivGlassCapsule: ViewModifier {
+/// of it — the border and drop shadow a solid capsule needed would read
+/// as a second, duller rim. Below iOS 26 they come back, because a flat
+/// material with no rim has no edge at all.
+///
+/// `tinted` is the ON state — the library door while the menu is open.
+struct LivGlass<S: Shape>: ViewModifier {
+    let shape: S
+    var tinted = false
+
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: .capsule)
+            // NOT `.interactive()`: that variant takes the touch for its
+            // own press effect, and a button wearing it stops firing
+            // (the library door, found live 2026-08-17).
+            content.glassEffect(
+                tinted ? .regular.tint(LivTheme.accent) : .regular, in: shape)
         } else {
             content
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+                .background(
+                    tinted ? AnyShapeStyle(LivTheme.accent) : AnyShapeStyle(.ultraThinMaterial),
+                    in: shape
+                )
+                .overlay(shape.stroke(LivTheme.border, lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         }
+    }
+}
+
+extension View {
+    func livGlass<S: Shape>(in shape: S, tinted: Bool = false) -> some View {
+        modifier(LivGlass(shape: shape, tinted: tinted))
+    }
+
+}
+
+/// THE SOFT EDGE. Every surface runs under the clock now (owner,
+/// 2026-08-17), so the top band fades from the ground colour to nothing:
+/// without it a list scrolled to the top puts its words through the
+/// time, and the glass controls lose their contrast.
+///
+/// It belongs to the SURFACE, not to the chrome — as its own layer in
+/// the desk's stack it swallowed the library door's taps, whatever
+/// `allowsHitTesting` said (found live). A view hands it to
+/// `safeAreaInset`, which is also what reserves the room; the desk
+/// overlays it on the words.
+struct LivTopScrim: View {
+    var body: some View {
+        // Solid where the clock is, then a fade under the controls: a
+        // plain two-stop gradient left words legible behind the time.
+        LinearGradient(
+            stops: [
+                .init(color: LivTheme.canvas, location: 0),
+                .init(color: LivTheme.canvas, location: 0.45),
+                .init(color: LivTheme.canvas.opacity(0), location: 1),
+            ],
+            startPoint: .top, endPoint: .bottom
+        )
+        .frame(height: LivRow.topInset)
+        .frame(maxWidth: .infinity)
+        .allowsHitTesting(false)
     }
 }
 
@@ -1411,7 +1460,7 @@ struct BottomBar: View {
         .padding(.horizontal, 4)
         .frame(height: LivRow.height)
         .frame(maxWidth: .infinity)
-        .modifier(LivGlassCapsule())
+        .livGlass(in: Capsule())
         .padding(.horizontal, 16)
     }
 

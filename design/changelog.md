@@ -1,5 +1,41 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — the whole screen, with the controls floating on it
+
+Owner: *"make all top buttons have a liquid glass style like the bar.
+The screen should also extend to the very top where time and battery
+indicators are and all the top buttons should float above."*
+
+**One glass, everywhere.** `LivGlass` takes any shape, so the bar's
+capsule, the two door circles and the workspace button are now the same
+surface — Liquid Glass on iOS 26, a material capsule below it. The
+workspace button had no ground at all before; it is a control like the
+others, so it wears one. The library door's ON state is tinted glass
+rather than a flat accent fill.
+
+**Every surface runs to the very top.** The desk, the views and both
+panels ignore the top safe area, so words and rows pass under the clock
+and the battery. What must clear the floating controls keeps
+`LivRow.topInset` — the status bar plus the 56pt band — and that is one
+token, not a number spread over five files.
+
+**The soft edge.** Content under a clock is unreadable without one, so
+the top band fades from the ground colour to nothing: solid where the
+time is, gone by the bottom of the controls. It belongs to the SURFACE
+(a view hands it to `safeAreaInset`, which is also what reserves the
+room; the desk overlays it on the words) — as its own layer in the
+desk's stack it swallowed the library door's taps, whatever
+`allowsHitTesting` said. Found live, and the reason is recorded in
+`LivTopScrim`.
+
+**The view's band is gone.** Closing a view is a glass chevron in the
+top row, in the corner the ••• uses on the desk — one place for the way
+out, whichever surface is in front — and a drag down in that band still
+closes.
+
+Also found live: `.glassEffect(.regular.interactive())` on a button
+stops it firing. The plain variant is what ships.
+
 ## 2026-08-17 — one row for every card
 
 Owner: *"The slide-in workspace card has a different style from the

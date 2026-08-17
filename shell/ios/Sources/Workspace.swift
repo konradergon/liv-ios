@@ -497,13 +497,17 @@ struct WorkspaceButton: View {
                     .font(.system(size: LivType.micro, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             // Capped so a long name never reaches the doors either side.
             .frame(maxWidth: 170)
-            .frame(height: 44)
-            .contentShape(Rectangle())
+            // The doors' own height, because they are one row of
+            // controls: three pieces of the same glass (owner,
+            // 2026-08-17).
+            .frame(height: 40)
         }
         .buttonStyle(.plain)
+        .livGlass(in: Capsule())
+        .contentShape(Capsule())
         .accessibilityLabel("Workspace: \(workspaces.activeName). Switch")
     }
 }

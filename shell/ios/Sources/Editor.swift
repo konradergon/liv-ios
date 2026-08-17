@@ -883,7 +883,7 @@ struct NoteEditor: View {
                 }
                 if failed { notice("Could not save. It will try again.") }
             }
-            .padding(.top, embedded ? 0 : LivRow.topChrome)
+            .padding(.top, embedded ? 0 : LivRow.topInset)
         }
     }
 
