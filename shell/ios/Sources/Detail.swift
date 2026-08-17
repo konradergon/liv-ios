@@ -180,6 +180,7 @@ struct EntityInspector: View {
                         cellRow(group)
                     }
                 }
+            LinksSection(id: id)
             suggestions
             // Facts you cannot change are not rows. A row that looks like
             // every other row and does nothing when tapped is a lie about
@@ -394,6 +395,11 @@ struct EntityInspector: View {
                 // Templates left the app (2026-08-15); an older box may
                 // still carry the marker cell, and it is not a field.
                 "template", dueProperty(row),
+                // Links have their own section below, with both
+                // directions and a door that makes one. A read-only chip
+                // row up here would be the same fact said twice
+                // (2026-08-17).
+                "related",
             ] + InspectorField.core)
     }
 

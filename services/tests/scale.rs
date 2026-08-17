@@ -110,3 +110,63 @@ fn name_lookup_stays_flat_as_the_box_grows() {
          ({small:?} -> {large:?}); property_id is scanning the store again"
     );
 }
+
+/// Links, both directions (2026-08-17). "What points at me" is the read
+/// that tempts a scan: every body in the box holds `[[ ]]` tokens, and
+/// the honest-looking way to answer is to walk them all. The core keeps
+/// a backlink index instead, so reading ONE entity's links must cost
+/// what that entity's links cost — never what the box costs.
+#[test]
+fn reading_links_stays_flat_as_the_box_grows() {
+    // The hub keeps the SAME five links in both boxes; everything else
+    // in the box links elsewhere, so the index is large either way. A
+    // scan of every body would make the 4x box ~4x slower.
+    fn reads(box_size: usize) -> Duration {
+        let (path, mut session) = boxed(&format!("links{box_size}"));
+        let now = DateTime::date(2026, 8, 17);
+        let hub = content::create_note(&mut session, now).unwrap();
+        let mut previous = hub;
+        for i in 0..box_size {
+            let id = content::create_note(&mut session, now).unwrap();
+            // A chain: each note points at the one before it. Only the
+            // first five reach the hub.
+            content::set_content(
+                &mut session,
+                id,
+                vec![Span::Text(TextSpan::plain("see ")), Span::Ref(previous)],
+                0,
+            )
+            .unwrap();
+            if i >= 4 {
+                previous = id;
+            }
+        }
+        let store = session.store();
+        // Best of FIVE: this test shares a machine with the two above,
+        // and a scheduler hiccup in the middle of a 500-read run is the
+        // only thing that has ever moved the ratio.
+        let best = (0..5)
+            .map(|_| {
+                let start = Instant::now();
+                for _ in 0..500 {
+                    assert_eq!(liv_services::links::links(store, hub).inbound.len(), 5);
+                }
+                start.elapsed()
+            })
+            .min()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        best
+    }
+    let small = reads(200);
+    let large = reads(800);
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    // The shape this guards against — walking every body — is ~4x per 4x
+    // box, and was measured at 7x when the hub's own link count grew with
+    // the box. 3x leaves room for a loaded machine without letting it in.
+    assert!(
+        ratio < 3.0,
+        "a 4x larger box multiplied the same link reads by {ratio:.2}x \
+         ({small:?} -> {large:?}); links() is following the box, not the entity"
+    );
+}

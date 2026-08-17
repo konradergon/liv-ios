@@ -110,6 +110,17 @@ char *liv_search_at(const char *path, const char *raw_query);
    is unavailable. Free with liv_string_free. */
 char *liv_content_history_at(const char *path, uint64_t id);
 
+/* Both directions of an entity's links, as one JSON object:
+   {"out":[{"id":N,"name":"..","kinds":["note"],"property":"related",
+            "from_body":false}, ..],
+    "in":[..]}
+   One mechanism, two doors: a [[ ]] typed in a body (from_body true) and
+   a link picked in properties (a `related` cell) are the same edge.
+   Filing and backstage furniture are not links. An unknown id answers
+   with two empty lists. NULL when the box is unavailable. Free with
+   liv_string_free. */
+char *liv_links_at(const char *path, uint64_t id);
+
 /* Birth of a note: Create + type:note + created, one transaction.
    Returns the id, 0 on failure. Caller drops straight into renaming. */
 uint64_t liv_create_note_at(const char *path);

@@ -2367,6 +2367,67 @@ fn list_membership_through_the_seam() {
 }
 
 #[test]
+fn links_cross_the_seam_in_both_directions() {
+    let (path, c_path) = fresh_box("liv_ffi_links.log");
+    let hub = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let picked = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let typed = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let name = CString::new("name").unwrap();
+    for (id, text) in [(hub, "Hub"), (picked, "Picked"), (typed, "Typed")] {
+        let value = CString::new(text).unwrap();
+        assert_eq!(
+            unsafe { liv_set_at(c_path.as_ptr(), id, name.as_ptr(), value.as_ptr()) }, 1);
+    }
+
+    // Door one: a link picked in properties.
+    let related = CString::new("related").unwrap();
+    let picked_ref = CString::new(format!("#{picked}")).unwrap();
+    assert_eq!(
+        unsafe { liv_add_cell_at(c_path.as_ptr(), hub, related.as_ptr(), picked_ref.as_ptr()) },
+        1);
+    // Door two: a [[ ]] typed in the body — a Ref span, nothing else.
+    let spans = CString::new(format!(r#"[{{"Text":{{"text":"see ","marks":0}}}},{{"Ref":{typed}}}]"#))
+        .unwrap();
+    assert_eq!(
+        unsafe { liv_set_content_at(c_path.as_ptr(), hub, spans.as_ptr(), 0, std::ptr::null_mut()) },
+        1);
+
+    let links = unsafe { read_json(liv_links_at(c_path.as_ptr(), hub)) };
+    let out = links["out"].as_array().unwrap();
+    assert_eq!(out.len(), 2, "one list, both doors: {links}");
+    assert_eq!(out[0]["id"].as_u64(), Some(picked));
+    assert_eq!(out[0]["name"], "Picked");
+    assert_eq!(out[0]["from_body"], false);
+    assert_eq!(out[1]["id"].as_u64(), Some(typed));
+    assert_eq!(out[1]["from_body"], true);
+    assert!(links["in"].as_array().unwrap().is_empty());
+
+    // …and the other end sees it coming back, through either door.
+    for target in [picked, typed] {
+        let back = unsafe { read_json(liv_links_at(c_path.as_ptr(), target)) };
+        let inbound = back["in"].as_array().unwrap();
+        assert_eq!(inbound.len(), 1, "#{target} is linked from the hub: {back}");
+        assert_eq!(inbound[0]["id"].as_u64(), Some(hub));
+        assert_eq!(inbound[0]["name"], "Hub");
+    }
+
+    // Unlinking is a removal of the cell — never a delete of the target.
+    assert_eq!(
+        unsafe { liv_remove_cell_at(c_path.as_ptr(), hub, related.as_ptr(), picked_ref.as_ptr()) },
+        1);
+    let after = unsafe { read_json(liv_links_at(c_path.as_ptr(), hub)) };
+    assert_eq!(after["out"].as_array().unwrap().len(), 1);
+    let orphan = unsafe { read_json(liv_links_at(c_path.as_ptr(), picked)) };
+    assert!(orphan["in"].as_array().unwrap().is_empty(), "the backlink went with it");
+
+    // An unknown id answers empty, never null.
+    let none = unsafe { read_json(liv_links_at(c_path.as_ptr(), 999_999)) };
+    assert!(none["out"].as_array().unwrap().is_empty());
+
+    cleanup(&path);
+}
+
+#[test]
 fn a_nul_byte_in_extracted_text_survives_the_seam() {
     let (path, c_path) = fresh_box("liv_ffi_nul.log");
     // A text-format file with an embedded NUL (a null-padded log).

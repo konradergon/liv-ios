@@ -16,6 +16,7 @@ pub mod export;
 pub mod files;
 pub mod habits;
 pub mod import;
+pub mod links;
 pub mod markdown;
 pub mod recurrence;
 pub mod search;

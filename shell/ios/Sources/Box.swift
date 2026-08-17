@@ -183,6 +183,37 @@ struct ContentDoc: Decodable {
     var spans: [SpanJSON]?
 }
 
+/// One end of a link, as the box reports it (liv_links_at). EVERY field
+/// Optional — the standing law.
+struct LinkRow: Decodable, Identifiable, Equatable {
+    var id: UInt64?
+    var name: String?
+    var kinds: [String]?
+    /// "related" for a link picked in properties, "content" for one typed
+    /// in a body.
+    var property: String?
+    /// Typed in a body: the brackets ARE the link, so it is removed by
+    /// editing the words, never from a list.
+    var fromBody: Bool?
+}
+
+/// Both directions at once — what this thing points at, and what points
+/// at it. `inbound` is the wire's `in` (a Swift keyword).
+struct LinkSet: Decodable, Equatable {
+    var out: [LinkRow]?
+    var inbound: [LinkRow]?
+
+    enum CodingKeys: String, CodingKey {
+        case out
+        case inbound = "in"
+    }
+
+    static let empty = LinkSet(out: [], inbound: [])
+    var outRows: [LinkRow] { out ?? [] }
+    var inRows: [LinkRow] { inbound ?? [] }
+    var isEmpty: Bool { outRows.isEmpty && inRows.isEmpty }
+}
+
 // MARK: - private wires (payloads the model flattens before publishing)
 
 private struct DistinctWire: Decodable {
@@ -674,6 +705,33 @@ final class BoxModel: ObservableObject {
                     "content decode failed: \(String(describing: error), privacy: .public)")
             }
             DispatchQueue.main.async { done(doc) }
+        }
+    }
+
+    /// Both directions of one entity's links (liv_links_at): what it
+    /// points at, and what points at it. A `[[ ]]` typed in a body and a
+    /// link picked in properties are the same edge — the core indexes
+    /// both — so this is the only reader either list needs.
+    func links(_ id: UInt64, done: @escaping (LinkSet) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            guard let raw = liv_links_at(path, id) else {
+                self.verbFailed("links")
+                DispatchQueue.main.async { done(.empty) }
+                return
+            }
+            let json = String(cString: raw)
+            liv_string_free(raw)
+            var set = LinkSet.empty
+            do {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                set = try decoder.decode(LinkSet.self, from: Data(json.utf8))
+            } catch {
+                Self.log.error(
+                    "links decode failed: \(String(describing: error), privacy: .public)")
+            }
+            DispatchQueue.main.async { done(set) }
         }
     }
 

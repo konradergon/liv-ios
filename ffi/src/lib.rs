@@ -953,6 +953,36 @@ pub unsafe extern "C" fn liv_content_history_at(path: *const c_char, id: u64) ->
     })
 }
 
+/// Both directions of an entity's LINKS, as one JSON object:
+/// `{"out":[Link…],"in":[Link…]}` with
+/// `Link = {"id","name","kinds":[..],"property","from_body"}`.
+///
+/// One mechanism, two doors (feature-map §6): a `[[ ]]` typed in a body
+/// is a `Ref` span, a link picked in properties is a `related` cell, and
+/// both are the same edge — `from_body` says only WHERE it lives, which
+/// is what decides whether the shell may remove it in place. `in` is the
+/// core's backlink index, so it costs what the entity's links cost, not
+/// what the box costs (services/tests/scale.rs).
+///
+/// Filing (`area`, `project`, `people`, `type`) is not a link, and
+/// backstage furniture (layers, pins, anything `working`) never appears.
+/// An unknown id answers with two empty lists. Null only when the box is
+/// unavailable. Free with `liv_string_free`.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn liv_links_at(path: *const c_char, id: u64) -> *mut c_char {
+    with_box(path, std::ptr::null_mut(), |session| {
+        let links = liv_services::links::links(session.store(), id);
+        let out = match serde_json::to_string(&links).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Read)
+    })
+}
+
 /// Birth of a note: Create + type + created, one transaction. Returns
 /// the id, 0 on failure. The caller drops straight into renaming.
 ///

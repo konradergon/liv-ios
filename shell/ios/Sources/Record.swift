@@ -335,6 +335,14 @@ struct RecordBody: View {
 
     // MARK: notes — the note editor, embedded
 
+    /// A record's own notes: shown only when it ALREADY has some.
+    ///
+    /// The "Add notes" door is gone (owner, 2026-08-17: "there is already
+    /// an editor. I think links should achieve this"). A task does not
+    /// need a second, smaller place to write: prose about it is a note,
+    /// and the Links section below puts one there in two taps. What was
+    /// written before this change stays exactly where it was, in the
+    /// same editor — nothing becomes unreachable.
     @ViewBuilder private var notesSection: some View {
         if notesShown {
             SectionLabel("Notes")
@@ -361,24 +369,6 @@ struct RecordBody: View {
                 showsTitle: false,
                 embedded: true
             )
-
-        } else {
-            Button {
-                withAnimation(LivMotion.nav) { notesShown = true }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                    Text("Add notes")
-                        .font(.system(size: LivType.body, weight: .medium))
-                    Spacer()
-                }
-                .foregroundStyle(LivTheme.accent)
-                .frame(height: 44)
-                .contentShape(Rectangle())
-            }            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
         }
     }
 }

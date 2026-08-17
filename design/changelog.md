@@ -1,5 +1,58 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — one link mechanism, two doors, both directions
+
+Owner: *"'Add notes…' in properties (as with tasks). There is already an
+editor. I think links should achieve this. Speaking of which, we should
+have a link property as an alternative to inline `[[]]` links. Both
+methods should use the same link mechanism and under properties it
+should be possible to view back/forward links."*
+
+**The mechanism was already one.** A `[[ ]]` typed in a body is a `Ref`
+span inside the content cell; a link picked in properties is a `related`
+cell. Both are `Value::targets()`, so the core has indexed both, in both
+directions, since the beginning — `Store::backlinks` (core/src/store.rs).
+Nothing about the data model changed. What was missing was a reader and
+a way to see it: nothing above the core had ever called that index, and
+no `liv_*` verb exposed it.
+
+**New: `services::links::links(store, id)`** — the one reader, with the
+rules in one place. Outgoing = `related` cells then body refs in reading
+order, deduped (a target picked AND typed is one row, and the removable
+one wins). Incoming = one index lookup. Filing is not a link: `area`,
+`project`, `people` and `type` are references too, and a "linked from"
+list that swallowed every filed note would say nothing. Backstage
+furniture is not a link either — a saved layout holds its tabs as
+`related` cells and must never read as "linked from". 10 tests, plus a
+COST test: a 4x box must not make one entity's link read 4x slower
+(the first version of that test failed at 7x and found its own bug).
+
+**New FFI verb (purely additive, flagged): `liv_links_at(path, id)`** →
+`{"out":[…],"in":[…]}`, each row `{id,name,kinds,property,from_body}`.
+
+**Properties gains a Links section**, on notes and records alike (one
+component, both homes). Rows carry the target's own kind chip and title —
+the same helpers every other list uses, so a nameless note reads
+"Untitled" here too. A picked link has a ✕; a body link has none, and
+wears a small mark instead, because the brackets ARE the link and the
+words are where it is removed. Below the rows, "+ Link…" — which opens
+SEARCH, the same screen `[[` opens, with the same find-or-create row.
+Then "Linked from", when anything points back. Long lists show 8 and say
+"Show all N" rather than turning the panel into one thing.
+
+**"Add notes" is gone from a record.** The embedded editor stays for a
+record that already carries notes — nothing became unreachable — but
+there is no door that starts one. Prose about a task is a note, and the
+Links section puts one there in two taps: `+ Link…`, type a title,
+"Create". This reverses part of 2026-08-10 (a record's notes reused the
+real editor); the owner's reason is that the real editor already exists,
+one screen up.
+
+**Open, flagged not decided:** whether "Links" is the right word when
+`link` is also a KIND (a URL bookmark) in this app; and whether a link
+to a trashed thing should come back when the thing is restored (today it
+drops from both lists, and a body link demotes to text on save).
+
 ## 2026-08-17 — one create key, and it never leaves
 
 Owner: *"don't have the create dynamically disappear. later on we should
