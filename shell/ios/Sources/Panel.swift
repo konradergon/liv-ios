@@ -38,59 +38,30 @@ import SwiftUI
 /// buttons"). A panel is DRAGGED back — the gesture the owner asked for
 /// on 2026-08-08, and the same one that opens it. The escape action
 /// below is what remains for anyone not using a finger.
-struct SidePanel<Band: View, Content: View>: View {
+struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
-    /// What sits in the panel's own top band, beside the pinned
-    /// workspace button that floats over every surface. Usually nothing
-    /// — see the EmptyView init below.
-    let band: Band
     @ViewBuilder let content: Content
 
-    init(
-        onDismiss: @escaping () -> Void,
-        @ViewBuilder band: () -> Band,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.onDismiss = onDismiss
-        self.band = band()
-        self.content = content()
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
-            // The band both panels own: the same 56pt the desk's chrome
-            // owns, so the tops line up and nothing a panel draws lands
-            // under the workspace name floating above it.
-            HStack(spacing: 0) {
-                band
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            // From the very top of the SCREEN: a panel runs under the
-            // clock like every other surface, and its first row starts
-            // below the glass controls floating over it (owner,
-            // 2026-08-17).
-            .frame(height: LivRow.topInset)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
-            }
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(LivTheme.canvas.ignoresSafeArea())
-        .ignoresSafeArea(edges: .top)
-        // VoiceOver's two-finger scrub, Voice Control's escape.
-        .accessibilityAction(.escape, onDismiss)
-        // No .transition: DeskHost positions these with an offset that
-        // follows the finger, and a transition on top of it would move
-        // the panel twice (owner, 2026-08-08).
-    }
-}
-
-extension SidePanel where Band == EmptyView {
-    init(onDismiss: @escaping () -> Void, @ViewBuilder content: () -> Content) {
-        self.init(onDismiss: onDismiss, band: { EmptyView() }, content: content)
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // THE SAME TOP A VIEW HAS (owner, 2026-08-17: "in the left
+            // sidebar it is opaque at the top — do the same as you did
+            // for views here"): the list runs under the clock and fades
+            // out behind it. What was here instead: 56pt of empty band
+            // with a hairline under it, which read as a bar that was not
+            // one.
+            .safeAreaInset(edge: .top) { LivTopScrim() }
+            // And the same room at the foot, because the bar floats over
+            // a panel too.
+            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
+            .background(LivTheme.canvas.ignoresSafeArea())
+            .ignoresSafeArea(edges: .top)
+            // VoiceOver's two-finger scrub, Voice Control's escape.
+            .accessibilityAction(.escape, onDismiss)
+            // No .transition: DeskHost positions these with an offset
+            // that follows the finger, and a transition on top of it
+            // would move the panel twice (owner, 2026-08-08).
     }
 }
 
@@ -210,11 +181,26 @@ struct LibraryPanel: View {
                                 onWorkspace()
                             }
                         }
+
+                        // Settings is the LAST ROW, not a pinned foot
+                        // (owner, 2026-08-17: "Settings being fixed when
+                        // you scroll and the bar inside here means
+                        // something hasn't been thought through"). Two
+                        // fixed layers at the foot of one list — a
+                        // pinned row and the global bar floating over it
+                        // — was one too many, and the bar is the one
+                        // that belongs to the whole app.
+                        SectionLabel("App")
+                            .padding(.horizontal, 10)
+                            .padding(.top, 22)
+                            .padding(.bottom, 2)
+                        row("Settings", glyph: .settings) {
+                            onSettings()
+                        }
                     }
                     .padding(.horizontal, 6)
                     .padding(.top, 8)
                 }
-                bottomBand
         }
     }
 
@@ -240,33 +226,6 @@ struct LibraryPanel: View {
         desk.featureShown = nil
         onDismiss()
         if onDesk { desk.switcherShown = true }
-    }
-
-    /// Pinned below the scroll (rev 6): the app's own door. "Where you
-    /// are" left this band on 2026-08-13 — the workspace is named at the
-    /// top of the screen now, over this panel, and a second copy at the
-    /// foot was the same fact twice.
-    private var bottomBand: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            row("Settings", glyph: .settings) {
-                onSettings()
-            }
-        }
-        .padding(.horizontal, 6)
-        // The bar floats over this panel — it is global and does not
-        // travel with the surface — so the pinned foot keeps its own
-        // room under it, exactly as a view does.
-        .padding(.bottom, 62)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // NO fill. It had a grey one for a few hours, on the theory that
-        // a place wants its own foot; on screen that is a slab of tone
-        // around a single row, saying nothing (owner, 2026-08-15: "what
-        // is the grey area towards the bottom in library? looks off").
-        // The hairline is the whole job: Settings is pinned, and a line
-        // says so.
-        .overlay(alignment: .top) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
     }
 
     /// One list row. NO hairline: a line between rows is what a FORM

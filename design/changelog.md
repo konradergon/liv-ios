@@ -1,5 +1,27 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — the menu is one list, under the same fading top
+
+Owner: *"in the left sidebar it is opaque at the top (do the same as you
+did for views here). Settings being fixed when you scroll and the bar
+inside here means something hasn't been thought through here."*
+
+**The panels get a view's top.** Both of them: 56pt of empty band with a
+hairline under it is gone, and in its place the same fading scrim a view
+uses — the list runs under the clock and fades out behind it. That band
+was drawing a line that read as a bar which was not one.
+
+**One fixed thing at the foot, not two.** Settings was pinned below the
+scroll while the global bar floated over it — two layers stacked at the
+bottom of one list, and the pinned one was the app's smallest door.
+Settings is now the last ROW of the menu, under an "App" heading, and
+the list keeps 58pt of room for the bar, exactly as a view does. The
+bar is the one thing that belongs to the whole app, so it is the one
+thing that stays.
+
+The properties panel inherits both, which fixes something nobody had
+reported: its last rows used to sit under the bar.
+
 ## 2026-08-17 — the whole screen, with the controls floating on it
 
 Owner: *"make all top buttons have a liquid glass style like the bar.
