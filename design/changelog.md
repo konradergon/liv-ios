@@ -1,5 +1,32 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — one row for every card
+
+Owner: *"The slide-in workspace card has a different style from the
+'New' card for example. Like the latter more since it has bigger text
+and looks simpler."*
+
+There were two row styles for the same job. The `+` menu drew its list
+at title size with a 24pt glyph and a hairline inset past it; the
+workspace card drew its own at body size with an 18pt glyph, chips under
+each name and a hairline under every line. One list of things to choose
+from, drawn two ways, is what standing rule 4 exists to stop — so there
+is **one row now** (`LivMenuRow`) and **one title** (`LivMenuTitle`),
+and the plainer, larger one won.
+
+The workspace card is that row throughout: "Workspace" in the menu's own
+title, All and each workspace with its emoji or ring, a checkmark on the
+one you are in, "New workspace…" in the accent. The two cards differ in
+exactly one thing now, which is the edge they hang from — the workspace
+card from the top, where its button is, and the create menu from the
+bottom, where its key is.
+
+**Gone with the smaller type:** the lens chips under each workspace
+name. A workspace's lens is still on screen where it acts — the filter
+chip in every view's header, and the filters in the menu — but if you
+want to see at a glance what each workspace keeps to, say so and it
+comes back as a second line.
+
 ## 2026-08-17 — one strip: the menu on the left, everything else to its right
 
 Owner: *"Have it so that you move from the bar to the right and into the

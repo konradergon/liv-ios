@@ -42,6 +42,99 @@ struct LivMenu: Identifiable {
     let items: [LivMenuItem]
 }
 
+// MARK: - one row, for every card
+
+/// The row BOTH cards are made of (owner, 2026-08-17: the workspace card
+/// "has a different style from the 'New' card… like the latter more
+/// since it has bigger text and looks simpler").
+///
+/// It was two: the menu's row at title size with a 26pt icon slot, and
+/// the workspace switcher's own at body size with an 18pt one, plus
+/// chips under the label and a hairline under every line. One list of
+/// things to choose from, drawn two ways, is exactly what standing rule
+/// 4 is about — so there is one row now, and the plainer, larger one
+/// won.
+struct LivMenuRow: View {
+    let label: String
+    var glyph: LivGlyph?
+    var symbol: String?
+    /// A workspace may wear an emoji instead of a glyph.
+    var emoji: String?
+    /// The one you are on: a checkmark, the way a list marks a choice.
+    var selected = false
+    var chevron = false
+    var destructive = false
+    /// A door rather than a choice — "New workspace…" — in the accent.
+    var accent = false
+    /// A hairline above, inset past the icon: rows after the first.
+    var divided = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Group {
+                    if let emoji, !emoji.isEmpty {
+                        Text(emoji).font(.system(size: LivType.title))
+                    } else if let glyph {
+                        LivIcon(glyph: glyph, color: tint(icon: true), size: 24)
+                    } else if let symbol {
+                        Image(systemName: symbol)
+                            .font(.system(size: LivType.title))
+                            .foregroundStyle(tint(icon: true))
+                    }
+                }
+                .frame(width: 26)
+                Text(label)
+                    .font(.system(size: LivType.title, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(tint(icon: false))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: LivType.body, weight: .semibold))
+                        .foregroundStyle(LivTheme.accent)
+                }
+                if chevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: LivType.caption, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(height: LivRow.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            if divided {
+                Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                    .padding(.leading, 54)
+            }
+        }
+    }
+
+    private func tint(icon: Bool) -> Color {
+        if destructive { return LivTheme.red }
+        if accent { return LivTheme.accent }
+        return icon ? LivTheme.text2 : LivTheme.text
+    }
+}
+
+/// The title both cards wear: the one word for what the card is.
+struct LivMenuTitle: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: LivType.title, weight: .semibold))
+            .foregroundStyle(LivTheme.text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+    }
+}
+
 // MARK: - a sheet from the TOP
 
 /// A whole SCREEN of content, arriving from the top edge — the same
@@ -270,13 +363,7 @@ struct LivMenuHost: ViewModifier {
             if !up { Spacer(minLength: 0).frame(height: 4) }
             if up { grabber }
             if let title = menu.title {
-                Text(title)
-                    .font(.system(size: LivType.title, weight: .semibold))
-                    .foregroundStyle(LivTheme.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 6)
-                    .padding(.bottom, 6)
+                LivMenuTitle(text: title)
             }
             ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
                 row(item, divided: i > 0)
@@ -308,50 +395,16 @@ struct LivMenuHost: ViewModifier {
     }
 
     private func row(_ item: LivMenuItem, divided: Bool) -> some View {
-        Button {
+        LivMenuRow(
+            label: item.label, glyph: item.glyph, symbol: item.symbol,
+            chevron: item.chevron, destructive: item.destructive, divided: divided
+        ) {
             close()
             // After the motion, not during it: a sheet that acts while
             // it is still moving takes the new screen's first frame with
             // it (the panels' own rule).
             DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
                 item.action()
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Group {
-                    if let glyph = item.glyph {
-                        LivIcon(
-                            glyph: glyph,
-                            color: item.destructive ? LivTheme.red : LivTheme.text2,
-                            size: 24)
-                    } else if let symbol = item.symbol {
-                        Image(systemName: symbol)
-                            .font(.system(size: LivType.title))
-                            .foregroundStyle(
-                                item.destructive ? LivTheme.red : LivTheme.text2)
-                    }
-                }
-                .frame(width: 26)
-                Text(item.label)
-                    .font(.system(size: LivType.title))
-                    .foregroundStyle(item.destructive ? LivTheme.red : LivTheme.text)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                if item.chevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                }
-            }
-            .padding(.horizontal, 16)
-            .frame(height: LivRow.height)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .top) {
-            if divided {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                    .padding(.leading, 54)
             }
         }
     }

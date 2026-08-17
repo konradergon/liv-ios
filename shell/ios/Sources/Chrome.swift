@@ -733,19 +733,20 @@ struct WorkspaceSwitcher: View {
                 // a list of workspaces above a filter you are naming is
                 // the wrong screen (owner, 2026-08-13).
                 if !composingFilter {
-                    SectionLabel("Workspace")
-                        .padding(.bottom, 4)
+                    // The SAME title and rows the `+` menu wears (owner,
+                    // 2026-08-17: bigger text, simpler). This card used
+                    // to draw its own smaller, denser list.
+                    LivMenuTitle(text: "Workspace")
                     choice(
-                        name: "All", lens: LivQuery.empty,
-                        active: workspaces.activeId == 0, glyph: .workspaces
+                        name: "All", active: workspaces.activeId == 0,
+                        glyph: .workspaces, divided: false
                     ) {
                         choose(0)
                     }
-                    ForEach(workspaces.workspaces) { ws in
+                    ForEach(Array(workspaces.workspaces.enumerated()), id: \.element.id) { _, ws in
                         choice(
-                            name: ws.display, lens: queryLens(ws),
-                            active: workspaces.activeId == ws.id, glyph: .workspace,
-                            emoji: ws.emoji
+                            name: ws.display, active: workspaces.activeId == ws.id,
+                            glyph: .workspace, emoji: ws.emoji, divided: true
                         ) {
                             choose(ws.id)
                         }
@@ -781,13 +782,14 @@ struct WorkspaceSwitcher: View {
                 // Filters LIVE in the library panel now; only their form
                 // is still here, opened by the panel's "New filter…".
                 if composingFilter {
-                    SectionLabel("New filter")
-                        .padding(.bottom, 4)
+                    LivMenuTitle(text: "New filter")
                     newFilterForm
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        // The ROWS carry their own 16pt inset, like the menu's; only the
+        // forms below need the card's.
+        .padding(.vertical, 4)
         // No .presentationDetents: it is not a sheet any more. It hangs
         // from the workspace button at the top (LivTopSheetHost), which
         // sizes itself to this content and scrolls only when it must.
@@ -814,96 +816,31 @@ struct WorkspaceSwitcher: View {
         }
     }
 
-    /// The lens, read straight off the wire. A workspace with no query
-    /// shows NOTHING — "no query" was a placeholder standing in for an
-    /// absence the empty line already states (owner, 2026-08-06).
-    private func queryLens(_ ws: WorkspaceRow) -> LivQuery {
-        LivQuery.parse(workspaces.query(of: ws.id) ?? "")
-    }
-
-    /// The VALUES a lens keeps to — the same words the pickers offered.
-    /// Everything else a hand-made query can say (exclusions, presence
-    /// tests, free text) has no chip: a chip is a value, and inventing a
-    /// shorthand for the rest would be the query language again, spelled
-    /// differently. A lens made of those alone shows nothing.
-    private func lensChips(_ lens: LivQuery) -> [String] {
-        lens.terms.compactMap { term in
-            if case .equals(_, let value) = term { return value }
-            return nil
-        }
-    }
-
     private func choose(_ id: UInt64, close: Bool = true) {
         workspaces.setActive(id)
         if close { onClose() }
     }
 
-    /// A workspace's own emoji leads its row (the furnished areas each
-    /// carry one); the drawn ring is the emoji-less fallback.
+    /// One workspace to switch to. The row is the app's ONE row — the
+    /// same one the `+` menu draws (LivMenuRow) — because a list of
+    /// things to choose from should not look different depending on
+    /// which card it is in (owner, 2026-08-17).
     ///
-    /// The lens shows as VALUE CHIPS, never as its text. A row used to
-    /// read `area:Work project:Viggo` in mono under the name — the query
-    /// language showing through, which no user ever types (owner,
-    /// 2026-08-11). The raw text is still there, in the folded Advanced
-    /// field where it belongs.
+    /// The lens chips that used to sit under each name are gone with the
+    /// smaller type they belonged to. A workspace's lens is still on
+    /// screen where it acts: the filter chip in every view's header, and
+    /// the filters in the menu.
     private func choice(
-        name: String, lens: LivQuery, active: Bool, glyph: LivGlyph,
-        emoji: String? = nil, action: @escaping () -> Void
+        name: String, active: Bool, glyph: LivGlyph,
+        emoji: String? = nil, divided: Bool, action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                if let emoji, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.system(size: LivType.body))
-                        .frame(width: 18)
-                } else {
-                    LivIcon(
-                        glyph: glyph,
-                        color: active ? LivTheme.accent : LivTheme.text3, size: 18
-                    )
-                    .frame(width: 18)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(name)
-                        .font(.system(size: LivType.body, weight: active ? .semibold : .regular))
-                        .foregroundStyle(active ? LivTheme.accent : LivTheme.text)
-                        .lineLimit(1)
-                    if !lensChips(lens).isEmpty {
-                        HStack(spacing: 5) {
-                            ForEach(lensChips(lens), id: \.self) { ValueChip($0) }
-                        }
-                    }
-                }
-                Spacer(minLength: 6)
-                if active {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: LivType.label, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
-                }
-            }
-            .frame(minHeight: 42)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
+        LivMenuRow(
+            label: name, glyph: glyph, emoji: emoji, selected: active, divided: divided,
+            action: action)
     }
 
     private func addRow(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: "plus")
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .frame(width: 18)
-                Text(label).font(.system(size: LivType.body))
-                Spacer()
-            }
-            .foregroundStyle(LivTheme.accent)
-            .frame(height: 40)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        LivMenuRow(label: label, symbol: "plus", accent: true, divided: true, action: action)
     }
 
     // MARK: the new-workspace form — name + query + the stamp hint
@@ -935,6 +872,7 @@ struct WorkspaceSwitcher: View {
                 .opacity(trimmed(draftName).isEmpty ? 0.45 : 1)
             }
         }
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
@@ -1010,6 +948,7 @@ struct WorkspaceSwitcher: View {
                     trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty ? 0.45 : 1)
             }
         }
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
