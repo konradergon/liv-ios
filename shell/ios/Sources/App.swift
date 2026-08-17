@@ -125,23 +125,26 @@ struct RootView: View {
             if let id = desk.minimisedRecord, !keyboard.up {
                 MinimisedRecordPill(id: id)
                     .padding(.bottom, 62)
-                    // Painted above the panels, so it fades under
-                    // whichever curtain is coming down over it.
-                    .opacity(1 - max(desk.curtain, desk.libraryCurtain))
-                    .accessibilityHidden(desk.curtain > 0 || desk.libraryCurtain > 0)
+                    // The pill belongs to the desk, so it travels with
+                    // it into the wings; under the properties curtain,
+                    // which it is painted above, it fades instead.
+                    .offset(x: desk.deskShift)
+                    .opacity(1 - desk.curtain)
+                    .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
                     .zIndex(2)
             }
             if !keyboard.up && desk.menu == nil {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
-                    // The bar is drawn above the panels, so no curtain
-                    // can cover it: it fades by how far the nearer one
-                    // has come down. It used to be dropped from the
-                    // hierarchy the moment a panel was shown, which read
-                    // as a pop halfway through the motion.
-                    .opacity(1 - max(desk.curtain, desk.libraryCurtain))
-                    .accessibilityHidden(desk.curtain > 0 || desk.libraryCurtain > 0)
+                    // The bar does NOT travel with the surface: it is
+                    // four GLOBAL actions (owner, 2026-08-17), so it
+                    // stays exactly where it is while the world moves
+                    // under it — Safari's bar over a page that scrolls
+                    // away. Under the properties curtain, which it is
+                    // painted above, it fades.
+                    .opacity(1 - desk.curtain)
+                    .accessibilityHidden(desk.curtain > 0)
                     // The extra offset carries it past the bottom safe
                     // area; the z keeps the exit above the opaque desk
                     // (audit, 2026-08-01). Both are pure translations.
@@ -366,7 +369,14 @@ struct FeatureLayer: View {
             // for it: a last row under the bar is a row you cannot read
             // or reach.
             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
-            .transition(.move(edge: .bottom))
+            // IN from the right, OUT downwards. Coming from the menu
+            // you travel rightwards into the view — usually as part of
+            // the strip's own move, which is why picking a row does not
+            // animate this layer as well (DeskModel.show). Leaving is
+            // the band's chevron or a drag DOWN on it, so the view
+            // leaves the way the finger sends it.
+            .transition(
+                .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .bottom)))
         }
     }
 

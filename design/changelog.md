@@ -1,5 +1,39 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-17 — one strip: the menu on the left, everything else to its right
+
+Owner: *"Have it so that you move from the bar to the right and into the
+view. Might be fitting to now make the left panel parked on the right
+and have you move to / from it. Instead of a dot, it is clearer to have
+a highlighted row."*
+
+**The library pushes again.** It is a PLACE — the app's primary menu —
+so it and the surface in front are one horizontal strip: the menu is
+parked off the left edge, the surface waits off screen to the right
+while you choose, and going between them is travel. `deskShift` and
+`deskTravel` are back, exactly as they were on 2026-08-15 before the
+strip was withdrawn with the surface work it arrived in. The PROPERTIES
+panel is unchanged — it is about the note you are looking at, so it
+stays a curtain over a surface that does not move.
+
+**A view arrives from the right, and that move is the strip's own.**
+Picking a row sets the view without animating this layer, because the
+surface travelling back in from the right already IS the motion — a
+slide inside a slide would have shown the desk arriving first and the
+view catching up at the end. A view summoned with no panel open (a
+notification, a boot flag) still animates itself in from the right, and
+every view leaves DOWNWARDS, the way the band's drag sends it.
+
+**The bar does not travel.** It is four global actions, so it stays
+where it is while the world moves under it — Safari's bar over a page
+that slides away. The menu's pinned Settings row keeps its own room
+under it.
+
+**A lit row, not a dot.** Where you are is the row itself: filled
+ground, semibold label, its icon at full strength. Saved filters use the
+same mark for "this lens is on". The accent dot is gone — a dot is a
+mark you have to learn.
+
 ## 2026-08-17 — global actions below, the whole app in the sidebar
 
 Owner: *"The ultimate goal is to clearly separate global actions from

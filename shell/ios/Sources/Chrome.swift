@@ -129,15 +129,22 @@ final class DeskModel: ObservableObject {
 
     /// Open a VIEW where you stand (owner, 2026-08-17: "one idea is to
     /// have it open where you stand"). It covers what you were looking
-    /// at and leaves the BAR underneath — the bar is how you got here
-    /// and how you leave, and a view that hides it is a cul-de-sac.
+    /// at and leaves the BAR underneath — the bar is four global
+    /// actions, and a view that hides them is a cul-de-sac.
     ///
-    /// It used to travel into the library, which was odd once the
-    /// library became filters and Settings: you pressed a key at the
-    /// bottom and a panel arrived from the left carrying something that
-    /// had nothing to do with the panel.
+    /// The view is set WITHOUT an animation of its own, because the
+    /// strip is the animation: the menu is parked on the left, the
+    /// surface travels back in from the right, and the view is already
+    /// on it when it arrives — one move, not a slide inside a slide
+    /// (owner, 2026-08-17: "have it so that you move from the bar to the
+    /// right and into the view"). Only a view summoned with no panel
+    /// open — a notification, a boot flag — animates itself in.
     func show(_ feature: Feature) {
-        withAnimation(LivMotion.nav) { featureShown = feature }
+        if libraryShown {
+            featureShown = feature
+        } else {
+            withAnimation(LivMotion.nav) { featureShown = feature }
+        }
         setLibrary(false)
         menu = nil
     }
@@ -234,16 +241,37 @@ final class DeskModel: ObservableObject {
         return panelDrag!.progress(UIScreen.main.bounds.width)
     }
 
-    /// BOTH panels are curtains: each slides over a desk that stays
-    /// exactly where it is (owner, 2026-08-16: "make library a curtain
-    /// like before. i want to rethink what ive told you today").
+    /// The two panels do NOT move alike, and the reason is what each
+    /// one is (owner, 2026-08-17: "make the left panel parked on the
+    /// right and have you move to / from it").
     ///
-    /// The strip — the library pushing the desk a whole screen sideways
-    /// — is withdrawn along with the surface work it belonged to. The
-    /// desk never moves now, so nothing that belongs to the desk travels
-    /// either; the chrome painted ABOVE the panels simply fades by how
-    /// far the curtain over it has come down.
-    var libraryCurtain: CGFloat { panelProgress(.library) }
+    /// The LIBRARY is a PLACE — the app's primary menu — so it and the
+    /// surface in front are one horizontal strip: the menu is parked off
+    /// the left edge, everything else is parked to its right, and going
+    /// between them is travel. Opening the menu pushes the surface a
+    /// whole screen right; it waits there while you choose.
+    ///
+    /// The PROPERTIES panel is about the note you are already looking
+    /// at, so it stays a CURTAIN over a surface that does not move
+    /// (owner, 2026-08-15: "maybe having properties panel behave like a
+    /// curtain though").
+    ///
+    /// This is the strip of 2026-08-15 restored, deliberately: it was
+    /// withdrawn the next day with the surface work it arrived in, and
+    /// it is right again now that the left panel is where the app's
+    /// views live.
+    var deskShift: CGFloat {
+        panelProgress(.library) * UIScreen.main.bounds.width
+    }
+
+    /// How far the surface has travelled, 0…1. The doors ride it, so
+    /// they would slide THROUGH the pinned workspace button on the way
+    /// out; they fade over the first third of the journey instead, and
+    /// are gone before they reach it.
+    var deskTravel: CGFloat {
+        min(1, abs(deskShift) / max(1, UIScreen.main.bounds.width) * 3)
+    }
+
     var curtain: CGFloat { panelProgress(.inspector) }
 
     /// The metadata inspector covers the active entity tab's body.

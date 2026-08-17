@@ -141,6 +141,7 @@ struct LibraryPanel: View {
                         // the calendar, and it carries the count the
                         // bar's tab square used to: what you have open.
                         SectionLabel("Views")
+                            .padding(.horizontal, 10)
                             .padding(.top, 10)
                             .padding(.bottom, 2)
                         row(
@@ -164,6 +165,7 @@ struct LibraryPanel: View {
                         // say the thing the name never did — which lists
                         // ignore the workspace, and which wear it.
                         SectionLabel("This workspace")
+                            .padding(.horizontal, 10)
                             .padding(.top, 22)
                             .padding(.bottom, 2)
                         ForEach(workspaceViews) { feature in
@@ -183,6 +185,7 @@ struct LibraryPanel: View {
                         // button at the top centre is its one door
                         // (owner, 2026-08-13).
                         SectionLabel("Filters")
+                            .padding(.horizontal, 10)
                             .padding(.top, 22)
                             .padding(.bottom, 2)
                         Group {
@@ -203,7 +206,7 @@ struct LibraryPanel: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 6)
                     .padding(.top, 8)
                 }
                 bottomBand
@@ -227,7 +230,9 @@ struct LibraryPanel: View {
     /// counts. One row, one place, and the second press is the list.
     private func docs() {
         let onDesk = desk.featureShown == nil
-        withAnimation(LivMotion.nav) { desk.featureShown = nil }
+        // No animation on the swap: the strip's own travel carries you
+        // back to the desk (see DeskModel.show).
+        desk.featureShown = nil
         onDismiss()
         if onDesk { desk.switcherShown = true }
     }
@@ -242,8 +247,11 @@ struct LibraryPanel: View {
                 onSettings()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 6)
+        // The bar floats over this panel — it is global and does not
+        // travel with the surface — so the pinned foot keeps its own
+        // room under it, exactly as a view does.
+        .padding(.bottom, 62)
         .frame(maxWidth: .infinity, alignment: .leading)
         // NO fill. It had a grey one for a few hours, on the theory that
         // a place wants its own foot; on screen that is a slab of tone
@@ -270,16 +278,19 @@ struct LibraryPanel: View {
     /// a place, not a thing.
     private func row(
         _ label: String, glyph: LivGlyph, detail: String? = nil,
-        /// A lens TOGGLE rather than a place to go: the dot says it is on.
+        /// WHERE YOU ARE — or, for a filter, that its lens is on. The
+        /// whole row is lit, not a dot beside it (owner, 2026-08-17,
+        /// pointing at Notesnook): a dot is a mark you have to learn,
+        /// and a lit row is the row itself telling you.
         on: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                LivIcon(glyph: glyph, color: LivTheme.text2, size: 26)
+                LivIcon(glyph: glyph, color: on ? LivTheme.text : LivTheme.text2, size: 26)
                     .frame(width: 28)
                 Text(label)
-                    .font(.system(size: LivType.title))
+                    .font(.system(size: LivType.title, weight: on ? .semibold : .regular))
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(1)
                 Spacer(minLength: 8)
@@ -288,11 +299,13 @@ struct LibraryPanel: View {
                         .font(.system(size: LivType.body))
                         .foregroundStyle(LivTheme.muted)
                 }
-                if on {
-                    Circle().fill(LivTheme.accent).frame(width: 8, height: 8)
-                }
             }
+            .padding(.horizontal, 10)
             .frame(height: LivRow.height)
+            .background(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
+                    .fill(on ? LivTheme.panel : .clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

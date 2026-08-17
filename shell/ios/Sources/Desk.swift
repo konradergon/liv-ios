@@ -51,6 +51,9 @@ struct DeskHost: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The strip: the surface in front waits off screen to the
+            // right for as long as the menu is open (owner, 2026-08-17).
+            .offset(x: desk.deskShift)
             .accessibilityHidden(anyPanel)
 
             // A VIEW, opened where you stand (owner, 2026-08-17). It
@@ -60,6 +63,8 @@ struct DeskHost: View {
             // to close before you could choose another one — with the
             // sidebar as the primary menu, that is a cul-de-sac.
             FeatureLayer()
+                // A view is part of the surface, so it travels with it.
+                .offset(x: desk.deskShift)
                 .zIndex(0.5)
 
             // The doors (design/ios.md §6 rev 6): top-left opens the
@@ -87,14 +92,14 @@ struct DeskHost: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 6)
-            // Pinned, like the workspace button between them: the
-            // library door stays reachable with the properties panel up
-            // (owner, 2026-08-15: "that button should be visible with
-            // the property card open"). They are painted above the
-            // panels, so a curtain cannot cover them — they fade by
-            // exactly how far the LIBRARY's curtain has come down, since
-            // that is the one that lands on top of them.
-            .opacity(1 - desk.libraryCurtain)
+            // PINNED, like the workspace button between them: the
+            // library door has to stay reachable with the properties
+            // panel up (owner, 2026-08-15: "that button should be
+            // visible with the property card open"), and that panel
+            // covers the whole screen. They fade only as the MENU
+            // arrives — that is the one surface where what they belong
+            // to has left the screen.
+            .opacity(1 - desk.deskTravel)
             .accessibilityHidden(desk.libraryShown)
             .zIndex(3)
 
