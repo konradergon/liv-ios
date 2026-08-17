@@ -222,7 +222,7 @@ struct TodayView: View {
     /// today's captures, and the door to the place that routes them.
     private func capturedFooter(_ count: Int) -> some View {
         Button {
-            desk.featureShown = .inbox
+            desk.go(.inbox)
         } label: {
             HStack(spacing: 6) {
                 Text("\(count) captured today")

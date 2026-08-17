@@ -28,6 +28,13 @@ uint64_t liv_capture_at(const char *path, const char *text);
    core's structural Block::Task and a literal "- [ ] " prefix in a Body
    paragraph.
 
+   Each entity row carries `recency`: the seq of the newest transaction
+   that touched it — a MONOTONIC key, 0 if none. It is what "the thing I
+   was working on earlier" means, and it is the same signal search
+   tiebreaks with, so a recents list and a search agree. Wall-clock
+   modification time ties across rapid edits and cannot order recents.
+   (Additive, 2026-08-18.)
+
    Each entity row's `title` is its DISPLAY NAME: its name cell, else the
    first non-empty line of its content with the block marker taken off,
    else "#<id>". Changed 2026-08-07 (owner) — it used to be a whole-body

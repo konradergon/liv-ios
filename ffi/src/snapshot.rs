@@ -117,6 +117,14 @@ pub(crate) struct EntityRow {
     /// Fingerprint of the stored content value, 0 when none — the editor
     /// learns from every snapshot whether its base moved, for free.
     content_print: u64,
+    /// The seq of the newest transaction that touched this entity: a
+    /// MONOTONIC recency key, not a wall clock (2026-08-18). It is what
+    /// "the note I was editing earlier" means, and the shell's Docs list
+    /// sorts on it — the same signal search already tiebreaks with
+    /// (services/src/search.rs), so the two orders can never disagree.
+    /// Wall-clock `modified` ties across rapid edits and cannot order
+    /// recents. 0 for an entity no transaction touched.
+    recency: u64,
     /// The entity's projected vault path (P20j.6) — `library/<pool>/<slug>`,
     /// exactly what materializes on disk, or absent for box-only entities.
     /// The shell shows it only in vault mode; Reveal opens root+this.
@@ -558,6 +566,10 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
             .into_iter()
             .map(|f| (f.id, f.rel_path))
             .collect();
+    // Recency: ONE O(history) pass for the whole snapshot, not a lookup
+    // per entity — `Store::modified` walks history each time it is asked,
+    // which is the shape the file projection was punished for (2026-08-08).
+    let recency = store.recency();
     let entities = projected
         .iter()
         .filter_map(|id| store.get(*id))
@@ -612,6 +624,7 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
                 content_print: liv_services::content::content_fingerprint(
                     entity.get(props::CONTENT),
                 ),
+                recency: recency.get(&entity.id).copied().unwrap_or(0),
                 vault_path: vault_paths.get(&entity.id).cloned(),
                 cells: entity
                     .cells
@@ -683,7 +696,13 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
         }
     };
 
-    let mut seen: Vec<Id> = Vec::new();
+    // How many proposals so far target this entity — a COUNTER, not a
+    // rescan of everything seen (2026-08-18). It was a Vec walked with
+    // `filter().count()` per proposal, which made every snapshot
+    // quadratic in the queue: a box whose clerk had proposed 400 times
+    // spent 430ms of a 450ms snapshot right here (found by the cost test
+    // at the seam, ffi/src/tests.rs).
+    let mut seen: std::collections::HashMap<Id, u32> = std::collections::HashMap::new();
     // The consent gate covers the READ too (P19 review): the sweep goes
     // quiet when the switch is off, but the .pending sidecar persists —
     // yesterday's queue must not keep proposing over a recorded opt-out.
@@ -703,8 +722,11 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
                 | Some(liv_core::Command::Redirect { entity, .. }) => *entity,
                 None => return None,
             };
-            seen.push(entity);
-            let ordinal = seen.iter().filter(|e| **e == entity).count() as u32;
+            let ordinal = {
+                let n = seen.entry(entity).or_insert(0);
+                *n += 1;
+                *n
+            };
             Some(ProposalRow {
                 entity,
                 ordinal,

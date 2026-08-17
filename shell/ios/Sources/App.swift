@@ -46,12 +46,13 @@ struct LivApp: App {
             print("SHARE-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("SHARE-SELFCHECK \($0)") }
         }
-        // The inactive-tab rule (Tabs.swift), same door:
-        // `-tabs.selfcheck 1`.
-        if UserDefaults.standard.bool(forKey: "tabs.selfcheck") {
-            let failures = livTabsSelfCheck()
-            print("TABS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
-            failures.forEach { print("TABS-SELFCHECK \($0)") }
+        // Where you are and how you got there (Navigate.swift), same
+        // door: `-places.selfcheck 1`. It replaces the tab plane's
+        // suite, which went with the tabs (2026-08-18).
+        if UserDefaults.standard.bool(forKey: "places.selfcheck") {
+            let failures = livPlacesSelfCheck()
+            print("PLACES-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("PLACES-SELFCHECK \($0)") }
         }
         // The icon language (Glyph.swift) — one kind per row, one colour
         // per kind, every drawing inside its box: `-glyph.selfcheck 1`.
@@ -176,22 +177,18 @@ struct RootView: View {
             // a creation (Box.actId calls back before the snapshot moves).
             desk.shapeOf = { [weak box] id in TabShape.of(box?.entity(id)) }
         }
-        // Saved tab sets from before Option C may hold tasks. The first
-        // snapshot is the first moment we can tell; after that they are
-        // closed quietly (owner, 2026-08-08).
+        // A saved document from before Option C may BE a task. The first
+        // snapshot is the first moment we can tell; a record belongs in a
+        // card, so the desk falls back to the list (owner, 2026-08-08,
+        // carried over to one open document).
         .onReceive(box.$snap.compactMap { $0 }.prefix(1)) { _ in
-            desk.pruneRecordTabs()
+            desk.dropRecordDocument()
         }
         .onChange(of: appearance) { _, fresh in
             (LivAppearance(rawValue: fresh) ?? .dark).applyToWindows()
         }
         // The tab view takes the whole screen too (owner, 2026-07-29) — top
         // bar and bottom bar both covered. Its own footer carries Done.
-        .fullScreenCover(isPresented: $desk.switcherShown) {
-            TabSwitcher()
-                .environmentObject(box)
-                .environmentObject(desk)
-        }
         .fullScreenCover(isPresented: $desk.searchShown) {
             SearchView()
                 .environmentObject(box)
@@ -299,11 +296,11 @@ struct RootView: View {
         switch state {
         case "grid", "library": desk.setLibrary(true)
         case "search": desk.searchShown = true
-        case "today": desk.show(.today)
-        case "tasks": desk.show(.tasks)
-        case "inbox": desk.show(.inbox)
-        case "calendar": desk.show(.calendar)
-        case "everything": desk.show(.everything)
+        case "today": desk.go(.today)
+        case "tasks": desk.go(.tasks)
+        case "inbox": desk.go(.inbox)
+        case "calendar": desk.go(.calendar)
+        case "everything": desk.go(.everything)
         case "desk": if let id = newest.first { desk.open(id) }
         // Open one NAMED entity, for looking at a specific note without
         // driving the whole UI to reach it: `-desk.boot open -desk.open
@@ -318,17 +315,9 @@ struct RootView: View {
                 desk.open(hit)
             }
         // The create menu, from the bar's `+`.
-        case "newtab": desk.newTab()
-        case "switcher":
-            for id in newest.prefix(3).reversed() { desk.open(id) }
-            desk.switcherShown = true
-        // Rehearsal for the Inactive list: open a handful of tabs and
-        // BACKDATE all but the active one, because nobody can wait three
-        // weeks to look at a screen (2026-08-10).
-        case "inactive":
-            for id in newest.prefix(7).reversed() { desk.open(id) }
-            desk.backdateTabsForRehearsal(days: 30)
-            desk.switcherShown = true
+        case "newtab", "create": desk.createSomething()
+        // The Docs LIST, which is the state's root.
+        case "docs": desk.showList()
         default: break
         }
     }
@@ -340,51 +329,4 @@ struct RootView: View {
     }
 }
 
-/// A view, over whatever you were looking at. Its own 40pt band carries
-/// the way out, the way every full-screen surface in this app does; the
-/// BAR is still below it, so the next place is one key away instead of
-/// a close-then-open.
-struct FeatureLayer: View {
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var desk: DeskModel
-    @EnvironmentObject var workspaces: WorkspaceModel
-
-    var body: some View {
-        if let feature = desk.featureShown {
-            VStack(spacing: 0) {
-                Group {
-                    switch feature {
-                    case .today: TodayView()
-                    case .everything: EverythingView()
-                    case .inbox: InboxView()
-                    case .tasks: TasksView()
-                    case .calendar: CalendarView()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .background(LivTheme.canvas.ignoresSafeArea(edges: .top))
-            // The bar floats over this, so the view keeps its own room
-            // for it: a last row under the bar is a row you cannot read
-            // or reach. The three glass controls at the top are the same
-            // bargain, one band up.
-            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
-            .safeAreaInset(edge: .top) { LivTopScrim() }
-            .ignoresSafeArea(edges: .top)
-            // FROM THE RIGHT, AND BACK TO THE RIGHT — never over or off
-            // the notes (owner, 2026-08-17: "Each state should be
-            // treated equally as something opening on the right, and the
-            // notes should remain separate").
-            //
-            // Docs is a state like Today or the calendar, not the ground
-            // the others sit on: there is no closing a view, only going
-            // somewhere else, and every somewhere-else arrives the same
-            // way. Picked from the menu the strip's own travel is the
-            // whole motion, which is why this layer is not animated then
-            // (DeskModel.show); this transition is for the cases with no
-            // panel open — a notification, a boot flag.
-            .transition(.move(edge: .trailing))
-        }
-    }
-}
 

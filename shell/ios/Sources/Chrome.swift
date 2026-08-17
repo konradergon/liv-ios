@@ -12,13 +12,18 @@ import UIKit
 
 /// The lens roster. Calendar is a v1 placeholder — its body renders
 /// EmptyHint("Calendar arrives with M3.") until M3.
+/// DOCS IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
+/// equally… and the notes should remain separate"). It leads because it
+/// is where the words are, and its ROOT is the list of them; a note open
+/// on the desk is one level inside it.
 enum Feature: String, CaseIterable, Identifiable {
-    case today, everything, inbox, tasks, calendar
+    case docs, today, everything, inbox, tasks, calendar
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .docs: return "Docs"
         case .today: return "Today"
         case .everything: return "Everything"
         case .inbox: return "Inbox"
@@ -30,6 +35,7 @@ enum Feature: String, CaseIterable, Identifiable {
     /// The blueprints' own drawing for each place (Glyph.swift).
     var glyph: LivGlyph {
         switch self {
+        case .docs: return .note
         case .today: return .today
         case .everything: return .everything
         case .inbox: return .inbox
@@ -43,50 +49,39 @@ enum Feature: String, CaseIterable, Identifiable {
     // things. The drawing alone tells them apart.
 }
 
-// MARK: - desk tabs
+// MARK: - where you are
 
-struct DeskTab: Identifiable {
-    let id: UUID
-    var content: DeskTabContent
-    /// When this tab was last USED — opened, focused, or stepped back
-    /// to. A packed civil stamp, the app's one time vocabulary. Tabs
-    /// that go untouched long enough fall out of the grid and into the
-    /// Inactive list; nothing about them is lost, they are just not in
-    /// the way. No default on purpose: every place that mints a tab has
-    /// to say when.
-    var lastUsed: Int64
+/// One place you have been: a state, or a document inside Docs. The
+/// stack exists for ONE control — the labelled back at the top of a
+/// document, which says where it will take you ("‹ Docs", "‹ Today",
+/// "‹ Kitchen rebuild"). Device state, never a cell.
+enum LivPlace: Equatable {
+    case state(Feature)
+    case document(UInt64)
 }
 
-/// Tabs hold EDITABLE content and nothing else (rev 6): the one case
-/// left after `.new` died — the New Tab screen is an overlay now, never
-/// a tab.
-enum DeskTabContent: Equatable {
-    case entity(UInt64)
-}
-
-/// The chrome's one state object. Entity-tab ids + the active index ride
-/// UserDefaults ("desk.tabs.v1.<workspace>"); ids missing from the box
-/// are dropped LAZILY — the dead tab renders an EmptyHint, never a crash
-/// and never an eager sweep against a box that may still be opening.
+/// The chrome's one state object.
 ///
-/// M4: ONE tab plane whose open SET is remembered per workspace — never a
-/// second tab bar (that was the old app's three-tab-system debt).
-/// Switching workspace saves the current set and restores that
-/// workspace's. The desk MAY be empty: an empty desk shows a hint
-/// pointing at the bar's `+`, which is the only way back to a tab.
+/// **One open document** (owner, 2026-08-18). Tabs are gone: Docs is a
+/// list of your notes ordered by what you touched last, opening one
+/// replaces what was open, and the id rides UserDefaults per workspace
+/// ("desk.doc.v1.<workspace>") so a relaunch resumes where you were. The
+/// plane of tabs, its grid, its inactive shelf and its saved layouts are
+/// all deleted; what they were for — "hold two notes at once" — is the
+/// list's top rows and the labelled back.
 final class DeskModel: ObservableObject {
-    /// The view open INSIDE the library — Today, Inbox, Calendar, Tasks,
-    /// Everything — or nil for the library's own list of them. It is not
-    /// a window over the desk any more (owner, 2026-08-15: "do the views
-    /// opening inside the library"): a view is a thing you look at in
-    /// the library, which is a place, and the desk stays parked beside
-    /// it exactly where you left it.
-    @Published var featureShown: Feature?
-    @Published private(set) var tabs: [DeskTab]
-    @Published var activeTabId: UUID? {
+    /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
+    /// changes it; there is no "no state" — Docs is one of them.
+    @Published var state: Feature = .docs
+    /// The one document open inside Docs, or nil for the list. Opening a
+    /// note replaces whatever was open (there is no second slot to put
+    /// it in), and the id is persisted per workspace.
+    @Published private(set) var openDoc: UInt64? {
         didSet { persist() }
     }
-    @Published var switcherShown = false
+    /// Where the labelled back at the top of a document goes. Capped:
+    /// a chain of link jumps is a stack, not a diary.
+    @Published private(set) var returns: [LivPlace] = []
     @Published var searchShown = false
     /// The library place (left) is up.
     @Published private(set) var libraryShown = false
@@ -127,30 +122,9 @@ final class DeskModel: ObservableObject {
         }
     }
 
-    /// Open a VIEW where you stand (owner, 2026-08-17: "one idea is to
-    /// have it open where you stand"). It covers what you were looking
-    /// at and leaves the BAR underneath — the bar is four global
-    /// actions, and a view that hides them is a cul-de-sac.
-    ///
-    /// The view is set WITHOUT an animation of its own, because the
-    /// strip is the animation: the menu is parked on the left, the
-    /// surface travels back in from the right, and the view is already
-    /// on it when it arrives — one move, not a slide inside a slide
-    /// (owner, 2026-08-17: "have it so that you move from the bar to the
-    /// right and into the view"). Only a view summoned with no panel
-    /// open — a notification, a boot flag — animates itself in.
-    func show(_ feature: Feature) {
-        if libraryShown {
-            featureShown = feature
-        } else {
-            withAnimation(LivMotion.nav) { featureShown = feature }
-        }
-        setLibrary(false)
-        menu = nil
-    }
     @Published var cameraShown = false
     /// The Settings sheet and the WORKSPACE switcher sheet (distinct from
-    /// `switcherShown`, the tab view). Model state so open() can dismiss
+    /// the tab view). Model state so open() can dismiss
     /// them — as DeskHost-local @State they outlived a notification tap
     /// and the landing tab hid behind them (audit, 2026-08-04).
     @Published var settingsShown = false
@@ -176,7 +150,7 @@ final class DeskModel: ObservableObject {
     /// How to build the create menu. Set by DeskHost, which owns the
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
-    var newTabMenu: (() -> LivMenu)?
+    var createMenu: (() -> LivMenu)?
     /// One panel being dragged: which one, whether the drag OPENS or
     /// CLOSES it, and the finger's travel so far. It lives on the MODEL
     /// because the bottom bar and the pill, which fade under a curtain,
@@ -227,7 +201,7 @@ final class DeskModel: ObservableObject {
     /// (2026-08-15), which is a place on the strip, not a cover — the
     /// swipe back to the desk has to keep working while you are in one.
     var deskInFront: Bool {
-        !searchShown && !switcherShown && !cameraShown && !settingsShown
+        !searchShown && !cameraShown && !settingsShown
             && !workspaceShown
     }
 
@@ -345,186 +319,123 @@ final class DeskModel: ObservableObject {
         return true
     }
 
-    /// Tab-activation history for the bar's ‹ › — device state, not cells.
-    private var backIds: [UUID] = []
-    private var forwardIds: [UUID] = []
-
-    /// The workspace whose tab set is currently on the plane. 0 = "All".
-    private(set) var workspaceId: UInt64 = 0
-
-    /// The pre-M4 single-plane key. Migrated once into the All plane so no
-    /// one loses their open tabs to this change.
+    /// The pre-M4 single plane, and the per-workspace tab sets that
+    /// followed it. READ-ONLY now: the first launch after tabs die takes
+    /// the workspace's active tab out of the old dictionary and makes it
+    /// the open document, so nobody boots to an empty desk.
     private static let legacyKey = "desk.tabs.v1"
 
-    private var persistKey: String { WorkspaceModel.tabsKey(workspaceId) }
+    /// The workspace whose document is on the desk. 0 = "All".
+    private(set) var workspaceId: UInt64 = 0
 
-    var activeTab: DeskTab? {
-        tabs.first { $0.id == activeTabId }
-    }
-
-    var canGoBack: Bool { backIds.contains { alive($0) } }
-    var canGoForward: Bool { forwardIds.contains { alive($0) } }
-
-    private func alive(_ id: UUID) -> Bool {
-        tabs.contains { $0.id == id }
-    }
-
-    /// This tab is being used, now. The ONE place a tab's clock is set.
-    func touch(_ tabId: UUID) {
-        guard let i = tabs.firstIndex(where: { $0.id == tabId }) else { return }
-        tabs[i].lastUsed = Civil.nowStamp()
-        persist()
-    }
-
-    /// The tabs the grid shows. Inactive tabs are NOT removed from
-    /// `tabs` — they stay in the one array, so closing, de-duplicating,
-    /// pruning, ‹ › and the saved plane all keep working on the whole
-    /// set, and only what is DISPLAYED narrows.
-    ///
-    /// The active tab is never inactive, which is what guarantees this
-    /// is non-empty whenever `tabs` is — and therefore that the empty
-    /// desk still means "no tabs at all", not "none you looked at
-    /// lately".
-    var liveTabs: [DeskTab] {
-        let now = Civil.nowStamp()
-        return tabs.filter {
-            $0.id == activeTabId || !LivTabs.isInactive($0.lastUsed, now: now)
-        }
-    }
-
-    /// Untouched long enough to be out of the way. Most recently used
-    /// first, so the list reads newest-stale to oldest.
-    var inactiveTabs: [DeskTab] {
-        let now = Civil.nowStamp()
-        return tabs
-            .filter {
-                $0.id != activeTabId && LivTabs.isInactive($0.lastUsed, now: now)
-            }
-            .sorted { $0.lastUsed > $1.lastUsed }
-    }
-
-    /// Close every inactive tab at once. Safe without a confirmation and
-    /// without an undo: a tab is device state, so this writes nothing to
-    /// the box — every note, file and capture is still there, in search,
-    /// in Everything, in its workspace. The same reasoning the owner
-    /// already accepted for the silent record-tab prune (2026-08-08).
-    func closeInactive() {
-        for tab in inactiveTabs { close(tab.id) }
-    }
-
-    /// Activate a tab, recording history. Every activation path funnels
-    /// here so ‹ › always tell the truth.
-    func focus(_ tabId: UUID) {
-        // Stamp FIRST and unconditionally: re-opening the tab you are
-        // already on is still using it, and the early return below would
-        // otherwise let the active tab age out from under you.
-        touch(tabId)
-        guard tabId != activeTabId else { return }
-        if let current = activeTabId { backIds.append(current) }
-        forwardIds.removeAll()
-        activeTabId = tabId
-        if inspectorShown {
-            // In the panel's own motion — a full-screen surface must
-            // never vanish in one frame (audit, 2026-08-04).
-            withAnimation(LivMotion.nav) { inspectorShown = false }
-        }
-        objectWillChange.send()
-    }
-
-    func goBack() {
-        while let id = backIds.popLast() {
-            guard alive(id) else { continue }
-            if let current = activeTabId { forwardIds.append(current) }
-            // ‹ › assign activeTabId directly rather than calling
-            // focus(), so they must stamp for themselves — otherwise
-            // stepping back to a tab and reading it left it ageing.
-            touch(id)
-            activeTabId = id
-            leaveChooser()
-            objectWillChange.send()
-            return
-        }
-    }
-
-    func goForward() {
-        while let id = forwardIds.popLast() {
-            guard alive(id) else { continue }
-            if let current = activeTabId { backIds.append(current) }
-            touch(id)
-            activeTabId = id
-            leaveChooser()
-            objectWillChange.send()
-            return
-        }
-    }
-
-    /// ‹ › move the desk UNDERNEATH whatever menu is up. Asking for a
-    /// tab means you want to see it.
-    private func leaveChooser() {
-        guard menu != nil else { return }
-        menu = nil
-    }
+    private var persistKey: String { WorkspaceModel.docKey(workspaceId) }
 
     init() {
-        // One-time migration: the old single plane becomes the All plane.
         let defaults = UserDefaults.standard
-        if defaults.dictionary(forKey: WorkspaceModel.tabsKey(0)) == nil,
-            let legacy = defaults.dictionary(forKey: Self.legacyKey)
-        {
-            defaults.set(legacy, forKey: WorkspaceModel.tabsKey(0))
-        }
         workspaceId = UInt64(defaults.integer(forKey: WorkspaceModel.activeKey))
-        let (restored, active) = Self.load(WorkspaceModel.tabsKey(workspaceId))
-        tabs = restored
-        activeTabId =
-            restored.indices.contains(active) ? restored[active].id : restored.first?.id
+        openDoc = Self.load(workspaceId)
     }
 
-    /// One plane's saved set. Entity ids only. An empty plane restores as
-    /// genuinely empty — the empty desk shows its hint, and the `+`.
-    private static func load(_ key: String) -> ([DeskTab], Int) {
-        var restored: [DeskTab] = []
-        var active = -1
-        if let stored = UserDefaults.standard.dictionary(forKey: key) {
-            let ids = (stored["ids"] as? [String] ?? []).compactMap { UInt64($0) }
-            // The clocks, keyed by ENTITY id — a tab's UUID is minted
-            // fresh every launch, so the entity is the only identity a
-            // saved plane actually has.
-            let used = stored["used"] as? [String: Int] ?? [:]
-            // A plane saved before tabs had clocks counts as used NOW.
-            // Reading a missing stamp as "never used" would sweep every
-            // tab you own on the first launch after the upgrade.
-            let now = Civil.nowStamp()
-            restored = ids.map {
-                DeskTab(
-                    id: UUID(), content: .entity($0),
-                    lastUsed: used[String($0)].map(Int64.init) ?? now)
-            }
-            active = stored["active"] as? Int ?? -1
+    /// The workspace's document: the new key, else one taken out of the
+    /// old tab plane (its active tab, or the last one saved).
+    private static func load(_ workspace: UInt64) -> UInt64? {
+        let defaults = UserDefaults.standard
+        if let saved = defaults.object(forKey: WorkspaceModel.docKey(workspace)) as? NSNumber {
+            let id = saved.uint64Value
+            return id == 0 ? nil : id
         }
-        return (restored, active)
+        let legacy =
+            defaults.dictionary(forKey: WorkspaceModel.tabsKey(workspace))
+            ?? (workspace == 0 ? defaults.dictionary(forKey: legacyKey) : nil)
+        guard let legacy else { return nil }
+        let ids = (legacy["ids"] as? [String] ?? []).compactMap { UInt64($0) }
+        let active = legacy["active"] as? Int ?? -1
+        return ids.indices.contains(active) ? ids[active] : ids.last
     }
 
-    /// Swap the plane. The outgoing set is saved under ITS key first, so a
-    /// switch is never a loss; the incoming set replaces the tabs whole and
-    /// the ‹ › history resets — it belonged to the other workspace.
+    private func persist() {
+        UserDefaults.standard.set(NSNumber(value: openDoc ?? 0), forKey: persistKey)
+    }
+
+    /// Swap the workspace. The outgoing document is saved under ITS key
+    /// first, so a switch is never a loss; the incoming one replaces it,
+    /// and the way-back stack resets — it belonged to the other place.
     func adopt(workspace id: UInt64) {
         guard id != workspaceId else { return }
         persist()  // the OUTGOING key — persistKey still points at it
         workspaceId = id
-        let (restored, active) = Self.load(persistKey)
-        backIds = []
-        forwardIds = []
-        tabs = restored
-        activeTabId =
-            restored.indices.contains(active) ? restored[active].id : restored.first?.id
-        featureShown = nil
-        switcherShown = false
+        returns = []
+        openDoc = Self.load(id)
+        state = .docs
         setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
         settingsShown = false
         objectWillChange.send()
+    }
+
+    // MARK: going places
+
+    /// The Go-to menu's one door. A state REPLACES the state you were in
+    /// — states are roots, never children of each other — and Docs keeps
+    /// whatever document was open, so "Docs" from the calendar puts you
+    /// back in the note you were writing.
+    func go(_ feature: Feature) {
+        guard feature != state else { return }
+        endEditing()
+        returns = []
+        withAnimation(LivMotion.nav) { state = feature }
+        setLibrary(false)
+        menu = nil
+    }
+
+    /// Up, out of a document, to the list of them. The state does not
+    /// change: you were in Docs the whole time.
+    func showList() {
+        endEditing()
+        returns = []
+        withAnimation(LivMotion.nav) { openDoc = nil }
+    }
+
+    /// The labelled back at the top of a document: where it goes, or nil
+    /// when there is nothing beneath (then the document's own way up is
+    /// the list — see `DocumentBack`).
+    var back: LivPlace? { returns.last }
+
+    /// Take it. Pops one place; a document below is re-opened without
+    /// pushing itself back on.
+    func goBack() {
+        guard let place = returns.popLast() else { return }
+        endEditing()
+        withAnimation(LivMotion.nav) {
+            switch place {
+            case .state(let feature):
+                state = feature
+                if feature != .docs { openDoc = nil }
+            case .document(let id):
+                state = .docs
+                openDoc = id
+            }
+        }
+        menu = nil
+    }
+
+    /// Put the keyboard away and COMMIT what is in it. The title line
+    /// commits on resign (EditorText's TitleDelegate) and the body's
+    /// flush rides teardown, so a surface swap that skips this loses a
+    /// rename typed a second earlier — a real hazard now that leaving a
+    /// document happens on every state change (2026-08-18).
+    private func endEditing() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    /// A document that turns out to be a RECORD is not a document: it
+    /// belongs in a card. Called once, on the first snapshot, because
+    /// that is the first moment the shape of a saved id can be known.
+    func dropRecordDocument() {
+        guard let id = openDoc, shapeOf(id) == .record else { return }
+        openDoc = nil
     }
 
     /// The one door for opening anything, anywhere.
@@ -555,136 +466,49 @@ final class DeskModel: ObservableObject {
         menu = nil
     }
 
-    /// Land a document as a tab. Everything that used to be `open`.
+    /// Land a document on the desk. It REPLACES what was open (owner,
+    /// 2026-08-18): there is one document surface, and the note you were
+    /// in is one row down the list you came from.
     private func openDocument(_ entityId: UInt64) {
+        endEditing()
         recordCard = nil
-        if let existing = tabs.first(where: { $0.content == .entity(entityId) }) {
-            focus(existing.id)
-        } else {
-            let tab = DeskTab(
-                id: UUID(), content: .entity(entityId),
-                lastUsed: Civil.nowStamp())
-            tabs.append(tab)
-            focus(tab.id)
+        guard entityId != openDoc else {
+            // Already here — a reminder tap for the open note, say. Land
+            // on it rather than pushing it onto its own way-back stack.
+            surfaceCleanup()
+            return
         }
-        featureShown = nil
-        switcherShown = false
-        // The in-hierarchy overlays animate out in the house motion — a
-        // full-screen surface must never vanish in one frame (audit,
-        // 2026-08-04). The properties panel is here too: focus() skips
-        // its reset when the tab is ALREADY active, so a reminder tap
-        // for the open note would land behind it.
+        // Where the labelled back will go: the state you were in, or the
+        // document you were reading before this one.
+        let from: LivPlace = state == .docs && openDoc != nil
+            ? .document(openDoc!) : .state(state)
+        returns.append(from)
+        if returns.count > 20 { returns.removeFirst(returns.count - 20) }
+        state = .docs
+        openDoc = entityId
+        surfaceCleanup()
+    }
+
+    /// Everything an arrival closes. A tapped reminder routes here from
+    /// anywhere, so leaving a cover up made the notification look ignored
+    /// (audit, 2026-08-04).
+    private func surfaceCleanup() {
         setLibrary(false)
         withAnimation(LivMotion.nav) {
             menu = nil
             inspectorShown = false
         }
-        // Search, camera, Settings and the workspace switcher are covers
-        // and sheets — UIKit animates their dismissal itself. A tapped
-        // reminder routes here from anywhere, so leaving any of them up
-        // made the notification look ignored: the tab was created and
-        // focused behind a surface the user was still looking at.
         searchShown = false
         cameraShown = false
         settingsShown = false
         workspaceShown = false
-        persist()
     }
 
     /// `+`: the create MENU, sliding up over whatever you are looking at
-    /// (owner, 2026-08-13). It never appends a tab — choosing something
-    /// does. The full-screen page this used to summon is deleted.
-    ///
-    /// It leaves the surface in front ALONE. Closing the open view here
-    /// made the key destroy the very thing that gives it its day, so a
-    /// task made while looking at Thursday came out due today
-    /// (2026-08-17); `open` closes the view a moment later anyway, once
-    /// the new record exists.
-    func newTab() {
-        menu = newTabMenu?()
-    }
-
-    /// Closing the last tab leaves the desk empty — and an empty desk is
-    /// empty: a hint, and the `+` that ends it.
-    func close(_ tabId: UUID) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
-        tabs.remove(at: index)
-        if tabs.isEmpty {
-            activeTabId = nil
-        } else if activeTabId == tabId {
-            // The nearest tab you have actually been using. Stepping to
-            // the plain index neighbour could land the desk on a
-            // three-week-old note you never asked for.
-            let now = Civil.nowStamp()
-            let fresh = tabs.filter { !LivTabs.isInactive($0.lastUsed, now: now) }
-            let nextDoor = tabs[min(index, tabs.count - 1)]
-            let landing =
-                LivTabs.isInactive(nextDoor.lastUsed, now: now)
-                ? (fresh.max { $0.lastUsed < $1.lastUsed } ?? nextDoor)
-                : nextDoor
-            activeTabId = landing.id
-            touch(landing.id)
-        }
-        persist()
-    }
-
-    /// Entity ids only — .new tabs are moments, not state worth restoring.
-    /// Always to the CURRENT workspace's key: opening something from search
-    /// or the inbox joins the current workspace's set, by construction.
-    /// Old saved tab sets may hold task or event ids from before Option
-    /// C. A record cannot be a tab, so those close quietly the first
-    /// time the box says what they are (owner, 2026-08-08: the app is in
-    /// alpha, delete freely).
-    func pruneRecordTabs() {
-        let doomed = tabs.filter {
-            // ONLY records. A file is a document you work on and keeps
-            // its tab (files, 2026-08-09).
-            if case .entity(let id) = $0.content { return shapeOf(id) == .record }
-            return false
-        }
-        guard !doomed.isEmpty else { return }
-        for tab in doomed { close(tab.id) }
-    }
-
-    /// Rehearsal only (`-desk.boot inactive`): age every tab except the
-    /// active one, so the Inactive list can be seen and photographed
-    /// today. Writes nothing but the same per-device clocks a real week
-    /// of use would.
-    func backdateTabsForRehearsal(days: Int) {
-        let old = Civil.stamp(
-            day: Civil.addDays(Civil.todayDay(), -days), hhmm: 900)
-        for i in tabs.indices where tabs[i].id != activeTabId {
-            tabs[i].lastUsed = old - Int64(i)
-        }
-        persist()
-        objectWillChange.send()
-    }
-
-    /// Self-check only: install a known set of tabs. `tabs` is
-    /// private(set) so the suite cannot reach it, and the alternative —
-    /// opening the setter to everyone — is how a second file starts
-    /// mutating the tab plane.
-    func replaceTabsForSelfCheck(_ fresh: [DeskTab]) {
-        tabs = fresh
-        activeTabId = fresh.last?.id
-    }
-
-    private func persist() {
-        var ids: [String] = []
-        var used: [String: Int] = [:]
-        var active = -1
-        // EVERY tab, inactive ones included. `active` is an index into
-        // the ids array being built here, so filtering any tab out would
-        // both point it at the wrong tab and lose the inactive ones for
-        // good.
-        for tab in tabs {
-            guard case .entity(let entity) = tab.content else { continue }
-            if tab.id == activeTabId { active = ids.count }
-            ids.append(String(entity))
-            used[String(entity)] = Int(tab.lastUsed)
-        }
-        UserDefaults.standard.set(
-            ["ids": ids, "active": active, "used": used], forKey: persistKey)
+    /// (owner, 2026-08-13). It never opens anything by itself — choosing
+    /// something does — and it leaves the surface in front alone.
+    func createSomething() {
+        menu = createMenu?()
     }
 }
 
@@ -1050,9 +874,6 @@ struct SettingsSheet: View {
     @State private var fieldDraft = ""
     /// Dark, light, or follow the system — device state, never a cell.
     @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
-    /// How long a desk tab may sit untouched before it steps out of the
-    /// grid. Device state too — Settings never writes cells.
-    @AppStorage(LivTabs.key) private var inactiveDays = LivTabs.defaultDays
 
     var body: some View {
         ScrollView {
@@ -1072,9 +893,6 @@ struct SettingsSheet: View {
                 SectionLabel("Reminders")
                     .padding(.top, 10)
                 notifyRows
-                SectionLabel("Tabs")
-                    .padding(.top, 10)
-                inactiveTabsRow
                 SectionLabel("Fields")
                     .padding(.top, 10)
                 fieldsRow
@@ -1106,20 +924,6 @@ struct SettingsSheet: View {
             .sorted { ($0.usage ?? 0) > ($1.usage ?? 0) }
             .compactMap { $0.name }
             .filter { !$0.isEmpty }
-    }
-
-    /// When a tab goes Inactive. A picker over fixed periods, because a
-    /// user never types a rule (standing rule 5). "Never" turns the
-    /// whole thing off and every tab comes straight back to the grid —
-    /// nothing was ever closed, so it is lossless both ways.
-    private var inactiveTabsRow: some View {
-        Picker("Inactive after", selection: $inactiveDays) {
-            ForEach(LivTabs.choices, id: \.self) { days in
-                Text(LivTabs.label(days)).tag(days)
-            }
-        }
-        .pickerStyle(.segmented)
-        .frame(minHeight: 30)
     }
 
     private var appearanceRow: some View {
@@ -1400,13 +1204,18 @@ struct LivTopScrim: View {
 
 // MARK: - bottom bar
 
-/// FOUR GLOBAL KEYS: ‹ › history, search, create (owner, 2026-08-17).
+/// THREE KEYS: where you are, search, create (owner, 2026-08-18).
 ///
-/// The separation the owner drew: **global ACTIONS live here; global
-/// STATE and which view you are in live in the left sidebar.** So the
-/// views key is gone from this bar — the sidebar is the app's primary
-/// menu now, and this bar is four things you can do from anywhere,
-/// wherever you happen to be.
+/// The state key NAMES the state you are in and opens the Go-to menu.
+/// It sat in the left sidebar for two days (2026-08-17) and came back
+/// here for a reason worth keeping: a drawer is the right home for what
+/// you touch rarely — the workspace, filters, Settings — and the wrong
+/// home for the thing you touch on every navigation, which also has to
+/// be reachable from inside a document.
+///
+/// The history keys ‹ › are gone with the tabs they stepped through.
+/// Going back is the labelled control at the top of a document, which
+/// says where it will take you.
 ///
 /// It is Safari's bar, deliberately: a floating capsule of glass that
 /// the page passes under. That reverses "solid, never a blur" from
@@ -1422,39 +1231,17 @@ struct BottomBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            navButton("chevron.left", enabled: desk.canGoBack, label: "Back") {
-                desk.goBack()
-            }
-            navButton("chevron.right", enabled: desk.canGoForward, label: "Forward") {
-                desk.goForward()
-            }
-            navButton("magnifyingglass", enabled: true, label: "Search") {
+            stateKey
+            navButton("magnifyingglass", label: "Search") {
                 desk.searchShown = true
             }
             // FAR RIGHT, and it makes ANY object (owner, 2026-08-16:
             // "maybe have the + button at far right and make it support
-            // adding any object with properties"). The corner is where a
-            // thumb goes and where every app puts its create key; the
-            // four things it can make are Note, Task, Event and File.
-            //
-            // ALWAYS live. It was disabled on an empty desk, back when
-            // the empty desk's body WAS the New Tab chooser and a second
-            // door to it would have been a lie (audit, 2026-08-04). That
-            // page is gone (2026-08-13) and the empty desk now points at
-            // this button — "No tabs. The + below makes one." — so the
-            // guard became the lie it was written to prevent: a
-            // workspace with no tabs could not be given one at all
-            // (owner, 2026-08-15, from the phone).
-            // ALWAYS HERE (owner, 2026-08-17: "don't have the create
-            // dynamically disappear"). A key that comes and goes with
-            // the surface is a key you cannot learn — and it was only
-            // vanishing to avoid a second `+` on the same screen, which
-            // is now solved the other way: the views' own floating keys
-            // are gone and this is the one create door in the app. It
-            // still knows the day you are looking at, through
-            // `desk.contextDay`.
-            navButton("plus", enabled: true, label: "New") {
-                desk.newTab()
+            // adding any object with properties"). Always live: a create
+            // key that comes and goes is a key you cannot learn (owner,
+            // 2026-08-17).
+            navButton("plus", label: "New") {
+                desk.createSomething()
             }
         }
         .padding(.horizontal, 4)
@@ -1464,19 +1251,65 @@ struct BottomBar: View {
         .padding(.horizontal, 16)
     }
 
+    /// WHERE YOU ARE, and the way anywhere else (owner, 2026-08-18: the
+    /// ClickUp arrangement, after the sidebar proved to be the wrong
+    /// home for something you touch on every navigation). It NAMES the
+    /// state, so the bar answers "where am I" as well as "where to".
+    ///
+    /// Six states will not fit as six keys; one labelled key that opens
+    /// the menu is two taps to anywhere — the same two the sidebar cost,
+    /// with the difference that this one is on screen inside a document.
+    private var stateKey: some View {
+        Button {
+            desk.menu = goToMenu()
+        } label: {
+            HStack(spacing: 6) {
+                LivIcon(glyph: desk.state.glyph, color: LivTheme.text2, size: 20)
+                Text(desk.state.title)
+                    .font(.system(size: LivType.body, weight: .medium))
+                    .foregroundStyle(LivTheme.text2)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up")
+                    .font(.system(size: LivType.micro, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Go to. In \(desk.state.title)")
+    }
+
+    /// Go to: the six states, the one you are in ticked. Docs leads,
+    /// because it is where the words are.
+    private func goToMenu() -> LivMenu {
+        let order: [Feature] = [.docs, .today, .inbox, .calendar, .tasks, .everything]
+        return LivMenu(
+            id: "goto", from: .bottom, title: "Go to",
+            items: order.map { feature in
+                LivMenuItem(
+                    label: feature == desk.state ? "\(feature.title) ✓" : feature.title,
+                    glyph: feature.glyph
+                ) {
+                    desk.go(feature)
+                }
+            })
+    }
+
     private func navButton(
-        _ icon: String, enabled: Bool, label: String, action: @escaping () -> Void
+        _ icon: String, label: String, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: LivType.title, weight: .medium))
-                .foregroundStyle(enabled ? LivTheme.text2 : LivTheme.muted.opacity(0.5))
+                .foregroundStyle(LivTheme.text2)
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
         .accessibilityLabel(label)
     }
 

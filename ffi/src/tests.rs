@@ -2366,6 +2366,89 @@ fn list_membership_through_the_seam() {
     cleanup(&path);
 }
 
+/// COST, not just correctness (standing rule 2). The snapshot gained a
+/// recency pass over the whole history (2026-08-18); the shape it must
+/// keep is LINEAR in the box, because a per-entity `Store::modified`
+/// would be O(box x history) — the exact shape the file projection was
+/// punished for. Interleaved rounds, best ratio, like services/tests/scale.rs.
+#[test]
+fn the_snapshot_stays_linear_in_box_size() {
+    fn boxed(name: &str, notes: usize) -> (std::path::PathBuf, CString) {
+        let (path, c_path) = fresh_box(name);
+        for n in 0..notes {
+            let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
+            let prop = CString::new("name").unwrap();
+            // DISTINCT names on purpose: identical ones make the clerk
+            // propose a merge per note, and then the box under test is a
+            // proposal queue, not a box of notes. (That accident found a
+            // real defect first — the proposal ordinal was quadratic in
+            // the queue — which is fixed in snapshot.rs.)
+            let value = CString::new(format!("note number {n}")).unwrap();
+            unsafe { liv_set_at(c_path.as_ptr(), id, prop.as_ptr(), value.as_ptr()) };
+        }
+        (path, c_path)
+    }
+    let (small_path, small) = boxed("liv_ffi_cost_small.log", 200);
+    let (large_path, large) = boxed("liv_ffi_cost_large.log", 400);
+    let once = |p: &CString| {
+        let start = std::time::Instant::now();
+        let raw = unsafe { liv_snapshot(p.as_ptr()) };
+        assert!(!raw.is_null());
+        unsafe { liv_string_free(raw) };
+        start.elapsed()
+    };
+    let ratio = (0..5)
+        .map(|_| {
+            let s = once(&small);
+            let l = once(&large);
+            l.as_secs_f64() / s.as_secs_f64().max(1e-9)
+        })
+        .fold(f64::INFINITY, f64::min);
+    cleanup(&small_path);
+    cleanup(&large_path);
+    // Linear is ~2x for a doubled box. Quadratic starts at ~3.5x here and
+    // gets worse; 2.8 leaves room for per-call constants without letting a
+    // scan back in.
+    assert!(ratio < 2.8, "doubling the box multiplied the snapshot by {ratio:.2}x");
+}
+
+#[test]
+fn the_snapshot_carries_recency_so_a_list_can_show_what_you_touched_last() {
+    let (path, c_path) = fresh_box("liv_ffi_recency.log");
+    let first = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let second = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let third = unsafe { liv_create_note_at(c_path.as_ptr()) };
+
+    let recency = |snap: &serde_json::Value, id: u64| -> u64 {
+        snap["entities"].as_array().unwrap().iter()
+            .find(|e| e["id"].as_u64() == Some(id))
+            .and_then(|e| e["recency"].as_u64())
+            .unwrap_or(0)
+    };
+
+    // Birth order, so far.
+    let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+    assert!(recency(&snap, first) < recency(&snap, second));
+    assert!(recency(&snap, second) < recency(&snap, third));
+
+    // Touch the FIRST one — a rename is a transaction like any other.
+    let name = CString::new("name").unwrap();
+    let value = CString::new("Back on top").unwrap();
+    assert_eq!(
+        unsafe { liv_set_at(c_path.as_ptr(), first, name.as_ptr(), value.as_ptr()) }, 1);
+
+    let after = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+    assert!(
+        recency(&after, first) > recency(&after, third),
+        "the entity just edited leads: {} vs {}",
+        recency(&after, first), recency(&after, third));
+    // Monotonic, not wall-clock: three edits in the same second still
+    // order (this is why it is the transaction seq, not `modified`).
+    assert!(recency(&after, second) < recency(&after, third));
+
+    cleanup(&path);
+}
+
 #[test]
 fn links_cross_the_seam_in_both_directions() {
     let (path, c_path) = fresh_box("liv_ffi_links.log");
@@ -2793,3 +2876,6 @@ fn note_task_lines_ride_the_wire() {
 
     cleanup(&path);
 }
+
+
+

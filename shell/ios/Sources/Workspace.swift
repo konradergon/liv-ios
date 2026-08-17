@@ -461,8 +461,15 @@ final class WorkspaceModel: ObservableObject {
     func forgetQuery(_ id: UInt64) {}
 
     /// One tab plane, remembered per workspace (never a second tab BAR).
+    /// The tab plane's old key. READ-ONLY since 2026-08-18 — the first
+    /// launch after tabs died takes one id out of it (see DeskModel).
     static func tabsKey(_ workspace: UInt64) -> String {
         "desk.tabs.v1.\(workspace)"
+    }
+
+    /// The one open document, per workspace.
+    static func docKey(_ workspace: UInt64) -> String {
+        "desk.doc.v1.\(workspace)"
     }
 }
 

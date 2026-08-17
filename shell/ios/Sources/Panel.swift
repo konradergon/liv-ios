@@ -85,11 +85,6 @@ struct LibraryPanel: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
-    /// The two bands: global views see the whole box; workspace views
-    /// wear the active workspace's lens.
-    private let globalViews: [Feature] = [.today, .inbox]
-    private let workspaceViews: [Feature] = [.calendar, .tasks, .everything]
-
     var body: some View {
         // THE APP'S PRIMARY MENU (owner, 2026-08-17). Which view you are
         // in is global STATE, so it lives here; the bar below holds
@@ -109,50 +104,15 @@ struct LibraryPanel: View {
         VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // DOCS IS A VIEW LIKE THE OTHERS (owner,
-                        // 2026-08-17: "the main problem with our first
-                        // layout was treating Docs as the primary
-                        // view"). It leads because it is where the words
-                        // are, but it sits in the same list as Today and
-                        // the calendar, and it carries the count the
-                        // bar's tab square used to: what you have open.
-                        SectionLabel("Views")
-                            .padding(.horizontal, 10)
-                            .padding(.top, 10)
-                            .padding(.bottom, 2)
-                        row(
-                            "Docs", glyph: .note,
-                            detail: desk.liveTabs.isEmpty ? nil : "\(desk.liveTabs.count)",
-                            on: desk.featureShown == nil
-                        ) {
-                            docs()
-                        }
-                        ForEach(globalViews) { feature in
-                            row(
-                                feature.title, glyph: feature.glyph,
-                                on: desk.featureShown == feature
-                            ) {
-                                open(feature)
-                            }
-                        }
-
-                        // Not the workspace's NAME: the button floating
-                        // above this panel says that. These two labels
-                        // say the thing the name never did — which lists
-                        // ignore the workspace, and which wear it.
-                        SectionLabel("This workspace")
-                            .padding(.horizontal, 10)
-                            .padding(.top, 22)
-                            .padding(.bottom, 2)
-                        ForEach(workspaceViews) { feature in
-                            row(
-                                feature.title, glyph: feature.glyph,
-                                on: desk.featureShown == feature
-                            ) {
-                                open(feature)
-                            }
-                        }
-
+                        // THE VIEWS ARE NOT HERE (owner, 2026-08-18).
+                        // They are the bar's own key, which names where
+                        // you are and opens the Go-to menu: a drawer is
+                        // the right home for what you touch rarely, and
+                        // the wrong one for the thing you touch on every
+                        // navigation — this panel cannot even be reached
+                        // from inside a document, where the top-left is
+                        // the way out of it.
+                        //
                         // Saved filters live HERE, not inside the
                         // workspace sheet — a filter is not a workspace,
                         // and this is where you already come to change
@@ -202,30 +162,6 @@ struct LibraryPanel: View {
                     .padding(.top, 8)
                 }
         }
-    }
-
-    /// A view opens where you stand, and the panel gets out of the way.
-    /// Pressing the row you are already on is the way back to the desk —
-    /// the same gesture the bar's menu had, kept because it is the only
-    /// exit that does not ask you to find a chevron.
-    private func open(_ feature: Feature) {
-        if desk.featureShown == feature {
-            docs()
-        } else {
-            desk.show(feature)
-        }
-    }
-
-    /// Docs: the desk itself. Pressed while you are ALREADY on the desk
-    /// it opens the grid of what you have open — the list this row
-    /// counts. One row, one place, and the second press is the list.
-    private func docs() {
-        let onDesk = desk.featureShown == nil
-        // No animation on the swap: the strip's own travel carries you
-        // back to the desk (see DeskModel.show).
-        desk.featureShown = nil
-        onDismiss()
-        if onDesk { desk.switcherShown = true }
     }
 
     /// One list row. NO hairline: a line between rows is what a FORM

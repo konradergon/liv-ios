@@ -38,16 +38,21 @@ struct DeskHost: View {
     var body: some View {
         ZStack(alignment: .top) {
             Group {
-                if let tab = desk.activeTab, case .entity(let id) = tab.content {
-                    // Keyed by ENTITY: serial captures rewrite this same
-                    // tab with a new entity, and per-entity @State (the
-                    // seeded title) must reseed on that flip.
+                if let id = desk.openDoc, desk.state == .docs {
+                    // Keyed by ENTITY: a serial capture rewrites the
+                    // surface with a new entity, and per-entity @State
+                    // (the seeded title) must reseed on that flip.
                     EntityTabBody(id: id).id(id)
+                } else if desk.state == .docs {
+                    // DOCS' OWN ROOT: the list of what you have written,
+                    // what you touched last at the top (owner,
+                    // 2026-08-18).
+                    DocsList()
                 } else {
-                    // An empty desk is EMPTY. It used to be the New Tab
-                    // page; that page is gone (owner, 2026-08-13) and its
-                    // three verbs live in the `+` menu on the bar below.
-                    EmptyHint("No tabs. The + below makes one.")
+                    // Another state entirely — Today, the calendar. The
+                    // views draw themselves (FeatureLayer is gone with
+                    // the layer it was).
+                    FeatureBody(feature: desk.state)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -62,17 +67,6 @@ struct DeskHost: View {
             .offset(x: desk.deskShift)
             .accessibilityHidden(anyPanel)
 
-            // A VIEW, opened where you stand (owner, 2026-08-17). It
-            // lives HERE, inside the desk, rather than at the root: the
-            // panels and the doors above it are the app's global
-            // furniture, and a view that covered them was a view you had
-            // to close before you could choose another one — with the
-            // sidebar as the primary menu, that is a cul-de-sac.
-            FeatureLayer()
-                // A view is part of the surface, so it travels with it.
-                .offset(x: desk.deskShift)
-                .zIndex(0.5)
-
             // The doors (design/ios.md §6 rev 6): top-left opens the
             // LIBRARY, top-right the ••• holds the secondary verbs.
             //
@@ -82,22 +76,31 @@ struct DeskHost: View {
             // one that closes it — a button beside it was a second door
             // to one room (standing rule 4).
             HStack(spacing: 8) {
-                FloatCircle(
-                    symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
-                ) {
-                    endEditing()
-                    goToLibrary()
+                // INSIDE A DOCUMENT the top-left is the way OUT of it,
+                // labelled with where it goes — "‹ Docs", "‹ Today",
+                // "‹ Kitchen rebuild" (owner, 2026-08-18: "it just seems
+                // editing mode isn't part of docs if they aren't linked
+                // navigation wise"). That is an ordinary list→detail
+                // stack, which is what every other app on this phone
+                // does, and it makes the hierarchy a fact rather than a
+                // highlight in a menu.
+                //
+                // AT A STATE'S ROOT it is the library door: the
+                // workspace, the filters and Settings.
+                if desk.openDoc != nil, desk.state == .docs {
+                    DocumentBack()
+                } else {
+                    FloatCircle(
+                        symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
+                    ) {
+                        endEditing()
+                        goToLibrary()
+                    }
                 }
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
                 // trash — so it belongs to Docs and to nothing else.
-                //
-                // There is no "close the view" key any more (owner,
-                // 2026-08-17): a view is not a lid over the notes, it is
-                // one of the states in the menu, and the way out of one
-                // state is to pick another — including Docs. The chevron
-                // and the drag-down band it replaced are both gone.
-                if desk.featureShown == nil, case .entity(let id) = desk.activeTab?.content {
+                if desk.state == .docs, let id = desk.openDoc {
                     noteMenu(id)
                 }
             }
@@ -120,15 +123,22 @@ struct DeskHost: View {
             // 2026-08-13: "it should remain visible as you swipe into the
             // global panel"). It hides only under the PROPERTIES panel,
             // which is about this note and not about the app.
-            WorkspaceButton { desk.workspaceShown = true }
-                .padding(.top, 6)
+            // Not inside a DOCUMENT: there the top-left is the way out,
+            // labelled, and two capsules side by side collide (seen on
+            // 2026-08-18). The workspace belongs to a state's root — and
+            // it stays lit over the library panel, which is where you go
+            // to change it.
+            if desk.openDoc == nil || desk.state != .docs || desk.libraryDrawn {
+                WorkspaceButton { desk.workspaceShown = true }
+                    .padding(.top, 6)
                 // It stays lit under BOTH panels now. The properties
                 // card starts below this whole band (SidePanel), so the
-                // desk's chrome is visible above it — that is what says
-                // the card belongs to the desk. It used to fade out
-                // under the properties panel, from when that panel
-                // covered the screen edge to edge.
-                .zIndex(3)
+                    // desk's chrome is visible above it — that is what
+                    // says the card belongs to the desk. It used to fade
+                    // out under the properties panel, from when that
+                    // panel covered the screen edge to edge.
+                    .zIndex(3)
+            }
 
             // The panels, drawn last so they cover doors and body alike.
             // Mounted while shown OR while a finger is dragging one, and
@@ -146,7 +156,7 @@ struct DeskHost: View {
                 // instead of sliding out (audit, 2026-08-01).
                 .zIndex(1)
             }
-            if case .entity(let id) = desk.activeTab?.content,
+            if let id = desk.openDoc, desk.state == .docs,
                 desk.inspectorShown || desk.panelDrag?.which == .inspector
             {
                 SidePanel(
@@ -162,7 +172,7 @@ struct DeskHost: View {
 
         }
         .background(LivTheme.canvas)
-        .onAppear { desk.newTabMenu = createMenu }
+        .onAppear { desk.createMenu = createMenu }
         .fileImporter(
             isPresented: $picking, allowedContentTypes: [.item],
             allowsMultipleSelection: true
@@ -219,8 +229,8 @@ struct DeskHost: View {
             "Move to Trash?", isPresented: $confirmTrash, titleVisibility: .visible
         ) {
             Button("Move to Trash", role: .destructive) {
-                if let tab = desk.activeTab, case .entity(let id) = tab.content {
-                    trashNote(id, tab: tab.id)
+                if let id = desk.openDoc, desk.state == .docs {
+                    trashNote(id)
                 }
             }
         }
@@ -303,7 +313,7 @@ struct DeskHost: View {
         } else {
             // Leftward: put the library away, else summon the properties.
             if desk.libraryShown { return (.library, false) }
-            if !desk.inspectorShown, case .entity = desk.activeTab?.content {
+            if !desk.inspectorShown, desk.openDoc != nil, desk.state == .docs {
                 return (.inspector, true)
             }
         }
@@ -546,18 +556,18 @@ struct DeskHost: View {
         }
     }
 
-    /// Trash closes the tab (a trashed note has no business on the desk)
-    /// and offers Undo on the chip — the box has no restore verb yet, and
+    /// Trash leaves the desk showing the LIST (a trashed note has no
+    /// business on it) and offers Undo on the chip — the box has no restore verb yet, and
     /// undo-right-after IS restore ONLY while the trash is the last
     /// transaction. So the order matters: end editing FIRST, which
     /// flushes any dirty title/body onto the serial lane ahead of the
     /// trash; a teardown flush after the trash would slip between it and
     /// the Undo, and the chip would undo the wrong thing (found live,
     /// 2026-08-02).
-    private func trashNote(_ id: UInt64, tab: UUID) {
+    private func trashNote(_ id: UInt64) {
         endEditing()
         box.trash(id)
-        withAnimation(LivMotion.nav) { desk.close(tab) }
+        desk.showList()
         flash("Moved to Trash", undo: {
             box.undo()
             desk.open(id)

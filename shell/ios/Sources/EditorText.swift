@@ -843,6 +843,9 @@ struct MarkdownEditor: UIViewRepresentable {
     /// before (HourGridDrag, PanelDrag); the answer here is to have only
     /// one — the card's.
     var embedded: Bool = false
+    /// Whose caret to remember (LivCaret). 0 for a record's notes, which
+    /// live inside a card that is not torn down by navigation.
+    var note: UInt64 = 0
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView(showsTitle: showsTitle)
@@ -876,7 +879,22 @@ struct MarkdownEditor: UIViewRepresentable {
             let selected = view.selectedRange
             view.text = text
             let n = (text as NSString).length
-            view.selectedRange = NSRange(location: min(selected.location, n), length: 0)
+            // THE FIRST set for this note is the one that restores where
+            // you were (2026-08-18): the editor is rebuilt every time you
+            // come back from another state, and landing at the top of a
+            // long note is not "where you left it". Later sets — a
+            // conflict swap, a reload — keep the live caret instead.
+            var landing = min(selected.location, n)
+            if !context.coordinator.restored, note != 0,
+                let remembered = LivCaret.recall(note)
+            {
+                landing = min(remembered, n)
+            }
+            context.coordinator.restored = true
+            view.selectedRange = NSRange(location: landing, length: 0)
+            if landing > 0 {
+                view.scrollRangeToVisible(NSRange(location: landing, length: 0))
+            }
             // A load or a conflict swap is a whole new document: the
             // outline has to catch up too (it is not on the typing path,
             // so nothing else recomputes it here).
@@ -921,6 +939,9 @@ struct MarkdownEditor: UIViewRepresentable {
         /// The title line has its own delegate so none of the body's text
         /// machinery (styling, the [[ tracker, the outline) ever sees it.
         let title = TitleDelegate()
+        /// Has this mount already put the caret where it was left? One
+        /// shot: after that the live caret is the truth (LivCaret).
+        var restored = false
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
@@ -1050,6 +1071,12 @@ struct MarkdownEditor: UIViewRepresentable {
         func textViewDidChangeSelection(_ textView: UITextView) {
             trackLink(in: textView)
             updateRuleReveal(textView)
+            // Where you were, for when this editor is rebuilt. Only after
+            // the restore has run, or the programmatic set that precedes
+            // it would record a caret of 0 over the real one.
+            if restored, parent.note != 0 {
+                LivCaret.remember(parent.note, at: textView.selectedRange.location)
+            }
         }
 
         // MARK: the [[ picker

@@ -96,6 +96,11 @@ struct EntityRow: Decodable, Identifiable {
     var contentPrint: UInt64? = nil
     var vaultPath: String? = nil
     var cells: [CellRow]? = nil
+    /// The seq of the newest transaction that touched this — a
+    /// MONOTONIC recency key, not a date (2026-08-18). Docs sorts on it;
+    /// it must never be printed as a time.
+    var recency: UInt64? = nil
+
 }
 
 struct CellRow: Decodable {

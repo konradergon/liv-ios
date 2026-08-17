@@ -1268,6 +1268,22 @@ func livCalendarSelfCheck() -> [String] {
     func stamp(_ label: String, _ got: Int64, _ want: Int64) {
         if got != want { failures.append("FAIL \(label) got \(got) want \(want)") }
     }
+    // Day arithmetic across boundaries — rescued from the tab suite
+    // when tabs were deleted (2026-08-18). `Civil.daysBetween` still has
+    // a live caller (Today.swift's "N days into a span"), and it is the
+    // kind of hand-rolled maths that breaks at a month edge. It takes
+    // DAY numbers, not stamps.
+    let anchor = Civil.todayDay()
+    func days(_ label: String, _ got: Int, _ want: Int) {
+        if got != want { failures.append("FAIL \(label) got \(got) want \(want)") }
+    }
+    days("0 days", Civil.daysBetween(anchor, anchor), 0)
+    days("1 day", Civil.daysBetween(Civil.addDays(anchor, -1), anchor), 1)
+    days("21 days", Civil.daysBetween(Civil.addDays(anchor, -21), anchor), 21)
+    days("40 days, across months", Civil.daysBetween(Civil.addDays(anchor, -40), anchor), 40)
+    days("400 days, across a year", Civil.daysBetween(Civil.addDays(anchor, -400), anchor), 400)
+    days("forwards is negative", Civil.daysBetween(Civil.addDays(anchor, 5), anchor), -5)
+
     span("span 0900->1100", CalClock.span(start: 202608070900, end: 202608071100), 120)
     span("span no end", CalClock.span(start: 202608070900, end: nil), 0)
     span("span zero end", CalClock.span(start: 202608070900, end: 0), 0)

@@ -546,8 +546,14 @@ final class NoteEditorModel: ObservableObject {
     }
 
     /// Tab switch / dismiss: flush first (never lose text), then disarm.
+    /// Leaving. Under one open document this runs every time you go to
+    /// another state, not just when a cover appears — so the queued
+    /// follow-up matters (2026-08-18): `flush()` with a save already in
+    /// flight and NO completion used to queue nothing at all, and the
+    /// keystrokes typed during that save went with the teardown. Passing
+    /// a completion is what puts this call in the queue.
     func stop() {
-        flush()
+        flush { _ in }
         stopped = true
         idleTimer?.invalidate()
         checkpointTimer?.invalidate()
@@ -903,7 +909,8 @@ struct NoteEditor: View {
             bridge: bridge, onOpenRef: onOpenRef,
             onLink: { linkShown = true },
             onInsert: { insertMenu() },
-            showsTitle: showsTitle, embedded: embedded
+            showsTitle: showsTitle, embedded: embedded,
+            note: embedded ? 0 : id
         )
         .frame(
             maxWidth: .infinity,

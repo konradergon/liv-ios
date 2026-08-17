@@ -1,5 +1,68 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-18 — tabs are gone: Docs is a list, and one document at a time
+
+Owner: *"what should we do about document tabs to fit the new model? what
+do we do about the bottom bar looking like it's for regular tab
+management?"* — and, on the answer: *"build it."*
+
+**Docs is a list of your notes, ordered by what you touched last.** That
+ordering is the whole reason it can beat a grid of open tabs: the note
+you were editing ten minutes ago is row one, so "get me back to that
+one" is the same two taps the switcher cost — and unlike the grid it
+also reaches the note you did not leave open. The signal is the log's
+own: a new `recency` field on the wire (the seq of the last transaction
+that touched the entity), which is the same key search already tiebreaks
+with, so the two orders can never disagree. Purely additive, with a test
+and a cost test at the seam.
+
+**One document at a time.** Opening a note replaces what was open; the
+id is remembered per workspace, so a relaunch resumes where you were,
+and the first launch after this takes that id out of the old tab plane
+so nobody boots empty. Deleted with the tabs: the switcher grid, the
+Inactive shelf and its Settings picker, the per-workspace tab planes,
+saved layouts' only door, `DeskTab`, `LivTabs`, and 605 lines of
+Tabs.swift. The core's layer verbs stay — the ABI is additive-only —
+but nothing calls them now.
+
+**The bar is three keys: where you are · search · +.** The first NAMES
+the state and opens the Go-to menu (Docs · Today · Inbox · Calendar ·
+Tasks · Everything, the current one ticked). The history keys went with
+the tabs they stepped through — they were a stack of tab UUIDs, alive
+only while their tab was open, which is nothing once tabs are gone.
+
+**A document's own chrome is "‹ Docs" and the •••.** The back is
+labelled with where it goes — the list, or Today, or the note you
+followed a link out of — which is an ordinary list→detail stack and
+makes "a document is inside Docs" a fact of the navigation rather than a
+highlight in a menu. The library door and the workspace button belong to
+a state's ROOT, so they step aside inside a document.
+
+**Three hazards the change made routine, fixed in the same batch.** The
+editor is now torn down every time you leave a document, so: `stop()`
+passes a completion to `flush()` (without one, a save already in flight
+queued nothing and the keystrokes typed during it went with the
+teardown); every leave calls `endEditing()` first (the title commits on
+resign, so a rename typed a second earlier used to die with the
+surface); and the caret is remembered per note for the session and
+restored on the way back, with the note scrolled to it. The caret, not a
+scroll offset in points — the text arrives asynchronously and the
+title's inset is written a frame later, so a remembered offset lands
+somewhere else.
+
+**Found while measuring, fixed:** the snapshot's proposal ordinal was
+quadratic in the pending queue (a Vec rescanned per proposal). On a box
+whose clerk had proposed 400 times it was 430ms of a 450ms snapshot. It
+is a counter now, and the cost test that caught it lives at the seam.
+Worth the owner's attention separately: 400 notes with the SAME name
+make the clerk propose ~400 merges, and that queue is what made the box
+slow — the assist sweep, not the snapshot.
+
+**Also:** `-tabs.selfcheck` becomes `-places.selfcheck` (where you are,
+how you got there, and that the way-back stack is capped); the tab
+suite's day-arithmetic checks moved into the calendar suite, where
+`Civil.daysBetween` still has a caller.
+
 ## 2026-08-17 — every state opens on the right, and Docs is one of them
 
 Owner: *"Some views still open above the notes and then slide down, which
