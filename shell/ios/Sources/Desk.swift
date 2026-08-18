@@ -29,6 +29,11 @@ struct DeskHost: View {
     @State private var copying = false
     /// What the ••• is handing to the rest of the phone (phase 7).
     @State private var share: SharePayload?
+    /// The file picker, opened by the `+` menu's file row.
+    @State private var picking = false
+    /// Guards the create doors against a double tap while a write is in
+    /// flight.
+    @State private var creating = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -171,6 +176,14 @@ struct DeskHost: View {
 
         }
         .background(LivTheme.canvas)
+        .onAppear { desk.createMenu = createMenu }
+        .fileImporter(
+            isPresented: $picking, allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            FileImport.adopt(urls, box: box, workspaces: workspaces, desk: desk)
+        }
         // The whole desk goes INERT while a drag is latched. This — not
         // anything at the UIKit layer — is what stops a drag from
         // pressing the button it started on: disabling a SwiftUI
@@ -390,6 +403,98 @@ struct DeskHost: View {
             })
         return LivMenu(id: "note-verbs", from: .top, items: items)
     }
+
+    /// Birth an empty note and land in it: the editor takes the screen
+    /// with the caret already in it. The workspace stamps it exactly as
+    /// any other creation door does.
+    private func createNote() {
+        guard !creating else { return }
+        creating = true
+        box.createNote { id in
+            guard id != 0 else {
+                creating = false
+                return
+            }
+            creating = false
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.adoptCapture(id)
+        }
+    }
+
+    /// The create menu, sliding up from the bar that summoned it. These
+    /// three verbs were a whole full-screen PAGE until 2026-08-13.
+    ///
+    /// PLAIN glyphs, no colour: carved kind chips were tried here on
+    /// 2026-08-12 and rejected (owner: "color / boxed icons in new tab
+    /// looks bad"). Kind colour marks what a THING is, in the lists —
+    /// never what a button would make.
+    /// The `+` makes ANY object, not only the two that can hold a tab
+    /// (owner, 2026-08-16: "make it support adding any object with
+    /// properties. tabs still hold documents though").
+    ///
+    /// That last clause is the whole shape of this: a note and a file
+    /// LAND as tabs, because a tab holds a document; a task and an event
+    /// land as CARDS with the caret in the name, because a record's
+    /// facts fill a card and not a screen (the 2026-08-07 ruling, still
+    /// standing). One door, two landings, decided by what the thing IS.
+    ///
+    /// It supersedes 2026-08-12's "task and event don't belong in new
+    /// tab" — that was aimed at the full-screen New Tab page and its
+    /// four-way chooser, both long deleted, and neither is what this is.
+    private func createMenu() -> LivMenu {
+        LivMenu(
+            id: "create",
+            from: .bottom,
+            title: "New",
+            items: [
+                LivMenuItem(label: "Note", glyph: .note) { createNote() },
+                LivMenuItem(label: "Task", glyph: .task) { createRecord(event: false) },
+                LivMenuItem(label: "Event", glyph: .event) { createRecord(event: true) },
+                LivMenuItem(label: "File", glyph: .file(.other)) { picking = true },
+            ])
+    }
+
+    /// A task or an event: made at once, landing in its properties with
+    /// the caret in the name — the app's one create rule (owner,
+    /// 2026-08-13: "naming of items should be done in properties").
+    ///
+    /// Dated TODAY at 09:00. The bar has no day of its own to inherit,
+    /// and a task with no clock time has no moment to ring at
+    /// (2026-08-07); the card's own due row is one tap away for anything
+    /// else.
+    private func createRecord(event: Bool) {
+        guard !creating else { return }
+        creating = true
+        // The day the surface in front is looking at, or today's.
+        let stamp = Civil.stamp(
+            day: desk.contextDay ?? Civil.todayDay(),
+            hhmm: Int64(LivDue.defaultHHMM))
+        let landed: (UInt64) -> Void = { id in
+            creating = false
+            guard id != 0 else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            // `as: .record` — the snapshot has not caught up yet.
+            desk.open(id, as: .record)
+        }
+        if event {
+            box.createEvent(dueCivil: stamp, dateOnly: false, done: landed)
+        } else {
+            box.createTask { id in
+                guard id != 0 else {
+                    landed(0)
+                    return
+                }
+                box.setSpan(id, "due", start: stamp, end: 0, dateOnly: false)
+                landed(id)
+            }
+        }
+    }
+
 
     /// Hand this note to the phone as markdown. The content arrives on
     /// the box's serial queue, so the payload is built FIRST and the

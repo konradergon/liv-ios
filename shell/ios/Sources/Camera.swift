@@ -275,15 +275,6 @@ private struct CameraViewfinder: UIViewRepresentable {
 // MARK: - the flow
 
 struct CameraFlow: View {
-    /// Shooting INTO something that already owns the words and the
-    /// filing — the capture sheet (2026-08-18). The tray keeps its
-    /// thumbnails and the shutter; the caption and the chips belong to a
-    /// photo that stands alone, and asking for them twice is the clutter
-    /// the owner ruled out. ONE camera either way (standing rule 4).
-    var scanning = false
-    /// Each shot as it lands: the committed entity, and the file it
-    /// points at. The capture sheet reads the words out of that file.
-    var onShot: ((UInt64, String) -> Void)? = nil
     /// Fires on Done with the session's committed entity ids, in shot
     /// order. The chrome may open the last one as a desk tab; the flow
     /// itself never leaves the viewfinder mid-session.
@@ -414,7 +405,7 @@ struct CameraFlow: View {
     }
 
     private var trayPanel: some View {
-        VStack(alignment: .leading, spacing: scanning ? 0 : 7) {
+        VStack(alignment: .leading, spacing: 7) {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -430,20 +421,18 @@ struct CameraFlow: View {
                     }
                 }
             }
-            if !scanning {
-                TextField("Caption", text: $caption)
-                    .font(.system(size: LivType.body))
-                    .textFieldStyle(.plain)
-                    .submitLabel(.done)
-                    .onSubmit { commitCaption() }
-                    .padding(.horizontal, 9)
-                    .frame(height: 30)
-                    .background(
-                        RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                            .fill(LivTheme.panel)
-                    )
-                chipRow
-            }
+            TextField("Caption", text: $caption)
+                .font(.system(size: LivType.body))
+                .textFieldStyle(.plain)
+                .submitLabel(.done)
+                .onSubmit { commitCaption() }
+                .padding(.horizontal, 9)
+                .frame(height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: LivTheme.radiusSm)
+                        .fill(LivTheme.panel)
+                )
+            chipRow
         }
         .padding(9)
         .background(
@@ -695,7 +684,6 @@ struct CameraFlow: View {
                     shots.append(CameraShot(id: id, thumb: thumb))
                     target = id
                     caption = captions[id] ?? ""
-                    onShot?(id, path)
                 }
             }
         }

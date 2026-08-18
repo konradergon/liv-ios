@@ -202,15 +202,6 @@ struct RootView: View {
                     }
                 }
         }
-        // Quick Capture: a SHEET, not a cover — the surface you were on
-        // stays visible behind it, because a thought written down is not
-        // a place you go (owner, 2026-08-18).
-        .sheet(isPresented: $desk.captureShown) {
-            CaptureSheet()
-                .environmentObject(box)
-                .environmentObject(desk)
-                .environmentObject(workspaces)
-        }
         .fullScreenCover(isPresented: $desk.cameraShown) {
             CameraFlow(onDone: { ids in
                 if let last = ids.last { desk.open(last) }

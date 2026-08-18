@@ -13,61 +13,61 @@ that, because a couple of late things are worth seeing and a pile of
 them is a wall. Your tap wins for the rest of the session. Same collapse
 control the done-today row on this screen already used (standing rule 4).
 
-## 2026-08-18 — Quick Capture: the app's one door in
+## 2026-08-18 — Quick Capture: built, then reverted
 
-Owner: *"start building… always ask about choices and ambiguities"*, then
-four settled answers — the `+` opens **a capture sheet with the kinds
-inside it**; the photo does **OCR into the body**; the thing is **named
-by its first line, with no name field**; and the whole thing must be
-*"clean on par with the Obsidian screenshots and never cluttered… we
-don't get useless functionality in"*. First **function** of the layout →
-functions → polish order.
+Built and taken out the same day. Recorded so nobody builds it again
+without knowing why it went.
 
-**The `+` opens a sheet, not a menu.** One field, keyboard already up,
-and a Save that asks nothing: the words land as a capture — unrouted —
-and the Inbox's Route lens gives them an address later. Deciding what a
-thought IS at the moment you have it is the tax the old `New ▸ Note /
-Task / Event` menu charged; you could not type a word until you had
-paid it, and then you were dropped in a full-screen editor or a
-properties card. Three surfaces to write one line down.
+**What it was.** The `+` stopped opening the four-kind create menu and
+opened a sheet instead: one multi-line field with the keyboard already
+up, a bottom row of `[camera] [paperclip] … Capture ⌄ [Save]`, and a
+kind control defaulting to **Capture** — an untyped scrap that lands
+unrouted for the Inbox's Route lens to give an address later. The camera
+ran on-device Vision OCR into the body and linked the photo back with a
+`related` cell.
 
-**The kinds stayed, in one control.** Bottom row: `[camera] [paperclip]
-… Capture ⌄  [Save]`. The kind key SHOWS what this will become rather
-than offering four buttons that all look primary. Capture saves and gets
-out of the way; Note, Task and Event open, because naming a kind is
-already saying you meant to work on it. A record keeps its first line as
-its name and everything after it as its body — **no word typed here is
-ever dropped**. File left the kind list: the paperclip is that door
-(standing rule 4).
+**Why it went.** Owner: *"I don't like the capture addition. Does
+ClickUp have anything like it?"* — and then, decisively, *"I just don't
+understand what you do with a capture later?"*
 
-**Photo → words** (Vision, on the device). The camera key opens the ONE
-camera flow in a *scanning* dress — thumbnails and shutter, no caption
-and no chips, because the capture already owns the words and the filing.
-Each shot commits as a file entity at the shutter, as it always has, and
-what it SAYS is read and appended to the capture. The photo is then
-linked with a `related` cell — the same edge `[[ ]]` writes — and named
-after the capture's first line, so the links row says "MEETING NOTES"
-and not `031000DC-07F4-….heic`. Save waits for the read: saving a
-heartbeat early would drop the words the photo was taken for.
+The research answered the first question against it. ClickUp mobile's
+`+` is a **menu of kinds** (Task, Doc, Reminder, Note, Chat message,
+Channel): you pick what the thing is before you can type a word, which
+is exactly what Liv already had. ClickUp's task form requires a name
+**and a location** — the List name sits at the top — and their docs state
+plainly that a task cannot exist outside a List. Their Inbox is a
+notification centre, not a bin for captures. The one genuinely unfiled
+thing is a Reminder, and the docs describe no way to promote one into a
+task: a capture channel with no drain. The nearest real precedent is
+**Notepad** — a private scratchpad with "Convert to task" — but it is a
+separate tool reached from the avatar or the More menu, never the `+`.
 
-**A core fix this exposed** (`services`, failing-test-first, flagged):
-`capture()` stored its whole text as ONE flat span. The sheet is the
-first door that can hand it more than one line, and the result named
-itself with its entire body in every list — visible in the Inbox
-screenshot as a two-line row. Lines are the storage format, not a
-rendering choice: `content::plain_spans` is now the one text→spans
-grammar, `capture` uses it, and the test helper that had quietly
-duplicated it points at it too. The CLI's `liv add` and the share
-extension get the fix for free.
+The owner's own reason is the sharper one, and it is about this app, not
+about ClickUp: *"the capture editor is limiting and duplicated for notes.
+we should test if people actually struggle without capture."* A cramped
+`TextEditor` inside a sheet is a worse editor than the editor, and it sat
+in front of the app's most-used button. And the evidence was already on
+screen: **25 items in Route**. An inbox only pays for itself if it gets
+emptied.
 
-**Deleted** (standing rule 6): the create menu, `createNote()`,
-`createRecord()` and the desk's file importer — every one of them
-unreachable once the `+` opened the sheet.
+**What went:** `Capture.swift` (the sheet, `CaptureKind`, `CaptureOCR`),
+`DeskModel.captureShown`, the App-level sheet, and the camera's
+`scanning`/`onShot` additions. Restored: `createMenu()`, `createNote()`,
+`createRecord(event:)` and the desk's file importer, exactly as they
+were.
 
-*Not built, deliberately:* no destination line (there is one Inbox), no
-property chips (the workspace stamps silently, as at every other door),
-no name row, no Keep/Composer toggle.
+**What stayed, on purpose:** the `services` fix the sheet exposed.
+`capture()` had stored its whole text as ONE flat span, so a multi-line
+capture named itself with its entire body in every list.
+`content::plain_spans` is now the one text→spans grammar and `capture`
+uses it. That verb is still live — the CLI's `liv add`, the share
+extension, and search's create row all go through it — so the fix
+outlives the sheet that found it.
 
+**Not re-landed, and worth a decision later:** the on-device OCR. The
+owner had said the camera's only use is *"ocr scanning"*, and it worked;
+its natural home is the camera door itself, writing a photo's words into
+the photo, not into a capture.
 
 ## 2026-08-18 — four surfaces, laid out from the blueprints
 
