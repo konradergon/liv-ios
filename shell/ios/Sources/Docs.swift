@@ -25,36 +25,47 @@ struct DocsList: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                header
                 if rows.isEmpty {
                     EmptyHint("Nothing written yet. The + below starts one.")
                         .padding(.top, 40)
                 } else {
-                    ForEach(rows, id: \.id) { row in
-                        DocsRow(row: row) { desk.open(row.id) }
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                        Button { desk.open(row.id) } label: {
+                            LivListRow(
+                                glyph: LivKind.glyph(of: row),
+                                title: livRowTitle(row),
+                                untitled: livRowIsUntitled(row),
+                                divided: i < rows.count - 1
+                            ) {
+                                if let when = whenLabel(row) { LivRowFact(text: when) }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { box.trash(row.id) } label: {
+                                Label("Trash", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 18)
         }
         .contentMargins(.bottom, 88, for: .scrollContent)
         .background(LivTheme.canvas)
         .safeAreaInset(edge: .top) { LivTopScrim() }
     }
 
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            SectionLabel("Docs")
-            Spacer(minLength: 8)
-            if workspaces.lensOn, !workspaces.activeQuery.isInert {
-                LensChip(label: workspaces.activeName)
-            }
-            Text("\(rows.count)")
-                .font(.system(size: LivType.body).monospacedDigit())
-                .foregroundStyle(LivTheme.text3)
-        }
-        .padding(.top, 8)
-        .padding(.bottom, 2)
+    /// NO TITLE and no count (owner, 2026-08-18: "the view name doesn't
+    /// need to be repeated"). The bar names the state; a heading over
+    /// the list would say it twice, and the number was furniture.
+    ///
+    /// The workspace lens has no chip here either — the workspace's own
+    /// name is at the top of the screen.
+    private func whenLabel(_ row: EntityRow) -> String? {
+        guard let stamp = row.created, stamp > 0 else { return nil }
+        let day = Civil.day(of: stamp)
+        return day == Civil.todayDay() ? Civil.timeString(stamp) : Civil.dayLabel(day)
     }
 
     /// Documents only — a task is a record and opens as a card, so a
@@ -74,59 +85,5 @@ struct DocsList: View {
                     && (!lensOn || lens.matches(row))
             }
             .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
-    }
-}
-
-// MARK: - one row
-
-/// The same row Everything draws — carved kind chip, title, quiet
-/// trailing fact — because a list of things should not look different
-/// depending on which list it is (standing rule 4). The trailing fact
-/// here is WHEN, taken from `created`: the recency that orders the list
-/// is a transaction seq, which is not a date and must never be printed
-/// as one.
-private struct DocsRow: View {
-    let row: EntityRow
-    let open: () -> Void
-
-    @EnvironmentObject var box: BoxModel
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 9) {
-                IconChip(
-                    glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 26)
-                Text(livRowTitle(row))
-                    .font(.system(size: LivType.strong))
-                    .foregroundStyle(livRowIsUntitled(row) ? LivTheme.muted : LivTheme.text)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                if let when = created {
-                    Text(when)
-                        .font(.system(size: LivType.body).monospacedDigit())
-                        .foregroundStyle(LivTheme.text3)
-                }
-            }
-            .padding(.vertical, 4)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                box.trash(row.id)
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
-        }
-    }
-
-    private var created: String? {
-        guard let stamp = row.created, stamp > 0 else { return nil }
-        let day = Civil.day(of: stamp)
-        return day == Civil.todayDay() ? Civil.timeString(stamp) : Civil.dayLabel(day)
     }
 }

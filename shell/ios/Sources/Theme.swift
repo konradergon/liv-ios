@@ -147,8 +147,12 @@ enum LivType {
 /// "UI in the property panel is cramped towards the top when almost half
 /// of the panel is empty").
 enum LivRow {
-    /// An ordinary list row: a label, a value, a chevron.
-    static let height: CGFloat = 54
+    /// An ordinary list row: a label, a value, a chevron. 54 was the
+    /// number when a row's text was 16–18 and every row had a hairline
+    /// under it; the surface pass took the hairlines out of content
+    /// lists and the rows came down with them (owner, 2026-08-18:
+    /// "maximize simplicity… quiet, effortless").
+    static let height: CGFloat = 48
     /// A row carrying a title and a second line under it.
     static let tall: CGFloat = 58
     /// The band the top chrome owns: the two door circles and the
@@ -156,7 +160,7 @@ enum LivRow {
     /// the top of the screen — a banner, a notice, an acknowledgment —
     /// starts below this, or it lands on the workspace's own name
     /// (owner, 2026-08-15: "the message is on top of each other").
-    static let topChrome: CGFloat = 56
+    static let topChrome: CGFloat = 48
 
     /// The same band measured from the very top of the SCREEN. Surfaces
     /// run under the status bar now (owner, 2026-08-17: "the screen
@@ -225,12 +229,24 @@ enum LivTheme {
     static let onAccent = Color(
         UIColor { $0.userInterfaceStyle == .light ? .white : .black })
 
-    // Elevation, the system's ramp: the ground behind everything, the
-    // secondary background for wells and cards, fills for chips.
+    // ELEVATION, the system's ramp (surface pass, owner 2026-08-18: the
+    // left panel "should feel like a panel, not a view or a curtain…
+    // distinct from the main canvas, but not pitch black"). Three steps
+    // and no more: the ground, the raised surface a panel or a card
+    // stands on, and a fill for the small stuff. Nothing in this app
+    // uses a shadow or a gradient to say "raised" — a step of tone does
+    // it, flat.
+    //
+    // The panel read as a curtain because it was painted in `canvas`:
+    // the same black as the thing it covered, so only motion told them
+    // apart.
     static let canvas = Color(.systemBackground)
     static let surface = Color(.secondarySystemBackground)
     static let panel = Color(.secondarySystemBackground)
+    /// A quiet fill for a lit row, a chip, a well — never a border.
     static let panel2 = Color(.tertiarySystemFill)
+    /// The lightest possible mark of "this row is the one you are on".
+    static let selection = Color(.quaternarySystemFill)
 
     // The four text tiers + hairlines, the system's own.
     static let text = Color(.label)

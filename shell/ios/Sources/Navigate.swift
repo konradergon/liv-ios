@@ -45,22 +45,19 @@ struct DocumentBack: View {
 
     var body: some View {
         Button(action: act) {
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: LivType.body, weight: .semibold))
                 Text(label)
-                    .font(.system(size: LivType.body, weight: .medium))
+                    .font(.system(size: LivType.body))
                     .lineLimit(1)
             }
             .foregroundStyle(LivTheme.text2)
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .frame(maxWidth: 180)
+            .frame(height: 44)
+            .frame(maxWidth: 170, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .livGlass(in: Capsule())
-        .contentShape(Capsule())
         .accessibilityLabel("Back to \(label)")
     }
 

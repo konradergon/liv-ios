@@ -643,11 +643,18 @@ extension View {
     /// narrow •••; and its fill is derived from the tint, so the two
     /// buttons floated in a lighter grey than the bar they belong with.
     /// One surface, one size — the bar's own recipe, which is now glass.
+    /// BARE (surface pass, owner 2026-08-18: "fewer giant rounded
+    /// buttons… compact, unobtrusive controls"). Safari does not put
+    /// each of its toolbar glyphs in its own capsule, and neither does
+    /// anything else with a quiet bar: the glass belongs to the BAR, and
+    /// a control that floats over content gets contrast from the scrim
+    /// above the words instead. What is left is a 40pt target around a
+    /// glyph, and an `on` state that tints the glyph rather than
+    /// wrapping it in a lozenge.
     func livTopButton(on: Bool = false) -> some View {
         buttonStyle(.plain)
             .frame(width: 40, height: 40)
-            .livGlass(in: Circle(), tinted: on)
-            .contentShape(Circle())
+            .contentShape(Rectangle())
     }
 }
 
@@ -660,7 +667,7 @@ struct FloatCircleLabel: View {
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: LivType.title, weight: .regular))
-            .foregroundStyle(on ? LivTheme.onAccent : LivTheme.text2)
+            .foregroundStyle(on ? LivTheme.accent : LivTheme.text2)
             // A FIXED square, so a wide glyph and a narrow one come out
             // the same button.
             .frame(width: 22, height: 22)

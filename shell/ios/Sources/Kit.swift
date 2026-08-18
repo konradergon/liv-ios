@@ -35,9 +35,13 @@ struct SectionLabel: View {
             // recipe, 28 call sites — the whole app's section hierarchy
             // moves together, and the old grey was 6.5:1 against the
             // canvas where this is 11:1.
-            Text(text.uppercased())
-                .font(.system(size: LivType.body, weight: .semibold))
-                .kerning(0.3)
+            // Sentence case, secondary ink, ordinary weight (surface
+            // pass, owner 2026-08-18: "eliminate unnecessary small text
+            // and labels"). UPPERCASE + semibold + kerning made every
+            // heading shout; a heading's whole job is to be findable
+            // when you look for it and invisible when you do not.
+            Text(text)
+                .font(.system(size: LivType.label, weight: .medium))
                 .foregroundStyle(LivTheme.text2)
             Spacer()
             if let trailing {

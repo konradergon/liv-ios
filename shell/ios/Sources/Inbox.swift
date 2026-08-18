@@ -89,15 +89,17 @@ struct InboxView: View {
 
         List {
             Group {
-                HStack(spacing: 8) {
-                    SectionLabel("Inbox")
-                    // The Inbox ignores the lens on purpose. A chip in
-                    // the app's own language says so; a grey sentence
-                    // under the header did not (owner, 2026-08-06).
-                    if workspaces.lensOn { ValueChip("all workspaces") }
-                    Spacer()
+                // No "Inbox" heading (owner, 2026-08-18) — the bar
+                // says where you are. The lens chip stays: it explains
+                // an EXCEPTION, that this one list ignores the
+                // workspace (owner, 2026-08-06).
+                if workspaces.lensOn {
+                    HStack(spacing: 8) {
+                        ValueChip("all workspaces")
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.top, 10)
                 }
-                .padding(.top, 8)
 
                 if scraps.isEmpty && groups.isEmpty && !assistOff {
                     EmptyHint("Inbox zero.")

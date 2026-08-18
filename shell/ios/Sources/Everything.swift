@@ -44,24 +44,20 @@ struct EverythingView: View {
     @State private var lens: EverythingLens = .all
 
     var body: some View {
-        let rows = rows(lens)
+        let slice = rows(lens)
         List {
             Group {
-                HStack(spacing: 8) {
-                    SectionLabel("Everything")
-                    if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
-                    Spacer(minLength: 0)
-                    Text("\(rows.count)")
-                        .font(.system(size: LivType.label).monospacedDigit())
-                        .foregroundStyle(LivTheme.text3)
-                }
-                .padding(.top, 8)
+                // NO TITLE, no count (owner, 2026-08-18): the bar names
+                // the state, and the number was furniture. The slice
+                // picker is the only thing this screen needs at its
+                // head, because it changes what the list IS.
                 picker
-                    .padding(.vertical, 6)
-                if rows.isEmpty {
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+                if slice.isEmpty {
                     EmptyHint(empty)
                 } else {
-                    ForEach(rows) { row in line(row) }
+                    ForEach(slice) { row in line(row) }
                 }
             }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -100,77 +96,31 @@ struct EverythingView: View {
         return EverythingLens.allCases.filter { $0 != .unfiled || !stampsArea }
     }
 
+    /// The slice pills (ClickUp's shape, owner 2026-08-18): compact,
+    /// outlined when off, filled when on, and no well around them. The
+    /// segmented control this replaces was a box inside a box.
     private var picker: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 8) {
             ForEach(lenses) { l in
                 Button {
                     lens = l
                 } label: {
                     Text(l.title)
                         .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
-                        .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text3)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: LivTheme.radius - 2)
-                                .fill(lens == l ? LivTheme.surface : .clear)
-                        )
-                        .contentShape(Rectangle())
+                        .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text2)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                        .background(Capsule().fill(lens == l ? LivTheme.panel2 : .clear))
+                        .overlay(
+                            Capsule().strokeBorder(
+                                lens == l ? Color.clear : LivTheme.border, lineWidth: 0.5))
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }
-        }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel2))
-    }
-
-    // MARK: one row
-
-    private func line(_ row: EntityRow) -> some View {
-        let chips = chips(row)
-        return HStack(spacing: 9) {
-            // The carved kind chip: what a thing IS, said in its color
-            // (blueprints, 2026-08-12).
-            IconChip(
-                glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(display(row))
-                    .font(.system(size: LivType.strong))
-                    .foregroundStyle(
-                        livRowIsUntitled(row) ? LivTheme.muted : LivTheme.text
-                    )
-                    .lineLimit(1)
-                if !chips.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(chips, id: \.self) { ValueChip($0) }
-                    }
-                }
-            }
-            Spacer(minLength: 8)
-            if let trailing = trailing(row) {
-                Text(trailing)
-                    .font(.system(size: LivType.body).monospacedDigit())
-                    .foregroundStyle(
-                        lens == .upcoming ? LivTheme.text2 : LivTheme.text3)
-            }
-        }
-        .padding(.vertical, 4)
-        .frame(minHeight: 40)
-        .contentShape(Rectangle())
-        .onTapGesture { desk.open(row.id) }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                box.trash(row.id)
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
+            Spacer(minLength: 0)
         }
     }
-
-    // MARK: the slice
 
     /// `everything` is the curated front-of-house list — backstage entities
     /// (properties, options, types, workspaces) are already excluded by the
@@ -204,6 +154,32 @@ struct EverythingView: View {
         }
     }
 
+    // MARK: one row
+
+    private func line(_ row: EntityRow) -> some View {
+        LivListRow(
+            glyph: LivKind.glyph(of: row),
+            // A MIXED list: the kind's colour is doing work here, so it
+            // stays (owner, 2026-08-18: "colour only in mixed lists").
+            tint: LivKind.color(of: row),
+            title: display(row),
+            untitled: livRowIsUntitled(row)
+        ) {
+            if let trailing = trailing(row) {
+                LivRowFact(text: trailing, emphasis: lens == .upcoming)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { desk.open(row.id) }
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                box.trash(row.id)
+            } label: {
+                Label("Trash", systemImage: "trash")
+            }
+        }
+    }
+
     /// Upcoming answers "when is it due"; the other slices answer "when did
     /// I catch it". Today reads as a time either way — a column of identical
     /// dates tells you nothing.
@@ -233,21 +209,4 @@ struct EverythingView: View {
     /// status. A capture given a status is a task in Today, in Tasks, and to
     /// the reminder scheduler — it must not wear the scrap icon here.
 
-    /// Area first — it is the one filing question — then status, then the
-    /// first reference value. Three at most; the row must stay one line.
-    private func chips(_ row: EntityRow) -> [String] {
-        var out: [String] = []
-        if let area = area(row) { out.append(area) }
-        if let status = row.status, !status.isEmpty { out.append(status) }
-        for cell in row.cells ?? [] {
-            guard out.count < 3 else { break }
-            // Never the TYPE: the carved chip at the head of the row
-            // already says it, and the word "note" beside a blue note
-            // icon is the same fact twice (Today has always skipped it).
-            guard cell.property != "type", cell.refTarget != nil else { continue }
-            let value = cell.value ?? ""
-            if !value.isEmpty, !out.contains(value) { out.append(value) }
-        }
-        return out
-    }
 }

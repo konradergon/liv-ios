@@ -84,11 +84,10 @@ struct TodayView: View {
                     allDayBand(allDay, doneNames: doneNames)
                 }
 
-                SectionLabel(
-                    onToday ? "Today" : Civil.dayLabel(selectedDay),
-                    trailing: timedOpen.isEmpty ? nil : "\(timedOpen.count)"
-                )
-                .padding(.top, 14).padding(.bottom, 2)
+                // No day heading here (owner, 2026-08-18): the line at
+                // the top of the screen and the lit chip in the strip
+                // both already say which day this is, and the count was
+                // furniture — the list under it is the count.
                 if timedOpen.isEmpty && done.isEmpty && allDay.isEmpty {
                     EmptyHint("Nothing scheduled")
                 }
@@ -150,20 +149,19 @@ struct TodayView: View {
 
     // MARK: header + section furniture
 
+    /// The DATE, not the view's name (owner, 2026-08-18: the name is on
+    /// the bar; what this line is for is which day you are looking at).
+    /// The "N left" count went with it — the list under it is the count.
     private func header(today: Int64, left: Int) -> some View {
         HStack(spacing: 8) {
-            SectionLabel("Today · " + Civil.dayLabel(today))
-            // Why the list is short — never a mystery (M4).
-            if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
+            Text(Civil.dayLabel(today))
+                .font(.system(size: LivType.title, weight: .semibold))
+                .foregroundStyle(LivTheme.text)
             if box.busyRetrying { ProgressView().scaleEffect(0.7) }
-            Spacer()
-            if left > 0 {
-                Text("\(left) left")
-                    .font(.system(size: LivType.label).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
-            }
+            Spacer(minLength: 0)
         }
-        .padding(.top, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
     }
 
     /// LATE means only what can still be DONE: incomplete tasks whose day
@@ -257,17 +255,20 @@ struct TodayView: View {
             Text(Civil.dayLabel(Civil.day(of: row.due ?? 0)))
                 .font(.system(size: LivType.caption).monospacedDigit())
                 .foregroundStyle(LivTheme.red)
+            // A VERB, in plain accent text (surface pass, owner
+            // 2026-08-18). It wore a filled capsule with a border, and
+            // eleven of them down a column of late tasks was the
+            // loudest thing on the screen — louder than the lateness it
+            // was offering to fix.
             Button {
                 reschedule(row, toDay: today)
             } label: {
                 Text("Today")
-                    .font(.system(size: LivType.label, weight: .semibold))
+                    .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(LivTheme.accent)
-                    .padding(.horizontal, 9)
-                    .frame(height: 24)
-                    .background(Capsule().fill(LivTheme.panel2))
-                    .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-                    .contentShape(Capsule())
+                    .padding(.leading, 6)
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
         }

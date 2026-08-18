@@ -169,8 +169,6 @@ struct CalendarView: View {
             Text(CalGrid.title(monthFirst))
                 .font(.system(size: LivType.strong, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
-            // Why the grid is sparse — never a mystery (M4).
-            if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
             if box.busyRetrying { ProgressView().scaleEffect(0.7) }
             Spacer()
             // A VERB, dressed as one. As plain accent text beside the

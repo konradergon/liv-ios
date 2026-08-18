@@ -1,5 +1,48 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-18 — the surface pass, second half: lists, the bar, the wide controls
+
+Owner: *"the surface design still feels very unpolished and overly
+AI-generated… clean, modern, cohesive… Take inspiration—match their
+level of restraint and polish"*, with ClickUp, Linear, Notion and Safari
+named, and: *"Don't add UI to make things feel more polished. The
+opposite: remove anything unnecessary."*
+
+Four decisions were the owner's, asked before building: colour only in
+mixed lists, no repeated view titles, the bar split like ClickUp's, and
+the workspace as plain text.
+
+**One row for every list** (`Rows.swift`). One line of text at ordinary
+size, a 19pt glyph, the quietest possible fact on the right, and a
+hairline that starts where the text starts. No chevrons, no counts, no
+second line of chips. **Colour only where it tells things apart**: Docs
+is all documents, so its glyph is monochrome; Everything, Today and the
+calendar mix kinds, so the kind colour stays there. The filled 26pt
+carved chips are gone from every list — a column of bright squares was
+the loudest thing on screen.
+
+**No view repeats its own name.** Docs, Everything, Tasks and the Inbox
+lost their headings and counts (the bar names the state); Today keeps
+its DATE and the calendar its month, because those are facts, not
+labels. Today also lost the second day heading under the strip.
+
+**The bar is two objects**, ClickUp's arrangement: a glass capsule
+holding the state key and search, and the `+` as its own round button
+beside it. Create is the only key there that is not navigation.
+
+**The wide controls are gone.** The workspace is plain text with a small
+chevron; the way out of a document is a plain "‹ Docs". Both wore glass
+capsules that read as buttons-about-nothing. Icon controls keep their
+glass circles — those were never the problem.
+
+**Everything's slice picker** is three outlined pills instead of a
+segmented control inside a filled well, and Today's reschedule verb is
+plain accent text instead of eleven filled capsules down a column.
+
+**Not in this pass**, and the honest list of what still looks unfinished:
+the properties panel and the record card, the search screen, the Inbox's
+route cards, and the editor's own chrome.
+
 ## 2026-08-18 — tabs are gone: Docs is a list, and one document at a time
 
 Owner: *"what should we do about document tabs to fit the new model? what

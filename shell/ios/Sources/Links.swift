@@ -41,7 +41,6 @@ struct LinksSection: View {
                 .padding(.bottom, 2)
             ForEach(Array(visible(links.outRows, all: showAllOut).enumerated()), id: \.element.id) {
                 i, link in
-                if i > 0 { LinkHairline() }
                 LinkRowView(
                     link: link, row: box.entity(link.id ?? 0),
                     onOpen: { open(link) }, onRemove: removal(for: link))
@@ -54,8 +53,7 @@ struct LinksSection: View {
                     .padding(.bottom, 2)
                 ForEach(Array(visible(links.inRows, all: showAllIn).enumerated()), id: \.element.id) {
                     i, link in
-                    if i > 0 { LinkHairline() }
-                    LinkRowView(
+                        LinkRowView(
                         link: link, row: box.entity(link.id ?? 0),
                         onOpen: { open(link) }, onRemove: nil)
                 }
@@ -148,28 +146,18 @@ struct LinksSection: View {
 /// only when this list is where the link lives — the way to remove it.
 private struct LinkRowView: View {
     let link: LinkRow
-    /// The snapshot's own row for the target, when the shell holds it.
-    /// A link row is a row like any other: the same title rule, the same
-    /// grey for a nameless thing, the same carved kind chip (standing
-    /// rule 4 — one display helper, not a second one that nearly agrees).
-    /// The wire's own name is the fallback for a thing the snapshot has
-    /// not caught up with.
+    /// The snapshot's own row for the target, when the shell holds it —
+    /// so a link row is a row like any other (standing rule 4).
     let row: EntityRow?
     let onOpen: () -> Void
     let onRemove: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 0) {
             Button(action: onOpen) {
-                HStack(spacing: 9) {
-                    IconChip(glyph: glyph, color: color, size: 24)
-                    Text(name)
-                        .font(.system(size: LivType.strong))
-                        .foregroundStyle(untitled ? LivTheme.muted : LivTheme.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                }
-                .contentShape(Rectangle())
+                LivListRow(
+                    glyph: glyph, tint: color, title: name, untitled: untitled,
+                    divided: false)
             }
             .buttonStyle(.plain)
             if let onRemove {
@@ -177,22 +165,21 @@ private struct LinkRowView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: LivType.caption, weight: .semibold))
                         .foregroundStyle(LivTheme.text3)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Unlink \(name)")
             } else if link.fromBody == true {
-                // Not chrome for its own sake: this is the whole reason
-                // the row has no ✕. It says the link lives in the words.
+                // The whole reason this row has no ✕: the link lives in
+                // the words, so the words are where it is removed.
                 Image(systemName: "text.quote")
                     .font(.system(size: LivType.caption))
                     .foregroundStyle(LivTheme.text3)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 44)
                     .accessibilityLabel("Typed in the note")
             }
         }
-        .frame(minHeight: LivRow.height)
     }
 
     private var untitled: Bool {
@@ -219,8 +206,3 @@ private struct LinkRowView: View {
     }
 }
 
-private struct LinkHairline: View {
-    var body: some View {
-        Rectangle().fill(LivTheme.border).frame(height: 0.5)
-    }
-}

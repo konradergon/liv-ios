@@ -1230,24 +1230,37 @@ struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            stateKey
-            navButton("magnifyingglass", label: "Search") {
-                desk.searchShown = true
+        // TWO PIECES, not one (owner, 2026-08-18, pointing at ClickUp):
+        // navigation in a bar, and CREATE as its own object beside it.
+        // Create is the only key here that is not navigation, and a
+        // container it does not belong in is exactly the kind of quiet
+        // wrongness the surface pass is for.
+        HStack(spacing: 10) {
+            HStack(spacing: 0) {
+                stateKey
+                navButton("magnifyingglass", label: "Search") {
+                    desk.searchShown = true
+                }
+                .frame(width: 52)
             }
-            // FAR RIGHT, and it makes ANY object (owner, 2026-08-16:
-            // "maybe have the + button at far right and make it support
-            // adding any object with properties"). Always live: a create
-            // key that comes and goes is a key you cannot learn (owner,
-            // 2026-08-17).
-            navButton("plus", label: "New") {
+            .padding(.leading, 6)
+            .padding(.trailing, 2)
+            .frame(height: 50)
+            .livGlass(in: Capsule())
+
+            Button {
                 desk.createSomething()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: 50, height: 50)
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .livGlass(in: Circle())
+            .accessibilityLabel("New")
         }
-        .padding(.horizontal, 4)
-        .frame(height: LivRow.height)
-        .frame(maxWidth: .infinity)
-        .livGlass(in: Capsule())
         .padding(.horizontal, 16)
     }
 
@@ -1263,19 +1276,18 @@ struct BottomBar: View {
         Button {
             desk.menu = goToMenu()
         } label: {
-            HStack(spacing: 6) {
-                LivIcon(glyph: desk.state.glyph, color: LivTheme.text2, size: 20)
+            HStack(spacing: 7) {
+                LivIcon(glyph: desk.state.glyph, color: LivTheme.text2, size: 18)
                 Text(desk.state.title)
                     .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.text2)
+                    .foregroundStyle(LivTheme.text)
                     .lineLimit(1)
                 Image(systemName: "chevron.up")
-                    .font(.system(size: LivType.micro, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
             }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity)
-            .frame(height: 40)
+            .padding(.horizontal, 10)
+            .frame(height: 50)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

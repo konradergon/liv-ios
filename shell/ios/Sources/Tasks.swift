@@ -49,7 +49,6 @@ struct TasksView: View {
     var body: some View {
         let groups = visibleGroups()
         List {
-            headerRow
             chipRow
             if groups.allSatisfy({ $0.rows.isEmpty }) {
                 emptyRow
@@ -87,19 +86,6 @@ struct TasksView: View {
     }
 
     // MARK: header + filter chips
-
-    /// SectionLabel-scale only — the chrome's top bar is the big header now.
-    private var headerRow: some View {
-        HStack(spacing: 8) {
-            SectionLabel("Tasks")
-            // Why the list is short — never a mystery (M4).
-            if workspaces.lensOn { LensChip(label: workspaces.lensLabel) }
-        }
-        .padding(.top, 8)
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-    }
 
     private var chipRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {

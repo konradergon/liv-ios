@@ -55,7 +55,9 @@ struct SidePanel<Content: View>: View {
             // And the same room at the foot, because the bar floats over
             // a panel too.
             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
-            .background(LivTheme.canvas.ignoresSafeArea())
+            // A PANEL, not a curtain (owner, 2026-08-18): one step of tone
+        // above the canvas, flat — no shadow, no gradient, no border.
+        .background(LivTheme.panel.ignoresSafeArea())
             .ignoresSafeArea(edges: .top)
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
@@ -104,59 +106,40 @@ struct LibraryPanel: View {
         VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // THE VIEWS ARE NOT HERE (owner, 2026-08-18).
-                        // They are the bar's own key, which names where
-                        // you are and opens the Go-to menu: a drawer is
-                        // the right home for what you touch rarely, and
-                        // the wrong one for the thing you touch on every
-                        // navigation — this panel cannot even be reached
-                        // from inside a document, where the top-left is
-                        // the way out of it.
+                        // THE VIEWS ARE NOT HERE (owner, 2026-08-18):
+                        // they are the bar's own key, which names where
+                        // you are and opens the Go-to menu. A drawer is
+                        // the right home for what you touch rarely and
+                        // the wrong one for what you touch on every
+                        // navigation.
                         //
-                        // Saved filters live HERE, not inside the
-                        // workspace sheet — a filter is not a workspace,
-                        // and this is where you already come to change
-                        // what you are looking at (owner, 2026-08-11).
-                        // The WORKSPACE itself has no row: the pinned
-                        // button at the top centre is its one door
-                        // (owner, 2026-08-13).
-                        SectionLabel("Filters")
-                            .padding(.horizontal, 10)
-                            .padding(.top, 22)
-                            .padding(.bottom, 2)
-                        Group {
-                            ForEach(workspaces.filters) { view in
-                                row(
-                                    view.display,
-                                    glyph: .filter,
-                                    on: workspaces.activeFilterId == view.id
-                                ) {
-                                    workspaces.activeFilterId =
-                                        workspaces.activeFilterId == view.id ? nil : view.id
-                                    onDismiss()
-                                }
-                            }
-                            row("New filter…", glyph: .plus) {
-                                desk.composeFilter = true
-                                onWorkspace()
+                        // NO SECTION LABELS either (owner, 2026-08-18:
+                        // "eliminate unnecessary small text and
+                        // labels"). Two headings over five rows was
+                        // furniture explaining furniture; the filters
+                        // are obviously filters, and Settings is
+                        // obviously Settings.
+                        ForEach(workspaces.filters) { view in
+                            row(
+                                view.display,
+                                glyph: .filter,
+                                on: workspaces.activeFilterId == view.id
+                            ) {
+                                workspaces.activeFilterId =
+                                    workspaces.activeFilterId == view.id ? nil : view.id
+                                onDismiss()
                             }
                         }
-
+                        row("New filter", glyph: .plus) {
+                            desk.composeFilter = true
+                            onWorkspace()
+                        }
                         // Settings is the LAST ROW, not a pinned foot
-                        // (owner, 2026-08-17: "Settings being fixed when
-                        // you scroll and the bar inside here means
-                        // something hasn't been thought through"). Two
-                        // fixed layers at the foot of one list — a
-                        // pinned row and the global bar floating over it
-                        // — was one too many, and the bar is the one
-                        // that belongs to the whole app.
-                        SectionLabel("App")
-                            .padding(.horizontal, 10)
-                            .padding(.top, 22)
-                            .padding(.bottom, 2)
-                        row("Settings", glyph: .settings) {
-                            onSettings()
-                        }
+                        // (owner, 2026-08-17): two fixed layers at the
+                        // foot of one list — a pinned row and the global
+                        // bar over it — was one too many.
+                        row("Settings", glyph: .settings) { onSettings() }
+                            .padding(.top, 16)
                     }
                     .padding(.horizontal, 6)
                     .padding(.top, 8)
@@ -178,33 +161,32 @@ struct LibraryPanel: View {
     /// a place, not a thing.
     private func row(
         _ label: String, glyph: LivGlyph, detail: String? = nil,
-        /// WHERE YOU ARE — or, for a filter, that its lens is on. The
-        /// whole row is lit, not a dot beside it (owner, 2026-08-17,
-        /// pointing at Notesnook): a dot is a mark you have to learn,
-        /// and a lit row is the row itself telling you.
+        /// The lens that is ON. The lightest mark that reads as a state:
+        /// a quaternary fill and medium ink, no accent, no dot, no
+        /// border (surface pass, owner 2026-08-18).
         on: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                LivIcon(glyph: glyph, color: on ? LivTheme.text : LivTheme.text2, size: 26)
-                    .frame(width: 28)
+            HStack(spacing: 10) {
+                LivIcon(glyph: glyph, color: on ? LivTheme.text : LivTheme.text3, size: 20)
+                    .frame(width: 22)
                 Text(label)
-                    .font(.system(size: LivType.title, weight: on ? .semibold : .regular))
-                    .foregroundStyle(LivTheme.text)
+                    .font(.system(size: LivType.body, weight: on ? .medium : .regular))
+                    .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 if let detail {
                     Text(detail)
-                        .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.muted)
+                        .font(.system(size: LivType.label))
+                        .foregroundStyle(LivTheme.text3)
                 }
             }
             .padding(.horizontal, 10)
-            .frame(height: LivRow.height)
+            .frame(height: 44)
             .background(
                 RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
-                    .fill(on ? LivTheme.panel : .clear)
+                    .fill(on ? LivTheme.selection : .clear)
             )
             .contentShape(Rectangle())
         }

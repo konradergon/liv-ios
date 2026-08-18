@@ -489,32 +489,21 @@ struct WorkspaceButton: View {
 
     var body: some View {
         Button(action: action) {
-            // One ink and one height with the glyphs either side of it,
-            // so the top row reads as ONE row of controls rather than a
-            // text button between two pairs of blobs.
-            HStack(spacing: 7) {
-                LivIcon(
-                    glyph: workspaces.activeId == 0 ? .workspaces : .workspace,
-                    color: LivTheme.text2, size: 18)
+            HStack(spacing: 5) {
                 Text(workspaces.activeName)
-                    .font(.system(size: LivType.body))
+                    .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(LivTheme.text2)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: LivType.micro, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
             }
-            .padding(.horizontal, 12)
-            // Capped so a long name never reaches the doors either side.
-            .frame(maxWidth: 170)
-            // The doors' own height, because they are one row of
-            // controls: three pieces of the same glass (owner,
-            // 2026-08-17).
-            .frame(height: 40)
+            // Capped so a long name never reaches the controls either side.
+            .frame(maxWidth: 180)
+            .frame(height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .livGlass(in: Capsule())
-        .contentShape(Capsule())
         .accessibilityLabel("Workspace: \(workspaces.activeName). Switch")
     }
 }
