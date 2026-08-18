@@ -13,6 +13,14 @@ that, because a couple of late things are worth seeing and a pile of
 them is a wall. Your tap wins for the rest of the session. Same collapse
 control the done-today row on this screen already used (standing rule 4).
 
+Precedent, found after the fact: **Google Calendar does exactly this** —
+overdue tasks collapse into one row showing the count, expandable, on by
+default. The known failure mode is Todoist's: a collapsed section reads
+as an EMPTY section, and people stop finding their overdue work. The red
+dot and the count are what guard against that, so if the pile ever stops
+being noticed, that is the thing to make louder — not a reason to unfold
+it. Owner is testing before anything else changes here.
+
 ## 2026-08-18 — Quick Capture: built, then reverted
 
 Built and taken out the same day. Recorded so nobody builds it again
@@ -65,9 +73,27 @@ extension, and search's create row all go through it — so the fix
 outlives the sheet that found it.
 
 **Not re-landed, and worth a decision later:** the on-device OCR. The
-owner had said the camera's only use is *"ocr scanning"*, and it worked;
-its natural home is the camera door itself, writing a photo's words into
-the photo, not into a capture.
+owner had said the camera's only use is *"ocr scanning"*, and it worked.
+But the shape it shipped in was wrong, and the research says so: **no
+first-party app reads a photo into a body silently.** Apple Notes makes
+you invoke Scan Text, select the text, then Insert; Google Keep needs a
+per-image "Grab image text"; Todoist's image capture shows a draft you
+edit before anything is created. (The one counterexample is a community
+Obsidian plugin, not a shipping first-party app.) Three shipped models
+to choose between if it comes back: insert on an explicit command,
+index for search only, or a reviewable draft before it commits. Its home
+is the camera door either way, not a capture.
+
+**Evidence caveat, recorded honestly.** `help.clickup.com` returned 403
+to one researcher, so the claim about the MOBILE plus menu specifically
+rests on ClickUp's own prose rather than screenshots; other findings did
+fetch official help screenshots and shipped web-bundle strings. Two
+things soften the "ClickUp does not do this" line without overturning
+it: ClickUp's WEB create modal does open on a kind tab bar (Task | Doc |
+Reminder | Whiteboard | Dashboard) inside the sheet, and its mobile task
+modal has a lower-left button that sets status and task type next to
+Create at lower-right. So a kind control inside a create sheet is not
+foreign to ClickUp — it is just not what their phone's `+` does.
 
 ## 2026-08-18 — four surfaces, laid out from the blueprints
 
