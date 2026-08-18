@@ -45,7 +45,19 @@ struct TodayView: View {
     /// ring, the LATE predicate and the done-collapse.
     @State private var taskOptions: [StatusOption] = []
     @State private var doneExpanded = false
+    /// Whether the LATE pile is open. nil = nobody has said, so the
+    /// count decides (see `lateOpenByDefault`); once you tap, your tap
+    /// wins for the rest of the session.
+    @State private var lateOpen: Bool?
     @State private var duePick: TodayDuePick?
+
+    /// A few late tasks are worth seeing; a pile of them is a wall.
+    /// Owner, 2026-08-18: *"so much LATE stuff i can't see what's for
+    /// today"* — thirteen rows at 44pt is 570pt of screen, which is the
+    /// whole phone, so the day itself started below the fold. Above this
+    /// many, the pile arrives folded and the day is the first thing you
+    /// see.
+    private static let lateOpenByDefault = 3
 
     var body: some View {
         let today = Civil.todayDay()
@@ -72,9 +84,12 @@ struct TodayView: View {
                     .padding(.vertical, 6)
 
                 if !late.isEmpty {
-                    lateHeader(late.count)
-                    ForEach(late) { row in
-                        lateLine(row, today: today, doneNames: doneNames)
+                    let open = lateOpen ?? (late.count <= Self.lateOpenByDefault)
+                    lateHeader(late.count, open: open)
+                    if open {
+                        ForEach(late) { row in
+                            lateLine(row, today: today, doneNames: doneNames)
+                        }
                     }
                 }
 
@@ -180,19 +195,36 @@ struct TodayView: View {
     /// LATE means only what can still be DONE: incomplete tasks whose day
     /// has passed (owner ruling, phase 5). A past event is not late — it
     /// happened.
-    private func lateHeader(_ count: Int) -> some View {
-        HStack(spacing: 7) {
-            Circle().fill(LivTheme.red).frame(width: 7, height: 7)
-            Text("LATE")
-                .font(.system(size: LivType.label, weight: .bold))
-                .kerning(0.6)
-                .foregroundStyle(LivTheme.red)
-            Text("\(count) task\(count == 1 ? "" : "s")")
-                .font(.system(size: LivType.caption).monospacedDigit())
-                .foregroundStyle(LivTheme.muted)
-            Spacer()
+    ///
+    /// The header FOLDS the pile. It stays red and keeps its count, so
+    /// nothing is hidden — the number is the honest headline, and the
+    /// rows behind it are one tap away. This is the same collapse the
+    /// done-today row already uses on this screen (standing rule 4).
+    private func lateHeader(_ count: Int, open: Bool) -> some View {
+        Button {
+            lateOpen = !open
+        } label: {
+            HStack(spacing: 7) {
+                Circle().fill(LivTheme.red).frame(width: 7, height: 7)
+                Text("LATE")
+                    .font(.system(size: LivType.label, weight: .bold))
+                    .kerning(0.6)
+                    .foregroundStyle(LivTheme.red)
+                Text("\(count) task\(count == 1 ? "" : "s")")
+                    .font(.system(size: LivType.caption).monospacedDigit())
+                    .foregroundStyle(LivTheme.muted)
+                Spacer()
+                Image(systemName: open ? "chevron.up" : "chevron.down")
+                    .font(.system(size: LivType.caption, weight: .semibold))
+                    .foregroundStyle(LivTheme.text3)
+            }
+            .frame(minHeight: 38)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .padding(.top, 14).padding(.bottom, 2)
+        .accessibilityLabel("\(count) late task\(count == 1 ? "" : "s")")
+        .accessibilityHint(open ? "Hides the list" : "Shows the list")
     }
 
     private func nowLine(_ now: Int64) -> some View {

@@ -1,5 +1,18 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-18 — Today: the late pile folds
+
+Owner: *"so much LATE stuff i can't see what's for today."* Thirteen late
+rows at 44pt is 570pt — the whole phone — so the day itself started below
+the fold and Today answered the wrong question.
+
+LATE is now a FOLD. It keeps its red dot and its count, so nothing is
+hidden and the number is still the headline; the rows are one tap
+behind it. It arrives folded above three late tasks and open at or below
+that, because a couple of late things are worth seeing and a pile of
+them is a wall. Your tap wins for the rest of the session. Same collapse
+control the done-today row on this screen already used (standing rule 4).
+
 ## 2026-08-18 — Quick Capture: the app's one door in
 
 Owner: *"start building… always ask about choices and ambiguities"*, then
