@@ -330,10 +330,15 @@ final class DeskModel: ObservableObject {
 
     private var persistKey: String { WorkspaceModel.docKey(workspaceId) }
 
+    /// LAUNCH ON TODAY (owner, 2026-08-18). Resuming the last document
+    /// is what a notes app does; planning is what this one is for, so
+    /// the day is where it opens. Nothing is lost — the document you
+    /// were in is still loaded, one tap away as the first row of Docs.
     init() {
         let defaults = UserDefaults.standard
         workspaceId = UInt64(defaults.integer(forKey: WorkspaceModel.activeKey))
         openDoc = Self.load(workspaceId)
+        state = .today
     }
 
     /// The workspace's document: the new key, else one taken out of the
@@ -1252,8 +1257,8 @@ struct BottomBar: View {
                 desk.createSomething()
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(LivTheme.text2)
+                    .font(.system(size: 21, weight: .medium))
+                    .foregroundStyle(LivTheme.text)
                     .frame(width: 50, height: 50)
                     .contentShape(Circle())
             }
@@ -1277,14 +1282,14 @@ struct BottomBar: View {
             desk.menu = goToMenu()
         } label: {
             HStack(spacing: 7) {
-                LivIcon(glyph: desk.state.glyph, color: LivTheme.text2, size: 18)
+                LivIcon(glyph: desk.state.glyph, color: LivTheme.text, size: 19)
                 Text(desk.state.title)
                     .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(1)
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
             }
             .padding(.horizontal, 10)
             .frame(height: 50)
@@ -1297,7 +1302,10 @@ struct BottomBar: View {
     /// Go to: the six states, the one you are in ticked. Docs leads,
     /// because it is where the words are.
     private func goToMenu() -> LivMenu {
-        let order: [Feature] = [.docs, .today, .inbox, .calendar, .tasks, .everything]
+        // TODAY LEADS (owner, 2026-08-18). The order is the order of
+        // a day: what is happening, then what you are writing, then
+        // what arrived, then the rest.
+        let order: [Feature] = [.today, .docs, .inbox, .calendar, .tasks, .everything]
         return LivMenu(
             id: "goto", from: .bottom, title: "Go to",
             items: order.map { feature in
@@ -1316,7 +1324,7 @@ struct BottomBar: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: LivType.title, weight: .medium))
-                .foregroundStyle(LivTheme.text2)
+                .foregroundStyle(LivTheme.text)
                 .frame(maxWidth: .infinity)
                 .frame(height: 40)
                 .contentShape(Rectangle())

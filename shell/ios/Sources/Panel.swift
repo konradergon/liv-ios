@@ -169,11 +169,11 @@ struct LibraryPanel: View {
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                LivIcon(glyph: glyph, color: on ? LivTheme.text : LivTheme.text3, size: 20)
+                LivIcon(glyph: glyph, color: on ? LivTheme.text : LivTheme.text2, size: 21)
                     .frame(width: 22)
                 Text(label)
-                    .font(.system(size: LivType.body, weight: on ? .medium : .regular))
-                    .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
+                    .font(.system(size: LivType.body, weight: on ? .semibold : .regular))
+                    .foregroundStyle(LivTheme.text)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 if let detail {
@@ -183,7 +183,7 @@ struct LibraryPanel: View {
                 }
             }
             .padding(.horizontal, 10)
-            .frame(height: 44)
+            .frame(height: 50)
             .background(
                 RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
                     .fill(on ? LivTheme.selection : .clear)

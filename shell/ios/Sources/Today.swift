@@ -253,7 +253,7 @@ struct TodayView: View {
                 .lineLimit(1)
             Spacer(minLength: 6)
             Text(Civil.dayLabel(Civil.day(of: row.due ?? 0)))
-                .font(.system(size: LivType.caption).monospacedDigit())
+                .font(.system(size: LivType.label).monospacedDigit())
                 .foregroundStyle(LivTheme.red)
             // A VERB, in plain accent text (surface pass, owner
             // 2026-08-18). It wore a filled capsule with a border, and
@@ -298,7 +298,10 @@ struct TodayView: View {
             Text(Civil.timeString(item.stamp))
                 .font(.system(size: LivType.label).monospacedDigit())
                 .foregroundStyle(dimmed ? LivTheme.muted : LivTheme.text3)
-                .frame(width: 40, alignment: .leading)
+                // Wide enough for "09:00" at the platform's body size —
+                // it was cut for 15pt type and wrapped to two lines the
+                // moment the scale grew (2026-08-18).
+                .frame(width: 52, alignment: .leading)
             // ONE mark, in a fixed column so every title starts at the
             // same place. The coloured vertical bar is gone (owner,
             // 2026-08-08) — it said "task or event" a third time. This

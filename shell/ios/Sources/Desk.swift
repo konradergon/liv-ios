@@ -91,7 +91,7 @@ struct DeskHost: View {
                     DocumentBack()
                 } else {
                     FloatCircle(
-                        symbol: "line.3.horizontal", on: desk.libraryShown, label: "Library"
+                        symbol: "sidebar.left", on: desk.libraryShown, label: "Library"
                     ) {
                         endEditing()
                         goToLibrary()

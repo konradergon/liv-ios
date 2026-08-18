@@ -52,7 +52,7 @@ struct DocumentBack: View {
                     .font(.system(size: LivType.body))
                     .lineLimit(1)
             }
-            .foregroundStyle(LivTheme.text2)
+            .foregroundStyle(LivTheme.text)
             .frame(height: 44)
             .frame(maxWidth: 170, alignment: .leading)
             .contentShape(Rectangle())

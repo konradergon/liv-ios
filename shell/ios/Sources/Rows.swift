@@ -29,17 +29,17 @@ struct LivListRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            LivIcon(glyph: glyph, color: tint ?? LivTheme.text3, size: 19)
+            LivIcon(glyph: glyph, color: tint ?? LivTheme.text2, size: 20)
                 .frame(width: 22)
             Text(title)
                 .font(.system(size: LivType.strong))
-                .foregroundStyle(untitled ? LivTheme.text3 : LivTheme.text)
+                .foregroundStyle(untitled ? LivTheme.text2 : LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 10)
             trailing
         }
         .padding(.horizontal, 2)
-        .frame(minHeight: 52)
+        .frame(minHeight: 54)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             if divided {
@@ -71,8 +71,8 @@ struct LivRowFact: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: LivType.body).monospacedDigit())
-            .foregroundStyle(emphasis ? LivTheme.text2 : LivTheme.text3)
+            .font(.system(size: LivType.label).monospacedDigit())
+            .foregroundStyle(emphasis ? LivTheme.text : LivTheme.text2)
             .lineLimit(1)
     }
 }

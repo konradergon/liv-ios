@@ -1,5 +1,40 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-18 — the day is the home, and the app stops whispering
+
+Owner: *"do the menu reorder and launch on today… the left panel
+button's 'hamburger' icon is just ugly… ui text is just too small
+throughout, and dimmed."*
+
+**Today leads, and the app opens on it.** The Go-to menu is ordered like
+a day — Today, Docs, Inbox, Calendar, Tasks, Everything — and launch
+lands on Today instead of resuming the last document. Resuming a
+document is what a notes app does; planning is what this one is for.
+Nothing is lost: the document you were in is still loaded and is the
+first row of Docs.
+
+Note what did NOT need building: coming back from a note to Today. The
+labelled back has said "‹ Today" since the tabs went, because opening a
+document pushes the place you came from — that is the whole reason the
+bar's ‹ › could be deleted.
+
+**The type scale is the platform's.** `body` was 15, which is iOS's
+*subheadline*, and every row, value and button sat on it; the app read
+as a dense desktop tool shrunk onto a phone. It is 17 now, with the rest
+of the scale moved up a step behind it (label 15, caption 13, title 20,
+display 24). Rows grew with the text: 48 → 52.
+
+**And it stops dimming what you have to read.** Titles, the bar's keys,
+the workspace, the panel's rows and the way-back are all at full
+strength; secondary ink is for facts beside the words, and the tertiary
+tier is furniture only. One layout bug fell out of the bigger digits and
+is fixed: the agenda's time column was cut for 15pt and wrapped "09:00"
+onto two lines.
+
+**The panel door is `sidebar.left`**, Apple's own symbol for the thing
+it opens. Three stacked bars is the generic web hamburger, and it was
+the last piece of chrome that looked borrowed.
+
 ## 2026-08-18 — the surface pass, second half: lists, the bar, the wide controls
 
 Owner: *"the surface design still feels very unpolished and overly

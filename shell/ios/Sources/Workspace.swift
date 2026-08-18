@@ -492,11 +492,11 @@ struct WorkspaceButton: View {
             HStack(spacing: 5) {
                 Text(workspaces.activeName)
                     .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.text2)
+                    .foregroundStyle(LivTheme.text)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
             }
             // Capped so a long name never reaches the controls either side.
             .frame(maxWidth: 180)

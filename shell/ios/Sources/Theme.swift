@@ -123,22 +123,30 @@ enum LivAppearance: String, CaseIterable, Identifiable {
 /// for readability"). The old band each step replaces is named so the
 /// next person can see what was merged into what.
 enum LivType {
-    /// was 7.5–9.5 · glyph badges, a card's kind footer, the ✕ on a chip
-    static let micro: CGFloat = 10.5
-    /// was 10–10.5 · chips, stamps, counts
-    static let caption: CGFloat = 12
-    /// was 11–11.5 · uppercase field labels, secondary detail
-    static let label: CGFloat = 13
-    /// was 12–13.5 · the app's ORDINARY text: list rows, values, buttons
-    static let body: CGFloat = 15
-    /// was 14–15 · emphasised rows, the create-menu verbs
-    static let strong: CGFloat = 16
-    /// was 16–17 · screen and sheet titles
-    static let title: CGFloat = 18
-    /// was 19–20 · an entity's name in the properties panel
-    static let display: CGFloat = 22
-    /// was 24 · a record's name field
-    static let hero: CGFloat = 26
+    // THE PLATFORM'S SCALE (owner, 2026-08-18: "ui text is just too
+    // small throughout, and dimmed"). The app was reading a full step
+    // under iOS: our `body` was 15, which is the system's *subheadline*,
+    // and every list row, button and value sat on it. These are Apple's
+    // own sizes now — body 17, subheadline 15, footnote 13 — so the app
+    // reads like the rest of the phone instead of like a dense
+    // desktop tool shrunk onto it.
+    //
+    /// A badge, the ✕ on a chip — never a word you have to read.
+    static let micro: CGFloat = 11
+    /// Chips, stamps, counts.
+    static let caption: CGFloat = 13
+    /// Uppercase section labels, secondary detail.
+    static let label: CGFloat = 15
+    /// The app's ORDINARY text: list rows, values, buttons. iOS body.
+    static let body: CGFloat = 17
+    /// Emphasised rows, the create-menu verbs.
+    static let strong: CGFloat = 18
+    /// Screen and sheet titles.
+    static let title: CGFloat = 20
+    /// An entity's name in the properties panel.
+    static let display: CGFloat = 24
+    /// A record's name field.
+    static let hero: CGFloat = 28
 }
 
 /// Row metrics. A list row was 46pt when its text was 11–13; the type
@@ -152,15 +160,15 @@ enum LivRow {
     /// under it; the surface pass took the hairlines out of content
     /// lists and the rows came down with them (owner, 2026-08-18:
     /// "maximize simplicity… quiet, effortless").
-    static let height: CGFloat = 48
+    static let height: CGFloat = 52
     /// A row carrying a title and a second line under it.
-    static let tall: CGFloat = 58
+    static let tall: CGFloat = 62
     /// The band the top chrome owns: the two door circles and the
     /// workspace button centred between them. ANYTHING that speaks at
     /// the top of the screen — a banner, a notice, an acknowledgment —
     /// starts below this, or it lands on the workspace's own name
     /// (owner, 2026-08-15: "the message is on top of each other").
-    static let topChrome: CGFloat = 48
+    static let topChrome: CGFloat = 52
 
     /// The same band measured from the very top of the SCREEN. Surfaces
     /// run under the status bar now (owner, 2026-08-17: "the screen
