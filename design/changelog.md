@@ -31,12 +31,15 @@ tier is furniture only. One layout bug fell out of the bigger digits and
 is fixed: the agenda's time column was cut for 15pt and wrapped "09:00"
 onto two lines.
 
-**The panel door is `rectangle.leftthird.inset.filled`** — the plainest
-symbol that still says "panel": an outlined rectangle with a solid left
-third, no interior lines or dots, drawn at the LIGHT weight (owner,
-2026-08-18: "even more plain looking… i like a minimalist look"). Three
-stacked bars was the generic web hamburger; `sidebar.left` was the right
-idea with decoration inside it.
+**The panel door is DRAWN, not borrowed** (`PanelMark`, Glyph.swift).
+Three stacked bars was the generic web hamburger; `sidebar.left` was the
+right idea carrying decoration; `rectangle.leftthird.inset.filled` was
+plain but a WINDOW — wide, squarish corners, a Mac's proportions (owner,
+2026-08-18: "a bit rounder. it looks like a desktop icon"). This is the
+same idea at a phone's proportions and a phone's radius: a nearly square
+plate, generously rounded, one rounded bar inside its left edge, and
+nothing else. Drawing it is also the only way to control the radius —
+which was the whole ask.
 
 ## 2026-08-18 — the surface pass, second half: lists, the bar, the wide controls
 

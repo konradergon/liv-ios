@@ -90,12 +90,16 @@ struct DeskHost: View {
                 if desk.openDoc != nil, desk.state == .docs {
                     DocumentBack()
                 } else {
-                    FloatCircle(
-                        symbol: "rectangle.leftthird.inset.filled", on: desk.libraryShown, label: "Library"
-                    ) {
+                    Button {
                         endEditing()
                         goToLibrary()
+                    } label: {
+                        PanelMark(
+                            color: desk.libraryShown ? LivTheme.accent : LivTheme.text,
+                            size: 22)
                     }
+                    .livTopButton(on: desk.libraryShown)
+                    .accessibilityLabel("Library")
                 }
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,

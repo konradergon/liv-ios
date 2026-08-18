@@ -352,6 +352,36 @@ private struct Pen {
 /// A bare glyph, stroked in its own colour. This is how an icon appears
 /// when it sits in a row that already has a chip, or where a solid block
 /// of colour would shout.
+/// THE PANEL DOOR, drawn here rather than borrowed from SF Symbols
+/// (owner, 2026-08-18: "a bit rounder. it looks like a desktop icon").
+///
+/// The symbol we had — `rectangle.leftthird.inset.filled` — is a WINDOW:
+/// wide, squarish corners, the proportions of a Mac. This is the same
+/// idea at a phone's proportions and a phone's radius: a nearly square
+/// plate, generously rounded, with one rounded bar sitting inside its
+/// left edge. Nothing else — no lines, no dots, no second bar.
+struct PanelMark: View {
+    let color: Color
+    var size: CGFloat = 22
+
+    var body: some View {
+        let height = size * 0.88
+        let radius = size * 0.30
+        let line = max(1.4, size / 14)
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .strokeBorder(color, lineWidth: line)
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: radius * 0.5, style: .continuous)
+                    .fill(color)
+                    .frame(width: size * 0.20)
+                    .padding(.vertical, size * 0.17)
+                    .padding(.leading, size * 0.16)
+            }
+            .frame(width: size, height: height)
+            .accessibilityHidden(true)
+    }
+}
+
 struct LivIcon: View {
     let glyph: LivGlyph
     let color: Color
