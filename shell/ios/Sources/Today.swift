@@ -102,6 +102,19 @@ struct TodayView: View {
                         item, dimmed: false, next: item.key == nextKey,
                         doneNames: doneNames)
                 }
+                // WHAT NEXT (BP-8's widget of that name, on the one
+                // surface a phone has room for it): open tasks with NO
+                // date. The timeline above answers "when"; this answers
+                // "what", which is the object-based ordering the owner
+                // asked for — and without it an undated commitment is
+                // invisible until you go looking for it in Tasks.
+                if onToday, !nextUp.isEmpty {
+                    SectionLabel("What next")
+                        .padding(.top, 16).padding(.bottom, 2)
+                    ForEach(nextUp) { row in
+                        nextLine(row)
+                    }
+                }
                 if !done.isEmpty {
                     doneCollapse(done.count)
                     if doneExpanded {
@@ -423,6 +436,78 @@ struct TodayView: View {
             .filter {
                 $0.trashed != true && $0.archived != true && lens.matches($0)
             }
+    }
+
+    /// Open, UNDATED tasks — what you have taken on that no clock is
+    /// carrying. Capped: this is a nudge under the day, not a second
+    /// Tasks screen, and the state key is one tap from the whole list.
+    private var nextUp: [EntityRow] {
+        let lens = workspaces.activeQuery
+        let lensOn = workspaces.lensOn && !lens.isInert
+        return (box.snap?.everything ?? [])
+            .compactMap { box.entity($0) }
+            .filter { row in
+                row.trashed != true && row.archived != true
+                    && livCanTick(row)
+                    && (row.due ?? 0) == 0
+                    && !isDoneStatus(row)
+                    && (!lensOn || lens.matches(row))
+            }
+            .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
+            .prefix(5)
+            .map { $0 }
+    }
+
+    /// The row's ONE anchor, in the blueprint's order: project → people
+    /// → subject → area. Nothing renders when it has none.
+    private func anchorChip(_ row: EntityRow) -> String? {
+        for property in ["project", "people", "subjects", "area"] {
+            let hit = (row.cells ?? []).first {
+                $0.property == property && !($0.value ?? "").isEmpty
+            }
+            if let value = hit?.value, !value.isEmpty { return value }
+        }
+        return nil
+    }
+
+    /// A status that closes the thing. The vocabulary is the box's, so
+    /// this asks the option list rather than guessing at words.
+    private func isDoneStatus(_ row: EntityRow) -> Bool {
+        guard let status = row.status, !status.isEmpty else { return false }
+        return taskOptions.first { $0.name == status }?.completes == true
+    }
+
+    /// One what-next row: the ring, the name, and the anchor it belongs
+    /// to. No date — that is the whole point of the band.
+    private func nextLine(_ row: EntityRow) -> some View {
+        HStack(spacing: 8) {
+            StatusRing(done: false) { toggleStatus(row.id) }
+            Text(displayTitle(row))
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            // The ANCHOR, never the status: every row in this band is
+            // open, so a column of "todo" chips says nothing (BP-6's
+            // rule — the section carries the status, the chip carries
+            // what the thing is attached to).
+            if let anchor = anchorChip(row) {
+                ValueChip(anchor)
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { desk.open(row.id) }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button("Today") { reschedule(row, toDay: Civil.todayDay()) }
+                .tint(LivTheme.accent)
+        }
     }
 
     private func dueRows(on day: Int64) -> [EntityRow] {

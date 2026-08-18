@@ -1,5 +1,44 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-18 — four surfaces, laid out from the blueprints
+
+Owner: *"take inspiration from blueprints regarding layout of today,
+inbox, tasks, and everything"* — and, before that: *"I should do layout →
+app functions → UI polish."* So this is layout only; nothing here is
+paint, and the functions the blueprints describe but the app does not
+have (a widget board, the capture panel, task lenses, saved views) are
+named at the end rather than half-built.
+
+**Inbox — the blueprint's two questions** (BP-5 B1). Route and Tidy are
+tabs now, counted, instead of two section labels stacked in one scroll —
+a long Route list used to bury the clerk's suggestions under it. And the
+orphan row is one line again: icon, title, age. **The four verbs left
+every row**: BP-5 puts the routing question on the row you PICKED, and
+eight captures × four buttons was thirty-two controls on one screen.
+Tapping a row opens Task · Event · Note · Link underneath it, one row at
+a time. Empty state is the blueprint's own words: "Inbox zero — nothing
+waiting."
+
+**Today — "What next"** (BP-8's widget of that name). Under the
+timeline: open tasks carrying NO date, five at most, each with its
+anchor. The timeline answers *when*; this answers *what*, which is the
+object-based ordering the owner asked for — and without it an undated
+commitment was invisible until you went hunting in Tasks.
+
+**Everything and Tasks — the row budget.** BP-3 states it: "type icon ·
+title · anchor chip · status dot · modified", and "empty fields do not
+render". Everything's rows carried three chips before the surface pass
+and none after it; they carry ONE now — project → subject → people →
+area, the blueprint's order, and nothing when there is none. Tasks was
+showing up to three; BP-6 caps it at one for the same reason ("never a
+status chip — the column already carries status").
+
+**Not built, deliberately** (function, not layout): the dashboard widget
+board and its gallery, the Quick Capture panel with its destination line,
+the merge suggestion and commit bar in Route, Tasks' other lenses
+(Cards/Board/Schedule) and the saved-view object, and the count badge on
+the bar's Inbox key.
+
 ## 2026-08-18 — the day is the home, and the app stops whispering
 
 Owner: *"do the menu reorder and launch on today… the left panel

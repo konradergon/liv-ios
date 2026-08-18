@@ -165,6 +165,15 @@ struct EverythingView: View {
             title: display(row),
             untitled: livRowIsUntitled(row)
         ) {
+            // ONE anchor chip, then when — the blueprint's row budget
+            // (BP-3: "type icon · title · anchor chip · status dot ·
+            // modified", and "empty fields do not render"). It was three
+            // chips before the surface pass and none after it; one is
+            // what the spec asks for, and it answers the question a
+            // mixed list actually raises: what is this attached to.
+            if let anchor = anchorChip(row) {
+                ValueChip(anchor)
+            }
             if let trailing = trailing(row) {
                 LivRowFact(text: trailing, emphasis: lens == .upcoming)
             }
@@ -178,6 +187,20 @@ struct EverythingView: View {
                 Label("Trash", systemImage: "trash")
             }
         }
+    }
+
+
+    /// The row's ONE anchor, in the blueprint's own order: project →
+    /// subject → people → area. First one that exists wins; nothing
+    /// renders when none does.
+    private func anchorChip(_ row: EntityRow) -> String? {
+        for property in ["project", "subjects", "people", "area"] {
+            let hit = (row.cells ?? []).first {
+                $0.property == property && !($0.value ?? "").isEmpty
+            }
+            if let value = hit?.value, !value.isEmpty { return value }
+        }
+        return nil
     }
 
     /// Upcoming answers "when is it due"; the other slices answer "when did

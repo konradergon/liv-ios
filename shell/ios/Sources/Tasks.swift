@@ -472,16 +472,19 @@ struct TasksView: View {
 
     /// Ref cells become chips: the cell's own display value, else the
     /// target's title from the snapshot index. Three at most — density law.
+    /// ONE chip, not three (BP-6: the tile's line 2 is "people, then
+    /// exactly ONE date chip, then tier — and NEVER a status chip,
+    /// because the column already carries status"; empty fields do not
+    /// render at all). The date is the row's right-hand fact already, so
+    /// what is left to say here is what the task is attached to.
     private func refChips(_ row: EntityRow) -> [String] {
-        var out: [String] = []
-        for cell in row.cells ?? [] {
-            guard let target = cell.refTarget else { continue }
-            let value = cell.value ?? ""
-            let text = value.isEmpty ? (model.entity(target)?.title ?? "") : value
-            if !text.isEmpty, !out.contains(text) { out.append(text) }
-            if out.count == 3 { break }
+        for property in ["project", "people", "subjects", "area"] {
+            let hit = (row.cells ?? []).first {
+                $0.property == property && !($0.value ?? "").isEmpty
+            }
+            if let value = hit?.value, !value.isEmpty { return [value] }
         }
-        return out
+        return []
     }
 }
 

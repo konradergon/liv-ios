@@ -21,6 +21,18 @@ private struct InboxDuePick: Identifiable {
     var id: UInt64 { entity }
 }
 
+/// Route or Tidy — the blueprint's two questions (BP-5).
+enum InboxLens: String, CaseIterable {
+    case route, tidy
+
+    var title: String {
+        switch self {
+        case .route: return "Route"
+        case .tidy: return "Tidy"
+        }
+    }
+}
+
 struct InboxView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -83,38 +95,83 @@ struct InboxView: View {
     /// semantics (owner-approved default).
     private var assistOff: Bool { box.snap?.assist?.on == false }
 
+    /// Which question you are answering. The blueprint's Route / Tidy.
+    @State private var lens: InboxLens = .route
+    /// The orphan whose routing question is open — one at a time.
+    @State private var routing: UInt64?
+
+    /// The two lenses, as the blueprint names and counts them.
+    private func lensRow(unrouted: Int, tidy: Int) -> some View {
+        HStack(spacing: 8) {
+            ForEach(InboxLens.allCases, id: \.self) { l in
+                let count = l == .route ? unrouted : tidy
+                Button { lens = l } label: {
+                    HStack(spacing: 6) {
+                        Text(l.title)
+                            .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
+                            .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text2)
+                        if count > 0 {
+                            Text("\(count)")
+                                .font(.system(size: LivType.label).monospacedDigit())
+                                .foregroundStyle(LivTheme.text3)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 32)
+                    .background(Capsule().fill(lens == l ? LivTheme.panel2 : .clear))
+                    .overlay(
+                        Capsule().strokeBorder(
+                            lens == l ? Color.clear : LivTheme.border, lineWidth: 0.5))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
     var body: some View {
         let scraps = self.scraps
         let groups = proposalGroups
 
         List {
             Group {
-                // No "Inbox" heading (owner, 2026-08-18) — the bar
-                // says where you are. The lens chip stays: it explains
-                // an EXCEPTION, that this one list ignores the
-                // workspace (owner, 2026-08-06).
+                // TWO LENSES, the blueprint's own pair (BP-5 B1): ROUTE
+                // is the orphans waiting for an address, TIDY is the
+                // assist queue. One cleanup home, two questions — "where
+                // does this go" and "what did the clerk notice" — and
+                // they were stacked in one scroll before, so a full
+                // Route list buried the suggestions under it.
+                lensRow(unrouted: scraps.count, tidy: groups.count)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
                 if workspaces.lensOn {
+                    // It explains an EXCEPTION: this one list ignores the
+                    // workspace (owner, 2026-08-06).
                     HStack(spacing: 8) {
                         ValueChip("all workspaces")
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, 10)
+                    .padding(.bottom, 6)
                 }
 
-                if scraps.isEmpty && groups.isEmpty && !assistOff {
-                    EmptyHint("Inbox zero.")
-                        .padding(.top, 32)
-                }
-
-                if !scraps.isEmpty {
-                    SectionLabel("Route", trailing: "\(scraps.count)")
-                        .padding(.top, 14).padding(.bottom, 2)
-                    ForEach(scraps) { row in
-                        routeCard(row)
+                if lens == .route {
+                    if scraps.isEmpty {
+                        // The blueprint's own copy (BP-5 B8).
+                        EmptyHint("Inbox zero — nothing waiting.")
+                            .padding(.top, 32)
+                    } else {
+                        ForEach(scraps) { row in
+                            routeCard(row)
+                        }
                     }
+                } else {
+                    if groups.isEmpty && !assistOff {
+                        EmptyHint("Nothing to tidy.")
+                            .padding(.top, 32)
+                    }
+                    suggestedSection(groups)
                 }
-
-                suggestedSection(groups)
             }
             .listRowInsets(
                 EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
@@ -156,39 +213,45 @@ struct InboxView: View {
     // MARK: route — a card per unrouted capture
 
     private func routeCard(_ row: EntityRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // What is waiting: a capture, in the capture colour.
-                IconChip(
-                    glyph: LivKind.glyph(of: row), color: LivKind.color(of: row),
-                    size: 22
-                )
-                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                LivIcon(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 19)
+                    .frame(width: 22)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
                 Text(displayTitle(row))
                     .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(2)
                 Spacer(minLength: 8)
                 Text(stamp(row))
-                    .font(.system(size: LivType.caption).monospacedDigit())
+                    .font(.system(size: LivType.label).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)
             }
-            HStack(spacing: 7) {
-                // The verbs stay NEUTRAL — colour marks what a thing is,
-                // never what a button would make (owner, 2026-08-12). They
-                // do share the one glyph table, so a routed note wears the
-                // same drawing the button promised.
-                routeVerb("Task", .task) { routeTask(row) }
-                routeVerb("Event", .event) { routeEvent(row) }
-                routeVerb("Note", .note) { route(row, to: "note", as: "Note") }
-                routeVerb("Link", .link) { route(row, to: "link", as: "Link") }
+            // THE VERBS ARE NOT ON EVERY ROW any more (BP-5 B3/B4): the
+            // blueprint's orphan row is one line — icon, title, source,
+            // one chip, age — and the routing question belongs to the
+            // row you PICKED. Four buttons on every row made a list of
+            // eight captures into thirty-two controls.
+            if routing == row.id {
+                HStack(spacing: 7) {
+                    routeVerb("Task", .task) { routeTask(row) }
+                    routeVerb("Event", .event) { routeEvent(row) }
+                    routeVerb("Note", .note) { route(row, to: "note", as: "Note") }
+                    routeVerb("Link", .link) { route(row, to: "link", as: "Link") }
+                }
+                .padding(.leading, 32)
             }
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture { desk.open(row.id) }
+        .onTapGesture {
+            withAnimation(LivMotion.nav) {
+                routing = routing == row.id ? nil : row.id
+            }
+        }
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                .padding(.leading, 32)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
