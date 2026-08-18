@@ -91,7 +91,7 @@ struct DeskHost: View {
                     DocumentBack()
                 } else {
                     FloatCircle(
-                        symbol: "sidebar.left", on: desk.libraryShown, label: "Library"
+                        symbol: "rectangle.leftthird.inset.filled", on: desk.libraryShown, label: "Library"
                     ) {
                         endEditing()
                         goToLibrary()
@@ -666,8 +666,12 @@ struct FloatCircleLabel: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: LivType.title, weight: .regular))
-            .foregroundStyle(on ? LivTheme.accent : LivTheme.text2)
+            // LIGHT, not regular (owner, 2026-08-18: "even more plain
+            // looking… i like a minimalist look"). A thinner stroke is
+            // the whole difference between an icon that announces
+            // itself and one that is just there.
+            .font(.system(size: LivType.title, weight: .light))
+            .foregroundStyle(on ? LivTheme.accent : LivTheme.text)
             // A FIXED square, so a wide glyph and a narrow one come out
             // the same button.
             .frame(width: 22, height: 22)

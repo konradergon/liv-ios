@@ -31,9 +31,12 @@ tier is furniture only. One layout bug fell out of the bigger digits and
 is fixed: the agenda's time column was cut for 15pt and wrapped "09:00"
 onto two lines.
 
-**The panel door is `sidebar.left`**, Apple's own symbol for the thing
-it opens. Three stacked bars is the generic web hamburger, and it was
-the last piece of chrome that looked borrowed.
+**The panel door is `rectangle.leftthird.inset.filled`** — the plainest
+symbol that still says "panel": an outlined rectangle with a solid left
+third, no interior lines or dots, drawn at the LIGHT weight (owner,
+2026-08-18: "even more plain looking… i like a minimalist look"). Three
+stacked bars was the generic web hamburger; `sidebar.left` was the right
+idea with decoration inside it.
 
 ## 2026-08-18 — the surface pass, second half: lists, the bar, the wide controls
 
