@@ -150,7 +150,9 @@ final class DeskModel: ObservableObject {
     /// How to build the create menu. Set by DeskHost, which owns the
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
-    var createMenu: (() -> LivMenu)?
+    /// The `+` sheet: Quick Capture (2026-08-18). It replaced the create
+    /// MENU, which made you name a kind before you could type a word.
+    @Published var captureShown = false
     /// One panel being dragged: which one, whether the drag OPENS or
     /// CLOSES it, and the finger's travel so far. It lives on the MODEL
     /// because the bottom bar and the pill, which fade under a curtain,
@@ -201,7 +203,7 @@ final class DeskModel: ObservableObject {
     /// (2026-08-15), which is a place on the strip, not a cover — the
     /// swipe back to the desk has to keep working while you are in one.
     var deskInFront: Bool {
-        !searchShown && !cameraShown && !settingsShown
+        !searchShown && !cameraShown && !captureShown && !settingsShown
             && !workspaceShown
     }
 
@@ -505,15 +507,17 @@ final class DeskModel: ObservableObject {
         }
         searchShown = false
         cameraShown = false
+        captureShown = false
         settingsShown = false
         workspaceShown = false
     }
 
-    /// `+`: the create MENU, sliding up over whatever you are looking at
-    /// (owner, 2026-08-13). It never opens anything by itself — choosing
-    /// something does — and it leaves the surface in front alone.
+    /// `+`: QUICK CAPTURE, sliding up over whatever you are looking at.
+    /// One field, the keyboard already up, and no question about what the
+    /// thing is — that is the Inbox's job (owner, 2026-08-18). It leaves
+    /// the surface in front alone, exactly as the create menu did.
     func createSomething() {
-        menu = createMenu?()
+        captureShown = true
     }
 }
 

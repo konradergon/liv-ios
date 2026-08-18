@@ -1685,6 +1685,30 @@ fn parse_civil_single(raw: &str) -> Option<DateTime> {
 /// "Thu 6 Aug ## Today - [ ] milk ## Notes" everywhere it appeared.
 /// `summary` still exists and still means what it says; it is simply not
 /// the answer to "what is this called" (owner, 2026-08-07).
+/// Plain typed text → spans, one `Break(Body)` per newline.
+///
+/// The ONE grammar for "someone typed this into a box" (standing rule 4).
+/// Markers stay literal — `## Gear` is the characters `## Gear`, and the
+/// renderer decides what that looks like — so this never guesses at
+/// structure the typist did not ask for. `markdown.rs` is the other
+/// parser, and it is for FILES, which really are markdown.
+///
+/// The lines matter because everything downstream counts them: a name is
+/// the first line (`source_name`), the clerk reads line by line, and the
+/// editor round-trips paragraphs.
+pub fn plain_spans(text: &str) -> Vec<Span> {
+    let mut spans = Vec::new();
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            spans.push(Span::Break(Block::Body));
+        }
+        if !line.is_empty() {
+            spans.push(Span::text(line));
+        }
+    }
+    spans
+}
+
 pub fn display_name(store: &Store, entity: &Entity) -> String {
     match entity.get(props::CONTENT) {
         Some(Value::RichText(rich)) => source_name(store, entity, rich),

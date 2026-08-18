@@ -131,18 +131,10 @@ fn priority_is_offered_not_expected_by_the_task_type() {
 // deviation until it converts to marks-and-blocks).
 
 fn body(text: &str) -> Vec<Span> {
-    // The iOS editor's shape: every newline is a Body break, markers stay
-    // literal text (shell/ios/Sources/Editor.swift textToSpans).
-    let mut spans = Vec::new();
-    for (i, line) in text.split('\n').enumerate() {
-        if i > 0 {
-            spans.push(Span::Break(Block::Body));
-        }
-        if !line.is_empty() {
-            spans.push(Span::Text(TextSpan::plain(line)));
-        }
-    }
-    spans
+    // The one grammar, not a second copy of it (standing rule 4): the
+    // same function `capture` uses, and the same shape the iOS editor
+    // writes (shell/ios/Sources/Editor.swift textToSpans).
+    content::plain_spans(text)
 }
 
 #[test]
@@ -349,6 +341,60 @@ fn display_name_never_shows_syntax() {
     check("> quoted words", "quoted words");
     // A hash with no space is the user's own text, not a heading.
     check("#errands today", "#errands today");
+
+    cleanup(&path);
+}
+
+/// A capture of more than one line (2026-08-18). The iOS Quick Capture
+/// sheet is the first door that can hand `capture` a multi-line thought,
+/// and it exposed that `capture` stored the whole thing as ONE flat text
+/// span: no line structure at all, so `display_name` — which returns the
+/// first LINE — had only one line to find and answered with the entire
+/// body. A shopping list captured in the sheet named itself
+/// "Roof leak in the shed\nCall the roofer, get two quotes" in every list
+/// in the app.
+///
+/// The lines are the storage format, not a rendering choice: the CLI's
+/// `liv add` and the share extension hand `capture` text too, and the
+/// editor that opens the capture afterwards must find the same paragraphs
+/// the person typed.
+#[test]
+fn a_capture_keeps_the_lines_it_was_given() {
+    let (path, mut session) = fresh("capture_lines");
+    let now = DateTime::date(2026, 8, 18);
+
+    let scrap = liv_services::capture(
+        &mut session,
+        "Roof leak in the shed\nCall the roofer, get two quotes",
+        now,
+    )
+    .unwrap();
+
+    assert_eq!(
+        content::display_name(session.store(), session.store().get(scrap).unwrap()),
+        "Roof leak in the shed",
+        "a capture is named by its FIRST line, like everything else unnamed"
+    );
+
+    // And the second line is still there, as its own paragraph.
+    let Some(Value::RichText(rich)) = session.store().get(scrap).unwrap().get(props::CONTENT)
+    else {
+        panic!("a capture holds content")
+    };
+    assert_eq!(
+        rich.spans.iter().filter(|s| matches!(s, Span::Break(_))).count(),
+        1,
+        "two lines is one break: {:?}",
+        rich.spans
+    );
+
+    // One line stays exactly one span — the common case gains nothing.
+    let single = liv_services::capture(&mut session, "Ring the plumber", now).unwrap();
+    let Some(Value::RichText(rich)) = session.store().get(single).unwrap().get(props::CONTENT)
+    else {
+        panic!("a capture holds content")
+    };
+    assert_eq!(rich.spans, vec![Span::text("Ring the plumber")]);
 
     cleanup(&path);
 }

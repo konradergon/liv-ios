@@ -1,5 +1,61 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-18 — Quick Capture: the app's one door in
+
+Owner: *"start building… always ask about choices and ambiguities"*, then
+four settled answers — the `+` opens **a capture sheet with the kinds
+inside it**; the photo does **OCR into the body**; the thing is **named
+by its first line, with no name field**; and the whole thing must be
+*"clean on par with the Obsidian screenshots and never cluttered… we
+don't get useless functionality in"*. First **function** of the layout →
+functions → polish order.
+
+**The `+` opens a sheet, not a menu.** One field, keyboard already up,
+and a Save that asks nothing: the words land as a capture — unrouted —
+and the Inbox's Route lens gives them an address later. Deciding what a
+thought IS at the moment you have it is the tax the old `New ▸ Note /
+Task / Event` menu charged; you could not type a word until you had
+paid it, and then you were dropped in a full-screen editor or a
+properties card. Three surfaces to write one line down.
+
+**The kinds stayed, in one control.** Bottom row: `[camera] [paperclip]
+… Capture ⌄  [Save]`. The kind key SHOWS what this will become rather
+than offering four buttons that all look primary. Capture saves and gets
+out of the way; Note, Task and Event open, because naming a kind is
+already saying you meant to work on it. A record keeps its first line as
+its name and everything after it as its body — **no word typed here is
+ever dropped**. File left the kind list: the paperclip is that door
+(standing rule 4).
+
+**Photo → words** (Vision, on the device). The camera key opens the ONE
+camera flow in a *scanning* dress — thumbnails and shutter, no caption
+and no chips, because the capture already owns the words and the filing.
+Each shot commits as a file entity at the shutter, as it always has, and
+what it SAYS is read and appended to the capture. The photo is then
+linked with a `related` cell — the same edge `[[ ]]` writes — and named
+after the capture's first line, so the links row says "MEETING NOTES"
+and not `031000DC-07F4-….heic`. Save waits for the read: saving a
+heartbeat early would drop the words the photo was taken for.
+
+**A core fix this exposed** (`services`, failing-test-first, flagged):
+`capture()` stored its whole text as ONE flat span. The sheet is the
+first door that can hand it more than one line, and the result named
+itself with its entire body in every list — visible in the Inbox
+screenshot as a two-line row. Lines are the storage format, not a
+rendering choice: `content::plain_spans` is now the one text→spans
+grammar, `capture` uses it, and the test helper that had quietly
+duplicated it points at it too. The CLI's `liv add` and the share
+extension get the fix for free.
+
+**Deleted** (standing rule 6): the create menu, `createNote()`,
+`createRecord()` and the desk's file importer — every one of them
+unreachable once the `+` opened the sheet.
+
+*Not built, deliberately:* no destination line (there is one Inbox), no
+property chips (the workspace stamps silently, as at every other door),
+no name row, no Keep/Composer toggle.
+
+
 ## 2026-08-18 — four surfaces, laid out from the blueprints
 
 Owner: *"take inspiration from blueprints regarding layout of today,

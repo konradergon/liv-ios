@@ -47,8 +47,11 @@ pub fn capture(
                 entity: scrap,
                 cell: Cell {
                     property: props::CONTENT,
+                    // Line by line (2026-08-18). One flat span made a
+                    // multi-line capture name itself with its whole body
+                    // in every list — the lines ARE the storage format.
                     value: Value::RichText(RichText {
-                        spans: vec![Span::text(text)],
+                        spans: crate::content::plain_spans(text),
                     }),
                 },
             },
