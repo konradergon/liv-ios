@@ -194,3 +194,72 @@ fn reading_links_stays_flat_as_the_box_grows() {
          links() is following the box, not the entity"
     );
 }
+
+/// THE WRITE PATH (2026-08-19). Standing rule 2 says anything on the
+/// snapshot path ships with a cost test. Three read paths had one; the
+/// WRITE path had none — and that is where the app was quadratic.
+///
+/// Measured before this test existed: one `liv_set_at` on a box of notes
+/// WITH BODIES cost 39.7 ms at 500 notes, 152.5 ms at 1,000, and did not
+/// finish inside ten minutes at 2,000. The same edit on notes with no
+/// body was flat, 4.9 ms at 500 to 8.6 ms at 8,000 — because the clerk
+/// only reads entities that have content, and the FFI runs the clerk
+/// over the WHOLE BOX on every write (`ffi/src/lib.rs`, `checkin`).
+///
+/// The sweep is the thing being timed, not the commit: `Session::commit`
+/// underneath is a flat fsync. Bodies and names are BOTH required to
+/// reproduce it — the names are what the gazetteer walks, the bodies are
+/// what it walks them against.
+#[test]
+fn the_clerk_sweep_stays_flat_as_the_box_grows() {
+    fn written(name: &str, n: usize) -> (std::path::PathBuf, Session) {
+        let (path, mut session) = boxed(name);
+        let now = DateTime::date(2026, 8, 19);
+        for i in 0..n {
+            let id = content::create_note(&mut session, now).unwrap();
+            // A DISTINCT name per note: identical names would land every
+            // note in one dedupe bucket and measure a different defect.
+            content::set_property(&mut session, id, "name", &format!("note number {i}")).unwrap();
+            // A real body. Without one the clerk skips the entity and
+            // this test measures nothing.
+            content::set_content(
+                &mut session,
+                id,
+                vec![Span::Text(TextSpan::plain(
+                    "Meeting with Anna about the kitchen rebuild, due friday.",
+                ))],
+                0,
+            )
+            .unwrap();
+        }
+        (path, session)
+    }
+
+    let (small_path, small_box) = written("sweep500", 500);
+    let (large_path, large_box) = written("sweep1000", 1000);
+    let sweep = |session: &Session| {
+        time(|| {
+            let _ = liv_services::clerk::sweep(session.store(), DateTime::date(2026, 8, 19));
+        })
+    };
+    let ratio = best_ratio(3, || sweep(&small_box), || sweep(&large_box));
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
+    // Linear would be ~2x. Measured before the fix: 3.8x — every entity
+    // with content is walked against every named entity, so doubling the
+    // box quadruples one write. 2.6x is the same headroom the file
+    // projection gets, and it is nowhere near 3.8.
+    // Linear would be 2.0x. MEASURED 2.47x on 2026-08-19 — the sweep
+    // itself is mildly superlinear (every entity with content is walked
+    // against the gazetteer of every named entity), but it is NOT the
+    // quadratic that made a write take 152 ms. That was the FFI
+    // re-persisting the whole proposal queue once per proposal; see
+    // ffi/src/tests.rs `one_write_stays_flat_as_the_box_grows`. This
+    // guards the sweep's own shape so the second-order cost cannot grow
+    // into a first-order one unnoticed.
+    assert!(
+        ratio < 2.6,
+        "doubling the box multiplied the clerk sweep by {ratio:.2}x; \
+         the sweep is walking the box per entity, and it runs on EVERY write"
+    );
+}

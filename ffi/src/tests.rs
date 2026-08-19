@@ -2893,3 +2893,63 @@ fn note_task_lines_ride_the_wire() {
 
 
 
+
+/// ONE WRITE (2026-08-19). Standing rule 2 gave three READ paths a cost
+/// test and the write path none — and that is where the app was
+/// quadratic. Measured through this very ABI before the fix: one
+/// `liv_set_at` cost 39.7 ms on 500 notes with bodies, 152.5 ms on 1,000,
+/// and did not finish inside ten minutes on 2,000.
+///
+/// The cause was not the clerk's sweep, which is only mildly superlinear
+/// (2.47x per doubling, guarded in services/tests/scale.rs). It was
+/// `checkin` calling `Session::propose` once per proposal, and every one
+/// of those calls rewriting the WHOLE pending-queue file and fsyncing it.
+/// N proposals meant N fsyncs and O(N^2) bytes for a single edit.
+///
+/// Bodies AND distinct names are both required to reproduce: the bodies
+/// are what makes the clerk look at an entity, the names are what it
+/// looks them up against.
+#[test]
+fn one_write_stays_flat_as_the_box_grows() {
+    fn boxed(name: &str, notes: usize) -> (std::path::PathBuf, CString, u64) {
+        let (path, c_path) = fresh_box(name);
+        let prop = CString::new("name").unwrap();
+        let mut last = 0;
+        for i in 0..notes {
+            let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
+            let value = CString::new(format!("note number {i}")).unwrap();
+            unsafe { liv_set_at(c_path.as_ptr(), id, prop.as_ptr(), value.as_ptr()) };
+            let body = CString::new(
+                "[{\"Text\":{\"text\":\"Meeting with Anna about the rebuild, due friday.\",\"marks\":0}}]",
+            )
+            .unwrap();
+            let mut fresh: u64 = 0;
+            unsafe { liv_set_content_at(c_path.as_ptr(), id, body.as_ptr(), 0, &mut fresh) };
+            last = id;
+        }
+        (path, c_path, last)
+    }
+    let (small_path, small, small_id) = boxed("liv_ffi_write_small.log", 250);
+    let (large_path, large, large_id) = boxed("liv_ffi_write_large.log", 500);
+    let prop = CString::new("name").unwrap();
+    let once = |p: &CString, id: u64, tag: &str| {
+        let value = CString::new(tag).unwrap();
+        let start = std::time::Instant::now();
+        unsafe { liv_set_at(p.as_ptr(), id, prop.as_ptr(), value.as_ptr()) };
+        start.elapsed()
+    };
+    let ratio = (0..3)
+        .map(|k| {
+            let s = once(&small, small_id, &format!("small {k}"));
+            let l = once(&large, large_id, &format!("large {k}"));
+            l.as_secs_f64() / s.as_secs_f64().max(1e-9)
+        })
+        .fold(f64::INFINITY, f64::min);
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
+    assert!(
+        ratio < 2.6,
+        "doubling the box multiplied ONE property edit by {ratio:.2}x; \
+         the write path is doing work proportional to the whole box"
+    );
+}

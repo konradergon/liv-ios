@@ -8,7 +8,7 @@
 //!
 //! The language model of milestone 8 is a brain swap behind this socket.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use liv_core::{
     props, Author, Block, Cell, Command, DateTime, Entity, Id, PersistError, Proposal, RichText,
@@ -316,7 +316,42 @@ fn decline_key(proposal: &Proposal) -> Option<(&str, Id, Id)> {
 }
 
 /// Everything named and front-of-house is a name worth noticing.
-fn gazetteer(store: &Store) -> Vec<(Id, String)> {
+/// One name the clerk can spot in someone's writing.
+struct Named {
+    id: Id,
+    /// As written, for the label the user reads.
+    name: String,
+    /// Lowercased ONCE per sweep. This used to be recomputed inside the
+    /// per-entity loop — an allocation per entity per name.
+    lowered: String,
+}
+
+/// Every name in the box, plus a word index into it.
+///
+/// The index is what stops the mentions proposer being quadratic. Without
+/// it, each entity that has content walks EVERY name in the box; with it,
+/// each entity looks up only the names whose first word it actually
+/// contains. Measured 2026-08-19 on notes with bodies: the sweep cost
+/// 8.9 ms at 250 notes, 35.4 at 500 and 141.7 at 1,000 — four times the
+/// work for twice the box.
+struct Gazetteer {
+    names: Vec<Named>,
+    /// First whole word of each lowered name → its indices in `names`.
+    /// A name can only be found in a text that contains its first word as
+    /// a word, because `contains_word` demands a boundary on both sides —
+    /// so this prefilter can never hide a match.
+    by_first_word: HashMap<String, Vec<usize>>,
+    /// Names with no alphanumeric run at all. Vanishingly rare; checked
+    /// against every entity so the prefilter stays a prefilter.
+    wordless: Vec<usize>,
+}
+
+/// The alphanumeric runs of a string, lowercased input assumed.
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty())
+}
+
+fn gazetteer(store: &Store) -> Gazetteer {
     let named = Query {
         constraints: vec![Constraint {
             property: props::NAME,
@@ -324,18 +359,30 @@ fn gazetteer(store: &Store) -> Vec<(Id, String)> {
         }],
         ..Query::default()
     };
-    run(store, &named)
+    let names: Vec<Named> = run(store, &named)
         .into_iter()
         .filter_map(|id| {
             let entity = store.get(id)?;
             match entity.get(props::NAME) {
-                Some(Value::Text(name)) if name.chars().count() >= 3 => {
-                    Some((id, name.clone()))
-                }
+                Some(Value::Text(name)) if name.chars().count() >= 3 => Some(Named {
+                    id,
+                    lowered: name.to_lowercase(),
+                    name: name.clone(),
+                }),
                 _ => None,
             }
         })
-        .collect()
+        .collect();
+
+    let mut by_first_word: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut wordless = Vec::new();
+    for (at, named) in names.iter().enumerate() {
+        match words(&named.lowered).next() {
+            Some(first) => by_first_word.entry(first.to_string()).or_default().push(at),
+            None => wordless.push(at),
+        }
+    }
+    Gazetteer { names, by_first_word, wordless }
 }
 
 /// The text spans of the content cell, flattened.
@@ -390,18 +437,36 @@ fn propose_mentions(
     vocabulary: &Vocabulary,
     entity: &Entity,
     text: &str,
-    gazetteer: &[(Id, String)],
+    gazetteer: &Gazetteer,
     proposals: &mut Vec<Proposal>,
 ) {
     let lower = text.to_lowercase();
-    for (target, name) in gazetteer {
-        if *target == entity.id {
+
+    // Look up only the names this text could possibly contain, then walk
+    // them IN GAZETTEER ORDER. The order matters as much as the speed:
+    // the inbox is re-derived by every process and "accept 2" must mean
+    // the proposal the user just read, so a BTreeSet of indices restores
+    // exactly the order the old whole-gazetteer loop produced.
+    let mut candidates: BTreeSet<usize> = gazetteer.wordless.iter().copied().collect();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for word in words(&lower) {
+        if !seen.insert(word) {
             continue;
         }
-        if entity.has(vocabulary.related, &Value::Reference(*target)) {
+        if let Some(at) = gazetteer.by_first_word.get(word) {
+            candidates.extend(at.iter().copied());
+        }
+    }
+
+    for at in candidates {
+        let named = &gazetteer.names[at];
+        if named.id == entity.id {
             continue;
         }
-        if !contains_word(&lower, &name.to_lowercase()) {
+        if entity.has(vocabulary.related, &Value::Reference(named.id)) {
+            continue;
+        }
+        if !contains_word(&lower, &named.lowered) {
             continue;
         }
         proposals.push(Proposal {
@@ -409,12 +474,12 @@ fn propose_mentions(
                 entity: entity.id,
                 cell: Cell {
                     property: vocabulary.related,
-                    value: Value::Reference(*target),
+                    value: Value::Reference(named.id),
                 },
             }],
-            label: format!("relate to {name}"),
+            label: format!("relate to {}", named.name),
             author: Author::Proposer("mentions".into()),
-            reason: format!("mentions \"{name}\" → relate?"),
+            reason: format!("mentions \"{}\" → relate?", named.name),
         });
     }
 }

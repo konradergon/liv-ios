@@ -256,11 +256,15 @@ fn checkin(key: PathBuf, mut session: Session, committed: Committed) {
         Committed::Wrote => {
             let today = civil_today();
             let proposals = clerk::sweep(session.store(), today);
-            for proposal in proposals {
-                if session.propose(proposal).is_err() {
-                    cache().lock().unwrap().remove(&key);
-                    return;
-                }
+            // ONE durable write for the whole sweep. This was a loop
+            // calling `propose` per proposal, and each of those rewrote
+            // the entire pending-queue file and fsynced it — N fsyncs and
+            // O(N^2) bytes for one property edit (measured 2026-08-19:
+            // 152 ms at 1,000 notes, unfinished at 2,000). Guarded by
+            // `one_write_stays_flat_as_the_box_grows`.
+            if session.propose_all(proposals).is_err() {
+                cache().lock().unwrap().remove(&key);
+                return;
             }
             cache_store(key, session);
         }

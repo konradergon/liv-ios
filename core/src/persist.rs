@@ -394,6 +394,30 @@ impl Session {
         self.persist_pending()
     }
 
+    /// Every proposal of one sweep, quarantined in ONE write.
+    ///
+    /// `propose` rewrites the whole queue file and fsyncs it on every
+    /// call. That is right for a single agent draft and catastrophic for
+    /// a sweep: the shell re-derives every proposal in the box on every
+    /// mutation, so N proposals cost N fsyncs and O(N^2) serialized
+    /// bytes. Measured 2026-08-19 through the C ABI: one property edit
+    /// took 39.7 ms on a box of 500 notes with bodies, 152.5 ms on 1,000,
+    /// and did not finish inside ten minutes on 2,000.
+    ///
+    /// Same proposals, same order, same durability when this returns —
+    /// one file write instead of N. A crash mid-sweep now leaves the
+    /// queue untouched rather than holding a prefix, which is the better
+    /// of the two: a sweep is re-derivable by definition.
+    pub fn propose_all(&mut self, proposals: Vec<Proposal>) -> Result<(), PersistError> {
+        if proposals.is_empty() {
+            return Ok(());
+        }
+        for proposal in proposals {
+            self.store.propose(proposal);
+        }
+        self.persist_pending()
+    }
+
     /// Decline and remember: the refusal is appended to the sidecar before
     /// the call returns, so nothing asks again — across restarts too.
     pub fn reject(&mut self, index: usize) -> Result<(), PersistError> {
