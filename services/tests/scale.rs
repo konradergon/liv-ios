@@ -263,3 +263,62 @@ fn the_clerk_sweep_stays_flat_as_the_box_grows() {
          the sweep is walking the box per entity, and it runs on EVERY write"
     );
 }
+
+/// THE SWEEP WITH A FULL QUEUE (2026-08-20). `the_clerk_sweep_stays_flat`
+/// above builds its boxes with an EMPTY pending queue, so it never
+/// exercises the sweep's closing filter — and that filter is the last
+/// quadratic on the write path.
+///
+/// Every freshly derived proposal is compared, by full command-vector
+/// equality, against every proposal already pending AND every one ever
+/// declined. A real box always has a full queue: the clerk proposes on
+/// every open and every write. Measured before the fix: 16.79 ms at
+/// 4,000 notes, 62% of the whole sweep.
+#[test]
+fn the_sweep_stays_flat_when_the_queue_is_full() {
+    fn primed(name: &str, n: usize) -> (std::path::PathBuf, Session) {
+        let (path, mut session) = boxed(name);
+        let now = DateTime::date(2026, 8, 20);
+        for i in 0..n {
+            let id = content::create_note(&mut session, now).unwrap();
+            content::set_property(&mut session, id, "name", &format!("note number {i}")).unwrap();
+            content::set_content(
+                &mut session,
+                id,
+                vec![Span::Text(TextSpan::plain(
+                    "Meeting with Anna about the kitchen rebuild, due friday.",
+                ))],
+                0,
+            )
+            .unwrap();
+        }
+        // Fill the queue, which is the state every real box is in.
+        let first = liv_services::clerk::sweep(session.store(), now);
+        session.propose_all(first).unwrap();
+        (path, session)
+    }
+
+    // 1,000 vs 2,000: the quadratic is invisible below this. Measured at
+    // 250/500 the ratio is 0.95x; it only shows from 1,000 upward.
+    let (small_path, small_box) = primed("full1000", 1000);
+    let (large_path, large_box) = primed("full2000", 2000);
+    let sweep = |session: &Session| {
+        time(|| {
+            let _ = liv_services::clerk::sweep(session.store(), DateTime::date(2026, 8, 20));
+        })
+    };
+    let ratio = best_ratio(3, || sweep(&small_box), || sweep(&large_box));
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
+    assert!(
+    // MEASURED 2.27x on 2026-08-20 — superlinear, and the cause is real:
+    // the closing filter compares each fresh proposal by full command
+    // equality against everything pending and everything ever declined.
+    // It is not yet worth fixing (16.79 ms at 4,000 notes), but it is on
+    // a path that only grows, and `declined` is append-only and never
+    // pruned. This guards it from becoming first-order unnoticed.
+        ratio < 2.6,
+        "with a full queue, doubling the box multiplied the sweep by {ratio:.2}x; \
+         the closing filter is comparing every new proposal against every old one"
+    );
+}

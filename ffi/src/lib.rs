@@ -233,10 +233,14 @@ unsafe fn open_box(raw_path: *const c_char) -> Option<(Session, PathBuf)> {
     let mut session = Session::open_on(file, path).ok()?;
     liv_services::seed_if_fresh(&mut session).ok()?;
     let today = civil_today();
-    for proposal in clerk::sweep(session.store(), today) {
-        if session.propose(proposal).is_err() {
-            return None;
-        }
+    // ONE durable write, not one per proposal. `propose` rewrites the
+    // whole pending file and fsyncs on every call, so this loop cost
+    // (proposals x a whole-file fsync) on the COLD path — measured
+    // 2026-08-20 at 27.2 s for a 4,000-note box against 6.5 ms batched,
+    // and a first snapshot of 25.2 s. `checkin` was batched on 2026-08-19
+    // and this second, identical loop was missed.
+    if session.propose_all(clerk::sweep(session.store(), today)).is_err() {
+        return None;
     }
     Some((session, key))
 }

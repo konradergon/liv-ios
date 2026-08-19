@@ -72,9 +72,11 @@ fn dispatch(args: &[String]) -> Result<(), String> {
 
     // The clerk sweeps at every open; duplicates of anything pending or
     // declined never reach the queue.
-    for proposal in liv_services::clerk::sweep(session.store(), civil_today()) {
-        session.propose(proposal).map_err(|e| e.to_string())?;
-    }
+    // One durable write. The CLI has no store cache, so EVERY invocation
+    // is a cold open and paid the whole per-proposal fsync loop.
+    session
+        .propose_all(liv_services::clerk::sweep(session.store(), civil_today()))
+        .map_err(|e| e.to_string())?;
 
     match rest.split_first() {
         None | Some((&"today", _)) => {
@@ -332,9 +334,9 @@ fn add(session: &mut Session, text: &str) -> Result<(), String> {
 
     // The clerk runs behind the write; whatever it noticed shows at once.
     let already = session.store().pending().len();
-    for proposal in liv_services::clerk::sweep(session.store(), civil_today()) {
-        session.propose(proposal).map_err(|e| e.to_string())?;
-    }
+    session
+        .propose_all(liv_services::clerk::sweep(session.store(), civil_today()))
+        .map_err(|e| e.to_string())?;
     for proposal in session.store().pending().iter().skip(already) {
         let subject = subject_of(proposal)
             .map(|id| format!("{id}"))

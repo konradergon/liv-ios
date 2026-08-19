@@ -117,7 +117,38 @@ End to end, one `liv_set_at`:
 - `services/tests/scale.rs` `the_clerk_sweep_stays_flat_as_the_box_grows` —
   the sweep's own shape.
 
+## The two loops that were missed (2026-08-20)
+
+The fix above batched `checkin`. There were two more copies of the same
+per-proposal loop, and they were worse, because they sit on the COLD path
+where nothing is cached:
+
+- `ffi/src/lib.rs` — the open path. Every proposal, a whole-file rewrite
+  and an fsync. Measured 27.2 s for a 4,000-note box against 6.5 ms
+  batched; the first `liv_snapshot` on such a box took 25.2 s.
+- `cli/src/main.rs`, twice. The CLI has no cache, so EVERY invocation is
+  a cold open and paid the whole loop.
+
+All three now use `Session::propose_all`. Verified end to end through the
+real CLI on a 2,000-note box: **a cold open went from ~11.8 s to 26 ms.**
+
+This is also why `propose_all` looked useless when it landed: it was
+measured on a WARM write, where the queue was already full and the sweep
+returned almost nothing new. The cost was always on the cold path.
+
 ## Still open
+
+**The sweep's closing filter is still superlinear.** Every fresh proposal
+is compared by full command equality against everything pending and
+everything ever declined. Measured 2.27x per doubling at 1,000 -> 2,000
+notes, and 16.79 ms at 4,000 — real, but not yet worth fixing. It is
+guarded by `the_sweep_stays_flat_when_the_queue_is_full`, which had to
+prime the queue to see it at all; the earlier tests build boxes with an
+empty queue and are blind to it. Note `declined` is append-only and never
+pruned, so this term grows with the box's whole history, not its size.
+The designed fix is to bucket pending and declined by (command count,
+first command's entity) — equal command vectors necessarily agree on
+both, so the key cannot hide a match.
 
 The sweep still runs over the whole box on every write. It is now cheap enough
 that this does not hurt (15.6 ms at 8,000 notes), but it is still O(box) per
