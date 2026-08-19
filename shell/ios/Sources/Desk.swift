@@ -452,6 +452,16 @@ struct DeskHost: View {
                 LivMenuItem(label: "Task", glyph: .task) { createRecord(event: false) },
                 LivMenuItem(label: "Event", glyph: .event) { createRecord(event: true) },
                 LivMenuItem(label: "File", glyph: .file(.other)) { picking = true },
+                // The camera's way in. It had none: nothing has set
+                // `cameraShown` since the tab plane that used to hold the
+                // button was deleted, so the whole flow was unreachable
+                // (found 2026-08-19). Named for what the owner uses it
+                // for — "i don't see usage for camera except ocr
+                // scanning" — and the shutter still takes plain photos
+                // once you are in there.
+                LivMenuItem(label: "Scan text", symbol: "text.viewfinder") {
+                    desk.cameraShown = true
+                },
             ])
     }
 

@@ -277,6 +277,30 @@ enum SpanText {
     /// pasting a note containing "[[123]]" from elsewhere used to loop
     /// forever on "The box refused this save". The characters stay exactly
     /// as typed — only their meaning is demoted.
+    /// Characters that were RECOGNISED, not typed — one Body line each,
+    /// nothing interpreted (2026-08-19).
+    ///
+    /// `textToSpans` is the markdown grammar for what a person typed in
+    /// the editor, and it is the wrong reader for a photographed page.
+    /// It DELETES a line of three or more dashes (`if case .rule …
+    /// continue` — the marker IS the line), which is the separator on
+    /// every receipt, form and letterhead; it eats the marker off
+    /// `# 5 apples`; and it turns a printed `- [ ]` into a real task that
+    /// then shows up in Tasks as a to-do you never wrote.
+    ///
+    /// This is not a second grammar (standing rule 4) — it is the ABSENCE
+    /// of one, and it is the exact mirror of the core's own
+    /// `content::plain_spans`, which `capture` uses for the same reason.
+    /// What the camera read is what the note says.
+    static func plainSpans(_ text: String) -> [SpanJSON] {
+        var out: [SpanJSON] = []
+        for (i, line) in text.components(separatedBy: "\n").enumerated() {
+            if i > 0 { out.append(.brk(.body)) }
+            if !line.isEmpty { out.append(.text(line, marks: 0)) }
+        }
+        return out
+    }
+
     static func textToSpans(
         _ text: String, isKnown: (UInt64) -> Bool = { _ in true }
     ) -> [SpanJSON] {

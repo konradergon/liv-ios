@@ -1,5 +1,74 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-08-19 — Scan text: a page becomes a note
+
+Owner: *"do the ocr on the camera door"*, then — after being shown that
+storing words on the photo makes them searchable but unreadable —
+*"Actually don't know who is going to care about the photo itself. You
+probably want the best presentation of what you've scanned"*, and
+finally *"scan into a note, drop the photo."*
+
+That is **Apple Notes' Scan Text**, exactly: camera → the characters
+cross over → no image asset is kept. Keep and Google Docs keep the
+picture and append the words beside it; OneNote only fills the
+clipboard. Nobody keeps a photo you took in order to read it.
+
+**The shape.** `Scan text` sits beside the shutter in the camera tray —
+two intents in one row: the shutter KEEPS a photo, Scan text keeps the
+WORDS and files nothing. Vision reads the frame on the device, a note is
+born holding what it read, and you land in the editor. No file is
+written, no photo entity exists, and the note titles itself from its
+first line, which is the core's own rule for anything unnamed (and the
+one first-party precedent for content-derived naming — Apple titles a
+note by its first line, and renames no image ever).
+
+**The camera had no door.** Nothing has set `cameraShown` since the tab
+plane that used to hold the button was deleted, so the whole flow was
+unreachable dead UI. `Scan text` is now a row in the `+` menu, which is
+also how plain photo capture became reachable again.
+
+**Three defects found before shipping, not after.**
+
+1. *Orientation.* `VNImageRequestHandler(cgImage:)` has no orientation
+   and treats every buffer as upright, while `UIImage(...)?.cgImage`
+   hands back the RAW sensor pixels — so a page photographed in portrait
+   arrives sideways, loses its small glyphs, and comes back as gibberish
+   for the mirrored EXIF values. The reverted August 18 code had exactly
+   this bug. The fix is `VNImageRequestHandler(data:)`, which reads the
+   EXIF tag itself; passing an explicit `orientation:` would be WORSE,
+   because it supersedes the tag rather than combining with it. Measured
+   on the simulator across all eight EXIF values: the data handler
+   matches an upright reference every time, the naive form fails seven
+   times out of eight.
+2. *Language.* The reverted code asked for `sv-SE`, which does not exist
+   on an iOS 17 target — and Vision neither throws nor warns for an
+   unsupported language, it just runs a model you did not choose. The
+   list is now intersected with `supportedRecognitionLanguages()` at
+   runtime, so Swedish arrives when the OS has it and nothing breaks
+   when it does not. `revision` is pinned to 3 for the same class of
+   reason: the default follows the SDK you LINK against, not the phone.
+3. *The wrong parser.* `SpanText.textToSpans` is the markdown grammar for
+   what a person typed. It DELETES a line of three or more dashes (the
+   marker IS the line) — the separator on every receipt, form and
+   letterhead — and turns a printed `- [ ]` into a real task in your
+   Tasks list. Recognised characters are not markdown. `SpanText.
+   plainSpans` is the literal reader, the exact mirror of the core's
+   `content::plain_spans`; it is not a second grammar but the absence of
+   one. Verified against a photographed receipt: every line stored as
+   typed, all Body blocks, no phantom task.
+
+Also: a refused content write used to leave a blank note behind. It now
+trashes it.
+
+**Known limit, not fixed here.** `CameraEngine` never sets the capture
+connection's rotation, and the app is portrait-locked — so a page shot
+with the phone turned sideways gets an upright EXIF tag and Vision reads
+it rotated. Scanning a page in portrait, which is the normal posture, is
+unaffected. The fix belongs at capture and would change the existing
+photo path too, which cannot be verified without a device; left for a
+batch that can test it.
+
+
 ## 2026-08-18 — Today: the late pile folds
 
 Owner: *"so much LATE stuff i can't see what's for today."* Thirteen late

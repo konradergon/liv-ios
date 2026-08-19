@@ -297,6 +297,14 @@ struct CameraFlow: View {
     @State private var chipText = ""
     @State private var suggestions: [String] = []
     @State private var pickerItem: PhotosPickerItem?
+    /// Scan text: the shutter's sibling. `scanning` is true while Vision
+    /// is working; `scanSaid` is the one line the tray shows when a
+    /// photograph turned out to have no words in it.
+    @State private var scanning = false
+    @State private var scanSaid = ""
+    @State private var scanPickerItem: PhotosPickerItem?
+    /// Which intent pressed the shutter. Consumed by the next frame.
+    @State private var wantsScan = false
 
     private let hasCamera = CameraEngine.hasCamera
 
@@ -325,6 +333,18 @@ struct CameraFlow: View {
                     CameraFlow.buzz()
                 }
                 pickerItem = nil
+            }
+        }
+        // The same stand-in, routed to the scanner instead of the filer.
+        .onChange(of: scanPickerItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    scan(data)
+                } else {
+                    CameraFlow.buzz()
+                }
+                scanPickerItem = nil
             }
         }
     }
@@ -604,46 +624,105 @@ struct CameraFlow: View {
 
     // MARK: shutter row — real shutter, or the simulator's stand-in
 
+    /// Two intents, one row. The shutter KEEPS a photo; Scan text keeps
+    /// the WORDS and throws the picture away. They sit side by side
+    /// because they are the same gesture pointed at the same thing, and
+    /// the difference is only what you wanted out of it.
     @ViewBuilder private var shutterRow: some View {
-        if hasCamera {
-            if permission == .granted {
-                Button {
-                    engine.shoot()
-                } label: {
+        VStack(spacing: 6) {
+            if !scanSaid.isEmpty { EmptyHint(scanSaid).padding(.vertical, 0) }
+            if hasCamera {
+                if permission == .granted {
                     ZStack {
-                        Circle().strokeBorder(.white, lineWidth: 3)
-                            .frame(width: 62, height: 62)
-                        Circle().fill(.white).frame(width: 50, height: 50)
+                        Button {
+                            engine.shoot()
+                        } label: {
+                            ZStack {
+                                Circle().strokeBorder(.white, lineWidth: 3)
+                                    .frame(width: 62, height: 62)
+                                Circle().fill(.white).frame(width: 50, height: 50)
+                            }
+                            .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Shutter")
+
+                        HStack {
+                            Spacer()
+                            Button { scanShot() } label: { scanLabel }
+                                .buttonStyle(.plain)
+                                .disabled(scanning)
+                        }
                     }
-                    .contentShape(Circle())
+                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Shutter")
-            }
-        } else {
-            VStack(spacing: 6) {
+            } else {
                 EmptyHint("simulator: pick a photo to stand in for the shutter")
                     .padding(.vertical, 0)
-                PhotosPicker(selection: $pickerItem, matching: .images) {
-                    ZStack {
-                        Circle().strokeBorder(.white, lineWidth: 3)
-                            .frame(width: 62, height: 62)
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: LivType.display))
-                            .foregroundStyle(.white)
+                ZStack {
+                    PhotosPicker(selection: $pickerItem, matching: .images) {
+                        ZStack {
+                            Circle().strokeBorder(.white, lineWidth: 3)
+                                .frame(width: 62, height: 62)
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.system(size: LivType.display))
+                                .foregroundStyle(.white)
+                        }
+                        .contentShape(Circle())
                     }
-                    .contentShape(Circle())
+                    .accessibilityLabel("Pick a photo")
+
+                    HStack {
+                        Spacer()
+                        PhotosPicker(selection: $scanPickerItem, matching: .images) {
+                            scanLabel
+                        }
+                        .disabled(scanning)
+                    }
                 }
-                .accessibilityLabel("Pick a photo")
+                .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    /// It says what it does and what it is doing (literal naming). The
+    /// same label carries both states so the control never changes size
+    /// mid-press.
+    private var scanLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "text.viewfinder")
+                .font(.system(size: LivType.strong, weight: .medium))
+            Text(scanning ? "Reading…" : "Scan text")
+                .font(.system(size: LivType.label, weight: .medium))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 11)
+        .frame(height: 36)
+        .background(cameraChromeFill, in: Capsule())
+        .contentShape(Capsule())
+        .opacity(scanning ? 0.6 : 1)
     }
 
     // MARK: acts
 
     private func begin() {
-        engine.onPhoto = { ingest($0) }
-        engine.onShotFailed = { CameraFlow.buzz() }
+        // ONE shutter, two intents. The engine stays ignorant of which:
+        // whoever pressed sets the flag, and the frame goes where it was
+        // asked for. A second capture path would be a second thing to
+        // keep true (standing rule 4).
+        engine.onPhoto = { data in
+            if wantsScan {
+                wantsScan = false
+                scan(data)
+            } else {
+                ingest(data)
+            }
+        }
+        engine.onShotFailed = {
+            wantsScan = false
+            scanning = false
+            CameraFlow.buzz()
+        }
         guard hasCamera else { return }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -658,6 +737,80 @@ struct CameraFlow: View {
             }
         default:
             permission = .denied
+        }
+    }
+
+    // MARK: scanning — the words, not the picture
+
+    /// Ask the next frame for its words.
+    private func scanShot() {
+        guard !scanning else { return }
+        scanSaid = ""
+        scanning = true
+        wantsScan = true
+        engine.shoot()
+    }
+
+    /// A frame taken to be READ. The bytes are recognised and dropped —
+    /// no file is written, no photo entity is born (owner, 2026-08-19:
+    /// *"scan into a note, drop the photo"*). This is Apple Notes' Scan
+    /// Text: only the characters cross over.
+    ///
+    /// What comes back is a note, and you land in it. Apple reviews
+    /// before committing, by making you drag grab points over the words;
+    /// Todoist reviews on a draft screen. Liv reviews AFTER, in the
+    /// editor you land in — the same words, fully editable, and a note
+    /// you did not want is one swipe from the trash. The trade is
+    /// deliberate: an in-viewfinder selection step is a second surface,
+    /// and this app is meant to stay small.
+    private func scan(_ data: Data) {
+        scanning = true
+        LivScan.read(data) { found in
+            let text = found.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                // NO empty note. A photograph with no words in it is not
+                // a document you meant to make.
+                scanning = false
+                scanSaid = "No text found"
+                CameraFlow.buzz()
+                return
+            }
+            model.createNote { id in
+                guard id != 0 else {
+                    scanning = false
+                    CameraFlow.buzz()
+                    return
+                }
+                // A fresh note holds no content, so its fingerprint is 0
+                // — the compare-and-swap has nothing to lose a race with.
+                //
+                // plainSpans, NOT textToSpans: what the camera read is
+                // not markdown someone typed. The editor's parser deletes
+                // a line of three or more dashes outright — the separator
+                // on every receipt and letterhead — and turns a printed
+                // "- [ ]" into a real task in your Tasks list.
+                let spans = SpanText.plainSpans(text)
+                model.setContent(id, spansJson: SpanText.json(spans), base: 0) { status, _ in
+                    scanning = false
+                    guard status == 1 else {
+                        // Take the empty note back out. A refused write
+                        // used to leave a blank note behind, which is a
+                        // worse outcome than the failure itself.
+                        model.trash(id)
+                        CameraFlow.buzz()
+                        return
+                    }
+                    // Stamped like every other creation door, then out.
+                    // NO name is set: the first line names it, which is
+                    // the core's own rule for anything unnamed — and it
+                    // is the one precedent for content-derived naming
+                    // anywhere (Apple Notes titles a note by its first
+                    // line; nothing renames an image from what it read).
+                    workspaces.stamp(id, in: model)
+                    onDone?([id])
+                    dismiss()
+                }
+            }
         }
     }
 

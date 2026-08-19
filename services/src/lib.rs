@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
 use liv_core::{
-    props, Author, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session, Span,
+    props, Author, Cell, Command, DateTime, Entity, Id, PersistError, RichText, Session,
     Store, Value,
 };
 
