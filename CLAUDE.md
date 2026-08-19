@@ -33,10 +33,21 @@ for `x86_64-pc-windows-msvc` today). A shell is a thin UI that (1) calls FFI
 verbs to mutate, (2) reads the snapshot JSON to render.
 
 **Platforms, as of 2026-08-19.** `shell/ios/` is THE app — the product, built
-and shipped from this tree. The desktop is the **Tauri app** in the separate
-`lovable-notes-hub` repo, which links the same crates directly (no C ABI
-needed; see its `docs/liv-core-pivot.md`); the iOS tree is expected to move
-into that repo eventually.
+and shipped from this tree. The desktop is the **Tauri app** in the
+`lovable-notes-hub` working copy, which links the same crates directly (no C
+ABI needed); the iOS tree is expected to move there eventually.
+
+**It is not a separate repository.** Both working copies point at the same
+remote, `Dahlaren/lovable-notes-hub` — two branch lines with no common ancestor
+in one repo. Resolving that topology (merge, subtree, vendor or publish) is an
+open question; a `path = "../../liv/core"` across two checkouts of one remote is
+unclonable and un-CI-able. The `docs/liv-core-pivot.md` that used to be cited
+here exists only on an unpushed local branch.
+
+**Two crates are named `liv-core`**: this one (the append-only log) and the
+desktop's (a SQLite engine, 1,784 lines). They are not interchangeable, and only
+one should survive — see `design/one-core.md` for the comparison, the
+recommendation, the measured costs, and the six questions it needs answered.
 
 The hand-built Mac shell and the planned WinUI port are **gone** (deleted
 2026-08-19, owner's word). Tauri covers macOS, Windows and Linux, so neither
