@@ -2390,12 +2390,26 @@ fn the_snapshot_stays_linear_in_box_size() {
     }
     let (small_path, small) = boxed("liv_ffi_cost_small.log", 200);
     let (large_path, large) = boxed("liv_ffi_cost_large.log", 400);
+    // A NULL is not a failure — it is the ABI saying "busy" (`open_box`
+    // uses a non-blocking `try_lock`, and `with_box` hands back the
+    // caller's busy value). Asserting a snapshot can never be busy was
+    // wrong: this test passed alone and failed on every full run,
+    // because 70-odd sibling tests were hammering the same temp dir.
+    // A test that is red only when the suite is whole trains you to
+    // ignore red, so it retries the read it is timing and only gives up
+    // if the box is unavailable for a suspiciously long time.
     let once = |p: &CString| {
-        let start = std::time::Instant::now();
-        let raw = unsafe { liv_snapshot(p.as_ptr()) };
-        assert!(!raw.is_null());
-        unsafe { liv_string_free(raw) };
-        start.elapsed()
+        for _ in 0..50 {
+            let start = std::time::Instant::now();
+            let raw = unsafe { liv_snapshot(p.as_ptr()) };
+            if raw.is_null() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                continue;
+            }
+            unsafe { liv_string_free(raw) };
+            return start.elapsed();
+        }
+        panic!("the box stayed busy for a full second — that is not contention");
     };
     let ratio = (0..5)
         .map(|_| {

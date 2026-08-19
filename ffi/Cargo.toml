@@ -6,7 +6,7 @@ edition = "2021"
 [lib]
 name = "liv_ffi"
 # staticlib: the macOS SwiftUI shell links it directly (shell/macos/liv.h).
-# cdylib: a Windows DLL for the WinUI 3 shell to P/Invoke (shell/windows).
+# cdylib: a shared library for any shell that loads the ABI at runtime.
 # rlib: the crate's own Rust tests. All three from the one C ABI — the seam is
 # identical for every platform shell.
 crate-type = ["staticlib", "cdylib", "rlib"]

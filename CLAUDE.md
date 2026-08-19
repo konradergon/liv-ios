@@ -23,23 +23,26 @@ shell over the same Rust FFI.
 core/       Rust — the append-only log, entities = property→value cells, commands
 services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
 views/      Rust — value display + rendering helpers (cross-platform)
-ffi/        Rust — the ONE C ABI (55 `liv_*` fns); staticlib + cdylib + rlib
-cli/        Rust — a headless CLI over the same core (handy for inspecting a box)
+ffi/        Rust — the ONE C ABI (56 `liv_*` fns); staticlib + cdylib + rlib
+cli/        Rust — a headless CLI over the same core; the VERIFICATION tool
 shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
-archive/       superseded work, kept for reference — see archive/README.md
 ```
 
 Everything above `ffi/` is **platform-agnostic Rust** (it compiles for iOS and
 for `x86_64-pc-windows-msvc` today). A shell is a thin UI that (1) calls FFI
 verbs to mutate, (2) reads the snapshot JSON to render.
 
-**Platforms, as of 2026-07-28.** `shell/ios/` is THE app — the product, built
-and shipped from this tree. The desktop will be the **Tauri app** in the
-separate `lovable-notes-hub` repo, which links the same crates directly (no C
-ABI needed; see its `docs/liv-core-pivot.md`); the iOS tree is expected to move
-into that repo eventually. The hand-built Mac shell and the planned WinUI port
-are both **superseded** — the Mac shell is in `archive/`, and Tauri covers
-Windows and Linux for free.
+**Platforms, as of 2026-08-19.** `shell/ios/` is THE app — the product, built
+and shipped from this tree. The desktop is the **Tauri app** in the separate
+`lovable-notes-hub` repo, which links the same crates directly (no C ABI
+needed; see its `docs/liv-core-pivot.md`); the iOS tree is expected to move
+into that repo eventually.
+
+The hand-built Mac shell and the planned WinUI port are **gone** (deleted
+2026-08-19, owner's word). Tauri covers macOS, Windows and Linux, so neither
+had a reason to exist. Git history still holds them — `git log --diff-filter=D
+--name-only` finds the removal commit — but nothing in the working tree points
+at them any more, and nothing should.
 
 ## The boundary — READ THIS BEFORE EDITING
 
@@ -49,7 +52,7 @@ Windows and Linux for free.
 | `core/**`, `services/**`, `views/**` | **Settled.** Change only with the owner's word, failing-test-first. Logic two shells would both need belongs HERE, not in a shell. |
 | `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), mirror `with_box` + `Committed`, ship with a test, and be flagged to the owner. |
 | `design/**`, `*.md` specs | **READ** for the behavioural spec. Amend deliberately; don't rewrite history. |
-| `archive/**` | Read-only reference. Never build on it. |
+| `cli/**` | The verification tool. Keep every verb the shell has a way to reach. |
 | everything outside this repo | Ask first. |
 
 ## The specs are the source of truth
@@ -58,9 +61,9 @@ Port *behavior and layout*, don't invent them. In priority order:
 1. `interface.md` — the constitution/laws (what the app is and refuses to be).
 2. `feature-map.md` — every feature and its Liv reconciliation.
 3. `liv-ui-map.md` — the original UI, surface by surface.
-4. `design/p*.md` — the per-phase design docs (what shipped and why).
-5. `archive/macos-shell/Sources/*.swift` — the archived Mac shell. Read-only
-   reference for tokens, density and layout; never build on it.
+4. `design/p*.md` — the per-phase design docs (what shipped and why). These
+   still cite `shell/macos/...` line numbers for the deleted Mac shell: read
+   them for BEHAVIOUR, and ignore the coordinates.
 
 `design/what-liv-is-for.md` outranks all of these for **product** questions:
 architecturally clean and product-wrong is still wrong.
@@ -127,6 +130,8 @@ old codebase.
   for visible UI. Where a spec collides with the constitution, take the most
   faithful reconciliation and record the delta in the design doc.
 - AI features are quarantined (proposals only); don't build them into a shell.
-- Match the archived shell's density — this app is deliberately compact.
+- Keep it dense — this app is deliberately compact. The density reference used
+  to be the Mac shell; it is now `shell/ios/Sources/Theme.swift`, which is the
+  only place a size or a colour may be defined.
 - Verify on the simulator before claiming something works; cross-check writes
   against the box with the CLI. A builder's own report is not evidence.

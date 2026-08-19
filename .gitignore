@@ -3,7 +3,6 @@
 
 # Built binaries — artifacts, not source. Kept on disk (build.sh writes
 # them) but out of git; they bloated history at ~7MB per commit.
-/archive/macos-shell/build/
 
 # Local Liv reference material — never part of the liv repo
 /Programming the productivity app/
