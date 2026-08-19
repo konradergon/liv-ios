@@ -1,4 +1,5 @@
 {
+ "superseded": "2026-08-19 — every as_built citation in this file points at shell/macos/Sources/*, which was deleted. The DELTAS (what the blueprints asked for versus what existed) are still readable; the line numbers are not verifiable and the file paths do not exist.",
  "built": "2026-07-18",
  "source": "Viggo pack app-mockup + app-sim",
  "areas": [

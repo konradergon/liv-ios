@@ -13,3 +13,6 @@
 
 # The iOS shell build artifact — same rule as the macOS one.
 /shell/ios/build/
+
+# ctags index — generated, and it still pointed at /Users/k/src/lotus
+TAGS

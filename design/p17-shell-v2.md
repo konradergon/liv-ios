@@ -1,5 +1,12 @@
 # P17 — Shell v2 (BP-4): the chassis rebuild, sequenced behind its seeds
 
+> **SUPERSEDED 2026-08-19.** The shell this document rebuilds — the hand-built
+> macOS SwiftUI chrome, `Window.swift` — was deleted from the tree. The desktop
+> is the Tauri app now. Read this for the MODEL half of P17, which did ship and
+> which shipped Rust still cites: pins (P17g, `ffi/src/lib.rs:1546`) and layout
+> layers (P17i, `ffi/src/lib.rs:2174`). Every layout instruction here targets a
+> program that no longer exists.
+
 P17 replaces the whole macOS chrome with the BP-4 blueprint (`/Users/k/Documents/bp4-shell.html`, annotations ⟨1⟩–⟨40⟩): a **six-band vertical frame** (title · global-tab melt row · [rail · Spaces\|Vault panel · center · five-lens panel] · content-tab lane · surface), welded by a `chrome → canvas → surface` **shade ladder** and the **melt seam** (no divider under the active tab — liv-ui-map §6-18, "intended, never achieved" in Liv). This throws out the shipped shell's deliberate Claude-style divergence (`sidebar · content · inspector`, opaque cards floating over window material through ~7pt gaps, `Window.swift:1329-1374`) in favor of full Liv chrome. That is a real rebuild of `Window.swift`'s body, not a reskin, and the owner should ratify the visual break before slice 1 lands (§4-①).
 
 It is sequenced **late** for two reasons. First, the disruptive muscle — tab groups/lock/melt, the two histories, the five-lens panel — sits on top of everything else, so it can only stabilize once the surfaces it re-homes are settled. Second, three of its pieces are **small entities** (pins, layout-layers, saved tab-groups) and one is a **creation-seam behavior** (workspace stamping); each needs a seed + failing-test-first FFI **before** its shell surface, and those seeds are cheap only because the closed value set already has what they need (`Reference(Id)`, `Number(f64)`, `Select(Id)` — `core/src/value.rs:220`).

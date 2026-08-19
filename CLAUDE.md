@@ -73,7 +73,7 @@ architecturally clean and product-wrong is still wrong.
 - **Mutations**: call a `liv_*_at(box_path, …)` verb. Each opens the box, runs
   one transaction, checks in. Returns an id / count / status. Never hold the box
   lock across long IO.
-- **Reads**: `liv_snapshot_at` (or `liv_snapshot_window_at` for the calendar)
+- **Reads**: `liv_snapshot` (or `liv_snapshot_window_at` for the calendar)
   returns a JSON `Snapshot` — decode it into your native models. Every wire field
   the shell adds must be **optional** in the decoder, or one missing key drops
   the whole snapshot (a real, recurring bug — see the macOS `applySnapshot`).
