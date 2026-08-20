@@ -81,7 +81,26 @@ in the workflow record and will land once the rulings do.
 Only the owner can answer these. Each is a place where two things the project
 believes take opposite sides, and picking one changes what gets built.
 
-**1. Is "Reversibility over friction" still a founding value?**
+> **Rulings 1 and 2 are DEFERRED (owner, 2026-08-20):** *"i don't even know
+> what 'reversibility over friction' or 'capture over classification' mean to
+> be honest, so we ignore those now."*
+>
+> That answer is itself the finding. Both are slogans from the constitution's
+> five paired trade-offs, both were co-authored with an assistant in the first
+> commit, and both have been used to justify architecture — while meaning
+> nothing to the person they supposedly bind. In plain words: *reversibility
+> over friction* means make everything undoable even where that costs speed or
+> convenience (it is why the storage engine is an append-only log); *capture
+> over classification* means let a thought in without saying what it is and
+> sort it later (it is the rule the reverted capture sheet served).
+>
+> The pass therefore adds a twelfth item, and it outranks both: **the
+> constitution needs translating into plain language before any of its
+> principles can be ruled on.** A founding document its owner cannot read is
+> not governing; it is a quarry for arguments. Rulings 7 and 10 below are
+> written in the same register and have the same problem.
+
+**1. Is "Reversibility over friction" still a founding value?** *(deferred)*
 It arrived in the first commit (`dd57594`, 6 July 09:03), co-authored with an
 assistant, before the product was named — and the whole core was built to
 serve it. `design/what-liv-is-for.md`, which outranks the constitution on
@@ -92,7 +111,7 @@ places. *Recommendation: keep the log's shape, demote the line into the
 architecture chapter where it is a true statement about the data model — but
 note that the same shape is why permanent erasure is impossible today.*
 
-**2. Does "capture over classification" still stand?**
+**2. Does "capture over classification" still stand?** *(deferred)*
 The constitution forbids asking "what type is this?" by name. After the Quick
 Capture revert the `+` asks exactly that, five ways. *Recommendation: rule
 that naming a kind at creation is allowed, but never a place, a name or a
