@@ -9,8 +9,10 @@
 > upgrades (see `core/src/persist.rs` + `core/tests/versioning.rs`); (2) the
 > historical spec/design docs (`design/p*.md`, `interface.md`, `feature-map.md`,
 > …) still say `lotus_*` — read them as `liv_*`. Do not reintroduce `lotus`
-> into code. (The *old* Tauri app in the separate `friend-fixes` repo is also
-> called Liv — unrelated to this codebase; don't confuse the two.)
+> into code. (The specs were ported from an OLDER Tauri app, also called Liv, that
+> lived at `~/src/friend-fixes`. That checkout no longer exists on this
+> machine, and it is NOT the desktop your team is building — see
+> `design/spec-alignment.md`.)
 
 A native productivity app on a clean, append-only Rust core. It is a from-scratch
 rewrite of an older Tauri/web app ("Liv", kept for reference in a **separate**
@@ -95,6 +97,9 @@ architecturally clean and product-wrong is still wrong.
 
 ```
 cargo test                        # the whole Rust workspace (run before every PR)
+# the shell's OWN tests are eight launch flags — cargo test does not run them:
+#   xcrun simctl launch --console-pty <udid> app.liv.ios -spans.selfcheck 1
+#   …and -workspace/-calendar/-share/-places/-glyph/-palette/-editor. Silent = pass.
 cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 ./target/release/liv --log <box> list --all   # inspect a box from the CLI
 ```
@@ -110,10 +115,15 @@ keeps it avoided — each one exists because its absence is visible in the
 old codebase.
 
 1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
-   second file calling the C ABI is a defect. (Today: 35 calls, one
-   file, and every other Swift file has zero.)
-2. **Anything on the snapshot path ships with a COST test**, not just a
-   correctness one — see `services/tests/scale.rs`. The file projection
+   second file calling the C ABI is a defect. (Measured 2026-08-20: 38
+   calls over 32 distinct verbs, one file. Six other Swift files mention
+   a verb NAME in a comment; none call one.)
+2. **Anything on the snapshot path OR THE WRITE PATH ships with a COST
+   test**, not just a correctness one — see `services/tests/scale.rs` and
+   `ffi/src/tests.rs` (`one_write_stays_flat_as_the_box_grows`). The
+   write path was added on 2026-08-19 because every existing cost test
+   covered a READ, which is exactly why a whole-box clerk sweep on every
+   write went unseen for weeks (`design/write-cost.md`). The file projection
    was quadratic for weeks and 315 correctness tests could not see it.
    Assert the SHAPE (doubling the box roughly doubles the work), never a
    millisecond budget.

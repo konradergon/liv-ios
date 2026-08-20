@@ -68,7 +68,7 @@ R7 (Google sync) gate **nothing** in P11 (§10).
    is schema-on-read, and every shipped `due` cell is untouched. (c) *The
    role behaviors come free*: "Space cycles the role" (bp1 e10) is one
    transaction moving a value between properties (§2.3); each lookup role is
-   instantly a search qualifier (`valid-until<2027-01-01` works the day it
+   instantly a search qualifier (`valid-until<2026-07-09` works the day it
    seeds, via `at_most_constraint`, `search.rs:366-370`); "a date is just a
    row; add another via N" (bp1 e25) is just another cell. The rejected
    alternative — a `role` field inside `Value::DateTime` — touches the Value

@@ -49,7 +49,7 @@ collection. See changelog. Two things to keep in mind if you touch it:
 2. **The two invariants are load-bearing**: the active tab is never
    inactive, so the live set is never empty while tabs is not. That is
    what keeps the empty desk meaning "no tabs at all". Both are asserted
-   in `-tabs.selfcheck 1`.
+   in `-places.selfcheck 1`.
 
 Not built, deliberately, from the same Chrome screenshot: tab search,
 tab groups, pinned tabs, incognito. The owner asked for one thing.

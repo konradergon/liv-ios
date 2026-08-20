@@ -1,13 +1,30 @@
-# iOS — the phone shell (proposal)
+# iOS — the phone shell
 
-> Status: **M1 in progress** (accent decided: lake green; source renamed
-> lotus→liv 2026-07-22 — this doc's verbs read `liv_*`). Produced 2026-07-21
+> Status: **ALPHA**, shipping from this tree. Revisions here stop at rev 28
+> (2026-08-16); `design/changelog.md` carries every batch since, so parts of
+> this file are two weeks behind the code. Two statements in the old status
+> line were dead and are struck: it is no longer "M1 in progress" (M1 was
+> passed by M3–M5 and eight roadmap phases), and the accent is NOT lake
+> green — `Theme.swift` uses the system tint and `2f7d6b` appears nowhere in
+> the shell. Corrected in the 2026-08-20 alignment pass; see
+> `design/spec-alignment.md` for what changed and what waits on a ruling.
+>
+> (Source renamed lotus→liv 2026-07-22 — this doc's verbs read `liv_*`.)
+> Produced 2026-07-21
 > from a full read of the specs, core, FFI, and macOS shell, plus a
 > three-architecture sync design pass judged through integrity / UX / cost
 > lenses (unanimous verdict). Open owner decisions are collected in §8.
 > Mockups: see the published artifact (phone frames, accent toggle).
 
 ## 0. What the phone is
+
+> **Contradicted by two higher-ranked documents (2026-08-20).**
+> `design/what-liv-is-for.md` — which CLAUDE.md ranks above every spec on
+> product questions — says "The phone is not a feeder for a computer app. It
+> is this product, on a phone, and it stands alone", and CLAUDE.md says
+> `shell/ios/` is THE app. The satellite framing below, and the sync funnel
+> in §2 that follows from it, are left in place as record. What to do with
+> the still-running Outbox is an open ruling, not an edit.
 
 The phone is a **capture satellite**, not a second desk. Its priorities, from
 the owner:
