@@ -9,6 +9,12 @@
 > the shell. Corrected in the 2026-08-20 alignment pass; see
 > `design/spec-alignment.md` for what changed and what waits on a ruling.
 >
+> **The blueprints are a quarry, not a contract (owner, 2026-08-20):**
+> *"it should be a super simplified version of the blueprints only bringing
+> the best bits and fitting well into a phone."* A gap between a `bp*.html`
+> mockup and this shell is not a defect by default — see
+> `design/spec-alignment.md`. Blueprint rules about QUALITY still bind.
+>
 > (Source renamed lotus→liv 2026-07-22 — this doc's verbs read `liv_*`.)
 > Produced 2026-07-21
 > from a full read of the specs, core, FFI, and macOS shell, plus a

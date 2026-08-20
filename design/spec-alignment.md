@@ -165,6 +165,35 @@ amend with a platform clause, carrying the original scar forward.*
 
 ---
 
+## A ruling that arrived during the pass (2026-08-20)
+
+**How the phone treats the blueprints.** Owner, verbatim:
+
+> *"don't fix the gaps. it should be a super simplified version of the
+> blueprints only bringing the best bits and fitting well into a phone."*
+
+This settles a question the pass had open in another form (ruling 9, the
+spec ranking) for one class of document. The fourteen `bp*.html` blueprints
+are **not a specification the phone owes conformance to.** They are a
+desktop design to take the best ideas from.
+
+The consequence, and the reason it is written here: a gap between a
+blueprint and the phone is **not automatically a defect**. Before this,
+every comparison against BP-5 produced a "missing from the app" list, and
+that list reads as a to-do. It is not one. The test for taking something
+from a blueprint is whether it earns its place on a phone — not whether the
+mockup has it.
+
+Two things this does NOT license. A blueprint rule that names a QUALITY
+still binds: BP-5's "every assist statement is a sentence about your
+things, no ids, no command names, no diff syntax" was a real law, the app
+broke it, and fixing that on 2026-08-20 was right. And "simplified" is not
+"emptied" — the owner's earlier instruction stands: *"without removing
+their purpose or the basic functionality they provide."*
+
+So the useful output of a blueprint comparison is three piles — KEEP,
+DROP ON PURPOSE, ADAPT — never a gap list.
+
 ## Written nowhere (13 facts with no home)
 
 The opposite failure: things now load-bearing that appear in no spec. Chief
