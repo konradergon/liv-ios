@@ -594,3 +594,48 @@ fn content_save_keeps_proposals_the_sweep_cannot_rebuild() {
 
     cleanup(&path);
 }
+
+/// The clerk speaks in NAMES, not in database ids (2026-08-20).
+///
+/// Owner, on seeing the Inbox: *"cryptic messages 'exact duplicate ->
+/// merge into #xxxxx' crammed into rows. Nobody knows what #xxxxx means."*
+///
+/// They were right, and it was the only proposer that did it. The other
+/// four already produce sentences a person can read — `contains "friday" →
+/// due 22 Aug?`, `mentions "Anna" → relate?`, `a priority word → priority
+/// high?`. Dedupe is the one proposal that points at ANOTHER entity, and
+/// it named it by number while the clerk had `display_name` in scope the
+/// whole time.
+#[test]
+fn a_merge_names_the_survivor_instead_of_its_id() {
+    let (mut session, path) = boxed("clerk_merge_names");
+    // dedupe buckets on name + type, so the pair needs real names.
+    let a = capture(&mut session, "Ring the plumber");
+    let b = capture(&mut session, "Ring the plumber");
+    liv_services::content::set_property(&mut session, a, "name", "Ring the plumber").unwrap();
+    liv_services::content::set_property(&mut session, b, "name", "Ring the plumber").unwrap();
+
+    let proposals = clerk::sweep(session.store(), DateTime::date(2026, 8, 20));
+    let merge = proposals
+        .iter()
+        .find(|p| matches!(&p.author, Author::Proposer(n) if n == "dedupe"))
+        .expect("two identical notes produce a merge");
+
+    assert!(
+        !merge.reason.contains('#'),
+        "a person cannot read an id: {:?}",
+        merge.reason
+    );
+    assert!(
+        merge.reason.contains("Ring the plumber"),
+        "the survivor must be named: {:?}",
+        merge.reason
+    );
+    assert!(
+        !merge.label.contains('#'),
+        "nor in the label: {:?}",
+        merge.label
+    );
+    let _ = a;
+    cleanup(&path);
+}

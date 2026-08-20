@@ -142,7 +142,12 @@ struct InboxView: View {
                 // does this go" and "what did the clerk notice" — and
                 // they were stacked in one scroll before, so a full
                 // Route list buried the suggestions under it.
-                lensRow(unrouted: scraps.count, tidy: groups.count)
+                // BOTH COUNTS IN THE SAME UNIT — items (owner,
+                // 2026-08-20: the two numbers meant different things, so
+                // "Route 6 · Tidy 2" could mean six things and twenty
+                // edits). Tidy counted PROPOSERS, which is a grouping
+                // detail nobody outside this file can see.
+                lensRow(unrouted: scraps.count, tidy: proposals.count)
                     .padding(.top, 10)
                     .padding(.bottom, 4)
                 if workspaces.lensOn {
@@ -392,21 +397,32 @@ struct InboxView: View {
         .padding(.top, 14).padding(.bottom, 2)
     }
 
+    /// What this suggestion is ABOUT. The proposal carries the entity id;
+    /// the shell already knows how to turn one into a title.
+    private func title(of p: ProposalRow) -> String {
+        guard let id = p.entity, let row = box.entity(id) else { return "Untitled" }
+        return livRowTitle(row)
+    }
+
     private func suggestionRow(_ p: ProposalRow) -> some View {
         HStack(alignment: .center, spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    ForEach(
-                        Array((p.commands ?? []).prefix(3).enumerated()),
-                        id: \.offset
-                    ) { _, command in
-                        diffChip(command)
-                    }
-                }
+            // A SENTENCE ABOUT YOUR THINGS, not a command diff (owner,
+            // 2026-08-20: "so many color blips and tags, plus cryptic
+            // messages crammed into rows"). The row used to lead with up
+            // to three chips rendering the raw writes — "+ created ·
+            // 2026-08-…", "– trash", "+ redirect" — which is the
+            // proposal's implementation, not its meaning, and left the
+            // reader to guess WHICH note was about to change. The name
+            // was on the wire the whole time (`ProposalRow.entity`).
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title(of: p))
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(LivTheme.text)
+                    .lineLimit(1)
                 if let reason = p.reason, !reason.isEmpty {
                     Text(reason)
                         .font(.system(size: LivType.label))
-                        .foregroundStyle(LivTheme.text3)
+                        .foregroundStyle(LivTheme.text2)
                         .lineLimit(2)
                 }
             }
@@ -439,17 +455,6 @@ struct InboxView: View {
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-    }
-
-    @ViewBuilder private func diffChip(_ command: ProposalCommandRow) -> some View {
-        let sign = (command.kind == "remove" || command.kind == "trash") ? "−" : "+"
-        let label = [command.property, command.value]
-            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-        if !label.isEmpty {
-            ValueChip("\(sign) \(label)")
-        } else if let kind = command.kind, !kind.isEmpty {
-            ValueChip("\(sign) \(kind)")
         }
     }
 

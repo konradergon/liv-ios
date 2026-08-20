@@ -610,14 +610,22 @@ fn propose_dedupe(store: &Store, proposals: &mut Vec<Proposal>) {
             commands.push(Command::Redirect { entity: loser_id, to: survivor, before: NONE });
         }
         let losers = ids.len() - 1;
+        // NAME the survivor. This said "#4155" until 2026-08-20 — the one
+        // proposer of five that showed a database id to a person, while
+        // the other four already wrote sentences. The owner's words on
+        // seeing it: "Nobody knows what #xxxxx means."
+        let kept = store
+            .get(survivor)
+            .map(|e| crate::content::display_name(store, e))
+            .unwrap_or_else(|| format!("#{survivor}"));
         proposals.push(Proposal {
             commands,
             label: format!(
-                "merge {losers} duplicate{} into #{survivor}",
+                "merge {losers} duplicate{} into \"{kept}\"",
                 if losers == 1 { "" } else { "s" }
             ),
             author: Author::Proposer("dedupe".into()),
-            reason: format!("exact duplicate → merge into #{survivor}?"),
+            reason: format!("the same as \"{kept}\" → merge?"),
         });
     }
 }
