@@ -194,6 +194,60 @@ their purpose or the basic functionality they provide."*
 So the useful output of a blueprint comparison is three piles — KEEP,
 DROP ON PURPOSE, ADAPT — never a gap list.
 
+### Worked example: the Inbox against BP-5
+
+Sorted into the three piles the ruling above calls for, not into gaps.
+
+**KEEP — already there, and the spine of the blueprint.** Route and Tidy as
+its own named pair, Route first. One cleanup home, so routing and tidying
+never share a scroll. Both empty-state sentences word for word — *"Inbox
+zero — nothing waiting."* and *"Nothing to tidy."* Nothing ever applied
+without a tap. Dismissals permanent, so the clerk never re-asks. Suggested
+values drawn only from the user's own vocabulary. Amber for AI presence and
+nothing else. No nagging pill, no animation, no cost to skipping. Counts
+hidden at zero.
+
+**DROP ON PURPOSE — the blueprint has it, the phone should not.**
+
+- *The metadata step inside triage.* BP-5's Route is "orphan → metadata →
+  commit" with the ten-row shared inspector bound inline to the selected
+  orphan. On a phone that is a wall under every card. Routing on the phone
+  answers the KIND and stops; anything more opens the note. Recorded so it
+  is not re-proposed as a gap.
+- *"Review each" and per-suggestion alternatives.* Groups of one already
+  read as single items, and ✓/✕ per row covers it. Only becomes meaningful
+  if merge arrives.
+- *The Quick Capture column.* BP-5 is a two-panel pair; the capture half was
+  built and reverted on 2026-08-18 on the owner's word. Already decided.
+
+**ADAPT — worth taking, but on the phone's terms.**
+
+- *The count outside the Inbox.* On a desktop the sidebar is always visible,
+  so the badge is a convenience. On a phone you cannot see the Inbox without
+  going there, which makes it worth MORE, not less. The numbers are already
+  in the snapshot. `Kit.swift:3-4` already claims "the Inbox proposal capsule
+  is the app's ONE in-app badge" — and no badge exists anywhere. Small.
+- *The merge answer.* BP-5 calls new-note and merge "the only two answers
+  that exist". Liv has the merge logic in the core already. What blocks it is
+  the accept seam: `liv_accept` only matches proposals whose first command is
+  an "add", and a merge starts with a Trash. Needs the owner's word — it is
+  an additive FFI change.
+
+**A QUALITY problem, which the ruling says still binds regardless of piles.**
+`Inbox.swift:78` filters out every proposal the accept seam cannot run, and
+the pill counts the filtered list. So merge suggestions exist in the box,
+are invisible on screen, and nothing says so. That is not a blueprint gap —
+it is the app being quietly untrue about what it knows.
+
+**Divergences worth keeping.** Four verbs asking KIND rather than "which
+note" is right for a core with no folders — type is Liv's address. Routing
+FINISHES the object (a task gets its first open status, an event opens the
+date sheet), which the blueprint never asked for and which stops the app
+making half-things invisible on the screens meant to show them. And the
+five-second Undo pill is the phone's substitute for the blueprint's
+show-the-destination-before-committing — a phone commits in one tap, so the
+safety net belongs after it.
+
 ## Written nowhere (13 facts with no home)
 
 The opposite failure: things now load-bearing that appear in no spec. Chief
