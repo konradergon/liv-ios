@@ -53,6 +53,7 @@ struct DeskHost: View {
                     // views draw themselves (FeatureLayer is gone with
                     // the layer it was).
                     FeatureBody(feature: desk.state)
+                        .transition(LivMotion.surface)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -402,7 +403,16 @@ struct DeskHost: View {
             LivMenuItem(label: "Move to Trash", symbol: "trash", destructive: true) {
                 confirmTrash = true
             })
-        return LivMenu(id: "note-verbs", from: .top, items: items)
+        // THE MENU SAYS WHAT IT IS ABOUT (owner's clips, 2026-08-20).
+        // Five verbs with no subject is the same defect the owner named
+        // in the Inbox — "nobody knows what #xxxxx means" — in a
+        // different place: a control that acts on something it will not
+        // name.
+        return LivMenu(
+            id: "note-verbs", from: .top,
+            subject: row.map(livRowTitle) ?? "This note",
+            subjectDetail: row.map { LivKind.of($0).word },
+            items: items)
     }
 
     /// Birth an empty note and land in it: the editor takes the screen

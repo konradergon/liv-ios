@@ -121,7 +121,12 @@ struct SearchView: View {
             }
             if trimmed.isEmpty {
                 ScrollView {
-                    EmptyHint("Search everything you have.").padding(.top, 40)
+                    EmptyHint(
+                        "Search everything you have",
+                        detail: "Notes, tasks, events, files and people.",
+                        glyph: .everything
+                    )
+                    .padding(.top, 40)
                 }
             } else if hits.isEmpty {
                 // Zero results: the Create row IS the empty state, at the

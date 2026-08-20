@@ -39,6 +39,15 @@ struct LivMenu: Identifiable {
     /// The edge it comes from: `.bottom` slides up, `.top` slides down.
     let from: VerticalEdge
     var title: String?
+    /// WHAT THE MENU IS ACTING ON, when that is a specific thing rather
+    /// than the app in general (owner's clips, 2026-08-20). The
+    /// reference menu opens under the document's own title and repeats
+    /// it in a header — name on one line, what it is on a second — so
+    /// "Rename…", "Move to…" and "Delete" have a visible subject.
+    /// Liv's note ••• menu had no title at all: five verbs and no sign
+    /// of which note they were about.
+    var subject: String?
+    var subjectDetail: String?
     let items: [LivMenuItem]
 }
 
@@ -103,13 +112,22 @@ struct LivMenuRow: View {
             }
             .padding(.horizontal, 16)
             .frame(height: LivRow.height)
+            // THE ONE YOU ARE ON, as a fill (owner's clips, 2026-08-20).
+            // ChatGPT's drawer marks the current destination with a soft
+            // rounded fill and no tick at all; ours had a tick and a
+            // semibold word, which you have to read to find. A fill is
+            // found without reading.
+            .background(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
+                    .fill(selected ? LivTheme.panel2 : .clear)
+                    .padding(.horizontal, 8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .livRowPress()
         .overlay(alignment: .top) {
             if divided {
                 Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                    .padding(.leading, 54)
+                    .padding(.leading, LivRow.hairline + 18)
             }
         }
     }
@@ -132,6 +150,34 @@ struct LivMenuTitle: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
+    }
+}
+
+/// The menu's subject: the thing every verb below it will act on.
+struct LivMenuSubject: View {
+    let name: String
+    var detail: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(name)
+                .font(.system(size: LivType.title, weight: .semibold))
+                .foregroundStyle(LivTheme.text)
+                .lineLimit(1)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.text2)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
     }
 }
 
@@ -364,6 +410,9 @@ struct LivMenuHost: ViewModifier {
             if up { grabber }
             if let title = menu.title {
                 LivMenuTitle(text: title)
+            }
+            if let subject = menu.subject {
+                LivMenuSubject(name: subject, detail: menu.subjectDetail)
             }
             ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
                 row(item, divided: i > 0)

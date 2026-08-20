@@ -64,6 +64,21 @@ enum LivKind: CaseIterable {
         }
     }
 
+    /// The kind's word, for the places that must SAY what a thing is
+    /// rather than draw it — a menu's subject line, an accessibility
+    /// label. `wire` is the snapshot's spelling and is not for reading.
+    var word: String {
+        switch self {
+        case .note: return "Note"
+        case .task: return "Task"
+        case .event: return "Event"
+        case .file: return "File"
+        case .link: return "Link"
+        case .person: return "Person"
+        case .capture: return "Capture"
+        }
+    }
+
     /// One kind, one colour, everywhere it appears: a task is purple in
     /// a list, in the calendar, and on a chip. Nothing else may hardcode
     /// a kind's colour.

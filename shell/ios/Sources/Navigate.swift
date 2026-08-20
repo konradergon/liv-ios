@@ -98,6 +98,7 @@ struct FeatureBody: View {
             case .calendar: CalendarView()
             }
         }
+        .transition(LivMotion.surface)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The bar floats over this, and the glass controls over that: a
         // state keeps room for both, and its own content scrolls under

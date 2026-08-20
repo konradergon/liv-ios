@@ -163,8 +163,12 @@ struct InboxView: View {
                 if lens == .route {
                     if scraps.isEmpty {
                         // The blueprint's own copy (BP-5 B8).
-                        EmptyHint("Inbox zero — nothing waiting.")
-                            .padding(.top, 32)
+                        EmptyHint(
+                            "Inbox zero",
+                            detail: "Anything you capture without deciding what it is waits here.",
+                            glyph: .inbox
+                        )
+                        .padding(.top, 32)
                     } else {
                         ForEach(scraps) { row in
                             routeCard(row)
@@ -218,9 +222,35 @@ struct InboxView: View {
     // MARK: route — a card per unrouted capture
 
     private func routeCard(_ row: EntityRow) -> some View {
+        Button {
+            withAnimation(LivMotion.nav) {
+                routing = routing == row.id ? nil : row.id
+            }
+        } label: {
+            routeFace(row)
+        }
+        .livRowPress()
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                box.trash(row.id)  // soft, undoable
+            } label: {
+                Label("Trash", systemImage: "trash")
+            }
+            .tint(LivTheme.red)
+        }
+    }
+
+    private func routeFace(_ row: EntityRow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                LivIcon(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 19)
+                // QUIET, because this list is one kind by construction
+                // (owner, 2026-08-18: "colour only in mixed lists").
+                // Everything is genuinely mixed and keeps its tint; the
+                // Inbox is a pile of unrouted captures, so its colour
+                // was twenty identical yellow marks telling nothing
+                // apart — which is what the owner saw on 2026-08-20:
+                // "so many color blips and tags".
+                LivIcon(glyph: LivKind.glyph(of: row), color: LivTheme.text2, size: 19)
                     .frame(width: 22)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
                 Text(displayTitle(row))
@@ -244,27 +274,14 @@ struct InboxView: View {
                     routeVerb("Note", .note) { route(row, to: "note", as: "Note") }
                     routeVerb("Link", .link) { route(row, to: "link", as: "Link") }
                 }
-                .padding(.leading, 32)
+                .padding(.leading, LivRow.hairline)
             }
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(LivMotion.nav) {
-                routing = routing == row.id ? nil : row.id
-            }
-        }
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.leading, 32)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
-                box.trash(row.id)  // soft, undoable
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
-            .tint(LivTheme.red)
+                .padding(.leading, LivRow.hairline)
         }
     }
 

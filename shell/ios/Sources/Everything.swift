@@ -157,6 +157,17 @@ struct EverythingView: View {
     // MARK: one row
 
     private func line(_ row: EntityRow) -> some View {
+        // A BUTTON, not a tap gesture (owner's clips, 2026-08-20). A
+        // gesture opens the row and says nothing while it does it;
+        // every app in the reference set lights the row under the
+        // finger first. Eight rows in this app were gestures.
+        Button { desk.open(row.id) } label: {
+            row_(row)
+        }
+        .livRowPress()
+    }
+
+    private func row_(_ row: EntityRow) -> some View {
         LivListRow(
             glyph: LivKind.glyph(of: row),
             // A MIXED list: the kind's colour is doing work here, so it
@@ -179,7 +190,6 @@ struct EverythingView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { desk.open(row.id) }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
                 box.trash(row.id)

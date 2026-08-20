@@ -232,18 +232,57 @@ struct CountTile: View {
 
 // MARK: - EmptyHint
 
+/// AN EMPTY SURFACE STILL SAYS SOMETHING (owner's clips, 2026-08-20).
+///
+/// The reference set answers a nothing-here the same way every time: a
+/// glyph, a line in full-strength ink saying what is missing, and a
+/// quieter line saying what the thing is for. ChatGPT's empty Projects
+/// panel is the clearest example of the shape.
+///
+/// NO BUTTON, though the references have one: Liv's floating bar already
+/// carries a `+` on every surface, and a second creation door here would
+/// be the same rule written twice (standing rule 4).
+///
+/// The bare sentence stays the default, because most of the eighteen
+/// call sites are a passing state ("This was deleted") rather than a
+/// place you have landed and must now start from. Only a surface a user
+/// can sit and look at earns the glyph and the button.
 struct EmptyHint: View {
     let text: String
+    /// The quieter second line. Says what the surface is FOR.
+    var detail: String? = nil
+    var glyph: LivGlyph? = nil
 
     init(_ text: String) { self.text = text }
 
+    init(_ text: String, detail: String? = nil, glyph: LivGlyph? = nil) {
+        self.text = text
+        self.detail = detail
+        self.glyph = glyph
+    }
+
+    private var furnished: Bool { detail != nil || glyph != nil }
+
     var body: some View {
-        Text(text)
-            .font(.system(size: LivType.strong))
-            .foregroundStyle(LivTheme.muted)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 24)
+        VStack(spacing: 10) {
+            if let glyph {
+                LivIcon(glyph: glyph, color: LivTheme.text3, size: 30)
+                    .padding(.bottom, 2)
+            }
+            Text(text)
+                .font(.system(size: LivType.strong, weight: furnished ? .semibold : .regular))
+                .foregroundStyle(furnished ? LivTheme.text : LivTheme.muted)
+                .multilineTextAlignment(.center)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(LivTheme.text2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 }
 

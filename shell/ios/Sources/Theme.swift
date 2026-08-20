@@ -3,19 +3,24 @@
 // dark/light pair resolved by the system's appearance machinery, and a
 // Settings row picks Dark, Light, or System.
 //
-// THE PALETTE COMES FROM THE APP ICON (owner, 2026-08-15). The icon is
-// three arms of dots, each one hue running light to dark: VIOLET, PINK,
-// AMBER. The app uses them the same way — violet for chrome and notes,
-// pink for tasks and people, amber for events, files and captures. There
-// is no blue and no cyan anywhere, because there is none in the mark.
+// THE COLOURS ARE THE SYSTEM'S (owner, 2026-08-15: "revert colors and
+// faces to as system like as possible… we should do the surface
+// appearance last and thoroughly"). An icon-derived palette — violet,
+// pink, amber, measured to a 7:1 floor — came first and was reverted;
+// the paragraph describing it lived on at the top of this file for five
+// days after the code below stopped doing it, which is what a comment
+// that outlives its code looks like.
 //
-// And it is built to a CONTRAST FLOOR, the one thing worth taking from
-// the Modus themes (owner brought them for exactly this): every colour
-// here clears 7:1 against the ground it sits on, in BOTH schemes. The
-// old set was Apple's system colours, where six of thirteen sat under
-// that and the accent — every link and every button label — was the
-// worst thing on screen at 4.95:1. `livPaletteSelfCheck` measures it now
-// rather than trusting anyone's eye.
+// THE SURFACE PASS ARRIVED 2026-08-20, and it is the one this file
+// predicted: "when the surface pass comes, it changes the right-hand
+// side of these lines and nothing else". It did not repaint anything.
+// It gave the app the shapes its reference set shares — a card, one
+// row, one hairline inset, a press state — because measuring showed
+// the app's roughness was never the colours; it was thirteen row
+// recipes with five heights and five separator insets.
+//
+// `livPaletteSelfCheck` still measures contrast rather than trusting
+// anyone's eye.
 
 import SwiftUI
 import UIKit
@@ -170,6 +175,26 @@ enum LivRow {
     /// (owner, 2026-08-15: "the message is on top of each other").
     static let topChrome: CGFloat = 52
 
+    /// WHERE A HAIRLINE STARTS — at the text, past the glyph column.
+    /// Measured 2026-08-20: the app drew its row separators at five
+    /// different insets (36, 32, 31, full width, none) across thirteen
+    /// hand-rolled row recipes, which is why a list and a menu never
+    /// looked like the same app. One number now.
+    static let hairline: CGFloat = 36
+
+    /// The gap a CARD leaves at the screen's edges. A card is how the
+    /// reference apps group rows — Apple Notes, Obsidian's overflow
+    /// sheet and ChatGPT's settings all put related rows on a raised
+    /// panel with a quiet label above it, rather than running hairlines
+    /// edge to edge (owner's clips, 2026-08-20).
+    static let cardInset: CGFloat = 16
+
+    /// The room a section heading owns. It used to own none, so all
+    /// twenty-eight call sites supplied their own and disagreed ten
+    /// ways (10/14/16/18/22 above, 0/2/4/6 below).
+    static let sectionTop: CGFloat = 18
+    static let sectionBottom: CGFloat = 6
+
     /// The same band measured from the very top of the SCREEN. Surfaces
     /// run under the status bar now (owner, 2026-08-17: "the screen
     /// should also extend to the very top where time and battery
@@ -181,6 +206,21 @@ enum LivRow {
 
 enum LivMotion {
     static let nav = Animation.easeInOut(duration: navSeconds)
+
+    /// HOW A SURFACE REPLACES A SURFACE. Measured 2026-08-20: there was
+    /// no transition declared on either branch point, so SwiftUI used
+    /// its default — `.opacity`. The app's primary navigation, the one
+    /// the Go-to menu drives, CROSS-FADED, which is the one thing the
+    /// rule above forbids ("nothing fades in combination"). It had been
+    /// that way since the states were built.
+    ///
+    /// A state replaces a state — they are roots, never children — so
+    /// there is no forward and no back to encode. One direction for
+    /// all of them: the next thing arrives from the right, the last
+    /// thing leaves to the left. Pure movement, no fade mixed in.
+    static let surface = AnyTransition.asymmetric(
+        insertion: .move(edge: .trailing),
+        removal: .move(edge: .leading))
     /// The same duration as a NUMBER, for the one case that must wait
     /// for the motion to land before swapping what is underneath (the
     /// calendar's month pager). Two literals would drift.
@@ -255,6 +295,12 @@ enum LivTheme {
     static let panel2 = Color(.tertiarySystemFill)
     /// The lightest possible mark of "this row is the one you are on".
     static let selection = Color(.quaternarySystemFill)
+    /// A row UNDER THE FINGER. Measured 2026-08-20: the app had no
+    /// custom button style anywhere, and eight row sites used
+    /// `.onTapGesture`, which gives no feedback at all — a tap either
+    /// worked or seemed not to. Every app in the owner's reference set
+    /// answers a touch before it acts.
+    static let pressed = Color(.quaternarySystemFill)
 
     // The four text tiers + hairlines, the system's own.
     static let text = Color(.label)

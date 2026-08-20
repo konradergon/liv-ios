@@ -39,7 +39,7 @@ struct LivListRow<Trailing: View>: View {
             trailing
         }
         .padding(.horizontal, 2)
-        .frame(minHeight: 54)
+        .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             if divided {
@@ -49,7 +49,7 @@ struct LivListRow<Trailing: View>: View {
                     // Starts where the TEXT starts: an inset hairline
                     // groups the rows, a full-width one cuts the screen
                     // into slabs.
-                    .padding(.leading, 36)
+                    .padding(.leading, LivRow.hairline)
             }
         }
     }
@@ -74,5 +74,96 @@ struct LivRowFact: View {
             .font(.system(size: LivType.label).monospacedDigit())
             .foregroundStyle(emphasis ? LivTheme.text : LivTheme.text2)
             .lineLimit(1)
+    }
+}
+
+
+// MARK: - the press state (surface pass 2, owner's clips 2026-08-20)
+
+/// A row answers the finger before it answers the tap.
+///
+/// The app had no custom button style at all: rows built on `Button`
+/// got SwiftUI's plain style, which does nothing to a row, and the
+/// eight rows built on `.onTapGesture` got less than that. Every app
+/// in the owner's reference set — Apple Notes, Obsidian, ChatGPT —
+/// lights the row under the finger. It is the cheapest possible signal
+/// that the tap landed, and its absence is most of what "clunky" means
+/// on a touch screen.
+///
+/// Slide-only motion (owner, 2026-07-31) is about NAVIGATION — areas
+/// arriving and leaving. A press is not navigation and does not move:
+/// it is a fill that is either there or not.
+struct LivPress: ButtonStyle {
+    /// Rows inside a card are already clipped by the card, so they take
+    /// the square fill; a standalone row rounds its own corners.
+    var radius: CGFloat = 0
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(configuration.isPressed ? LivTheme.pressed : .clear))
+            .contentShape(Rectangle())
+    }
+}
+
+extension View {
+    /// The whole app's row press. Written as a modifier so a row that is
+    /// NOT a button (a `.onTapGesture` row, a swipe row) can still be
+    /// converted without changing its shape.
+    func livRowPress(radius: CGFloat = 0) -> some View {
+        buttonStyle(LivPress(radius: radius))
+    }
+}
+
+// MARK: - the card (surface pass 2)
+
+/// Related rows on a raised panel, inset from the screen's edges.
+///
+/// This is the one shape every app in the owner's reference set agrees
+/// on. Apple Notes puts a date group on a white card with the heading
+/// OUTSIDE it; Obsidian's overflow sheet is four cards separated by
+/// gaps instead of one list with headers; ChatGPT's settings is three.
+/// The gap between two cards says "different things" far more quietly
+/// than a heading does, and it needs no words.
+///
+/// Liv ran every list edge to edge with hairlines, which reads as one
+/// undifferentiated column no matter how the rows inside are grouped.
+struct LivCard<Content: View>: View {
+    /// A quiet heading above the card. Outside it, like the references:
+    /// a label inside a card is a row that cannot be tapped.
+    var label: String? = nil
+    var inset: CGFloat = LivRow.cardInset
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let label {
+                SectionLabel(label)
+                    .padding(.horizontal, inset + 4)
+                    .padding(.top, LivRow.sectionTop)
+                    .padding(.bottom, LivRow.sectionBottom)
+            }
+            VStack(alignment: .leading, spacing: 0) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LivTheme.surface)
+                .clipShape(
+                    RoundedRectangle(cornerRadius: LivTheme.radiusLg, style: .continuous))
+                .padding(.horizontal, inset)
+        }
+    }
+}
+
+/// The hairline BETWEEN two rows of a card. Inside a card the line never
+/// runs to the edge — it starts where the text starts and stops short of
+/// the card's own rounded corner, or it draws a chord across it.
+struct LivCardRule: View {
+    var inset: CGFloat = LivRow.hairline
+
+    var body: some View {
+        Rectangle()
+            .fill(LivTheme.border)
+            .frame(height: 0.5)
+            .padding(.leading, inset)
     }
 }

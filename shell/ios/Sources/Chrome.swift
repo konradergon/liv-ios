@@ -884,26 +884,29 @@ struct SettingsSheet: View {
     @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
 
     var body: some View {
+        // GROUPS AS CARDS (owner's clips, 2026-08-20). ChatGPT's
+        // settings, Obsidian's overflow sheet and Apple Notes' list all
+        // group with a raised card and a quiet label ABOVE it, never
+        // with a heading over a flat run of controls. The gap between
+        // two cards says "different things" without a word.
+        //
+        // The sheet drops to `canvas` so the cards have a ground to
+        // stand on — the elevation ramp already says this is what the
+        // two steps are for; nothing here used them.
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Settings")
                     .font(.system(size: LivType.title, weight: .bold))
                     .foregroundStyle(LivTheme.text)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, LivRow.cardInset + 4)
+                    .padding(.top, 16)
                 // What a person actually came here to change, first.
-                SectionLabel("Appearance")
-                appearanceRow
+                LivCard(label: "Appearance") { appearanceRow.padding(12) }
                 if box.snap?.assist != nil {
-                    SectionLabel("Suggestions")
-                        .padding(.top, 10)
-                    assistRow
+                    LivCard(label: "Suggestions") { assistRow.padding(12) }
                 }
-                SectionLabel("Reminders")
-                    .padding(.top, 10)
-                notifyRows
-                SectionLabel("Fields")
-                    .padding(.top, 10)
-                fieldsRow
+                LivCard(label: "Reminders") { notifyRows.padding(12) }
+                LivCard(label: "Fields") { fieldsRow.padding(12) }
                 // No Advanced drawer. It held the phone→desk handoff
                 // (status, ledger, Ship now, the satellite path) and the
                 // store's own facts, and it went with every other
@@ -913,11 +916,11 @@ struct SettingsSheet: View {
                 // gets a door someone would want to open.
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(.bottom, 20)
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(LivTheme.surface)
+        .presentationBackground(LivTheme.canvas)
         // Read-only refresh: acks on disk become Delivered chips.
         .onAppear { outbox.scanAcks() }
     }

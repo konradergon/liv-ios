@@ -28,8 +28,12 @@ struct TrashView: View {
         NavigationStack {
             Group {
                 if rows.isEmpty {
-                    EmptyHint("Nothing in the trash.")
-                        .padding(.top, 40)
+                    EmptyHint(
+                        "Nothing in the trash",
+                        detail: "Deleted things wait here until you put them back.",
+                        glyph: .trash
+                    )
+                    .padding(.top, 40)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {

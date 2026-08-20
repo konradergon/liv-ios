@@ -26,8 +26,12 @@ struct NotesList: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if rows.isEmpty {
-                    EmptyHint("Nothing written yet. The + below starts one.")
-                        .padding(.top, 40)
+                    EmptyHint(
+                        "Nothing written yet",
+                        detail: "The + below starts one. Everything else in Liv can point at it.",
+                        glyph: .note
+                    )
+                    .padding(.top, 40)
                 } else {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
                         Button { desk.open(row.id) } label: {
@@ -40,7 +44,7 @@ struct NotesList: View {
                                 if let when = whenLabel(row) { LivRowFact(text: when) }
                             }
                         }
-                        .buttonStyle(.plain)
+                        .livRowPress()
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) { box.trash(row.id) } label: {
                                 Label("Trash", systemImage: "trash")
