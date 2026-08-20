@@ -804,6 +804,53 @@ final class MarkdownTextView: UITextView {
         }
     }
 
+    // MARK: the keyboard's own height, as scrollable room
+
+    /// How much of this view the keyboard (and its toolbar) covers.
+    ///
+    /// Without this the view's bounds run the full height of the screen,
+    /// so UIKit believes a caret behind the keys is perfectly visible and
+    /// never scrolls — the owner's "it doesn't scroll as you type"
+    /// (2026-08-20). The 110pt bottom `textContainerInset` above is for
+    /// the floating bar and is nowhere near a keyboard.
+    ///
+    /// Only a view that scrolls ITSELF takes this. Embedded in a record
+    /// card, the card's own ScrollView owns the keyboard avoidance.
+    private func watchKeyboard() {
+        guard isScrollEnabled else { return }
+        let centre = NotificationCenter.default
+        for name in [UIResponder.keyboardWillChangeFrameNotification,
+                     UIResponder.keyboardWillHideNotification] {
+            centre.addObserver(
+                self, selector: #selector(keyboardMoved(_:)), name: name, object: nil)
+        }
+    }
+
+    @objc private func keyboardMoved(_ note: Notification) {
+        guard let window else { return }
+        let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey]
+            as? NSValue)?.cgRectValue ?? .zero
+        let hiding = note.name == UIResponder.keyboardWillHideNotification
+        // In THIS view's coordinates, then intersected with it: a keyboard
+        // on another screen, or one that ends off-frame, covers nothing.
+        let mine = convert(bounds, to: window.screen.coordinateSpace)
+        let covered = hiding ? 0 : max(0, mine.maxY - end.minY)
+        // The safe area already accounts for the home indicator, which the
+        // keyboard sits on top of — subtracting it stops a doubled gap.
+        let room = max(0, covered - safeAreaInsets.bottom)
+        guard abs(contentInset.bottom - room) > 0.5 else { return }
+        contentInset.bottom = room
+        verticalScrollIndicatorInsets.bottom = room
+        if isFirstResponder, !hiding {
+            scrollRangeToVisible(selectedRange)
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { watchKeyboard() }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         guard showsTitle else { return }
@@ -1066,6 +1113,7 @@ struct MarkdownEditor: UIViewRepresentable {
             parent.text = textView.text
             trackLink(in: textView)
             scheduleOutline(textView.text)
+            keepCaretVisible(textView)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
@@ -1076,6 +1124,29 @@ struct MarkdownEditor: UIViewRepresentable {
             // it would record a caret of 0 over the real one.
             if restored, parent.note != 0 {
                 LivCaret.remember(parent.note, at: textView.selectedRange.location)
+            }
+            keepCaretVisible(textView)
+        }
+
+        /// SCROLL AS YOU TYPE (owner, 2026-08-20: "it doesn't scroll as you
+        /// type in notes!").
+        ///
+        /// A UITextView scrolls to keep the caret inside its own BOUNDS,
+        /// and this one's bounds run the full height of the screen —
+        /// underneath the keyboard and its toolbar. So UIKit was content
+        /// while the line you were writing sat behind the keys. Nothing
+        /// ever set a bottom inset, so there was no room to scroll into.
+        ///
+        /// `MarkdownTextView` now keeps `contentInset.bottom` equal to the
+        /// covered height; this asks for the caret after layout has
+        /// settled, because during typing the glyph for the character just
+        /// entered does not exist yet when the delegate fires.
+        func keepCaretVisible(_ textView: UITextView) {
+            guard textView.isFirstResponder, textView.isScrollEnabled else { return }
+            let caret = textView.selectedRange
+            DispatchQueue.main.async {
+                guard textView.isFirstResponder else { return }
+                textView.scrollRangeToVisible(caret)
             }
         }
 

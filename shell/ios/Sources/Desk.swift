@@ -756,9 +756,21 @@ struct EntityTabBody: View {
             seedTitle()
             // Child onAppear fires before the parent's, so the editor reads
             // this through onChange, not its own onAppear.
-            if desk.consumeFocus(id) {
-                autoFocus = true
-            }
+            //
+            // OPENING A NOTE PUTS THE CARET IN IT (owner, 2026-08-20:
+            // "Opening a note doesn't put cursor in note automatically").
+            // It used to focus only what was just CREATED — `consumeFocus`
+            // is one-shot by design — so opening something you wrote
+            // yesterday left you looking at your words with no way to add
+            // to them but a tap. The caret lands where you left it
+            // (`LivCaret`), not at the top.
+            //
+            // `consumeFocus` still runs, and must: it is what puts the
+            // caret at the START of a brand-new note rather than at a
+            // remembered position, and leaving it unconsumed would strand
+            // the request for the next thing opened.
+            _ = desk.consumeFocus(id)
+            autoFocus = true
         }
         .onChange(of: storedName) { old, fresh in
             // The snapshot moved under us (undo, another surface). Reseed
