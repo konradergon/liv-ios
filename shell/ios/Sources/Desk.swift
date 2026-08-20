@@ -763,7 +763,10 @@ struct EntityTabBody: View {
             // is one-shot by design — so opening something you wrote
             // yesterday left you looking at your words with no way to add
             // to them but a tap. The caret lands where you left it
-            // (`LivCaret`), not at the top.
+            // (`LivCaret`) or, for a note this launch has not seen yet,
+            // at the END — never at the top (owner, 2026-08-20: "The
+            // caret is always put at the beginning of the document, not
+            // where you left or at the end").
             //
             // `consumeFocus` still runs, and must: it is what puts the
             // caret at the START of a brand-new note rather than at a

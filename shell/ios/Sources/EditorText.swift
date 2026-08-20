@@ -932,12 +932,21 @@ struct MarkdownEditor: UIViewRepresentable {
             // long note is not "where you left it". Later sets — a
             // conflict swap, a reload — keep the live caret instead.
             var landing = min(selected.location, n)
-            if !context.coordinator.restored, note != 0,
-                let remembered = LivCaret.recall(note)
-            {
-                landing = min(remembered, n)
+            // NOTHING REMEMBERED LANDS AT THE END, NOT THE TOP
+            // (owner, 2026-08-20: "The caret is always put at the
+            // beginning of the document, not where you left or at the
+            // end"). `LivCaret` only knows notes opened since launch, so
+            // for most opens `recall` is nil — and the fallback was
+            // `selected.location`, which on a text view built moments ago
+            // is 0. Every such note therefore opened at the top. A note is
+            // a thing you add to; the end is the useful place, and the top
+            // is the one place the caret is never wanted.
+            if !context.coordinator.restored, n > 0, note != 0 {
+                landing = min(LivCaret.recall(note) ?? n, n)
             }
-            context.coordinator.restored = true
+            // An empty buffer is not the document arriving — a note whose
+            // content has not loaded yet must not spend the one restore.
+            if n > 0 { context.coordinator.restored = true }
             view.selectedRange = NSRange(location: landing, length: 0)
             if landing > 0 {
                 view.scrollRangeToVisible(NSRange(location: landing, length: 0))
@@ -1110,6 +1119,12 @@ struct MarkdownEditor: UIViewRepresentable {
                 pendingIME = nil
                 apply(around: pending, to: textView.textStorage)
             }
+            // Typing means the document is live: the restore window is
+            // over, and from here `remember` may record. Without this a
+            // note created empty never remembered its caret at all — the
+            // programmatic-set branch above is the only other place that
+            // sets this, and typing never goes through it.
+            restored = true
             parent.text = textView.text
             trackLink(in: textView)
             scheduleOutline(textView.text)
