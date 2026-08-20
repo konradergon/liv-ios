@@ -42,6 +42,14 @@ enum BlockJSON: Equatable {
     case ordered(depth: Int)
     case task(depth: Int, done: Bool)
     case rule
+    /// A fenced code block. The buffer writes ``` (with the language on
+    /// the opening fence), because without a buffer form the whole thing
+    /// was flattened to Body on the first save — AND its contents were
+    /// re-read by the markdown grammar, so a `#` inside a fence became a
+    /// heading (2026-08-20).
+    case code(lang: String?)
+    /// A callout, `> [!kind]`. Same loss, same fix.
+    case callout(kind: String)
     case other
 }
 
@@ -63,11 +71,15 @@ extension SpanJSON: Codable {
         var depth: UInt8?
         var done: Bool?
     }
+    private struct CodePayload: Decodable { var lang: String? }
+    private struct CalloutPayload: Decodable { var kind: String? }
     private struct BreakObject: Decodable {
         var Heading: UInt8?
         var Bullet: Depthed?
         var Ordered: Depthed?
         var Task: TaskPayload?
+        var Code: CodePayload?
+        var Callout: CalloutPayload?
     }
 
     init(from decoder: Decoder) throws {
@@ -101,8 +113,12 @@ extension SpanJSON: Codable {
                     self = .brk(.ordered(depth: Int(b.depth ?? 0)))
                 } else if let t = o.Task {
                     self = .brk(.task(depth: Int(t.depth ?? 0), done: t.done ?? false))
+                } else if let b = o.Code {
+                    self = .brk(.code(lang: b.lang))
+                } else if let b = o.Callout {
+                    self = .brk(.callout(kind: b.kind ?? "note"))
                 } else {
-                    self = .brk(.other)  // Code, Callout, or newer
+                    self = .brk(.other)  // a block newer than this build
                 }
             } else {
                 self = .brk(.other)
@@ -138,6 +154,14 @@ extension SpanJSON: Codable {
             case .quote: try c.encode("Quote", forKey: .Break)
             case .rule: try c.encode("Rule", forKey: .Break)
             case .other: try c.encode("Body", forKey: .Break)
+            case .code(let lang):
+                var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
+                var p = o.nestedContainer(keyedBy: LangKeys.self, forKey: .Code)
+                try p.encode(lang, forKey: .lang)
+            case .callout(let kind):
+                var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
+                var p = o.nestedContainer(keyedBy: KindKeys.self, forKey: .Callout)
+                try p.encode(kind, forKey: .kind)
             case .heading(let n):
                 var o = c.nestedContainer(keyedBy: BreakKeys.self, forKey: .Break)
                 try o.encode(UInt8(n), forKey: .Heading)
@@ -161,7 +185,9 @@ extension SpanJSON: Codable {
     }
 
     private enum TextKeys: String, CodingKey { case text, marks }
-    private enum BreakKeys: String, CodingKey { case Heading, Bullet, Ordered, Task }
+    private enum BreakKeys: String, CodingKey { case Heading, Bullet, Ordered, Task, Code, Callout }
+    private enum LangKeys: String, CodingKey { case lang }
+    private enum KindKeys: String, CodingKey { case kind }
     private enum DepthKeys: String, CodingKey { case depth }
     private enum TaskKeys: String, CodingKey { case depth, done }
 }
@@ -209,9 +235,38 @@ enum SpanText {
         // Ordered-list counters, one per depth, cleared by any
         // non-ordered paragraph.
         var counters: [Int] = []
+        // A code block is one Break PER LINE, but a fence is written once
+        // around the RUN — so the opening fence is emitted when a run
+        // starts and the closing one when it ends. Anything else would put
+        // ``` before every line of the block.
+        var inFence = false
+        var fenceLang: String? = nil
+        func closeFence() {
+            if inFence {
+                out.append("\n```")
+                inFence = false
+                fenceLang = nil
+            }
+        }
         for span in spans {
             switch span {
             case .brk(let block):
+                if case .code(let lang) = block {
+                    // A language CHANGE closes and reopens: two adjacent
+                    // runs tagged py and js are two fences, and merging
+                    // them silently loses the second language.
+                    if inFence, lang != fenceLang { closeFence() }
+                    if !inFence {
+                        if wrote { out.append("\n") }
+                        out.append("```" + (lang ?? ""))
+                        inFence = true
+                        fenceLang = lang
+                        wrote = true
+                    }
+                    out.append("\n")
+                    continue
+                }
+                closeFence()
                 if wrote { out.append("\n") }
                 wrote = true
                 if case .ordered(let d) = block {
@@ -232,6 +287,7 @@ enum SpanText {
                 out += token(id, name: name(id))
             }
         }
+        closeFence()
         return out
     }
 
@@ -242,6 +298,8 @@ enum SpanText {
     private static func marker(_ block: BlockJSON) -> String {
         switch block {
         case .body, .other: return ""
+        case .code(let lang): return "```" + (lang ?? "")
+        case .callout(let kind): return "> [!" + kind + "] "
         case .heading(let n): return String(repeating: "#", count: max(1, min(6, n))) + " "
         case .quote: return "> "
         case .rule: return "---"
@@ -305,10 +363,36 @@ enum SpanText {
         _ text: String, isKnown: (UInt64) -> Bool = { _ in true }
     ) -> [SpanJSON] {
         var out: [SpanJSON] = []
-        for (i, line) in text.components(separatedBy: "\n").enumerated() {
+        // A fence is the one block that is a RANGE, not a line prefix, so
+        // the scan carries one bit of state. Inside a fence NOTHING is
+        // interpreted — that is the half of the 2026-08-20 data loss that
+        // was worse than the flattening itself: a `#` or a `- ` inside a
+        // code block used to come back out as a heading or a bullet.
+        var inFence = false
+        var lang: String? = nil
+        var wrote = false
+        for line in text.components(separatedBy: "\n") {
+            let bare = line.trimmingCharacters(in: .whitespaces)
+            if bare.hasPrefix("```") {
+                if inFence {
+                    inFence = false
+                    lang = nil
+                } else {
+                    inFence = true
+                    let tag = String(bare.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                    lang = tag.isEmpty ? nil : tag
+                }
+                continue            // the fence line IS the marker, never content
+            }
+            if inFence {
+                out.append(.brk(.code(lang: lang)))
+                wrote = true
+                if !line.isEmpty { out.append(.text(line, marks: 0)) }
+                continue
+            }
             let shape = MarkScan.shape(line)
             let block = blockJSON(of: shape, line: line)
-            if i > 0 {
+            if wrote {
                 out.append(.brk(block))
             } else if block != .body {
                 // A non-body FIRST paragraph needs its leading Break —
@@ -316,6 +400,7 @@ enum SpanText {
                 // opens no line", services/src/tasks.rs).
                 out.append(.brk(block))
             }
+            wrote = true
             if case .rule = shape.block { continue }  // the marker IS the line
             let content = (line as NSString).substring(from: shape.marker.length)
             out.append(contentsOf: lineSpans(content, isKnown: isKnown))
@@ -345,6 +430,7 @@ enum SpanText {
         case .ordered: return .ordered(depth: depth())  // the number is presentation
         case .task(let checked): return .task(depth: depth(), done: checked)
         case .quote: return .quote
+        case .callout(let kind): return .callout(kind: kind)
         case .rule: return .rule
         }
     }
@@ -445,8 +531,18 @@ enum SpanText {
         spans.contains { span in
             switch span {
             case .brk(let b):
-                // Code and Callout have no buffer form at all.
-                return b == .other
+                // RENDER AND RESCAN, like the text and ref arms below,
+                // instead of a hand-written list of which blocks survive.
+                // That list was `b == .other`, and it went stale the
+                // moment Code and Callout gained a buffer form — a
+                // callout was then mangled into a quote with NO banner,
+                // which is worse than the flattening the banner existed
+                // to warn about (2026-08-20). A rule that matters lives
+                // in a mechanism, not in prose.
+                let probe: [SpanJSON] = [
+                    .text("a", marks: 0), .brk(b), .brk(.body), .text("x", marks: 0),
+                ]
+                return textToSpans(spansToText(probe, name: name), isKnown: isKnown) != probe
             case .text(let t, let marks):
                 // An UNMARKED run is only ever text, whatever it holds —
                 // including raw newlines, which older writers put in one
@@ -614,6 +710,16 @@ final class NoteEditorModel: ObservableObject {
             self.flattens = SpanText.carriesFormatting(
                 spans,
                 name: { [weak self] in self?.title($0) },
+                // "Known" means the box has a ROW for it — which since
+                // 2026-08-20 includes trashed entities, because the
+                // snapshot carries them. That is deliberate and it is the
+                // fix for a data loss: the core accepts a Ref to a trashed
+                // entity (ffi test `a_link_to_a_trashed_thing_still_saves`),
+                // but this oracle used to read a list that filtered trash,
+                // so a [[link]] whose target was in the bin was rewritten
+                // as plain text on the next save — permanently, since
+                // restoring the target re-promotes nothing. Do not
+                // "optimise" trashed rows out of `entities`.
                 isKnown: { [weak box] id in box?.entity(id) != nil })
             let fresh = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
             self.storedText = fresh
@@ -760,6 +866,16 @@ final class NoteEditorModel: ObservableObject {
             self.flattens = SpanText.carriesFormatting(
                 spans,
                 name: { [weak self] in self?.title($0) },
+                // "Known" means the box has a ROW for it — which since
+                // 2026-08-20 includes trashed entities, because the
+                // snapshot carries them. That is deliberate and it is the
+                // fix for a data loss: the core accepts a Ref to a trashed
+                // entity (ffi test `a_link_to_a_trashed_thing_still_saves`),
+                // but this oracle used to read a list that filtered trash,
+                // so a [[link]] whose target was in the bin was rewritten
+                // as plain text on the next save — permanently, since
+                // restoring the target re-promotes nothing. Do not
+                // "optimise" trashed rows out of `entities`.
                 isKnown: { [weak box] id in box?.entity(id) != nil })
             let theirs = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
             self.draft = mine
@@ -1104,12 +1220,37 @@ func livSpanCodecSelfCheck() -> [String] {
 
     // 2. spans → text → spans: Text, Ref AND blocks exactly. The v1
     //    "flattens the block" delta is retired (owner, 2026-08-11) —
-    //    only `.other` (Code, Callout, unknown) still flattens.
+    //    only `.other` — a block NEWER than this build — still flattens.
+    //    Code and Callout stopped flattening on 2026-08-20.
     let refDoc: [SpanJSON] = [
         .text("see ", marks: 0), .ref(4155), .text(" now", marks: 0),
         .brk(.body), .text("line two", marks: 0),
     ]
     check("ref round-trip", SpanText.textToSpans(SpanText.spansToText(refDoc, name: names)) == refDoc)
+
+    // A CODE FENCE SURVIVES AN EDIT (2026-08-20). Until this landed, Code
+    // and Callout decoded to `.other`, rendered as nothing, and re-encoded
+    // as Body — and the fence's CONTENTS were then re-read by the markdown
+    // grammar, so a `#` inside a code block came back out as a heading.
+    let codeDoc: [SpanJSON] = [
+        .text("before", marks: 0),
+        .brk(.code(lang: "swift")), .text("# not a heading", marks: 0),
+        .brk(.code(lang: "swift")), .text("- not a bullet", marks: 0),
+        .brk(.body), .text("after", marks: 0),
+    ]
+    let codeText = SpanText.spansToText(codeDoc, name: names)
+    check(
+        "code fence renders", codeText == "before\n```swift\n# not a heading\n- not a bullet\n```\nafter",
+        codeText.debugDescription)
+    check(
+        "code fence round-trip", SpanText.textToSpans(codeText) == codeDoc,
+        SpanText.textToSpans(codeText).debugDescription)
+
+    let calloutDoc: [SpanJSON] = [.brk(.callout(kind: "warning")), .text("mind the step", marks: 0)]
+    check(
+        "callout survives encode",
+        SpanText.json(calloutDoc).contains("\"Callout\""),
+        SpanText.json(calloutDoc))
 
     let heading: [SpanJSON] = [
         .brk(.heading(1)), .text("Title", marks: 0),
@@ -1123,7 +1264,7 @@ func livSpanCodecSelfCheck() -> [String] {
         "heading derives from the buffer",
         SpanText.textToSpans("# Title\nbody") == heading)
     check(
-        "other still flattens",
+        "a block newer than this build still flattens",
         SpanText.textToSpans(SpanText.spansToText(
             [.brk(.other), .text("x", marks: 0)], name: names))
             == [.text("x", marks: 0)])
@@ -1329,7 +1470,10 @@ func livSpanCodecSelfCheck() -> [String] {
         SpanText.json(vocab))
 
     // 8. Decoding is total AND faithful: every variant lands on its own
-    //    case; Code and Callout land on .other; nothing throws.
+    //    case; nothing throws. Code and Callout used to land on `.other`
+    //    and re-encode as Body, which destroyed them on the first save
+    //    (2026-08-20). They now decode to themselves, keeping the
+    //    language and the kind.
     let wire = #"[{"Text":{"text":"m","marks":3}},{"Break":"Quote"},{"Break":{"Bullet":{"depth":2}}},"#
         + #"{"Break":{"Code":{"lang":"swift"}}},{"Break":{"Callout":{"kind":"note"}}},"#
         + #"{"Break":{"Task":{"depth":1,"done":true}}},{"Ref":9},{"Text":"z"}]"#
@@ -1338,8 +1482,8 @@ func livSpanCodecSelfCheck() -> [String] {
     check("marks survive the decode", decoded.first == .text("m", marks: 3))
     check("quote decodes", decoded.count > 1 && decoded[1] == .brk(.quote))
     check("bullet keeps depth", decoded.count > 2 && decoded[2] == .brk(.bullet(depth: 2)))
-    check("code is other", decoded.count > 3 && decoded[3] == .brk(.other))
-    check("callout is other", decoded.count > 4 && decoded[4] == .brk(.other))
+    check("code keeps its language", decoded.count > 3 && decoded[3] == .brk(.code(lang: "swift")))
+    check("callout keeps its kind", decoded.count > 4 && decoded[4] == .brk(.callout(kind: "note")))
     check("task keeps done", decoded.count > 5 && decoded[5] == .brk(.task(depth: 1, done: true)))
     check("combined marks flag", SpanText.carriesFormatting(decoded))
     check("plain doc is not flagged", !SpanText.carriesFormatting(refDoc))

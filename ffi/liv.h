@@ -332,6 +332,12 @@ uint64_t liv_layer_save_at(const char *path, const char *name, uint64_t workspac
    never cascades. 1 on success, 0 on failure. */
 int32_t liv_trash_at(const char *path, uint64_t id);
 
+/* Put a trashed thing back — the inverse of liv_trash_at, and the verb
+   that was missing until 2026-08-20. Without it, undo-right-after was the
+   only recovery, and only while the trash was still the last transaction.
+   1 restored, 0 busy / no such entity / not trashed. Never cascades. */
+int32_t liv_restore_at(const char *path, uint64_t id);
+
 /* Remove every cell of one property — the inverse of liv_set_at's
    replace. Missing property on the entity is success. 1 ok, 0 on
    busy/no entity/no property definition. */

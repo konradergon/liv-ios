@@ -364,7 +364,7 @@ struct RecordBody: View {
                 // not open a dead tab. The desk's own call site obeys
                 // this (Desk.swift); the card must too.
                 onOpenRef: { target in
-                    if box.entity(target) != nil { desk.open(target) }
+                    if box.live(target) != nil { desk.open(target) }
                 },
                 showsTitle: false,
                 embedded: true

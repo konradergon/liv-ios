@@ -131,7 +131,7 @@ struct LinksSection: View {
     }
 
     private func open(_ link: LinkRow) {
-        guard let target = link.id, box.entity(target) != nil else { return }
+        guard let target = link.id, box.live(target) != nil else { return }
         desk.open(target)
     }
 

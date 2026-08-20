@@ -423,7 +423,7 @@ enum MarkStyler {
                         ], range: abs(content))
                 }
             }
-        case .quote:
+        case .quote, .callout:
             markBlock()
             let content = NSRange(
                 location: shape.marker.length, length: lineLen - shape.marker.length)

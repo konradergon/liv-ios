@@ -202,6 +202,10 @@ struct RootView: View {
                     }
                 }
         }
+        .sheet(isPresented: $desk.trashShown) {
+            TrashView()
+                .environmentObject(box)
+        }
         .fullScreenCover(isPresented: $desk.cameraShown) {
             CameraFlow(onDone: { ids in
                 if let last = ids.last { desk.open(last) }

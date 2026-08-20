@@ -82,6 +82,7 @@ struct LibraryPanel: View {
     /// 2026-08-04).
     let onWorkspace: () -> Void
     let onSettings: () -> Void
+    let onTrash: () -> Void
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -138,8 +139,14 @@ struct LibraryPanel: View {
                         // (owner, 2026-08-17): two fixed layers at the
                         // foot of one list — a pinned row and the global
                         // bar over it — was one too many.
-                        row("Settings", glyph: .settings) { onSettings() }
+                        // The way back from a delete. It sits with
+                        // Settings because it is house-keeping, not a
+                        // place you work — and because the alternative was
+                        // a fourth pill on Everything, which is already
+                        // the screen the owner finds most confusing.
+                        row("Trash", glyph: .trash) { onTrash() }
                             .padding(.top, 16)
+                        row("Settings", glyph: .settings) { onSettings() }
                     }
                     .padding(.horizontal, 6)
                     .padding(.top, 8)

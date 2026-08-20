@@ -2226,6 +2226,28 @@ pub unsafe extern "C" fn liv_layer_save_at(
 /// Trash one entity — the inspector's Trash action. Soft, reversible
 /// (⌘⌥Z), never cascades. 1 on success, 0 on failure.
 ///
+/// Put a trashed thing back (2026-08-20). The inverse of `liv_trash_at`,
+/// and the verb that was missing: the core has had `Command::Restore`
+/// since the first milestone, but with no export the phone could only
+/// undo a trash while it was still the LAST transaction. After the next
+/// write, trash was one-way.
+///
+/// 1 restored, 0 busy / no such entity / not trashed. Never cascades —
+/// restoring a thing restores exactly that thing, the mirror of trash.
+#[no_mangle]
+pub unsafe extern "C" fn liv_restore_at(path: *const c_char, id: u64) -> i32 {
+    with_box(path, 0, |session| {
+        match session.commit(
+            vec![liv_core::Command::Restore { entity: id }],
+            "restore".to_string(),
+            liv_core::Author::User,
+        ) {
+            Ok(_) => (1, Committed::Wrote),
+            Err(_) => (0, Committed::Failed),
+        }
+    })
+}
+
 /// # Safety
 /// `path` must be a valid NUL-terminated UTF-8 string.
 #[no_mangle]

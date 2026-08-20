@@ -25,6 +25,12 @@ enum LineBlock: Equatable {
     case ordered(Int)  // the number as typed
     case task(checked: Bool)
     case quote
+    /// `> [!kind]` — a callout. It MUST be tested before the quote branch,
+    /// because a callout begins with the quote marker; without it the
+    /// writer's `> [!warning] ` came back as a quote whose prose began
+    /// "[!warning]" (2026-08-20 — the fix for the flattening introduced
+    /// exactly that regression, caught by the span self-check).
+    case callout(String)
     case rule
 }
 
@@ -112,6 +118,26 @@ enum MarkScan {
                 return LineShape(
                     block: .ordered(n), indent: indent,
                     marker: NSRange(location: 0, length: j + 2), box: nil)
+            }
+        }
+
+        // callout: "> [!kind]" — BEFORE quote, which it starts with.
+        if i < u.count, u[i] == 0x3E {
+            var j = i + 1
+            if j < u.count, u[j] == 0x20 { j += 1 }
+            if j + 1 < u.count, u[j] == 0x5B, u[j + 1] == 0x21 {   // "[!"
+                var k = j + 2
+                while k < u.count, u[k] != 0x5D { k += 1 }          // to "]"
+                if k < u.count {
+                    let kind = String(decoding: u[(j + 2)..<k], as: UTF16.self)
+                    var end = k + 1
+                    if end < u.count, u[end] == 0x20 { end += 1 }
+                    if !kind.isEmpty {
+                        return LineShape(
+                            block: .callout(kind), indent: indent,
+                            marker: NSRange(location: 0, length: end), box: nil)
+                    }
+                }
             }
         }
 
@@ -304,6 +330,8 @@ enum EditOps {
         case .bullet: continuation = "\(pad)- "
         case .ordered(let n): continuation = "\(pad)\(n + 1). "
         case .quote: continuation = "\(pad)> "
+        // Return inside a callout continues the callout, like a quote.
+        case .callout(let kind): continuation = "\(pad)> [!\(kind)] "
         case .body, .heading, .rule: return nil
         }
         // Marker-only line → end the list: clear the line, stay on it.

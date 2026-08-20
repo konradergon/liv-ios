@@ -294,6 +294,18 @@ pub(crate) struct Snapshot {
     widgets: Vec<liv_services::timeviews::WidgetRow>,
     /// The kind-id seam (P19c). OPTIONAL shell-side.
     kinds: Vec<KindRow>,
+    /// THE TRASH (2026-08-20). The ids of every trashed entity — an ID
+    /// LIST like `everything` and `dated`, whose rows live in `entities[]`
+    /// with `trashed: true`. OPTIONAL shell-side like every other addition.
+    ///
+    /// It exists for two reasons that turned out to be one. A trashed
+    /// thing was unreachable from the app — the core has `Restore` and the
+    /// ABI had no verb, so trash was one-way after the next write. And the
+    /// editor demoted a `[[link]]` whose target was trashed into plain
+    /// text, permanently, because its "does this exist?" test reads
+    /// `everything`, which `Query::default()` filters. The shell could not
+    /// tell "in the trash" from "never existed". Now it can.
+    trashed: Vec<Id>,
     /// The assist switch (P19h): the entity id (the toggle's write target)
     /// + its state. OPTIONAL shell-side.
     assist: Option<AssistRow>,
@@ -500,6 +512,13 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
     let archived_prop = property_id(store, "archived");
 
     let everything = run(store, &Query::default());
+    // THE TRASH. `Query::default()` filters trashed rows, so this asks the
+    // same question with the filter off and keeps the difference — which is
+    // exactly the set the app could not see.
+    let trashed: Vec<Id> = run(store, &Query { include_trashed: true, ..Query::default() })
+        .into_iter()
+        .filter(|id| store.get(*id).map(|e| e.trashed).unwrap_or(false))
+        .collect();
 
     let sections = liv_services::today_sections(store, civil_today());
     let (today, unstructured) = (sections.due, sections.unstructured);
@@ -551,6 +570,13 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
     // shell's id→row index; every surface iterates the ID LISTS
     // (everything/dated/…), so a backstage row here leaks nowhere.
     let mut projected: Vec<Id> = everything.clone();
+    // The trash joins the ROW STORE only, on the same argument the widgets
+    // use below: `entities[]` is the shell's id→row index, and every surface
+    // iterates the ID LISTS, so a row here leaks into no list that did not
+    // ask for it. It is what lets the shell tell "in the trash" from "never
+    // existed" — the distinction the editor needs to stop demoting a link
+    // to a trashed note into plain text.
+    projected.extend(trashed.iter().copied());
     if let Some(widget_type) = liv_services::content::find_type(store, "widget") {
         projected.extend(
             store
@@ -844,6 +870,7 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
         today,
         unstructured,
         everything,
+        trashed,
         dated,
         occurrences,
         inbox,

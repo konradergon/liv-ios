@@ -2953,3 +2953,73 @@ fn one_write_stays_flat_as_the_box_grows() {
          the write path is doing work proportional to the whole box"
     );
 }
+
+/// RESTORE, and the trash on the wire (2026-08-20). Two data losses, one
+/// root: nothing trashed crossed the seam, so the phone could neither put
+/// a thing back nor tell "in the trash" from "never existed".
+#[test]
+fn a_trashed_thing_can_come_back_and_is_visible_on_the_wire() {
+    let (path, c_path) = fresh_box("liv_ffi_restore.log");
+    let id = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let prop = CString::new("name").unwrap();
+    let value = CString::new("the one that got away").unwrap();
+    unsafe { liv_set_at(c_path.as_ptr(), id, prop.as_ptr(), value.as_ptr()) };
+
+    let snap = |what: &str| -> serde_json::Value {
+        let raw = unsafe { liv_snapshot(c_path.as_ptr()) };
+        assert!(!raw.is_null(), "snapshot was busy while {what}");
+        let text = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_owned();
+        unsafe { liv_string_free(raw) };
+        serde_json::from_str(&text).unwrap()
+    };
+    let ids = |v: &serde_json::Value, key: &str| -> Vec<u64> {
+        v[key].as_array().unwrap().iter().filter_map(|x| x.as_u64()).collect()
+    };
+
+    let before = snap("live");
+    assert!(ids(&before, "everything").contains(&id));
+    assert!(ids(&before, "trashed").is_empty(), "nothing is in the trash yet");
+
+    assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), id) }, 1);
+    let trashed = snap("trashed");
+    assert!(!ids(&trashed, "everything").contains(&id), "trash leaves the live list");
+    assert!(ids(&trashed, "trashed").contains(&id), "and appears in the trash");
+    // The row must be in the id→row index too, or the shell still cannot
+    // tell a trashed target from one that never existed — which is what
+    // demoted a [[link]] to plain text on the next save.
+    let row = trashed["entities"].as_array().unwrap().iter()
+        .find(|r| r["id"].as_u64() == Some(id))
+        .expect("a trashed entity still has a row");
+    assert_eq!(row["trashed"].as_bool(), Some(true));
+    assert_eq!(row["title"].as_str(), Some("the one that got away"));
+
+    // Restoring twice is refused, exactly like trashing twice.
+    assert_eq!(unsafe { liv_restore_at(c_path.as_ptr(), id) }, 1);
+    assert_eq!(unsafe { liv_restore_at(c_path.as_ptr(), id) }, 0, "already live");
+
+    let after = snap("restored");
+    assert!(ids(&after, "everything").contains(&id), "back in the live list");
+    assert!(ids(&after, "trashed").is_empty(), "and out of the trash");
+
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// The core accepts a link to a TRASHED entity — the shell was demoting it
+/// on its own. This pins the seam's half of the contract.
+#[test]
+fn a_link_to_a_trashed_thing_still_saves() {
+    let (path, c_path) = fresh_box("liv_ffi_trashlink.log");
+    let target = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    let source = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    assert_eq!(unsafe { liv_trash_at(c_path.as_ptr(), target) }, 1);
+
+    let body = CString::new(format!(
+        "[{{\"Text\":{{\"text\":\"see \",\"marks\":0}}}},{{\"Ref\":{target}}}]"
+    ))
+    .unwrap();
+    let mut fresh: u64 = 0;
+    let status = unsafe { liv_set_content_at(c_path.as_ptr(), source, body.as_ptr(), 0, &mut fresh) };
+    assert_eq!(status, 1, "the core accepts a Ref to a trashed entity");
+
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

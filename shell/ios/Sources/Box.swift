@@ -14,6 +14,11 @@ struct Snapshot: Decodable {
     var today, unstructured, everything, dated: [UInt64]?
     var occurrences: [Occurrence]?
     var entities: [EntityRow]?
+    /// The ids of everything in the trash, newest first (2026-08-20). An id
+    /// list like `everything`; the rows are in `entities` carrying
+    /// `trashed: true`. Optional, like every wire addition — one missing
+    /// key must never drop the whole snapshot.
+    var trashed: [UInt64]?
     var properties: [PropertyRow]?
     var kinds: [KindRow]?
     /// The workspace tree (M4). Shapes live in Workspace.swift.
@@ -272,8 +277,25 @@ final class BoxModel: ObservableObject {
         self.path = path
     }
 
+    /// The row for an id, whether or not it is in the trash. Use this for
+    /// EXISTENCE — "has this box ever heard of it?" — which is what the
+    /// editor's link oracle asks.
     func entity(_ id: UInt64) -> EntityRow? {
         entities[id]
+    }
+
+    /// The row for an id, but only if it is LIVE. Use this for anything
+    /// that opens, renders or navigates.
+    ///
+    /// The two used to be the same call, because the snapshot filtered
+    /// trashed rows out entirely and `entity(_:)` could only ever return a
+    /// live one. Since 2026-08-20 the trash rides the wire — which is what
+    /// stops the editor demoting a link to a trashed note — so every site
+    /// that meant "alive" and wrote "exists" would silently start opening
+    /// deleted things. A rule that matters lives in a type, not a comment.
+    func live(_ id: UInt64) -> EntityRow? {
+        guard let row = entities[id], row.trashed != true else { return nil }
+        return row
     }
 
     // MARK: reads
@@ -519,6 +541,14 @@ final class BoxModel: ObservableObject {
 
     func unset(_ id: UInt64, _ property: String) {
         act("unset") { liv_unset_at(self.path, id, property) == 1 }
+    }
+
+    /// Put a trashed thing back — the inverse of `trash`, and the door
+    /// that did not exist until 2026-08-20. Before it, undo-right-after was
+    /// the only recovery, and only while the trash was still the last
+    /// transaction; after any other write the thing was unreachable.
+    func restore(_ id: UInt64, done: ((Bool) -> Void)? = nil) {
+        act("restore", done) { liv_restore_at(self.path, id) == 1 }
     }
 
     /// Soft, reversible, never cascades.

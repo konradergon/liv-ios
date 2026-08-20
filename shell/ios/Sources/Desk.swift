@@ -152,7 +152,8 @@ struct DeskHost: View {
                 LibraryPanel(
                     onDismiss: { desk.setLibrary(false) },
                     onWorkspace: { desk.workspaceShown = true },
-                    onSettings: { desk.settingsShown = true }
+                    onSettings: { desk.settingsShown = true },
+                    onTrash: { desk.trashShown = true }
                 )
                 .offset(x: panelOffset(.library))
                 // Exit transitions render BELOW later siblings without an
@@ -710,7 +711,7 @@ struct EntityTabBody: View {
     @FocusState private var titleFocused: Bool
 
     var body: some View {
-        if box.entity(id) != nil {
+        if box.live(id) != nil {
             content
         } else {
             // A persisted tab whose entity left the box — dropped lazily.
@@ -735,7 +736,7 @@ struct EntityTabBody: View {
                 // tab. Liv shows the bytes and never writes them.
                 FileBody(id: id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if box.entity(id) != nil {
+            } else if box.live(id) != nil {
                 NoteEditor(
                     id: id,
                     title: $title, onTitleCommit: commitTitle,
@@ -743,7 +744,7 @@ struct EntityTabBody: View {
                     // link but saves as text (ruling 5) — tapping it must
                     // not open a dead tab.
                     onOpenRef: { target in
-                        if box.entity(target) != nil { desk.open(target) }
+                        if box.live(target) != nil { desk.open(target) }
                     },
                     autoFocus: autoFocus
                 )

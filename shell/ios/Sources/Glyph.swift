@@ -109,7 +109,7 @@ enum LivGlyph: Equatable {
     // Places — the library's rows.
     case today, inbox, calendar, tasks, everything
     // Furniture.
-    case filter, settings, workspace, workspaces, plus
+    case filter, settings, workspace, workspaces, plus, trash
 }
 
 /// The blueprint's 24×24 drawing space. Every glyph is STROKED, never
@@ -176,6 +176,17 @@ struct GlyphShape: Shape {
             pen.shape(
                 [(4, 4.5, 0), (20, 4.5, 0), (13.6, 12.2, 0), (13.6, 19.5, 0), (10.4, 17.6, 0), (10.4, 12.2, 0)],
                 closed: true)
+        case .trash:
+            // A bin: lid, body, and two staves. Drawn rather than an SF
+            // Symbol so it sits on the same optical weight as its
+            // neighbours in the library rows.
+            pen.line(5, 6.5, 19, 6.5)
+            pen.line(9.5, 6.5, 9.5, 4.5)
+            pen.line(9.5, 4.5, 14.5, 4.5)
+            pen.line(14.5, 4.5, 14.5, 6.5)
+            pen.line(6.8, 6.5, 7.8, 19.5)
+            pen.line(17.2, 6.5, 16.2, 19.5)
+            pen.line(7.8, 19.5, 16.2, 19.5)
         case .settings:
             pen.circle(12, 12, 6.8)
             pen.circle(12, 12, 2)

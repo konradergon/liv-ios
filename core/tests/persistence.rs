@@ -325,3 +325,74 @@ fn merge_and_redirect_survive_restart() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// Restore, which had no test anywhere in the workspace until 2026-08-20.
+///
+/// `Command::Restore` is the documented inverse of `Trash` and the only way
+/// a trashed thing can come back. It shipped untested, and the C ABI exports
+/// no verb for it — so on the phone, trash has been one-way after the next
+/// write. This proves the foundation the new verb stands on: restore works,
+/// it survives a reopen, and it refuses the two cases it should.
+#[test]
+fn restore_brings_a_trashed_entity_back_and_survives_a_reopen() {
+    let path = temp_path("restore");
+    let id;
+    {
+        let mut session = Session::open(&path).unwrap();
+        id = session.allocate_id();
+        session
+            .commit(vec![Command::Create { entity: id }], "create", Author::User)
+            .unwrap();
+        session
+            .commit(vec![Command::Trash { entity: id }], "trash", Author::User)
+            .unwrap();
+        assert!(session.store().get(id).unwrap().trashed, "trashed in memory");
+
+        // Trashing twice is refused — the guard that makes Trash/Restore a
+        // reversible PAIR rather than a toggle that can drift.
+        assert!(session
+            .commit(vec![Command::Trash { entity: id }], "again", Author::User)
+            .is_err());
+
+        session
+            .commit(vec![Command::Restore { entity: id }], "restore", Author::User)
+            .unwrap();
+        assert!(!session.store().get(id).unwrap().trashed, "restored in memory");
+
+        // And restoring something live is refused for the same reason.
+        assert!(session
+            .commit(vec![Command::Restore { entity: id }], "again", Author::User)
+            .is_err());
+    }
+    {
+        // The whole point: the restore is IN THE LOG, not just in memory.
+        let session = Session::open(&path).unwrap();
+        assert!(
+            !session.store().get(id).unwrap().trashed,
+            "a restore must survive a restart, or the trash is one-way on disk too"
+        );
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A trashed entity is still THERE — `get` resolves it, which is why the
+/// core accepts a link pointing at one. The iOS editor demotes such a link
+/// to plain text because the snapshot hides trashed rows and the shell
+/// cannot tell "in the trash" from "never existed". This pins the core's
+/// half of that contract so a future change cannot quietly break the fix.
+#[test]
+fn a_trashed_entity_is_still_reachable_by_id() {
+    let path = temp_path("trashed_get");
+    let mut session = Session::open(&path).unwrap();
+    let id = session.allocate_id();
+    session
+        .commit(vec![Command::Create { entity: id }], "create", Author::User)
+        .unwrap();
+    session
+        .commit(vec![Command::Trash { entity: id }], "trash", Author::User)
+        .unwrap();
+
+    assert!(session.store().get(id).is_some(), "trash is soft: get still resolves");
+    assert!(session.store().get(id).unwrap().trashed);
+    let _ = std::fs::remove_file(&path);
+}

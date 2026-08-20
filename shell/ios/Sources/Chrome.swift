@@ -128,6 +128,8 @@ final class DeskModel: ObservableObject {
     /// them — as DeskHost-local @State they outlived a notification tap
     /// and the landing tab hid behind them (audit, 2026-08-04).
     @Published var settingsShown = false
+    /// The trash list — the only door to `liv_restore_at`.
+    @Published var trashShown = false
     @Published var workspaceShown = false
     /// The workspace sheet should open with the NEW FILTER form already
     /// composing. Filters are reached from the library panel now; the
@@ -506,6 +508,7 @@ final class DeskModel: ObservableObject {
         searchShown = false
         cameraShown = false
         settingsShown = false
+        trashShown = false
         workspaceShown = false
     }
 
