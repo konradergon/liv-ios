@@ -38,16 +38,16 @@ struct DeskHost: View {
     var body: some View {
         ZStack(alignment: .top) {
             Group {
-                if let id = desk.openDoc, desk.state == .docs {
+                if let id = desk.openDoc, desk.state == .notes {
                     // Keyed by ENTITY: a serial capture rewrites the
                     // surface with a new entity, and per-entity @State
                     // (the seeded title) must reseed on that flip.
                     EntityTabBody(id: id).id(id)
-                } else if desk.state == .docs {
+                } else if desk.state == .notes {
                     // DOCS' OWN ROOT: the list of what you have written,
                     // what you touched last at the top (owner,
                     // 2026-08-18).
-                    DocsList()
+                    NotesList()
                 } else {
                     // Another state entirely — Today, the calendar. The
                     // views draw themselves (FeatureLayer is gone with
@@ -87,7 +87,7 @@ struct DeskHost: View {
                 //
                 // AT A STATE'S ROOT it is the library door: the
                 // workspace, the filters and Settings.
-                if desk.openDoc != nil, desk.state == .docs {
+                if desk.openDoc != nil, desk.state == .notes {
                     DocumentBack()
                 } else {
                     Button {
@@ -104,7 +104,7 @@ struct DeskHost: View {
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
                 // trash — so it belongs to Docs and to nothing else.
-                if desk.state == .docs, let id = desk.openDoc {
+                if desk.state == .notes, let id = desk.openDoc {
                     noteMenu(id)
                 }
             }
@@ -132,7 +132,7 @@ struct DeskHost: View {
             // 2026-08-18). The workspace belongs to a state's root — and
             // it stays lit over the library panel, which is where you go
             // to change it.
-            if desk.openDoc == nil || desk.state != .docs || desk.libraryDrawn {
+            if desk.openDoc == nil || desk.state != .notes || desk.libraryDrawn {
                 WorkspaceButton { desk.workspaceShown = true }
                     .padding(.top, 6)
                 // It stays lit under BOTH panels now. The properties
@@ -160,7 +160,7 @@ struct DeskHost: View {
                 // instead of sliding out (audit, 2026-08-01).
                 .zIndex(1)
             }
-            if let id = desk.openDoc, desk.state == .docs,
+            if let id = desk.openDoc, desk.state == .notes,
                 desk.inspectorShown || desk.panelDrag?.which == .inspector
             {
                 SidePanel(
@@ -233,7 +233,7 @@ struct DeskHost: View {
             "Move to Trash?", isPresented: $confirmTrash, titleVisibility: .visible
         ) {
             Button("Move to Trash", role: .destructive) {
-                if let id = desk.openDoc, desk.state == .docs {
+                if let id = desk.openDoc, desk.state == .notes {
                     trashNote(id)
                 }
             }
@@ -317,7 +317,7 @@ struct DeskHost: View {
         } else {
             // Leftward: put the library away, else summon the properties.
             if desk.libraryShown { return (.library, false) }
-            if !desk.inspectorShown, desk.openDoc != nil, desk.state == .docs {
+            if !desk.inspectorShown, desk.openDoc != nil, desk.state == .notes {
                 return (.inspector, true)
             }
         }

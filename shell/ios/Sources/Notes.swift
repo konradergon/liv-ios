@@ -17,7 +17,7 @@ import SwiftUI
 /// without changing it does not bump it. Opening is not in the log at
 /// all — no verb writes a visit — and inventing a device-side one would
 /// make this list disagree with search on every other surface.
-struct DocsList: View {
+struct NotesList: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel

@@ -65,8 +65,8 @@ struct DocumentBack: View {
         switch desk.back {
         case .state(let feature): return feature.title
         case .document(let id):
-            return box.entity(id).map(livRowTitle) ?? "Docs"
-        case nil: return Feature.docs.title
+            return box.entity(id).map(livRowTitle) ?? "Notes"
+        case nil: return Feature.notes.title
         }
     }
 
@@ -90,7 +90,7 @@ struct FeatureBody: View {
     var body: some View {
         Group {
             switch feature {
-            case .docs: EmptyView()  // Docs draws itself (DocsList / the editor)
+            case .notes: EmptyView()  // Docs draws itself (NotesList / the editor)
             case .today: TodayView()
             case .everything: EverythingView()
             case .inbox: InboxView()
@@ -132,7 +132,7 @@ func livPlacesSelfCheck() -> [String] {
 
     // A document is INSIDE Docs, and it remembers where you came from.
     desk.open(7)
-    check("opening a document lands in Docs", desk.state == .docs, "\(desk.state)")
+    check("opening a document lands in Docs", desk.state == .notes, "\(desk.state)")
     check("the open document is the one asked for", desk.openDoc == 7)
     check("back goes where you came from", desk.back == .state(.calendar), "\(String(describing: desk.back))")
 
@@ -141,12 +141,12 @@ func livPlacesSelfCheck() -> [String] {
     check("the second document replaces the first", desk.openDoc == 9)
     check("back is the note you were reading", desk.back == .document(7))
     desk.goBack()
-    check("stepping back re-opens it", desk.openDoc == 7 && desk.state == .docs)
+    check("stepping back re-opens it", desk.openDoc == 7 && desk.state == .notes)
     check("and it does not push itself back on", desk.back == .state(.calendar))
 
     // Up, out of the document, to the list — the state does not change.
     desk.showList()
-    check("the list is Docs with no document", desk.state == .docs && desk.openDoc == nil)
+    check("the list is Docs with no document", desk.state == .notes && desk.openDoc == nil)
     check("and nothing is beneath it", desk.back == nil)
 
     // Opening the SAME document again is not a step.

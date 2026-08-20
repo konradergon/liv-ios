@@ -12,18 +12,18 @@ import UIKit
 
 /// The lens roster. Calendar is a v1 placeholder — its body renders
 /// EmptyHint("Calendar arrives with M3.") until M3.
-/// DOCS IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
+/// NOTES IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
 /// equally… and the notes should remain separate"). It leads because it
 /// is where the words are, and its ROOT is the list of them; a note open
 /// on the desk is one level inside it.
 enum Feature: String, CaseIterable, Identifiable {
-    case docs, today, everything, inbox, tasks, calendar
+    case notes, today, everything, inbox, tasks, calendar
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .docs: return "Docs"
+        case .notes: return "Notes"
         case .today: return "Today"
         case .everything: return "Everything"
         case .inbox: return "Inbox"
@@ -35,7 +35,7 @@ enum Feature: String, CaseIterable, Identifiable {
     /// The blueprints' own drawing for each place (Glyph.swift).
     var glyph: LivGlyph {
         switch self {
-        case .docs: return .note
+        case .notes: return .note
         case .today: return .today
         case .everything: return .everything
         case .inbox: return .inbox
@@ -72,7 +72,7 @@ enum LivPlace: Equatable {
 final class DeskModel: ObservableObject {
     /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
     /// changes it; there is no "no state" — Docs is one of them.
-    @Published var state: Feature = .docs
+    @Published var state: Feature = .notes
     /// The one document open inside Docs, or nil for the list. Opening a
     /// note replaces whatever was open (there is no second slot to put
     /// it in), and the id is persisted per workspace.
@@ -371,7 +371,7 @@ final class DeskModel: ObservableObject {
         workspaceId = id
         returns = []
         openDoc = Self.load(id)
-        state = .docs
+        state = .notes
         setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
@@ -383,7 +383,7 @@ final class DeskModel: ObservableObject {
 
     /// The Go-to menu's one door. A state REPLACES the state you were in
     /// — states are roots, never children of each other — and Docs keeps
-    /// whatever document was open, so "Docs" from the calendar puts you
+    /// whatever document was open, so "Notes" from the calendar puts you
     /// back in the note you were writing.
     func go(_ feature: Feature) {
         guard feature != state else { return }
@@ -416,9 +416,9 @@ final class DeskModel: ObservableObject {
             switch place {
             case .state(let feature):
                 state = feature
-                if feature != .docs { openDoc = nil }
+                if feature != .notes { openDoc = nil }
             case .document(let id):
-                state = .docs
+                state = .notes
                 openDoc = id
             }
         }
@@ -485,11 +485,11 @@ final class DeskModel: ObservableObject {
         }
         // Where the labelled back will go: the state you were in, or the
         // document you were reading before this one.
-        let from: LivPlace = state == .docs && openDoc != nil
+        let from: LivPlace = state == .notes && openDoc != nil
             ? .document(openDoc!) : .state(state)
         returns.append(from)
         if returns.count > 20 { returns.removeFirst(returns.count - 20) }
-        state = .docs
+        state = .notes
         openDoc = entityId
         surfaceCleanup()
     }
@@ -1305,7 +1305,7 @@ struct BottomBar: View {
         // TODAY LEADS (owner, 2026-08-18). The order is the order of
         // a day: what is happening, then what you are writing, then
         // what arrived, then the rest.
-        let order: [Feature] = [.today, .docs, .inbox, .calendar, .tasks, .everything]
+        let order: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
         return LivMenu(
             id: "goto", from: .bottom, title: "Go to",
             items: order.map { feature in

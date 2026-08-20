@@ -317,7 +317,7 @@ struct RootView: View {
         // The create menu, from the bar's `+`.
         case "newtab", "create": desk.createSomething()
         // The Docs LIST, which is the state's root.
-        case "docs": desk.showList()
+        case "notes", "docs": desk.showList()
         default: break
         }
     }
