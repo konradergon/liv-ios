@@ -466,7 +466,6 @@ struct DeskHost: View {
             id: "create",
             from: .bottom,
             title: "New",
-            anchored: true,
             items: [
                 LivMenuItem(label: "Note", glyph: .note) { createNote() },
                 LivMenuItem(label: "Task", glyph: .task) { createRecord(event: false) },

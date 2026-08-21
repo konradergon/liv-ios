@@ -205,10 +205,11 @@ enum LivRow {
 }
 
 /// The floating bottom bar's own size, so anything that must clear it —
-/// a scroll's bottom margin, a menu anchored above it — asks rather than
-/// guesses. Measured 2026-08-20: four unrelated literals were doing this
-/// job (58 in the panel and the feature bodies, 62 in App, 88 in Notes,
-/// 110 inside the editor), none of them the bar's actual height.
+/// or send it off screen — asks rather than guesses. Measured
+/// 2026-08-20: four unrelated literals were doing this job (58 in the
+/// panel and the feature bodies, 62 in App, 88 in Notes, 110 inside the
+/// editor), none of them the bar's actual height. Those four are still
+/// there; only the scroll-away chrome asks.
 enum LivBar {
     static let height: CGFloat = 50
     /// The breath between the bar and the screen's bottom edge.

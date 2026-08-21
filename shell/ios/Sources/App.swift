@@ -134,12 +134,7 @@ struct RootView: View {
                     .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
                     .zIndex(2)
             }
-            // THE BAR STAYS UNDER AN ANCHORED MENU. A card that grows
-            // out of the `+` and then leaves no `+` under it is a card
-            // that came from nowhere — in the reference clip the bar it
-            // belongs to never moves. A full-bleed sheet still retires
-            // the bar: that one covers the corner the bar lives in.
-            if !keyboard.up && (desk.menu == nil || desk.menu?.anchored == true) {
+            if !keyboard.up && desk.menu == nil {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
