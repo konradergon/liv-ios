@@ -60,6 +60,14 @@ struct SectionLabel: View {
                 }
             }
         }
+        // THE HEADING OWNS ITS OWN ROOM (2026-08-21). Leaving it to the
+        // caller is exactly the drift standing rule 3 predicts: colours
+        // are tokenised and have never moved; this was prose and moved
+        // five ways across sixteen sites. A caller may still add
+        // HORIZONTAL inset — that belongs to the surface, not the
+        // heading.
+        .padding(.top, LivRow.sectionTop)
+        .padding(.bottom, LivRow.sectionBottom)
     }
 }
 

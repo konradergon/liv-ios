@@ -210,8 +210,6 @@ struct TasksView: View {
         .onTapGesture {
             if group.completes { toggleExpanded(group.name) }
         }
-        .padding(.top, 14)
-        .padding(.bottom, 2)
         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
@@ -239,8 +237,6 @@ struct TasksView: View {
         let lines = noteLines
         if !lines.isEmpty {
             SectionLabel("In notes", trailing: "\(lines.count)")
-                .padding(.top, 14)
-                .padding(.bottom, 2)
                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)

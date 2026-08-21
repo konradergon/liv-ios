@@ -347,8 +347,6 @@ struct RecordBody: View {
         if notesShown {
             SectionLabel("Notes")
                 .padding(.horizontal, 16)
-                .padding(.top, 22)
-                .padding(.bottom, 2)
             // The REAL editor, minus its title line — the card names the
             // record above it. Checkboxes, [[links]], markdown styling
             // and the keyboard toolbar all come with it, and the second,

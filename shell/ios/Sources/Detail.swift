@@ -150,16 +150,12 @@ struct EntityInspector: View {
                 }
                 .padding(.bottom, 4)
                 SectionLabel("Schedule")
-                    .padding(.top, 18)
-                    .padding(.bottom, 2)
                 dueRow(row)
                 if showsStatus(row) {
                     DetailHairline()
                     statusRow(row)
                 }
                 SectionLabel("Filing")
-                    .padding(.top, 22)
-                    .padding(.bottom, 2)
                 // Zero fill pressure: the core fields are always here, even
                 // empty; everything else appears only once it holds a value
                 // (design/editor-study.md §8). Two filled fields is a
@@ -173,8 +169,6 @@ struct EntityInspector: View {
                 let extras = DetailCellGroup.groups(row, skipping: skipSet(row))
                 if !extras.isEmpty {
                     SectionLabel("Other")
-                        .padding(.top, 22)
-                        .padding(.bottom, 2)
                     ForEach(Array(extras.enumerated()), id: \.element.id) { i, group in
                         if i > 0 { DetailHairline() }
                         cellRow(group)
@@ -207,8 +201,6 @@ struct EntityInspector: View {
         let pending = box.proposals(for: id)
         if !pending.isEmpty {
             SectionLabel("Suggested")
-                .padding(.top, 22)
-                .padding(.bottom, 2)
             ForEach(Array(pending.enumerated()), id: \.element.id) { i, proposal in
                 if i > 0 { DetailHairline() }
                 suggestionRow(proposal)
@@ -804,8 +796,6 @@ struct DetailDueSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 SectionLabel("Date")
-                    .padding(.top, 18)
-                    .padding(.bottom, 6)
                 // Neither shortcut closes the sheet: setting a day and
                 // THEN a time is the common pair, and being thrown out
                 // after the day meant reopening to finish (owner,
@@ -834,8 +824,6 @@ struct DetailDueSheet: View {
                 }
                 if calendarShown { monthPicker }
                 SectionLabel("Time")
-                    .padding(.top, 22)
-                    .padding(.bottom, 6)
                 timeRow
                 // ALWAYS rendered, disabled when there is nothing to
                 // clear. It used to appear only once a due existed —

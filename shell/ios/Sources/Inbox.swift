@@ -355,7 +355,6 @@ struct InboxView: View {
     ) -> some View {
         if assistOff {
             SectionLabel("Suggested")
-                .padding(.top, 14).padding(.bottom, 2)
             HStack(spacing: 8) {
                 Text("Suggestions are off")
                     .font(.system(size: LivType.body))

@@ -141,8 +141,6 @@ struct LivCard<Content: View>: View {
             if let label {
                 SectionLabel(label)
                     .padding(.horizontal, inset + 4)
-                    .padding(.top, LivRow.sectionTop)
-                    .padding(.bottom, LivRow.sectionBottom)
             }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -37,8 +37,6 @@ struct LinksSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionLabel("Links")
-                .padding(.top, 22)
-                .padding(.bottom, 2)
             ForEach(Array(visible(links.outRows, all: showAllOut).enumerated()), id: \.element.id) {
                 i, link in
                 LinkRowView(
@@ -49,8 +47,6 @@ struct LinksSection: View {
             linkButton
             if !links.inRows.isEmpty {
                 SectionLabel("Linked from")
-                    .padding(.top, 22)
-                    .padding(.bottom, 2)
                 ForEach(Array(visible(links.inRows, all: showAllIn).enumerated()), id: \.element.id) {
                     i, link in
                         LinkRowView(

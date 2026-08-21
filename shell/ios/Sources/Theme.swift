@@ -189,11 +189,26 @@ enum LivRow {
     /// edge to edge (owner's clips, 2026-08-20).
     static let cardInset: CGFloat = 16
 
-    /// The room a section heading owns. It used to own none, so all
-    /// twenty-eight call sites supplied their own and disagreed ten
-    /// ways (10/14/16/18/22 above, 0/2/4/6 below).
+    /// THE ROOM A SECTION HEADING OWNS.
+    ///
+    /// It used to own none. `SectionLabel` drew the words and left the
+    /// space to whoever placed it, so all sixteen call sites supplied
+    /// their own and disagreed five ways: 14, 16, 18 or 22 above and 2,
+    /// 4 or 6 below, with two sites giving none at all. The same
+    /// heading sat closer to its rows on Today than in the properties
+    /// panel, which is the kind of unevenness you feel without being
+    /// able to point at it.
+    ///
+    /// 18 and 4 are chosen to MOVE THE LEAST: no heading in the app
+    /// shifts more than 4pt above or 2pt below from where it sat. Every
+    /// other candidate moved something twice as far.
+    ///
+    /// The ratio is the part that matters and every reference app
+    /// agrees on it — a big gap above, a small one below, so a heading
+    /// binds downward to the rows it names and separates upward from
+    /// the group before it.
     static let sectionTop: CGFloat = 18
-    static let sectionBottom: CGFloat = 6
+    static let sectionBottom: CGFloat = 4
 
     /// The same band measured from the very top of the SCREEN. Surfaces
     /// run under the status bar now (owner, 2026-08-17: "the screen

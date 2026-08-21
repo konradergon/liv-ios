@@ -173,6 +173,12 @@ struct SearchView: View {
                             )
                             .textCase(nil)
                             .padding(.horizontal, 16)
+                            // The heading brings its own room now, so
+                            // the List must not add a second helping on
+                            // top of it — the same zeroing Tasks does
+                            // for its group headers.
+                            .listRowInsets(
+                                EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                         }
                         .listSectionSeparator(.hidden, edges: .top)
                     }

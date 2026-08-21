@@ -95,7 +95,6 @@ struct TodayView: View {
 
                 if !allDay.isEmpty {
                     SectionLabel("All-day")
-                        .padding(.top, 14).padding(.bottom, 4)
                     allDayBand(allDay, doneNames: doneNames)
                 }
 
@@ -125,7 +124,6 @@ struct TodayView: View {
                 // invisible until you go looking for it in Tasks.
                 if onToday, !nextUp.isEmpty {
                     SectionLabel("What next")
-                        .padding(.top, 16).padding(.bottom, 2)
                     ForEach(nextUp) { row in
                         nextLine(row)
                     }
