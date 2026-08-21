@@ -155,6 +155,7 @@ struct TodayView: View {
         .environment(\.defaultMinListRowHeight, 10)
         // Room under the last row for the add button to sit over.
         .contentMargins(.bottom, 88, for: .scrollContent)
+        .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
             DetailDueSheet(

@@ -67,7 +67,8 @@ struct EverythingView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        .contentMargins(.bottom, 16, for: .scrollContent)  // full screen: no bar under it
+        .contentMargins(.bottom, 16, for: .scrollContent)
+        .livHidesChrome()  // full screen: no bar under it
         .background(LivTheme.canvas)
         .onAppear {
             box.refresh()

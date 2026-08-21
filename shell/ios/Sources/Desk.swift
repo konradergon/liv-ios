@@ -119,7 +119,11 @@ struct DeskHost: View {
             // arrives — that is the one surface where what they belong
             // to has left the screen.
             .opacity(1 - desk.deskTravel)
-            .accessibilityHidden(desk.libraryShown)
+            // …and they leave upward while you read, with the bar
+            // (owner's clips, 2026-08-20). `topInset` is exactly the
+            // band they own, clock included.
+            .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
+            .accessibilityHidden(desk.libraryShown || desk.chromeAway)
             .zIndex(3)
 
             // The workspace, top CENTRE, between the doors — on the desk,
@@ -136,6 +140,10 @@ struct DeskHost: View {
             if desk.openDoc == nil || desk.state != .notes || desk.libraryDrawn {
                 WorkspaceButton { desk.workspaceShown = true }
                     .padding(.top, 6)
+                    // Away with the doors it sits between, or the band
+                    // empties around a button left hanging under the
+                    // clock (owner's clips, 2026-08-20).
+                    .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
                 // It stays lit under BOTH panels now. The properties
                 // card starts below this whole band (SidePanel), so the
                     // desk's chrome is visible above it — that is what
@@ -458,6 +466,7 @@ struct DeskHost: View {
             id: "create",
             from: .bottom,
             title: "New",
+            anchored: true,
             items: [
                 LivMenuItem(label: "Note", glyph: .note) { createNote() },
                 LivMenuItem(label: "Task", glyph: .task) { createRecord(event: false) },

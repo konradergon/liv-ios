@@ -70,6 +70,60 @@ enum LivPlace: Equatable {
 /// all deleted; what they were for — "hold two notes at once" — is the
 /// list's top rows and the labelled back.
 final class DeskModel: ObservableObject {
+    // MARK: the chrome gets out of the way while you read
+
+    /// THE BAR AND THE DOORS ARE OFF SCREEN because you are reading
+    /// (owner's clips, 2026-08-20 — Obsidian). Scrolling INTO a list
+    /// sends them away; scrolling back up, or reaching the top, brings
+    /// them home. A long note or a long list is the whole screen, and
+    /// the furniture is one small scroll away.
+    ///
+    /// One flag on this model, because both halves of the chrome are
+    /// mounted in different files and both already observe it: the bar
+    /// in `RootView` (App.swift) and the doors in `DeskHost`
+    /// (Desk.swift).
+    @Published private(set) var chromeAway = false
+
+    /// The offset the last decision was made at. Kept within
+    /// `chromeThreshold` of the live offset, so a direction change
+    /// answers on the next few points rather than having to undo the
+    /// whole scroll first.
+    private var chromeAnchor: CGFloat = 0
+
+    /// How far you must scroll before the chrome agrees you meant it.
+    /// Small enough to feel immediate, large enough that the rubber-band
+    /// at the end of a list does not flap it.
+    private let chromeThreshold: CGFloat = 44
+
+    /// The band at the top of a list where the chrome is ALWAYS there.
+    /// Arriving at a surface must never be the state where its
+    /// furniture is missing.
+    private let chromeHome: CGFloat = 40
+
+    /// One scroll offset, in points from the content's top.
+    func scrolled(to y: CGFloat) {
+        if y <= chromeHome {
+            chromeAnchor = y
+            setChrome(away: false)
+            return
+        }
+        if y > chromeAnchor + chromeThreshold { setChrome(away: true) }
+        if y < chromeAnchor - chromeThreshold { setChrome(away: false) }
+        chromeAnchor = min(max(chromeAnchor, y - chromeThreshold), y + chromeThreshold)
+    }
+
+    /// Back on screen, unconditionally — leaving a surface, opening a
+    /// menu, anything that is not reading.
+    func chromeHomeAgain() {
+        chromeAnchor = 0
+        setChrome(away: false)
+    }
+
+    private func setChrome(away: Bool) {
+        guard away != chromeAway else { return }
+        withAnimation(LivMotion.nav) { chromeAway = away }
+    }
+
     /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
     /// changes it; there is no "no state" — Docs is one of them.
     @Published var state: Feature = .notes
@@ -394,6 +448,7 @@ final class DeskModel: ObservableObject {
         withAnimation(LivMotion.nav) { state = feature }
         setLibrary(false)
         menu = nil
+        chromeHomeAgain()
     }
 
     /// Up, out of a document, to the list of them. The state does not

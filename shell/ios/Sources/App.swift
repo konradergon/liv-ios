@@ -134,7 +134,12 @@ struct RootView: View {
                     .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
                     .zIndex(2)
             }
-            if !keyboard.up && desk.menu == nil {
+            // THE BAR STAYS UNDER AN ANCHORED MENU. A card that grows
+            // out of the `+` and then leaves no `+` under it is a card
+            // that came from nowhere — in the reference clip the bar it
+            // belongs to never moves. A full-bleed sheet still retires
+            // the bar: that one covers the corner the bar lives in.
+            if !keyboard.up && (desk.menu == nil || desk.menu?.anchored == true) {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
@@ -145,7 +150,12 @@ struct RootView: View {
                     // away. Under the properties curtain, which it is
                     // painted above, it fades.
                     .opacity(1 - desk.curtain)
-                    .accessibilityHidden(desk.curtain > 0)
+                    .accessibilityHidden(desk.curtain > 0 || desk.chromeAway)
+                    // OUT OF THE WAY WHILE YOU READ (owner's clips,
+                    // 2026-08-20). Its own height plus the safe area it
+                    // sits in, so it leaves the screen rather than
+                    // peeking over the edge.
+                    .offset(y: desk.chromeAway ? LivBar.clearance + 12 : 0)
                     // The extra offset carries it past the bottom safe
                     // area; the z keeps the exit above the opaque desk
                     // (audit, 2026-08-01). Both are pure translations.

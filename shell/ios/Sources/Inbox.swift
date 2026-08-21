@@ -192,6 +192,7 @@ struct InboxView: View {
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
         .contentMargins(.bottom, 16, for: .scrollContent)
+        .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
             DetailDueSheet(model: box, id: pick.entity, property: "due")

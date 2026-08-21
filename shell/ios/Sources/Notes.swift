@@ -56,6 +56,7 @@ struct NotesList: View {
             .padding(.horizontal, 18)
         }
         .contentMargins(.bottom, 88, for: .scrollContent)
+        .livHidesChrome()
         .background(LivTheme.canvas)
         .safeAreaInset(edge: .top) { LivTopScrim() }
     }

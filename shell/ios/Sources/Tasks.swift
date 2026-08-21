@@ -69,6 +69,7 @@ struct TasksView: View {
         .scrollDismissesKeyboard(.interactively)
         // Room under the last row for the add button to sit over.
         .contentMargins(.bottom, 88, for: .scrollContent)
+        .livHidesChrome()
         .background(LivTheme.canvas.ignoresSafeArea())
         .sheet(item: $duePick) { p in
             DetailDueSheet(model: model, id: p.entity, property: "due")

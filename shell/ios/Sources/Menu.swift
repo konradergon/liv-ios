@@ -48,6 +48,14 @@ struct LivMenu: Identifiable {
     /// of which note they were about.
     var subject: String?
     var subjectDetail: String?
+    /// ANCHORED TO THE BUTTON THAT OPENED IT (owner's clips,
+    /// 2026-08-20). ChatGPT's `+` menu is not a sheet from the screen's
+    /// edge — it is a card that grows out of the `+` itself, sized to
+    /// its own content and sitting directly above the button, with the
+    /// rows arriving one after another from nearest-the-button
+    /// outward. A full-bleed sheet says "a new place"; this says "that
+    /// button, expanded", which is what a create menu is.
+    var anchored = false
     let items: [LivMenuItem]
 }
 
@@ -343,7 +351,7 @@ struct LivMenuHost: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay {
             if active, let drawn {
-                ZStack(alignment: drawn.from == .top ? .top : .bottom) {
+                ZStack(alignment: alignment(drawn)) {
                     // The scrim: everything behind it is out of reach
                     // until this closes, and tapping it closes.
                     Rectangle()
@@ -363,6 +371,12 @@ struct LivMenuHost: ViewModifier {
                         // The panel is always mounted while `drawn` is
                         // set, so this is a real slide in BOTH directions
                         // — a `.transition` on an `if` gave neither.
+                        // An anchored card grows OUT OF ITS BUTTON, so
+                        // it travels only its own height from the bar,
+                        // not from the screen's edge.
+                        .frame(maxWidth: drawn.anchored ? LivMenuHost.anchoredWidth : .infinity)
+                        .padding(.trailing, drawn.anchored ? 16 : 0)
+                        .padding(.bottom, drawn.anchored ? LivBar.clearance + 8 : 0)
                         .offset(y: shown ? 0 : (drawn.from == .top ? -height : height))
                 }
                 .ignoresSafeArea()
@@ -398,6 +412,16 @@ struct LivMenuHost: ViewModifier {
         menu = nil
     }
 
+    /// Wide enough for the longest verb and no wider. A card that grows
+    /// out of a button and then spans the screen has stopped being that
+    /// button.
+    static let anchoredWidth: CGFloat = 244
+
+    private func alignment(_ menu: LivMenu) -> Alignment {
+        if menu.anchored { return .bottomTrailing }
+        return menu.from == .top ? .top : .bottom
+    }
+
     /// The sheet itself: a native-feeling card — rounded on the side
     /// facing the content, square against the edge it is attached to, the
     /// grabber on that same edge, and the SAME paddings whichever way it
@@ -405,9 +429,14 @@ struct LivMenuHost: ViewModifier {
     /// a top sheet whose first row sits under the clock reads as broken.
     private func panel(_ menu: LivMenu) -> some View {
         let up = menu.from == .bottom
+        let anchored = menu.anchored
+        let n = menu.items.count
         return VStack(spacing: 0) {
-            if !up { Spacer(minLength: 0).frame(height: 4) }
-            if up { grabber }
+            if !up && !anchored { Spacer(minLength: 0).frame(height: 4) }
+            // An anchored card has no grabber: a grabber says "drag this
+            // edge", and this card is not attached to an edge.
+            if up && !anchored { grabber }
+            if anchored { Spacer(minLength: 0).frame(height: 6) }
             if let title = menu.title {
                 LivMenuTitle(text: title)
             }
@@ -416,20 +445,36 @@ struct LivMenuHost: ViewModifier {
             }
             ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
                 row(item, divided: i > 0)
+                    // NEAREST THE BUTTON ARRIVES FIRST. The rows rise in
+                    // sequence out of the `+` rather than landing as one
+                    // slab — the cascade in the reference clip. It is
+                    // movement only; nothing fades (owner, 2026-07-31).
+                    .offset(y: anchored ? (shown ? 0 : 12) : 0)
+                    .animation(
+                        anchored
+                            ? LivMotion.nav.delay(Double(n - 1 - i) * 0.025) : nil,
+                        value: shown)
             }
-            if up { Spacer(minLength: 0).frame(height: 4) }
-            if !up { grabber }
+            if up { Spacer(minLength: 0).frame(height: anchored ? 6 : 4) }
+            if !up && !anchored { grabber }
         }
         .frame(maxWidth: .infinity)
+        .clipped()
         // The safe area on the attached edge, kept as SPACE inside the
-        // card rather than ignored.
-        .padding(up ? .bottom : .top, up ? LivSafeArea.bottom : LivSafeArea.top)
+        // card rather than ignored. An anchored card touches no edge:
+        // it already clears the bar, which already clears the safe area.
+        .padding(
+            up ? .bottom : .top,
+            anchored ? 0 : (up ? LivSafeArea.bottom : LivSafeArea.top))
         .background(
             UnevenRoundedRectangle(
-                topLeadingRadius: up ? LivTheme.radiusLg : 0,
-                bottomLeadingRadius: up ? 0 : LivTheme.radiusLg,
-                bottomTrailingRadius: up ? 0 : LivTheme.radiusLg,
-                topTrailingRadius: up ? LivTheme.radiusLg : 0,
+                // Square against the edge it is attached to — except an
+                // anchored card, which is attached to nothing and is
+                // rounded the whole way round.
+                topLeadingRadius: (up || anchored) ? LivTheme.radiusLg : 0,
+                bottomLeadingRadius: (up && !anchored) ? 0 : LivTheme.radiusLg,
+                bottomTrailingRadius: (up && !anchored) ? 0 : LivTheme.radiusLg,
+                topTrailingRadius: (up || anchored) ? LivTheme.radiusLg : 0,
                 style: .continuous
             )
             .fill(LivTheme.surface)

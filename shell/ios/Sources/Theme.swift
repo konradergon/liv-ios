@@ -204,6 +204,19 @@ enum LivRow {
     static var topInset: CGFloat { LivSafeArea.top + topChrome }
 }
 
+/// The floating bottom bar's own size, so anything that must clear it —
+/// a scroll's bottom margin, a menu anchored above it — asks rather than
+/// guesses. Measured 2026-08-20: four unrelated literals were doing this
+/// job (58 in the panel and the feature bodies, 62 in App, 88 in Notes,
+/// 110 inside the editor), none of them the bar's actual height.
+enum LivBar {
+    static let height: CGFloat = 50
+    /// The breath between the bar and the screen's bottom edge.
+    static let gap: CGFloat = 4
+    /// From the bottom of the SCREEN to the top of the bar.
+    static var clearance: CGFloat { height + gap + LivSafeArea.bottom }
+}
+
 enum LivMotion {
     static let nav = Animation.easeInOut(duration: navSeconds)
 

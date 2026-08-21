@@ -108,6 +108,47 @@ struct FeatureBody: View {
     }
 }
 
+// MARK: - the chrome gets out of the way while you read
+
+extension View {
+    /// Put this on a top-level surface's OWN scroll view — never on a
+    /// parent, and never on a sheet or a panel. Scrolling down sends the
+    /// bar and the doors off screen; scrolling up brings them back.
+    ///
+    /// iOS 18 and later. `onScrollGeometryChange` is the only way to
+    /// read a SwiftUI `List`'s offset without reaching into UIKit, and
+    /// the build targets 17.0 (`build.sh`). Below 18 the chrome simply
+    /// stays where it is, which is the behaviour this app had until
+    /// today — a missing nicety, never a broken screen. Raising the
+    /// floor is the owner's call, not this change's.
+    func livHidesChrome() -> some View {
+        modifier(LivChromeScroll())
+    }
+}
+
+private struct LivChromeScroll: ViewModifier {
+    @EnvironmentObject var desk: DeskModel
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content
+                .onScrollGeometryChange(for: CGFloat.self) { geo in
+                    // From the CONTENT's top, not the container's: the
+                    // lists carry different top insets, and a raw
+                    // contentOffset would put "the top" in a different
+                    // place on each one.
+                    geo.contentOffset.y + geo.contentInsets.top
+                } action: { _, y in
+                    desk.scrolled(to: y)
+                }
+                // Leaving the surface must not leave the chrome hidden.
+                .onDisappear { desk.chromeHomeAgain() }
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - the self-check: where you are, and how you got there
 
 /// `-places.selfcheck 1`. It replaces the tab plane's suite, which went
