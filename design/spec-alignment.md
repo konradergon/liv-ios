@@ -25,9 +25,13 @@ being wrong:
 
 1. **There is one git repository, not two.** Both working copies are
    checkouts of `Dahlaren/lovable-notes-hub`. The phone is the branch
-   `konrad/rewrite-mac`, which is on the remote and **93 commits behind
-   local**. The desktop is `main` plus `viggo/*` and `viktor/*`. There is
-   also `konrad/liv-core-pivot`, unpushed, holding the crate-merge attempt.
+   **`konrad/ios`** — renamed 2026-08-21 from `konrad/rewrite-mac`, which
+   was named for a shell that has not existed since 2026-08-19 (the older
+   name is still on the remote, and the two design docs that cite it as
+   provenance still say it, correctly, because that is where the work sat
+   when they were written). The desktop is `main` plus `viggo/*` and
+   `viktor/*`. There is also `konrad/liv-core-pivot`, unpushed, holding
+   the crate-merge attempt.
    CLAUDE.md called the desktop "the separate `lovable-notes-hub` repo".
 2. **`~/src/friend-fixes` no longer exists.** `liv-ui-map.md` is a 4,578-line
    replication spec mined from a ~130k-line codebase that is gone from this
