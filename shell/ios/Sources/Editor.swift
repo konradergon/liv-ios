@@ -30,10 +30,10 @@ import os
 /// The core's block vocabulary (core/src/value.rs `Block`), at FULL
 /// fidelity. Until 2026-08-11 this was two cases — body and "other" —
 /// because the codec flattened everything anyway (the recorded
-/// deviation). Now the phone writes what the core stores. `.other`
-/// remains for the shapes this editor cannot hold (Code fences,
-/// Callouts, and whatever the core grows later): they still flatten,
-/// behind the same banner as before.
+/// deviation). Now the phone writes what the core stores. Code fences
+/// and Callouts joined on 2026-08-20 — they were the last two that
+/// flattened. `.other` remains for whatever the core grows next: those
+/// still flatten, behind the same banner as before.
 enum BlockJSON: Equatable {
     case body
     case heading(Int)  // 1...6
