@@ -1,0 +1,14 @@
+[package]
+name = "liv-engine"
+version = "0.1.0"
+edition = "2021"
+description = "The Liv engine: an append-only op log and the view derived from it."
+
+[lib]
+name = "liv_engine"
+
+# NO DEPENDENCIES, deliberately, for as long as that holds. The on-disk
+# format is this crate's own bytes (design/op-format.md), not a derive
+# macro's output — that is the whole point of §1's second lesson. SQLite
+# arrives in the view layer, not here.
+[dependencies]

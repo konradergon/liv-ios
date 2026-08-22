@@ -255,6 +255,92 @@ be stated rather than discovered.
 
 ---
 
-## Answers
+## Answers — 2026-08-22
 
-*(dated, as they arrive)*
+> **Delegated by the owner:** *"for now make all required decisions yourself and
+> continue with the phases. don't worry too much about having the new core work
+> with the tauri app as it is now, just that it will be relatively easy for others
+> to integrate it later on. goal is a future shared core and that the mobile app
+> works with it initially."*
+>
+> **That reverses the plan's central constraint** and removes most of what made
+> these decisions hard. The old plan grew the desktop's SQLite core in place, so
+> every answer had to survive its schema, its generated columns, its UNIQUE
+> constraints and its live data. The new target is a NEW core that the phone runs
+> on first, built so the desktop can adopt it later.
+>
+> Three of the four questions were hard only because of the constraint that is now
+> lifted. They are answered accordingly, and cheaply.
+
+### The three decisions in `core.md` §12
+
+1. **Write identity is `(device, seq)`.** No downside, and sync is impossible
+   without it.
+2. **The body's merge unit is the block.** Forecloses live co-editing, which the
+   product does not want.
+3. **The log is the truth; the view is derived.** With the op format now written
+   down, the vocabulary promise is cheap to keep.
+
+### 1 — Entity identity: **UUIDv7**
+
+Was expensive because it meant migrating the desktop's integer primary keys through
+FTS5 external-content wiring and 39 of 57 existing C functions. **A new core does
+not inherit any of that.** Ids are 16 bytes from the first line of code, and the C
+ABI is designed for them rather than retrofitted — a by-value struct, and a real
+error channel instead of `0` meaning failure.
+
+v7 rather than v4, because id order must remain creation order. **Monotonicity
+within a millisecond must be verified in the generator**, not assumed.
+
+The view keeps an integer surrogate rowid alongside the UUID, because FTS5's
+`content_rowid` requires one. That is a local detail of the view, not of the model.
+
+### 2 — UNIQUE constraints: **none in the merge path, by construction**
+
+Mostly moot for a new schema. The rule is now a property of the design rather than a
+negotiation with an existing one:
+
+- **No UNIQUE constraint may sit on anything sync writes.** Convergence and
+  constraints do not compose.
+- **Tags are keyed by name** as an add-wins set, so "no two tags with the same name"
+  is true by construction rather than enforced.
+- The desktop's three constraints stop being this core's problem. When the desktop
+  adopts, `file_path` is dead code and can go, `tags.name` is replaced by the above,
+  and `source_key` becomes a vault-indexer concern — a projection detail, not a
+  merge one.
+
+### 3 — Sync transport: **per-device append-only files in a synced folder**
+
+iCloud Drive on iOS and macOS, "point at any folder" on desktop for Linux and
+Syncthing. **The same file format either way**, and that format is also what a relay
+would carry — so moving to a server later is a client swap, not a rewrite.
+
+One writer per file means no conflicts to resolve, and an append-only file's every
+visible state is a prefix of its final one, which is the prefix atomicity the merge
+rules assume.
+
+**Build the gap buffer regardless** — one integer per device and a holding table,
+roughly fifty lines. It is cheaper than betting on any transport.
+
+**Encryption: not in the first version, and stated in the UI rather than implied.**
+Recorded as a known gap, not an oversight.
+
+### 4 — Undo granularity: **one user action is one group is one undo step**
+
+The desktop's 450 ms whole-note debounce was the only thing making this hard, and the
+desktop is no longer the constraint. The phone already counts undo steps this way.
+When the desktop adopts, its save path either learns to say what changed, or it gets
+note-level undo and that becomes a stated platform difference.
+
+### 5 — The store: **SQLite, via rusqlite, bundled**
+
+Not for its query planner — a full scan of 500,000 entities is 1.6 ms — but because
+it runs on both platforms, WAL lets an app extension read while the app writes, it
+carries the text index the measurements found missing, and **the desktop already uses
+it**, which is most of what "easy for others to integrate later" means.
+
+**Proven before being chosen**, 2026-08-22: `rusqlite` with `bundled` cross-compiles
+for `aarch64-apple-ios-sim` and `aarch64-apple-ios`, and a `CREATE VIRTUAL TABLE …
+USING fts5` query returns the right answer when run inside the simulator. 19.1 MB
+static library before stripping. The current core has no C dependency and this adds
+one; that is the price, and it was measured rather than assumed.
