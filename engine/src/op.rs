@@ -219,6 +219,28 @@ impl<'a> Reader<'a> {
 
 // ---- values -----------------------------------------------------------
 
+/// One value as bytes. The view stores these in a cell row, so the same
+/// encoder serves the log and the table it derives — one definition, not
+/// two that can drift.
+pub fn encode_value(v: &Value) -> Vec<u8> {
+    let mut out = Vec::with_capacity(24);
+    put_value(&mut out, v);
+    out
+}
+
+/// The other direction. `None` rather than an error: a value the view
+/// cannot read is a bug in this crate, not hostile input, and a caller
+/// reading one cell should not have to handle a format error.
+pub fn decode_value(bytes: &[u8]) -> Option<Value> {
+    let mut r = Reader::new(bytes);
+    let v = get_value(&mut r).ok()?;
+    if r.i == bytes.len() {
+        Some(v)
+    } else {
+        None
+    }
+}
+
 fn put_value(out: &mut Vec<u8>, v: &Value) {
     match v {
         Value::Text(s) => {

@@ -8,7 +8,7 @@
 //!    appended to by another device, or copied mid-write, ends in a
 //!    partial group. Everything before it stands.
 
-use liv_engine::log::{decode_stream, encode_stream, Log};
+use liv_engine::log::{decode_stream, encode_stream};
 use liv_engine::*;
 
 fn dev(n: u8) -> DeviceId {
@@ -34,18 +34,18 @@ fn group(device: u8, first_seq: u64, ops: usize) -> Group {
 
 #[test]
 fn a_fresh_box_knows_it_holds_nothing() {
-    let log = Log::open_in_memory().unwrap();
+    let log = Engine::open_in_memory(dev(1)).unwrap();
     assert_eq!(log.next_seq(dev(1)).unwrap(), 0);
     assert!(log.version_vector().unwrap().is_empty());
-    assert_eq!(log.count().unwrap(), 0);
+    assert_eq!(log.group_count().unwrap(), 0);
 }
 
 #[test]
 fn appending_advances_the_version_vector() {
-    let mut log = Log::open_in_memory().unwrap();
-    log.append(&group(1, 0, 3)).unwrap();
-    log.append(&group(1, 3, 2)).unwrap();
-    log.append(&group(2, 0, 1)).unwrap();
+    let mut log = Engine::open_in_memory(dev(1)).unwrap();
+    log.receive(group(1, 0, 3)).unwrap();
+    log.receive(group(1, 3, 2)).unwrap();
+    log.receive(group(2, 0, 1)).unwrap();
 
     assert_eq!(log.next_seq(dev(1)).unwrap(), 5, "three ops then two");
     assert_eq!(log.next_seq(dev(2)).unwrap(), 1);
@@ -57,9 +57,9 @@ fn appending_advances_the_version_vector() {
 
 #[test]
 fn a_group_survives_the_round_trip_through_storage() {
-    let mut log = Log::open_in_memory().unwrap();
+    let mut log = Engine::open_in_memory(dev(1)).unwrap();
     let g = group(1, 0, 4);
-    log.append(&g).unwrap();
+    log.receive(g.clone()).unwrap();
     let back = log.range(dev(1), 0).unwrap();
     assert_eq!(back, vec![g], "what came out is what went in");
 }
@@ -68,7 +68,7 @@ fn a_group_survives_the_round_trip_through_storage() {
 fn out_of_order_arrivals_wait_for_the_gap_to_fill() {
     // The whole point of the hold buffer. Ops 3 and 5 arrive before op 0,
     // and nothing may be applied until the run is contiguous.
-    let mut log = Log::open_in_memory().unwrap();
+    let mut log = Engine::open_in_memory(dev(1)).unwrap();
 
     let landed = log.receive(group(1, 3, 2)).unwrap();
     assert!(landed.is_empty(), "a group past the gap must not land");
@@ -77,7 +77,7 @@ fn out_of_order_arrivals_wait_for_the_gap_to_fill() {
     let landed = log.receive(group(1, 5, 1)).unwrap();
     assert!(landed.is_empty(), "nor the one after it");
     assert_eq!(log.held(), 2);
-    assert_eq!(log.count().unwrap(), 0, "nothing has been written yet");
+    assert_eq!(log.group_count().unwrap(), 0, "nothing has been written yet");
 
     // The arrival that fills the gap releases everything behind it.
     let landed = log.receive(group(1, 0, 3)).unwrap();
@@ -91,7 +91,7 @@ fn out_of_order_arrivals_wait_for_the_gap_to_fill() {
 
 #[test]
 fn one_device_waiting_does_not_hold_up_another() {
-    let mut log = Log::open_in_memory().unwrap();
+    let mut log = Engine::open_in_memory(dev(1)).unwrap();
     log.receive(group(1, 9, 1)).unwrap(); // held, waiting for a gap
     let landed = log.receive(group(2, 0, 1)).unwrap();
     assert_eq!(landed.len(), 1, "device 2 is not behind device 1's gap");
@@ -101,10 +101,10 @@ fn one_device_waiting_does_not_hold_up_another() {
 #[test]
 fn receiving_the_same_group_twice_is_a_no_op() {
     // Sync re-sending a range it already sent is normal, not an error.
-    let mut log = Log::open_in_memory().unwrap();
+    let mut log = Engine::open_in_memory(dev(1)).unwrap();
     assert_eq!(log.receive(group(1, 0, 2)).unwrap().len(), 1);
     assert_eq!(log.receive(group(1, 0, 2)).unwrap().len(), 0, "already held");
-    assert_eq!(log.count().unwrap(), 1, "and it was not written twice");
+    assert_eq!(log.group_count().unwrap(), 1, "and it was not written twice");
     assert_eq!(log.next_seq(dev(1)).unwrap(), 2);
 }
 
@@ -112,16 +112,16 @@ fn receiving_the_same_group_twice_is_a_no_op() {
 fn the_log_reads_back_in_causal_order_not_arrival_order() {
     // A note written on a train and synced a week later belongs where it
     // was WRITTEN, or two devices disagree about the user's own past.
-    let mut log = Log::open_in_memory().unwrap();
+    let mut log = Engine::open_in_memory(dev(1)).unwrap();
     let mut early = group(2, 0, 1);
     early.hlc = Hlc { wall_ms: 1_000, ctr: 0 };
     let mut late = group(1, 0, 1);
     late.hlc = Hlc { wall_ms: 9_000, ctr: 0 };
 
-    log.append(&late).unwrap(); // arrives first
-    log.append(&early).unwrap(); // written first
+    log.receive(late.clone()).unwrap(); // arrives first
+    log.receive(early.clone()).unwrap(); // written first
 
-    let all = log.all().unwrap();
+    let all = log.groups().unwrap();
     assert_eq!(all[0].hlc.wall_ms, 1_000, "the earlier write comes first");
     assert_eq!(all[1].hlc.wall_ms, 9_000);
 }
@@ -134,7 +134,7 @@ fn a_box_from_a_newer_build_is_refused_whole() {
     let path = dir.join("box.db");
 
     {
-        let log = Log::open(&path).unwrap();
+        let log = Engine::open(&path, dev(1)).unwrap();
         drop(log);
     }
     // Forge a box written by a build from the future.
@@ -143,7 +143,7 @@ fn a_box_from_a_newer_build_is_refused_whole() {
         .unwrap();
     drop(c);
 
-    match Log::open(&path) {
+    match Engine::open(&path, dev(1)) {
         Err(LogError::UnsupportedBox { found, supported }) => {
             assert_eq!(found, BOX_FORMAT + 1);
             assert_eq!(supported, BOX_FORMAT);
@@ -197,12 +197,12 @@ fn a_box_reopens_with_what_it_held() {
     let path = dir.join("box.db");
 
     {
-        let mut log = Log::open(&path).unwrap();
-        log.append(&group(1, 0, 2)).unwrap();
-        log.append(&group(1, 2, 1)).unwrap();
+        let mut log = Engine::open(&path, dev(1)).unwrap();
+        log.receive(group(1, 0, 2)).unwrap();
+        log.receive(group(1, 2, 1)).unwrap();
     }
-    let log = Log::open(&path).unwrap();
+    let log = Engine::open(&path, dev(1)).unwrap();
     assert_eq!(log.next_seq(dev(1)).unwrap(), 3);
-    assert_eq!(log.all().unwrap().len(), 2);
+    assert_eq!(log.groups().unwrap().len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }

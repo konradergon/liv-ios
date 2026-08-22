@@ -104,9 +104,9 @@ conversion between them.
 
 ---
 
-## Phase 4 — The view, and the replay gate
+## Phase 4 — The view, and the replay gate · **DONE 2026-08-22**
 
-*~2 weeks. The gate for everything after.*
+*Twelve tests. The gate passed on its first run.*
 
 The SQLite schema, and one function that applies an op to the view inside the same
 transaction as the append.
@@ -118,7 +118,19 @@ Randomised writes, then the same test against a box built by the phone. **If thi
 cannot be made to pass, the design is wrong and everything after should stop.** It
 is cheap here and expensive later, which is the whole reason it is Phase 4.
 
-Cost test alongside, asserting shape: doubling the box roughly doubles one write.
+Cost test alongside, asserting shape rather than milliseconds — and it earned its
+place immediately. One write was **6.03× slower on a box ten times the size**:
+`next_seq` asked for `MAX(first_seq + op_count)`, an expression SQLite cannot answer
+from the `(device, first_seq)` index, so every write scanned everything that device
+had ever written. Taking the last row by key instead makes it a descending index
+seek. **A correctness test could not have seen it** — the answer was right the whole
+time.
+
+**One table serves registers and sets both.** A cell row is keyed by the dot that
+wrote it, so "one live value" and "many live values" are the same shape: a register
+with two rows is contended and shows the user the choice, a set with two rows has two
+members. The difference lives in the ops — `SetCell` names what it replaces,
+`AddToSet` does not — and never in the schema.
 
 ---
 

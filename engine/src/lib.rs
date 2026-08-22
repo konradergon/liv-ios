@@ -1,6 +1,6 @@
 //! The Liv engine.
 //!
-//! An append-only log of operations is the truth; a materialised view
+//! An append-only log of operations is the truth; a view derived from it
 //! answers every question. Both live in one file, updated in a single
 //! transaction per user action.
 //!
@@ -15,10 +15,13 @@
 //! a separate layer — so the desktop can link this crate directly, the
 //! way it links its own core today.
 
+pub mod engine;
 pub mod id;
 pub mod log;
 pub mod op;
+pub mod view;
 
+pub use engine::Engine;
 pub use id::{DeviceId, Dot, EntityId, Hlc, IdGen};
-pub use log::{decode_stream, encode_stream, Log, LogError, VersionVector, BOX_FORMAT};
+pub use log::{decode_stream, encode_stream, Hold, LogError, VersionVector, BOX_FORMAT};
 pub use op::{Author, DateSpec, DecodeError, Group, Op, Value, RECORD_VERSION};

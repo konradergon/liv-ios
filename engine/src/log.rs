@@ -79,25 +79,46 @@ CREATE TABLE IF NOT EXISTS ops (
 CREATE INDEX IF NOT EXISTS ops_in_time ON ops(hlc_wall, hlc_ctr);
 ";
 
-pub struct Log {
-    conn: rusqlite::Connection,
-    /// Groups that arrived before the ones they follow. In memory on
-    /// purpose: if the process dies, the version vector still says we do
-    /// not have them, so sync fetches them again. Persisting them would
-    /// buy one round trip and cost a second place for the truth to live.
-    hold: BTreeMap<(DeviceId, u64), Group>,
+/// Groups that arrived before the ones they follow.
+///
+/// In memory on purpose: if the process dies, the version vector still
+/// says we do not have them, so sync fetches them again. Persisting them
+/// would buy one round trip and cost a second place for the truth to live.
+#[derive(Default)]
+pub struct Hold {
+    by: BTreeMap<(DeviceId, u64), Group>,
 }
 
-impl Log {
-    pub fn open(path: &std::path::Path) -> Result<Log, LogError> {
-        Log::from_conn(rusqlite::Connection::open(path)?)
+impl Hold {
+    /// How many groups are waiting for a gap to fill.
+    pub fn len(&self) -> usize {
+        self.by.len()
     }
 
-    pub fn open_in_memory() -> Result<Log, LogError> {
-        Log::from_conn(rusqlite::Connection::open_in_memory()?)
+    pub fn is_empty(&self) -> bool {
+        self.by.is_empty()
     }
 
-    fn from_conn(conn: rusqlite::Connection) -> Result<Log, LogError> {
+    pub fn keep(&mut self, g: Group) {
+        self.by.insert((g.device, g.first_seq), g);
+    }
+
+    /// The group that continues this device at `next`, if it is waiting.
+    pub fn take(&mut self, device: DeviceId, next: u64) -> Option<Group> {
+        self.by.remove(&(device, next))
+    }
+}
+
+/// Open a box: pragmas, schema, and the version fence.
+pub fn open(path: &std::path::Path) -> Result<rusqlite::Connection, LogError> {
+    prepare(rusqlite::Connection::open(path)?)
+}
+
+pub fn open_in_memory() -> Result<rusqlite::Connection, LogError> {
+    prepare(rusqlite::Connection::open_in_memory()?)
+}
+
+fn prepare(conn: rusqlite::Connection) -> Result<rusqlite::Connection, LogError> {
         // WAL is why an app extension can read while the app writes —
         // the reason SQLite was chosen over a hand-rolled file
         // (core-decisions.md §5).
@@ -123,15 +144,15 @@ impl Log {
                 }
             }
         }
-        Ok(Log { conn, hold: BTreeMap::new() })
-    }
+    Ok(conn)
+}
 
-    /// Append a group this device just wrote. The caller is responsible
-    /// for its seq being the next one — `receive` is the door for groups
-    /// from anywhere else.
-    pub fn append(&mut self, g: &Group) -> Result<(), LogError> {
+    /// Append a group. The caller is responsible for its seq being the
+    /// next one — `Engine::receive` is the door for groups from anywhere
+    /// else.
+pub fn append(conn: &rusqlite::Connection, g: &Group) -> Result<(), LogError> {
         let bytes = op::encode(g);
-        self.conn.execute(
+        conn.execute(
             "INSERT OR IGNORE INTO ops(device, first_seq, op_count, hlc_wall, hlc_ctr, bytes)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
@@ -147,19 +168,29 @@ impl Log {
     }
 
     /// The seq this device should write next.
-    pub fn next_seq(&self, device: DeviceId) -> Result<u64, LogError> {
-        let high: Option<i64> = self.conn.query_row(
-            "SELECT MAX(first_seq + op_count) FROM ops WHERE device = ?1",
+pub fn next_seq(conn: &rusqlite::Connection, device: DeviceId) -> Result<u64, LogError> {
+    // THE LAST ROW, not an aggregate over an expression. `MAX(first_seq
+    // + op_count)` cannot be answered from the (device, first_seq) index,
+    // so SQLite scanned every row this device had ever written — on
+    // every write, because a write asks for its own next seq first. The
+    // cost test caught it at 6.03x on a box ten times the size, which is
+    // exactly the shape standing rule 2 exists to see.
+    //
+    // Ordering by the key and taking one row is a descending index seek.
+    let high: Option<(i64, i64)> = conn
+        .query_row(
+            "SELECT first_seq, op_count FROM ops WHERE device = ?1
+             ORDER BY first_seq DESC LIMIT 1",
             [&device.0[..]],
-            |r| r.get(0),
-        )?;
-        Ok(high.unwrap_or(0) as u64)
-    }
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok();
+    Ok(high.map(|(seq, n)| (seq + n) as u64).unwrap_or(0))
+}
 
     /// What this box holds, per device.
-    pub fn version_vector(&self) -> Result<VersionVector, LogError> {
-        let mut stmt = self
-            .conn
+pub fn version_vector(conn: &rusqlite::Connection) -> Result<VersionVector, LogError> {
+        let mut stmt = conn
             .prepare("SELECT device, MAX(first_seq + op_count) FROM ops GROUP BY device")?;
         let rows = stmt.query_map([], |r| {
             let d: Vec<u8> = r.get(0)?;
@@ -180,8 +211,12 @@ impl Log {
 
     /// Everything one device wrote from `from` onward, in seq order —
     /// what sync sends when the other side says what it is missing.
-    pub fn range(&self, device: DeviceId, from: u64) -> Result<Vec<Group>, LogError> {
-        let mut stmt = self.conn.prepare(
+pub fn range(
+        conn: &rusqlite::Connection,
+        device: DeviceId,
+        from: u64,
+    ) -> Result<Vec<Group>, LogError> {
+        let mut stmt = conn.prepare(
             "SELECT bytes FROM ops WHERE device = ?1 AND first_seq >= ?2 ORDER BY first_seq",
         )?;
         let rows =
@@ -198,9 +233,8 @@ impl Log {
     /// Ordered by the clock, not by arrival: a note written on a train and
     /// synced a week later belongs where it was written, or two devices
     /// disagree about the user's own past (core.md §7).
-    pub fn all(&self) -> Result<Vec<Group>, LogError> {
-        let mut stmt = self
-            .conn
+pub fn all(conn: &rusqlite::Connection) -> Result<Vec<Group>, LogError> {
+        let mut stmt = conn
             .prepare("SELECT bytes FROM ops ORDER BY hlc_wall, hlc_ctr, device, first_seq")?;
         let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
         let mut out = Vec::new();
@@ -210,59 +244,10 @@ impl Log {
         Ok(out)
     }
 
-    pub fn count(&self) -> Result<u64, LogError> {
-        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM ops", [], |r| r.get(0))?;
+pub fn count(conn: &rusqlite::Connection) -> Result<u64, LogError> {
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM ops", [], |r| r.get(0))?;
         Ok(n as u64)
     }
-
-    /// Take a group from anywhere — this device or another — and return
-    /// the groups that became applicable, in order.
-    ///
-    /// **The hold buffer.** A group whose first op does not follow the
-    /// last one we hold is kept aside until the gap fills, so an op is
-    /// never applied before the one it replaces. `core-decisions.md`
-    /// says build this regardless of transport, because it is fifty lines
-    /// and it stops the choice of transport from being load-bearing.
-    ///
-    /// A group already held is idempotent: sync sending the same range
-    /// twice is normal, not an error.
-    pub fn receive(&mut self, g: Group) -> Result<Vec<Group>, LogError> {
-        let device = g.device;
-        let mut next = self.next_seq(device)?;
-
-        if g.first_seq < next {
-            return Ok(Vec::new()); // already have it
-        }
-        if g.first_seq > next {
-            self.hold.insert((device, g.first_seq), g);
-            return Ok(Vec::new());
-        }
-
-        let mut landed = Vec::new();
-        self.append(&g)?;
-        next += g.ops.len() as u64;
-        landed.push(g);
-
-        // Draining is the whole point: the arrival that fills a gap
-        // releases everything that was waiting behind it.
-        while let Some(waiting) = self.hold.remove(&(device, next)) {
-            self.append(&waiting)?;
-            next += waiting.ops.len() as u64;
-            landed.push(waiting);
-        }
-        Ok(landed)
-    }
-
-    /// How many groups are waiting for a gap to fill.
-    pub fn held(&self) -> usize {
-        self.hold.len()
-    }
-
-    /// The dot of the last op in a group — what `reverses` points at.
-    pub fn last_dot(g: &Group) -> Dot {
-        Dot { device: g.device, seq: g.first_seq + g.ops.len().saturating_sub(1) as u64 }
-    }
-}
 
 // ---- the wire form ----------------------------------------------------
 
