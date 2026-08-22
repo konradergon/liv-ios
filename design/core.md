@@ -168,8 +168,14 @@ carries a text index, which is the one gap §9b found. It is also already the
 desktop's store, so the ideal shape and the reachable shape are the same file.
 
 **Photo and file bytes are never in the log.** They are content-addressed alongside
-it; ops carry hashes. That is what keeps "just replay it" affordable — and that
-store does not exist yet in either tree.
+it; ops carry hashes. That is what keeps "just replay it" affordable.
+
+**That store does not exist in either tree, and the model is wrong today.**
+`FileRef` is `{ path: String, hash: [u8; 32] }` (`core/src/value.rs:152`) — it
+carries a **device-local path**, which cannot survive a device boundary. The shell
+also writes photos to `Application Support/liv/photos/` while the box lives in the
+App Group container; the two are not in the same place. Lazy blob-by-hash is a real
+subproject on the critical path for every sync transport.
 
 ---
 
@@ -464,6 +470,12 @@ compiled constants or entities. Ops carry an arbitrary property id either way.
 ---
 
 ## 14. Open questions
+
+> **Four of these are now framed for decision in `design/core-decisions.md`** —
+> entity identity, the three UNIQUE constraints, the sync transport, and undo
+> granularity — each with its options, measured costs, a recommendation and what
+> would change it. The op encoding this section demanded is written down in
+> `design/op-format.md`.
 
 1. **What is one undo step on the desktop?** The phone counts undo steps literally. The
    desktop's IPC is per statement and a note save is one whole-body replacement on a

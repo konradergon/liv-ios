@@ -39,13 +39,24 @@ has specified.
 **And fix the two open rebuild-on-read defects**, because they live in code that
 survives whichever direction this goes:
 
-| Fix | Cost | Payoff |
+| Fix | Payoff | Status |
 |---|---|---|
-| `find_type` uses the existing name index | one line + a failing test | 15× at 40k entities; O(box) → O(1) writes |
-| `recency()` maintained on append, not rebuilt per query | small | 99 ms per search at 500k, waste at any size |
+| `find_type` uses the existing name index | build rate flat at ~19,500/s instead of collapsing to 1,354/s — 15× at 40k | **done**, 2026-08-22 |
+| `recency()` maintained on append | 99 ms → 0.0 ms per search at 500k; a search 264 → 183 ms steady state | **done**, 2026-08-22 |
 
-Both against `services`/`core`, so: owner's word, failing test first, cost test
-alongside per standing rule 2.
+Both landed failing-test-first with cost tests asserting shape, per standing rule 2.
+343 tests pass.
+
+### Phase 0 status
+
+| Item | Status |
+|---|---|
+| The two defects | **done** |
+| The op encoding and its version field | **drafted** — `design/op-format.md` |
+| Entity identity, scoped | **done** — measured by compile probe, in `core-decisions.md` |
+| The four decisions, framed to be answerable | **done** — `design/core-decisions.md` |
+| The three decisions in `core.md` §12 | **waiting on the owner** |
+| The five open questions | **four framed, all waiting on the owner** |
 
 ---
 
