@@ -51,6 +51,12 @@ pub struct Store {
     /// quadratic twice before this index existed (T1, owner 2026-08-09).
     /// Unfiltered on purpose: trash and plumbing are read-time concerns.
     names: HashMap<String, Vec<Id>>,
+    /// The last transaction to touch each entity — derived, like the two
+    /// above, and maintained on append for the same reason (T3, owner
+    /// 2026-08-22). It was recomputed by walking the whole history on
+    /// every call, and `search` calls it once per query: 99 ms per
+    /// search at 500,000 entities, identical every time.
+    recency: HashMap<Id, u64>,
 
     /// The disk truth (milestone 2 makes this the append-only log on disk).
     /// Private, so the only way it grows is `commit`: append-only is a fact,
@@ -90,6 +96,8 @@ impl Store {
             for command in &tx.commands {
                 store.apply(command)?;
             }
+            let commands = tx.commands.clone();
+            store.note_recency(&commands, tx.seq);
             // Mirror the cursor bookkeeping that commit/undo/redo perform live.
             match tx.reverses {
                 None => {
@@ -203,14 +211,42 @@ impl Store {
     /// (bp3 a10, "jump back to where you were") needs a monotonic signal —
     /// wall-clock `modified` ties across rapid edits. Later transactions
     /// overwrite earlier ones for the same (redirect-resolved) entity.
-    pub fn recency(&self) -> HashMap<Id, u64> {
-        let mut map = HashMap::new();
-        for tx in &self.history {
-            for command in &tx.commands {
-                map.insert(self.resolve(command.entity()), tx.seq);
+    pub fn recency(&self) -> &HashMap<Id, u64> {
+        &self.recency
+    }
+
+    /// Fold one landed transaction into `recency`. Called from the two
+    /// places a transaction joins history — `commit_with` and `replay` —
+    /// and nowhere else.
+    ///
+    /// Resolved AFTER the commands are applied, which is what the old
+    /// read-time walk did for the transaction that created a redirect.
+    /// A merge trashes the loser before redirecting it, and every reader
+    /// of this map filters trashed entities, so the loser's own older
+    /// entry is unreachable rather than wrong.
+    fn note_recency(&mut self, commands: &[Command], seq: u64) {
+        // A REDIRECT MOVES AN ENTITY'S PAST WITH IT. The walk this
+        // replaces resolved at READ time, so every entry an id had ever
+        // collected followed it to its target. Maintained, that has to
+        // happen once, here — otherwise a merged-away id keeps a stale
+        // entry and the two disagree. Undoing the redirect converges
+        // again, because the undo transaction touches both ids and is by
+        // definition the newest thing that did.
+        for command in commands {
+            if let Command::Redirect { entity, .. } = command {
+                if let Some(had) = self.recency.remove(entity) {
+                    let target = self.resolve(*entity);
+                    if target != *entity {
+                        let slot = self.recency.entry(target).or_insert(0);
+                        *slot = (*slot).max(had);
+                    }
+                }
             }
         }
-        map
+        for command in commands {
+            let id = self.resolve(command.entity());
+            self.recency.insert(id, seq);
+        }
     }
 
     /// The append-only log, read-only. Provenance and undo history live here.
@@ -405,6 +441,7 @@ impl Store {
         }
 
         let seq = self.history.len() as u64;
+        self.note_recency(&commands, seq);
         self.history.push(Transaction {
             seq,
             commands,

@@ -1495,15 +1495,31 @@ pub fn unset_property(session: &mut Session, id: Id, prop_name: &str) -> Result<
 /// A type is front-of-house and carries expectations; that pair is what
 /// distinguishes "note" the type from anything else that borrows the word.
 pub fn find_type(store: &Store, name: &str) -> Option<Id> {
-    let query = Query {
-        constraints: vec![
-            Constraint { property: props::NAME, op: Op::Equals(Value::text(name)) },
-            Constraint { property: props::EXPECTED, op: Op::Exists },
-        ],
-        include_working: true,
-        ..Query::default()
-    };
-    run(store, &query).first().copied()
+    // THE NAME INDEX, not a scan (T2, owner 2026-08-22). This built a
+    // Query and ran a full-store scan, on every call — and `create_note`
+    // calls it on every creation, so building a box was O(n²): 6,557
+    // notes/s at 10,000 entities, 1,354/s at 40,000, with 98% of a
+    // 500,000-entity build's samples inside this one function.
+    //
+    // The index T1 added answers exactly this question. The two filters
+    // reproduce what the query did: `run` drops trashed entities and
+    // sorts by id before `first()`, and `names` is deliberately
+    // unfiltered ("trash and plumbing are read-time concerns"), so the
+    // read-time concerns live here now.
+    //
+    // `include_working: true` had no filter to bypass — the working flag
+    // is not a constraint the name index can carry — and no type entity
+    // has ever worn it.
+    store
+        .named(name)
+        .iter()
+        .copied()
+        .filter(|&id| {
+            store.get(id).is_some_and(|e| {
+                !e.trashed && e.all(props::EXPECTED).next().is_some()
+            })
+        })
+        .min()
 }
 
 /// Set one property to one value: replace-the-cell semantics, one

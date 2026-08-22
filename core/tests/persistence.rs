@@ -396,3 +396,96 @@ fn a_trashed_entity_is_still_reachable_by_id() {
     assert!(session.store().get(id).unwrap().trashed);
     let _ = std::fs::remove_file(&path);
 }
+
+/// T3 (owner, 2026-08-22): `recency` is maintained on append rather than
+/// recomputed per read. This pins the maintained map against the walk it
+/// replaces, across the two cases that can move an entry — a MERGE, which
+/// redirects one id onto another, and an UNDO, which appends an inverse.
+///
+/// It also reopens the log, because `replay` builds the map on a different
+/// path from `commit` and a divergence there would only show after a restart.
+#[test]
+fn recency_matches_the_history_walk_it_replaces() {
+    // The formula this replaced: last transaction to touch each entity,
+    // resolved at read time.
+    fn walked(store: &Store) -> std::collections::HashMap<Id, u64> {
+        let mut map = std::collections::HashMap::new();
+        for tx in store.history() {
+            for command in &tx.commands {
+                let id = match command {
+                    Command::Create { entity }
+                    | Command::Trash { entity }
+                    | Command::Restore { entity }
+                    | Command::AddCell { entity, .. }
+                    | Command::RemoveCell { entity, .. }
+                    | Command::Redirect { entity, .. } => *entity,
+                };
+                map.insert(store.resolve(id), tx.seq);
+            }
+        }
+        map
+    }
+
+    // Compared in full, not weakened to what a reader happens to reach:
+    // a redirect folds an id's past onto its target, so the maintained
+    // map and the walk agree key for key.
+    fn sorted(map: &std::collections::HashMap<Id, u64>) -> std::collections::BTreeMap<Id, u64> {
+        map.iter().map(|(id, seq)| (*id, *seq)).collect()
+    }
+
+    let path = temp_path("recency_walk");
+    let mut session = Session::open(&path).unwrap();
+
+    let a = session.allocate_id();
+    let b = session.allocate_id();
+    session
+        .commit(vec![Command::Create { entity: a }], "a", Author::User)
+        .unwrap();
+    session
+        .commit(vec![Command::Create { entity: b }], "b", Author::User)
+        .unwrap();
+    session
+        .commit(
+            vec![Command::AddCell { entity: a, cell: cell(props::NAME, Value::text("one")) }],
+            "name a",
+            Author::User,
+        )
+        .unwrap();
+    session
+        .commit(
+            vec![Command::AddCell { entity: b, cell: cell(props::NAME, Value::text("two")) }],
+            "name b",
+            Author::User,
+        )
+        .unwrap();
+
+    let live = sorted(session.store().recency());
+    assert_eq!(live, sorted(&walked(session.store())), "after plain writes");
+
+    // A merge: b is trashed and redirected onto a.
+    session.merge(a, b, Vec::new(), Author::User).unwrap();
+    assert_eq!(
+        sorted(session.store().recency()),
+        sorted(&walked(session.store())),
+        "after a merge, which redirects one id onto another"
+    );
+
+    // And an undo, which appends the inverse rather than rewriting.
+    session.undo(Author::User).unwrap();
+    assert_eq!(
+        sorted(session.store().recency()),
+        sorted(&walked(session.store())),
+        "after an undo, which appends an inverse transaction"
+    );
+
+    // Reopen: `replay` builds the map on its own path.
+    let before = sorted(session.store().recency());
+    drop(session);
+    let reopened = Session::open(&path).unwrap();
+    assert_eq!(
+        sorted(reopened.store().recency()),
+        before,
+        "the map survives a restart — replay maintains it too"
+    );
+    let _ = std::fs::remove_file(&path);
+}

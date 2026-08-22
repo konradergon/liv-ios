@@ -322,3 +322,63 @@ fn the_sweep_stays_flat_when_the_queue_is_full() {
          the closing filter is comparing every new proposal against every old one"
     );
 }
+
+/// T2 (owner, 2026-08-22): `find_type` must not scan the box.
+///
+/// Measured before the fix: creating notes collapsed from 6,557/s at 10,000
+/// entities to 1,354/s at 40,000 — because `create_note` calls `find_type`,
+/// which built a Query and ran a full-store scan for the "note" type on every
+/// single creation. A profile of a 500,000-entity build put 98% of samples in
+/// that one call. Building a box was O(n²).
+///
+/// `store.named()` is an O(1) index over exactly this — the one T1 added — and
+/// the store's own comment says trash and plumbing are read-time concerns,
+/// which is what the filter below is for.
+#[test]
+fn finding_a_type_does_not_scan_the_box() {
+    let (small_path, small_box) = notes("ft400", 400);
+    let (large_path, large_box) = notes("ft4000", 4000);
+    let look = |session: &Session| {
+        time(|| {
+            assert!(
+                liv_services::content::find_type(session.store(), "note").is_some(),
+                "the seeded note type is findable"
+            );
+        })
+    };
+    let ratio = best_ratio(5, || look(&small_box), || look(&large_box));
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
+    // Ten times the box. A scan is ~10x; an index is ~1x. 2.5 leaves room
+    // for constant overhead without letting the scan back in.
+    assert!(
+        ratio < 2.5,
+        "ten times the box multiplied a type lookup by {ratio:.2}x; \
+         find_type is scanning the store instead of using the name index"
+    );
+}
+
+/// T3 (owner, 2026-08-22): `recency` must not be rebuilt per read.
+///
+/// Measured before the fix: 99 ms per call at 500,000 entities, on every
+/// search, identical every time — it walked the whole transaction history and
+/// allocated a fresh map of every entity. Search calls it once per query, so
+/// it was ~34% of a search that already reads the whole box.
+#[test]
+fn recency_is_not_rebuilt_on_every_read() {
+    let (small_path, small_box) = notes("rc400", 400);
+    let (large_path, large_box) = notes("rc4000", 4000);
+    let ask = |session: &Session| {
+        time(|| {
+            assert!(!session.store().recency().is_empty(), "the box has history");
+        })
+    };
+    let ratio = best_ratio(5, || ask(&small_box), || ask(&large_box));
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
+    assert!(
+        ratio < 2.5,
+        "ten times the history multiplied a recency read by {ratio:.2}x; \
+         it is being rebuilt from history instead of maintained on append"
+    );
+}
