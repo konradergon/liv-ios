@@ -21,6 +21,13 @@ enum Feature: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// THE ORDER, declared once. `allCases` follows the declaration and
+    /// the Go-to menu hard-coded a different one; only the menu's was
+    /// ever visible, so they were free to disagree. Putting the views in
+    /// the side panel makes a second one visible, which is exactly when
+    /// two orderings become a bug (standing rule 4).
+    static let inOrder: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
+
     var title: String {
         switch self {
         case .notes: return "Notes"
@@ -1366,7 +1373,7 @@ struct BottomBar: View {
         // TODAY LEADS (owner, 2026-08-18). The order is the order of
         // a day: what is happening, then what you are writing, then
         // what arrived, then the rest.
-        let order: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
+        let order = Feature.inOrder
         return LivMenu(
             id: "goto", from: .bottom, title: "Go to",
             items: order.map { feature in

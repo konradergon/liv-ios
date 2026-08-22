@@ -107,20 +107,38 @@ struct LibraryPanel: View {
         VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // THE VIEWS ARE NOT HERE (owner, 2026-08-18):
-                        // they are the bar's own key, which names where
-                        // you are and opens the Go-to menu. A drawer is
-                        // the right home for what you touch rarely and
-                        // the wrong one for what you touch on every
-                        // navigation.
+                        // THE VIEWS ARE BACK (team, 2026-08-22 — see
+                        // design/tabs.md). They left on 2026-08-18 for
+                        // the bar's own key, on the argument that a
+                        // drawer is the wrong home for what you touch on
+                        // every navigation. Under a tab-centric model
+                        // the argument inverts: a view now decides what
+                        // the TABS hold, so it is picked once and then
+                        // lived in, and the bar's slot is needed for the
+                        // tab key.
                         //
-                        // NO SECTION LABELS either (owner, 2026-08-18:
+                        // Notesnook's shape, which `row` already drew:
+                        // a monochrome glyph, the name, a count on the
+                        // right, and the one you are in wearing a soft
+                        // fill.
+                        ForEach(Feature.inOrder) { feature in
+                            row(
+                                feature.title,
+                                glyph: feature.glyph,
+                                detail: counts.of(feature),
+                                on: desk.state == feature
+                            ) {
+                                desk.go(feature)
+                                onDismiss()
+                            }
+                        }
+
+                        // NO SECTION LABELS (owner, 2026-08-18:
                         // "eliminate unnecessary small text and
-                        // labels"). Two headings over five rows was
-                        // furniture explaining furniture; the filters
-                        // are obviously filters, and Settings is
-                        // obviously Settings.
-                        ForEach(workspaces.filters) { view in
+                        // labels"). The gap does the separating, which
+                        // is the same argument the card grouping makes
+                        // one surface over.
+                        ForEach(Array(workspaces.filters.enumerated()), id: \.element.id) { i, view in
                             row(
                                 view.display,
                                 glyph: .filter,
@@ -130,28 +148,82 @@ struct LibraryPanel: View {
                                     workspaces.activeFilterId == view.id ? nil : view.id
                                 onDismiss()
                             }
+                            .padding(.top, i == 0 ? 16 : 0)
                         }
                         row("New filter", glyph: .plus) {
                             desk.composeFilter = true
                             onWorkspace()
                         }
-                        // Settings is the LAST ROW, not a pinned foot
-                        // (owner, 2026-08-17): two fixed layers at the
-                        // foot of one list — a pinned row and the global
-                        // bar over it — was one too many.
-                        // The way back from a delete. It sits with
-                        // Settings because it is house-keeping, not a
-                        // place you work — and because the alternative was
-                        // a fourth pill on Everything, which is already
-                        // the screen the owner finds most confusing.
+                        .padding(.top, 4)
+                        // Trash stays in the list — it is house-keeping,
+                        // not a place you work. Settings moved to the
+                        // foot with the workspace (team, 2026-08-22).
                         row("Trash", glyph: .trash) { onTrash() }
                             .padding(.top, 16)
-                        row("Settings", glyph: .settings) { onSettings() }
                     }
                     .padding(.horizontal, 6)
                     .padding(.top, 8)
                 }
+                foot
         }
+    }
+
+    /// THE FOOT: the workspace, what it holds, and the way to settings.
+    ///
+    /// Obsidian's shape, which the owner pointed at: the name, a quiet
+    /// line under it saying what is inside, and a gear beside it. It is
+    /// pinned rather than scrolling with the list, because it is not a
+    /// place in the list — it says which box you are in.
+    ///
+    /// This reverses 2026-08-17's "Settings is the last row, not a
+    /// pinned foot", whose argument was that a pinned row plus the
+    /// global bar was one fixed layer too many. The bar now slides away
+    /// on scroll, so the objection is gone.
+    private var foot: some View {
+        HStack(spacing: 8) {
+            Button {
+                onWorkspace()
+            } label: {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(workspaces.activeName)
+                            .font(.system(size: LivType.body, weight: .medium))
+                            .foregroundStyle(LivTheme.text)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(LivTheme.text2)
+                    }
+                    Text(counts.foot)
+                        .font(.system(size: LivType.label))
+                        .foregroundStyle(LivTheme.text3)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onSettings) {
+                LivIcon(glyph: .settings, color: LivTheme.text2, size: 21)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        }
+    }
+
+    /// What each view holds, counted ONCE per snapshot rather than once
+    /// per row per render — six rows each scanning the box would be the
+    /// fifth instance of the pattern `design/core.md` §10 names.
+    private var counts: ViewCounts {
+        ViewCounts(box: box)
     }
 
     /// One list row. NO hairline: a line between rows is what a FORM
@@ -198,5 +270,64 @@ struct LibraryPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - what each view holds
+
+/// The counts beside the view rows, and the line under the workspace.
+///
+/// **One pass over the box, not one per row.** Six rows each asking the
+/// box a question would be the same shape as the four defects
+/// `design/core.md` §10 records — rebuild on read, once per render. This
+/// walks the entities once and answers from what it found.
+struct ViewCounts {
+    private var notes = 0
+    private var tasks = 0
+    private var inbox = 0
+    private var events = 0
+    private var everything = 0
+    private var today = 0
+
+    init(box: BoxModel) {
+        let now = Civil.todayDay()
+        for row in box.entities.values where row.trashed != true {
+            everything += 1
+            switch LivKind.of(row) {
+            case .note: notes += 1
+            case .task: tasks += 1
+            case .event: events += 1
+            case .capture: inbox += 1
+            default: break
+            }
+            // Today counts what is DUE today or earlier and still open —
+            // the same question the Today surface asks.
+            if livCanTick(row), let due = row.due, due > 0, Civil.day(of: due) <= now {
+                today += 1
+            }
+        }
+    }
+
+    /// A zero is not worth drawing. Notesnook shows one; this app's own
+    /// rule is that a count which is always there stops being read
+    /// (owner, 2026-08-18: "eliminate unnecessary small text").
+    private func shown(_ n: Int) -> String? {
+        n > 0 ? "\(n)" : nil
+    }
+
+    func of(_ feature: Feature) -> String? {
+        switch feature {
+        case .notes: return shown(notes)
+        case .tasks: return shown(tasks)
+        case .inbox: return shown(inbox)
+        case .calendar: return shown(events)
+        case .everything: return shown(everything)
+        case .today: return shown(today)
+        }
+    }
+
+    /// Obsidian's second line: what the workspace holds, in words.
+    var foot: String {
+        "\(everything) item\(everything == 1 ? "" : "s")"
     }
 }
