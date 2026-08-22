@@ -8,6 +8,21 @@
 >
 > **Nothing here is decided.** This records a recommendation, its evidence, and
 > what it costs. It needs the owner's word before any of it happens.
+>
+> ---
+>
+> **SUPERSEDED IN ITS RECOMMENDATION, 2026-08-22.** §3 below recommends keeping
+> the log and deleting the SQLite crate. The owner has since ruled: *"we can't
+> break or change how the tauri app works"* and *"both shells will share one
+> core."* Deleting the SQLite crate is, by definition, changing how the Tauri
+> app works, so that recommendation is off the table.
+>
+> What survives here and is still worth reading: the head-to-head evidence (§2),
+> the honest costs (§3), the properties-in-Swift audit (§4), and the open
+> questions (§6). What replaces §3 and §5: **`core.md`** for the design the two
+> cores should converge on, and **`core-plan.md`** for the order of work. This
+> document is left as written — it is the record of what was thought on
+> 2026-08-19, and rewriting it would erase the reasoning rather than correct it.
 
 ---
 
