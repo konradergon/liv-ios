@@ -134,16 +134,32 @@ members. The difference lives in the ops — `SetCell` names what it replaces,
 
 ---
 
-## Phase 5 — The model
+## Phase 5 — The model · **DONE 2026-08-22**
 
-*~2 weeks.*
+*Twelve tests.*
 
-Entities, cells, the closed value set, and the furniture — six areas, six fields, six
-kinds — as compiled-in constants with frozen ids, so two devices cannot seed
-different versions of "Area".
+The furniture — six areas, six fields, six kinds, three statuses — as compiled-in
+constants with frozen ids. **Not seeded: there is nowhere to write them.** Two fresh
+boxes on different devices agree about all of it having exchanged nothing and having
+written zero ops, which is the whole answer to the drift `one-core.md` §4 records,
+where the phone mints its own copy on every launch.
 
-Tags, projects and people are entities referenced by id, which is what makes rename
-one write and "everything with Anna" a lookup.
+**A real discriminator, at last.** `core-decisions.md` flagged that `id <
+FIRST_USER_ID` — the old "is this plumbing" trick — dies with UUIDv7, because v7
+sorts by time rather than by namespace. Furniture ids are UUID version 8 with the
+class in the low nibble and a readable marker in the tail, so the check is one nibble
+and does not depend on ordering at all.
+
+**Values are refused at the door.** A property declares what it holds, so a sentence
+cannot land in a due date and an area cannot land in a status. A property the model
+does not know is a user-created field, and the engine has no opinion about those
+beyond storing them — which is what the product's "seventh kind of field behind a
+door in Settings" requires.
+
+**The write API owns the merge rule.** `set` reads what is live and names those dots,
+so a caller never has to remember that a register write must say what it replaced —
+and `remove` names only the adds it can see, which is what makes a set add-wins.
+Renaming a person is one write, verified against forty notes that reference her.
 
 ---
 

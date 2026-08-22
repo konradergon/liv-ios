@@ -18,10 +18,14 @@
 pub mod engine;
 pub mod id;
 pub mod log;
+pub mod model;
 pub mod op;
 pub mod view;
+pub mod write;
 
 pub use engine::Engine;
+pub use model::{area, kind, prop, status, Holds, PropDef, Refused, AREAS, KINDS, PROPS, STATUSES};
+pub use write::{action, WriteError};
 pub use id::{DeviceId, Dot, EntityId, Hlc, IdGen};
 pub use log::{decode_stream, encode_stream, Hold, LogError, VersionVector, BOX_FORMAT};
 pub use op::{Author, DateSpec, DecodeError, Group, Op, Value, RECORD_VERSION};
