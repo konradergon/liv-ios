@@ -70,6 +70,10 @@ struct TabSwitcher: View {
     /// fullScreenCover, and stacking a second one on top of it is how
     /// surfaces started tearing each other down (audit, 2026-08-04).
     @State private var inactiveShown = false
+    /// What the header's field holds. Device state and a moment — never
+    /// persisted, because a filter you did not set is a filter you cannot
+    /// see the reason for.
+    @State private var filter = ""
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -97,7 +101,7 @@ struct TabSwitcher: View {
             ScrollView {
                 inactiveRow
                 LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(desk.liveTabs) { tab in card(tab) }
+                    ForEach(shown) { tab in card(tab) }
                     newTabCard
                 }
                 .padding(.horizontal, 16)
@@ -115,29 +119,76 @@ struct TabSwitcher: View {
     /// region belongs to the system. Rule 2 bans the blur that would
     /// normally sit there. This band absorbs the inset and gives the tab
     /// view the same way out the feature windows have.
+    /// SEARCH YOUR OPEN TABS — not the box. Global search is the bar's
+    /// own key and stays exactly where it was (owner, 2026-08-22: "keep
+    /// global search and global create… yet also have new tab and search
+    /// tab nicely put in"). This is the "search tab" half: a field that
+    /// narrows the grid in front of you.
+    ///
+    /// Two mechanical traps, both real, both hit on the way in. The band
+    /// was 40pt and a field needs more; and the band carried BOTH a
+    /// tap-to-dismiss and a drag-to-dismiss across its whole width, so a
+    /// field placed in it was swallowed by the gestures before it could
+    /// take a keystroke. Both now belong to the chevron alone.
     private var header: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 10) {
             Button { desk.switcherShown = false } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: LivType.strong, weight: .semibold))
                     .foregroundStyle(LivTheme.text2)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close tabs")
-            Spacer()
+            // The dismissing gestures live HERE, on the chevron, not on
+            // the band — see above.
+            .gesture(
+                DragGesture(minimumDistance: 20)
+                    .onEnded { g in
+                        if g.translation.height > 40 { desk.switcherShown = false }
+                    }
+            )
+
+            HStack(spacing: 7) {
+                LivIcon(glyph: .everything, color: LivTheme.text3, size: 16)
+                TextField("Search tabs", text: $filter)
+                    .font(.system(size: LivType.body))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                if !filter.isEmpty {
+                    Button { filter = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: LivType.body))
+                            .foregroundStyle(LivTheme.text3)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear")
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .background(
+                RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
+                    .fill(LivTheme.panel2))
         }
         .padding(.horizontal, 12)
-        .frame(height: 40)
-        .contentShape(Rectangle())
-        .onTapGesture { desk.switcherShown = false }
-        .gesture(
-            DragGesture(minimumDistance: 20)
-                .onEnded { g in
-                    if g.translation.height > 40 { desk.switcherShown = false }
-                }
-        )
+        .frame(height: 54)
+    }
+
+    /// The tabs the grid shows, narrowed by the field. Matching on the
+    /// same title the card draws, so what you type and what you see can
+    /// never be answering different questions.
+    private var shown: [DeskTab] {
+        let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return desk.liveTabs }
+        return desk.liveTabs.filter { tab in
+            guard case .entity(let id) = tab.content, let row = box.entity(id) else {
+                return false
+            }
+            return livRowTitle(row).lowercased().contains(needle)
+        }
     }
 
     // MARK: cards

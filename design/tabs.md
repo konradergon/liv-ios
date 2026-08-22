@@ -131,11 +131,16 @@ Every phase: shell only, and the gate is the eight launch-flag self-checks.
 
 | | | |
 |---|---|---|
-| **1** | Views return to the side panel, Notesnook-style, with the Obsidian foot | no tabs yet |
-| **2** | Tabs return for Notes — the exact pre-deletion model, `Tabs.swift` verbatim | plus a ninth suite |
-| **3** | The bar: tab key, `+` lands in a new tab, new-tab card and tab search in the switcher | |
-| **4** | Per-view planes — **blocked on Reading A or B** | one view per commit |
+| **1** | Views return to the side panel, Notesnook-style, with the Obsidian foot | **done** |
+| **2** | Tabs return for Notes — the exact pre-deletion model, `Tabs.swift` verbatim | **done**, ninth suite restored |
+| **3** | The bar: tab key, `+` lands in a new tab, new-tab card and tab search in the switcher | **done** |
+| **4** | Per-view planes, Reading B — one plane per view | one view per commit |
 | **5** | Inactive tabs across every plane | |
+
+**Known intermediate state after phase 3:** there is still only ONE plane, so
+the tab key shows the Notes count in every view. Phase 4 is what gives each view
+its own, and until then the key is honest about the plane that exists rather
+than inventing five empty ones.
 
 ---
 

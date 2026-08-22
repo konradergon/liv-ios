@@ -1567,7 +1567,7 @@ struct BottomBar: View {
         // wrongness the surface pass is for.
         HStack(spacing: 10) {
             HStack(spacing: 0) {
-                stateKey
+                tabKey
                 navButton("magnifyingglass", label: "Search") {
                     desk.searchShown = true
                 }
@@ -1602,16 +1602,25 @@ struct BottomBar: View {
     /// Six states will not fit as six keys; one labelled key that opens
     /// the menu is two taps to anywhere — the same two the sidebar cost,
     /// with the difference that this one is on screen inside a document.
-    private var stateKey: some View {
+    /// THE TAB KEY, in the slot the state key used to hold.
+    ///
+    /// The views moved to the side panel on 2026-08-22, which freed this
+    /// place — and freeing it is what let the bar gain a tab door without
+    /// a fifth key or a second row. It still answers "where am I" with the
+    /// view's own glyph; the panel now answers it in words.
+    ///
+    /// The count is of LIVE tabs, not all of them: a tab on the Inactive
+    /// shelf is open but out of the way, and a key that counted them would
+    /// disagree with the grid it opens.
+    private var tabKey: some View {
         Button {
-            desk.menu = goToMenu()
+            desk.switcherShown = true
         } label: {
             HStack(spacing: 7) {
                 LivIcon(glyph: desk.state.glyph, color: LivTheme.text, size: 19)
-                Text(desk.state.title)
-                    .font(.system(size: LivType.body, weight: .medium))
+                Text("\(desk.liveTabs.count)")
+                    .font(.system(size: LivType.body, weight: .medium).monospacedDigit())
                     .foregroundStyle(LivTheme.text)
-                    .lineLimit(1)
                 Image(systemName: "chevron.up")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(LivTheme.text2)
@@ -1621,26 +1630,8 @@ struct BottomBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Go to. In \(desk.state.title)")
-    }
-
-    /// Go to: the six states, the one you are in ticked. Docs leads,
-    /// because it is where the words are.
-    private func goToMenu() -> LivMenu {
-        // TODAY LEADS (owner, 2026-08-18). The order is the order of
-        // a day: what is happening, then what you are writing, then
-        // what arrived, then the rest.
-        let order = Feature.inOrder
-        return LivMenu(
-            id: "goto", from: .bottom, title: "Go to",
-            items: order.map { feature in
-                LivMenuItem(
-                    label: feature == desk.state ? "\(feature.title) ✓" : feature.title,
-                    glyph: feature.glyph
-                ) {
-                    desk.go(feature)
-                }
-            })
+        .accessibilityLabel(
+            "Tabs. \(desk.liveTabs.count) open in \(desk.state.title)")
     }
 
     private func navButton(
