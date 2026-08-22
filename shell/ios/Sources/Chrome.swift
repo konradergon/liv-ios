@@ -56,6 +56,34 @@ enum Feature: String, CaseIterable, Identifiable {
     // things. The drawing alone tells them apart.
 }
 
+// MARK: - desk tabs
+
+/// One tab. Restored 2026-08-22 with the model it had before
+/// `0aa2af3` deleted it (design/tabs.md).
+struct DeskTab: Identifiable {
+    /// Minted fresh every launch. A tab's durable identity is the entity
+    /// it holds, which is what the saved plane stores.
+    let id: UUID
+    var content: DeskTabContent
+    /// When this tab was last USED — opened or focused. A packed civil
+    /// stamp, the app's one time vocabulary. Tabs that go untouched long
+    /// enough fall out of the grid onto the Inactive shelf; nothing about
+    /// them is lost, they are just not in the way. No default on purpose:
+    /// every place that mints a tab has to say when.
+    var lastUsed: Int64
+}
+
+/// **Notes only, for now.** The team's ruling of 2026-08-22 is Reading B:
+/// each view owns a tab strip, and a tab is a saved POSITION inside that
+/// view. In Notes that position is a document, which is exactly what this
+/// case was before. The other views' cases arrive with their planes; in
+/// Tasks a tab will be a list, and tapping a task still raises a card —
+/// so neither of the owner's 2026-08-07 and 2026-08-08 rulings is
+/// reversed.
+enum DeskTabContent: Equatable {
+    case entity(UInt64)
+}
+
 // MARK: - where you are
 
 /// One place you have been: a state, or a document inside Docs. The
@@ -134,12 +162,26 @@ final class DeskModel: ObservableObject {
     /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
     /// changes it; there is no "no state" — Docs is one of them.
     @Published var state: Feature = .notes
-    /// The one document open inside Docs, or nil for the list. Opening a
-    /// note replaces whatever was open (there is no second slot to put
-    /// it in), and the id is persisted per workspace.
-    @Published private(set) var openDoc: UInt64? {
+    /// The Notes plane: the open tabs and which one is active.
+    @Published private(set) var tabs: [DeskTab] = []
+    @Published var activeTabId: UUID? {
         didSet { persist() }
     }
+    @Published var switcherShown = false
+
+    /// The document on the desk — now DERIVED from the active tab rather
+    /// than stored beside it.
+    ///
+    /// This one line is why `Desk.swift` needed no changes at all: every
+    /// existing caller of `openDoc` keeps working, and the tab plane
+    /// became the single place the answer lives. Two slots holding the
+    /// same fact is how they start to disagree.
+    var openDoc: UInt64? {
+        guard case .entity(let id)? = activeTab?.content else { return nil }
+        return id
+    }
+
+    var activeTab: DeskTab? { tabs.first { $0.id == activeTabId } }
     /// Where the labelled back at the top of a document goes. Capped:
     /// a chain of link jumps is a stack, not a diary.
     @Published private(set) var returns: [LivPlace] = []
@@ -333,6 +375,9 @@ final class DeskModel: ObservableObject {
     /// the safe answer (a document tab renders a record's name fine, a
     /// record card cannot render a note).
     var shapeOf: (UInt64) -> TabShape = { _ in .document }
+    /// Does the box hold this at all? Defaults to yes, so nothing is
+    /// pruned before a box has answered.
+    var knows: (UInt64) -> Bool = { _ in true }
 
     /// Put the card away, remembering it.
     func minimiseRecord() {
@@ -391,7 +436,126 @@ final class DeskModel: ObservableObject {
     /// The workspace whose document is on the desk. 0 = "All".
     private(set) var workspaceId: UInt64 = 0
 
-    private var persistKey: String { WorkspaceModel.docKey(workspaceId) }
+    private var persistKey: String { WorkspaceModel.tabsKey(workspaceId) }
+
+    // ---- the plane -------------------------------------------------
+
+    /// This tab is being used, now. The ONE place a tab's clock is set.
+    func touch(_ tabId: UUID) {
+        guard let i = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        tabs[i].lastUsed = Civil.nowStamp()
+        persist()
+    }
+
+    /// The tabs the grid shows. Inactive tabs are NOT removed from
+    /// `tabs` — they stay in the one array, so closing, de-duplicating,
+    /// pruning and the saved plane all keep working on the whole set, and
+    /// only what is DISPLAYED narrows.
+    ///
+    /// The active tab is never inactive, which guarantees this is
+    /// non-empty whenever `tabs` is — and therefore that an empty desk
+    /// means "no tabs at all", not "none you looked at lately".
+    var liveTabs: [DeskTab] {
+        let now = Civil.nowStamp()
+        return tabs.filter {
+            $0.id == activeTabId || !LivTabs.isInactive($0.lastUsed, now: now)
+        }
+    }
+
+    /// Untouched long enough to be out of the way. Most recently used
+    /// first, so the shelf reads newest-stale to oldest.
+    var inactiveTabs: [DeskTab] {
+        let now = Civil.nowStamp()
+        return tabs
+            .filter { $0.id != activeTabId && LivTabs.isInactive($0.lastUsed, now: now) }
+            .sorted { $0.lastUsed > $1.lastUsed }
+    }
+
+    /// Close every inactive tab at once. Safe without a confirmation and
+    /// without an undo: a tab is device state, so this writes nothing to
+    /// the box — every note is still there, in search, in Everything, in
+    /// its workspace.
+    func closeInactive() {
+        for tab in inactiveTabs { close(tab.id) }
+    }
+
+    /// Activate a tab. Every activation path funnels here.
+    ///
+    /// The `‹ ›` history keys did NOT come back with the rest: they
+    /// stepped through per-launch tab UUIDs, greyed out as tabs closed,
+    /// and were never persisted. The labelled back at the top of a
+    /// document, over the durable `returns` stack, replaced them and is
+    /// better (design/tabs.md).
+    func focus(_ tabId: UUID) {
+        // Stamp FIRST and unconditionally: re-opening the tab you are
+        // already on is still using it, and the early return below would
+        // otherwise let the active tab age out from under you.
+        touch(tabId)
+        guard tabId != activeTabId else { return }
+        endEditing()
+        activeTabId = tabId
+        if inspectorShown {
+            withAnimation(LivMotion.nav) { inspectorShown = false }
+        }
+    }
+
+    /// Closing the last tab leaves the desk empty — and an empty desk is
+    /// empty: a hint, and the `+` that ends it.
+    func close(_ tabId: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        endEditing()
+        tabs.remove(at: index)
+        if tabs.isEmpty {
+            activeTabId = nil
+        } else if activeTabId == tabId {
+            // The nearest tab you have actually been using. Stepping to
+            // the plain index neighbour could land the desk on a
+            // three-week-old note you never asked for.
+            let now = Civil.nowStamp()
+            let fresh = tabs.filter { !LivTabs.isInactive($0.lastUsed, now: now) }
+            let nextDoor = tabs[min(index, tabs.count - 1)]
+            let landing =
+                LivTabs.isInactive(nextDoor.lastUsed, now: now)
+                ? (fresh.max { $0.lastUsed < $1.lastUsed } ?? nextDoor)
+                : nextDoor
+            activeTabId = landing.id
+            touch(landing.id)
+        }
+        persist()
+    }
+
+    /// Old saved planes may hold task or event ids from before records
+    /// became cards. A record cannot be a tab, so those close quietly the
+    /// first time the box says what they are (owner, 2026-08-08).
+    func pruneRecordTabs() {
+        let doomed = tabs.filter {
+            // ONLY records. A file is a document you work on and keeps
+            // its tab (files, 2026-08-09).
+            if case .entity(let id) = $0.content { return shapeOf(id) == .record }
+            return false
+        }
+        guard !doomed.isEmpty else { return }
+        for tab in doomed { close(tab.id) }
+    }
+
+    /// Rehearsal only (`-desk.boot inactive`): age every tab except the
+    /// active one, so the shelf can be seen and photographed today.
+    func backdateTabsForRehearsal(days: Int) {
+        let old = Civil.stamp(day: Civil.addDays(Civil.todayDay(), -days), hhmm: 900)
+        for i in tabs.indices where tabs[i].id != activeTabId {
+            tabs[i].lastUsed = old - Int64(i)
+        }
+        persist()
+        objectWillChange.send()
+    }
+
+    /// Self-check only: install a known set. `tabs` is private(set) so the
+    /// suite cannot reach it, and opening the setter to everyone is how a
+    /// second file starts mutating the plane.
+    func replaceTabsForSelfCheck(_ fresh: [DeskTab]) {
+        tabs = fresh
+        activeTabId = fresh.last?.id
+    }
 
     /// LAUNCH ON TODAY (owner, 2026-08-18). Resuming the last document
     /// is what a notes app does; planning is what this one is for, so
@@ -400,29 +564,78 @@ final class DeskModel: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         workspaceId = UInt64(defaults.integer(forKey: WorkspaceModel.activeKey))
-        openDoc = Self.load(workspaceId)
+        let (restored, active) = Self.loadPlane(workspaceId)
+        tabs = restored
+        activeTabId = active ?? restored.last?.id
         state = .today
     }
 
     /// The workspace's document: the new key, else one taken out of the
     /// old tab plane (its active tab, or the last one saved).
-    private static func load(_ workspace: UInt64) -> UInt64? {
+    /// One plane's saved set. Entity ids only — a tab's UUID is minted
+    /// fresh every launch, so the entity is the only identity a saved
+    /// plane actually has.
+    ///
+    /// **And the four days without tabs are folded in here.** Between
+    /// 2026-08-18 and 2026-08-22 the desk held one document under its own
+    /// key, while the old plane sat beside it untouched. Restoring the
+    /// plane alone would bring back a four-day-old tab set and silently
+    /// drop the note actually in use, so the live document is added and
+    /// focused, and its key is then removed — one truth, once.
+    private static func loadPlane(_ workspace: UInt64) -> ([DeskTab], UUID?) {
         let defaults = UserDefaults.standard
-        if let saved = defaults.object(forKey: WorkspaceModel.docKey(workspace)) as? NSNumber {
-            let id = saved.uint64Value
-            return id == 0 ? nil : id
-        }
-        let legacy =
+        let now = Civil.nowStamp()
+        var restored: [DeskTab] = []
+        var active = -1
+
+        let stored =
             defaults.dictionary(forKey: WorkspaceModel.tabsKey(workspace))
             ?? (workspace == 0 ? defaults.dictionary(forKey: legacyKey) : nil)
-        guard let legacy else { return nil }
-        let ids = (legacy["ids"] as? [String] ?? []).compactMap { UInt64($0) }
-        let active = legacy["active"] as? Int ?? -1
-        return ids.indices.contains(active) ? ids[active] : ids.last
+        if let stored {
+            let ids = (stored["ids"] as? [String] ?? []).compactMap { UInt64($0) }
+            // A plane saved before tabs had clocks counts as used NOW.
+            // Reading a missing stamp as "never used" would sweep every
+            // tab you own on the first launch after the upgrade.
+            let used = stored["used"] as? [String: Int] ?? [:]
+            restored = ids.map {
+                DeskTab(
+                    id: UUID(), content: .entity($0),
+                    lastUsed: used[String($0)].map(Int64.init) ?? now)
+            }
+            active = stored["active"] as? Int ?? -1
+        }
+
+        var activeId = restored.indices.contains(active) ? restored[active].id : nil
+        let docKey = WorkspaceModel.docKey(workspace)
+        if let saved = defaults.object(forKey: docKey) as? NSNumber, saved.uint64Value != 0 {
+            let live = saved.uint64Value
+            if let already = restored.first(where: { $0.content == .entity(live) }) {
+                activeId = already.id
+            } else {
+                let tab = DeskTab(id: UUID(), content: .entity(live), lastUsed: now)
+                restored.append(tab)
+                activeId = tab.id
+            }
+            defaults.removeObject(forKey: docKey)
+        }
+        return (restored, activeId)
     }
 
     private func persist() {
-        UserDefaults.standard.set(NSNumber(value: openDoc ?? 0), forKey: persistKey)
+        var ids: [String] = []
+        var used: [String: Int] = [:]
+        var active = -1
+        // EVERY tab, inactive ones included. `active` indexes the array
+        // being built here, so filtering any tab out would both point it
+        // at the wrong tab and lose the inactive ones for good.
+        for tab in tabs {
+            guard case .entity(let entity) = tab.content else { continue }
+            if tab.id == activeTabId { active = ids.count }
+            ids.append(String(entity))
+            used[String(entity)] = Int(tab.lastUsed)
+        }
+        UserDefaults.standard.set(
+            ["ids": ids, "active": active, "used": used], forKey: persistKey)
     }
 
     /// Swap the workspace. The outgoing document is saved under ITS key
@@ -433,7 +646,10 @@ final class DeskModel: ObservableObject {
         persist()  // the OUTGOING key — persistKey still points at it
         workspaceId = id
         returns = []
-        openDoc = Self.load(id)
+        let (restored, active) = Self.loadPlane(id)
+        tabs = restored
+        activeTabId = active ?? restored.last?.id
+        switcherShown = false
         state = .notes
         setLibrary(false, animated: false)
         menu = nil
@@ -460,10 +676,14 @@ final class DeskModel: ObservableObject {
 
     /// Up, out of a document, to the list of them. The state does not
     /// change: you were in Docs the whole time.
+    /// **The tabs stay open.** Before the plane came back this cleared
+    /// the one document slot; now it deselects, which is the same thing
+    /// on screen and a different thing underneath — your tabs are where
+    /// you left them.
     func showList() {
         endEditing()
         returns = []
-        withAnimation(LivMotion.nav) { openDoc = nil }
+        withAnimation(LivMotion.nav) { activeTabId = nil }
     }
 
     /// The labelled back at the top of a document: where it goes, or nil
@@ -480,10 +700,19 @@ final class DeskModel: ObservableObject {
             switch place {
             case .state(let feature):
                 state = feature
-                if feature != .notes { openDoc = nil }
+                // No longer clears the document: leaving Notes for Today
+                // does not close what you had open, because the plane is
+                // Notes' own and Desk draws a feature body regardless.
             case .document(let id):
                 state = .notes
-                openDoc = id
+                if let tab = tabs.first(where: { $0.content == .entity(id) }) {
+                    focus(tab.id)
+                } else {
+                    let tab = DeskTab(
+                        id: UUID(), content: .entity(id), lastUsed: Civil.nowStamp())
+                    tabs.append(tab)
+                    focus(tab.id)
+                }
             }
         }
         menu = nil
@@ -502,9 +731,27 @@ final class DeskModel: ObservableObject {
     /// A document that turns out to be a RECORD is not a document: it
     /// belongs in a card. Called once, on the first snapshot, because
     /// that is the first moment the shape of a saved id can be known.
+    /// Called once, on the first snapshot — the first moment the box can
+    /// say what a saved id IS.
+    ///
+    /// Two sweeps, and both wait for this moment on purpose. A record
+    /// cannot be a tab, so tabs holding one close (owner, 2026-08-08).
+    /// And a tab whose entity is not in the box at all is a card that can
+    /// only ever say "this was deleted" — the plane restored on
+    /// 2026-08-22 had 65 of them on a test device whose box had been
+    /// rebuilt underneath it.
+    ///
+    /// The original rule was that missing ids drop LAZILY, "never an
+    /// eager sweep against a box that may still be opening". This is not
+    /// that sweep: the box has opened, which is the whole reason this
+    /// function is called here and not in `init`.
     func dropRecordDocument() {
-        guard let id = openDoc, shapeOf(id) == .record else { return }
-        openDoc = nil
+        pruneRecordTabs()
+        let gone = tabs.filter {
+            if case .entity(let id) = $0.content { return !knows(id) }
+            return false
+        }
+        for tab in gone { close(tab.id) }
     }
 
     /// The one door for opening anything, anywhere.
@@ -554,7 +801,17 @@ final class DeskModel: ObservableObject {
         returns.append(from)
         if returns.count > 20 { returns.removeFirst(returns.count - 20) }
         state = .notes
-        openDoc = entityId
+        // Append or focus — the whole difference tabs make. Opening a
+        // second note no longer replaces the first.
+        if let existing = tabs.first(where: { $0.content == .entity(entityId) }) {
+            focus(existing.id)
+        } else {
+            let tab = DeskTab(
+                id: UUID(), content: .entity(entityId), lastUsed: Civil.nowStamp())
+            tabs.append(tab)
+            focus(tab.id)
+        }
+        switcherShown = false
         surfaceCleanup()
     }
 

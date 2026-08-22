@@ -85,8 +85,11 @@ reverses nothing.
 **Recommended: B, with Notes keeping A's behaviour**, because a note tab is what
 already worked and is what "how tabs looked for notes before" names.
 
-**This is the owner's call and it gates the per-view work.** Phases 1–3 below are
-identical under both readings, so the question does not block starting.
+**DECIDED 2026-08-22, owner: Reading B.** Each view owns a tab strip, and a tab
+is a saved position inside that view. **Notes keeps a note per tab**, because
+that is what already worked and what "how tabs looked for notes before" names.
+Nothing the owner previously ruled is reversed: in Tasks a tab is a task *list*,
+and tapping a task still raises a card.
 
 ---
 

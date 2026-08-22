@@ -55,6 +55,13 @@ struct LivApp: App {
             failures.forEach { print("PLACES-SELFCHECK \($0)") }
         }
         // The icon language (Glyph.swift) — one kind per row, one colour
+        // The inactive-tab rule (Tabs.swift), same door:
+        // `-tabs.selfcheck 1`. Restored with the tabs on 2026-08-22.
+        if UserDefaults.standard.bool(forKey: "tabs.selfcheck") {
+            let failures = livTabsSelfCheck()
+            print("TABS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("TABS-SELFCHECK \($0)") }
+        }
         // per kind, every drawing inside its box: `-glyph.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "glyph.selfcheck") {
             let failures = livGlyphSelfCheck()
@@ -181,6 +188,7 @@ struct RootView: View {
             // deciding once at open() would race the refresh that follows
             // a creation (Box.actId calls back before the snapshot moves).
             desk.shapeOf = { [weak box] id in TabShape.of(box?.entity(id)) }
+            desk.knows = { [weak box] id in box?.entity(id) != nil }
         }
         // A saved document from before Option C may BE a task. The first
         // snapshot is the first moment we can tell; a record belongs in a
@@ -194,6 +202,13 @@ struct RootView: View {
         }
         // The tab view takes the whole screen too (owner, 2026-07-29) — top
         // bar and bottom bar both covered. Its own footer carries Done.
+        // The switcher takes the whole screen (owner, 2026-07-29) — top
+        // bar and bottom bar both covered. Its own footer carries Done.
+        .fullScreenCover(isPresented: $desk.switcherShown) {
+            TabSwitcher()
+                .environmentObject(box)
+                .environmentObject(desk)
+        }
         .fullScreenCover(isPresented: $desk.searchShown) {
             SearchView()
                 .environmentObject(box)
@@ -305,6 +320,10 @@ struct RootView: View {
         switch state {
         case "grid", "library": desk.setLibrary(true)
         case "search": desk.searchShown = true
+        case "switcher": desk.switcherShown = true
+        case "inactive":
+            desk.backdateTabsForRehearsal(days: LivTabs.defaultDays + 1)
+            desk.switcherShown = true
         case "today": desk.go(.today)
         case "tasks": desk.go(.tasks)
         case "inbox": desk.go(.inbox)
