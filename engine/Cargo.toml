@@ -7,8 +7,14 @@ description = "The Liv engine: an append-only op log and the view derived from i
 [lib]
 name = "liv_engine"
 
-# NO DEPENDENCIES, deliberately, for as long as that holds. The on-disk
-# format is this crate's own bytes (design/op-format.md), not a derive
-# macro's output — that is the whole point of §1's second lesson. SQLite
-# arrives in the view layer, not here.
+# ONE DEPENDENCY, and it is the substrate. `id` and `op` have none and
+# should keep none: the on-disk FORMAT is this crate's own bytes
+# (design/op-format.md), not a derive macro's output, which is the whole
+# of that document's second lesson. SQLite stores those bytes; it does not
+# define them.
+#
+# Proven before it was chosen (core-plan.md phase 1): `bundled` compiles
+# SQLite from C and cross-compiles for aarch64-apple-ios and the
+# simulator, and FTS5 answers correctly when run inside one.
 [dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }

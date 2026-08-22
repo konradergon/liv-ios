@@ -157,7 +157,7 @@ properties, not one**, and §13 banks a whole subsystem on conflating them:
 - **Prefix atomicity** — whatever B sees of D's stream is always some prefix. **Only one
   of the four gives this for free.**
 
-**Build the gap buffer regardless of what is chosen below.** It is cheaper than betting
+**Build the hold buffer regardless of what is chosen below.** It is cheaper than betting
 on a transport.
 
 ### Options
@@ -215,7 +215,7 @@ plus a written statement of what that means.
 ### Regardless of the answer
 
 1. `(device, seq)` must be **plaintext metadata** in every transport.
-2. **Build the gap buffer anyway.**
+2. **Build the hold buffer anyway.**
 3. **The blob store does not exist in either tree**, and `FileRef` carries a
    device-local path that cannot survive a device boundary. The shell writes photos to
    one directory while the box lives in another. Lazy blob-by-hash is a real subproject
@@ -319,7 +319,7 @@ One writer per file means no conflicts to resolve, and an append-only file's eve
 visible state is a prefix of its final one, which is the prefix atomicity the merge
 rules assume.
 
-**Build the gap buffer regardless** — one integer per device and a holding table,
+**Build the hold buffer regardless** — one integer per device and a holding table,
 roughly fifty lines. It is cheaper than betting on any transport.
 
 **Encryption: not in the first version, and stated in the UI rather than implied.**

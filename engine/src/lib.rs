@@ -16,7 +16,9 @@
 //! way it links its own core today.
 
 pub mod id;
+pub mod log;
 pub mod op;
 
 pub use id::{DeviceId, Dot, EntityId, Hlc, IdGen};
+pub use log::{decode_stream, encode_stream, Log, LogError, VersionVector, BOX_FORMAT};
 pub use op::{Author, DateSpec, DecodeError, Group, Op, Value, RECORD_VERSION};

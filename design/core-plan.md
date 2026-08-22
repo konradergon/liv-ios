@@ -80,17 +80,27 @@ Ships with:
 
 ---
 
-## Phase 3 — The log
+## Phase 3 — The log · **DONE 2026-08-22**
 
-*~1 week.*
+*Eleven tests.*
 
 Append a group, read a range, version vectors, and the torn tail. One user action is
 one length-prefixed group with its own checksum: a reader that runs out of bytes
 mid-group drops the whole group.
 
-**The gap buffer ships here**, not with sync — one integer per device and a holding
-table, so an op is never applied without its predecessor. `core-decisions.md` says
-build it regardless of transport, because it is cheaper than betting on one.
+**The hold buffer ships here**, not with sync — so an op is never applied without the
+one it follows. `core-decisions.md` says build it regardless of transport, because it
+is cheap and it stops the transport choice from being load-bearing.
+
+*(Renamed from "gap buffer" on 2026-08-22: it holds ops waiting on gaps in a sequence,
+and in a codebase containing a text editor that name collides with the editing
+structure of the same name. "Pending" was unavailable too — the proposal queue owns
+that word.)*
+
+**Two forms, one encoding.** Locally the log is a SQLite table, so a write can join
+the view's transaction and either both land or neither does. On the wire it is a flat
+stream of the same frames — so a sync file is a log and a log is a sync file, with no
+conversion between them.
 
 ---
 
