@@ -19,9 +19,10 @@ above `ffi/` is portable Rust. Shells are thin: they call `liv_*` verbs to
 mutate (each opens the box, runs ONE transaction, closes) and decode one
 JSON `Snapshot` to render. Layers: `core/` (log, store, values) →
 `services/` (projections, search, import/export, clerk, recurrence,
-projection/vault) → `views/` (display helpers) → `ffi/` (the C ABI, 55
-verbs) → shells (`shell/ios` SwiftUI; `shell/macos` parked; a Tauri desktop
-under consideration in the separate lovable-notes-hub repo).
+projection/vault) → `views/` (display helpers) → `ffi/` (the C ABI, 59
+verbs) → shells (`shell/ios` SwiftUI, the only one; the hand-built macOS
+shell was DELETED on 2026-08-19, and the desktop is the Tauri app in the
+lovable-notes-hub working copy).
 
 ## Read these before judging anything
 

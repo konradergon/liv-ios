@@ -25,7 +25,7 @@ shell over the same Rust FFI.
 core/       Rust — the append-only log, entities = property→value cells, commands
 services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
 views/      Rust — value display + rendering helpers (cross-platform)
-ffi/        Rust — the ONE C ABI (56 `liv_*` fns); staticlib + cdylib + rlib
+ffi/        Rust — the ONE C ABI (59 `liv_*` fns); staticlib + cdylib + rlib
 cli/        Rust — a headless CLI over the same core; the VERIFICATION tool
 shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
 ```
@@ -97,13 +97,38 @@ architecturally clean and product-wrong is still wrong.
 
 ```
 cargo test                        # the whole Rust workspace (run before every PR)
-# the shell's OWN tests are eight launch flags — cargo test does not run them:
-#   xcrun simctl launch --console-pty <udid> app.liv.ios -spans.selfcheck 1
-#   …and -workspace/-calendar/-share/-places/-glyph/-palette/-editor. Silent = pass.
 cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 ./target/release/liv --log <box> list --all   # inspect a box from the CLI
 ```
-iOS shell: `shell/ios/build.sh` (add `run` to boot it in a simulator).
+
+**The iOS shell has three of its own, and `cargo test` runs none of them.**
+
+```
+shell/ios/build.sh          # one swiftc invocation; add `run` to boot a simulator
+shell/ios/suites.sh         # the ten launch-flag self-checks (the shell's unit tests)
+shell/ios/drive.sh          # drives the running app and asserts what is ON SCREEN
+```
+
+`suites.sh` replaces the recipe that used to be written here, which did not
+work: the app does not exit after a self-check, so a bare `simctl launch
+--console-pty` never returns, and bounding it with SIGALRM fails because
+`xcrun` forks `simctl`. The script has the working form and the reason.
+
+Both scripts INSTALL `build/Liv.app` themselves and refuse to run against
+a bundle older than the sources. Until 2026-08-27 they did not, and
+launched whatever was already on the simulator — a deliberately broken
+assertion still printed ten PASSes. When you change a check, break one
+assertion on purpose and watch it fail before you trust the green.
+
+**`suites.sh` is necessary and not sufficient.** It asks the MODEL, and on
+2026-08-23 a day was lost to a rework where the model was right and the screen
+never repainted — every suite passed while the app was visibly broken.
+`drive.sh tour` is the answer: it walks all six views and asserts, from the
+accessibility tree, which surface is actually rendered (`Surface.swift`). Run
+it before claiming a UI change works. Its other checks are `panel`, `bar`,
+`grid`, `lens` (a saved filter actually narrows the app), `facets` and
+`vault`.
+
 Do not commit unless the owner asks.
 
 ## Standing rules that keep this from rotting
@@ -115,8 +140,8 @@ keeps it avoided — each one exists because its absence is visible in the
 old codebase.
 
 1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
-   second file calling the C ABI is a defect. (Measured 2026-08-20: 38
-   calls over 32 distinct verbs, one file. Six other Swift files mention
+   second file calling the C ABI is a defect. (Measured 2026-08-28: 53
+   calls over 41 distinct verbs, one file. Nine other Swift files mention
    a verb NAME in a comment; none call one.)
 2. **Anything on the snapshot path OR THE WRITE PATH ships with a COST
    test**, not just a correctness one — see `services/tests/scale.rs` and
