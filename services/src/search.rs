@@ -70,63 +70,189 @@ pub struct Facet {
     pub values: Vec<FacetValue>,
 }
 
-/// Parse a raw DSL string into free-text terms + a structured Query.
+/// What one token of the DSL is, before the store is consulted.
 ///
-/// Qualifiers: `key:value` (Equals), `key<value` (AtMost, dates), `is:flag`
-/// (archived/trashed/working gates), `has:key` (Exists), `no:key` (Missing).
-/// Keys resolve through `property_id`; a `reference` key's value resolves by
-/// entity name (so `type:task` finds the type named "task"), everything else
-/// through the shared `parse_value`. An unrecognized or unparseable qualifier
-/// demotes to a free-text word — a search never errors on a typo. Archived is
-/// excluded by default (a `NotEquals(true)` the base query carries) unless
-/// `is:archived` asks for it.
+/// THE ONE TOKENISER. `parse_mode` consumes this rather than walking
+/// tokens itself, and the shell reads it back over the FFI instead of
+/// carrying a second lexer — which is what standing rule 4 asks for and
+/// what the phone violated with sixteen visible disagreements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TermOp {
+    Equals,
+    NotEquals,
+    AtMost,
+    Has,
+    No,
+    Is,
+    /// A bare word, or anything unreadable. A REQUIRED word, never dropped
+    /// (owner, 2026-08-27: "typo shows nothing").
+    Text,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Term {
+    pub op: TermOp,
+    /// The property name as typed, with any leading `-` removed.
+    pub key: String,
+    pub value: String,
+    /// The token respelled canonically, so joining a term list reproduces
+    /// a query the parser reads back the same way.
+    pub raw: String,
+}
+
+/// Split a raw query into terms. No store, no resolution, no opinion about
+/// whether a property exists.
+pub fn lex(raw: &str) -> Vec<Term> {
+    tokenize(raw).iter().map(|t| classify(t)).collect()
+}
+
+fn classify(token: &str) -> Term {
+    let text = |t: &str| Term {
+        op: TermOp::Text,
+        key: String::new(),
+        value: t.to_string(),
+        raw: t.to_string(),
+    };
+    if let Some((key, val)) = split_qualifier(token, ':') {
+        let (op, key) = match key {
+            "is" => (TermOp::Is, key),
+            "has" => (TermOp::Has, key),
+            "no" => (TermOp::No, key),
+            _ => match key.strip_prefix('-') {
+                Some(bare) => (TermOp::NotEquals, bare),
+                None => (TermOp::Equals, key),
+            },
+        };
+        return Term { raw: spell(&op, key, val), op, key: key.to_string(), value: val.to_string() };
+    }
+    if let Some((key, val)) = split_qualifier(token, '<') {
+        return Term {
+            raw: format!("{key}<{val}"),
+            op: TermOp::AtMost,
+            key: key.to_string(),
+            value: val.to_string(),
+        };
+    }
+    text(token)
+}
+
+/// `key:value`, and where the quotes go when something carries a space.
+///
+/// The VALUE is quoted — `people:"Anna Karlsson"` — which is the spelling
+/// `tokenize`'s own documentation gives and the one already in the shell.
+/// A key with a space is the odd case, and there the WHOLE term is quoted
+/// instead, minus included: `"valid until:friday"`. Either way the
+/// tokenizer strips the quotes and keeps the spaces, so both arrive as one
+/// token and split correctly.
+fn spell(op: &TermOp, key: &str, value: &str) -> String {
+    let minus = if *op == TermOp::NotEquals { "-" } else { "" };
+    if key.contains(' ') {
+        return format!("\"{minus}{key}:{value}\"");
+    }
+    if value.contains(' ') {
+        return format!("{minus}{key}:\"{value}\"");
+    }
+    format!("{minus}{key}:{value}")
+}
+
+/// Which job the query is doing.
+///
+/// `is:archived` cannot mean one thing. In a WORKSPACE it means "show me my
+/// archived things"; in SEARCH it means "look in the archive too" (owner,
+/// 2026-08-27: "lens means only, search means include"). Those are opposite
+/// filters, so the grammar stays one and the CALLER says which job it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// A search box: the flags WIDEN what is looked at.
+    Search,
+    /// A workspace lens or a saved filter: the flags RESTRICT to it.
+    Lens,
+}
+
+/// Parse for a search box. The shape every existing caller wants.
 pub fn parse(store: &Store, raw: &str) -> SearchQuery {
+    parse_mode(store, raw, Mode::Search)
+}
+
+/// Parse a raw DSL string into free-text terms + a structured Query, for
+/// the job `mode` names. `parse` is the `Mode::Search` wrapper.
+///
+/// Qualifiers: `key:value` (Equals), `key<value` (AtMost, dates), `is:flag`,
+/// `has:key` (Exists), `no:key` (Missing). Keys resolve through
+/// `property_id`; a `reference` key's value resolves by entity name (so
+/// `type:task` finds the type named "task"), everything else through the
+/// shared `parse_value`. An unrecognized or unparseable qualifier demotes to
+/// a free-text word — a search never errors on a typo.
+///
+/// `is:archived`, `is:trashed` and `is:working` are GATES: in a Search they
+/// widen (archived is excluded by default, and `is:archived` lifts that);
+/// in a Lens they restrict. `is:bookmarked` is never a gate — it is a plain
+/// constraint in both modes.
+pub fn parse_mode(store: &Store, raw: &str, mode: Mode) -> SearchQuery {
     let mut terms = Vec::new();
     let mut constraints = Vec::new();
     let mut include_working = false;
     let mut include_trashed = false;
     let mut include_archived = false;
 
-    for token in tokenize(raw) {
-        let token = token.as_str();
-        let lower = token.to_lowercase();
-        if let Some((key, val)) = split_qualifier(token, ':') {
-            match key {
-                "is" => match val {
-                    "archived" => include_archived = true,
-                    "trashed" => include_trashed = true,
-                    "working" => include_working = true,
-                    _ => terms.push(lower),
-                },
-                "has" => match property_id(store, val) {
-                    Some(p) => constraints.push(Constraint { property: p, op: Op::Exists }),
-                    None => terms.push(lower),
-                },
-                "no" => match property_id(store, val) {
-                    Some(p) => constraints.push(Constraint { property: p, op: Op::Missing }),
-                    None => terms.push(lower),
-                },
-                // A leading '-' on a property qualifier EXCLUDES it
-                // (bp3 a17): `-object:contact` → Op::NotEquals. is/has/no
-                // do not take the prefix — a '-is:'/'-has:' demotes to text.
-                _ => {
-                    let constraint = match key.strip_prefix('-') {
-                        Some(bare) => not_equals_constraint(store, bare, val),
-                        None => equals_constraint(store, key, val),
-                    };
-                    match constraint {
-                        Some(c) => constraints.push(c),
-                        None => terms.push(lower),
+    for term in lex(raw) {
+        let lower = term.raw.to_lowercase();
+        let (key, val) = (term.key.as_str(), term.value.as_str());
+        match term.op {
+            // The FLAGS. In Search they lift a gate; in a Lens they are an
+            // ordinary equality, which is what makes a workspace called
+            // Archive show the archive rather than everything plus it.
+            TermOp::Is => match val {
+                "archived" | "trashed" | "working" | "bookmarked" => {
+                    let gate = val != "bookmarked";
+                    if mode == Mode::Search && gate {
+                        match val {
+                            "archived" => include_archived = true,
+                            "trashed" => include_trashed = true,
+                            _ => include_working = true,
+                        }
+                    } else {
+                        match flag_constraint(store, val) {
+                            Some(c) => {
+                                // A lens that asks for the archive must be
+                                // shown it: the gate is lifted AND the
+                                // constraint restricts to it.
+                                match val {
+                                    "archived" => include_archived = true,
+                                    "trashed" => include_trashed = true,
+                                    "working" => include_working = true,
+                                    _ => {}
+                                }
+                                constraints.push(c);
+                            }
+                            None => terms.push(lower),
+                        }
                     }
                 }
-            }
-        } else if let Some((key, val)) = split_qualifier(token, '<') {
-            match at_most_constraint(store, key, val) {
+                _ => terms.push(lower),
+            },
+            TermOp::Has => match property_id(store, val) {
+                Some(p) => constraints.push(Constraint { property: p, op: Op::Exists }),
+                None => terms.push(lower),
+            },
+            TermOp::No => match property_id(store, val) {
+                Some(p) => constraints.push(Constraint { property: p, op: Op::Missing }),
+                None => terms.push(lower),
+            },
+            TermOp::NotEquals => match not_equals_constraint(store, key, val) {
                 Some(c) => constraints.push(c),
                 None => terms.push(lower),
-            }
-        } else {
-            terms.push(lower);
+            },
+            TermOp::Equals => match equals_constraint(store, key, val) {
+                Some(c) => constraints.push(c),
+                None => terms.push(lower),
+            },
+            TermOp::AtMost => match at_most_constraint(store, key, val) {
+                Some(c) => constraints.push(c),
+                None => terms.push(lower),
+            },
+            TermOp::Text => terms.push(term.value.to_lowercase()),
         }
     }
 
@@ -438,10 +564,8 @@ fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
     }
 }
 
-/// Split a token at the first `sep` into a non-empty (key, value). Returns
-/// None when either side is empty, so a bare "http://x" or "key:" degrades
-/// to free text rather than a half-qualifier.
-/// Whitespace tokens — except that a double-quoted run keeps its spaces:
+/// Split a raw query on whitespace — except that a double-quoted run keeps
+/// its spaces:
 /// `people:"Anna Karlsson"` is ONE token, `people:Anna Karlsson`, quotes
 /// stripped. The chip-click contract depends on it (the P11.5 review's
 /// live-reproduced high: without quoting, multi-word values split into a
@@ -468,6 +592,9 @@ fn tokenize(raw: &str) -> Vec<String> {
     out
 }
 
+/// Split a token at the first `sep` into a non-empty (key, value). Returns
+/// None when either side is empty, so a bare "http://x" or "key:" degrades
+/// to free text rather than a half-qualifier.
 fn split_qualifier(token: &str, sep: char) -> Option<(&str, &str)> {
     let (key, val) = token.split_once(sep)?;
     if key.is_empty() || val.is_empty() {
@@ -475,6 +602,14 @@ fn split_qualifier(token: &str, sep: char) -> Option<(&str, &str)> {
     } else {
         Some((key, val))
     }
+}
+
+/// `is:<flag>` as an ordinary equality on the flag's own bool property.
+/// Every flag in a Lens comes through here, and so does any flag in a
+/// Search that is not a gate (`is:bookmarked`).
+fn flag_constraint(store: &Store, flag: &str) -> Option<Constraint> {
+    let property = property_id(store, flag)?;
+    Some(Constraint { property, op: Op::Equals(Value::Bool(true)) })
 }
 
 /// `key:value` → an Equals constraint. A `reference` key resolves its value

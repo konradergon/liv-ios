@@ -364,6 +364,49 @@ fn a_quoted_qualifier_value_keeps_its_spaces() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_spaced_property_name_needs_the_whole_term_quoted() {
+    // TWO spellings reach the same term, and the shell writes both:
+    // `people:"Anna Karlsson"` when the VALUE has a space, and
+    // `"valid until:friday"` when the NAME does. There is nowhere else to
+    // put the quotes in the second case — `valid until:"friday"` leaves
+    // `valid` as a bare word and `until:friday` as a term for a property
+    // that does not exist.
+    //
+    // Pinned on 2026-08-27, when the shell's three separate spellers were
+    // folded into one that follows `spell`. Nothing covered this form, so
+    // nothing would have caught the shell being routed onto a spelling the
+    // core cannot read.
+    let dir = std::env::temp_dir().join("liv_search_spaced_name");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("box.log");
+    let mut session = Session::open(&path).unwrap();
+    liv_services::seed_if_fresh(&mut session).unwrap();
+
+    // A property whose NAME carries a space. Nothing stops a user making
+    // one — the schema is data — which is exactly why the grammar has a
+    // spelling for it.
+    liv_services::content::birth_property(&mut session, "valid until", "text").unwrap();
+    let note = liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 10)).unwrap();
+    liv_services::content::set_property(&mut session, note, "valid until", "friday").unwrap();
+    let other = liv_services::content::create_note(&mut session, DateTime::date(2026, 7, 11)).unwrap();
+
+    let store = session.store();
+    let sq = search::parse(store, "\"valid until:friday\"");
+    let hits = search::search(store, &sq, 200, |_| String::new());
+    assert!(hits.iter().any(|h| h.id == note), "the whole-quoted term resolves");
+    assert!(!hits.iter().any(|h| h.id == other), "and it filters, not free-texts");
+
+    // The minus rides INSIDE the quotes, which is what the shell writes.
+    let sq = search::parse(store, "\"-valid until:friday\"");
+    let hits = search::search(store, &sq, 200, |_| String::new());
+    assert!(!hits.iter().any(|h| h.id == note), "excluded");
+    assert!(hits.iter().any(|h| h.id == other), "and the rest survive");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---- P13 13a: facet exclusion (include→exclude→off) + recency + true count ----
 
 #[test]
@@ -448,4 +491,130 @@ fn empty_query_sorts_by_recency() {
         .into_iter().map(|h| h.id).collect();
     let pos = |id: Id| order.iter().position(|x| *x == id).unwrap();
     assert!(pos(newer) < pos(older), "most-recently-edited sorts first (modified-desc)");
+}
+
+// ---- 2026-08-27: one grammar, one parser ----
+//
+// The shell carried a second parser for this DSL and the two disagreed
+// sixteen ways. Retiring the Swift one makes THIS the only answer, so the
+// four places the core was the worse of the two are fixed here first.
+// Owner's rulings, 2026-08-27: "lens means only, search means include;
+// case-insensitive values; typo shows nothing".
+
+/// A small store carrying the four property definitions these tests need —
+/// area, tags, bookmarked, archived. Entities come from `thing`.
+fn bench() -> (Store, Id, Id, Id) {
+    let mut store = Store::new();
+    let mut cmds = Vec::new();
+    let area = store.allocate_id();
+    def(&mut cmds, area, "area", "text");
+    let tags = store.allocate_id();
+    def(&mut cmds, tags, "tags", "text");
+    let bookmarked = store.allocate_id();
+    def(&mut cmds, bookmarked, "bookmarked", "bool");
+    let archived = store.allocate_id();
+    def(&mut cmds, archived, "archived", "bool");
+    store.commit(cmds, "fields", Author::User).unwrap();
+    (store, area, tags, bookmarked)
+}
+
+fn thing(store: &mut Store, name: &str, cells: &[(Id, Value)]) -> Id {
+    let id = store.allocate_id();
+    let mut cmds = Vec::new();
+    live(&mut cmds, id, name);
+    for (p, v) in cells {
+        add(&mut cmds, id, *p, v.clone());
+    }
+    store.commit(cmds, "thing", Author::User).unwrap();
+    id
+}
+
+fn archived_id(store: &Store) -> Id {
+    store.named("archived").iter().copied().min().unwrap()
+}
+
+#[test]
+fn a_lens_restricts_where_a_search_widens() {
+    // The same token, two jobs. `is:archived` in a WORKSPACE means "show me
+    // my archived things"; in SEARCH it means "look in the archive too".
+    // One grammar can serve both only if the caller says which it is.
+    let (mut store, _, _, _) = bench();
+    let arch = archived_id(&store);
+    let live_one = thing(&mut store, "live one", &[]);
+    let old = thing(&mut store, "old one", &[(arch, Value::Bool(true))]);
+
+    let lens = search::parse_mode(&store, "is:archived", search::Mode::Lens);
+    assert_eq!(run(&store, &lens.query), vec![old], "a lens shows ONLY the archived");
+
+    let found = search::parse_mode(&store, "is:archived", search::Mode::Search);
+    let mut both = run(&store, &found.query);
+    both.sort();
+    let mut want = vec![live_one, old];
+    want.sort();
+    assert_eq!(both, want, "a search shows archived AS WELL");
+}
+
+#[test]
+fn bookmarked_is_a_flag_the_core_knows() {
+    // It shipped in the shell's parser and not in this one, so a bookmarks
+    // workspace worked until it went through the core and then emptied.
+    let (mut store, _, _, bookmarked) = bench();
+    let plain = thing(&mut store, "plain", &[]);
+    let kept = thing(&mut store, "kept", &[(bookmarked, Value::Bool(true))]);
+
+    let q = search::parse_mode(&store, "is:bookmarked", search::Mode::Lens);
+    let hits = run(&store, &q.query);
+    assert_eq!(hits, vec![kept]);
+    assert!(!hits.contains(&plain));
+}
+
+#[test]
+fn a_property_name_resolves_whatever_its_case() {
+    // `Area:Work` silently found nothing: the name index is an exact map,
+    // so the token demoted to free text and the screen went empty with no
+    // error anywhere.
+    let (mut store, area, _, _) = bench();
+    let n = thing(&mut store, "roof", &[(area, Value::text("Work"))]);
+
+    for raw in ["area:Work", "Area:Work", "AREA:Work"] {
+        let q = search::parse_mode(&store, raw, search::Mode::Lens);
+        assert_eq!(run(&store, &q.query), vec![n], "{raw} should resolve");
+    }
+}
+
+#[test]
+fn a_text_value_matches_whatever_its_case() {
+    // Values stay VERBATIM on the way in — "errands" must not become
+    // "Errands" — but matching is a different question, and a lens that
+    // misses its own value because someone capitalised it is a trap.
+    let (mut store, _, tags, _) = bench();
+    let n = thing(&mut store, "article", &[(tags, Value::text("Reading"))]);
+
+    for raw in ["tags:Reading", "tags:reading", "tags:READING"] {
+        let q = search::parse_mode(&store, raw, search::Mode::Lens);
+        assert_eq!(run(&store, &q.query), vec![n], "{raw} should match");
+    }
+    // And the cell itself is untouched by any of it.
+    let cell = store.get(n).unwrap();
+    assert_eq!(cell.all(tags).next(), Some(&Value::text("Reading")));
+}
+
+#[test]
+fn a_typo_shows_nothing_rather_than_everything() {
+    // The shell's parser ignored what it could not read, so a workspace
+    // query with one letter wrong quietly filtered nothing. The core's
+    // rule — an unreadable token is a required word — is the honest one
+    // (owner, 2026-08-27).
+    let (mut store, area, _, _) = bench();
+    thing(&mut store, "roof", &[(area, Value::text("Work"))]);
+
+    let q = search::parse_mode(&store, "wibble", search::Mode::Lens);
+    assert_eq!(q.terms, vec!["wibble".to_string()]);
+
+    let slip = search::parse_mode(&store, "no:projct", search::Mode::Lens);
+    assert_eq!(
+        slip.terms,
+        vec!["no:projct".to_string()],
+        "a misspelled property is a word, not a filter that matches everything"
+    );
 }

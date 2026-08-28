@@ -51,7 +51,18 @@ pub struct Store {
     /// quadratic twice before this index existed (T1, owner 2026-08-09).
     /// Unfiltered on purpose: trash and plumbing are read-time concerns.
     names: HashMap<String, Vec<Id>>,
-    /// The last transaction to touch each entity — derived, like the two
+    /// The same index keyed by a LOWERCASED name.
+    ///
+    /// `named` answers "who claims this name, exactly" and several callers
+    /// depend on that being exact. But a person typing `Area:Work` into a
+    /// workspace query means the property called `area`, and an exact map
+    /// answered nothing — the token silently demoted to free text and the
+    /// screen emptied with no error anywhere (owner, 2026-08-27). A second
+    /// index costs one map entry per named entity and keeps the lookup
+    /// O(1); scanning every entity on a miss would put a full pass on the
+    /// read path, which standing rule 2 exists to stop.
+    folded: HashMap<String, Vec<Id>>,
+    /// The last transaction to touch each entity — derived, like the three
     /// above, and maintained on append for the same reason (T3, owner
     /// 2026-08-22). It was recomputed by walking the whole history on
     /// every call, and `search` calls it once per query: 99 ms per
@@ -171,6 +182,13 @@ impl Store {
     /// the index only answers "who claims this name", in id order.
     pub fn named(&self, name: &str) -> &[Id] {
         self.names.get(name).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Every entity whose NAME matches this text ignoring case. Use it
+    /// where a PERSON typed the name — a query, a picker — and `named`
+    /// where the app did.
+    pub fn named_folded(&self, name: &str) -> &[Id] {
+        self.folded.get(&name.to_lowercase()).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Everything pointing at this entity, through any property or span —
@@ -519,6 +537,10 @@ impl Store {
                 if cell.property == props::NAME {
                     if let crate::value::Value::Text(name) = &cell.value {
                         self.names.entry(name.clone()).or_default().push(*entity);
+                        self.folded
+                            .entry(name.to_lowercase())
+                            .or_default()
+                            .push(*entity);
                     }
                 }
                 Ok(())
@@ -550,6 +572,11 @@ impl Store {
                 if removed.property == props::NAME {
                     if let crate::value::Value::Text(name) = &removed.value {
                         if let Some(ids) = self.names.get_mut(name) {
+                            if let Some(i) = ids.iter().position(|id| id == entity) {
+                                ids.remove(i);
+                            }
+                        }
+                        if let Some(ids) = self.folded.get_mut(&name.to_lowercase()) {
                             if let Some(i) = ids.iter().position(|id| id == entity) {
                                 ids.remove(i);
                             }

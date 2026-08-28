@@ -3023,3 +3023,76 @@ fn a_link_to_a_trashed_thing_still_saves() {
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+// ---- the lens seam: ids uncapped, terms lexed (owner, 2026-08-27) ----
+
+/// A lens box path with its sidecars cleared; returns (PathBuf, CString).
+fn lens_box(name: &str) -> (std::path::PathBuf, CString) {
+    let path = std::env::temp_dir().join(name);
+    for suffix in ["", ".declined", ".pending"] {
+        let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+    }
+    let c = CString::new(path.to_str().unwrap()).unwrap();
+    (path, c)
+}
+
+fn lens_json(c: &CString, raw: &str) -> serde_json::Value {
+    let q = CString::new(raw).unwrap();
+    let out = unsafe { liv_query_ids_at(c.as_ptr(), q.as_ptr()) };
+    assert!(!out.is_null(), "liv_query_ids_at returned null for {raw:?}");
+    let json = unsafe { CStr::from_ptr(out).to_str().unwrap().to_owned() };
+    unsafe { liv_string_free(out) };
+    serde_json::from_str(&json).unwrap()
+}
+
+#[test]
+fn a_lens_query_returns_every_id_and_its_terms() {
+    let (path, c) = lens_box("liv_ffi_lens_ids.log");
+    // More than search's 200-row page, so a cap would be visible.
+    for i in 0..250 {
+        let t = CString::new(format!("note {i} about roofs")).unwrap();
+        assert_ne!(unsafe { liv_capture_at(c.as_ptr(), t.as_ptr()) }, 0, "capture {i}");
+    }
+
+    let v = lens_json(&c, "roofs");
+    let ids = v["ids"].as_array().unwrap();
+    assert_eq!(
+        ids.len(),
+        250,
+        "a lens is never capped — search's 200-row page is not a membership set"
+    );
+
+    let terms = v["terms"].as_array().unwrap();
+    assert_eq!(terms.len(), 1);
+    assert_eq!(terms[0]["op"], "text");
+    assert_eq!(terms[0]["value"], "roofs");
+
+    for suffix in ["", ".declined", ".pending"] {
+        let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+    }
+}
+
+#[test]
+fn a_lens_term_round_trips_through_its_raw_spelling() {
+    // `setting()` on the shell rebuilds a query by joining the terms it did
+    // not touch, so a term's `raw` has to parse back to the same term or a
+    // hand-typed advanced query is silently rewritten.
+    let (path, c) = lens_box("liv_ffi_lens_terms.log");
+    let t = CString::new("anything").unwrap();
+    let _ = unsafe { liv_capture_at(c.as_ptr(), t.as_ptr()) };
+
+    let v = lens_json(&c, "area:Work -tags:old has:project people:\"Anna Karlsson\" wibble");
+    let terms = v["terms"].as_array().unwrap();
+    let ops: Vec<&str> = terms.iter().map(|t| t["op"].as_str().unwrap()).collect();
+    assert_eq!(ops, vec!["equals", "notequals", "has", "equals", "text"]);
+    let raws: Vec<&str> = terms.iter().map(|t| t["raw"].as_str().unwrap()).collect();
+    assert_eq!(
+        raws,
+        vec!["area:Work", "-tags:old", "has:project", "people:\"Anna Karlsson\"", "wibble"],
+        "a multi-word value keeps its quotes, and the minus rides inside them"
+    );
+
+    for suffix in ["", ".declined", ".pending"] {
+        let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+    }
+}

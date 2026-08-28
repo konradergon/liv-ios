@@ -493,6 +493,110 @@ pub unsafe extern "C" fn liv_search_at(
     })
 }
 
+/// Lex a query into terms. NO BOX, no lock, no store.
+///
+/// `[{"op":"equals","key":"area","value":"Work","raw":"area:Work"},…]`.
+/// Free with `liv_string_free`; null only on a bad string.
+///
+/// This exists because a shell editing a DRAFT query — a picker row saying
+/// "Area: Work", a value being replaced — needs the terms of a string that
+/// is not the active lens, and needs them per keystroke. Asking
+/// `liv_query_ids_at` would run the whole filter to throw the ids away.
+/// `lex` consults nothing, so this verb opens nothing.
+///
+/// # Safety
+/// `raw_query` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn liv_lex(raw_query: *const c_char) -> *mut c_char {
+    if raw_query.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(raw) = CStr::from_ptr(raw_query).to_str() else {
+        return std::ptr::null_mut();
+    };
+    match serde_json::to_string(&search::lex(raw)).ok().and_then(|s| CString::new(s).ok()) {
+        Some(s) => s.into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// The ids a LENS admits, plus the query's terms — the seam that lets the
+/// shell stop carrying a second parser.
+///
+/// `{"ids":[u64,…],"terms":[{"op":"equals","key":"area","value":"Work",
+/// "raw":"area:Work"},…]}`. Free the string with `liv_string_free`; null on
+/// a busy box.
+///
+/// WHY NOT `liv_search_at`. Three reasons, each on its own fatal. It caps
+/// at 200 ids, so a 300-member workspace would silently lose 100 rows off
+/// every surface. It computes facets on every call, which is roughly one
+/// full store scan per candidate value of every faceted property. And it
+/// reads a file off disk per surviving file entity, inside the box lock.
+/// A lens wants membership, not a ranked page.
+///
+/// `Mode::Lens`, so `is:archived` RESTRICTS to the archive here while it
+/// WIDENS in search (owner, 2026-08-27).
+///
+/// THE FILE READ IS PAID ONLY WHEN IT BUYS SOMETHING: a lens with no free
+/// text — which is nearly all of them, `area:Work` and the like — takes the
+/// structured path and touches no file at all. A lens that does carry a
+/// word uses the same corpus search does, because the two must agree about
+/// what that word matches.
+///
+/// # Safety
+/// `path` and `raw_query` must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+pub unsafe extern "C" fn liv_query_ids_at(
+    path: *const c_char,
+    raw_query: *const c_char,
+) -> *mut c_char {
+    if path.is_null() || raw_query.is_null() {
+        return std::ptr::null_mut();
+    }
+    let (Ok(raw), Ok(path_str)) = (CStr::from_ptr(raw_query).to_str(), CStr::from_ptr(path).to_str())
+    else {
+        return std::ptr::null_mut();
+    };
+    let cache = files::cache_dir(path_str);
+    with_box(path, std::ptr::null_mut(), |session| {
+        let store = session.store();
+        let sq = search::parse_mode(store, raw, search::Mode::Lens);
+        let ids: Vec<u64> = if sq.terms.is_empty() {
+            liv_services::run(store, &sq.query)
+        } else {
+            let file_prop = property_id(store, "file");
+            let format_prop = property_id(store, "format");
+            let extracted = |entity: &Entity| -> String {
+                let Some(fp) = file_prop else { return String::new() };
+                let Some(Value::File(file)) = entity.get(fp) else { return String::new() };
+                let format = format_prop
+                    .and_then(|p| entity.get(p))
+                    .and_then(|v| match v {
+                        Value::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("");
+                files::extracted_text(&cache, file, format)
+            };
+            search::search(store, &sq, usize::MAX, extracted)
+                .into_iter()
+                .map(|h| h.id)
+                .collect()
+        };
+        #[derive(Serialize)]
+        struct LensResult {
+            ids: Vec<u64>,
+            terms: Vec<search::Term>,
+        }
+        let result = LensResult { ids, terms: search::lex(raw) };
+        let out = match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
+            Some(s) => s.into_raw(),
+            None => std::ptr::null_mut(),
+        };
+        (out, Committed::Read)
+    })
+}
+
 /// Re-hash a file entity's referenced path; if the bytes changed, replace
 /// the File cell (one transaction — the hash change IS the integration).
 /// Returns 1 if changed & rewritten, 0 if unchanged, -1 if the path no

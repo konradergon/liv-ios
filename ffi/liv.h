@@ -1,4 +1,4 @@
-/* The one C seam between the macOS shell and the core.
+/* The one C seam between a native shell and the core.
    The shell never sees an entity or a byte of the log — it captures,
    reads one JSON snapshot, and triages by (entity, ordinal, fingerprint).
    Every call opens the box and closes it; the shell never holds it. */
@@ -109,6 +109,15 @@ int32_t liv_set_at(const char *path, uint64_t id,
    bare ids (the shell already holds each title/cells) in rank order.
    Free with liv_string_free. NULL when the box is unavailable. */
 char *liv_search_at(const char *path, const char *raw_query);
+
+/* Lex a query into terms — no box, no lock. Free with liv_string_free. */
+char *liv_lex(const char *raw_query);
+
+/* The ids a LENS admits, plus the query's lexed terms:
+   {"ids":[…],"terms":[{"op","key","value","raw"},…]}.
+   `is:archived` RESTRICTS here where it WIDENS in search. Free with
+   liv_string_free; NULL on a busy box. */
+char *liv_query_ids_at(const char *path, const char *raw_query);
 
 /* Every past version of an entity's content, NEWEST first:
    [{"seq":N,"time":..,"author":"..","label":"..","spans":[..]}]

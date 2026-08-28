@@ -1072,10 +1072,27 @@ pub fn run(store: &Store, query: &Query) -> Vec<Id> {
     matches.into_iter().map(|e| e.id).collect()
 }
 
+/// Does this entity carry this value for this property?
+///
+/// TEXT COMPARES WITHOUT CASE. A value is stored verbatim — `errands` must
+/// never become `Errands` on its way into a cell — but MATCHING is a
+/// different question, and a saved query that misses its own value because
+/// someone capitalised it is a trap (owner, 2026-08-27). Every other kind
+/// compares exactly, as it did.
+fn carries(entity: &Entity, property: Id, value: &Value) -> bool {
+    match value {
+        Value::Text(want) => entity.all(property).any(|v| match v {
+            Value::Text(got) => got.eq_ignore_ascii_case(want),
+            _ => false,
+        }),
+        _ => entity.has(property, value),
+    }
+}
+
 fn satisfies(entity: &Entity, constraint: &Constraint) -> bool {
     match &constraint.op {
-        Op::Equals(value) => entity.has(constraint.property, value),
-        Op::NotEquals(value) => !entity.has(constraint.property, value),
+        Op::Equals(value) => carries(entity, constraint.property, value),
+        Op::NotEquals(value) => !carries(entity, constraint.property, value),
         Op::Exists => entity.all(constraint.property).next().is_some(),
         Op::Missing => entity.all(constraint.property).next().is_none(),
         Op::AtMost(value) => entity
@@ -1091,8 +1108,15 @@ fn satisfies(entity: &Entity, constraint: &Constraint) -> bool {
 /// semantics exactly: not trashed, carries a value-kind, lowest id
 /// wins, plumbing included (definitions ARE plumbing, but we asked).
 pub fn property_id(store: &Store, name: &str) -> Option<Id> {
-    store
-        .named(name)
+    // EXACT FIRST, then case-insensitively. A person typing `Area:Work`
+    // means the property called `area`; before this the exact map answered
+    // nothing, the token demoted to free text, and the screen emptied with
+    // no error anywhere (owner, 2026-08-27).
+    definition(store, store.named(name)).or_else(|| definition(store, store.named_folded(name)))
+}
+
+fn definition(store: &Store, ids: &[Id]) -> Option<Id> {
+    ids
         .iter()
         .filter_map(|id| store.get(*id))
         .filter(|e| !e.trashed && e.get(props::VALUE_KIND).is_some())
