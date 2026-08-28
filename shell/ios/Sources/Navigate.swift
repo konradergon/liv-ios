@@ -1,4 +1,129 @@
+// liv iOS — WHERE YOU ARE, and how you got there.
+//
+// The roster of places, one place you have been, the capped way back,
+// the control that takes it, and the body each place draws. The first
+// three moved here from Chrome.swift on 2026-08-23 (standing rule 9):
+// they were the chrome's neighbours by accident, and they are this
+// file's subject — the view that reads `desk.back` and the suite that
+// pins it were already here.
+
 import SwiftUI
+
+// MARK: - the places
+
+/// The lens roster. Calendar is a v1 placeholder — its body renders
+/// EmptyHint("Calendar arrives with M3.") until M3.
+/// NOTES IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
+/// equally… and the notes should remain separate"). It leads because it
+/// is where the words are, and its ROOT is the list of them; a note open
+/// on the desk is one level inside it.
+enum Feature: String, CaseIterable, Identifiable {
+    case notes, today, everything, inbox, tasks, calendar
+
+    var id: String { rawValue }
+
+    /// THE ORDER, declared once. `allCases` follows the declaration and
+    /// the Go-to menu hard-coded a different one; only the menu's was
+    /// ever visible, so they were free to disagree. Putting the views in
+    /// the side panel makes a second one visible, which is exactly when
+    /// two orderings become a bug (standing rule 4).
+    static let inOrder: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
+
+    var title: String {
+        switch self {
+        case .notes: return "Notes"
+        case .today: return "Today"
+        case .everything: return "Everything"
+        case .inbox: return "Inbox"
+        case .tasks: return "Tasks"
+        case .calendar: return "Calendar"
+        }
+    }
+
+    /// The blueprints' own drawing for each place (Glyph.swift).
+    var glyph: LivGlyph {
+        switch self {
+        case .notes: return .note
+        case .today: return .today
+        case .everything: return .everything
+        case .inbox: return .inbox
+        case .tasks: return .tasks
+        case .calendar: return .calendar
+        }
+    }
+
+    // No per-view hue. The library's rows are bare and colourless
+    // (owner, 2026-08-13); a view is a place, and kind colour is for
+    // things. The drawing alone tells them apart.
+}
+
+// MARK: - where you are
+
+/// One place you have been: a state, or a document inside Docs. The
+/// stack exists for ONE control — the labelled back at the top of a
+/// document, which says where it will take you ("‹ Docs", "‹ Today",
+/// "‹ Kitchen rebuild"). Device state, never a cell.
+enum LivPlace: Equatable {
+    case state(Feature)
+    case document(UInt64)
+}
+
+/// The way back: a stack of places, with the cap ON THE TYPE.
+///
+/// A chain of link jumps is a stack, not a diary, so it forgets its
+/// oldest step rather than growing without bound. The rule lived as two
+/// lines inside `openDocument` before 2026-08-23; standing rule 3 says a
+/// rule that matters lives in a type.
+struct LivReturns: Equatable {
+    /// The deepest chain anyone keeps. Twenty jumps is already further
+    /// back than a person can name.
+    static let cap = 20
+
+    private var places: [LivPlace] = []
+    /// WHERE BACK CAME FROM. The forward leg, added 2026-08-23 with the
+    /// bar's `›` key. Obsidian draws that key permanently dead — that is
+    /// literally what the reference measures — and shipping a control
+    /// that can never work seemed worse than giving it the job every
+    /// browser gives it.
+    private var forwards: [LivPlace] = []
+
+    var last: LivPlace? { places.last }
+    var next: LivPlace? { forwards.last }
+    var count: Int { places.count }
+    var forwardCount: Int { forwards.count }
+
+    /// A FRESH navigation, which ends any forward journey: you cannot go
+    /// forward into a future you have just replaced. Every browser does
+    /// this and a user would notice immediately if it did not.
+    mutating func push(_ place: LivPlace) {
+        cap(&places, adding: place)
+        forwards = []
+    }
+
+    /// Back one step. `here` is where you are standing as you leave, and
+    /// it becomes the place `›` returns to.
+    mutating func stepBack(from here: LivPlace) -> LivPlace? {
+        guard let place = places.popLast() else { return nil }
+        cap(&forwards, adding: here)
+        return place
+    }
+
+    mutating func stepForward(from here: LivPlace) -> LivPlace? {
+        guard let place = forwards.popLast() else { return nil }
+        cap(&places, adding: here)
+        return place
+    }
+
+    mutating func clear() {
+        places = []
+        forwards = []
+    }
+
+    private func cap(_ stack: inout [LivPlace], adding place: LivPlace) {
+        stack.append(place)
+        if stack.count > Self.cap { stack.removeFirst(stack.count - Self.cap) }
+    }
+}
 
 // MARK: - where you were in a note (owner, 2026-08-18)
 
@@ -27,57 +152,6 @@ enum LivCaret {
     static func recall(_ note: UInt64) -> Int? { byNote[note] }
 }
 
-// MARK: - the way out of a document (owner, 2026-08-18)
-
-/// The top-left control INSIDE a document: an ordinary list→detail back,
-/// labelled with where it goes.
-///
-/// Why labelled and not a bare chevron: the destination is not always the
-/// list. Follow a `[[link]]` and it is the note you came from; open a
-/// note out of Today and it is Today. A bare arrow would be a guess; the
-/// word is the promise.
-///
-/// With nothing beneath it the destination is the list — a document is a
-/// level inside Docs, so up always exists.
-struct DocumentBack: View {
-    @EnvironmentObject var box: BoxModel
-    @EnvironmentObject var desk: DeskModel
-
-    var body: some View {
-        Button(action: act) {
-            HStack(spacing: 3) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                Text(label)
-                    .font(.system(size: LivType.body))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(LivTheme.text)
-            .frame(height: 44)
-            .frame(maxWidth: 170, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Back to \(label)")
-    }
-
-    private var label: String {
-        switch desk.back {
-        case .state(let feature): return feature.title
-        case .document(let id):
-            return box.entity(id).map(livRowTitle) ?? "Notes"
-        case nil: return Feature.notes.title
-        }
-    }
-
-    private func act() {
-        if desk.back == nil {
-            desk.showList()
-        } else {
-            desk.goBack()
-        }
-    }
-}
 
 // MARK: - a state's body
 
@@ -90,12 +164,12 @@ struct FeatureBody: View {
     var body: some View {
         Group {
             switch feature {
-            case .notes: EmptyView()  // Docs draws itself (NotesList / the editor)
-            case .today: TodayView()
-            case .everything: EverythingView()
-            case .inbox: InboxView()
-            case .tasks: TasksView()
-            case .calendar: CalendarView()
+            case .notes: EmptyView()  // Notes draws itself (the tab grid / the editor)
+            case .today: TodayView().livSurface(feature.rawValue)
+            case .everything: EverythingView().livSurface(feature.rawValue)
+            case .inbox: InboxView().livSurface(feature.rawValue)
+            case .tasks: TasksView().livSurface(feature.rawValue)
+            case .calendar: CalendarView().livSurface(feature.rawValue)
             }
         }
         .transition(LivMotion.surface)
@@ -103,7 +177,7 @@ struct FeatureBody: View {
         // The bar floats over this, and the glass controls over that: a
         // state keeps room for both, and its own content scrolls under
         // them (owner, 2026-08-17).
-        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
+        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: LivBar.room) }
         .safeAreaInset(edge: .top) { LivTopScrim() }
     }
 }
@@ -162,7 +236,14 @@ func livPlacesSelfCheck() -> [String] {
         if !ok { failures.append("FAIL \(label) \(detail())") }
     }
 
-    let desk = DeskModel()
+    // A SCRATCH desk, on a workspace nobody has. This suite opens sixty
+    // documents to prove the way-back stack is capped, and every one of
+    // them is a real tab write — on a plain `DeskModel()` that lands in
+    // the Notes plane of whatever workspace you are actually using. It
+    // survived only because the first snapshot sweeps ids the box does
+    // not know (2026-08-23; the tabs and planes suites were fixed the
+    // same way the day before).
+    let desk = DeskModel.scratchForSelfCheck()
     desk.shapeOf = { _ in .document }
 
     // A state replaces a state — states are roots, never children.
@@ -201,11 +282,38 @@ func livPlacesSelfCheck() -> [String] {
     for id in 100..<160 { desk.open(UInt64(id)) }
     check("the way back is capped", desk.returns.count <= 20, "\(desk.returns.count)")
 
+    // THE FORWARD LEG (2026-08-23, with the bar's `›` key).
+    let fresh = DeskModel.scratchForSelfCheck()
+    fresh.shapeOf = { _ in .document }
+    check("nothing to go forward to at rest", fresh.forward == nil)
+    fresh.go(.today)
+    fresh.open(3)
+    check("still nothing forward after a normal journey", fresh.forward == nil)
+    fresh.goBack()
+    check("back leaves a forward step", fresh.forward == .document(3), "\(String(describing: fresh.forward))")
+    check("and back went where it said", fresh.state == .today && fresh.openDoc == nil)
+    fresh.goForward()
+    check("forward returns you", fresh.openDoc == 3 && fresh.state == .notes)
+    check("and nothing is left ahead", fresh.forward == nil)
+    check("while back is where you came from", fresh.back == .state(.today))
+    // A FRESH navigation ends the forward journey — you cannot go
+    // forward into a future you have just replaced.
+    fresh.goBack()
+    check("back again leaves a forward step", fresh.forward != nil)
+    fresh.go(.calendar)
+    check("a new move clears the way forward", fresh.forward == nil, "\(String(describing: fresh.forward))")
+    // The forward stack is capped like the back one.
+    for id in 200..<260 { fresh.open(UInt64(id)) }
+    for _ in 0..<60 { fresh.goBack() }
+    check("the way forward is capped", fresh.returns.forwardCount <= 20, "\(fresh.returns.forwardCount)")
+    DeskModel.forgetScratchForSelfCheck()
+
     // A record never becomes the document surface — it rises as a card.
     desk.shapeOf = { _ in .record }
     let openBefore = desk.openDoc
     desk.open(5)
     check("a record opens as a card", desk.recordCard == 5 && desk.openDoc == openBefore)
 
+    DeskModel.forgetScratchForSelfCheck()
     return failures
 }

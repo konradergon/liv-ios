@@ -159,6 +159,84 @@ enum LivType {
 /// bigger text would simply be more cramped in the same box (owner:
 /// "UI in the property panel is cramped towards the top when almost half
 /// of the panel is empty").
+/// THE LEFT PANEL, measured off the owner's own reference.
+///
+/// Every number here was read out of `~/Desktop/Throwaway/ui-inspo/left-panel.MOV`
+/// frame by frame (2026-08-23) rather than invented, because the owner
+/// asked for the aesthetic to be COPIED, not approximated. The clip is
+/// the ChatGPT iOS app; the two attached screenshots (Notesnook,
+/// Obsidian) agree with it on everything they both show.
+///
+/// **The panel is not full screen.** That reverses rev 6's "both panels
+/// are FULL-SCREEN (Notesnook's layout is the model)" of 2026-08-03 —
+/// the owner looked at it on a phone and said no.
+enum LivPanel {
+    /// How much of the desk stays on screen beside the panel. The
+    /// reference leaves 99pt of a 430pt screen; a fixed peek rather than
+    /// a percentage, so a small phone keeps a real, tappable sliver
+    /// instead of a stripe.
+    static let peek: CGFloat = 100
+
+    /// The panel's width: everything except the peek. 330 of 430 = 77%,
+    /// which is what the reference measures.
+    static let width: CGFloat = max(240, LivScreen.width - peek)
+
+    /// One inset for EVERYTHING in the panel — the title, every glyph
+    /// column, every section heading, every row's text, and the trailing
+    /// edge of the header button. The reference uses 28 for all of them,
+    /// and that single column is what makes two different lists read as
+    /// one.
+    static let inset: CGFloat = 28
+
+    /// One rhythm for the whole panel: nav rows and list rows alike.
+    static let row: CGFloat = 53
+
+    /// The lit row's fill sits 12pt from each panel edge — 16pt OUTSIDE
+    /// the text inset, so the fill is the row plus its padding rather
+    /// than a box drawn around the words.
+    static let litInset: CGFloat = 12
+    static let litRadius: CGFloat = 12
+    static let litHeight: CGFloat = 49
+
+    /// The desk's corner radius while it is pushed aside. This is the
+    /// DEVICE's own display radius, which is the whole trick: the desk
+    /// reads as the same screen moved sideways, not as a card.
+    static let deskRadius: CGFloat = 55
+
+    /// How far the desk's own content fades while the panel is open.
+    /// The reference measures 0.50 on three separate elements. It is a
+    /// wash toward the background, never a black scrim — so in a dark
+    /// theme it is the canvas laid over the content, not shade.
+    static let wash: CGFloat = 0.5
+
+    /// The shadow the desk casts back onto the panel. No vertical
+    /// offset; it reaches about 36pt.
+    static let shadowOpacity: CGFloat = 0.10
+    static let shadowRadius: CGFloat = 18
+}
+
+/// The screen, asked once. `UIScreen.main.bounds` is deprecated and was
+/// being read from five places that all had to agree about how far a
+/// panel travels; they now agree by construction (standing rule 4).
+enum LivScreen {
+    /// READ ONCE, not per render.
+    ///
+    /// It was a computed property, and `deskShift` reads it on every
+    /// evaluation of the desk's body — so every render pulled UIKit
+    /// scene state into the SwiftUI graph. The result was not a crash
+    /// but something worse to find: bodies kept evaluating with the
+    /// right values while the screen stopped updating at all. Switching
+    /// view left the old surface on screen with the new chrome over it,
+    /// and a stack sample showed the layout attributes cycling (found
+    /// live, 2026-08-23, after bisecting eight innocent modifiers).
+    ///
+    /// A phone does not change its screen width. One read at launch.
+    static let width: CGFloat = {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
+            .screen.bounds.width ?? 430
+    }()
+}
+
 enum LivRow {
     /// An ordinary list row: a label, a value, a chevron. 54 was the
     /// number when a row's text was 16–18 and every row had a hairline
@@ -225,12 +303,45 @@ enum LivRow {
 /// panel and the feature bodies, 62 in App, 88 in Notes, 110 inside the
 /// editor), none of them the bar's actual height. Those four are still
 /// there; only the scroll-away chrome asks.
+/// THE BOTTOM BAR, measured off `bar-and-buttons-dynamic-hiding.MOV`
+/// (Obsidian for iOS) on 2026-08-23. The owner asked for "the same
+/// button set you'd expect in a browser or Obsidian — literally", so
+/// these are the reference's own proportions rather than ours.
 enum LivBar {
-    static let height: CGFloat = 50
+    /// 57 measured; 56 keeps the capsule's radius a whole number.
+    static let height: CGFloat = 56
     /// The breath between the bar and the screen's bottom edge.
     static let gap: CGFloat = 4
-    /// From the bottom of the SCREEN to the top of the bar.
+    /// How far the capsule stands in from each screen edge. The
+    /// reference measures 43 of 430 — the bar is NARROWER than the text
+    /// column beside it, which is what stops it reading as a toolbar.
+    static let sideInset: CGFloat = 42
+    /// From the capsule's end to the first glyph's centre.
+    static let endInset: CGFloat = 34
+    static let glyph: CGFloat = 22
+    /// DISABLED IS INK, and nothing else: same glyph, same size, same
+    /// place. The reference's disabled grey is 31% of its enabled ink,
+    /// with no plate, no border and no removal from the row.
+    static let disabledInk: CGFloat = 0.3
+    /// From the bottom of the SCREEN to the top of the bar. Includes the
+    /// live safe area, so it is for offsets and paddings only.
     static var clearance: CGFloat { height + gap + LivSafeArea.bottom }
+
+    /// THE ROOM A SURFACE LEAVES FOR THE BAR — and the one to use inside
+    /// `.safeAreaInset`.
+    ///
+    /// It must NOT read the live safe area. A safe-area inset whose own
+    /// height is derived from the safe area feeds itself: AttributeGraph
+    /// reports a cycle, and the surface then STOPS UPDATING while its
+    /// body keeps evaluating perfectly — switching view leaves the old
+    /// screen up under the new chrome. That cost half a day and eight
+    /// innocent suspects on 2026-08-23; the giveaway was `desk.state`
+    /// logging the right value while the pixels never changed.
+    ///
+    /// A surface inside a safe-area inset is already above the home
+    /// indicator, so the bar's own height plus its gap is the whole
+    /// requirement.
+    static let room: CGFloat = height + gap + 8
 }
 
 enum LivMotion {

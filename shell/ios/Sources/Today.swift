@@ -40,16 +40,33 @@ struct TodayView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var selectedDay = Civil.todayDay()
     /// The task status vocabulary, board order; `completes` drives the
     /// ring, the LATE predicate and the done-collapse.
     @State private var taskOptions: [StatusOption] = []
-    @State private var doneExpanded = false
-    /// Whether the LATE pile is open. nil = nobody has said, so the
-    /// count decides (see `lateOpenByDefault`); once you tap, your tap
-    /// wins for the rest of the session.
-    @State private var lateOpen: Bool?
     @State private var duePick: TodayDuePick?
+
+    /// WHERE YOU ARE in this view: the day, and the two piles you have
+    /// opened. Not `@State` since 2026-08-22 — it is what a Today tab
+    /// HOLDS (design/tabs.md, Reading B), so it lives in the plane and
+    /// comes back with it. With no tab, `pos` is today with both piles
+    /// at their defaults, which is what this screen always did.
+    private var pos: TodayPosition { TodayPosition(token: desk.position(.today)) }
+    private var selectedDay: Int64 { pos.day }
+    private var doneExpanded: Bool { pos.doneExpanded }
+    private var lateOpen: Bool? { pos.lateOpen }
+
+    private func park(day: Int64? = nil, doneExpanded: Bool? = nil, lateOpen: Bool?? = nil) {
+        let next = TodayPosition(
+            day: day ?? pos.day,
+            doneExpanded: doneExpanded ?? pos.doneExpanded,
+            lateOpen: lateOpen ?? pos.lateOpen)
+        desk.park(.today, at: next.token)
+    }
+
+    /// The strip writes through the plane, so moving the day IS parking.
+    private var dayBinding: Binding<Int64> {
+        Binding(get: { pos.day }, set: { park(day: $0) })
+    }
 
     /// A few late tasks are worth seeing; a pile of them is a wall.
     /// Owner, 2026-08-18: *"so much LATE stuff i can't see what's for
@@ -80,7 +97,7 @@ struct TodayView: View {
         List {
             Group {
                 header(today: today, left: timedOpen.count + late.count)
-                TodayDateStrip(selected: $selectedDay, today: today)
+                TodayDateStrip(selected: dayBinding, today: today)
                     .padding(.vertical, 6)
 
                 if !late.isEmpty {
@@ -152,7 +169,7 @@ struct TodayView: View {
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
         // Room under the last row for the add button to sit over.
-        .contentMargins(.bottom, 88, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
@@ -201,7 +218,7 @@ struct TodayView: View {
     /// done-today row already uses on this screen (standing rule 4).
     private func lateHeader(_ count: Int, open: Bool) -> some View {
         Button {
-            lateOpen = !open
+            park(lateOpen: .some(!open))
         } label: {
             HStack(spacing: 7) {
                 Circle().fill(LivTheme.red).frame(width: 7, height: 7)
@@ -241,7 +258,7 @@ struct TodayView: View {
 
     private func doneCollapse(_ count: Int) -> some View {
         Button {
-            doneExpanded.toggle()
+            park(doneExpanded: !doneExpanded)
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: doneExpanded ? "chevron.down" : "chevron.right")
@@ -462,10 +479,9 @@ struct TodayView: View {
     /// The lens (M4) + the archived filter Today always lacked (recon,
     /// phase 5 — Tasks and Everything both had it).
     private var datedRows: [EntityRow] {
-        let lens = workspaces.activeQuery
         return (box.snap?.dated ?? []).compactMap { box.entity($0) }
             .filter {
-                $0.trashed != true && $0.archived != true && lens.matches($0)
+                $0.trashed != true && $0.archived != true && workspaces.admits($0)
             }
     }
 
@@ -473,8 +489,11 @@ struct TodayView: View {
     /// carrying. Capped: this is a nudge under the day, not a second
     /// Tasks screen, and the state key is one tap from the whole list.
     private var nextUp: [EntityRow] {
-        let lens = workspaces.activeQuery
-        let lensOn = workspaces.lensOn && !lens.isInert
+        // No `lensOn` guard any more: `admits` returns true when there is
+        // no lens, so the two readings collapse into one. `isInert` was the
+        // Swift parser's idea that a query it could not read filters
+        // nothing — the core has no such notion, and a typo now shows
+        // nothing rather than everything (owner, 2026-08-27).
         return (box.snap?.everything ?? [])
             .compactMap { box.entity($0) }
             .filter { row in
@@ -482,7 +501,7 @@ struct TodayView: View {
                     && livCanTick(row)
                     && (row.due ?? 0) == 0
                     && !isDoneStatus(row)
-                    && (!lensOn || lens.matches(row))
+                    && workspaces.admits(row)
             }
             .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
             .prefix(5)
@@ -492,7 +511,7 @@ struct TodayView: View {
     /// The row's ONE anchor, in the blueprint's order: project → people
     /// → subject → area. Nothing renders when it has none.
     private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "people", "subjects", "area"] {
+        for property in ["project", "people", "tags", "area"] {
             let hit = (row.cells ?? []).first {
                 $0.property == property && !($0.value ?? "").isEmpty
             }
@@ -561,12 +580,11 @@ struct TodayView: View {
         let dayIds = Set(items.map(\.row.id))
         // The lens applies to occurrence SERIES rows too — a filtered
         // surface filters whole.
-        let lens = workspaces.activeQuery
         for occ in box.snap?.occurrences ?? [] {
             guard let series = occ.series, let civil = occ.civil,
                 Civil.day(of: civil) == day, !dayIds.contains(series),
                 let row = box.entity(series), row.trashed != true,
-                row.archived != true, lens.matches(row)
+                row.archived != true, workspaces.admits(row)
             else { continue }
             items.append(
                 TodayAgendaItem(
@@ -590,13 +608,12 @@ struct TodayView: View {
     }
 
     private func capturedTodayCount(today: Int64) -> Int {
-        let lens = workspaces.activeQuery
         return (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
             .filter { row in
                 guard row.trashed != true, let created = row.created else {
                     return false
                 }
-                return Civil.day(of: created) == today && lens.matches(row)
+                return Civil.day(of: created) == today && workspaces.admits(row)
             }
             .count
     }
@@ -666,7 +683,10 @@ struct TodayView: View {
     /// at today; a selection behind it would be invisible).
     private func loadWindow() {
         let today = Civil.todayDay()
-        if selectedDay < today { selectedDay = today }
+        // Only a PARKED day can go stale. With no tab there is nothing to
+        // snap forward, and parking here would mint a tab on every launch
+        // for someone who never asked for one.
+        if desk.position(.today) != nil, selectedDay < today { park(day: today) }
         box.refreshWindow(
             from: Civil.stamp(day: Civil.addDays(today, -1), hhmm: 0),
             to: Civil.stamp(day: Civil.addDays(today, 7), hhmm: 2359))

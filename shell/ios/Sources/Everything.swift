@@ -13,27 +13,13 @@
 //      workspace lens like every workspace view — "workspaces define
 //      context consistently via property filtering" outranks the old
 //      "Everything never hides" rule. The always-complete surface is the
-//      All workspace: one switch away, and the LensChip in the header
-//      says when a lens is on. (The old rule's text, for the record: "a
-//      screen called Everything that hides things is a lie.")
+//      All workspace: one switch away. (The old rule's text, for the
+//      record: "a screen called Everything that hides things is a lie.")
 //   2. Unfiled means NO AREA — not "no type". The Inbox's rule keys on
 //      type, which is why a task you hesitated over was missing from every
 //      area AND from the Inbox (the study's §2.6 hole).
 
 import SwiftUI
-
-/// Which slice of the box is on screen.
-private enum EverythingLens: String, CaseIterable, Identifiable {
-    case all, upcoming, unfiled
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .upcoming: return "Upcoming"
-        case .unfiled: return "Unfiled"
-        }
-    }
-}
 
 struct EverythingView: View {
     @EnvironmentObject var box: BoxModel
@@ -41,7 +27,13 @@ struct EverythingView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var lens: EverythingLens = .all
+    /// NOT `@State` since 2026-08-22. The slice is what this view's tab
+    /// HOLDS (design/tabs.md, Reading B), so it lives in the plane, is
+    /// saved with it, and two tabs can sit on two different slices. The
+    /// view derives it and never stores it.
+    private var lens: EverythingLens {
+        EverythingLens(rawValue: desk.position(.everything) ?? "") ?? .all
+    }
 
     var body: some View {
         let slice = rows(lens)
@@ -74,7 +66,7 @@ struct EverythingView: View {
             box.refresh()
             // The selected slice may have just been hidden by a
             // workspace switch.
-            if !lenses.contains(lens) { lens = .all }
+            if !lenses.contains(lens) { desk.park(.everything, at: EverythingLens.all.rawValue) }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { box.refresh() }
@@ -104,7 +96,7 @@ struct EverythingView: View {
         HStack(spacing: 8) {
             ForEach(lenses) { l in
                 Button {
-                    lens = l
+                    desk.park(.everything, at: l.rawValue)
                 } label: {
                     Text(l.title)
                         .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
@@ -129,10 +121,9 @@ struct EverythingView: View {
     private func rows(_ lens: EverythingLens) -> [EntityRow] {
         // The workspace lens applies here since rev 6 — the All workspace
         // is the complete view.
-        let wsLens = workspaces.activeQuery
         let all = (box.snap?.everything ?? [])
             .compactMap { box.entity($0) }
-            .filter { $0.trashed != true && $0.archived != true && wsLens.matches($0) }
+            .filter { $0.trashed != true && $0.archived != true && workspaces.admits($0) }
         switch lens {
         case .all:
             return all.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
@@ -205,7 +196,7 @@ struct EverythingView: View {
     /// subject → people → area. First one that exists wins; nothing
     /// renders when none does.
     private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "subjects", "people", "area"] {
+        for property in ["project", "tags", "people", "area"] {
             let hit = (row.cells ?? []).first {
                 $0.property == property && !($0.value ?? "").isEmpty
             }

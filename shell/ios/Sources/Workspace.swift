@@ -1,5 +1,7 @@
-// liv iOS — workspaces + filters (design/ios.md, M4). The model layer:
-// pure, testable, no SwiftUI in the parser.
+// liv iOS — workspaces + filters (design/ios.md, M4). The workspace and
+// filter model, the snapshot row decoders, the term-spelling helpers and
+// the lens chip. The query PARSER is not here: it moved to the core on
+// 2026-08-27.
 //
 // THE DATA MODEL (settled 2026-07-26, restated so nothing drifts):
 // a workspace is an entity carrying ONE `query` cell — a search-DSL string
@@ -14,8 +16,11 @@
 // filter is the same thing minus the stamp: a view entity with a `query`
 // cell. One grammar, one parser, one mental model.
 //
-// The lens runs CLIENT-SIDE against the snapshot rows the phone already
-// holds — no search round-trip per surface, per keystroke, or per refresh.
+// The lens is answered by the CORE. `refreshLens` sends the combined
+// workspace-and-filter query to `liv_query_ids_at` and keeps the id set it
+// returns; `admits` only reads that set. One round-trip per lens change
+// and one per snapshot — not one per surface, and not one per keystroke:
+// editing a draft query lexes it with `liv_lex`, which opens no box.
 
 import Combine
 import Foundation
@@ -23,255 +28,63 @@ import SwiftUI
 
 // MARK: - the grammar
 
-/// One parsed token. Everything the parser does not understand becomes
-/// `.ignored`: it never filters (a typo must never empty every list) and it
-/// never stamps (a guess must never become a cell).
-enum LivTerm: Equatable {
-    /// `key:value` — the ONE stamping shape.
-    case equals(property: String, value: String)
-    /// `-key:value` — excludes; vacuously true where the cell is absent
-    /// (the core's Op::NotEquals, same semantics).
-    case notEquals(property: String, value: String)
-    /// `has:key` — the property is present with a non-empty value.
-    case missingNot(property: String)
-    /// `no:key` — the property is absent (or empty).
-    case missing(property: String)
-    /// `is:archived` / `is:trashed` / `is:bookmarked` — the row's own flags.
-    case flag(String)
-    /// Free text, `due<20260801`, `is:nonsense`, a bare word — kept for the
-    /// summary line, inert for both matching and stamping.
-    case ignored(String)
-}
-
-/// A parsed workspace / filter query.
-struct LivQuery: Equatable {
-    let raw: String
-    let terms: [LivTerm]
-
-    static let empty = LivQuery(raw: "", terms: [])
-
-    /// The value a picker shows for one property — the first `key:value`
-    /// term naming it, or nil for "Any". Only `equals` counts: a lens
-    /// built from pickers is made of the one stamping shape.
-    func value(of property: String) -> String? {
-        for term in terms {
-            if case .equals(let p, let v) = term,
-                p.compare(property, options: .caseInsensitive) == .orderedSame
-            {
-                return v
-            }
-        }
-        return nil
+/// SPELLING a term, and rewriting the text around it.
+///
+/// What is left of the shell's query handling after the parser went to the
+/// core on 2026-08-27. Nothing here decides what a query MEANS — it only
+/// produces and edits text, which is the half a shell legitimately owns.
+enum LivTerms {
+    /// `key:value`, or `-key:value` to exclude.
+    ///
+    /// The VALUE is quoted when it carries a space — `people:"Anna
+    /// Karlsson"` — and the WHOLE term when the key does. Same rule as
+    /// `services::search::spell`, and it has to stay the same rule: the
+    /// core respells every term it hands back, so a difference here would
+    /// rewrite a hand-typed query the first time a picker touched it.
+    static func term(_ property: String, _ value: String, exclude: Bool = false) -> String {
+        let minus = exclude ? "-" : ""
+        let clean = value.replacingOccurrences(of: "\"", with: "")
+        if property.contains(" ") { return "\"\(minus)\(property):\(clean)\"" }
+        if clean.contains(" ") { return "\(minus)\(property):\"\(clean)\"" }
+        return "\(minus)\(property):\(clean)"
     }
 
-    /// Put a picked value back into the raw text, replacing whatever that
-    /// property said before and leaving every other term exactly as it
-    /// was typed. Editing through the pickers therefore never rewrites
-    /// an advanced query someone hand-made — it only touches its own row.
-    func setting(_ property: String, to value: String?) -> String {
-        var kept = LivQuery.tokenize(raw).filter { token in
-            guard let (key, _) = LivQuery.splitQualifier(token) else { return true }
-            return key.compare(property, options: .caseInsensitive) != .orderedSame
-        }
+    /// What a picker row shows for one property, or nil for "Any". Only an
+    /// equality counts: a lens built from pickers is made of the one
+    /// stamping shape.
+    static func value(of property: String, in terms: [BoxModel.LivQueryTerm]) -> String? {
+        terms.first {
+            $0.op == "equals"
+                && $0.key.compare(property, options: .caseInsensitive) == .orderedSame
+        }?.value
+    }
+
+    /// Put a picked value back, replacing whatever that property said and
+    /// leaving every other term exactly as the core respelled it. Editing
+    /// through a picker therefore never rewrites an advanced query someone
+    /// hand-made — it only touches its own row.
+    static func setting(
+        _ property: String, to value: String?, in terms: [BoxModel.LivQueryTerm]
+    ) -> String {
+        var kept = terms
+            .filter { $0.key.compare(property, options: .caseInsensitive) != .orderedSame }
+            .map(\.raw)
         if let value, !value.trimmingCharacters(in: .whitespaces).isEmpty {
-            kept.append(LivQuery.term(property, value))
+            kept.append(term(property, value))
         }
         return kept.joined(separator: " ")
     }
 
-    /// `key:value`, quoted when the value has a space — the spelling the
-    /// core's DSL and `parse` above both already understand.
-    static func term(_ property: String, _ value: String) -> String {
-        let needsQuotes = value.contains(" ") || value.contains("\"")
-        let clean = value.replacingOccurrences(of: "\"", with: "")
-        return needsQuotes ? "\(property):\"\(clean)\"" : "\(property):\(clean)"
-    }
-
-    /// The five understood shapes, quote-aware, in the core DSL's spelling:
-    ///
-    ///   key:value          equality (STAMPS)
-    ///   -key:value         exclusion
-    ///   has:key            presence
-    ///   no:key             absence
-    ///   is:flag            archived | trashed | bookmarked
-    ///   key:"two words"    quoted value
-    ///
-    /// Anything else is `.ignored` — never a filter, never a stamp.
-    static func parse(_ s: String) -> LivQuery {
-        var terms: [LivTerm] = []
-        for token in tokenize(s) {
-            guard let (key, value) = splitQualifier(token) else {
-                terms.append(.ignored(token))
-                continue
-            }
-            switch key.lowercased() {
-            case "is":
-                let flag = value.lowercased()
-                if ["archived", "trashed", "bookmarked"].contains(flag) {
-                    terms.append(.flag(flag))
-                } else {
-                    terms.append(.ignored(token))  // is:working etc — inert here
-                }
-            case "has":
-                terms.append(.missingNot(property: value))
-            case "no":
-                terms.append(.missing(property: value))
-            default:
-                if key.hasPrefix("-") {
-                    let bare = String(key.dropFirst())
-                    if bare.isEmpty {
-                        terms.append(.ignored(token))
-                    } else {
-                        terms.append(.notEquals(property: bare, value: value))
-                    }
-                } else {
-                    terms.append(.equals(property: key, value: value))
-                }
-            }
-        }
-        return LivQuery(raw: s, terms: terms)
-    }
-
-    /// The stamp: equality terms ONLY, in written order, exact duplicates
-    /// dropped. Two values for one property is a contradiction the user
-    /// typed — both are kept and the last write wins, exactly as `set` does.
-    var stampCells: [(property: String, value: String)] {
+    /// The stamp: the equality terms, in written order, exact duplicates
+    /// dropped.
+    static func stamps(_ terms: [BoxModel.LivQueryTerm]) -> [(property: String, value: String)] {
         var out: [(property: String, value: String)] = []
-        for term in terms {
-            guard case .equals(let property, let value) = term else { continue }
-            guard !out.contains(where: { $0.property == property && $0.value == value })
+        for t in terms where t.op == "equals" {
+            guard !out.contains(where: { $0.property == t.key && $0.value == t.value })
             else { continue }
-            out.append((property: property, value: value))
+            out.append((property: t.key, value: t.value))
         }
         return out
-    }
-
-    /// True when nothing in this query can filter anything out — an empty
-    /// query, or one made only of tokens the parser refused to guess at.
-    var isInert: Bool {
-        !terms.contains { term in
-            if case .ignored = term { return false }
-            return true
-        }
-    }
-
-    /// "stamps area:Work" — the one-line honesty hint on the new-workspace
-    /// form. Empty when the query stamps nothing.
-    var stampSummary: String {
-        let cells = stampCells
-        guard !cells.isEmpty else { return "" }
-        let parts = cells.map { cell -> String in
-            cell.value.contains(" ")
-                ? "\(cell.property):\"\(cell.value)\"" : "\(cell.property):\(cell.value)"
-        }
-        return "stamps " + parts.joined(separator: " ")
-    }
-
-    /// Conjunction — a saved filter chosen inside a workspace ANDs onto it.
-    func and(_ other: LivQuery) -> LivQuery {
-        if other.terms.isEmpty { return self }
-        if terms.isEmpty { return other }
-        return LivQuery(
-            raw: [raw, other.raw].filter { !$0.isEmpty }.joined(separator: " "),
-            terms: terms + other.terms)
-    }
-
-    // MARK: matching (client-side, against one snapshot row)
-
-    /// Every understood term must hold (a conjunction). Ignored terms are
-    /// skipped — an unknown token shrinks nothing.
-    func matches(_ row: EntityRow) -> Bool {
-        for term in terms {
-            switch term {
-            case .equals(let property, let value):
-                if !LivQuery.has(row, property, value) { return false }
-            case .notEquals(let property, let value):
-                if LivQuery.has(row, property, value) { return false }
-            case .missingNot(let property):
-                if !LivQuery.carries(row, property) { return false }
-            case .missing(let property):
-                if LivQuery.carries(row, property) { return false }
-            case .flag(let flag):
-                switch flag {
-                case "archived": if row.archived != true { return false }
-                case "trashed": if row.trashed != true { return false }
-                case "bookmarked": if row.bookmarked != true { return false }
-                default: break
-                }
-            case .ignored:
-                continue
-            }
-        }
-        return true
-    }
-
-    /// One cell of `property` displays as `value`. Property names and values
-    /// compare case-insensitively — the phone is a typing surface, not a
-    /// terminal. `type`/`status`/`name` also consult the row's flattened
-    /// wire fields, which is where the snapshot puts them.
-    private static func has(_ row: EntityRow, _ property: String, _ value: String) -> Bool {
-        if (row.cells ?? []).contains(where: {
-            same($0.property, property) && same($0.value, value)
-        }) { return true }
-        switch property.lowercased() {
-        case "type":
-            return (row.kinds ?? []).contains { same($0, value) }
-        case "status":
-            return same(row.status, value)
-        case "name":
-            return same(row.title, value)
-        default:
-            return false
-        }
-    }
-
-    private static func carries(_ row: EntityRow, _ property: String) -> Bool {
-        if (row.cells ?? []).contains(where: {
-            same($0.property, property) && !($0.value ?? "").isEmpty
-        }) { return true }
-        switch property.lowercased() {
-        case "type": return !(row.kinds ?? []).isEmpty
-        case "status": return !(row.status ?? "").isEmpty
-        case "name": return !(row.title ?? "").isEmpty
-        default: return false
-        }
-    }
-
-    private static func same(_ a: String?, _ b: String?) -> Bool {
-        guard let a, let b else { return false }
-        return a.compare(b, options: .caseInsensitive) == .orderedSame
-    }
-
-    // MARK: tokenizer (the core's, ported verbatim)
-
-    /// A `"` toggles quoting; whitespace splits only outside quotes. So
-    /// `project:"Big Thing"` is ONE token whose value keeps its space.
-    static func tokenize(_ raw: String) -> [String] {
-        var out: [String] = []
-        var current = ""
-        var quoted = false
-        for c in raw {
-            if c == "\"" {
-                quoted.toggle()
-            } else if c.isWhitespace && !quoted {
-                if !current.isEmpty { out.append(current) }
-                current = ""
-            } else {
-                current.append(c)
-            }
-        }
-        if !current.isEmpty { out.append(current) }
-        return out
-    }
-
-    /// Split on the FIRST colon. An empty key or value is not a qualifier —
-    /// `:x`, `x:`, and a bare word all fall through to `.ignored`.
-    static func splitQualifier(_ token: String) -> (String, String)? {
-        guard let i = token.firstIndex(of: ":") else { return nil }
-        let key = String(token[token.startIndex..<i])
-        let value = String(token[token.index(after: i)...])
-        if key.isEmpty || value.isEmpty { return nil }
-        return (key, value)
     }
 }
 
@@ -378,16 +191,55 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    /// The lens actually applied to Today / Tasks / Search: the workspace's
-    /// query ANDed with any chosen saved filter.
-    var activeQuery: LivQuery {
-        var q = LivQuery.parse(query(of: activeId) ?? "")
-        if let f = activeFilterId,
-            let raw = filters.first(where: { $0.id == f })?.query
-        {
-            q = q.and(LivQuery.parse(raw))
+    /// The lens as RAW TEXT: the workspace's query and any chosen filter,
+    /// joined with a space. There is nothing to AND — a query is already a
+    /// conjunction, so concatenation is the whole operation, and the core
+    /// parses the result exactly as it would if a person had typed it.
+    var activeRaw: String {
+        [query(of: activeId) ?? "", activeFilterId.flatMap { f in
+            filters.first(where: { $0.id == f })?.query
+        } ?? ""]
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    }
+
+    /// WHICH ENTITIES THE LENS ADMITS, answered by the core.
+    ///
+    /// `nil` means no lens is on and every row passes. A Set rather than a
+    /// predicate because the answer arrives once per lens change and once
+    /// per snapshot, not once per row per render.
+    @Published private(set) var lensIds: Set<UInt64>?
+
+    /// Does this row pass the lens?
+    ///
+    /// It READS the core's answer; it does not decide anything. No lens on
+    /// means every row passes, which is why the optional is not defaulted
+    /// to an empty set — an empty set is "the lens admits nothing", and
+    /// those are opposite screens.
+    func admits(_ row: EntityRow) -> Bool {
+        guard let lensIds else { return true }
+        return lensIds.contains(row.id)
+    }
+
+    /// Re-ask the core. Call when the lens changes and on every snapshot —
+    /// a note created a moment ago has to enter a filtered view, and only
+    /// the box knows whether it belongs.
+    func refreshLens(_ box: BoxModel) {
+        // The STAMP is workspace-only and needs no box, so it is set here
+        // and now — synchronously, off `liv_lex`. Waiting for the lens's
+        // round-trip would leave a capture made in the first moments of a
+        // workspace unstamped.
+        workspaceTerms = box.lex(query(of: activeId) ?? "")
+        let raw = activeRaw
+        guard !raw.isEmpty else {
+            lensIds = nil
+            return
         }
-        return q
+        box.query(raw) { [weak self] ids, _ in
+            guard let self, raw == self.activeRaw else { return }
+            self.lensIds = ids
+        }
     }
 
     /// True when some lens is on — the surfaces show the chip only then.
@@ -395,11 +247,18 @@ final class WorkspaceModel: ObservableObject {
         activeId != 0 || activeFilterId != nil
     }
 
-    /// What a capture made right now inherits. Filters never stamp — only a
-    /// workspace does.
+    /// The cells a new entity inherits from the WORKSPACE. Read off the
+    /// terms the core lexed, not off the text.
+    ///
+    /// The workspace only — never the saved filter. A filter narrows what
+    /// you are looking at; it does not say what you are making.
     var stampCells: [(property: String, value: String)] {
-        LivQuery.parse(query(of: activeId) ?? "").stampCells
+        LivTerms.stamps(workspaceTerms)
     }
+
+    /// The active WORKSPACE's terms, lexed separately from the lens: the
+    /// lens is workspace-and-filter, the stamp is workspace-only.
+    @Published private(set) var workspaceTerms: [BoxModel.LivQueryTerm] = []
 
     /// Write the active workspace's stamp onto something just created.
     /// The ONE implementation — every creation door calls this, so a task
@@ -432,12 +291,6 @@ final class WorkspaceModel: ObservableObject {
         return cells
     }
 
-    /// "stamps area:Work" for the doors that have no post-save chip strip
-    /// to show it in — the promise is made before the write, not after.
-    var stampHint: String {
-        LivQuery.parse(query(of: activeId) ?? "").stampSummary
-    }
-
     func setActive(_ id: UInt64) {
         activeId = id
         activeFilterId = nil
@@ -460,11 +313,17 @@ final class WorkspaceModel: ObservableObject {
 
     func forgetQuery(_ id: UInt64) {}
 
-    /// One tab plane, remembered per workspace (never a second tab BAR).
-    /// The tab plane's old key. READ-ONLY since 2026-08-18 — the first
-    /// launch after tabs died takes one id out of it (see DeskModel).
+    /// The pre-2026-08-22 key: ONE plane per workspace, holding the Notes
+    /// tabs. READ-ONLY — nothing writes it. `DeskPlanes.load` (Plane.swift)
+    /// reads it once, to become the Notes plane of v2.
     static func tabsKey(_ workspace: UInt64) -> String {
         "desk.tabs.v1.\(workspace)"
+    }
+
+    /// One plane per VIEW per workspace. Each view owns a tab strip and a
+    /// tab is a saved position inside it (design/tabs.md, Reading B).
+    static func planeKey(_ workspace: UInt64, _ view: String) -> String {
+        "desk.tabs.v2.\(workspace).\(view)"
     }
 
     /// The one open document, per workspace.
@@ -475,41 +334,11 @@ final class WorkspaceModel: ObservableObject {
 
 // MARK: - the lens chip
 
-/// The workspace you are standing in, and the door to change it. ONE
-/// button, at the top centre of everything (owner, 2026-08-13): the desk,
-/// full or empty, and — drawn over it — the library panel, because the
-/// panel is exactly where you go to change what you are looking at and
-/// watching the name vanish as you swipe in was backwards.
-///
-/// It used to be a row at the foot of the panel and another at the foot
-/// of the New Tab page; both are gone, this is the one.
-struct WorkspaceButton: View {
-    @EnvironmentObject var workspaces: WorkspaceModel
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Text(workspaces.activeName)
-                    .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.text)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-            }
-            // Capped so a long name never reaches the controls either side.
-            .frame(maxWidth: 180)
-            .frame(height: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Workspace: \(workspaces.activeName). Switch")
-    }
-}
-
-/// The quiet indicator every FILTERED surface wears, so a short list is
-/// never a mystery. The Inbox never shows it — the Inbox is never filtered.
+/// The quiet indicator SEARCH wears, so a short result list is never a
+/// mystery. The other surfaces named their lens in prose instead and lost
+/// their chips on 2026-08-18 ("the workspace button at top centre says it
+/// once"); the panel foot names the workspace. The Inbox never shows it —
+/// the Inbox is never filtered.
 struct LensChip: View {
     let label: String
 
@@ -528,109 +357,91 @@ struct LensChip: View {
     }
 }
 
-// MARK: - the parser's self-check (pure in, pure out; no test target here)
+// MARK: - the self-check (pure in, pure out; no test target here)
 
-/// Run with `simctl launch … app.liv.ios -workspace.selfcheck 1`; an empty
-/// result is a pass. Same shape as `livSpanCodecSelfCheck`.
+/// `-workspace.selfcheck 1`.
+///
+/// WHAT IT USED TO CHECK IS GONE, on purpose. All forty-one of its
+/// assertions exercised a query parser written in Swift, which was
+/// retired on 2026-08-27 because it disagreed with the core's in sixteen
+/// visible ways. Those semantics are pinned in Rust now
+/// (`services/tests/search.rs`), where there is one answer.
+///
+/// This checks what the shell still owns: SPELLING a term, and rewriting
+/// the text around one without disturbing the rest. It must not simply
+/// shrink to nothing — an empty failure list prints PASS, and a suite that
+/// checks nothing while reporting success is worse than no suite.
 func livWorkspaceSelfCheck() -> [String] {
     var failures: [String] = []
     func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
         if !ok { failures.append("FAIL \(label) \(detail())") }
     }
-    func row(_ cells: [(String, String)], kinds: [String] = []) -> EntityRow {
-        EntityRow(
-            id: 1, title: "a row", kinds: kinds,
-            cells: cells.map { CellRow(property: $0.0, value: $0.1) })
+
+    // ---- spelling ----
+    check("plain", LivTerms.term("area", "Work") == "area:Work")
+    check("exclusion", LivTerms.term("tags", "old", exclude: true) == "-tags:old")
+    // The VALUE is quoted, matching `services::search::spell`. If these two
+    // ever disagree, a picker rewrites a hand-typed query the first time it
+    // is touched.
+    check(
+        "a spaced value quotes the value",
+        LivTerms.term("people", "Anna Karlsson") == "people:\"Anna Karlsson\"",
+        LivTerms.term("people", "Anna Karlsson"))
+    check(
+        "a spaced key quotes the whole term",
+        LivTerms.term("valid until", "friday") == "\"valid until:friday\"",
+        LivTerms.term("valid until", "friday"))
+    check(
+        "an excluded spaced value keeps the minus outside the quotes",
+        LivTerms.term("people", "Anna Karlsson", exclude: true)
+            == "-people:\"Anna Karlsson\"",
+        LivTerms.term("people", "Anna Karlsson", exclude: true))
+    check("a stray quote is dropped, never doubled", LivTerms.term("a", "b\"c") == "a:bc")
+
+    // ---- reading a value back, and rewriting ----
+    func t(_ op: String, _ key: String, _ value: String, _ raw: String)
+        -> BoxModel.LivQueryTerm
+    {
+        BoxModel.LivQueryTerm(op: op, key: key, value: value, raw: raw)
     }
-    func stamps(_ q: LivQuery) -> String {
-        q.stampCells.map { "\($0.property)=\($0.value)" }.joined(separator: ",")
-    }
+    let terms = [
+        t("equals", "area", "Work", "area:Work"),
+        t("notequals", "tags", "old", "-tags:old"),
+        t("text", "", "wibble", "wibble"),
+    ]
+    check("reads its own value", LivTerms.value(of: "area", in: terms) == "Work")
+    check("case-insensitive on the key", LivTerms.value(of: "AREA", in: terms) == "Work")
+    check("nil for a property with no equality", LivTerms.value(of: "tags", in: terms) == nil)
+    check("nil for a property not there", LivTerms.value(of: "project", in: terms) == nil)
 
-    let work = row([("area", "Work")])
-    let home = row([("area", "Home")])
-    let bare = row([])
+    // Replacing one row leaves every other term exactly as the core spelled
+    // it — including the free text, which a picker must never eat.
+    check(
+        "replacing keeps the rest",
+        LivTerms.setting("area", to: "Home", in: terms) == "-tags:old wibble area:Home",
+        LivTerms.setting("area", to: "Home", in: terms))
+    check(
+        "clearing removes only its own row",
+        LivTerms.setting("area", to: nil, in: terms) == "-tags:old wibble",
+        LivTerms.setting("area", to: nil, in: terms))
+    check(
+        "clearing with blank is the same as nil",
+        LivTerms.setting("area", to: "   ", in: terms) == "-tags:old wibble")
+    check(
+        "setting a property that was not there appends it",
+        LivTerms.setting("project", to: "Roof", in: terms)
+            == "area:Work -tags:old wibble project:Roof",
+        LivTerms.setting("project", to: "Roof", in: terms))
 
-    // 1. Equality parses, filters AND stamps.
-    let eq = LivQuery.parse("area:Work")
-    check("equality parses", eq.terms == [.equals(property: "area", value: "Work")],
-        "\(eq.terms)")
-    check("equality stamps", stamps(eq) == "area=Work", stamps(eq))
-    check("equality matches", eq.matches(work))
-    check("equality excludes the other value", !eq.matches(home))
-    check("equality excludes the cell-less row", !eq.matches(bare))
-    check("equality is case-insensitive", LivQuery.parse("Area:work").matches(work))
-
-    // 2. `-key:value` filters but NEVER stamps.
-    let neg = LivQuery.parse("-tag:old")
-    check("negation parses", neg.terms == [.notEquals(property: "tag", value: "old")],
-        "\(neg.terms)")
-    check("negation never stamps", neg.stampCells.isEmpty, stamps(neg))
-    check("negation excludes a carrier", !neg.matches(row([("tag", "old")])))
-    check("negation keeps a non-carrier", neg.matches(row([("tag", "new")])))
-    check("negation is vacuously true when absent", neg.matches(bare))
-
-    // 3. Quoted values survive the space, and stamp whole.
-    let quoted = LivQuery.parse("project:\"Big Thing\"")
-    check("quoted parses whole",
-        quoted.terms == [.equals(property: "project", value: "Big Thing")], "\(quoted.terms)")
-    check("quoted stamps whole", stamps(quoted) == "project=Big Thing", stamps(quoted))
-    check("quoted matches", quoted.matches(row([("project", "Big Thing")])))
-    check("quoted summary re-quotes",
-        quoted.stampSummary == "stamps project:\"Big Thing\"", quoted.stampSummary)
-
-    // 4. An unknown token neither stamps nor excludes everything.
-    for junk in ["wibble", "due<20260801", "is:nonsense", ":x", "x:", "-:y"] {
-        let q = LivQuery.parse(junk)
-        check("\(junk) never stamps", q.stampCells.isEmpty, stamps(q))
-        check("\(junk) excludes nothing", q.matches(work) && q.matches(bare))
-        check("\(junk) is inert", q.isInert)
-    }
-    // …and it does not poison the terms beside it.
-    let mixed = LivQuery.parse("area:Work wibble due<20260801")
-    check("mixed stamps only the equality", stamps(mixed) == "area=Work", stamps(mixed))
-    check("mixed still filters", mixed.matches(work) && !mixed.matches(home))
-
-    // 5. has: / no: filter, never stamp.
-    let has = LivQuery.parse("has:project")
-    check("has parses", has.terms == [.missingNot(property: "project")], "\(has.terms)")
-    check("has never stamps", has.stampCells.isEmpty)
-    check("has matches a carrier", has.matches(row([("project", "Viggo")])))
-    check("has rejects the empty", !has.matches(row([("project", "")])))
-    let no = LivQuery.parse("no:project")
-    check("no parses", no.terms == [.missing(property: "project")], "\(no.terms)")
-    check("no never stamps", no.stampCells.isEmpty)
-    check("no matches the bare row", no.matches(bare))
-    check("no rejects a carrier", !no.matches(row([("project", "Viggo")])))
-
-    // 6. is:flag reads the row's own flags, never stamps.
-    let arch = LivQuery.parse("is:archived")
-    check("is:archived parses", arch.terms == [.flag("archived")], "\(arch.terms)")
-    check("is:archived never stamps", arch.stampCells.isEmpty)
-    check("is:archived excludes a live row", !arch.matches(work))
-
-    // 7. Conjunction: every understood term must hold.
-    let both = LivQuery.parse("area:Work -tag:old")
-    check("conjunction stamps only equality", stamps(both) == "area=Work", stamps(both))
-    check("conjunction keeps the clean carrier", both.matches(work))
-    check("conjunction drops the excluded",
-        !both.matches(row([("area", "Work"), ("tag", "old")])))
-    check("conjunction drops the wrong area", !both.matches(home))
-
-    // 8. `type:` reads the row's kinds (the wire flattens them off cells).
-    let typed = LivQuery.parse("type:task")
-    check("type matches a kind", typed.matches(row([], kinds: ["task"])))
-    check("type rejects another kind", !typed.matches(row([], kinds: ["note"])))
-
-    // 9. An empty query is inert and matches everything.
-    let none = LivQuery.parse("   ")
-    check("empty is inert", none.isInert && none.stampCells.isEmpty)
-    check("empty matches everything", none.matches(work) && none.matches(bare))
-
-    // 10. AND of two queries keeps both sides' terms; only the workspace
-    //     side is ever asked for a stamp (the caller's rule, pinned here).
-    let anded = LivQuery.parse("area:Work").and(LivQuery.parse("-tag:old"))
-    check("and keeps both", anded.terms.count == 2, "\(anded.terms)")
-    check("and matches like the written pair", anded.matches(work))
+    // ---- the stamp ----
+    let stamps = LivTerms.stamps(terms)
+    check("stamps only equalities", stamps.count == 1, "\(stamps.count)")
+    check("stamps the right cell", stamps.first?.property == "area" && stamps.first?.value == "Work")
+    let dupes = [
+        t("equals", "area", "Work", "area:Work"),
+        t("equals", "area", "Work", "area:Work"),
+    ]
+    check("an exact duplicate stamps once", LivTerms.stamps(dupes).count == 1)
 
     return failures
 }

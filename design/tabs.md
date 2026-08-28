@@ -134,13 +134,78 @@ Every phase: shell only, and the gate is the eight launch-flag self-checks.
 | **1** | Views return to the side panel, Notesnook-style, with the Obsidian foot | **done** |
 | **2** | Tabs return for Notes — the exact pre-deletion model, `Tabs.swift` verbatim | **done**, ninth suite restored |
 | **3** | The bar: tab key, `+` lands in a new tab, new-tab card and tab search in the switcher | **done** |
-| **4** | Per-view planes, Reading B — one plane per view | one view per commit |
-| **5** | Inactive tabs across every plane | |
+| **4** | Per-view planes, Reading B — one plane per view | **done**, tenth suite added |
+| **5** | Inactive tabs across every plane | **done** |
 
-**Known intermediate state after phase 3:** there is still only ONE plane, so
-the tab key shows the Notes count in every view. Phase 4 is what gives each view
-its own, and until then the key is honest about the plane that exists rather
-than inventing five empty ones.
+---
+
+## What phase 4 decided
+
+**A plane per view, and a view with no plane shows its root.** No tabs has
+always meant "you are looking at the list" in Notes; it means the same
+everywhere now, so nobody boots into five empty tabs they did not ask for.
+**Moving is what mints the tab** — pick a different day, a different filter, a
+different slice, and a tab appears in the strip saying where you are parked.
+
+**What a position IS, per view** (`shell/ios/Sources/Positions.swift`, one
+file, because the card, the switcher's filter, the accessibility label and the
+view itself all need the same words — standing rule 4):
+
+| view | a tab holds | still `@State` |
+|---|---|---|
+| Notes | a document — what a tab always was | — |
+| Everything | the slice (All / Upcoming / Unfiled) | — |
+| Inbox | Route or Tidy | the orphan being routed |
+| Tasks | the filter chip + the groups you unfolded | the due-pick sheet |
+| Today | the day + the LATE and Done piles | the status vocabulary |
+| Calendar | the month + the day selected in it | the block in the air, the bin's frame, the page request, the learned width |
+
+**A token is on disk.** Single-field positions store their raw value
+(`"upcoming"`, `"tidy"`); Tasks, Today and the Calendar store JSON with
+`.sortedKeys`. That flag is the format, not tidiness: without it Swift's
+per-process dictionary ordering spells the same position differently on
+different launches, so a token read back from disk never equals a freshly built
+one and `park` sees a move where nothing moved. The five-run flake that found
+it is why the suite asserts it.
+
+**A token this build cannot read falls back to the view's root**, and the card
+falls back to the view's name. Saved planes outlive the code that wrote them.
+
+## What phase 5 decided
+
+**One attic, not six.** The switcher grid is the view you are standing in; the
+Inactive shelf is every view at once, grouped by view in `Feature.inOrder` with
+a count per group. A shelf that showed only the current plane would hide five —
+a Calendar tab you stopped using in July would be invisible until you happened
+to open the Calendar again, which is the opposite of what a shelf is for.
+
+- The switcher's Inactive row counts **every** plane, so it appears in a view
+  that has nothing parked of its own. That is the point: it is the door to the
+  attic, not to this room's corner of it.
+- **"Close all" closes every view's**, which is what the screen now shows. Still
+  no confirmation and still no undo chip: a tab is device state, so closing one
+  writes nothing to the box.
+- **Reviving a tab from another view changes view first.** Focusing it where you
+  stand would put it somewhere you cannot see.
+- `TabCard` now takes the view its tab belongs to instead of reading
+  `desk.state`. It had to: the shelf draws cards from several planes at once,
+  and a position token has no meaning without the view that wrote it.
+- `-desk.boot inactive` ages **every** plane, or the rehearsal would show a
+  screen no user will ever see.
+
+### Two defects phase 4 surfaced
+
+1. **`-tabs.selfcheck` was rearranging real tabs.** It built a plain
+   `DeskModel()`, which is bound to the live workspace, and every plane verb
+   writes through to UserDefaults. It had done this since the day it was
+   written; with one plane the fakes landed where the app already was and
+   nothing looked wrong. With a plane per view they landed on **Today** — three
+   phantom tabs on a real device, visible in the tab key. Both suites now build
+   `DeskModel.scratchForSelfCheck()`, a desk on workspace `UInt64.max`, and
+   clear its keys on the way out.
+2. **`persist()` wrote a key for an empty plane**, so a view that once had a
+   tab never looked untouched again. "No plane" and "a plane with no tabs" are
+   one state and must not become two.
 
 ---
 

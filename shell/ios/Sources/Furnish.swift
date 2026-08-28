@@ -1,7 +1,7 @@
 // liv iOS — the furnishing pass (design/ios.md §10, what-liv-is-for v2).
-// The app arrives furnished: six areas of life as workspaces, the area
-// select with exactly six options, and the three text properties the
-// capture chips write (project / subjects / people — whose absence on a
+// The app arrives furnished: the area select with exactly six options,
+// and the three text properties the
+// capture chips write (project / tags / people — whose absence on a
 // fresh box made the chips silently write NOTHING; `set` and `addCell`
 // refuse unknown property names).
 //
@@ -21,16 +21,14 @@ enum Furnish {
         "Work", "Health", "Money", "Home", "Family & Friends", "Learning",
     ]
 
-
     /// The text fields the capture/camera chips write. `area` is separate:
     /// it is a select, born with its options.
-    static let textProperties = ["project", "subjects", "people"]
+    static let textProperties = ["project", "tags", "people"]
 
-    /// A workspace query value, quoted where spaced (the DSL's tokenizer:
-    /// `area:"Family & Friends"` is one token).
-    static func areaQuery(_ name: String) -> String {
-        name.contains(" ") ? "area:\"\(name)\"" : "area:\(name)"
-    }
+    /// The name this field used to carry. The product says Tags and the
+    /// engine says `tags`; the shell said `subjects`, which made three
+    /// names for one field (owner, 2026-08-27: "rename subjects to tags").
+    static let oldTagName = "subjects"
 
     /// Run one pass against a decoded snapshot. Call once per launch (the
     /// caller guards); cross-launch idempotence lives in the guards below,
@@ -59,6 +57,40 @@ private final class FurnishPass {
         finishIfDone()
     }
 
+    /// Rewrite `old:` to `new:` in every saved workspace and filter query.
+    ///
+    /// Only the QUALIFIER KEY is touched — `subjects:x` becomes `tags:x`,
+    /// and the word "subjects" appearing as free text is left alone,
+    /// because a person searching for that word still means the word.
+    private func renameInQueries(_ snap: Snapshot, from old: String, to new: String) {
+        let rows: [(UInt64, String)] =
+            (snap.workspaces ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
+            + (snap.views ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
+        for (id, text) in rows {
+            let rewritten = text
+                .split(separator: " ", omittingEmptySubsequences: false)
+                .map { token -> String in
+                    let t = String(token)
+                    for prefix in ["\(old):", "-\(old):", "\"\(old):", "\"-\(old):"] {
+                        if t.hasPrefix(prefix) {
+                            return prefix.replacingOccurrences(of: old, with: new)
+                                + String(t.dropFirst(prefix.count))
+                        }
+                    }
+                    // `has:subjects` / `no:subjects` name the property as a
+                    // VALUE, so they need the other half rewritten.
+                    for lead in ["has:", "no:"] where t.lowercased() == lead + old {
+                        return lead + new
+                    }
+                    return t
+                }
+                .joined(separator: " ")
+            guard rewritten != text else { continue }
+            track()
+            box.set(id, "query", rewritten) { [self] _ in landed() }
+        }
+    }
+
     // MARK: a+b — properties, and the area options
 
     private func furnishProperties(_ snap: Snapshot) {
@@ -69,7 +101,43 @@ private final class FurnishPass {
             }
         }
 
+        // MIGRATE BEFORE MINTING. A property is an entity and its name is
+        // a cell, so renaming it is ONE write — and every cell keeps
+        // pointing at it, because a cell references a property by name
+        // resolved at read, not by a copy of the string.
+        //
+        // Changing the constant alone would have minted a second property
+        // called `tags` and left every existing tag stranded on a
+        // `subjects` no screen mentions any more. The data would still be
+        // in the box and invisible, which is worse than losing it.
+        var renamedTags = false
+        if let old = existing(Furnish.oldTagName), let pid = old.id,
+            existing("tags") == nil
+        {
+            renamedTags = true
+            track()
+            box.set(pid, "name", "tags") { [self] _ in landed() }
+        }
+
+        // AND EVERY SAVED QUERY THAT NAMES IT. Renaming the property
+        // moved the data; a workspace or filter whose text still says
+        // `subjects:` now names a property that does not exist, and an
+        // unresolvable property is a REQUIRED WORD (owner, 2026-08-27:
+        // "typo shows nothing") — so the saved filter silently stops
+        // matching anything. Found by reading a real box: a filter called
+        // `foo` held `area:Health subjects:psychopathy`.
+        // NOT guarded on `renamedTags`. A box whose property was renamed
+        // on an earlier launch still holds saved text naming the old one,
+        // and that box is exactly the one nobody would think to check. The
+        // rewrite writes only when a query actually changes, so a clean
+        // box does nothing.
+        renameInQueries(snap, from: Furnish.oldTagName, to: "tags")
+
         for name in Furnish.textProperties where existing(name) == nil {
+            // The rename above lands after this snapshot was taken, so
+            // `existing("tags")` is still nil in this pass. Minting here
+            // would produce the exact duplicate the rename exists to avoid.
+            if name == "tags" && renamedTags { continue }
             track()
             box.addProperty(name) { [self] _ in landed() }
         }

@@ -96,9 +96,23 @@ struct CalendarView: View {
     /// history.
     @State private var wasOn: Int64?
 
+    /// WHERE YOU ARE: the month on screen and the day selected in it.
+    /// Not `@State` since 2026-08-22 — it is what a Calendar tab HOLDS
+    /// (design/tabs.md, Reading B), so it lives in the plane and comes
+    /// back with it. Everything else on this screen stays `@State`,
+    /// because a block in the air is not a place.
+    private var pos: CalendarPosition { CalendarPosition(token: desk.position(.calendar)) }
     /// First day of the shown month (packed civil), the grid's anchor.
-    @State private var monthFirst = CalGrid.firstOfMonth(Civil.todayDay())
-    @State private var selectedDay = Civil.todayDay()
+    private var monthFirst: Int64 { pos.month }
+    private var selectedDay: Int64 { pos.day }
+
+    /// ONE call for both, always. Two parks in a row would publish twice
+    /// and animate the second against the first.
+    private func park(month: Int64? = nil, day: Int64? = nil) {
+        desk.park(
+            .calendar,
+            at: CalendarPosition(month: month ?? pos.month, day: day ?? pos.day).token)
+    }
     /// The task status vocabulary — the ring writes the `completes`-marked
     /// option, never a hardcoded "done" (same as Today).
     @State private var taskOptions: [StatusOption] = []
@@ -228,14 +242,15 @@ struct CalendarView: View {
     /// it is further — a leap of many months has no direction worth
     /// animating.
     private func go(to day: Int64, today: Int64) {
-        selectedDay = day
         let home = CalGrid.firstOfMonth(day)
         if home == CalGrid.addMonths(monthFirst, -1) {
+            park(day: day)
             page(-1)
         } else if home == CalGrid.addMonths(monthFirst, 1) {
+            park(day: day)
             page(1)
         } else {
-            monthFirst = home
+            park(month: home, day: day)
         }
     }
 
@@ -260,8 +275,7 @@ struct CalendarView: View {
         let moved = CalGrid.addMonths(monthFirst, n)
         let today = Civil.todayDay()
         let land = {
-            monthFirst = moved
-            selectedDay = CalGrid.firstOfMonth(today) == moved ? today : moved
+            park(month: moved, day: CalGrid.firstOfMonth(today) == moved ? today : moved)
         }
         if animated { withAnimation(LivMotion.nav, land) } else { land() }
     }
@@ -304,7 +318,7 @@ struct CalendarView: View {
                 calMonth(CalGrid.addMonths(monthFirst, $0), today: today, byDay: byDay)
             },
             selected: selectedDay,
-            onSelect: { selectedDay = $0 },
+            onSelect: { park(day: $0) },
             onHold: { createEvent(on: $0) },
             onPage: { step($0, animated: false) },
             request: $pageRequest,
@@ -330,7 +344,7 @@ struct CalendarView: View {
     /// the time is the first row in them.
     private func createEvent(on day: Int64) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        selectedDay = day
+        park(day: day)
         create(on: day, minutes: 9 * 60, allDay: false)
     }
 
@@ -789,12 +803,11 @@ struct CalendarView: View {
     /// itself dated on the day dedupes away (Today's rule). The lens applies
     /// to occurrence SERIES rows too — a filtered surface filters whole.
     private func itemsByDay() -> [Int64: [CalendarDayItem]] {
-        let lens = workspaces.activeQuery
         var out: [Int64: [CalendarDayItem]] = [:]
         var datedIds: [Int64: Set<UInt64>] = [:]
         for id in box.snap?.dated ?? [] {
             guard let row = box.entity(id), row.trashed != true,
-                let due = row.due, lens.matches(row)
+                let due = row.due, workspaces.admits(row)
             else { continue }
             let day = Civil.day(of: due)
             out[day, default: []].append(
@@ -805,7 +818,7 @@ struct CalendarView: View {
         for occ in box.snap?.occurrences ?? [] {
             guard let series = occ.series, let civil = occ.civil,
                 let row = box.entity(series), row.trashed != true,
-                lens.matches(row)
+                workspaces.admits(row)
             else { continue }
             let day = Civil.day(of: civil)
             guard datedIds[day]?.contains(series) != true else { continue }
@@ -1047,7 +1060,11 @@ private struct MonthGridView: View, Equatable {
 /// Components-in, components-out within one Gregorian calendar — a stamp
 /// never round-trips through a timezone. Noon anchor dodges the
 /// DST-skipped-midnight edge (Civil's own rule).
-private enum CalGrid {
+///
+/// Not `private` since 2026-08-22: a Calendar tab stores a month, and
+/// `Positions.swift` has to name and normalise one. Nothing else about it
+/// moved — the month math still lives here, once.
+enum CalGrid {
     /// One day cell, and the six-week grid it lives in. The pager needs
     /// the grid's height as a NUMBER (a GeometryReader has none of its
     /// own), so it lives here rather than as a literal in two places.

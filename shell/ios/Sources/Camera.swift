@@ -42,7 +42,7 @@ private enum CameraChipKind: String, Identifiable {
     var property: String {
         switch self {
         case .area: return "area"
-        case .tag: return "subjects"
+        case .tag: return "tags"
         case .project: return "project"
         case .person: return "people"
         }

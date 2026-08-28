@@ -62,6 +62,13 @@ struct LivApp: App {
             print("TABS-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("TABS-SELFCHECK \($0)") }
         }
+        // One plane per view (Positions.swift), same door:
+        // `-planes.selfcheck 1`. Added with phase 4 of design/tabs.md.
+        if UserDefaults.standard.bool(forKey: "planes.selfcheck") {
+            let failures = livPlanesSelfCheck()
+            print("PLANES-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("PLANES-SELFCHECK \($0)") }
+        }
         // per kind, every drawing inside its box: `-glyph.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "glyph.selfcheck") {
             let failures = livGlyphSelfCheck()
@@ -132,7 +139,7 @@ struct RootView: View {
             // positioned against it.
             if let id = desk.minimisedRecord, !keyboard.up {
                 MinimisedRecordPill(id: id)
-                    .padding(.bottom, 62)
+                    .padding(.bottom, LivBar.room + LivBar.gap)
                     // The pill belongs to the desk, so it travels with
                     // it into the wings; under the properties curtain,
                     // which it is painted above, it fades instead.
@@ -145,14 +152,17 @@ struct RootView: View {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
-                    // The bar does NOT travel with the surface: it is
-                    // four GLOBAL actions (owner, 2026-08-17), so it
-                    // stays exactly where it is while the world moves
-                    // under it — Safari's bar over a page that scrolls
-                    // away. Under the properties curtain, which it is
-                    // painted above, it fades.
+                    // IT TRAVELS WITH THE DESK. That reverses
+                    // 2026-08-17's "the bar does NOT travel with the
+                    // surface: it is four GLOBAL actions", which was
+                    // right while the panel covered the screen — the bar
+                    // was behind it either way — and is wrong now that
+                    // the panel stops 100pt short: a bar left behind
+                    // would sit on the panel's own foot.
+                    .offset(x: desk.deskShift)
                     .opacity(1 - desk.curtain)
-                    .accessibilityHidden(desk.curtain > 0 || desk.chromeAway)
+                    .accessibilityHidden(
+                        desk.curtain > 0 || desk.chromeAway || desk.deskShift != 0)
                     // OUT OF THE WAY WHILE YOU READ (owner's clips,
                     // 2026-08-20). Its own height plus the safe area it
                     // sits in, so it leaves the screen rather than
@@ -257,6 +267,10 @@ struct RootView: View {
             // titles current when an entity is renamed after capture.
             bindOutboxTitles()
             workspaces.apply(snap)
+            // The lens is answered by the core, so it has to be re-asked
+            // whenever the box moves — a note created a moment ago must
+            // enter a filtered view, and only the box knows if it belongs.
+            workspaces.refreshLens(box)
             // Every decoded snapshot rebuilds the notification schedule —
             // the queue is a projection of the box, never patched (M5).
             Notify.shared.rebuild(snapshot: snap, box: box)
@@ -278,6 +292,12 @@ struct RootView: View {
         // is leaving and restores the one it is joining.
         .onChange(of: workspaces.activeId) { _, id in
             desk.adopt(workspace: id)
+            workspaces.refreshLens(box)
+        }
+        // A saved filter is the other half of the lens, and it changes
+        // without the workspace changing.
+        .onChange(of: workspaces.activeFilterId) { _, _ in
+            workspaces.refreshLens(box)
         }
         // Below the doors' band, like every other thing that speaks:
         // centred at the very top it printed itself over the workspace
@@ -344,8 +364,13 @@ struct RootView: View {
             }
         // The create menu, from the bar's `+`.
         case "newtab", "create": desk.createSomething()
-        // The Docs LIST, which is the state's root.
-        case "notes", "docs": desk.showList()
+        // NOTES' ROOT, which is the tab grid (2026-08-24). `showList`
+        // alone only clears the CURRENT view's tab, so booting this on
+        // Today cleared Today's tab and stayed there — the flag never
+        // arrived where its own comment said it did.
+        case "notes", "docs":
+            desk.go(.notes)
+            desk.showList()
         default: break
         }
     }

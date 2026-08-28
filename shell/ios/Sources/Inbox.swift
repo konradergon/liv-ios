@@ -21,18 +21,6 @@ private struct InboxDuePick: Identifiable {
     var id: UInt64 { entity }
 }
 
-/// Route or Tidy — the blueprint's two questions (BP-5).
-enum InboxLens: String, CaseIterable {
-    case route, tidy
-
-    var title: String {
-        switch self {
-        case .route: return "Route"
-        case .tidy: return "Tidy"
-        }
-    }
-}
-
 struct InboxView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -96,7 +84,13 @@ struct InboxView: View {
     private var assistOff: Bool { box.snap?.assist?.on == false }
 
     /// Which question you are answering. The blueprint's Route / Tidy.
-    @State private var lens: InboxLens = .route
+    ///
+    /// NOT `@State` since 2026-08-22 — it is what this view's tab HOLDS
+    /// (design/tabs.md, Reading B), so it lives in the plane and is saved
+    /// with it.
+    private var lens: InboxLens {
+        InboxLens(rawValue: desk.position(.inbox) ?? "") ?? .route
+    }
     /// The orphan whose routing question is open — one at a time.
     @State private var routing: UInt64?
 
@@ -105,7 +99,7 @@ struct InboxView: View {
         HStack(spacing: 8) {
             ForEach(InboxLens.allCases, id: \.self) { l in
                 let count = l == .route ? unrouted : tidy
-                Button { lens = l } label: {
+                Button { desk.park(.inbox, at: l.rawValue) } label: {
                     HStack(spacing: 6) {
                         Text(l.title)
                             .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))

@@ -42,12 +42,21 @@ struct DeskHost: View {
                     // Keyed by ENTITY: a serial capture rewrites the
                     // surface with a new entity, and per-entity @State
                     // (the seeded title) must reseed on that flip.
-                    EntityTabBody(id: id).id(id)
+                    EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
                 } else if desk.state == .notes {
-                    // DOCS' OWN ROOT: the list of what you have written,
-                    // what you touched last at the top (owner,
-                    // 2026-08-18).
-                    NotesList()
+                    // NOTES' OWN ROOT IS THE TABS (owner, 2026-08-24:
+                    // "make sure it replaces notes list"). The grid the
+                    // numbered box opens is the same grid, drawn as the
+                    // surface instead of over it.
+                    //
+                    // This RETIRES `NotesList` (deleted in the same
+                    // change, standing rule 6). That list replaced tabs
+                    // on 2026-08-18, on the argument that it reaches
+                    // notes you did NOT leave open — which a grid of
+                    // open tabs cannot. That reach now belongs to
+                    // search, which is a key on the bar, and the owner
+                    // has asked for the grid twice.
+                    TabSwitcher(asSurface: true).livSurface(LivSurface.tabs)
                 } else {
                     // Another state entirely — Today, the calendar. The
                     // views draw themselves (FeatureLayer is gone with
@@ -63,8 +72,70 @@ struct DeskHost: View {
             // keeps `LivRow.topInset` for itself.
             .overlay(alignment: .top) { LivTopScrim() }
             .ignoresSafeArea(edges: .top)
-            // The strip: the surface in front waits off screen to the
-            // right for as long as the menu is open (owner, 2026-08-17).
+            // THE DESK AS A CARD. The panel stops 100pt short of the
+            // right edge (owner, 2026-08-23: "Panel should not be full
+            // screen!"), so the desk stays on screen beside it — pushed,
+            // rounded off and washed back. Every number was measured
+            // frame by frame off the owner's own reference clip; they
+            // live in `LivPanel` with their source.
+            //
+            // The corner is a MASK, not a `clipShape`. The body
+            // deliberately runs out of its own bounds at the top so the
+            // words pass under the clock, and a clip is computed on those
+            // bounds and cuts them off at the status bar.
+            .mask {
+                RoundedRectangle(cornerRadius: LivPanel.deskRadius, style: .continuous)
+                    .ignoresSafeArea()
+            }
+            // Cast BACK onto the panel, no vertical offset.
+            .shadow(
+                color: .black.opacity(LivPanel.shadowOpacity),
+                radius: LivPanel.shadowRadius, x: -4, y: 0)
+            // A WASH, not a scrim: the reference fades the content to
+            // ~50% and leaves the background alone, so this is the app's
+            // own ground laid over the top. A black scrim in a dark theme
+            // would just look like the screen switching off.
+            //
+            // IT ALSO TAKES THE TOUCHES. With the panel open you could
+            // still reach the desk through the sliver and work it —
+            // scroll a list, tick a task — behind a panel that says it
+            // has your attention (owner, 2026-08-24). The reference does
+            // not: tapping the pushed-aside content brings it back.
+            //
+            // So while the panel is showing, this layer is what your
+            // finger meets, and its one job is to put the panel away.
+            // That also gives the sliver the purpose it is drawn for —
+            // it is the way back, and now it behaves like one.
+            .overlay {
+                let showing = desk.panelProgress(.library)
+                LivTheme.canvas
+                    .opacity(LivPanel.wash * showing)
+                    .contentShape(Rectangle())
+                    // At rest this must be completely absent, or every
+                    // tap on the desk would land here instead.
+                    .allowsHitTesting(showing > 0)
+                    .onTapGesture { desk.setLibrary(false) }
+                    // AND THE DRAG, because this layer swallows it.
+                    //
+                    // The panel is dragged open and shut from anywhere
+                    // (owner, 2026-08-08) by a recognizer on the window.
+                    // Measured with a probe: a touch that starts in the
+                    // sliver never reaches that recognizer once this
+                    // overlay is live — SwiftUI claims it first — while
+                    // one starting inside the panel still does. So the
+                    // gesture is put back exactly where it was lost,
+                    // rather than left quietly narrower than the rule
+                    // says it is.
+                    .gesture(
+                        DragGesture(minimumDistance: 18)
+                            .onEnded { g in
+                                if g.translation.width < -40 { desk.setLibrary(false) }
+                            }
+                    )
+                    // The desk is already hidden from VoiceOver behind a
+                    // panel; this must not become the one thing it finds.
+                    .accessibilityHidden(true)
+            }
             .offset(x: desk.deskShift)
             .accessibilityHidden(anyPanel)
 
@@ -77,31 +148,38 @@ struct DeskHost: View {
             // one that closes it — a button beside it was a second door
             // to one room (standing rule 4).
             HStack(spacing: 8) {
-                // INSIDE A DOCUMENT the top-left is the way OUT of it,
-                // labelled with where it goes — "‹ Docs", "‹ Today",
-                // "‹ Kitchen rebuild" (owner, 2026-08-18: "it just seems
-                // editing mode isn't part of docs if they aren't linked
-                // navigation wise"). That is an ordinary list→detail
-                // stack, which is what every other app on this phone
-                // does, and it makes the hierarchy a fact rather than a
-                // highlight in a menu.
+                // THE TOP-LEFT IS THE LIBRARY DOOR, always.
                 //
-                // AT A STATE'S ROOT it is the library door: the
-                // workspace, the filters and Settings.
-                if desk.openDoc != nil, desk.state == .notes {
-                    DocumentBack()
-                } else {
-                    Button {
-                        endEditing()
-                        goToLibrary()
-                    } label: {
-                        PanelMark(
-                            color: desk.libraryShown ? LivTheme.accent : LivTheme.text,
-                            size: 22)
-                    }
-                    .livTopButton(on: desk.libraryShown)
-                    .accessibilityLabel("Library")
+                // It used to become a labelled "‹ Notes" inside a
+                // document (owner, 2026-08-18). That is gone (owner,
+                // 2026-08-24: "the old '< Notes' should be gone"), and
+                // it should be: the bar below now carries a real `‹`
+                // over the same way-back stack, and the numbered box
+                // goes up to the grid. A labelled back beside them was a
+                // second door to one room — the reason the (i)
+                // properties door was deleted on 2026-08-14, and the
+                // same standing rule 4.
+                Button {
+                    endEditing()
+                    goToLibrary()
+                } label: {
+                    // THE SIZE GOES INSIDE THE LABEL. Applied outside, as
+                    // `livTopButton` does, the accessibility element came
+                    // out 396pt wide — the button plus the Spacer beside
+                    // it — so its activation point sat in the middle of
+                    // the screen and VoiceOver's "Library" overlapped the
+                    // ••• at the far end of the row. Found by `drive.sh
+                    // tour`, which could not open the panel from inside a
+                    // note because the tap landed on the text.
+                    PanelMark(
+                        color: desk.libraryShown ? LivTheme.accent : LivTheme.text,
+                        size: 22
+                    )
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Library")
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
                 // trash — so it belongs to Docs and to nothing else.
@@ -109,49 +187,28 @@ struct DeskHost: View {
                     noteMenu(id)
                 }
             }
+            // EACH DOOR IS ITS OWN ELEMENT. Left alone, SwiftUI merged
+            // the leading button with the `Spacer` next to it into one
+            // 396pt-wide accessibility element whose activation point sat
+            // in the middle of the note — so VoiceOver's "Library"
+            // covered the ••• as well, and a tap by label landed on the
+            // text. `.contain` says these are separate things in a row
+            // (found by `drive.sh tour`, 2026-08-24).
+            .accessibilityElement(children: .contain)
             .padding(.horizontal, 12)
             .padding(.top, 6)
-            // PINNED, like the workspace button between them: the
-            // library door has to stay reachable with the properties
-            // panel up (owner, 2026-08-15: "that button should be
-            // visible with the property card open"), and that panel
-            // covers the whole screen. They fade only as the MENU
-            // arrives — that is the one surface where what they belong
-            // to has left the screen.
-            .opacity(1 - desk.deskTravel)
+            // THEY TRAVEL WITH THE DESK. They used to fade out as the
+            // panel arrived, which was invisible while the panel covered
+            // the screen. Now that it stops 100pt short, the toggle rides
+            // along in the sliver — and tapping it there is how the panel
+            // closes, which is what the reference does.
+            .offset(x: desk.deskShift)
             // …and they leave upward while you read, with the bar
             // (owner's clips, 2026-08-20). `topInset` is exactly the
             // band they own, clock included.
             .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
             .accessibilityHidden(desk.libraryShown || desk.chromeAway)
             .zIndex(3)
-
-            // The workspace, top CENTRE, between the doors — on the desk,
-            // full or empty, and OVER the library panel, which
-            // is why it is drawn last with the highest z (owner,
-            // 2026-08-13: "it should remain visible as you swipe into the
-            // global panel"). It hides only under the PROPERTIES panel,
-            // which is about this note and not about the app.
-            // Not inside a DOCUMENT: there the top-left is the way out,
-            // labelled, and two capsules side by side collide (seen on
-            // 2026-08-18). The workspace belongs to a state's root — and
-            // it stays lit over the library panel, which is where you go
-            // to change it.
-            if desk.openDoc == nil || desk.state != .notes || desk.libraryDrawn {
-                WorkspaceButton { desk.workspaceShown = true }
-                    .padding(.top, 6)
-                    // Away with the doors it sits between, or the band
-                    // empties around a button left hanging under the
-                    // clock (owner's clips, 2026-08-20).
-                    .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
-                // It stays lit under BOTH panels now. The properties
-                // card starts below this whole band (SidePanel), so the
-                    // desk's chrome is visible above it — that is what
-                    // says the card belongs to the desk. It used to fade
-                    // out under the properties panel, from when that
-                    // panel covered the screen edge to edge.
-                    .zIndex(3)
-            }
 
             // The panels, drawn last so they cover doors and body alike.
             // Mounted while shown OR while a finger is dragging one, and
@@ -310,7 +367,7 @@ struct DeskHost: View {
     /// drag in flight is simply open (0) — the transition handles its
     /// arrival and departure as before.
     private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
-        let hidden = (1 - desk.panelProgress(which)) * UIScreen.main.bounds.width
+        let hidden = (1 - desk.panelProgress(which)) * DeskModel.travel(which)
         return which == .library ? -hidden : hidden
     }
 
@@ -338,7 +395,7 @@ struct DeskHost: View {
     /// A flick commits from anywhere; a slow drag commits past halfway.
     private func settleDrag(_ dx: CGFloat, _ velocity: CGFloat) {
         guard let live = desk.panelDrag else { return }
-        let width = UIScreen.main.bounds.width
+        let width = DeskModel.travel(live.which)
         // A real flick is fast: 700pt/s is a sharp throw, well above
         // the drift a finger has at the end of a deliberate drag. At
         // 250 a moderate release read as a flick and a 30%% drag flew
@@ -684,6 +741,16 @@ extension View {
     /// above the words instead. What is left is a 40pt target around a
     /// glyph, and an `on` state that tints the glyph rather than
     /// wrapping it in a lozenge.
+    ///
+    /// **Do not use this on a button that is followed by a `Spacer`.**
+    /// The frame lands OUTSIDE the button, and SwiftUI then reports an
+    /// accessibility element covering the button and the spacer both —
+    /// 396pt wide in the row that found this, with its activation point
+    /// in the middle of the screen and its bounds overlapping the ••• at
+    /// the far end. A person tapping the glyph is fine; VoiceOver and any
+    /// test driving by label are not. In that position, put
+    /// `.frame(width: 40, height: 40).contentShape(Rectangle())` inside
+    /// the label instead — see the library door above (2026-08-24).
     func livTopButton(on: Bool = false) -> some View {
         buttonStyle(.plain)
             .frame(width: 40, height: 40)

@@ -234,11 +234,55 @@ private struct DistinctWire: Decodable {
 private struct SearchWire: Decodable {
     struct Hit: Decodable { var id: UInt64? }
     var hits: [Hit]?
+    /// The counts the core already computed and the shell was throwing
+    /// away. `services::search::facet` runs one probe query per candidate
+    /// value on every search and sends back, per property, how many
+    /// results each value WOULD leave — plus whether the current query
+    /// already includes or excludes it. None of it reached a screen.
+    var facets: [FacetWire]?
     /// How many matched IN TOTAL. The core ranks everything and sends
     /// the first 200; the shell was throwing this away, so a query
     /// matching 1,800 things showed 200 and said nothing about the
     /// other 1,600 (found 2026-08-08).
     var total: Int?
+}
+
+private struct FacetWire: Decodable {
+    /// The property's name, which is also its spelling in the query DSL —
+    /// `type:task` resolves by name (services/src/search.rs).
+    var label: String?
+    var values: [ValueWire]?
+
+    struct ValueWire: Decodable {
+        var label: String?
+        var count: Int?
+        var active: Bool?
+        var excluded: Bool?
+    }
+}
+
+/// One property's facet: its name, and every value worth offering.
+///
+/// The `value` field on the wire is deliberately NOT decoded. A chip needs
+/// the label (which is the query spelling), the count, and the two state
+/// flags; decoding the core's `Value` enum would couple the shell to that
+/// enum's JSON shape for nothing.
+struct LivFacet: Identifiable {
+    let label: String
+    let values: [LivFacetValue]
+    var id: String { label }
+}
+
+struct LivFacetValue: Identifiable {
+    let label: String
+    let count: Int
+    /// The query INCLUDES this value. The core decides this, not the shell —
+    /// so a chip drawn from a hand-typed query is still right.
+    let active: Bool
+    /// The query EXCLUDES it. include -> exclude -> off is the cycle
+    /// (bp3 a19, services/src/search.rs).
+    let excluded: Bool
+    var id: String { label }
 }
 
 private struct ProbeWire: Decodable {
@@ -357,12 +401,6 @@ final class BoxModel: ObservableObject {
     /// YYYYMMDDHHMM bounds) and reload. Sticks across later refreshes.
     func refreshWindow(from: Int64, to: Int64) {
         window = (from, to)
-        refresh()
-    }
-
-    /// Back to the default current-month window.
-    func resetWindow() {
-        window = nil
         refresh()
     }
 
@@ -603,6 +641,30 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// Rename ONE VALUE everywhere it is carried — one grouped
+    /// transaction, one undo step (P19b).
+    ///
+    /// Text cells rewrite; a select or status renames the option, or
+    /// MERGES into an existing one when the new name is already taken.
+    /// That merge is the reason this cannot be N per-entity writes from
+    /// the shell: only the core can see every carrier at once.
+    ///
+    /// `done` receives the number of carriers changed, or nil on refusal
+    /// (unknown property, wrong kind, empty or unchanged name).
+    func renameValue(
+        property: String, from old: String, to new: String,
+        done: @escaping (Int?) -> Void
+    ) {
+        let path = self.path
+        boxQueue.async {
+            let n = liv_rename_value_at(path, property, old, new)
+            DispatchQueue.main.async {
+                done(n < 0 ? nil : Int(n))
+                if n > 0 { self.refresh() }
+            }
+        }
+    }
+
     func undo() {
         act("undo") { liv_undo_at(self.path) == 1 }
     }
@@ -809,13 +871,189 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// One term of a query, as the CORE lexed it.
+    ///
+    /// The shell used to lex this itself and the two disagreed sixteen
+    /// ways — `Area:Work` found nothing, a typo filtered nothing,
+    /// `is:archived` meant the opposite thing. There is one lexer now and
+    /// it is in Rust (`services::search::lex`).
+    struct LivQueryTerm: Decodable, Equatable {
+        /// equals | notequals | atmost | has | no | is | text
+        let op: String
+        let key: String
+        let value: String
+        /// The token respelled canonically, so joining a term list
+        /// reproduces a query the core reads back the same way.
+        let raw: String
+    }
+
+    /// Lex a query into terms. Synchronous, because it opens nothing: the
+    /// core's `lex` consults no store, so a picker editing a DRAFT query
+    /// can call it per keystroke without touching the box lock.
+    func lex(_ raw: String) -> [LivQueryTerm] {
+        guard let out = liv_lex(raw) else { return [] }
+        let json = String(cString: out)
+        liv_string_free(out)
+        return (try? JSONDecoder().decode([LivQueryTerm].self, from: Data(json.utf8))) ?? []
+    }
+
+    /// Which entities a LENS admits, and the terms it is made of.
+    ///
+    /// `is:archived` RESTRICTS here — a workspace called Archive shows the
+    /// archive — where the same token WIDENS in `search` (owner,
+    /// 2026-08-27). Uncapped: search sends a 200-row page, which is a page
+    /// and not a membership set.
+    func query(
+        _ raw: String,
+        done: @escaping (Set<UInt64>, [LivQueryTerm]) -> Void
+    ) {
+        let path = self.path
+        boxQueue.async {
+            var ids: Set<UInt64> = []
+            var terms: [LivQueryTerm] = []
+            if let out = liv_query_ids_at(path, raw) {
+                let json = String(cString: out)
+                liv_string_free(out)
+                struct Wire: Decodable {
+                    var ids: [UInt64]?
+                    var terms: [LivQueryTerm]?
+                }
+                if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
+                    ids = Set(w.ids ?? [])
+                    terms = w.terms ?? []
+                }
+            }
+            DispatchQueue.main.async { done(ids, terms) }
+        }
+    }
+
+    // MARK: the vault — a projection, never a second truth
+
+    /// What the folder around the box is, if anything.
+    ///
+    /// The ruling is O14 (`design/p20j-files-projection.md` §1): the box
+    /// stays the ONE truth and the vault folder is a total, continuously
+    /// reconciled, rebuildable PROJECTION with an inbound ingest channel.
+    /// An external edit is not truth until ingested — a window of
+    /// scan-at-open plus a debounce, which the design flags as its one
+    /// honest cost (F1).
+    ///
+    /// `legacy` means the box is not inside a vault folder, so there is no
+    /// projection to speak of. Cheap: no scan.
+    struct LivVaultStatus {
+        let mode: String
+        let root: String
+        let files: Int
+        var isVault: Bool { mode == "vault" }
+    }
+
+    /// One divergence the last scan found. `kind` is
+    /// conflict | missing | newfile | masschange | orphan | edited.
+    struct LivVaultFinding: Identifiable {
+        let kind: String
+        let path: String
+        let count: Int
+        var id: String { kind + ":" + path }
+    }
+
+    func vaultStatus(done: @escaping (LivVaultStatus?) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            var out: LivVaultStatus?
+            if let raw = liv_vault_status_at(path) {
+                let json = String(cString: raw)
+                liv_string_free(raw)
+                struct Wire: Decodable { var mode: String?; var root: String?; var files: Int? }
+                if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
+                    out = LivVaultStatus(
+                        mode: w.mode ?? "legacy", root: w.root ?? "", files: w.files ?? 0)
+                }
+            }
+            DispatchQueue.main.async { done(out) }
+        }
+    }
+
+    /// Scan, ingest every tier-A finding as ONE "vault-edit" transaction,
+    /// adopt, re-project. One user action, one transaction, one undo step.
+    /// `nil` means busy or legacy — never a silent no-op.
+    func vaultSync(done: @escaping ((edited: Int, created: Int, surfaced: Int)?) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            var out: (edited: Int, created: Int, surfaced: Int)?
+            if let raw = liv_vault_sync_at(path) {
+                let json = String(cString: raw)
+                liv_string_free(raw)
+                struct Wire: Decodable { var edited: Int?; var created: Int?; var surfaced: Int? }
+                if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
+                    out = (w.edited ?? 0, w.created ?? 0, w.surfaced ?? 0)
+                }
+            }
+            DispatchQueue.main.async {
+                done(out)
+                if let out, out.edited + out.created > 0 { self.refresh() }
+            }
+        }
+    }
+
+    /// Re-materialize every file from an empty manifest, so the folder
+    /// returns byte-identical even when the manifest lies. This is the
+    /// half of "rebuildable" the constitution permits: the projection
+    /// rebuilds from the log, never the log from the files.
+    /// Returns the file count, or nil on busy/legacy/failure.
+    func vaultRebuild(done: @escaping (Int?) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            let n = liv_vault_rebuild_at(path)
+            DispatchQueue.main.async { done(n < 0 ? nil : Int(n)) }
+        }
+    }
+
+    /// A read-only scan: what has diverged, without ingesting any of it.
+    func vaultFindings(all: Bool = false, done: @escaping ([LivVaultFinding]) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            var out: [LivVaultFinding] = []
+            if let raw = liv_vault_findings_at(path, all ? 1 : 0) {
+                let json = String(cString: raw)
+                liv_string_free(raw)
+                struct Wire: Decodable { var kind: String?; var path: String?; var count: Int? }
+                let wire = (try? JSONDecoder().decode([Wire].self, from: Data(json.utf8))) ?? []
+                out = wire.compactMap { w in
+                    guard let k = w.kind else { return nil }
+                    return LivVaultFinding(kind: k, path: w.path ?? "", count: w.count ?? 0)
+                }
+            }
+            DispatchQueue.main.async { done(out) }
+        }
+    }
+
+    /// The vault's self-defense notices — a length regression, an in-place
+    /// replacement, a conflicted-copy sibling. READ AND CLEAR: whoever
+    /// asks gets them once, so they must be shown, not counted.
+    func vaultAlerts(done: @escaping ([String]) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            var out: [String] = []
+            if let raw = liv_vault_alerts_at(path) {
+                let json = String(cString: raw)
+                liv_string_free(raw)
+                out = (try? JSONDecoder().decode([String].self, from: Data(json.utf8))) ?? []
+            }
+            DispatchQueue.main.async { done(out) }
+        }
+    }
+
     /// `done` receives the page of ids AND the true total, so a capped
     /// result can say so instead of quietly looking complete.
-    func search(_ query: String, done: @escaping ([UInt64], Int) -> Void) {
+    func search(
+        _ query: String,
+        done: @escaping ([UInt64], Int, [LivFacet]) -> Void
+    ) {
         let path = self.path
         boxQueue.async {
             var ids: [UInt64] = []
             var total = 0
+            var facets: [LivFacet] = []
             if let raw = liv_search_at(path, query) {
                 let json = String(cString: raw)
                 liv_string_free(raw)
@@ -824,8 +1062,18 @@ final class BoxModel: ObservableObject {
                 let wire = try? decoder.decode(SearchWire.self, from: Data(json.utf8))
                 ids = (wire?.hits ?? []).compactMap { $0.id }
                 total = wire?.total ?? ids.count
+                facets = (wire?.facets ?? []).compactMap { f in
+                    guard let label = f.label, !label.isEmpty else { return nil }
+                    let values: [LivFacetValue] = (f.values ?? []).compactMap { v in
+                        guard let vl = v.label, !vl.isEmpty else { return nil }
+                        return LivFacetValue(
+                            label: vl, count: v.count ?? 0,
+                            active: v.active ?? false, excluded: v.excluded ?? false)
+                    }
+                    return values.isEmpty ? nil : LivFacet(label: label, values: values)
+                }
             }
-            DispatchQueue.main.async { done(ids, total) }
+            DispatchQueue.main.async { done(ids, total, facets) }
         }
     }
 }

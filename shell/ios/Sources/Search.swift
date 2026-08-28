@@ -33,6 +33,7 @@ struct SearchView: View {
     /// How many matched in total. The core sends the first 200; without
     /// this a query matching 1,800 things looked like it matched 200.
     @State private var totalHits = 0
+    @State private var facets: [LivFacet] = []
     /// Monotonic ticket: a stale debounce or a stale result must drop.
     @State private var seq = 0
     @FocusState private var focused: Bool
@@ -41,16 +42,20 @@ struct SearchView: View {
         query.trimmingCharacters(in: .whitespaces)
     }
 
-    /// The lens (M4), applied to the CORE's ranked ids — rank order is
+    /// The lens, applied to the CORE's ranked ids — rank order is
     /// preserved, the workspace only removes. Search is filtered; the
     /// Inbox never is.
+    ///
+    /// TWO SETS MEETING, not a second opinion. Until 2026-08-27 this
+    /// re-filtered the core's own ranked answer through a parser written in
+    /// Swift, so one list was decided by two grammars that disagreed
+    /// sixteen ways. Both sides are the core's now: `rawHits` is what
+    /// `liv_search_at` ranked for the typed query, `lensIds` is what
+    /// `liv_query_ids_at` admits for the workspace, and this is their
+    /// intersection.
     private var hits: [UInt64] {
-        let lens = workspaces.activeQuery
-        guard workspaces.lensOn, !lens.isInert else { return rawHits }
-        return rawHits.filter { id in
-            guard let row = box.entity(id) else { return true }
-            return lens.matches(row)
-        }
+        guard let lens = workspaces.lensIds else { return rawHits }
+        return rawHits.filter { lens.contains($0) }
     }
 
     /// Find-or-create offers only when no row we actually render is
@@ -118,6 +123,9 @@ struct SearchView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
+            }
+            if !facets.isEmpty {
+                facetRow
             }
             if trimmed.isEmpty {
                 ScrollView {
@@ -296,12 +304,96 @@ struct SearchView: View {
         .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 
+    /// NARROW BY WHAT IS THERE, not by what you can spell.
+    ///
+    /// The core counts, for every value of every select property, how many
+    /// results picking it would leave — and whether the query already
+    /// includes or excludes it. It has sent that on every search since the
+    /// facet code was written; nothing drew it. This is that row.
+    ///
+    /// One line per property, scrolling sideways, count-descending as the
+    /// core sorted them. A chip is lit when the query includes its value and
+    /// struck through when it excludes it, and the CORE decides which — so a
+    /// query typed by hand lights the same chips as one built by tapping.
+    private var facetRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 18) {
+                ForEach(facets) { facet in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(facet.label)
+                            .font(.system(size: LivType.micro, weight: .medium))
+                            .foregroundStyle(LivTheme.text3)
+                            .textCase(.uppercase)
+                            .kerning(0.6)
+                        HStack(spacing: 6) {
+                            ForEach(facet.values) { value in
+                                chip(facet.label, value)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .frame(height: 52)
+        .padding(.bottom, 6)
+    }
+
+    private func chip(_ key: String, _ v: LivFacetValue) -> some View {
+        Button {
+            cycle(key, v)
+        } label: {
+            HStack(spacing: 5) {
+                Text(v.label)
+                    .strikethrough(v.excluded, color: LivTheme.red)
+                Text("\(v.count)")
+                    .font(.system(size: LivType.micro, weight: .medium).monospacedDigit())
+                    .foregroundStyle(v.active ? LivTheme.onAccent.opacity(0.7) : LivTheme.text3)
+            }
+            .font(.system(size: LivType.label, weight: v.active ? .semibold : .regular))
+            .foregroundStyle(
+                v.excluded ? LivTheme.red : (v.active ? LivTheme.onAccent : LivTheme.text))
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(
+                Capsule().fill(v.active ? LivTheme.accent : LivTheme.panel2))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            "\(key) \(v.label), \(v.count)"
+                + (v.active ? ", included" : v.excluded ? ", excluded" : ""))
+    }
+
+    /// include -> exclude -> off, the cycle the core documents (bp3 a19).
+    ///
+    /// This does NOT parse the query. One grammar, one parser, and the
+    /// parser is in Rust (`services::search::parse`); a second one here
+    /// would be the defect standing rule 4 names. All this does is remove
+    /// the exact spellings THIS function produces and append the next
+    /// state's. A term the user typed in some other equivalent spelling is
+    /// left alone — and the chip still draws correctly, because `active`
+    /// and `excluded` come from the core, not from reading the text back.
+    private func cycle(_ key: String, _ v: LivFacetValue) {
+        let include = LivTerms.term(key, v.label)
+        let exclude = LivTerms.term(key, v.label, exclude: true)
+        var q = query
+        for spelling in [exclude, include] {
+            q = q.replacingOccurrences(of: spelling, with: " ")
+        }
+        q = q.split(separator: " ").joined(separator: " ")
+        let next = v.active ? exclude : (v.excluded ? "" : include)
+        query = next.isEmpty ? q : (q.isEmpty ? next : q + " " + next)
+        kick(debounce: false)
+    }
+
     private func kick(debounce: Bool) {
         seq += 1
         let ticket = seq
         let q = trimmed
         guard !q.isEmpty else {
             rawHits = []
+            facets = []
             return
         }
         if debounce {
@@ -318,10 +410,11 @@ struct SearchView: View {
     /// results both drop.
     private func fire(_ ticket: Int, _ q: String) {
         guard ticket == seq else { return }
-        box.search(q) { ids, total in
+        box.search(q) { ids, total, found in
             guard ticket == seq else { return }
             rawHits = ids
             totalHits = total
+            facets = found
         }
     }
 }
@@ -330,7 +423,6 @@ struct SearchView: View {
 
 private struct SearchCreateRow: View {
     let query: String
-    /// The active workspace's stamp, promised before the write.
 
     var body: some View {
         HStack(spacing: 8) {

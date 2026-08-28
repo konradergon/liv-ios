@@ -62,6 +62,15 @@ enum LivTabs {
 /// previews, ✕ per card, the dashed new-tab card, and the
 /// + | "N tabs" | Done footer, which is the way out.
 struct TabSwitcher: View {
+    /// Drawn as the NOTES SURFACE rather than as the cover over it
+    /// (owner, 2026-08-24: "make sure it replaces notes list").
+    ///
+    /// One grid, two framings — never two grids (standing rule 4). As a
+    /// surface it drops the footer, because everything in that footer is
+    /// already on the bar below it: `+` creates, and there is nothing to
+    /// be Done with.
+    var asSurface = false
+
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
 
@@ -70,11 +79,6 @@ struct TabSwitcher: View {
     /// fullScreenCover, and stacking a second one on top of it is how
     /// surfaces started tearing each other down (audit, 2026-08-04).
     @State private var inactiveShown = false
-    /// What the header's field holds. Device state and a moment — never
-    /// persisted, because a filter you did not set is a filter you cannot
-    /// see the reason for.
-    @State private var filter = ""
-
     private let columns = [
         GridItem(.flexible(), spacing: 10),
         GridItem(.flexible(), spacing: 10),
@@ -97,7 +101,13 @@ struct TabSwitcher: View {
 
     private var grid: some View {
         VStack(spacing: 0) {
-            header
+            // The band the header used to be. It is not decoration: a
+            // ScrollView that touches the top safe area takes it over and
+            // draws its content THROUGH it, so without a band ahead of it
+            // a scrolled card row slides under the clock and the Dynamic
+            // Island — and a card's ✕ resting behind the Island cannot be
+            // tapped, because that region belongs to the system.
+            LivTopScrim()
             ScrollView {
                 inactiveRow
                 LazyVGrid(columns: columns, spacing: 10) {
@@ -107,95 +117,30 @@ struct TabSwitcher: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
-            footer
+            // As a surface the bar floats over the bottom, so it needs
+            // the same room every other surface leaves it.
+            .contentMargins(.bottom, asSurface ? LivBar.room : 0, for: .scrollContent)
+            if !asSurface { footer }
         }
     }
 
-    /// FeatureWindow's header, same 40pt band, same `v`. It is not
-    /// decoration: a ScrollView that touches the top safe area takes it over
-    /// and draws its content THROUGH it, so without a band ahead of it a
-    /// scrolled card row slides under the clock and the Dynamic Island —
-    /// and a ✕ resting behind the Island cannot be tapped, because that
-    /// region belongs to the system. Rule 2 bans the blur that would
-    /// normally sit there. This band absorbs the inset and gives the tab
-    /// view the same way out the feature windows have.
-    /// SEARCH YOUR OPEN TABS — not the box. Global search is the bar's
-    /// own key and stays exactly where it was (owner, 2026-08-22: "keep
-    /// global search and global create… yet also have new tab and search
-    /// tab nicely put in"). This is the "search tab" half: a field that
-    /// narrows the grid in front of you.
+    /// The tabs the grid shows.
     ///
-    /// Two mechanical traps, both real, both hit on the way in. The band
-    /// was 40pt and a field needs more; and the band carried BOTH a
-    /// tap-to-dismiss and a drag-to-dismiss across its whole width, so a
-    /// field placed in it was swallowed by the gestures before it could
-    /// take a keystroke. Both now belong to the chevron alone.
-    private var header: some View {
-        HStack(spacing: 10) {
-            Button { desk.switcherShown = false } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: LivType.strong, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close tabs")
-            // The dismissing gestures live HERE, on the chevron, not on
-            // the band — see above.
-            .gesture(
-                DragGesture(minimumDistance: 20)
-                    .onEnded { g in
-                        if g.translation.height > 40 { desk.switcherShown = false }
-                    }
-            )
-
-            HStack(spacing: 7) {
-                LivIcon(glyph: .everything, color: LivTheme.text3, size: 16)
-                TextField("Search tabs", text: $filter)
-                    .font(.system(size: LivType.body))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.done)
-                if !filter.isEmpty {
-                    Button { filter = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: LivType.body))
-                            .foregroundStyle(LivTheme.text3)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear")
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 36)
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
-                    .fill(LivTheme.panel2))
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 54)
-    }
-
-    /// The tabs the grid shows, narrowed by the field. Matching on the
-    /// same title the card draws, so what you type and what you see can
-    /// never be answering different questions.
-    private var shown: [DeskTab] {
-        let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return desk.liveTabs }
-        return desk.liveTabs.filter { tab in
-            guard case .entity(let id) = tab.content, let row = box.entity(id) else {
-                return false
-            }
-            return livRowTitle(row).lowercased().contains(needle)
-        }
-    }
+    /// It used to be narrowed by a "Search tabs" field in a header, with
+    /// a collapse chevron beside it. Both are gone (owner, 2026-08-24:
+    /// "you can remove the collapse button and search tabs from tab
+    /// view"). The grid is the Notes surface now, not a sheet you peer
+    /// into, so there is nothing to collapse; and a field that searches
+    /// the tabs you can already see, one tap from a search that reaches
+    /// the whole box, was the smaller of two searches.
+    private var shown: [DeskTab] { desk.liveTabs }
 
     // MARK: cards
 
     private func card(_ tab: DeskTab) -> some View {
         TabCard(
             tab: tab,
+            feature: desk.state,
             active: tab.id == desk.activeTabId,
             onOpen: {
                 desk.focus(tab.id)
@@ -206,9 +151,7 @@ struct TabSwitcher: View {
 
     private var newTabCard: some View {
         Button {
-            // `newTab()` is called `createSomething()` now — same thing:
-            // the create menu, which appends a tab when you choose.
-            desk.createSomething()
+            desk.newTab()
             desk.switcherShown = false
         } label: {
             RoundedRectangle(cornerRadius: 12)
@@ -235,9 +178,7 @@ struct TabSwitcher: View {
     private var footer: some View {
         HStack {
             Button {
-                // `newTab()` is called `createSomething()` now — same thing:
-            // the create menu, which appends a tab when you choose.
-            desk.createSomething()
+                desk.newTab()
                 desk.switcherShown = false
             } label: {
                 Image(systemName: "plus")
@@ -284,8 +225,9 @@ struct TabSwitcher: View {
     /// One row, above the grid. Hidden entirely at zero — an empty
     /// "Inactive 0" row is furniture explaining itself.
     @ViewBuilder private var inactiveRow: some View {
-        let parked = desk.inactiveTabs
-        if !parked.isEmpty {
+        let parked = desk.inactiveEverywhere
+        let total = parked.reduce(0) { $0 + $1.tabs.count }
+        if total > 0 {
             Button {
                 withAnimation(LivMotion.nav) { inactiveShown = true }
             } label: {
@@ -299,7 +241,7 @@ struct TabSwitcher: View {
                         .foregroundStyle(LivTheme.text)
                     ValueChip(LivTabs.label(LivTabs.days), dotted: false)
                     Spacer(minLength: 0)
-                    Text("\(parked.count)")
+                    Text("\(total)")
                         .font(.system(size: LivType.body).monospacedDigit())
                         .foregroundStyle(LivTheme.text3)
                     Image(systemName: "chevron.right")
@@ -352,10 +294,23 @@ struct InactiveTabs: View {
         VStack(spacing: 0) {
             band
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(desk.inactiveTabs) { tab in card(tab) }
+                // ONE SECTION PER VIEW. The grid behind this sheet is
+                // the view you are standing in; the shelf is every view
+                // at once, so each group has to say whose it is or a
+                // Calendar month and a note would sit side by side with
+                // nothing to tell them apart.
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(desk.inactiveEverywhere, id: \.feature) { group in
+                        SectionLabel(group.feature.title, trailing: "\(group.tabs.count)")
+                            .padding(.horizontal, 16)
+                            .padding(.top, 6)
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(group.tabs) { tab in card(tab, in: group.feature) }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                    }
                 }
-                .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
         }
@@ -384,6 +339,7 @@ struct InactiveTabs: View {
                 .foregroundStyle(LivTheme.text)
                 .padding(.leading, 4)
             Spacer(minLength: 0)
+            // Closes EVERY view's, which is what this screen now shows.
             Button {
                 desk.closeInactive()
                 close()
@@ -408,18 +364,24 @@ struct InactiveTabs: View {
     /// The SAME card the grid draws, with the age added to the kind
     /// footer — the one slot that already existed and had room. That is
     /// what earns this screen its explanation without a sentence.
-    private func card(_ tab: DeskTab) -> some View {
+    private func card(_ tab: DeskTab, in feature: Feature) -> some View {
         TabCard(
             tab: tab,
+            feature: feature,
             age: LivTabs.age(tab.lastUsed, now: Civil.nowStamp()),
-            onOpen: { revive(tab) },
-            onClose: { desk.close(tab.id) })
+            onOpen: { revive(tab, in: feature) },
+            onClose: { desk.close(tab.id, in: feature) })
     }
 
     /// Back into the grid, and onto the screen: this is the only way a
     /// tab leaves the inactive list, exactly as Chrome does it.
-    private func revive(_ tab: DeskTab) {
-        desk.focus(tab.id)
+    ///
+    /// It also CHANGES VIEW when the tab belongs to another one. The
+    /// shelf spans every plane now, so reviving a Calendar tab from the
+    /// Notes switcher has to take you to the Calendar — focusing it where
+    /// you stand would put it somewhere you cannot see.
+    private func revive(_ tab: DeskTab, in feature: Feature) {
+        desk.focus(tab.id, in: feature)
         close()
         desk.switcherShown = false
     }
@@ -476,7 +438,7 @@ func livTabsSelfCheck() -> [String] {
     // The two invariants the grid leans on. Built against a real model
     // so the filters are the ones that actually ship.
     UserDefaults.standard.set(21, forKey: LivTabs.key)
-    let model = DeskModel()
+    let model = DeskModel.scratchForSelfCheck()
     model.replaceTabsForSelfCheck([
         DeskTab(id: UUID(), content: .entity(1), lastUsed: daysAgo(90)),
         DeskTab(id: UUID(), content: .entity(2), lastUsed: daysAgo(40)),
@@ -501,13 +463,13 @@ func livTabsSelfCheck() -> [String] {
     // clock is ancient — otherwise the desk would render a body for a
     // tab the grid refuses to show, and "Close all" would shut the
     // screen out from under you.
-    let aged = DeskModel()
+    let aged = DeskModel.scratchForSelfCheck()
     aged.replaceTabsForSelfCheck([
         DeskTab(id: UUID(), content: .entity(1), lastUsed: daysAgo(90)),
         DeskTab(id: UUID(), content: .entity(2), lastUsed: daysAgo(40)),
         DeskTab(id: UUID(), content: .entity(3), lastUsed: daysAgo(0)),
     ])
-    aged.activeTabId = aged.tabs.first?.id  // the 90-day-old one
+    aged.activateForSelfCheck(aged.tabs.first?.id)  // the 90-day-old one
     check("ancient active tab is not inactive", !aged.inactiveTabs.contains { $0.id == aged.activeTabId })
     check("ancient active tab is live", aged.liveTabs.contains { $0.id == aged.activeTabId })
     check("only the untouched middle tab is inactive", aged.inactiveTabs.count == 1, "\(aged.inactiveTabs.count)")
@@ -526,6 +488,7 @@ func livTabsSelfCheck() -> [String] {
     if let saved { UserDefaults.standard.set(saved, forKey: LivTabs.key) } else {
         UserDefaults.standard.removeObject(forKey: LivTabs.key)
     }
+    DeskModel.forgetScratchForSelfCheck()
     return failures
 }
 
@@ -541,6 +504,11 @@ func livTabsSelfCheck() -> [String] {
 /// explains itself without a sentence.
 struct TabCard: View {
     let tab: DeskTab
+    /// WHICH VIEW this tab belongs to. A position token means nothing
+    /// without it — the vocabulary is per view (`Positions.swift`) — and
+    /// the shelf now shows cards from every plane at once, so the card
+    /// cannot read it off the view you happen to be standing in.
+    let feature: Feature
     var age: Int? = nil
     var active: Bool = false
     let onOpen: () -> Void
@@ -603,8 +571,27 @@ struct TabCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(
-            age.map { "\(title), inactive \($0) days" } ?? title)
+        // TWO UNTITLED NOTES SOUND THE SAME. Every unnamed note reads
+        // back as "Untitled", so a screen reader gives a grid of them one
+        // word repeated and no way to tell which is which — and neither
+        // can a test driving by label. The excerpt is what a sighted
+        // person is telling them apart by, so it goes in the label too.
+        .accessibilityLabel(spoken)
+    }
+
+    /// What the card says out loud: its title, what distinguishes it when
+    /// the title does not, its kind, and its age when it is on the shelf.
+    private var spoken: String {
+        var parts = [title]
+        if let row, livRowIsUntitled(row) {
+            let first = excerpt
+                .split(separator: "\n").first.map(String.init) ?? ""
+            let words = first.split(separator: " ").prefix(7).joined(separator: " ")
+            if !words.isEmpty { parts.append(words) }
+        }
+        parts.append(kind)
+        if let age { parts.append("inactive \(age) days") }
+        return parts.joined(separator: ", ")
     }
 
     private var row: EntityRow? {
@@ -612,12 +599,22 @@ struct TabCard: View {
         return box.entity(id)
     }
 
-    private var title: String { row.map(livRowTitle) ?? "Untitled" }
+    /// A position tab's own token; `nil` for a document tab.
+    private var token: String? {
+        guard case .position(let t) = tab.content else { return nil }
+        return t
+    }
+
+    private var title: String {
+        if let token { return LivPosition.title(feature, token) }
+        return row.map(livRowTitle) ?? "Untitled"
+    }
 
     /// A tab whose entity is gone says so. The dead-tab case is
     /// exactly what collects in the Inactive list, and calling it a
     /// capture would hide the one fact worth knowing about it.
     private var kind: String {
+        if token != nil { return feature.title }
         guard let row else { return "missing" }
         return LivKind.of(row).wire
     }
@@ -626,7 +623,10 @@ struct TabCard: View {
     /// come out of `Hue.dot`, which spreads any string over five colours
     /// — so a tab's dot said nothing about what the tab held.
     private var kindColor: Color {
-        row == nil ? LivTheme.muted : LivKind.color(of: row)
+        // A position is a PLACE, and places have no kind colour — the
+        // library's rows are bare and colourless (owner, 2026-08-13).
+        if token != nil { return LivTheme.text3 }
+        return row == nil ? LivTheme.muted : LivKind.color(of: row)
     }
 
     private var footer: String {
@@ -642,6 +642,7 @@ struct TabCard: View {
     /// its most valuable line repeating the two things beside it (owner,
     /// 2026-08-15). Today and Everything skip it the same way.
     private var excerpt: String {
+        if let token { return LivPosition.detail(feature, token) }
         guard let row else { return "Deleted" }
         var lines: [String] = []
         for cell in row.cells ?? [] {

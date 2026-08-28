@@ -125,6 +125,17 @@ enum LivGlyph: Equatable {
     case today, inbox, calendar, tasks, everything
     // Furniture.
     case filter, settings, workspace, workspaces, plus, trash
+    /// A NUMBER IN A BOX — the bar's tab key (owner, 2026-08-23: "just
+    /// have tabs as they appeared before when you clicked the numbered
+    /// box"). Obsidian's fifth key is this shape with today's date in
+    /// it; Liv puts the count of open tabs there, which is what a
+    /// numbered box means in every browser on this phone.
+    ///
+    /// Its own drawing rather than `.calendar`'s: the reference is a
+    /// plain rounded outline, and the calendar glyph's hanger lines and
+    /// header rule would run straight through the numerals. Two glyphs,
+    /// two things — not two drawings of one (standing rule 4).
+    case day(Int)
 }
 
 /// The blueprint's 24×24 drawing space. Every glyph is STROKED, never
@@ -150,6 +161,8 @@ struct GlyphShape: Shape {
         case .task, .tasks:
             pen.box(4.5, 4.5, 15, 15, 4.5)
             pen.shape([(8.5, 12.3, 0), (11.1, 14.9, 0), (15.7, 9.5, 0)], closed: false)
+        case .day:
+            pen.box(3.5, 4.5, 17, 16, 3.5)
         case .event, .calendar:
             pen.box(3, 5, 18, 16, 2.5)
             pen.line(8, 3, 8, 7)
@@ -419,7 +432,21 @@ struct LivIcon: View {
         GlyphShape(glyph: glyph)
             .stroke(color, style: stroke)
             .frame(width: size, height: size)
-        .accessibilityHidden(true)  // the row's text carries the name
+            // The numbered box carries a NUMBER inside it. Sized off the
+            // glyph so it scales with it, monospaced so the bar does not
+            // twitch between 9 tabs and 10.
+            .overlay {
+                if case .day(let n) = glyph {
+                    Text("\(n)")
+                        .font(.system(size: size * 0.46, weight: .bold).monospacedDigit())
+                        .foregroundStyle(color)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                        .frame(width: size * 0.62)
+                        .offset(y: size * 0.04)
+                }
+            }
+            .accessibilityHidden(true)  // the row's text carries the name
     }
 }
 
@@ -651,6 +678,10 @@ func livGlyphSelfCheck() -> [String] {
             .note, .task, .event, .person, .link, .capture,
             .today, .inbox, .calendar, .tasks, .everything,
             .filter, .settings, .workspace, .workspaces, .plus,
+            // Both digit widths: the numerals ride INSIDE the box, and a
+            // two-digit count that overflows it would be invisible in
+            // review and obvious on the day you open ten tabs.
+            .day(0), .day(9), .day(18), .day(31),
         ] + fileClasses.map { LivGlyph.file($0) }
     for glyph in drawn {
         let path = GlyphShape(glyph: glyph).path(in: box)

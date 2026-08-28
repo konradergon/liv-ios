@@ -31,13 +31,13 @@ struct InspectorField: Identifiable {
     /// The fields every note shows even when empty — the "zero fill
     /// pressure" core (design/editor-study.md §8: two filled fields is a
     /// finished object). Everything else appears only once it has a value.
-    static let core = ["area", "project", "subjects", "people"]
+    static let core = ["area", "project", "tags", "people"]
 
     /// Multi-valued by name — the same rule the camera's chip editor uses
     /// (Camera.swift's CameraChipKind.multi): tags and people accumulate,
     /// area and project replace.
     static func isMulti(_ property: String) -> Bool {
-        property == "subjects" || property == "people"
+        property == "tags" || property == "people"
     }
 
     /// Describe a property from the live snapshot.
@@ -525,6 +525,11 @@ struct InspectorValueSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var typed = ""
     @State private var known: [String] = []
+    /// The value being renamed everywhere, and the name being typed for
+    /// it. One value at a time — a rename is one transaction.
+    @State private var renaming: String?
+    @State private var renameTo = ""
+    @State private var renameSaid: String?
 
     private var trimmed: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -575,6 +580,20 @@ struct InspectorValueSheet: View {
                     ForEach(filtered, id: \.self) { value in
                         let on = current.contains { same($0, value) }
                         row(value, checked: on) { on ? remove(value) : add(value) }
+                            // RENAME IT EVERYWHERE, not just here. The core
+                            // rewrites every carrier in ONE transaction — and
+                            // for a select it renames the option, or merges
+                            // into an existing one. Only the core can see
+                            // every carrier at once, so this cannot be N
+                            // writes from the shell.
+                            .contextMenu {
+                                Button {
+                                    renameTo = value
+                                    renaming = value
+                                } label: {
+                                    Label("Rename everywhere…", systemImage: "pencil")
+                                }
+                            }
                     }
                     if creatable {
                         row("Create \u{201C}\(trimmed)\u{201D}", accent: true) { add(trimmed) }
@@ -594,6 +613,50 @@ struct InspectorValueSheet: View {
             // Once per open, never per keystroke.
             guard !field.closed else { return }
             box.distinctValues(property: field.property) { known = $0 }
+        }
+        .alert(
+            "Rename everywhere",
+            isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })
+        ) {
+            TextField("New name", text: $renameTo)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+            Button("Cancel", role: .cancel) { renaming = nil }
+            Button("Rename") { commitRename() }
+        } message: {
+            if let renaming {
+                let what = field.property.lowercased()
+                Text(verbatim:
+                    "Every \(what) reading \u{201C}\(renaming)\u{201D} changes. "
+                        + "One step, so one undo.")
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let renameSaid {
+                Text(renameSaid)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.text2)
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(Capsule().fill(LivTheme.panel2))
+                    .padding(.bottom, 18)
+            }
+        }
+    }
+
+    private func commitRename() {
+        guard let old = renaming else { return }
+        let new = renameTo.trimmingCharacters(in: .whitespacesAndNewlines)
+        renaming = nil
+        guard !new.isEmpty, new != old else { return }
+        box.renameValue(property: field.property, from: old, to: new) { n in
+            guard let n else {
+                renameSaid = "Could not rename that."
+                return
+            }
+            renameSaid = n == 1 ? "Renamed on 1 thing." : "Renamed on \(n) things."
+            box.distinctValues(property: field.property) { known = $0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { renameSaid = nil }
         }
     }
 
@@ -671,7 +734,7 @@ private struct DetailRowLabel: View {
 
     /// Each field's COLOR — no glyph. Icons here were tried on
     /// 2026-08-12 and rejected the same day: a clock for "due" and a tag
-    /// for "subjects" are pictures of the word beside them, which reads
+    /// for "tags" are pictures of the word beside them, which reads
     /// as noise rather than information (owner: "icons for properties
     /// are confusing, but color indication of some sort is ok"). A dot
     /// is the owner's own metaphor — it says which family a field
@@ -684,7 +747,7 @@ private struct DetailRowLabel: View {
         "status": LivTheme.accent,
         "area": LivTheme.amber,
         "project": LivTheme.green,
-        "subjects": LivTheme.purple,
+        "tags": LivTheme.purple,
         "people": LivTheme.pink,
     ]
 

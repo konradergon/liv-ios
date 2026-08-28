@@ -663,13 +663,22 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 // MARK: - the text view
 
 final class MarkdownTextView: UITextView {
-    /// Clearance for the floating circles the title starts below.
     /// Clearance above the title, measured from the top of the text
-    /// view. It has to clear the floating circles the desk hangs over
-    /// the note — at 54 the title sat about 8pt under them, which read
-    /// as crowded (owner, 2026-08-10: "titles in documents could still
-    /// use some breathing room").
-    private static let titleTop: CGFloat = 78
+    /// view: it has to clear the floating controls the desk hangs over
+    /// the note.
+    ///
+    /// It was the literal 78, measured by eye on one phone (owner,
+    /// 2026-08-10: "titles in documents could still use some breathing
+    /// room"). A literal cannot follow the safe area, so on a device
+    /// with a taller one — an iPhone Air's 59pt against a 14's 47 — the
+    /// door dropped THROUGH the title and sat on the word (seen live,
+    /// 2026-08-24, the moment the labelled back stopped covering it).
+    ///
+    /// `LivRow.topInset` is the band the top chrome owns, and its own
+    /// documentation already says it: anything that speaks at the top of
+    /// the screen starts below this, or it lands on the controls. The
+    /// title is something that speaks at the top of the screen.
+    private static var titleTop: CGFloat { LivRow.topInset }
     private static let gutter: CGFloat = 15
     /// Between the title and the first line of the note. At 6 the note
     /// began almost against its own name.

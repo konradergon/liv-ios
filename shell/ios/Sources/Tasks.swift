@@ -18,21 +18,27 @@ struct TasksView: View {
 
     @State private var options: [StatusOption] = []
     @State private var projects: [String] = []
-    @State private var filter: TasksFilter = .all
-    /// Names of completes-groups the user opened; default = collapsed.
-    @State private var expanded: Set<String> = []
     /// The row whose "Pick" swipe verb is choosing a date (sheet item).
     @State private var duePick: TasksDuePick?
+
+    /// WHERE YOU ARE in this view: the chip that is on, and the
+    /// completes-groups you have unfolded. Not `@State` since 2026-08-22
+    /// — it is what a Tasks tab HOLDS (design/tabs.md, Reading B), so it
+    /// lives in the plane and comes back with it.
+    private var pos: TasksPosition { TasksPosition(token: desk.position(.tasks)) }
+    private var filter: TasksPosition.Filter { pos.filter }
+    private var expanded: Set<String> { Set(pos.expanded) }
+
+    private func park(filter: TasksPosition.Filter? = nil, expanded: Set<String>? = nil) {
+        let next = TasksPosition(
+            filter: filter ?? pos.filter,
+            expanded: expanded ?? Set(pos.expanded))
+        desk.park(.tasks, at: next.token)
+    }
 
     private struct TasksDuePick: Identifiable {
         let entity: UInt64
         var id: UInt64 { entity }
-    }
-
-    private enum TasksFilter: Equatable {
-        case all
-        case status(String)
-        case project(String)
     }
 
     private struct TasksGroup: Identifiable {
@@ -68,7 +74,7 @@ struct TasksView: View {
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
         // Room under the last row for the add button to sit over.
-        .contentMargins(.bottom, 88, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas.ignoresSafeArea())
         .sheet(item: $duePick) { p in
@@ -92,7 +98,7 @@ struct TasksView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 TasksFilterChip("All", dot: nil, selected: filter == .all) {
-                    filter = .all
+                    park(filter: .all)
                 }
                 ForEach(options) { option in
                     let name = option.name ?? ""
@@ -100,7 +106,7 @@ struct TasksView: View {
                         name, dot: tasksOptionColor(option.hue),
                         selected: filter == .status(name)
                     ) {
-                        filter = filter == .status(name) ? .all : .status(name)
+                        park(filter: filter == .status(name) ? .all : .status(name))
                     }
                 }
                 ForEach(projects, id: \.self) { project in
@@ -108,8 +114,9 @@ struct TasksView: View {
                         project, dot: Hue.dot(project),
                         selected: filter == .project(project)
                     ) {
-                        filter =
-                            filter == .project(project) ? .all : .project(project)
+                        park(
+                            filter: filter == .project(project)
+                                ? .all : .project(project))
                     }
                 }
             }
@@ -140,10 +147,9 @@ struct TasksView: View {
     private func visibleGroups() -> [TasksGroup] {
         // The lens (M4) runs BEFORE the chip filter: the workspace scopes
         // the surface, the chips narrow inside it.
-        let lens = workspaces.activeQuery
         let tasks = (model.snap?.entities ?? []).filter {
             ($0.kinds ?? []).contains("task") && $0.trashed != true
-                && $0.archived != true && lens.matches($0)
+                && $0.archived != true && workspaces.admits($0)
         }
         let filtered = tasks.filter(matchesFilter)
 
@@ -226,10 +232,9 @@ struct TasksView: View {
     /// The workspace lens applies to the SOURCE NOTE — a filtered surface
     /// filters whole (rev 6's consistency rule).
     private var noteLines: [NoteTaskRow] {
-        let lens = workspaces.activeQuery
         return (model.snap?.noteTasks ?? []).filter { row in
             guard let owner = row.entity, let note = model.entity(owner) else { return false }
-            return lens.matches(note)
+            return workspaces.admits(note)
         }
     }
 
@@ -347,11 +352,9 @@ struct TasksView: View {
     }
 
     private func toggleExpanded(_ name: String) {
-        if expanded.contains(name) {
-            expanded.remove(name)
-        } else {
-            expanded.insert(name)
-        }
+        var open = expanded
+        if open.contains(name) { open.remove(name) } else { open.insert(name) }
+        park(expanded: open)
     }
 
     // MARK: rows
@@ -475,7 +478,7 @@ struct TasksView: View {
     /// render at all). The date is the row's right-hand fact already, so
     /// what is left to say here is what the task is attached to.
     private func refChips(_ row: EntityRow) -> [String] {
-        for property in ["project", "people", "subjects", "area"] {
+        for property in ["project", "people", "tags", "area"] {
             let hit = (row.cells ?? []).first {
                 $0.property == property && !($0.value ?? "").isEmpty
             }
