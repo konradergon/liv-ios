@@ -3,7 +3,11 @@
 
 # Built binaries — artifacts, not source. Kept on disk (build.sh writes
 # them) but out of git; they bloated history at ~7MB per commit.
-
+#
+# THIS COMMENT STOOD OVER NOTHING until 2026-08-28: the pattern it
+# describes was removed with the macOS shell, and the rule went with it.
+# 708MB of `shell/macos/build/lotus` had already gone in.
+/shell/macos/build/
 # Local Liv reference material — never part of the liv repo
 /Programming the productivity app/
 
