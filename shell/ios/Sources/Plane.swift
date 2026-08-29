@@ -84,48 +84,50 @@ struct DeskPlane {
 
 // MARK: - every view's strip, for one workspace
 
-/// The six planes of one workspace, and the only thing that writes them.
+/// ONE DESK, and a spot in each tool (2026-08-28).
 ///
-/// A value type: DeskModel holds one behind `private(set)`, so mutating a
-/// plane republishes the desk exactly as assigning the old dictionary
-/// did, and no other file can move a tab.
+/// Until now this was six planes, one per view, and a plane could hold
+/// either kind of tab. In practice it never did: `open(entity:)` was
+/// called with `.notes` at both of its call sites, `park` only ever
+/// wrote positions, and the sweep below already read `byFeature[.notes]`
+/// under a comment saying "only Notes holds entities". The split was
+/// real and undeclared.
+///
+/// Declaring it is the whole change. A DOCUMENT is plural — you keep
+/// several open and come back to them — so the documents live in one
+/// desk that follows you across every view. A TOOL is singular; there is
+/// one Today. What a tool needs remembered is WHERE YOU LEFT IT, which
+/// is one token, not a list of them. Six planes could hold three Todays,
+/// and did.
+///
+/// A value type: DeskModel holds one behind `private(set)`, so mutating
+/// it republishes the desk exactly as assigning the old dictionary did,
+/// and no other file can move a tab.
 struct DeskPlanes {
     /// The workspace these belong to. Every key is scoped by it, so a
     /// switch is a reload and never a merge.
     private(set) var workspaceId: UInt64
-    private var byFeature: [Feature: DeskPlane]
+    /// The documents you have open. One set, for the whole app.
+    private var desk: DeskPlane
+    /// Where each tool was left, in that view's own vocabulary
+    /// (`Positions.swift`). One token each; absent means its own root.
+    private var spots: [Feature: String]
 
     init(workspace: UInt64) {
         workspaceId = workspace
-        byFeature = Self.load(workspace)
+        (desk, spots) = Self.load(workspace)
     }
 
     // MARK: reading
 
-    /// One view's plane, or nil when it has never had one. `nil` and "a
-    /// plane with no tabs" are the same state and must not become two —
-    /// see `persist`.
-    subscript(feature: Feature) -> DeskPlane? { byFeature[feature] }
+    var tabs: [DeskTab] { desk.tabs }
 
-    func tabs(in feature: Feature) -> [DeskTab] { byFeature[feature]?.tabs ?? [] }
+    var activeTabId: UUID? { desk.activeTabId }
 
-    func activeTabId(in feature: Feature) -> UUID? { byFeature[feature]?.activeTabId }
+    var activeTab: DeskTab? { desk.tabs.first { $0.id == desk.activeTabId } }
 
-    func activeTab(in feature: Feature) -> DeskTab? {
-        guard let plane = byFeature[feature] else { return nil }
-        return plane.tabs.first { $0.id == plane.activeTabId }
-    }
-
-    /// Where the active tab of `feature` is parked, in that view's own
-    /// vocabulary (`Positions.swift`). `nil` means the plane has no tab
-    /// yet and the view shows its root — which is what no tabs has always
-    /// meant in Notes.
-    func position(_ feature: Feature) -> String? {
-        guard let tab = activeTab(in: feature),
-            case .position(let token) = tab.content
-        else { return nil }
-        return token
-    }
+    /// Where a tool was left. `nil` means it shows its own root.
+    func position(_ feature: Feature) -> String? { spots[feature] }
 
     /// The tabs the grid shows. Inactive tabs are NOT removed from the
     /// plane — they stay in the one array, so closing, de-duplicating,
@@ -135,11 +137,10 @@ struct DeskPlanes {
     /// The active tab is never inactive, which guarantees this is
     /// non-empty whenever the plane is — and therefore that an empty desk
     /// means "no tabs at all", not "none you looked at lately".
-    func live(in feature: Feature) -> [DeskTab] {
-        guard let plane = byFeature[feature] else { return [] }
+    var live: [DeskTab] {
         let now = Civil.nowStamp()
-        return plane.tabs.filter {
-            $0.id == plane.activeTabId || !LivTabs.isInactive($0.lastUsed, now: now)
+        return desk.tabs.filter {
+            $0.id == desk.activeTabId || !LivTabs.isInactive($0.lastUsed, now: now)
         }
     }
 
@@ -149,67 +150,39 @@ struct DeskPlanes {
     /// The active tab of that plane is never inactive — including when
     /// you are not looking at that view. A plane you left three weeks ago
     /// keeps the tab you left it on.
-    func inactive(in feature: Feature) -> [DeskTab] {
-        guard let plane = byFeature[feature] else { return [] }
+    var inactive: [DeskTab] {
         let now = Civil.nowStamp()
-        return plane.tabs
-            .filter { $0.id != plane.activeTabId && LivTabs.isInactive($0.lastUsed, now: now) }
+        return desk.tabs
+            .filter { $0.id != desk.activeTabId && LivTabs.isInactive($0.lastUsed, now: now) }
             .sorted { $0.lastUsed > $1.lastUsed }
     }
 
-    /// EVERY plane's shelf, in the declared view order, empty ones left
-    /// out.
-    ///
-    /// **One attic, not six.** With a plane per view, a shelf that showed
-    /// only the view you were standing in would hide five of them — a
-    /// Calendar tab you stopped using in July would be invisible until
-    /// you happened to open the Calendar. The grid above is the view you
-    /// are in; the shelf is everything you have parked.
-    var inactiveEverywhere: [(feature: Feature, tabs: [DeskTab])] {
-        Feature.inOrder.compactMap { feature in
-            let parked = inactive(in: feature)
-            return parked.isEmpty ? nil : (feature, parked)
-        }
-    }
-
-    var inactiveCount: Int {
-        Feature.allCases.reduce(0) { $0 + inactive(in: $1).count }
-    }
+    /// **One attic, and now it needs no gathering.** This used to walk
+    /// six planes so a Calendar tab parked in July would not be
+    /// invisible until you happened to open the Calendar. With one desk
+    /// there is one shelf and the question does not arise.
+    var inactiveCount: Int { inactive.count }
 
     // MARK: moving a tab
 
     /// This tab is being used, now. The ONE place a tab's clock is set.
-    mutating func touch(_ tabId: UUID, in feature: Feature) {
-        guard var plane = byFeature[feature],
-            let i = plane.tabs.firstIndex(where: { $0.id == tabId })
-        else { return }
-        plane.tabs[i].lastUsed = Civil.nowStamp()
-        byFeature[feature] = plane
+    mutating func touch(_ tabId: UUID) {
+        guard let i = desk.tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        desk.tabs[i].lastUsed = Civil.nowStamp()
         persist()
     }
 
-    mutating func setActive(_ tabId: UUID?, in feature: Feature) {
-        byFeature[feature, default: DeskPlane()].activeTabId = tabId
+    mutating func setActive(_ tabId: UUID?) {
+        desk.activeTabId = tabId
         persist()
     }
 
-    /// Park the active tab at `token`. **Moving is what mints the tab**:
-    /// a view whose plane is empty gets one here, so a user who never
-    /// leaves a view's root never accumulates a tab they did not ask for.
+    /// Remember where a tool was left. It used to MINT A TAB — which is
+    /// how a view you had merely scrolled ended up with two of itself,
+    /// and then three. One token, overwritten.
     mutating func park(_ feature: Feature, at token: String) {
-        var plane = byFeature[feature] ?? DeskPlane()
-        if let active = plane.activeTabId,
-            let i = plane.tabs.firstIndex(where: { $0.id == active })
-        {
-            guard plane.tabs[i].content != .position(token) else { return }
-            plane.tabs[i].content = .position(token)
-            plane.tabs[i].lastUsed = Civil.nowStamp()
-        } else {
-            let tab = DeskTab(id: UUID(), content: .position(token), lastUsed: Civil.nowStamp())
-            plane.tabs.append(tab)
-            plane.activeTabId = tab.id
-        }
-        byFeature[feature] = plane
+        guard spots[feature] != token else { return }
+        spots[feature] = token
         persist()
     }
 
@@ -217,47 +190,27 @@ struct DeskPlanes {
     /// there is none. Returns the tab to focus — appending and focusing
     /// are the whole difference tabs make, and opening a second note no
     /// longer replaces the first.
-    mutating func open(entity: UInt64, in feature: Feature) -> UUID {
-        var plane = byFeature[feature] ?? DeskPlane()
-        if let existing = plane.tabs.first(where: { $0.content == .entity(entity) }) {
+    mutating func open(entity: UInt64) -> UUID {
+        if let existing = desk.tabs.first(where: { $0.content == .entity(entity) }) {
             return existing.id
         }
         let tab = DeskTab(id: UUID(), content: .entity(entity), lastUsed: Civil.nowStamp())
-        plane.tabs.append(tab)
-        byFeature[feature] = plane
+        desk.tabs.append(tab)
         persist()
         return tab.id
-    }
-
-    /// A new tab at the view's own root, focused. The switcher's `+` in
-    /// every view but Notes, where a tab needs a document to hold and the
-    /// create menu answers instead.
-    mutating func openRoot(in feature: Feature) {
-        var plane = byFeature[feature] ?? DeskPlane()
-        let tab = DeskTab(
-            id: UUID(), content: .position(LivPosition.root(feature)),
-            lastUsed: Civil.nowStamp())
-        plane.tabs.append(tab)
-        plane.activeTabId = tab.id
-        byFeature[feature] = plane
-        persist()
     }
 
     /// Does this plane hold that tab? The chrome asks before it commits
     /// the keyboard, so a close that would do nothing does not also
     /// resign a field.
-    func holds(_ tabId: UUID, in feature: Feature) -> Bool {
-        byFeature[feature]?.tabs.contains { $0.id == tabId } ?? false
-    }
+    func holds(_ tabId: UUID) -> Bool { desk.tabs.contains { $0.id == tabId } }
 
     /// Closing the last tab leaves the desk empty — and an empty desk is
     /// empty: a hint, and the `+` that ends it.
-    mutating func close(_ tabId: UUID, in feature: Feature) {
-        guard var plane = byFeature[feature],
-            let index = plane.tabs.firstIndex(where: { $0.id == tabId })
-        else { return }
-        var tabs = plane.tabs
-        var activeTabId = plane.activeTabId
+    mutating func close(_ tabId: UUID) {
+        guard let index = desk.tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        var tabs = desk.tabs
+        var activeTabId = desk.activeTabId
         tabs.remove(at: index)
         if tabs.isEmpty {
             activeTabId = nil
@@ -277,9 +230,8 @@ struct DeskPlanes {
                 tabs[i].lastUsed = Civil.nowStamp()
             }
         }
-        plane.tabs = tabs
-        plane.activeTabId = activeTabId
-        byFeature[feature] = plane
+        desk.tabs = tabs
+        desk.activeTabId = activeTabId
         persist()
     }
 
@@ -305,8 +257,7 @@ struct DeskPlanes {
     /// caller can ask without touching the `@Published` struct that
     /// holds it — see `DeskModel.dropRecordDocument`.
     func hasStrangers(shapeOf: (UInt64) -> TabShape, knows: (UInt64) -> Bool) -> Bool {
-        guard let plane = byFeature[.notes] else { return false }
-        return plane.tabs.contains { tab in
+        desk.tabs.contains { tab in
             guard case .entity(let id) = tab.content else { return false }
             return shapeOf(id) == .record || !knows(id)
         }
@@ -315,19 +266,17 @@ struct DeskPlanes {
     mutating func dropRecordsAndStrangers(
         shapeOf: (UInt64) -> TabShape, knows: (UInt64) -> Bool
     ) {
-        guard var plane = byFeature[.notes] else { return }
-        let before = plane.tabs.count
-        plane.tabs.removeAll { tab in
+        let before = desk.tabs.count
+        desk.tabs.removeAll { tab in
             guard case .entity(let id) = tab.content else { return false }
             // ONLY records go for being records. A file is a document you
             // work on and keeps its tab (files, 2026-08-09).
             return shapeOf(id) == .record || !knows(id)
         }
-        guard plane.tabs.count != before else { return }
-        if let active = plane.activeTabId, !plane.tabs.contains(where: { $0.id == active }) {
-            plane.activeTabId = plane.tabs.last?.id
+        guard desk.tabs.count != before else { return }
+        if let active = desk.activeTabId, !desk.tabs.contains(where: { $0.id == active }) {
+            desk.activeTabId = desk.tabs.last?.id
         }
-        byFeature[.notes] = plane
         persist()
     }
 
@@ -336,7 +285,7 @@ struct DeskPlanes {
     mutating func adopt(workspace id: UInt64) {
         persist()  // the OUTGOING workspace — `workspaceId` still points at it
         workspaceId = id
-        byFeature = Self.load(id)
+        (desk, spots) = Self.load(id)
     }
 
     // MARK: what is on disk
@@ -345,31 +294,66 @@ struct DeskPlanes {
     /// followed it. READ-ONLY: nothing writes these keys any more.
     private static let legacyKey = "desk.tabs.v1"
 
-    /// Every view's plane for one workspace.
+    /// The desk and the tools' spots, for one workspace.
     ///
-    /// **Notes migrates; the rest are born empty.** The pre-2026-08-22
-    /// key held one plane, and it was the Notes one — so it is read into
-    /// `.notes` and left where it is, readable, rather than deleted. The
-    /// other five views have never had a plane and start without one; a
-    /// view with no plane shows its own root, which is what it did
-    /// yesterday.
-    private static func load(_ workspace: UInt64) -> [Feature: DeskPlane] {
-        var out: [Feature: DeskPlane] = [:]
-        for feature in Feature.allCases {
-            let key = WorkspaceModel.planeKey(workspace, feature.rawValue)
-            if let plane = Self.readPlane(key) {
-                out[feature] = plane
+    /// NOTHING SAVED IS THROWN AWAY. Three generations of key are read,
+    /// newest first, and the v2 per-view planes are folded rather than
+    /// dropped: their ENTITY tabs join the desk, and each view's active
+    /// POSITION becomes that tool's spot. A person upgrading keeps every
+    /// document they had open and lands each tool where they left it.
+    /// What they lose is the ability to have three Todays, which is the
+    /// point.
+    ///
+    /// The old keys are left on disk, readable, rather than deleted —
+    /// the same courtesy the 2026-08-22 migration paid v1.
+    private static func load(_ workspace: UInt64) -> (DeskPlane, [Feature: String]) {
+        var spots: [Feature: String] = [:]
+
+        // v3: already migrated.
+        if let desk = Self.readPlane(WorkspaceModel.deskKey(workspace)) {
+            let stored =
+                UserDefaults.standard.dictionary(forKey: WorkspaceModel.spotsKey(workspace))
+                as? [String: String] ?? [:]
+            for (raw, token) in stored {
+                if let f = Feature(rawValue: raw) { spots[f] = token }
+            }
+            return (desk, spots)
+        }
+
+        // v2: six planes. Entities to the desk, active positions to spots.
+        var desk = DeskPlane()
+        var migrated = false
+        for feature in Feature.inOrder {
+            guard let plane = Self.readPlane(WorkspaceModel.planeKey(workspace, feature.rawValue))
+            else { continue }
+            migrated = true
+            for tab in plane.tabs {
+                switch tab.content {
+                case .entity:
+                    // De-duplicated: the same note could sit in two
+                    // planes, and two tabs of one note is the bug the
+                    // desk exists to prevent.
+                    if !desk.tabs.contains(where: { $0.content == tab.content }) {
+                        desk.tabs.append(tab)
+                        if tab.id == plane.activeTabId, desk.activeTabId == nil {
+                            desk.activeTabId = tab.id
+                        }
+                    }
+                case .position(let token):
+                    // Only the one you were ON survives. The rest were
+                    // duplicates of a place there is one of.
+                    if tab.id == plane.activeTabId { spots[feature] = token }
+                }
             }
         }
-        if out[.notes] == nil {
-            // v1, plus the four days when the desk held one document
-            // under its own key — see `foldInLiveDocument`.
-            let legacy =
-                Self.readPlane(WorkspaceModel.tabsKey(workspace))
-                ?? (workspace == 0 ? Self.readPlane(legacyKey) : nil)
-            out[.notes] = Self.foldInLiveDocument(legacy ?? DeskPlane(), workspace: workspace)
-        }
-        return out
+        if migrated { return (desk, spots) }
+
+        // v1, plus the four days when the desk held one document under
+        // its own key — see `foldInLiveDocument`.
+        let legacy =
+            Self.readPlane(WorkspaceModel.tabsKey(workspace))
+            ?? (workspace == 0 ? Self.readPlane(legacyKey) : nil)
+        return (Self.foldInLiveDocument(legacy ?? DeskPlane(), workspace: workspace), spots)
     }
 
     /// One saved plane. Entity ids and position tokens only — a tab's
@@ -419,33 +403,42 @@ struct DeskPlanes {
         return plane
     }
 
-    /// Every plane, under its own key. Six small dictionaries written
-    /// when a tab changes — cheaper than tracking which plane moved, and
-    /// it cannot get out of step with itself.
+    /// The desk under one key, and the tools' spots under another.
     func persist() {
-        for (feature, plane) in byFeature {
-            var ids: [String] = []
-            var used: [String: Int] = [:]
-            var active = -1
-            // EVERY tab, inactive ones included. `active` indexes the
-            // array being built here, so filtering any tab out would both
-            // point it at the wrong tab and lose the inactive ones for
-            // good.
-            for tab in plane.tabs {
-                let token = tab.content.token
-                if tab.id == plane.activeTabId { active = ids.count }
-                ids.append(token)
-                used[token] = Int(tab.lastUsed)
-            }
-            let key = WorkspaceModel.planeKey(workspaceId, feature.rawValue)
-            // NO KEY FOR AN EMPTY PLANE. "No plane" and "a plane with no
-            // tabs" are the same state and must not become two, or a view
-            // that once had a tab would stop looking untouched forever.
-            if ids.isEmpty {
-                UserDefaults.standard.removeObject(forKey: key)
-            } else {
-                UserDefaults.standard.set(["ids": ids, "active": active, "used": used], forKey: key)
-            }
+        var ids: [String] = []
+        var used: [String: Int] = [:]
+        var active = -1
+        // EVERY tab, inactive ones included. `active` indexes the array
+        // being built here, so filtering any tab out would both point it
+        // at the wrong tab and lose the inactive ones for good.
+        for tab in desk.tabs {
+            let token = tab.content.token
+            if tab.id == desk.activeTabId { active = ids.count }
+            ids.append(token)
+            used[token] = Int(tab.lastUsed)
+        }
+        // ALWAYS WRITE THE KEY, EVEN EMPTY.
+        //
+        // The per-view planes deliberately did the opposite: "no plane"
+        // and "a plane with no tabs" had to be one state, or a view that
+        // once had a tab would stop looking untouched forever.
+        //
+        // That rule does not carry over, and carrying it over was a bug
+        // (found 2026-08-28). An absent desk key means NOT YET MIGRATED,
+        // so removing it on the last close sent the next launch back
+        // through the v2 fold and resurrected every tab the person had
+        // just closed. An empty desk is an empty desk; it has to be able
+        // to say so.
+        UserDefaults.standard.set(
+            ["ids": ids, "active": active, "used": used],
+            forKey: WorkspaceModel.deskKey(workspaceId))
+        let spotKey = WorkspaceModel.spotsKey(workspaceId)
+        if spots.isEmpty {
+            UserDefaults.standard.removeObject(forKey: spotKey)
+        } else {
+            UserDefaults.standard.set(
+                Dictionary(uniqueKeysWithValues: spots.map { ($0.key.rawValue, $0.value) }),
+                forKey: spotKey)
         }
     }
 
@@ -456,6 +449,8 @@ struct DeskPlanes {
 
     /// Self-check only: leave nothing behind.
     static func forgetScratch() {
+        UserDefaults.standard.removeObject(forKey: WorkspaceModel.deskKey(scratchWorkspace))
+        UserDefaults.standard.removeObject(forKey: WorkspaceModel.spotsKey(scratchWorkspace))
         for feature in Feature.allCases {
             UserDefaults.standard.removeObject(
                 forKey: WorkspaceModel.planeKey(scratchWorkspace, feature.rawValue))
@@ -463,25 +458,19 @@ struct DeskPlanes {
     }
 
     /// Self-check only: install a known set, focused on its last tab.
-    mutating func replaceForSelfCheck(_ fresh: [DeskTab], in feature: Feature) {
-        byFeature[feature, default: DeskPlane()].tabs = fresh
-        setActive(fresh.last?.id, in: feature)
+    mutating func replaceForSelfCheck(_ fresh: [DeskTab]) {
+        desk.tabs = fresh
+        setActive(fresh.last?.id)
     }
 
     /// Rehearsal only (`-desk.boot inactive`): age every tab except each
     /// plane's active one, so the shelf can be seen and photographed
     /// today.
     ///
-    /// **Every plane**, since 2026-08-22 — the shelf spans them now, and
-    /// a rehearsal that aged one would show a screen no user will ever
-    /// see.
     mutating func backdate(days: Int) {
         let old = Civil.stamp(day: Civil.addDays(Civil.todayDay(), -days), hhmm: 900)
-        for (feature, var plane) in byFeature {
-            for i in plane.tabs.indices where plane.tabs[i].id != plane.activeTabId {
-                plane.tabs[i].lastUsed = old - Int64(i)
-            }
-            byFeature[feature] = plane
+        for i in desk.tabs.indices where desk.tabs[i].id != desk.activeTabId {
+            desk.tabs[i].lastUsed = old - Int64(i)
         }
         persist()
     }

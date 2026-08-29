@@ -550,6 +550,18 @@ struct CalendarView: View {
                 // (found live, 2026-08-05), and the hour labels already say
                 // where you are — Apple's day view shows none either.
                 .scrollIndicators(.hidden)
+                // OUT OF THE WAY WHILE YOU READ, like every other view.
+                //
+                // Today, Tasks, Inbox and Everything have retired the
+                // bar on scroll since 2026-08-20; Calendar never asked,
+                // so it kept ~90pt of chrome permanently — and it is the
+                // view the owner named for the bar "always taking up
+                // space" (2026-08-28).
+                //
+                // ON THE SCROLL VIEW ITSELF. Attached to the outer body
+                // it compiles, runs, and does nothing: the geometry
+                // reader inside it never sees this scroll view.
+                .livHidesChrome()
                 .onAppear { openAtTheDay(today, nowMinutes: nowMinutes, scroller: scroller) }
                 .onChange(of: selectedDay) { _, _ in
                     openAtTheDay(today, nowMinutes: nowMinutes, scroller: scroller)

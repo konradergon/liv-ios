@@ -320,10 +320,23 @@ final class WorkspaceModel: ObservableObject {
         "desk.tabs.v1.\(workspace)"
     }
 
-    /// One plane per VIEW per workspace. Each view owns a tab strip and a
-    /// tab is a saved position inside it (design/tabs.md, Reading B).
+    /// One plane per VIEW per workspace — the 2026-08-22 shape.
+    /// READ-ONLY since 2026-08-28:  folds these into the
+    /// one desk and leaves them where they are.
     static func planeKey(_ workspace: UInt64, _ view: String) -> String {
         "desk.tabs.v2.\(workspace).\(view)"
+    }
+
+    /// THE DESK: the documents open in one workspace. One key, because
+    /// there is one desk (2026-08-28).
+    static func deskKey(_ workspace: UInt64) -> String {
+        "desk.v3.\(workspace)"
+    }
+
+    /// Where each tool was left, view name to position token. One small
+    /// map beside the desk, because a place is singular.
+    static func spotsKey(_ workspace: UInt64) -> String {
+        "desk.spots.v3.\(workspace)"
     }
 
     /// The one open document, per workspace.

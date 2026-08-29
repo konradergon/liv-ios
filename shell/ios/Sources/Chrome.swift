@@ -100,9 +100,9 @@ final class DeskModel: ObservableObject {
     @Published private(set) var planes: DeskPlanes
 
     /// THE STRIP YOU SEE — the plane of the view you are standing in.
-    var tabs: [DeskTab] { planes.tabs(in: state) }
+    var tabs: [DeskTab] { planes.tabs }
 
-    var activeTabId: UUID? { planes.activeTabId(in: state) }
+    var activeTabId: UUID? { planes.activeTabId }
 
     @Published var switcherShown = false
 
@@ -113,12 +113,21 @@ final class DeskModel: ObservableObject {
     /// existing caller of `openDoc` keeps working, and the tab plane
     /// became the single place the answer lives. Two slots holding the
     /// same fact is how they start to disagree.
+    /// The document ON SCREEN, not merely the one the desk has active.
+    ///
+    /// The `state` guard is load-bearing since the desk went app-wide
+    /// (2026-08-28). While each view had its own plane, being in Today
+    /// meant reading Today's plane, which held positions and never an
+    /// entity — so this was nil there for free. One desk keeps its
+    /// active tab wherever you go, which is the point of it, and without
+    /// the guard `goBack()` from a note into Today reported the note as
+    /// still open (caught by `-places.selfcheck`).
     var openDoc: UInt64? {
-        guard case .entity(let id)? = activeTab?.content else { return nil }
+        guard state == .notes, case .entity(let id)? = activeTab?.content else { return nil }
         return id
     }
 
-    var activeTab: DeskTab? { planes.activeTab(in: state) }
+    var activeTab: DeskTab? { planes.activeTab }
 
     // MARK: positions — a tab in a view that is not Notes
 
@@ -208,6 +217,22 @@ final class DeskModel: ObservableObject {
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
     var createMenu: (() -> LivMenu)?
+    /// Make the thing the surface in front of you HOLDS, with no menu:
+    /// a task in Tasks, an event on the day Calendar is showing, a note
+    /// everywhere else (owner, 2026-08-28 — note creation was two taps
+    /// by every route, including the one you take most).
+    ///
+    /// The menu is still there, on a long press. This inverts the cost:
+    /// the common thing is one tap and the exception is a tap and a
+    /// hold, where before everything cost two.
+    ///
+    /// It is not a new axis. Creating already belongs to where you
+    /// stand — a capture in a filtered workspace inherits that
+    /// workspace's cells (`WorkspaceModel.stamp`) — so this extends
+    /// "where you are decides the cells" to "where you are decides the
+    /// kind".
+    var createHere: (() -> Void)?
+
     /// Make one note, no menu. `newTab` in the Notes grid uses this:
     /// every card in that grid is a document, so asking "note, task,
     /// event, file or scan?" is a question with one sensible answer
@@ -412,30 +437,16 @@ final class DeskModel: ObservableObject {
     // ---- the plane (Plane.swift holds the arithmetic) ----------------
 
     /// This tab is being used, now.
-    func touch(_ tabId: UUID) { planes.touch(tabId, in: state) }
+    func touch(_ tabId: UUID) { planes.touch(tabId) }
 
     /// The tabs the grid shows — the current view's, inactive ones left
     /// out. Never empty while the plane has tabs: the active tab is never
     /// inactive, so an empty grid means "no tabs at all", not "none you
     /// looked at lately".
-    var liveTabs: [DeskTab] { planes.live(in: state) }
+    var liveTabs: [DeskTab] { planes.live }
 
     /// Untouched long enough to be out of the way, newest-stale first.
-    func inactive(in feature: Feature) -> [DeskTab] { planes.inactive(in: feature) }
-
-    var inactiveTabs: [DeskTab] { planes.inactive(in: state) }
-
-    /// EVERY plane's shelf, in the declared view order, empty ones left
-    /// out.
-    ///
-    /// **One attic, not six.** With a plane per view, a shelf that showed
-    /// only the view you were standing in would hide five of them — a
-    /// Calendar tab you stopped using in July would be invisible until
-    /// you happened to open the Calendar. The grid above is the view you
-    /// are in; the shelf is everything you have parked.
-    var inactiveEverywhere: [(feature: Feature, tabs: [DeskTab])] {
-        planes.inactiveEverywhere
-    }
+    var inactiveTabs: [DeskTab] { planes.inactive }
 
     var inactiveCount: Int { planes.inactiveCount }
 
@@ -444,9 +455,7 @@ final class DeskModel: ObservableObject {
     /// writes nothing to the box — every note is still there, in search,
     /// in Everything, in its workspace.
     func closeInactive() {
-        for (feature, parked) in planes.inactiveEverywhere {
-            for tab in parked { close(tab.id, in: feature) }
-        }
+        for tab in planes.inactive { close(tab.id) }
     }
 
     /// Activate a tab. Every activation path funnels here.
@@ -454,28 +463,14 @@ final class DeskModel: ObservableObject {
         // Stamp FIRST and unconditionally: re-opening the tab you are
         // already on is still using it, and the early return below would
         // otherwise let the active tab age out from under you.
-        planes.touch(tabId, in: state)
+        planes.touch(tabId)
         guard tabId != activeTabId else { return }
         endEditing()
-        planes.setActive(tabId, in: state)
+        planes.setActive(tabId)
         if inspectorShown {
             withAnimation(LivMotion.nav) { inspectorShown = false }
         }
     }
-
-    /// Open a tab that lives in ANOTHER view. The shelf spans every
-    /// plane, so tapping a card there has to take you to the view that
-    /// card belongs to first — otherwise the tab would be focused
-    /// somewhere you cannot see it.
-    func focus(_ tabId: UUID, in feature: Feature) {
-        if feature != state {
-            endEditing()
-            state = feature
-        }
-        focus(tabId)
-    }
-
-    func close(_ tabId: UUID) { close(tabId, in: state) }
 
     /// Closing the last tab leaves the desk empty — and an empty desk is
     /// empty: a hint, and the `+` that ends it.
@@ -483,10 +478,10 @@ final class DeskModel: ObservableObject {
     /// The keyboard is committed only when there is something to close,
     /// as it always was: a close that does nothing must not resign a
     /// field someone is typing in.
-    func close(_ tabId: UUID, in feature: Feature) {
-        guard planes.holds(tabId, in: feature) else { return }
+    func close(_ tabId: UUID) {
+        guard planes.holds(tabId) else { return }
         endEditing()
-        planes.close(tabId, in: feature)
+        planes.close(tabId)
     }
 
     /// Called once, on the first snapshot — the first moment the box can
@@ -552,7 +547,7 @@ final class DeskModel: ObservableObject {
     /// so the suite cannot reach them, and opening them to everyone is how
     /// a second file starts mutating the plane.
     func replaceTabsForSelfCheck(_ fresh: [DeskTab]) {
-        planes.replaceForSelfCheck(fresh, in: state)
+        planes.replaceForSelfCheck(fresh)
     }
 
     /// Self-check only: make a tab active WITHOUT stamping its clock.
@@ -560,7 +555,7 @@ final class DeskModel: ObservableObject {
     /// under test is that a tab whose own clock is ancient still counts
     /// as live while it is the active one.
     func activateForSelfCheck(_ tabId: UUID?) {
-        planes.setActive(tabId, in: state)
+        planes.setActive(tabId)
     }
 
     /// LAUNCH ON TODAY (owner, 2026-08-18). Resuming the last document
@@ -619,7 +614,7 @@ final class DeskModel: ObservableObject {
     func showList() {
         endEditing()
         returns.clear()
-        withAnimation(LivMotion.nav) { planes.setActive(nil, in: state) }
+        withAnimation(LivMotion.nav) { planes.setActive(nil) }
     }
 
     /// Where `‹` on the bar would take you, or nil when there is nothing
@@ -658,12 +653,13 @@ final class DeskModel: ObservableObject {
             switch place {
             case .state(let feature):
                 state = feature
-                // Leaving Notes for Today does not close what you had
-                // open: the plane is Notes' own and Desk draws a feature
-                // body regardless.
+                // Leaving Notes for Today does not CLOSE what you had
+                // open — the desk keeps it, and coming back resumes it.
+                // It stops being `openDoc` because you are not looking
+                // at it; the tab is still there.
             case .document(let id):
                 state = .notes
-                focus(planes.open(entity: id, in: .notes))
+                focus(planes.open(entity: id))
             }
         }
         menu = nil
@@ -725,7 +721,7 @@ final class DeskModel: ObservableObject {
         state = .notes
         // Append or focus — the whole difference tabs make. Opening a
         // second note no longer replaces the first.
-        focus(planes.open(entity: entityId, in: .notes))
+        focus(planes.open(entity: entityId))
         switcherShown = false
         surfaceCleanup()
     }
@@ -752,17 +748,13 @@ final class DeskModel: ObservableObject {
     /// document and a new tab needs a document to hold. In every other
     /// view a tab is a position, so a new one simply opens at the view's
     /// root and the user moves it where they want.
-    func newTab() {
-        guard state != .notes else {
-            // A NEW TAB HERE IS A NEW NOTE. This used to open the create
-            // menu, which is the `+` key's job and a different question:
-            // you asked for a tab in a grid of notes, so you get a note
-            // (owner, 2026-08-28). The menu is still one key away.
-            newNote?()
-            return
-        }
-        planes.openRoot(in: state)
-    }
+    /// A NEW TAB IS A NEW NOTE, from anywhere.
+    ///
+    /// It used to branch: a note in Notes, and `openRoot` — a second copy
+    /// of the view you were in — everywhere else. That branch is what
+    /// put three Todays in the switcher. A tab holds a document; there is
+    /// nothing else to open.
+    func newTab() { newNote?() }
 
     /// `+`: the create MENU, sliding up over whatever you are looking at
     /// (owner, 2026-08-13). It never opens anything by itself — choosing

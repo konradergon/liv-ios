@@ -19,6 +19,8 @@
 #
 #   ./drive.sh boot [where]      relaunch (optionally via -desk.boot <where>) and check
 #   ./drive.sh grid              Notes' root is the tab grid, and unopenable on itself
+#   ./drive.sh create            + makes what the place holds, in one tap
+#   ./drive.sh desk              one desk of documents, the same in every view
 #   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
 #   ./drive.sh vault             the Vault card offers controls, or says why not
@@ -316,9 +318,16 @@ cmd_tap() {
 # What a view is ALLOWED to render. Notes is the one that is not itself:
 # its root is the tab GRID, and a tab in it holds a document. Spelling that
 # out here beats a check that quietly passes on the wrong screen.
+# WHICH SURFACES COUNT AS "you are in this view".
+#
+# Notes has two, and that is not slack: its root is the LIST, and it
+# resumes the DOCUMENT you had open. The desk keeps its active tab, so
+# arriving at Notes with something open lands you back in it — which is
+# what a tab is for. `tabs` was the third, until the grid stopped being
+# Notes' root and became the switcher (2026-08-28).
 allowed() {
   case "$1" in
-    notes) echo "tabs document" ;;
+    notes) echo "notes document" ;;
     *)     echo "$1" ;;
   esac
 }
@@ -900,6 +909,96 @@ SKIP = ("Tabs.", "Library", "Note actions", "Back", "Forward", "Search", "New")'
     'print(len(SEEN))'
 }
 
+# ONE TAP MAKES THE THING THIS PLACE HOLDS.
+#
+# `+` used to open a five-item menu everywhere, so making a note — the
+# thing you do most — cost two taps by every route (owner, 2026-08-28).
+# It now creates what the surface in front of you holds, and the menu
+# moved to a long press.
+#
+# The long press is NOT checked here, and that is a tooling limit rather
+# than a choice: `axe` cannot generate one. A known-good shipping
+# gesture (Calendar's day cell, `.onLongPressGesture`) does not fire
+# through `axe swipe` or `axe touch` either. It IS reachable through the
+# simulator MCP's `touch_path` with two points and a dt, which is how it
+# was verified by hand on 2026-08-28 — the full menu came up and the tap
+# did not fire.
+cmd_create() {
+  # A DOCUMENT PLACE makes a document, in one tap and with no menu.
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_tap "New" || return 1
+  perl -e 'select(undef,undef,undef,1.8)'
+  no_create_menu || {
+    die "+ in Notes opened the create menu. It is meant to make a note and
+      leave the menu to a long press."
+    return 1
+  }
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "+ in Notes left the screen on '$(cmd_surface)', not a document.
+      A note is a document and opens as one."
+    return 1
+  }
+
+  # A RECORD PLACE makes a record, which opens as a card over where you
+  # stand rather than as a document — so the surface must NOT change.
+  cmd_boot tasks >/dev/null 2>&1 || { die "could not boot into Tasks."; return 1 }
+  cmd_tap "New" || return 1
+  perl -e 'select(undef,undef,undef,1.8)'
+  no_create_menu || { die "+ in Tasks opened the create menu."; return 1 }
+  [[ "$(cmd_surface)" == "tasks" ]] || {
+    die "+ in Tasks left the screen on '$(cmd_surface)'.
+      A task is a record: it opens as a card over Tasks, not as a document."
+    return 1
+  }
+  say "ok    create: one tap makes a note in Notes and a task in Tasks, no menu in either"
+  cmd_check
+}
+
+# True when the five-item create menu is NOT on screen.
+no_create_menu() {
+  local hit
+  hit=$(scan 'def walk(n):
+    if (n.get("AXLabel") or "") == "Scan text": print("yes")
+    for c in n.get("children") or []: walk(c)' | head -1)
+  [[ -z "$hit" ]]
+}
+
+# ONE DESK, AND IT FOLLOWS YOU.
+#
+# Until 2026-08-28 every view had its own plane of tabs, so `[n]` counted
+# "tabs open in Calendar" — a number about a place there is one of, and
+# the switcher over Today really did show two Todays. The desk is
+# app-wide now: the documents you have open are the same set wherever you
+# stand.
+#
+# This asserts the property neither `cargo test` nor the suites can see —
+# that the COUNT ON THE BAR does not move when you walk between views.
+# It does not open anything: opening a note raises the keyboard, and the
+# bar retires under one, so there would be no count to read.
+cmd_desk() {
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  local first n v
+  first=$(tab_count) || { die "the bar reports no tab count in Notes."; return 1 }
+  (( first > 0 )) || {
+    die "the desk is empty, so this check would pass on anything.
+      Open a note or two on the simulator first."
+    return 1
+  }
+
+  for v in today calendar tasks inbox everything; do
+    cmd_goto "$v" >/dev/null 2>&1 || { die "could not reach $v."; return 1 }
+    n=$(tab_count) || { die "no tab count in $v — the bar should carry one everywhere."; return 1 }
+    (( n == first )) || {
+      die "the desk changed size on the way to ${v}: ${first} in Notes, ${n} here.
+        There is one desk. A count that moves when you walk is a count of
+        that view's own plane, which is the thing that went away."
+      return 1
+    }
+  done
+  say "ok    desk: ${first} documents, the same set in all six views"
+  cmd_check
+}
+
 cmd_lens() {
   # DOES A SAVED FILTER ACTUALLY NARROW THE APP?
   #
@@ -1141,9 +1240,11 @@ case "${1:-}" in
   panel)   cmd_panel   || exit 1 ;;
   bar)     cmd_bar     || exit 1 ;;
   grid)    cmd_grid    || exit 1 ;;
+  create)  cmd_create  || exit 1 ;;
+  desk)    cmd_desk    || exit 1 ;;
   lens)    cmd_lens    || exit 1 ;;
   facets)  cmd_facets  || exit 1 ;;
   vault)   cmd_vault   || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
-  *) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

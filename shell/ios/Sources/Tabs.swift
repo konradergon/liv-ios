@@ -233,8 +233,7 @@ struct TabSwitcher: View {
     /// One row, above the grid. Hidden entirely at zero — an empty
     /// "Inactive 0" row is furniture explaining itself.
     @ViewBuilder private var inactiveRow: some View {
-        let parked = desk.inactiveEverywhere
-        let total = parked.reduce(0) { $0 + $1.tabs.count }
+        let total = desk.inactiveCount
         if total > 0 {
             Button {
                 withAnimation(LivMotion.nav) { inactiveShown = true }
@@ -302,23 +301,16 @@ struct InactiveTabs: View {
         VStack(spacing: 0) {
             band
             ScrollView {
-                // ONE SECTION PER VIEW. The grid behind this sheet is
-                // the view you are standing in; the shelf is every view
-                // at once, so each group has to say whose it is or a
-                // Calendar month and a note would sit side by side with
-                // nothing to tell them apart.
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(desk.inactiveEverywhere, id: \.feature) { group in
-                        SectionLabel(group.feature.title, trailing: "\(group.tabs.count)")
-                            .padding(.horizontal, 16)
-                            .padding(.top, 6)
-                        LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(group.tabs) { tab in card(tab, in: group.feature) }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
-                    }
+                // ONE LIST. It used to be a section per view, because
+                // the shelf spanned six planes and a Calendar month
+                // could sit beside a note with nothing to tell them
+                // apart. There is one desk now and everything on the
+                // shelf is a document, so the labels had nothing left to
+                // say (2026-08-28).
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(desk.inactiveTabs) { tab in card(tab) }
                 }
+                .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
         }
@@ -372,24 +364,24 @@ struct InactiveTabs: View {
     /// The SAME card the grid draws, with the age added to the kind
     /// footer — the one slot that already existed and had room. That is
     /// what earns this screen its explanation without a sentence.
-    private func card(_ tab: DeskTab, in feature: Feature) -> some View {
+    private func card(_ tab: DeskTab) -> some View {
         TabCard(
             tab: tab,
-            feature: feature,
+            feature: desk.state,
             age: LivTabs.age(tab.lastUsed, now: Civil.nowStamp()),
-            onOpen: { revive(tab, in: feature) },
-            onClose: { desk.close(tab.id, in: feature) })
+            onOpen: { revive(tab) },
+            onClose: { desk.close(tab.id) })
     }
 
     /// Back into the grid, and onto the screen: this is the only way a
     /// tab leaves the inactive list, exactly as Chrome does it.
     ///
-    /// It also CHANGES VIEW when the tab belongs to another one. The
-    /// shelf spans every plane now, so reviving a Calendar tab from the
-    /// Notes switcher has to take you to the Calendar — focusing it where
-    /// you stand would put it somewhere you cannot see.
-    private func revive(_ tab: DeskTab, in feature: Feature) {
-        desk.focus(tab.id, in: feature)
+    /// It no longer has to CHANGE VIEW first. The shelf used to span six
+    /// planes, so reviving a Calendar tab from the Notes switcher had to
+    /// take you to the Calendar. Everything on one desk is a document,
+    /// and a document opens where you are.
+    private func revive(_ tab: DeskTab) {
+        desk.focus(tab.id)
         close()
         desk.switcherShown = false
     }

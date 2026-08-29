@@ -41,7 +41,10 @@ struct BottomBar: View {
             key("chevron.left", "Back", on: desk.back != nil) { desk.goBack() }
             key("chevron.right", "Forward", on: desk.forward != nil) { desk.goForward() }
             key("magnifyingglass", "Search") { desk.searchShown = true }
-            key("plus", "New") { desk.createSomething() }
+            // TAP MAKES, HOLD ASKS. The menu is still one gesture away
+            // and it is the same menu; what changed is which of the two
+            // costs more.
+            key("plus", "New", hold: { desk.createSomething() }) { desk.createHere?() }
             tabKey
         }
         // The first and last glyph centres stand `endInset` from the
@@ -98,6 +101,7 @@ struct BottomBar: View {
     /// TAP TARGET is its whole slot even though the glyph is ~22pt.
     private func key(
         _ icon: String, _ label: String, on: Bool = true,
+        hold: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -111,5 +115,15 @@ struct BottomBar: View {
         .buttonStyle(.plain)
         .disabled(!on)
         .accessibilityLabel(label)
+        // The hold is a SIMULTANEOUS gesture so it cannot eat the tap:
+        // attached with `.onLongPressGesture`, the button stops firing
+        // on a quick press and every key would have to be held.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in hold?() },
+            including: hold == nil ? .subviews : .all
+        )
+        // VoiceOver and Voice Control cannot press-and-hold, so the
+        // menu has to be reachable as a named action too.
+        .accessibilityAction(named: "More") { hold?() }
     }
 }

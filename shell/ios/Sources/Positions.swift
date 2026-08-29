@@ -278,161 +278,89 @@ func livPlanesSelfCheck() -> [String] {
     let desk = DeskModel.scratchForSelfCheck()
     desk.shapeOf = { _ in .document }
 
-    // A view with no plane shows its ROOT. No tabs has always meant
-    // "you are looking at the list" in Notes; it means the same here.
+    // ---- a tool remembers ONE spot ----
+    //
+    // This is the whole of the 2026-08-28 change. Parking used to MINT A
+    // TAB, so a view you had merely scrolled ended up with two of
+    // itself, and then three: the switcher over Today really did show
+    // "Today, Today, Wed 26 Aug". A place is singular; what it needs
+    // remembered is where you left it.
     desk.go(.everything)
-    check("an untouched view has no plane", desk.planes[.everything] == nil)
-    check("and no position", desk.position(.everything) == nil)
-    check("so the view falls back to its root", LivPosition.root(.everything) == "all")
+    check("an untouched tool has no spot", desk.position(.everything) == nil)
+    check("so it falls back to its root", LivPosition.root(.everything) == "all")
 
-    // MOVING IS WHAT MINTS THE TAB.
     desk.park(.everything, at: "upcoming")
-    check("moving opens a tab", desk.tabs.count == 1, "\(desk.tabs.count)")
-    check("parked where asked", desk.position(.everything) == "upcoming")
+    check("parking remembers the spot", desk.position(.everything) == "upcoming")
+    check("and mints NO tab", desk.tabs.isEmpty, "\(desk.tabs.count)")
 
-    // And moving again moves that tab — it does not collect them.
     desk.park(.everything, at: "unfiled")
-    check("moving again reuses the tab", desk.tabs.count == 1, "\(desk.tabs.count)")
-    check("at the new place", desk.position(.everything) == "unfiled")
-    desk.park(.everything, at: "unfiled")
-    check("parking where you already are is not a move", desk.tabs.count == 1)
+    desk.park(.everything, at: "all")
+    check("parking again overwrites", desk.position(.everything) == "all")
+    check("and still mints no tab", desk.tabs.isEmpty, "\(desk.tabs.count)")
 
-    // A position is not a document, even though both are tabs.
-    check("a position never becomes the open document", desk.openDoc == nil)
-
-    // THE PLANES ARE SEPARATE.
-    desk.go(.notes)
-    check("switching view switches strip", desk.tabs.isEmpty, "\(desk.tabs.count)")
-    desk.open(7)
-    check("the note opened in the Notes plane", desk.tabs.count == 1 && desk.openDoc == 7)
-    desk.go(.everything)
-    check("and Everything kept its own", desk.tabs.count == 1 && desk.position(.everything) == "unfiled")
-    check("Notes kept its own too", desk.planes[.notes]?.tabs.count == 1)
-    check("the key counts the view you are in", desk.liveTabs.count == 1)
-
-    // New tab: a root position here, the create menu in Notes.
-    desk.newTab()
-    check("a second tab opens at the root", desk.tabs.count == 2)
-    check("and it is the active one", desk.position(.everything) == "all")
-    desk.go(.notes)
-    let notesBefore = desk.tabs.count
-    desk.newTab()
-    check("new tab in Notes appends nothing by itself", desk.tabs.count == notesBefore)
-
-    // EVERY LIFTED VIEW, not just the first. A view whose position is
-    // still `@State` is not in this list and is meant not to be.
-    desk.go(.inbox)
-    check("the Inbox opens at its root", desk.position(.inbox) == nil)
     desk.park(.inbox, at: InboxLens.tidy.rawValue)
-    check("the Inbox parks", desk.position(.inbox) == "tidy")
-    check("and Everything did not move", desk.planes[.everything]?.tabs.count == 2)
+    check("each tool keeps its own", desk.position(.inbox) == "tidy")
+    check("without disturbing the others", desk.position(.everything) == "all")
 
-    // Tasks carries a STRUCTURED position, so its token has to survive a
-    // round trip with everything in it.
+    // ---- the desk follows you ----
+    desk.go(.notes)
+    desk.open(7)
+    check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == 7)
+    desk.go(.calendar)
+    check("and is still there from another view", desk.tabs.count == 1, "\(desk.tabs.count)")
+    check("the key counts the same desk everywhere", desk.liveTabs.count == 1)
+    desk.open(8)
+    check("a document opened from a TOOL lands on the same desk", desk.tabs.count == 2)
+    check("no duplicate for a note already open", { desk.open(7); return desk.tabs.count }() == 2)
+
+    // A new tab is a new note, from anywhere — there is no second Today
+    // to open, which is what `openRoot` used to do.
+    desk.go(.today)
+    let before = desk.tabs.count
+    desk.newTab()
+    check("new tab never mints a position tab", desk.tabs.count == before, "\(desk.tabs.count)")
+
+    // ---- a structured position still round-trips ----
     let wanted = TasksPosition(filter: .status("To do"), expanded: ["Done", "Archived"])
-    desk.go(.tasks)
     desk.park(.tasks, at: wanted.token)
     let read = TasksPosition(token: desk.position(.tasks))
     check("the Tasks filter survives the token", read.filter == .status("To do"), "\(read.filter)")
     check("the open groups survive too", read.expanded == ["Archived", "Done"], "\(read.expanded)")
+    check("one position spells itself one way", wanted.token == read.token)
     check(
-        "one position spells itself one way", wanted.token == read.token,
-        "\n  wanted=\(wanted.token)\n  read  =\(read.token)")
-    check("a name with punctuation survives", TasksPosition(token: TasksPosition(filter: .project("Roof: phase 2 | east"), expanded: []).token).filter == .project("Roof: phase 2 | east"))
-    check("a token this build cannot read falls back to the root", TasksPosition(token: "{}}").filter == .all)
+        "a name with punctuation survives",
+        TasksPosition(
+            token: TasksPosition(filter: .project("Roof: phase 2 | east"), expanded: []).token
+        ).filter == .project("Roof: phase 2 | east"))
+    check(
+        "a token this build cannot read falls back to the root",
+        TasksPosition(token: "{}}").filter == .all)
     check("Tasks reads as its filter", LivPosition.title(.tasks, wanted.token) == "To do")
 
-    // Today and the Calendar hold a DAY, which is the position most
-    // likely to be read back on a different day than it was written.
-    desk.go(.today)
-    desk.park(.today, at: TodayPosition(day: 20_700, doneExpanded: true, lateOpen: false).token)
-    let day = TodayPosition(token: desk.position(.today))
-    check("the day survives", day.day == 20_700, "\(day.day)")
-    check("and both piles with it", day.doneExpanded && day.lateOpen == false)
-    check("today reads as Today", TodayPosition().title == "Today")
-    check("another day reads as that day", LivPosition.title(.today, day.token) == Civil.dayLabel(20_700))
-
-    desk.go(.calendar)
-    let march = CalGrid.firstOfMonth(Civil.stamp(day: 20_700, hhmm: 0) / 10_000)
-    desk.park(.calendar, at: CalendarPosition(month: march, day: 20_700).token)
-    let cal = CalendarPosition(token: desk.position(.calendar))
-    check("the month survives", cal.month == march, "\(cal.month)")
-    check("the day survives with it", cal.day == 20_700)
-    check("the Calendar reads as its month", LivPosition.title(.calendar, cal.token) == CalGrid.title(march))
-
-    // EVERY LIFTED VIEW has a root it can read back. A view still on
-    // `@State` returns "" and is meant to.
-    for feature in Feature.allCases where feature != .notes {
-        let root = LivPosition.root(feature)
-        check("\(feature.rawValue) has a root", !root.isEmpty)
-        check("\(feature.rawValue)'s root has words", !LivPosition.title(feature, root).isEmpty)
-        check("\(feature.rawValue)'s root has a line", !LivPosition.detail(feature, root).isEmpty)
-    }
-
-    // A token this build does not know still has words. Saved planes
-    // outlive the code that wrote them.
-    check("a known token reads as itself", LivPosition.title(.everything, "upcoming") == "Upcoming")
-    check("an unknown token falls back to the view", LivPosition.title(.everything, "sideways") == "Everything")
-
-    // ROUND TRIP. What is on screen and what is on disk must agree.
-    desk.persist()
-    let reopened = DeskModel.scratchForSelfCheck()
-    check("Everything came back", reopened.planes[.everything]?.tabs.count == 2, "\(reopened.planes[.everything]?.tabs.count ?? -1)")
-    check("at the position it was left", reopened.position(.everything) == "all")
-    check("Notes came back", reopened.planes[.notes]?.tabs.count == 1)
-    check("the Inbox came back", reopened.position(.inbox) == "tidy")
-    check("Tasks came back whole", TasksPosition(token: reopened.position(.tasks)).expanded == ["Archived", "Done"])
-    check("Today came back on its day", TodayPosition(token: reopened.position(.today)).day == 20_700)
-    check("the Calendar came back on its month", CalendarPosition(token: reopened.position(.calendar)).month == march)
-    reopened.go(.notes)
-    check("with the note it held", reopened.openDoc == 7, "\(String(describing: reopened.openDoc))")
-
-    // ---- phase 5: ONE attic, not six ------------------------------
+    // ---- one shelf ----
     let savedDays = UserDefaults.standard.object(forKey: LivTabs.key)
-    UserDefaults.standard.set(21, forKey: LivTabs.key)
+    UserDefaults.standard.set(14, forKey: LivTabs.key)
     let now = Civil.nowStamp()
-    let old = Civil.stamp(day: Civil.addDays(Civil.todayDay(), -60), hhmm: 900)
+    let old = Civil.stamp(day: Civil.addDays(Civil.todayDay(), -30), hhmm: 900)
 
-    desk.go(.notes)
     desk.replaceTabsForSelfCheck([
         DeskTab(id: UUID(), content: .entity(41), lastUsed: old),
-        DeskTab(id: UUID(), content: .entity(42), lastUsed: now),
+        DeskTab(id: UUID(), content: .entity(42), lastUsed: old),
+        DeskTab(id: UUID(), content: .entity(43), lastUsed: now),
     ])
-    desk.go(.calendar)
-    desk.replaceTabsForSelfCheck([
-        DeskTab(id: UUID(), content: .position(LivPosition.root(.calendar)), lastUsed: old),
-        DeskTab(id: UUID(), content: .position(CalendarPosition(day: 20_700).token), lastUsed: now),
-    ])
+    check("stale tabs go to the shelf", desk.inactiveCount == 2, "\(desk.inactiveCount)")
+    check("the active tab is never on it", desk.inactiveTabs.allSatisfy { $0.id != desk.activeTabId })
+    check("and the grid shows the rest", desk.liveTabs.count == 1, "\(desk.liveTabs.count)")
 
-    check("the shelf spans the planes", desk.inactiveEverywhere.count == 2, "\(desk.inactiveEverywhere.count)")
-    check("in the declared view order", desk.inactiveEverywhere.map(\.feature) == [.notes, .calendar])
-    check("and counts every one of them", desk.inactiveCount == 2, "\(desk.inactiveCount)")
-    check("while the grid shows only the view you are in", desk.inactiveTabs.count == 1)
-    check("the active tab of a plane you left is never inactive",
-        !desk.inactiveEverywhere.flatMap(\.tabs).contains { $0.id == desk.planes[.notes]?.activeTabId })
-
-    // Closing in another plane leaves the one you are in alone.
-    let stale = desk.inactive(in: .notes).first
-    check("Notes has a stale tab to close", stale != nil)
-    if let stale { desk.close(stale.id, in: .notes) }
-    check("closing another view's tab took only that one", desk.planes[.notes]?.tabs.count == 1, "\(desk.planes[.notes]?.tabs.count ?? -1)")
-    check("and left the view you are in", desk.tabs.count == 2, "\(desk.tabs.count)")
-    check("the shelf is down to one view", desk.inactiveEverywhere.count == 1)
-
+    if let stale = desk.inactiveTabs.first { desk.close(stale.id) }
+    check("closing from the shelf takes one", desk.tabs.count == 2, "\(desk.tabs.count)")
     desk.closeInactive()
-    check("Close all empties every plane", desk.inactiveCount == 0, "\(desk.inactiveCount)")
-    check("and never the tab you are on", desk.tabs.count == 1 && desk.planes[.notes]?.tabs.count == 1)
+    check("Close all empties the shelf", desk.inactiveCount == 0, "\(desk.inactiveCount)")
+    check("and never the tab you are on", desk.tabs.count == 1, "\(desk.tabs.count)")
 
-    // Reviving from another view TAKES YOU THERE.
-    desk.replaceTabsForSelfCheck([
-        DeskTab(id: UUID(), content: .position(LivPosition.root(.calendar)), lastUsed: now)
-    ])
-    desk.go(.everything)
-    let elsewhere = desk.planes[.notes]?.tabs.first
-    check("Notes still holds a tab to revive", elsewhere != nil)
-    if let elsewhere { desk.focus(elsewhere.id, in: .notes) }
-    check("reviving another view's tab changes view", desk.state == .notes, "\(desk.state)")
-    check("and focuses it there", desk.activeTabId == desk.planes[.notes]?.tabs.first?.id)
+    // ---- the shelf's own arithmetic is unchanged ----
+    check("a tab used today is live", !LivTabs.isInactive(now, now: now))
+    check("one used a month ago is not", LivTabs.isInactive(old, now: now))
 
     if let savedDays { UserDefaults.standard.set(savedDays, forKey: LivTabs.key) } else {
         UserDefaults.standard.removeObject(forKey: LivTabs.key)

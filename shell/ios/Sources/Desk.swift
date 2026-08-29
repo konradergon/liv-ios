@@ -276,6 +276,7 @@ struct DeskHost: View {
         .background(LivTheme.canvas)
         .onAppear {
             desk.createMenu = createMenu
+            desk.createHere = createHere
             desk.newNote = createNote
         }
         .fileImporter(
@@ -562,6 +563,24 @@ struct DeskHost: View {
     /// It supersedes 2026-08-12's "task and event don't belong in new
     /// tab" — that was aimed at the full-screen New Tab page and its
     /// four-way chooser, both long deleted, and neither is what this is.
+    /// What `+` makes, decided by where you are standing.
+    ///
+    /// Tasks and Today both go through `createRecord`, which already
+    /// dates the task from `desk.contextDay` — so a task made in Today
+    /// is due today and one made on a Calendar day is due that day,
+    /// without this function knowing anything about dates.
+    ///
+    /// Notes, Inbox and Everything all make a NOTE, and that is not a
+    /// fallback: `createNote` calls `adoptCapture`, so a note made from
+    /// the bar IS the capture the Inbox is a list of.
+    private func createHere() {
+        switch desk.state {
+        case .tasks, .today: createRecord(event: false)
+        case .calendar: createRecord(event: true)
+        case .notes, .inbox, .everything: createNote()
+        }
+    }
+
     private func createMenu() -> LivMenu {
         LivMenu(
             id: "create",
