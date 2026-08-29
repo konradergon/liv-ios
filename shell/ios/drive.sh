@@ -26,7 +26,7 @@
 #   ./drive.sh tap <label>       tap by accessibility label, then re-read the surface
 #   ./drive.sh goto <view>       open the panel, pick <view>, assert it rendered
 #   ./drive.sh tour              every view in turn — the one that catches a dead repaint
-#   ./drive.sh panel             the panel is not full screen, and its sliver is live
+#   ./drive.sh panel             BOTH panels: not full screen, sliver live
 #   ./drive.sh bar               five keys, one row, disabled drawn as disabled
 #   ./drive.sh cycles            AttributeGraph cycles since boot
 #
@@ -417,75 +417,205 @@ cmd_tour() {
 # the desk, so when the panel opens it must travel right by the panel's
 # width and still be on screen. If the panel ever goes full-width again,
 # or the desk stops travelling with it, this fails.
+# BOTH PANELS, ONE CHECK.
+#
+# The library and the note's properties panel became the SAME panel on
+# 2026-08-28 — one `SidePanel`, one travel distance, one wash, differing
+# in nothing but which edge they stand on. A check that covered only the
+# library would leave half of that untested, and the half that is newer.
+#
+# So this runs one body twice, mirrored. Everything it asserts is
+# GEOMETRY — where the desk's own chrome ended up — never whether a view
+# is mounted. A closed panel stays mounted and simply moves off screen,
+# so "is its marker in the tree" answers a different question than the
+# one being asked (learned the hard way, 2026-08-28).
 cmd_panel() {
-  # START FROM A LAUNCH. Run after a check that left the panel open, this
-  # measured a desk that was already travelled and reported "the desk
-  # barely moved: 332 -> 332" about a panel that worked (2026-08-27).
   cmd_boot >/dev/null 2>&1 || { die "could not boot before the panel check."; return 1 }
-  local closed_x open_x screen_w
-  screen_w=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
-import json,sys
-d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]
-print(int((d.get('frame') or {}).get('width', 0)))")
-  closed_x=$(button_x Library) || { die "no Library button on screen."; return 1 }
-  cmd_tap "Library" || return 1
-  panel_open || { die "the library panel did not open."; return 1 }
-  open_x=$(button_x Library) || {
-    die "the library toggle vanished when the panel opened.
+  check_side library || return 1
+  check_side properties || return 1
+  say "ok    panels: both stand short of the far edge, push the desk the right way, and come back from a tap and a drag in the sliver"
+  cmd_check
+}
+
+# One panel, by name. `library` opens from its own button and pushes the
+# desk RIGHT; `properties` opens with a drag in from the trailing edge
+# and pulls it LEFT.
+check_side() {
+  local which="$1" probe dir rest open_x screen_w mid_x
+  screen_w=$(screen_width)
+  (( screen_w > 0 )) || { die "could not read the screen width."; return 1 }
+
+  if [[ "$which" == library ]]; then
+    # The library door itself is the probe: it travels with the desk and
+    # it is the chrome that stays in the sliver on that side.
+    probe=Library; dir=1
+    cmd_boot >/dev/null 2>&1 || { die "could not boot before the library check."; return 1 }
+  else
+    # The properties panel only exists over an open document, and the
+    # ••• is the chrome that stays in ITS sliver.
+    probe="Note actions"; dir=-1
+    cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+    local row
+    row=$(first_note) || { die "no note in the list to open."; return 1 }
+    cmd_tap "$row" || return 1
+    perl -e 'select(undef,undef,undef,1.2)'
+  fi
+
+  rest=$(button_x "$probe") || {
+    die "no '$probe' on screen, so there is nothing to measure the desk by."
+    return 1
+  }
+  open_side "$which" || return 1
+  open_x=$(button_x "$probe") || {
+    die "the '$probe' door vanished when the $which panel opened.
       The panel is covering the desk, so it is full screen — and there is
       then no sliver to tap and no way back but a drag."
     return 1
   }
-  local travelled=$(( open_x - closed_x ))
-  if (( travelled < 40 )); then
-    die "the desk barely moved: the toggle went ${closed_x} -> ${open_x}.
-      The panel is not pushing the desk aside."
+
+  # IT MOVED, AND IT MOVED THE RIGHT WAY.
+  local travelled=$(( (open_x - rest) * dir ))
+  (( travelled >= 40 )) || {
+    die "the $which panel barely moved the desk: '$probe' went ${rest} -> ${open_x}
+      (expected to travel $([[ $dir == 1 ]] && echo right || echo left) by more than 40).
+      Either it is not pushing the desk aside, or it is pushing it the
+      wrong way."
     return 1
+  }
+  # AND IT LEFT A SLIVER. A panel that takes the whole screen has no way
+  # back but a drag, which is the thing the owner rejected outright.
+  if [[ "$which" == library ]]; then
+    (( open_x + 40 <= screen_w )) || {
+      die "the desk was pushed off screen: '$probe' is at ${open_x} of ${screen_w}.
+        That is a full-screen panel with extra steps."; return 1 }
+  else
+    (( open_x >= 0 )) || {
+      die "the desk was pulled off screen: '$probe' is at ${open_x}.
+        That is a full-screen panel with extra steps."; return 1 }
+    # AND THE PANEL ITSELF STOPS SHORT. Measured from the panel's own
+    # marker, which sits at its content's leading edge: on this side that
+    # edge is IN the screen, so there is a number to read. (On the
+    # library's side the panel's leading edge is the screen's own, at 0,
+    # and the sliver is measured by the desk instead — above.)
+    local edge
+    edge=$(overlay_x properties) || {
+      die "the properties panel drew no marker to measure."; return 1 }
+    (( edge >= 40 )) || {
+      die "the properties panel starts at x=${edge}: it is full screen.
+        It has to stop short and leave a sliver of the desk, the same way
+        the library does (owner, 2026-08-23: 'Panel should not be full
+        screen!')."
+      return 1
+    }
   fi
-  if (( open_x + 40 > screen_w )); then
-    die "the desk was pushed off screen: the toggle is at ${open_x} of ${screen_w}.
-      That is a full-screen panel with extra steps — the sliver has to
-      stay big enough to see and tap."
-    return 1
-  fi
+
   # THE SLIVER TAKES THE TOUCHES, and its one job is to bring the desk
   # back. You could work the desk through the gap while a panel was open
   # — scroll a list, tick a task — behind something that says it has your
   # attention (owner, 2026-08-24).
   #
-  # A COORDINATE tap, deliberately, and the only one in this file: the
-  # target is a REGION, not a control, and the desk is hidden from the
+  # A COORDINATE tap, deliberately, and the only ones in this file: the
+  # target is a REGION, not a control. The desk is hidden from the
   # accessibility tree behind a panel precisely so nothing in it can be
-  # reached. There is no label to aim at, which is the point.
-  local mid_x=$(( (open_x + screen_w) / 2 ))
+  # reached, so there is no label to aim at — which is the point. The x
+  # is DERIVED from the probe's own centre rather than guessed, and y is
+  # well below the chrome row so the tap lands on bare desk.
+  mid_x=$(button_cx "$probe") || { die "could not centre on '$probe'."; return 1 }
   axe tap --udid "$UDID" -x "$mid_x" -y 400 >/dev/null 2>&1 || {
-    die "could not tap the sliver at x=${mid_x}."
-    return 1
-  }
-  perl -e 'select(undef,undef,undef,1.2)'
-  panel_closed || {
-    die "tapping the sliver at x=${mid_x} left the panel open.
+    die "could not tap the $which sliver at x=${mid_x}."; return 1 }
+  perl -e 'select(undef,undef,undef,1.4)'
+  back_at_rest "$probe" "$rest" || {
+    die "tapping the $which sliver at x=${mid_x} left the panel open.
       The gap has to put the panel away — otherwise it is either dead
       (no way back) or live (the desk is workable behind a panel)."
     return 1
   }
+
   # AND THE DRAG STILL STARTS THERE. The panel is dragged open and shut
-  # from anywhere (owner, 2026-08-08). The layer that swallows touches in
-  # the sliver takes that drag too, so it has to carry it — measured once
-  # with a probe, guarded here so it cannot quietly go away again.
-  cmd_tap "Library" || return 1
-  panel_open || { die "the panel did not reopen for the drag check."; return 1 }
+  # from anywhere (owner, 2026-08-08); the layer that swallows touches in
+  # the sliver takes that drag too, so it has to carry it.
+  open_side "$which" || return 1
+  mid_x=$(button_cx "$probe") || { die "could not centre on '$probe'."; return 1 }
+  local end_x=$(( dir == 1 ? 120 : screen_w - 120 ))
   axe swipe --udid "$UDID" --start-x "$mid_x" --start-y 500 \
-    --end-x 120 --end-y 500 --duration 0.4 >/dev/null 2>&1
-  perl -e 'select(undef,undef,undef,1.5)'
-  panel_closed || {
-    die "a leftward drag from the sliver at x=${mid_x} left the panel open.
+    --end-x "$end_x" --end-y 500 --duration 0.4 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.6)'
+  back_at_rest "$probe" "$rest" || {
+    die "a drag from the $which sliver at x=${mid_x} left the panel open.
       The gesture opens and closes from anywhere; the sliver's own layer
       swallows the touch, so that layer has to carry the drag."
     return 1
   }
-  say "ok    panel: desk travelled ${closed_x} -> ${open_x} of ${screen_w}; tap and drag in the sliver both bring it back"
-  cmd_check
+}
+
+# Open one panel by its own door: a button for the library, an edge drag
+# for the properties panel, which has no button by design.
+open_side() {
+  local i
+  for i in {1..3}; do
+    if [[ "$1" == library ]]; then
+      cmd_tap "Library" >/dev/null 2>&1
+    else
+      axe swipe --udid "$UDID" --start-x $(( $(screen_width) - 5 )) --start-y 420 \
+        --end-x 120 --end-y 420 --duration 0.35 >/dev/null 2>&1
+    fi
+    perl -e 'select(undef,undef,undef,1.4)'
+    [[ -n "$(overlays | grep -x "$1")" ]] && return 0
+  done
+  die "the $1 panel did not open."
+  return 1
+}
+
+# Has the desk come home? Geometry, not mounting: a closed panel is still
+# in the view tree, just parked off screen.
+back_at_rest() {
+  local probe="$1" rest="$2" now i
+  for i in {1..8}; do
+    now=$(button_x "$probe") && (( now > rest - 8 && now < rest + 8 )) && return 0
+    perl -e 'select(undef,undef,undef,0.3)'
+  done
+  return 1
+}
+
+# The leading x of a panel's own marker — where the panel actually
+# starts, as opposed to where its full-width layout frame does.
+overlay_x() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+want = 'liv.overlay.' + sys.argv[1]
+d = json.load(sys.stdin)
+def w(n):
+    i = n.get('AXUniqueId') or n.get('identifier') or ''
+    f = n.get('frame') or {}
+    if i == want and f:
+        print(int(f.get('x', 0))); raise SystemExit
+    for c in n.get('children') or []: w(c)
+w(d if isinstance(d, dict) else d[0])
+raise SystemExit(1)" "$1"
+}
+
+screen_width() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+d = d if isinstance(d, dict) else d[0]
+print(int((d.get('frame') or {}).get('width', 0)))"
+}
+
+# The CENTRE x of a button's frame — what a region tap aims at when the
+# region is defined by the control sitting in it.
+button_cx() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+want = sys.argv[1]
+d = json.load(sys.stdin)
+def w(n):
+    f = n.get('frame') or {}
+    if (n.get('AXLabel') or '') == want and f.get('width'):
+        print(int(f['x'] + f['width'] / 2)); raise SystemExit
+    for c in n.get('children') or []: w(c)
+w(d if isinstance(d, dict) else d[0])
+raise SystemExit(1)" "$1"
 }
 
 # The x of a button's frame, by label.
@@ -645,25 +775,59 @@ w(d if isinstance(d,dict) else d[0])
 print(json.dumps(sorted(out, key=lambda k: k['x'])))"
 }
 
-# THE GRID IS NOTES' ROOT, and it cannot be opened on top of itself.
+# NOTES REACHES NOTES, and the grid is the switcher over it.
 #
-# Owner, 2026-08-24: "make sure it replaces notes list", and then, having
-# got a card of the grid laid over the grid, "the grid is now openable
-# inside the grid".
+# This replaces the 2026-08-24 check that asserted the opposite — that
+# Notes' root WAS the grid and the numbered box was dead on it. That
+# arrangement was measured on 2026-08-28 and it hid the box: the grid
+# draws `desk.liveTabs`, so Notes showed 8 of the 134 notes in the box
+# and offered no route to the other 126.
+#
+# The load-bearing assertion here is the second one. A view named after a
+# thing has to contain it, and the only way to see that a list is showing
+# you MORE than what you left open is to compare it against the count the
+# bar is already reporting.
 cmd_grid() {
   cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
-  [[ "$(cmd_surface)" == "tabs" ]] || {
-    die "Notes' root draws '$(cmd_surface)', not the tab grid."
+  [[ "$(cmd_surface)" == "notes" ]] || {
+    die "Notes' root draws '$(cmd_surface)', not the list of notes.
+      The grid is the tab SWITCHER; the root is the shelf."
     return 1
   }
-  local box
-  box=$(bar_keys | python3 -c '
+
+  # THE HOLE THIS CHECK EXISTS FOR. The list must reach past the open
+  # tabs — if the two numbers ever match again, the root has gone back to
+  # drawing `liveTabs` and 126 notes have quietly become unreachable.
+  local open rows
+  open=$(tab_count) || { die "the bar reports no tab count to compare against."; return 1 }
+  rows=$(note_rows)
+  (( rows > open )) || {
+    die "Notes lists ${rows} rows while ${open} tabs are open.
+      The root is showing you what you left open, not what you have. That
+      is the 8-of-134 hole (2026-08-28) coming back."
+    return 1
+  }
+
+  # AND THE NUMBERED BOX IS ALIVE HERE. It was dead for as long as the
+  # grid was the root — you cannot open the grid on top of itself. With a
+  # list underneath, the switcher is always a different surface.
+  local live
+  live=$(bar_keys | python3 -c '
 import json, sys
 ks = json.load(sys.stdin)
 print(int(ks[4]["enabled"]) if len(ks) > 4 else "?")')
-  [[ "$box" == "0" ]] || {
-    die "on the grid the numbered box reads '$box'; it must be dead.
-      Live, tapping it lays a card of the grid over the grid."
+  [[ "$live" == "1" ]] || {
+    die "the numbered box reads '$live' on Notes' root; it must be live.
+      Its one reason to be dead was the grid being the root, and it is not."
+    return 1
+  }
+  cmd_tap "$(bar_tab_label)" || return 1
+  # The grid is an OVERLAY now, not a surface: it covers Notes rather
+  # than replacing it, so the surface underneath stays `notes` and the
+  # thing to look for is the cover's own marker.
+  [[ -n "$(overlays | grep -x tabs)" ]] || {
+    die "tapped the numbered box and no tab grid came up (overlays: $(overlays | tr '\n' ' ')).
+      The box is the only door to the switcher."
     return 1
   }
   labelled_back && { die "a labelled back is on the grid."; return 1 }
@@ -684,8 +848,56 @@ print(int(ks[4]["enabled"]) if len(ks) > 4 else "?")')
       the back key, and the numbered box for the way up to the grid."
     return 1
   }
-  say "ok    grid: Notes' root is the tabs, the numbered box is dead on it, no labelled back in a document"
+  say "ok    grid: Notes lists ${rows} notes against ${open} open, the box opens the switcher, no labelled back in a document"
   cmd_check
+}
+
+# How many tabs the bar says are open.
+tab_count() {
+  bar_tab_label | python3 -c "
+import re, sys
+m = re.search(r'([0-9]+)', sys.stdin.read())
+print(m.group(1) if m else '')" | grep -E '^[0-9]+$'
+}
+
+bar_tab_label() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    if l.startswith("Tabs."): print(l)
+    for c in n.get("children") or []: walk(c)' | head -1
+}
+
+# The first row in Notes' list, by label — the door into a document now
+# that the root is a list rather than a grid of cards.
+first_note() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if (n.get("type") == "Button" and l and f.get("width", 0) > 200
+            and 40 < f.get("height", 0) < 90
+            and not l.startswith(SKIP)):
+        ROWS.append((f.get("y", 0), l))
+    for c in n.get("children") or []: walk(c)' \
+    'ROWS = []
+SKIP = ("Tabs.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+    'ROWS.sort()
+print(ROWS[0][1] if ROWS else "")' | grep .
+}
+
+# Rows in Notes' list: full-width buttons of row height, minus the chrome
+# that happens to share those bounds.
+note_rows() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if (n.get("type") == "Button" and l and f.get("width", 0) > 200
+            and 40 < f.get("height", 0) < 90
+            and not l.startswith(SKIP)):
+        SEEN.append(l)
+    for c in n.get("children") or []: walk(c)' \
+    'SEEN = []
+SKIP = ("Tabs.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+    'print(len(SEEN))'
 }
 
 cmd_lens() {

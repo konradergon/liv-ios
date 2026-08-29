@@ -375,7 +375,8 @@ enum LivMotion {
 enum LivInk {
     static let accent = UIColor.tintColor
     static let onAccent = UIColor.white
-    static let surface = UIColor.secondarySystemBackground
+    static let surface = UIColor { $0.userInterfaceStyle == .light
+        ? .secondarySystemBackground : .tertiarySystemBackground }
     static let panel2 = UIColor.tertiarySystemFill
     static let text = UIColor.label
     static let text2 = UIColor.secondaryLabel
@@ -428,9 +429,28 @@ enum LivTheme {
     // The panel read as a curtain because it was painted in `canvas`:
     // the same black as the thing it covered, so only motion told them
     // apart.
-    static let canvas = Color(.systemBackground)
-    static let surface = Color(.secondarySystemBackground)
-    static let panel = Color(.secondarySystemBackground)
+    /// THE RAMP IS SHIFTED ONE STEP UP IN DARK, and only in dark.
+    ///
+    /// The system's `.systemBackground` is #000000 in dark — night
+    /// black. The owner rejected it (2026-08-28: "Screw the night black
+    /// in desk. Dark mode is too dark."), and it was always the odd one
+    /// out: every surface above it is a lifted grey, so the ground being
+    /// absolute black made the app look like two different materials.
+    ///
+    /// Rather than mix a value, each token takes the NEXT rung of the
+    /// system's own dark ramp (#000 → #1C1C1E → #2C2C2E). The steps
+    /// between them are unchanged, so nothing that depended on one
+    /// surface reading as raised above another has moved; light is
+    /// untouched, where white is already the right ground.
+    static let canvas = Color(
+        UIColor { $0.userInterfaceStyle == .light
+            ? .systemBackground : .secondarySystemBackground })
+    static let surface = Color(
+        UIColor { $0.userInterfaceStyle == .light
+            ? .secondarySystemBackground : .tertiarySystemBackground })
+    static let panel = Color(
+        UIColor { $0.userInterfaceStyle == .light
+            ? .secondarySystemBackground : .tertiarySystemBackground })
     /// A quiet fill for a lit row, a chip, a well — never a border.
     static let panel2 = Color(.tertiarySystemFill)
     /// The lightest possible mark of "this row is the one you are on".

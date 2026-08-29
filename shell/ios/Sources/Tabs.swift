@@ -62,15 +62,6 @@ enum LivTabs {
 /// previews, ✕ per card, the dashed new-tab card, and the
 /// + | "N tabs" | Done footer, which is the way out.
 struct TabSwitcher: View {
-    /// Drawn as the NOTES SURFACE rather than as the cover over it
-    /// (owner, 2026-08-24: "make sure it replaces notes list").
-    ///
-    /// One grid, two framings — never two grids (standing rule 4). As a
-    /// surface it drops the footer, because everything in that footer is
-    /// already on the bar below it: `+` creates, and there is nothing to
-    /// be Done with.
-    var asSurface = false
-
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
 
@@ -101,13 +92,6 @@ struct TabSwitcher: View {
 
     private var grid: some View {
         VStack(spacing: 0) {
-            // The band the header used to be. It is not decoration: a
-            // ScrollView that touches the top safe area takes it over and
-            // draws its content THROUGH it, so without a band ahead of it
-            // a scrolled card row slides under the clock and the Dynamic
-            // Island — and a card's ✕ resting behind the Island cannot be
-            // tapped, because that region belongs to the system.
-            LivTopScrim()
             ScrollView {
                 inactiveRow
                 LazyVGrid(columns: columns, spacing: 10) {
@@ -116,11 +100,35 @@ struct TabSwitcher: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
+                // CLEAR THE CHROME, AND ONLY THE CHROME.
+                //
+                // The scrim used to sit in this VStack as a sibling, so
+                // it RESERVED `LivRow.topInset` — the safe area plus a
+                // 52pt chrome row — above the first card. As the Notes
+                // surface that cleared the library door, which is real.
+                // As the overlay there is no door to clear, and the same
+                // band pushed the grid a sixth of the way down a screen
+                // it had entirely to itself (owner, 2026-08-28: "a huge
+                // cut-off… pushes the grid way down almost half-way
+                // towards the middle").
+                //
+                // Now it protects without pushing: an overlay below, and
+                // room reserved here only where something is standing.
+                // Nothing above it: this ScrollView already starts below
+                // the status bar (measured: y=62 on a 912pt screen) and
+                // the grid owns the screen while it is up.
             }
-            // As a surface the bar floats over the bottom, so it needs
-            // the same room every other surface leaves it.
-            .contentMargins(.bottom, asSurface ? LivBar.room : 0, for: .scrollContent)
-            if !asSurface { footer }
+            // Still needed, and this is why: a ScrollView that touches
+            // the top safe area draws its content THROUGH it, so a
+            // scrolled card row slides under the clock and the Dynamic
+            // Island — and a card's ✕ resting behind the Island cannot
+            // be tapped, because that region belongs to the system.
+            // NO SCRIM, AND NO ROOM FOR THE BAR. Nothing floats over
+            // this grid — it covers the screen, footer and all. The
+            // scrim was painting canvas over the first row's titles for
+            // nothing, which together with the band it reserved was the
+            // cut-off the owner reported (2026-08-28).
+            footer
         }
     }
 

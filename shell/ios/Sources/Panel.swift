@@ -39,9 +39,14 @@ import SwiftUI
 /// below is what remains for anyone not using a finger.
 struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
-    /// How wide the panel stands. `nil` = the whole screen, which is what
-    /// the properties panel still does.
+    /// How wide the panel stands. `nil` = the whole screen.
     var width: CGFloat? = nil
+    /// WHICH EDGE IT STANDS ON. The library is on the left, the
+    /// properties panel on the right, and past this line they are the
+    /// same panel (owner, 2026-08-28: "the note property panel being
+    /// identical in behavior as the left panel is best, but on the
+    /// right… ideally it shares code with the left panel").
+    var side: HorizontalEdge = .leading
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -53,7 +58,14 @@ struct SidePanel<Content: View>: View {
             // out behind it. What was here instead: 56pt of empty band
             // with a hairline under it, which read as a bar that was not
             // one.
-            .safeAreaInset(edge: .top) { LivTopScrim() }
+            // ONLY THE STATUS BAR. `LivTopScrim()`'s default also
+            // reserves the 52pt chrome row, which is right on the desk —
+            // the library door floats there — and wrong here, where
+            // nothing floats over the panel at all. It pushed the first
+            // row a sixth of the way down a panel the owner had already
+            // called too empty at the top (2026-08-28: "In the panel,
+            // there is a huge cut-off that needs to go").
+            .safeAreaInset(edge: .top) { LivTopScrim(underChrome: false) }
             // The properties panel leaves room for the bar. The library
             // does not: its own foot floats and its list runs under it.
             //
@@ -73,7 +85,9 @@ struct SidePanel<Content: View>: View {
             // follows, so the narrow panel comes out full-screen with its
             // rows centred. Order is the whole of it.
             .frame(width: width)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(
+                maxWidth: .infinity,
+                alignment: side == .leading ? .leading : .trailing)
             .ignoresSafeArea()
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)

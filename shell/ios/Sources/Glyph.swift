@@ -162,7 +162,12 @@ struct GlyphShape: Shape {
             pen.box(4.5, 4.5, 15, 15, 4.5)
             pen.shape([(8.5, 12.3, 0), (11.1, 14.9, 0), (15.7, 9.5, 0)], closed: false)
         case .day:
-            pen.box(3.5, 4.5, 17, 16, 3.5)
+            // CENTRED, and a size up. It was box(3.5, 4.5, 17, 16): the
+            // centre sat at y 12.5 on a canvas whose centre is 12, so the
+            // digit drawn at the centre was half a unit high in it —
+            // visible, and the owner saw it (2026-08-28). 18x17 centred
+            // on (12, 12); the digit needs no offset to sit in it.
+            pen.box(3, 3.5, 18, 17, 3.5)
         case .event, .calendar:
             pen.box(3, 5, 18, 16, 2.5)
             pen.line(8, 3, 8, 7)
@@ -399,24 +404,38 @@ private struct Pen {
 /// idea at a phone's proportions and a phone's radius: a nearly square
 /// plate, generously rounded, with one rounded bar sitting inside its
 /// left edge. Nothing else — no lines, no dots, no second bar.
+/// The library door's glyph: a panel, with its leading column filled.
+///
+/// `open` WIDENS THE COLUMN instead of recolouring the whole mark. The
+/// button used to turn `LivTheme.accent` when the panel was showing,
+/// which the owner called amateur (2026-08-28) and which was also the
+/// wrong idea: a tint says "selected", and this is not a selection — it
+/// is a door that is currently standing open. Widening the column says
+/// that in the drawing, at any size, in any theme, and to anyone who
+/// cannot tell blue from grey.
 struct PanelMark: View {
     let color: Color
+    var open: Bool = false
     var size: CGFloat = 22
 
     var body: some View {
         let height = size * 0.88
-        let radius = size * 0.30
+        // 0.30 read as a squircle rather than as a panel (owner,
+        // 2026-08-28: "make some icons, especially the panel button, a
+        // bit less round"). A panel has corners; this keeps them.
+        let radius = size * 0.20
         let line = max(1.4, size / 14)
         RoundedRectangle(cornerRadius: radius, style: .continuous)
             .strokeBorder(color, lineWidth: line)
             .overlay(alignment: .leading) {
                 RoundedRectangle(cornerRadius: radius * 0.5, style: .continuous)
                     .fill(color)
-                    .frame(width: size * 0.20)
+                    .frame(width: size * (open ? 0.42 : 0.20))
                     .padding(.vertical, size * 0.17)
                     .padding(.leading, size * 0.16)
             }
             .frame(width: size, height: height)
+            .animation(.easeInOut(duration: 0.18), value: open)
             .accessibilityHidden(true)
     }
 }
@@ -443,7 +462,6 @@ struct LivIcon: View {
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
                         .frame(width: size * 0.62)
-                        .offset(y: size * 0.04)
                 }
             }
             .accessibilityHidden(true)  // the row's text carries the name

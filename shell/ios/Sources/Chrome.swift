@@ -208,9 +208,14 @@ final class DeskModel: ObservableObject {
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
     var createMenu: (() -> LivMenu)?
+    /// Make one note, no menu. `newTab` in the Notes grid uses this:
+    /// every card in that grid is a document, so asking "note, task,
+    /// event, file or scan?" is a question with one sensible answer
+    /// (owner, 2026-08-28).
+    var newNote: (() -> Void)?
     /// One panel being dragged: which one, whether the drag OPENS or
     /// CLOSES it, and the finger's travel so far. It lives on the MODEL
-    /// because the bottom bar and the pill, which fade under a curtain,
+    /// because the bottom bar and the pill, which travel with the desk,
     /// are drawn by RootView, one level up.
     struct PanelDrag: Equatable {
         enum Which { case library, inspector }
@@ -282,8 +287,8 @@ final class DeskModel: ObservableObject {
     /// drag's settle all have to agree to the pixel. They read
     /// `UIScreen.main.bounds.width` from four places before this, which is
     /// four chances to disagree (standing rule 4).
-    static func travel(_ which: PanelDrag.Which) -> CGFloat {
-        which == .library ? LivPanel.width : LivScreen.width
+    static func travel(_: PanelDrag.Which) -> CGFloat {
+        LivPanel.width
     }
 
     /// The two panels do NOT move alike, and the reason is what each
@@ -305,11 +310,26 @@ final class DeskModel: ObservableObject {
     /// withdrawn the next day with the surface work it arrived in, and
     /// it is right again now that the left panel is where the app's
     /// views live.
+    /// How far the desk stands aside, and which way. The library pushes
+    /// it right, the properties panel pulls it left, and nothing opens
+    /// both at once.
     var deskShift: CGFloat {
-        panelProgress(.library) * Self.travel(.library)
+        (panelProgress(.library) - panelProgress(.inspector)) * Self.travel(.library)
     }
 
-    var curtain: CGFloat { panelProgress(.inspector) }
+    /// Which panel is out, if either. The desk's mask, its shadow and
+    /// the wash that takes its touches all need to know which edge they
+    /// are answering to.
+    var openPanel: PanelDrag.Which? {
+        if panelProgress(.library) > 0 { return .library }
+        if panelProgress(.inspector) > 0 { return .inspector }
+        return nil
+    }
+
+    /// How far a panel — either one — is out, 0…1.
+    var panelOut: CGFloat {
+        max(panelProgress(.library), panelProgress(.inspector))
+    }
 
     /// The metadata inspector covers the active entity tab's body.
     /// Lifted to the model so DeskHost's floating chevron can drive it;
@@ -734,7 +754,11 @@ final class DeskModel: ObservableObject {
     /// root and the user moves it where they want.
     func newTab() {
         guard state != .notes else {
-            createSomething()
+            // A NEW TAB HERE IS A NEW NOTE. This used to open the create
+            // menu, which is the `+` key's job and a different question:
+            // you asked for a tab in a grid of notes, so you get a note
+            // (owner, 2026-08-28). The menu is still one key away.
+            newNote?()
             return
         }
         planes.openRoot(in: state)
@@ -830,6 +854,21 @@ extension View {
 /// `safeAreaInset`, which is also what reserves the room; the desk
 /// overlays it on the words.
 struct LivTopScrim: View {
+    /// Does chrome float over this surface? The library door does on the
+    /// desk, so the fade runs the full chrome row and the words stay
+    /// legible under it. Nothing floats over the panel, and covering a
+    /// chrome row it has not got pushed its first line a sixth of the
+    /// way down (owner, 2026-08-28: "a huge cut-off that needs to go").
+    ///
+    /// A BOOL, NOT A HEIGHT. The height is read INSIDE this body on
+    /// purpose. Passed in from the call site of a `.safeAreaInset`, the
+    /// safe area feeds itself: AttributeGraph reports a cycle and the
+    /// surface stops repainting while its body keeps evaluating. That is
+    /// the 2026-08-23 bug written three lines above the call in
+    /// SidePanel, and it cost an hour again on 2026-08-28 — the panel
+    /// simply never drew.
+    var underChrome: Bool = true
+
     var body: some View {
         // Solid where the clock is, then a fade under the controls: a
         // plain two-stop gradient left words legible behind the time.
@@ -841,7 +880,7 @@ struct LivTopScrim: View {
             ],
             startPoint: .top, endPoint: .bottom
         )
-        .frame(height: LivRow.topInset)
+        .frame(height: underChrome ? LivRow.topInset : LivSafeArea.top)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }

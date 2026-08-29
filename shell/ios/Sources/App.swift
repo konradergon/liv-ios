@@ -141,11 +141,11 @@ struct RootView: View {
                 MinimisedRecordPill(id: id)
                     .padding(.bottom, LivBar.room + LivBar.gap)
                     // The pill belongs to the desk, so it travels with
-                    // it into the wings; under the properties curtain,
-                    // which it is painted above, it fades instead.
+                    // it into the wings — either wing now that the
+                    // properties panel travels too, so there is nothing
+                    // left to fade under.
                     .offset(x: desk.deskShift)
-                    .opacity(1 - desk.curtain)
-                    .accessibilityHidden(desk.deskShift != 0 || desk.curtain > 0)
+                    .accessibilityHidden(desk.deskShift != 0)
                     .zIndex(2)
             }
             if !keyboard.up && desk.menu == nil {
@@ -160,9 +160,7 @@ struct RootView: View {
                     // the panel stops 100pt short: a bar left behind
                     // would sit on the panel's own foot.
                     .offset(x: desk.deskShift)
-                    .opacity(1 - desk.curtain)
-                    .accessibilityHidden(
-                        desk.curtain > 0 || desk.chromeAway || desk.deskShift != 0)
+                    .accessibilityHidden(desk.chromeAway || desk.deskShift != 0)
                     // OUT OF THE WAY WHILE YOU READ (owner's clips,
                     // 2026-08-20). Its own height plus the safe area it
                     // sits in, so it leaves the screen rather than
@@ -218,6 +216,7 @@ struct RootView: View {
             TabSwitcher()
                 .environmentObject(box)
                 .environmentObject(desk)
+                .livOverlay(LivOverlay.tabs)
         }
         .fullScreenCover(isPresented: $desk.searchShown) {
             SearchView()

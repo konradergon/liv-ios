@@ -24,9 +24,9 @@ enum LivSurface {
     /// The desk's three bodies. The five feature views use their
     /// `Feature.rawValue`, so there is one vocabulary, not two.
     ///
-    /// `tabs` is Notes' root: the grid, drawn as the surface rather than
-    /// over it (owner, 2026-08-24).
-    static let tabs = "tabs"
+    /// Notes' root: the list of every note (restored 2026-08-28, when
+    /// the grid-as-root was measured to be hiding 126 of them).
+    static let notes = "notes"
     static let document = "document"
 }
 
@@ -76,6 +76,13 @@ enum LivOverlay {
     static let prefix = "liv.overlay."
 
     static let library = "library"
+    /// The tab switcher. It was a SURFACE while it was Notes' root; as
+    /// of 2026-08-28 it is only ever the cover the numbered box opens,
+    /// which is an overlay over whatever you were on.
+    static let tabs = "tabs"
+    /// The note's properties panel — the library panel, mirrored onto
+    /// the trailing edge (2026-08-28).
+    static let properties = "properties"
     static let settings = "settings"
 }
 

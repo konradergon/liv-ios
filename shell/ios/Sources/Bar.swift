@@ -72,18 +72,18 @@ struct BottomBar: View {
     /// would disagree with the grid it opens.
     private var tabKey: some View {
         let n = desk.liveTabs.count
-        // YOU CANNOT OPEN THE GRID ON TOP OF THE GRID. Notes' root IS
-        // the grid now, so from there this key leads nowhere and is
-        // drawn the way every dead key in this bar is drawn: same glyph,
-        // same place, dimmer ink (owner, 2026-08-24, having got a card
-        // of the grid over the grid).
-        let onIt = desk.state == .notes && desk.openDoc == nil
+        // ALIVE EVERYWHERE AGAIN (2026-08-28). This key was dead on
+        // Notes' root for as long as that root WAS the grid — you cannot
+        // open the grid on top of itself. The root is the list again, so
+        // the switcher is always a different surface from the one you
+        // are standing on, and the special case goes rather than being
+        // handled.
         return Button {
             desk.switcherShown = true
         } label: {
             LivIcon(
                 glyph: .day(n),
-                color: LivTheme.text.opacity(onIt ? LivBar.disabledInk : 1),
+                color: LivTheme.text,
                 size: LivBar.glyph + 2
             )
             .frame(maxWidth: .infinity)
@@ -91,7 +91,6 @@ struct BottomBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(onIt)
         .accessibilityLabel("Tabs. \(n) open in \(desk.state.title)")
     }
 

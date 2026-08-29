@@ -44,19 +44,23 @@ struct DeskHost: View {
                     // (the seeded title) must reseed on that flip.
                     EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
                 } else if desk.state == .notes {
-                    // NOTES' OWN ROOT IS THE TABS (owner, 2026-08-24:
-                    // "make sure it replaces notes list"). The grid the
-                    // numbered box opens is the same grid, drawn as the
-                    // surface instead of over it.
+                    // NOTES' ROOT IS THE LIST AGAIN (2026-08-28).
                     //
-                    // This RETIRES `NotesList` (deleted in the same
-                    // change, standing rule 6). That list replaced tabs
-                    // on 2026-08-18, on the argument that it reaches
-                    // notes you did NOT leave open — which a grid of
-                    // open tabs cannot. That reach now belongs to
-                    // search, which is a key on the bar, and the owner
-                    // has asked for the grid twice.
-                    TabSwitcher(asSurface: true).livSurface(LivSurface.tabs)
+                    // From 2026-08-24 it was the tab grid, on the
+                    // owner's "make sure it replaces notes list". The
+                    // argument against `NotesList` then was that search
+                    // reaches what the grid cannot. Measured on the
+                    // simulator four days later, that is not what
+                    // happened: the grid draws `desk.liveTabs`, so Notes
+                    // showed EIGHT of the box's hundred and thirty-four
+                    // notes and offered no route at all to the other
+                    // hundred and twenty-six. A surface named after a
+                    // thing has to contain it.
+                    //
+                    // The grid keeps its real job — it is the tab
+                    // switcher, opened by the numbered box on the bar.
+                    // One is the shelf, the other is what is on the desk.
+                    NotesList().livSurface(LivSurface.notes)
                 } else {
                     // Another state entirely — Today, the calendar. The
                     // views draw themselves (FeatureLayer is gone with
@@ -83,14 +87,37 @@ struct DeskHost: View {
             // deliberately runs out of its own bounds at the top so the
             // words pass under the clock, and a clip is computed on those
             // bounds and cuts them off at the status bar.
+            // ROUNDED ON THREE SIDES. The leading corners are SQUARE
+            // while the panel is out, because they are the ones that
+            // meet it: a curve there pulls away from the seam and leaves
+            // a wedge of panel showing at the top and the bottom — the
+            // "ugly gaps" the owner reported (2026-08-28). Butted flush,
+            // there is nothing to see. The trailing corners keep the
+            // device's radius, which is where the screen's own edge is.
             .mask {
-                RoundedRectangle(cornerRadius: LivPanel.deskRadius, style: .continuous)
-                    .ignoresSafeArea()
+                // SQUARE ON THE EDGE THAT MEETS THE PANEL, whichever
+                // edge that is. A curve there pulls away from the seam
+                // and leaves a wedge of panel showing at the top and the
+                // bottom — the "ugly gaps" the owner reported
+                // (2026-08-28). The far edge keeps the device's radius,
+                // which is where the screen's own corner is.
+                let meetsLeading = desk.openPanel == .library
+                let meetsTrailing = desk.openPanel == .inspector
+                UnevenRoundedRectangle(
+                    topLeadingRadius: meetsLeading ? 0 : LivPanel.deskRadius,
+                    bottomLeadingRadius: meetsLeading ? 0 : LivPanel.deskRadius,
+                    bottomTrailingRadius: meetsTrailing ? 0 : LivPanel.deskRadius,
+                    topTrailingRadius: meetsTrailing ? 0 : LivPanel.deskRadius,
+                    style: .continuous
+                )
+                .ignoresSafeArea()
             }
-            // Cast BACK onto the panel, no vertical offset.
+            // Cast BACK onto the panel, no vertical offset — so the
+            // direction follows which panel it is falling on.
             .shadow(
                 color: .black.opacity(LivPanel.shadowOpacity),
-                radius: LivPanel.shadowRadius, x: -4, y: 0)
+                radius: LivPanel.shadowRadius,
+                x: desk.openPanel == .inspector ? 4 : -4, y: 0)
             // A WASH, not a scrim: the reference fades the content to
             // ~50% and leaves the background alone, so this is the app's
             // own ground laid over the top. A black scrim in a dark theme
@@ -107,14 +134,15 @@ struct DeskHost: View {
             // That also gives the sliver the purpose it is drawn for —
             // it is the way back, and now it behaves like one.
             .overlay {
-                let showing = desk.panelProgress(.library)
+                let showing = desk.panelOut
+                let which = desk.openPanel
                 LivTheme.canvas
                     .opacity(LivPanel.wash * showing)
                     .contentShape(Rectangle())
                     // At rest this must be completely absent, or every
                     // tap on the desk would land here instead.
                     .allowsHitTesting(showing > 0)
-                    .onTapGesture { desk.setLibrary(false) }
+                    .onTapGesture { closePanel(which) }
                     // AND THE DRAG, because this layer swallows it.
                     //
                     // The panel is dragged open and shut from anywhere
@@ -129,7 +157,13 @@ struct DeskHost: View {
                     .gesture(
                         DragGesture(minimumDistance: 18)
                             .onEnded { g in
-                                if g.translation.width < -40 { desk.setLibrary(false) }
+                                // Toward the panel's own edge closes it:
+                                // left for the library, right for the
+                                // properties panel.
+                                let away = which == .inspector
+                                    ? g.translation.width > 40
+                                    : g.translation.width < -40
+                                if away { closePanel(which) }
                             }
                     )
                     // The desk is already hidden from VoiceOver behind a
@@ -171,12 +205,8 @@ struct DeskHost: View {
                     // ••• at the far end of the row. Found by `drive.sh
                     // tour`, which could not open the panel from inside a
                     // note because the tap landed on the text.
-                    PanelMark(
-                        color: desk.libraryShown ? LivTheme.accent : LivTheme.text,
-                        size: 22
-                    )
-                    .frame(width: 40, height: 40)
-                    .contentShape(Rectangle())
+                    PanelMark(color: LivTheme.text, open: desk.libraryShown, size: 24)
+                        .livTopKeyShape()
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Library")
@@ -231,11 +261,12 @@ struct DeskHost: View {
                 desk.inspectorShown || desk.panelDrag?.which == .inspector
             {
                 SidePanel(
-                    onDismiss: {
-                        withAnimation(LivMotion.nav) { desk.inspectorShown = false }
-                    }
+                    onDismiss: { closePanel(.inspector) },
+                    width: LivPanel.width,
+                    side: .trailing
                 ) {
                     EntityInspector(id: id)
+                        .livOverlay(LivOverlay.properties)
                 }
                 .offset(x: panelOffset(.inspector))
                 .zIndex(1)
@@ -243,7 +274,10 @@ struct DeskHost: View {
 
         }
         .background(LivTheme.canvas)
-        .onAppear { desk.createMenu = createMenu }
+        .onAppear {
+            desk.createMenu = createMenu
+            desk.newNote = createNote
+        }
         .fileImporter(
             isPresented: $picking, allowedContentTypes: [.item],
             allowsMultipleSelection: true
@@ -366,6 +400,16 @@ struct DeskHost: View {
     /// How far off its own edge a panel currently sits. A panel with no
     /// drag in flight is simply open (0) — the transition handles its
     /// arrival and departure as before.
+    /// Shut whichever panel is out. The wash and its drag both need
+    /// this, and they must not each decide it for themselves.
+    private func closePanel(_ which: PanelDrag.Which?) {
+        switch which {
+        case .library: desk.setLibrary(false)
+        case .inspector: withAnimation(LivMotion.nav) { desk.inspectorShown = false }
+        case nil: break
+        }
+    }
+
     private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
         let hidden = (1 - desk.panelProgress(which)) * DeskModel.travel(which)
         return which == .library ? -hidden : hidden
@@ -733,14 +777,19 @@ extension View {
     /// narrow •••; and its fill is derived from the tint, so the two
     /// buttons floated in a lighter grey than the bar they belong with.
     /// One surface, one size — the bar's own recipe, which is now glass.
-    /// BARE (surface pass, owner 2026-08-18: "fewer giant rounded
-    /// buttons… compact, unobtrusive controls"). Safari does not put
-    /// each of its toolbar glyphs in its own capsule, and neither does
-    /// anything else with a quiet bar: the glass belongs to the BAR, and
-    /// a control that floats over content gets contrast from the scrim
-    /// above the words instead. What is left is a 40pt target around a
-    /// glyph, and an `on` state that tints the glyph rather than
-    /// wrapping it in a lozenge.
+    /// GLASS AGAIN, in a circle (owner, 2026-08-28: "the icons at the
+    /// top… have no button shape unlike everything below and icons give
+    /// off an outdated iOS UI look").
+    ///
+    /// This reverses the bare treatment of 2026-08-18 ("fewer giant
+    /// rounded buttons… compact, unobtrusive controls"), and the reason
+    /// it reverses is worth keeping: bare was argued from Safari, whose
+    /// toolbar glyphs sit in a bar that is itself a surface. These do
+    /// not — they float on the words, with nothing under them but a
+    /// fading scrim, so they read as loose icons rather than controls.
+    /// The bar below wears glass and the panel's settings key wears a
+    /// circle; these now wear both, which makes the app's three rows of
+    /// chrome one language (standing rule 4).
     ///
     /// **Do not use this on a button that is followed by a `Spacer`.**
     /// The frame lands OUTSIDE the button, and SwiftUI then reports an
@@ -753,8 +802,18 @@ extension View {
     /// the label instead — see the library door above (2026-08-24).
     func livTopButton(on: Bool = false) -> some View {
         buttonStyle(.plain)
-            .frame(width: 40, height: 40)
-            .contentShape(Rectangle())
+            .livTopKeyShape()
+    }
+
+    /// The SHAPE a top door wears, on its own so the library button can
+    /// apply it inside its label — see the warning above about the
+    /// 396pt-wide accessibility element.
+    func livTopKeyShape() -> some View {
+        // 44, not 40 (owner, 2026-08-28: "a notch larger"). It is also
+        // the platform's minimum target, which the 40 never was.
+        frame(width: 44, height: 44)
+            .livGlass(in: Circle())
+            .contentShape(Circle())
     }
 }
 
@@ -774,7 +833,7 @@ struct FloatCircleLabel: View {
             .foregroundStyle(on ? LivTheme.accent : LivTheme.text)
             // A FIXED square, so a wide glyph and a narrow one come out
             // the same button.
-            .frame(width: 22, height: 22)
+            .frame(width: 24, height: 24)
     }
 }
 

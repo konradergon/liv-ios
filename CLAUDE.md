@@ -125,9 +125,14 @@ assertion on purpose and watch it fail before you trust the green.
 never repainted — every suite passed while the app was visibly broken.
 `drive.sh tour` is the answer: it walks all six views and asserts, from the
 accessibility tree, which surface is actually rendered (`Surface.swift`). Run
-it before claiming a UI change works. Its other checks are `panel`, `bar`,
-`grid`, `lens` (a saved filter actually narrows the app), `facets` and
-`vault`.
+it before claiming a UI change works. Its other checks are `panel` (BOTH
+side panels — one body run twice, mirrored), `bar`, `grid`, `lens` (a
+saved filter actually narrows the app), `facets` and `vault`.
+
+Every check asserts GEOMETRY or rendered text, never whether a view is
+mounted: a closed panel stays in the view tree and simply moves off
+screen, so "is its marker there" answers a different question than the
+one being asked.
 
 Do not commit unless the owner asks.
 
