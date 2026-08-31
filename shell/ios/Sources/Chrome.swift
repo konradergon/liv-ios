@@ -274,6 +274,19 @@ final class DeskModel: ObservableObject {
     /// Which panel the finger is currently dragging. nil = none.
     @Published var panelDrag: PanelDrag?
 
+    /// WHERE A SURFACE PAGES SIDEWAYS ON ITS OWN, in window coordinates.
+    ///
+    /// The panel is dragged in from anywhere (owner, 2026-08-08), which
+    /// is right everywhere except on top of something that already means
+    /// something by a sideways drag. The calendar's month grid is the
+    /// only such place in the app; it publishes its frame here and the
+    /// window recognizer refuses to start inside it.
+    ///
+    /// NOT `@Published`: the recognizer reads it through a closure at
+    /// touch time, and publishing it would re-render the desk every time
+    /// the grid's frame settled.
+    var pagerZone: CGRect = .zero
+
     /// The desk is the surface in FRONT — nothing full-screen covers it.
     ///
     /// The panel drag is a recognizer on the WINDOW, so it sees touches

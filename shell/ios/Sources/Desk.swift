@@ -281,6 +281,7 @@ struct DeskHost: View {
             PanelDragInstaller(
                 active: { desk.deskInFront && desk.menu == nil },
                 mayClaim: { dx in claimPanel(dx) != nil },
+                pagerZone: { desk.pagerZone },
                 onLatch: { dx in
                     if let opening = claimPanel(dx) {
                         endEditing()

@@ -137,6 +137,9 @@ struct CalendarView: View {
     /// consumes it, slides, and hands the month back on landing — the
     /// drag itself lives down there, not here.
     @State private var pageRequest = 0
+    /// Is the month card up? The grid lives behind the title now, so
+    /// this is the only thing that puts it on screen.
+    @State private var pickingDay = false
     /// One month's width, learned from the layout, so the chevrons can
     /// slide by exactly one page too.
     @State private var pageWidth: CGFloat = 0
@@ -148,20 +151,57 @@ struct CalendarView: View {
         let doneNames = Set(
             taskOptions.filter { $0.completes == true }.compactMap(\.name))
 
+        // THE TIMELINE IS THE SCREEN (owner, 2026-08-31: "maybe
+        // replacing the current layout with the notion layout would be
+        // better… also getting rid of the day picker or doing it another
+        // way").
+        //
+        // The month grid sat here permanently and took about 40% of the
+        // phone, leaving the timeline roughly six hours. Notion Calendar
+        // — read frame by frame from
+        // `~/Desktop/Throwaway/new/notion-calendar.mov` — has no month
+        // grid on its main screen at all: the title carries a chevron,
+        // and everything under it is the timeline. That is the right
+        // trade on a phone, because the grid is how you JUMP and the
+        // timeline is what you READ, and reading happens far more often.
+        //
+        // It also removes a class of bug instead of patching it. The
+        // grid paged horizontally by drag and fought the panel's window
+        // recognizer for every sideways swipe — swiping right opened the
+        // library instead of turning the month, and both gestures ran on
+        // every touch move (owner, same day: "the calendar and
+        // especially day picker lags a lot"). A surface that is not on
+        // screen cannot fight anything.
         VStack(spacing: 0) {
             header(today: today)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-            weekdayRow
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-            monthPager(today: today, byDay: byDay)
-                .padding(.top, 4)
-                .padding(.bottom, 8)
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
             dayPanel(items: items, today: today, doneNames: doneNames)
         }
         .background(LivTheme.canvas)
+        // THE PICKER, WHEN YOU ASK FOR IT. The same grid, the same
+        // cells, the same long-press — it just is not standing on the
+        // screen the whole time.
+        .sheet(isPresented: $pickingDay) {
+            VStack(spacing: 0) {
+                weekdayRow
+                    .padding(.horizontal, 16)
+                    .padding(.top, 22)
+                monthPager(today: today, byDay: byDay)
+                    .padding(.top, 6)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(LivTheme.canvas)
+            // The card is exactly as tall as what is in it: the grabber,
+            // the weekday row, its padding and six week rows. Measured
+            // rather than guessed — 150 left about 80pt of empty card
+            // under the last week.
+            .presentationDetents([.height(CalGrid.gridHeight + 72)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(LivTheme.canvas)
+        }
         .onAppear {
             loadWindow()
             box.statusOptions(kind: "task") { taskOptions = $0 }
@@ -180,9 +220,26 @@ struct CalendarView: View {
 
     private func header(today: Int64) -> some View {
         HStack(spacing: 8) {
-            Text(CalGrid.title(monthFirst))
-                .font(.system(size: LivType.strong, weight: .semibold))
-                .foregroundStyle(LivTheme.text)
+            // THE DAY YOU ARE ON, AND THE DOOR TO THE PICKER.
+            //
+            // It said the MONTH, because the grid underneath said the
+            // day. With the grid behind a door, nothing else on the
+            // screen would name the day being shown — so the title
+            // carries it, and the chevron says the title is a way in.
+            // Notion's own title works exactly this way.
+            Button { pickingDay = true } label: {
+                HStack(spacing: 5) {
+                    Text(Civil.dayLabel(selectedDay))
+                        .font(.system(size: LivType.hero, weight: .bold))
+                        .foregroundStyle(LivTheme.text)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: LivType.caption, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(Civil.dayLabel(selectedDay)). Pick a day")
             if box.busyRetrying { ProgressView().scaleEffect(0.7) }
             Spacer()
             // A VERB, dressed as one. As plain accent text beside the
@@ -227,8 +284,17 @@ struct CalendarView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Today")
             .accessibilityAddTraits(onToday ? [.isSelected] : [])
-            chevron("chevron.left", label: "Previous month") { page(-1) }
-            chevron("chevron.right", label: "Next month") { page(1) }
+            // A DAY, NOT A MONTH. These paged the month, which was
+            // right while a month grid was the thing on screen. What is
+            // on screen now is one day, and the motion you want a
+            // hundred times more often is "tomorrow" — without this,
+            // reaching tomorrow would mean opening the picker.
+            chevron("chevron.left", label: "Previous day") {
+                go(to: Civil.addDays(selectedDay, -1), today: Civil.todayDay())
+            }
+            chevron("chevron.right", label: "Next day") {
+                go(to: Civil.addDays(selectedDay, 1), today: Civil.todayDay())
+            }
         }
     }
 
@@ -315,7 +381,10 @@ struct CalendarView: View {
                 calMonth(CalGrid.addMonths(monthFirst, $0), today: today, byDay: byDay)
             },
             selected: selectedDay,
-            onSelect: { park(day: $0) },
+            // PICKING CLOSES IT. The card exists to answer one
+            // question — which day — so it leaves as soon as it is
+            // answered rather than waiting to be dismissed.
+            onSelect: { park(day: $0); pickingDay = false },
             onHold: { createEvent(on: $0) },
             onPage: { step($0, animated: false) },
             request: $pageRequest,
@@ -903,6 +972,7 @@ struct CalendarView: View {
 /// changes — so a frame of dragging re-runs this body and nothing
 /// above it (owner, 2026-08-15: "minicalendar lags when dragged").
 private struct MonthPagerView: View {
+    @EnvironmentObject var desk: DeskModel
     let months: [CalMonth]
     let selected: Int64
     let onSelect: (Int64) -> Void
@@ -937,6 +1007,21 @@ private struct MonthPagerView: View {
             }
             .offset(x: -span + drag)
             .contentShape(Rectangle())
+            // TELL THE WINDOW RECOGNIZER TO KEEP OFF. This strip owns
+            // sideways drags — it is the month pager — and the panel's
+            // recognizer lives on the window, so it cannot see that from
+            // where it sits. Measured in WINDOW space, which is where
+            // the recognizer reports its touches (the same reason the
+            // trash zone measures itself that way).
+            .background(
+                GeometryReader { g in
+                    Color.clear
+                        .onAppear { desk.pagerZone = g.frame(in: .global) }
+                        .onChange(of: g.frame(in: .global)) { _, f in
+                            desk.pagerZone = f
+                        }
+                }
+            )
             .gesture(gesture(span: span))
             .onAppear { width = span }
             .onChange(of: span) { _, w in width = w }
@@ -1250,7 +1335,11 @@ enum CalClock {
     /// mark. It is also how much room the grid must leave at the top:
     /// without it the first hour of the day was sliced in half by the
     /// edge of the scroll (owner, 2026-08-10).
-    static let labelRise: CGFloat = 6
+    /// 6 until 2026-08-31. The label is centred on its own rule and
+    /// lifted by this much; at the new type scale half a line is about
+    /// 9pt, so at 6 the first hour was still clipped by the top of the
+    /// scroll view — visible as "08:00" with its top sliced off.
+    static let labelRise: CGFloat = 9
     /// Times land on quarter hours — 11:47 is never what anyone meant.
     static let step = 15
 
