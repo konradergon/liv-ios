@@ -935,16 +935,53 @@ bar_tab_label() {
 # safe on a busy machine is wasted on every healthy run. The success
 # condition is what the caller actually wants: a document on screen.
 open_first_note() {
-  local i row
+  # BY ITS OWN FRAME, not by its label — and that is not the ban being
+  # broken, it is the same exception the library sliver already takes.
+  #
+  # Every note in this box is called "Untitled, <date>", and the create
+  # check adds one per run, so three notes now share today's date. `axe
+  # tap --label` REFUSES a label that matches more than one element
+  # ("Multiple (3) accessibility elements matched… none expose
+  # AXUniqueId"), which is the correct thing for it to do and leaves this
+  # with nothing to aim at.
+  #
+  # The rule at the top of this file bans GUESSED coordinates — "that is
+  # how the same tap starts hitting a different row in every build" —
+  # and the centre of the frame the tree just reported is not a guess.
+  # It is the same information the label lookup would have used, read at
+  # the same instant. Every attempt is checked by the only thing that
+  # matters: a document on screen.
+  local i x y
   for i in {1..3}; do
-    row=$(first_note) || { perl -e 'select(undef,undef,undef,0.5)'; continue }
-    cmd_tap "$row" >/dev/null 2>&1 || { perl -e 'select(undef,undef,undef,0.5)'; continue }
-    perl -e 'select(undef,undef,undef,0.8)'
-    [[ "$(cmd_surface)" == "document" ]] && return 0
+    read x y <<< "$(first_note_point)"
+    if [[ -n "${x:-}" ]]; then
+      axe tap --udid "$UDID" -x "$x" -y "$y" >/dev/null 2>&1
+      perl -e 'select(undef,undef,undef,1.1)'
+      [[ "$(cmd_surface)" == "document" ]] && return 0
+    fi
+    perl -e 'select(undef,undef,undef,0.6)'
   done
   die "could not open a note from the list after three tries.
       The rows are there but tapping one did not land on a document."
   return 1
+}
+
+# The centre of the first note row, as `x y`, straight from the tree.
+first_note_point() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if (n.get("type") == "Button" and l and f.get("width", 0) > 200
+            and 40 < f.get("height", 0) < 90
+            and not l.startswith(SKIP)):
+        ROWS.append((f.get("y", 0), f))
+    for c in n.get("children") or []: walk(c)' \
+    'ROWS = []
+SKIP = ("Desk.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+    'ROWS.sort(key=lambda r: r[0])
+if ROWS:
+    f = ROWS[0][1]
+    print(int(f["x"] + f["width"] / 2), int(f["y"] + f["height"] / 2))'
 }
 
 first_note() {

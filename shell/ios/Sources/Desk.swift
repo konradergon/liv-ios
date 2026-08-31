@@ -303,7 +303,11 @@ struct DeskHost: View {
                     .zIndex(2)
             }
         }
-        .livTopSheet(isPresented: $desk.workspaceShown) {
+        // FROM THE BOTTOM: the workspace button and "New filter" both
+        // live at the FOOT of the library panel (team, 2026-08-22), and
+        // this card was still falling from the top of the screen because
+        // that is where the button used to be.
+        .livSheet(from: .bottom, isPresented: $desk.workspaceShown) {
             WorkspaceSwitcher(onClose: { desk.workspaceShown = false })
                 .environmentObject(box)
                 .environmentObject(workspaces)

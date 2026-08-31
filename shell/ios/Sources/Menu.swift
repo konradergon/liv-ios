@@ -201,21 +201,35 @@ struct LivMenuSubject: View {
 /// motion, scrim and card the one menu wears, for the one surface that
 /// is too big to be a list of rows: the workspace switcher.
 ///
-/// It comes from the top because its BUTTON is at the top (owner,
-/// 2026-08-15: "clicking on workspace has a card come in at the bottom,
-/// but since the button is on top it would be more convenient have it
-/// appearing at top also"). A `.sheet` cannot do that — on iPhone a
-/// sheet only ever comes up from the bottom — so it is drawn here, in
-/// the hierarchy, exactly as the menu is.
+/// IT COMES FROM THE EDGE ITS BUTTON IS ON, and that is the whole rule
+/// (owner, 2026-08-15: "clicking on workspace has a card come in at the
+/// bottom, but since the button is on top it would be more convenient
+/// have it appearing at top also"). A `.sheet` cannot do the top half —
+/// on iPhone a sheet only ever comes up from the bottom — so this is
+/// drawn in the hierarchy, exactly as the menu is.
+///
+/// THE EDGE IS A PARAMETER SINCE 2026-08-31, because the rule outlived
+/// the arrangement it was written for. The workspace button WAS at the
+/// top when the owner asked for this; it moved to the foot of the
+/// library panel a week later (team, 2026-08-22) and the direction
+/// stayed behind, so the workspace and filter cards fell from the top of
+/// the screen while the buttons that opened them sat at the bottom — the
+/// workspace button drawing a `chevron.down` the whole time (owner,
+/// 2026-08-31: "some menus are popping up top down when the button is
+/// not at the top"). Hard-coding a direction records an answer; taking
+/// it as a parameter records the rule, and the rule survives the
+/// furniture moving again.
 extension View {
-    func livTopSheet<Sheet: View>(
-        isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Sheet
+    func livSheet<Sheet: View>(
+        from edge: VerticalEdge = .bottom, isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Sheet
     ) -> some View {
-        modifier(LivTopSheetHost(isPresented: isPresented, sheet: content))
+        modifier(LivEdgeSheetHost(from: edge, isPresented: isPresented, sheet: content))
     }
 }
 
-struct LivTopSheetHost<Sheet: View>: ViewModifier {
+struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
+    let from: VerticalEdge
     @Binding var isPresented: Bool
     @ViewBuilder let sheet: () -> Sheet
 
@@ -230,7 +244,7 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay {
             if drawn {
-                ZStack(alignment: .top) {
+                ZStack(alignment: from == .top ? .top : .bottom) {
                     Rectangle()
                         .fill(Color.black.opacity(shown ? 0.4 : 0))
                         .ignoresSafeArea()
@@ -244,7 +258,7 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
                                     .onChange(of: geo.size.height) { _, h in height = h }
                             }
                         )
-                        .offset(y: shown ? 0 : -height)
+                        .offset(y: shown ? 0 : (from == .top ? -height : height))
                 }
                 .ignoresSafeArea()
                 .accessibilityAction(.escape) { isPresented = false }
@@ -274,8 +288,9 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
     /// the edge it is attached to, rounded on the side facing the content,
     /// the grabber on the bottom, and the safe area kept as space inside.
     private var card: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0).frame(height: 4)
+        let up = from == .bottom
+        return VStack(spacing: 0) {
+            if up { LivGrabber() } else { Spacer(minLength: 0).frame(height: 4) }
             // Hugs its content, and scrolls only once the content is
             // taller than the cap — a four-row switcher hanging down 86%
             // of the screen is a wall, not a card.
@@ -291,13 +306,22 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
             }
             .frame(height: min(content, UIScreen.main.bounds.height * 0.72))
             .onPreferenceChange(LivSheetHeight.self) { content = $0 }
-            LivGrabber()
+            if !up { LivGrabber() }
         }
-        .padding(.top, LivSafeArea.top)
+        // The safe area is SPACE INSIDE the card, on whichever edge it is
+        // attached to — a top card whose first row sits under the clock
+        // reads as broken, and so does a bottom one running into the home
+        // indicator.
+        .padding(.top, up ? 0 : LivSafeArea.top)
+        .padding(.bottom, up ? LivSafeArea.bottom : 0)
         .background(
+            // Square against the edge it hangs from, rounded on the side
+            // facing the content.
             UnevenRoundedRectangle(
-                topLeadingRadius: 0, bottomLeadingRadius: LivTheme.radiusLg,
-                bottomTrailingRadius: LivTheme.radiusLg, topTrailingRadius: 0,
+                topLeadingRadius: up ? LivTheme.radiusLg : 0,
+                bottomLeadingRadius: up ? 0 : LivTheme.radiusLg,
+                bottomTrailingRadius: up ? 0 : LivTheme.radiusLg,
+                topTrailingRadius: up ? LivTheme.radiusLg : 0,
                 style: .continuous
             )
             .fill(LivTheme.surface)
