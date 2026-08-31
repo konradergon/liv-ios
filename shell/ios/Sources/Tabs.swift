@@ -94,6 +94,20 @@ struct TabSwitcher: View {
         VStack(spacing: 0) {
             ScrollView {
                 inactiveRow
+                if shown.isEmpty {
+                    // NOTHING ON THE DESK. It drew a lone dashed card and
+                    // left you to infer the rest. An empty state is the
+                    // one place a person reads prose, so it is where the
+                    // app can say what this screen is.
+                    EmptyHint(
+                        "Nothing on the Desk",
+                        detail:
+                            "Notes you open stay here until you close them, "
+                            + "whichever view you wander off to.",
+                        glyph: .note
+                    )
+                    .padding(.top, 40)
+                }
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(shown) { tab in card(tab) }
                     newTabCard
@@ -112,17 +126,10 @@ struct TabSwitcher: View {
                 // cut-off… pushes the grid way down almost half-way
                 // towards the middle").
                 //
-                // Now it protects without pushing: an overlay below, and
-                // room reserved here only where something is standing.
-                // Nothing above it: this ScrollView already starts below
-                // the status bar (measured: y=62 on a 912pt screen) and
-                // the grid owns the screen while it is up.
+                // Nothing above it either: this ScrollView already
+                // starts below the status bar (measured: y=62 on a 912pt
+                // screen) and the grid owns the screen while it is up.
             }
-            // Still needed, and this is why: a ScrollView that touches
-            // the top safe area draws its content THROUGH it, so a
-            // scrolled card row slides under the clock and the Dynamic
-            // Island — and a card's ✕ resting behind the Island cannot
-            // be tapped, because that region belongs to the system.
             // NO SCRIM, AND NO ROOM FOR THE BAR. Nothing floats over
             // this grid — it covers the screen, footer and all. The
             // scrim was painting canvas over the first row's titles for
@@ -137,10 +144,12 @@ struct TabSwitcher: View {
     /// It used to be narrowed by a "Search tabs" field in a header, with
     /// a collapse chevron beside it. Both are gone (owner, 2026-08-24:
     /// "you can remove the collapse button and search tabs from tab
-    /// view"). The grid is the Notes surface now, not a sheet you peer
-    /// into, so there is nothing to collapse; and a field that searches
-    /// the tabs you can already see, one tap from a search that reaches
-    /// the whole box, was the smaller of two searches.
+    /// view"). A field that searches the documents you can already see,
+    /// one tap from a search that reaches the whole box, was the smaller
+    /// of two searches.
+    ///
+    /// (The grid was Notes' own surface for four days. It is the
+    /// switcher again since 2026-08-28 — the list is Notes' root.)
     private var shown: [DeskTab] { desk.liveTabs }
 
     // MARK: cards
@@ -172,7 +181,7 @@ struct TabSwitcher: View {
                     VStack(spacing: 4) {
                         Image(systemName: "plus")
                             .font(.system(size: LivType.title, weight: .medium))
-                        Text("New tab").font(.system(size: LivType.caption, weight: .medium))
+                        Text("New note").font(.system(size: LivType.caption, weight: .medium))
                     }
                     .foregroundStyle(LivTheme.text3)
                 )
@@ -196,14 +205,16 @@ struct TabSwitcher: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("New tab")
+            .accessibilityLabel("New note")
             Spacer()
             // The count agrees with what the grid SHOWS. Inactive tabs
             // are counted on their own row, the only place claiming them.
-            Text(
-                "\(desk.liveTabs.count) "
-                    + (desk.liveTabs.count == 1 ? "tab" : "tabs")
-            )
+            // THE WORD THE DESKTOP ALREADY USES. That app ships "New in
+            // Desk" and "a markdown note in this Desk"; this one had 617
+            // mentions of the desk in its code and none on screen. It is
+            // also plainer than "tabs", which is a browser's word for a
+            // thing this app only half is.
+            Text("\(desk.liveTabs.count) on the Desk")
                 .font(.system(size: LivType.body).monospacedDigit())
                 .foregroundStyle(LivTheme.text3)
             Spacer()
@@ -246,7 +257,7 @@ struct TabSwitcher: View {
                     Text("Inactive")
                         .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.text)
-                    ValueChip(LivTabs.label(LivTabs.days), dotted: false)
+                    ValueChip(LivTabs.label(LivTabs.days))
                     Spacer(minLength: 0)
                     Text("\(total)")
                         .font(.system(size: LivType.body).monospacedDigit())
@@ -619,9 +630,9 @@ struct TabCard: View {
         return LivKind.of(row).wire
     }
 
-    /// The kind's own colour, not a hash of the word: this dot used to
-    /// come out of `Hue.dot`, which spreads any string over five colours
-    /// — so a tab's dot said nothing about what the tab held.
+    /// The kind's own colour. This dot used to come from a hash of the
+    /// word, which said nothing about what the tab held; that hash is
+    /// gone entirely (2026-08-29) and kind colour is what is left.
     private var kindColor: Color {
         // A position is a PLACE, and places have no kind colour — the
         // library's rows are bare and colourless (owner, 2026-08-13).

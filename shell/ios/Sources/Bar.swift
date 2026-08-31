@@ -94,7 +94,14 @@ struct BottomBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Tabs. \(n) open in \(desk.state.title)")
+        // IT STOPPED BEING TRUE. "3 open in Calendar" named a plane per
+        // view, and there is one desk now — the count is the same in
+        // every view, which is the whole point of it. This is also the
+        // only place the app says what the number means, so it is where
+        // the word the desktop already uses belongs (that app ships
+        // "New in Desk" and "a markdown note in this Desk").
+        .accessibilityLabel(
+            n == 1 ? "Desk. 1 document open" : "Desk. \(n) documents open")
     }
 
     /// One key. Six of these share the capsule evenly, and each one's

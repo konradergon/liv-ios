@@ -23,10 +23,26 @@ struct InspectorField: Identifiable {
     let kind: String
     /// Several values at once (membership, addCell) versus one (set).
     let multi: Bool
-    /// A closed vocabulary: non-empty for a select. No create row.
+    /// The vocabulary a select already holds. NOT a closed one any more
+    /// — see `closed`.
     let options: [String]
+    /// The property's own id, so a new option can be minted against it.
+    let propertyId: UInt64
 
-    var closed: Bool { !options.isEmpty }
+    /// NOTHING IS CLOSED (owner, 2026-08-29: "make sure areas are not
+    /// fixed anymore").
+    ///
+    /// A select used to refuse the create row, on §10's fixed furniture:
+    /// six areas, researched not invented, and `what-liv-is-for.md` said
+    /// in as many words that areas "don't grow". That is amended there,
+    /// with the reason and the date.
+    ///
+    /// The six are still what the app arrives with, and that was always
+    /// the more important half — a person opens Liv and does not have to
+    /// design a system. What changes is that the walls the doc admitted
+    /// to ("someone whose life doesn't divide into these six areas will
+    /// feel the walls") are no longer walls.
+    var closed: Bool { false }
 
     /// The fields every note shows even when empty — the "zero fill
     /// pressure" core (design/editor-study.md §8: two filled fields is a
@@ -53,7 +69,8 @@ struct InspectorField: Identifiable {
             property: property,
             kind: row?.kind ?? "text",
             multi: isMulti(property),
-            options: options)
+            options: options,
+            propertyId: row?.id ?? 0)
     }
 }
 
@@ -139,16 +156,18 @@ struct EntityInspector: View {
                     .padding(.top, 10)
                     .padding(.bottom, 8)
                 }
-                HStack(spacing: 8) {
-                    // The kind words the box actually holds, each in its
-                    // own kind color — not the value hash, which spread
-                    // "note" and "event" over the same green.
-                    ForEach(row.kinds ?? [], id: \.self) {
-                        ValueChip($0, hue: LivKind.named($0).color)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.bottom, 4)
+                // NO KIND CHIP. It sat directly under the title as a
+                // pill of 11pt lowercase with a dot in it — "• note" —
+                // which is micro-text (owner, 2026-08-18: "eliminate
+                // unnecessary small text and labels") saying what the
+                // surface around it already says. You opened this panel
+                // from a note; it is a note.
+                //
+                // The kind is not lost: it is the card's own label in the
+                // switcher, the colour of a calendar block, and the hue
+                // of a chip that links to another entity — every place
+                // where two kinds sit side by side and the difference is
+                // worth a word (2026-08-29).
                 SectionLabel("Schedule")
                 dueRow(row)
                 if showsStatus(row) {
@@ -474,7 +493,7 @@ struct EntityInspector: View {
                 Button {
                     desk.open(target)
                 } label: {
-                    ValueChip(v.value, hue: LivKind.color(of: box.entity(target)))
+                    ValueChip(v.value)
                 }
                 .buttonStyle(.plain)
             } else {
@@ -668,13 +687,30 @@ struct InspectorValueSheet: View {
             dismiss()
             return
         }
+        // A SELECT NEEDS THE OPTION TO EXIST FIRST. `set` refuses a value
+        // with no matching option — that refusal is the core's, and it is
+        // right: a select's values are entities, not strings. So mint it,
+        // then write it, and let the write wait for the mint.
+        if field.kind == "select", field.propertyId != 0,
+            !field.options.contains(where: { same($0, value) })
+        {
+            box.addOption(field.propertyId, value) { [self] _ in write(value) }
+            typed = ""
+            if !field.multi { dismiss() }
+            return
+        }
+        write(value)
+        typed = ""
+    }
+
+    /// The write itself, once the vocabulary is known to hold the value.
+    private func write(_ value: String) {
         if field.multi {
             box.addCell(id, field.property, value)
         } else {
             box.set(id, field.property, value)
             dismiss()  // one value means the question is answered
         }
-        typed = ""
     }
 
     private func remove(_ value: String) {
@@ -702,8 +738,14 @@ struct InspectorValueSheet: View {
                         .foregroundStyle(LivTheme.accent)
                         .frame(width: 16)
                 } else {
-                    Circle().fill(Hue.dot(label)).frame(width: 7, height: 7)
-                        .frame(width: 16)
+                    // NO DOT. `Hue.dot` hashed the property's NAME to one
+                    // of five colours — its own comment said it "means
+                    // nothing beyond 'these two say the same thing'". A
+                    // reader takes a coloured dot for a signal, so five
+                    // hues down a settings list read as a code with
+                    // nothing to decode. The column stays, so the labels
+                    // still line up (2026-08-29).
+                    Color.clear.frame(width: 16, height: 7)
                 }
                 Text(label)
                     .font(.system(size: LivType.title))
@@ -732,33 +774,43 @@ private struct DetailRowLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
 
-    /// Each field's COLOR — no glyph. Icons here were tried on
-    /// 2026-08-12 and rejected the same day: a clock for "due" and a tag
-    /// for "tags" are pictures of the word beside them, which reads
-    /// as noise rather than information (owner: "icons for properties
-    /// are confusing, but color indication of some sort is ok"). A dot
-    /// is the owner's own metaphor — it says which family a field
-    /// belongs to and claims nothing more.
+    /// NO DOT, AND NO GLYPH (owner, 2026-08-29: "the dots are a bit
+    /// ugly, as well as colors in general").
     ///
-    /// Kind chips elsewhere (a note, a task, an event) keep their glyphs:
-    /// there the icon says what a THING is, which a word does not.
-    private static let hues: [String: Color] = [
-        "due": LivTheme.teal,
-        "status": LivTheme.accent,
-        "area": LivTheme.amber,
-        "project": LivTheme.green,
-        "tags": LivTheme.purple,
-        "people": LivTheme.pink,
-    ]
-
+    /// This reverses 2026-08-12, and the earlier decision is worth
+    /// keeping visible because it was not arbitrary. Icons were tried
+    /// that day and rejected the same day — a clock for "due" and a tag
+    /// for "tags" are pictures of the word beside them — and a
+    /// hand-picked colour per family went in instead, on the owner's
+    /// "icons for properties are confusing, but color indication of some
+    /// sort is ok".
+    ///
+    /// What changed is the company they kept. Six fully-saturated system
+    /// hues at 8pt were the loudest thing on a screen that is otherwise
+    /// greys, and they sat beside a hash-coloured dot that meant nothing
+    /// at all, so the whole device read as decoration. The family a field
+    /// belongs to is already said by the section it sits under —
+    /// Schedule, Filing, Links — which is a word rather than a code.
+    ///
+    /// Kind chips elsewhere (a note, a task, an event) keep their colour:
+    /// there it says what a THING is, and two kinds do sit side by side.
+    /// NO GLYPH ON A VALUE ROW.
+    ///
+    /// One was added on 2026-08-29, following the desktop's
+    /// `PropertyIcon`, and taken off the same day. Anytype for iOS —
+    /// which does the same job on the same screen size — draws its
+    /// property rows as label and value with nothing between, and shows
+    /// a glyph only in the SCHEMA view, where you are picking among
+    /// properties rather than reading one object's values. Its rows read
+    /// cleaner, and the reason generalises: an icon beside "due" is a
+    /// picture of the word next to it (the 2026-08-12 finding), whereas
+    /// an icon beside a property in a list of forty is how you find the
+    /// one you want.
+    ///
+    /// The glyphs moved to `Settings → Fields`, which is this app's
+    /// schema view.
     var body: some View {
         HStack(spacing: 10) {
-            if let color = Self.hues[text.lowercased()] {
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-                    .frame(width: 26, alignment: .center)
-            }
             Text(text)
                 // 15pt + 46pt rows: the library panel's density (rev 6 —
                 // "make the grouping UI akin to how the left panel looks").

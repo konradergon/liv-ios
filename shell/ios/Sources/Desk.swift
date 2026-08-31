@@ -15,8 +15,6 @@ struct DeskHost: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
-    /// The ••• menu's trash leg asks once before it acts.
-    @State private var confirmTrash = false
     /// The drag lives on the model now (the bar reads it too); this is
     /// the short name for it in here.
     private typealias PanelDrag = DeskModel.PanelDrag
@@ -95,29 +93,22 @@ struct DeskHost: View {
             // there is nothing to see. The trailing corners keep the
             // device's radius, which is where the screen's own edge is.
             .mask {
-                // SQUARE ON THE EDGE THAT MEETS THE PANEL, whichever
-                // edge that is. A curve there pulls away from the seam
-                // and leaves a wedge of panel showing at the top and the
-                // bottom — the "ugly gaps" the owner reported
-                // (2026-08-28). The far edge keeps the device's radius,
-                // which is where the screen's own corner is.
-                let meetsLeading = desk.openPanel == .library
-                let meetsTrailing = desk.openPanel == .inspector
+                let meetsLeading = desk.panelOut > 0
                 UnevenRoundedRectangle(
                     topLeadingRadius: meetsLeading ? 0 : LivPanel.deskRadius,
                     bottomLeadingRadius: meetsLeading ? 0 : LivPanel.deskRadius,
-                    bottomTrailingRadius: meetsTrailing ? 0 : LivPanel.deskRadius,
-                    topTrailingRadius: meetsTrailing ? 0 : LivPanel.deskRadius,
+                    bottomTrailingRadius: LivPanel.deskRadius,
+                    topTrailingRadius: LivPanel.deskRadius,
                     style: .continuous
                 )
                 .ignoresSafeArea()
             }
-            // Cast BACK onto the panel, no vertical offset — so the
-            // direction follows which panel it is falling on.
+            // Cast BACK onto the panel, no vertical offset — the panel is
+            // on the leading edge, so the shadow falls that way.
             .shadow(
                 color: .black.opacity(LivPanel.shadowOpacity),
                 radius: LivPanel.shadowRadius,
-                x: desk.openPanel == .inspector ? 4 : -4, y: 0)
+                x: -4, y: 0)
             // A WASH, not a scrim: the reference fades the content to
             // ~50% and leaves the background alone, so this is the app's
             // own ground laid over the top. A black scrim in a dark theme
@@ -135,14 +126,13 @@ struct DeskHost: View {
             // it is the way back, and now it behaves like one.
             .overlay {
                 let showing = desk.panelOut
-                let which = desk.openPanel
                 LivTheme.canvas
                     .opacity(LivPanel.wash * showing)
                     .contentShape(Rectangle())
                     // At rest this must be completely absent, or every
                     // tap on the desk would land here instead.
                     .allowsHitTesting(showing > 0)
-                    .onTapGesture { closePanel(which) }
+                    .onTapGesture { closePanel() }
                     // AND THE DRAG, because this layer swallows it.
                     //
                     // The panel is dragged open and shut from anywhere
@@ -157,13 +147,9 @@ struct DeskHost: View {
                     .gesture(
                         DragGesture(minimumDistance: 18)
                             .onEnded { g in
-                                // Toward the panel's own edge closes it:
-                                // left for the library, right for the
-                                // properties panel.
-                                let away = which == .inspector
-                                    ? g.translation.width > 40
-                                    : g.translation.width < -40
-                                if away { closePanel(which) }
+                                // Toward the panel's own edge closes it,
+                                // and its edge is the leading one.
+                                if g.translation.width < -40 { closePanel() }
                             }
                     )
                     // The desk is already hidden from VoiceOver behind a
@@ -244,31 +230,17 @@ struct DeskHost: View {
             // Mounted while shown OR while a finger is dragging one, and
             // positioned by that drag — they follow the hand rather than
             // waiting for it to let go (owner, 2026-08-08).
-            if desk.libraryDrawn || desk.panelDrag?.which == .library {
+            if desk.libraryDrawn || desk.panelDrag != nil {
                 LibraryPanel(
                     onDismiss: { desk.setLibrary(false) },
                     onWorkspace: { desk.workspaceShown = true },
                     onSettings: { desk.settingsShown = true },
                     onTrash: { desk.trashShown = true }
                 )
-                .offset(x: panelOffset(.library))
+                .offset(x: panelOffset())
                 // Exit transitions render BELOW later siblings without an
                 // explicit z — the panel would vanish behind the desk
                 // instead of sliding out (audit, 2026-08-01).
-                .zIndex(1)
-            }
-            if let id = desk.openDoc, desk.state == .notes,
-                desk.inspectorShown || desk.panelDrag?.which == .inspector
-            {
-                SidePanel(
-                    onDismiss: { closePanel(.inspector) },
-                    width: LivPanel.width,
-                    side: .trailing
-                ) {
-                    EntityInspector(id: id)
-                        .livOverlay(LivOverlay.properties)
-                }
-                .offset(x: panelOffset(.inspector))
                 .zIndex(1)
             }
 
@@ -310,10 +282,9 @@ struct DeskHost: View {
                 active: { desk.deskInFront && desk.menu == nil },
                 mayClaim: { dx in claimPanel(dx) != nil },
                 onLatch: { dx in
-                    if let claim = claimPanel(dx) {
+                    if let opening = claimPanel(dx) {
                         endEditing()
-                        desk.panelDrag = PanelDrag(
-                            which: claim.which, opening: claim.opening, amount: dx)
+                        desk.panelDrag = PanelDrag(opening: opening, amount: dx)
                     }
                 },
                 onMove: { dx in desk.panelDrag?.amount = dx },
@@ -331,15 +302,6 @@ struct DeskHost: View {
                     .zIndex(2)
             }
         }
-        .confirmationDialog(
-            "Move to Trash?", isPresented: $confirmTrash, titleVisibility: .visible
-        ) {
-            Button("Move to Trash", role: .destructive) {
-                if let id = desk.openDoc, desk.state == .notes {
-                    trashNote(id)
-                }
-            }
-        }
         .livTopSheet(isPresented: $desk.workspaceShown) {
             WorkspaceSwitcher(onClose: { desk.workspaceShown = false })
                 .environmentObject(box)
@@ -355,10 +317,10 @@ struct DeskHost: View {
         }
     }
 
-    /// Any full-screen surface covering the desk body.
-    private var anyPanel: Bool {
-        desk.libraryShown || desk.inspectorShown
-    }
+    /// Any full-screen surface covering the desk body. One panel left —
+    /// the properties are a card, and a card is a sheet the system
+    /// hosts, not a layer of the desk.
+    private var anyPanel: Bool { desk.libraryShown }
 
     /// The library door. It stays LIT with the properties card up
     /// (owner, 2026-08-15: "that button should be visible with the
@@ -401,46 +363,33 @@ struct DeskHost: View {
     /// How far off its own edge a panel currently sits. A panel with no
     /// drag in flight is simply open (0) — the transition handles its
     /// arrival and departure as before.
-    /// Shut whichever panel is out. The wash and its drag both need
-    /// this, and they must not each decide it for themselves.
-    private func closePanel(_ which: PanelDrag.Which?) {
-        switch which {
-        case .library: desk.setLibrary(false)
-        case .inspector: withAnimation(LivMotion.nav) { desk.inspectorShown = false }
-        case nil: break
-        }
+    /// Shut the panel. The wash and its drag both need this, and they
+    /// must not each decide it for themselves.
+    private func closePanel() { desk.setLibrary(false) }
+
+    private func panelOffset() -> CGFloat {
+        -(1 - desk.panelProgress) * DeskModel.travel
     }
 
-    private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
-        let hidden = (1 - desk.panelProgress(which)) * DeskModel.travel(which)
-        return which == .library ? -hidden : hidden
-    }
-
-    /// What a drag moving `dx` would do: which panel, opening or
-    /// closing. nil = nothing to claim in that direction, so the
-    /// recognizer must not latch (and must not cancel any touches).
-    private func claimPanel(
-        _ dx: CGFloat
-    ) -> (which: PanelDrag.Which, opening: Bool)? {
-        if dx > 0 {
-            // Rightward: put the properties away, else summon the library.
-            if desk.inspectorShown { return (.inspector, false) }
-            if !desk.libraryShown { return (.library, true) }
-        } else {
-            // Leftward: put the library away, else summon the properties.
-            if desk.libraryShown { return (.library, false) }
-            if !desk.inspectorShown, desk.openDoc != nil, desk.state == .notes {
-                return (.inspector, true)
-            }
-        }
-        return nil
+    /// Would a drag moving `dx` do anything? nil = nothing to claim in
+    /// that direction, so the recognizer must not latch (and must not
+    /// cancel any touches). The Bool is whether it OPENS.
+    ///
+    /// ONE PANEL LEFT, so one claim each way. The properties used to be
+    /// summoned by a leftward drag and put away by a rightward one; they
+    /// open as a CARD now (2026-08-29), from the note's ••• menu, which
+    /// is where Anytype puts them and where this app's other card verbs
+    /// already live.
+    private func claimPanel(_ dx: CGFloat) -> Bool? {
+        if dx > 0 { return desk.libraryShown ? nil : true }
+        return desk.libraryShown ? false : nil
     }
 
     /// Let go: finish the journey the finger started, or put it back.
     /// A flick commits from anywhere; a slow drag commits past halfway.
     private func settleDrag(_ dx: CGFloat, _ velocity: CGFloat) {
         guard let live = desk.panelDrag else { return }
-        let width = DeskModel.travel(live.which)
+        let width = DeskModel.travel
         // A real flick is fast: 700pt/s is a sharp throw, well above
         // the drift a finger has at the end of a deliberate drag. At
         // 250 a moderate release read as a flick and a 30%% drag flew
@@ -453,13 +402,10 @@ struct DeskHost: View {
         // stopped. The first version asked "did the drag commit" and
         // inverted the slow-close case: a 57% pull away snapped back
         // open (found live, 2026-08-09).
-        let towardVisible = live.which == .library ? velocity > 0 : velocity < 0
+        let towardVisible = velocity > 0
         let shown = flicked ? towardVisible : live.progress(width) > 0.5
         withAnimation(LivMotion.nav) {
-            switch live.which {
-            case .library: desk.setLibrary(shown, animated: false)
-            case .inspector: desk.inspectorShown = shown
-            }
+            desk.setLibrary(shown, animated: false)
             desk.panelDrag?.amount = live.amount(for: shown ? 1 : 0, width: width)
         } completion: {
             desk.panelDrag = nil
@@ -485,11 +431,17 @@ struct DeskHost: View {
         let row = box.entity(id)
         let isFile = TabShape.of(row) == .file
         var items: [LivMenuItem] = [
+            // FIRST, and the reason the ••• exists on a note at all now:
+            // the properties card has no edge gesture any more, so this
+            // is its door. Anytype reaches its own the same way.
+            LivMenuItem(label: "Properties", glyph: .settings) {
+                withAnimation(LivMotion.nav) { desk.inspectorShown = true }
+            },
             // The owner's own name for it — the copy carries the
             // PROPERTIES, deliberately not the body.
             LivMenuItem(label: "Duplicate note", symbol: "plus.square.on.square") {
                 duplicate(id)
-            }
+            },
         ]
         // A file hands its BYTES to whatever owns the format. Share and
         // Export are about MARKDOWN, so a file has none.
@@ -510,8 +462,28 @@ struct DeskHost: View {
                 })
         }
         items.append(
+            // ASKS IN THE SAME CARD IT WAS ASKED FROM.
+            //
+            // This raised a `.confirmationDialog`, which SwiftUI drew as
+            // an anchored popover with an arrow tail, landing part-way
+            // down the screen and across the bottom bar — the defect the
+            // owner caught in the Inbox on 2026-08-31 ("a message
+            // popping up at a random place at the bottom"). Both are the
+            // app's own menu now, which comes from the bottom edge every
+            // time and names what it is about (standing rule 4).
             LivMenuItem(label: "Move to Trash", symbol: "trash", destructive: true) {
-                confirmTrash = true
+                let name = row.map(livRowTitle) ?? "This note"
+                desk.menu = LivMenu(
+                    id: "trash-\(id)",
+                    from: .bottom,
+                    subject: name,
+                    subjectDetail: "Moved to Trash, and undoable",
+                    items: [
+                        LivMenuItem(
+                            label: "Move to Trash", symbol: "trash",
+                            destructive: true
+                        ) { trashNote(id) }
+                    ])
             })
         // THE MENU SAYS WHAT IT IS ABOUT (owner's clips, 2026-08-20).
         // Five verbs with no subject is the same defect the owner named
@@ -764,7 +736,6 @@ struct DeskHost: View {
         .frame(height: 36)
         .background(LivTheme.panel2, in: Capsule())
         .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
     }
 }
 

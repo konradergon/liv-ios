@@ -3,7 +3,9 @@
 // (liv_status_options_at, board order); `completes` groups collapse by
 // default. Filters are client-side state only — the snapshot is never
 // re-queried to filter. Status chips/rings wear the OPTION's hue (quantized
-// to the semantic set); project chips wear the Hue dot. Full snapshot on
+// to the semantic set); project chips wear no dot — a project has no colour
+// in the box, and hashing its name into one was a code with nothing to
+// decode (2026-08-29). Full snapshot on
 // appear — undated tasks must not drop. Tapping a row opens the entity as a
 // Desk tab (desk.open) — the rail→center gesture grammar; the chrome owns
 // the frame, so this body keeps only a SectionLabel-scale header.
@@ -97,26 +99,27 @@ struct TasksView: View {
     private var chipRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                TasksFilterChip("All", dot: nil, selected: filter == .all) {
-                    park(filter: .all)
+                TasksFilterChip("All", selected: filter == .all) {
+                    withAnimation(LivMotion.pick) { park(filter: .all) }
                 }
                 ForEach(options) { option in
                     let name = option.name ?? ""
-                    TasksFilterChip(
-                        name, dot: tasksOptionColor(option.hue),
-                        selected: filter == .status(name)
-                    ) {
-                        park(filter: filter == .status(name) ? .all : .status(name))
+                    TasksFilterChip(name, selected: filter == .status(name)) {
+                        withAnimation(LivMotion.pick) {
+                            park(filter: filter == .status(name) ? .all : .status(name))
+                        }
                     }
                 }
                 ForEach(projects, id: \.self) { project in
                     TasksFilterChip(
-                        project, dot: Hue.dot(project),
+                        project,
                         selected: filter == .project(project)
                     ) {
-                        park(
-                            filter: filter == .project(project)
-                                ? .all : .project(project))
+                        withAnimation(LivMotion.pick) {
+                            park(
+                                filter: filter == .project(project)
+                                    ? .all : .project(project))
+                        }
                     }
                 }
             }
@@ -208,8 +211,20 @@ struct TasksView: View {
             group.completes
             ? "\(group.rows.count) \(isExpanded ? "▾" : "▸")"
             : "\(group.rows.count)"
+        // THE LATENESS IS THE GROUP'S FACT, NOT EACH ROW'S. Measured
+        // 2026-08-30: this screen was 1.85% saturated pixels against
+        // Todoist's 0.58%, and 21,000 of those pixels were a column of
+        // red dates — one per row, because in this box every task is
+        // overdue. A colour that appears on every row distinguishes
+        // nothing; it just makes the list shout. Todoist says it once,
+        // in the heading, and leaves the rows grey.
+        let late = group.rows.filter { row in
+            guard let due = row.due, due > 0 else { return false }
+            return Civil.day(of: due) < Civil.todayDay()
+        }.count
         return SectionLabel(
             group.name, trailing: trailing,
+            note: late > 0 && !group.completes ? "\(late) late" : nil,
             trailingAction: group.completes ? { toggleExpanded(group.name) } : nil
         )
         .contentShape(Rectangle())
@@ -385,9 +400,11 @@ struct TasksView: View {
             }
             Spacer(minLength: 8)
             if let due {
-                Text(due.label)
-                    .font(.system(size: LivType.label).monospacedDigit())
-                    .foregroundStyle(due.danger ? LivTheme.red : LivTheme.text3)
+                // Always text3 — see `groupHeader` for where the
+                // lateness went.
+                Text(due)
+                    .font(.system(size: LivType.caption).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
             }
         }
         .padding(.vertical, 4)
@@ -459,15 +476,18 @@ struct TasksView: View {
 
     /// Trailing due: today shows the time (or "Today"), everything else the
     /// day label. Danger strictly past — due today is not overdue.
-    private func tasksDue(_ row: EntityRow) -> (label: String, danger: Bool)? {
+    /// A row's date, as words. It used to return a `danger` flag with it
+    /// and nothing reads that any more — the lateness moved to the group
+    /// heading, so the flag went with it rather than sitting here unused
+    /// (standing rule 6).
+    private func tasksDue(_ row: EntityRow) -> String? {
         guard let due = row.due, due > 0 else { return nil }
         let day = Civil.day(of: due)
-        let today = Civil.todayDay()
-        if day == today {
+        if day == Civil.todayDay() {
             let time = Civil.timeString(due)
-            return (time.isEmpty ? "Today" : time, false)
+            return time.isEmpty ? "Today" : time
         }
-        return (Civil.dayLabel(day), day < today)
+        return Civil.dayLabel(day)
     }
 
     /// Ref cells become chips: the cell's own display value, else the
@@ -492,42 +512,41 @@ struct TasksView: View {
 
 /// The ValueChip recipe + a selected state: accentSoft fill, accent ink.
 /// Neutral body always; the value's color stays in the dot.
+/// One filter chip. `dot` is OPTIONAL and usually absent.
+///
+/// A status wears one because the box holds a colour for it — a status
+/// option carries its own `hue`, chosen by a person. A project has no
+/// colour anywhere in the box, so its chip used to hash the project's
+/// NAME to one of five, which looked like a code and was not one
+/// (2026-08-29).
 private struct TasksFilterChip: View {
     let text: String
-    let dot: Color?
     let selected: Bool
     let action: () -> Void
 
-    init(_ text: String, dot: Color?, selected: Bool, action: @escaping () -> Void)
-    {
+    init(_ text: String, selected: Bool, action: @escaping () -> Void) {
         self.text = text
-        self.dot = dot
         self.selected = selected
         self.action = action
     }
 
+    // FOUR DEVICES BECAME ONE (polish pass, 2026-08-30). A chosen chip
+    // carried an accent fill, an accent border, accent ink and a heavier
+    // weight; an unchosen one carried a fill AND a border. Beside them
+    // sat a coloured dot repeating the status the chip spells out in
+    // letters. What is left: the chosen chip is filled and its words are
+    // full ink, the rest are bare. That is the same mark the lens row
+    // and the day strip use — the app has one way of saying "this one".
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                if let dot {
-                    Circle().fill(dot).frame(width: 6, height: 6)
-                }
-                Text(text)
-                    .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(selected ? LivTheme.accent : LivTheme.text2)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(
-                Capsule().fill(selected ? LivTheme.accentSoft : LivTheme.panel2)
-            )
-            .overlay(
-                Capsule().strokeBorder(
-                    selected ? LivTheme.accent.opacity(0.5) : LivTheme.border,
-                    lineWidth: 0.5)
-            )
-            .contentShape(Capsule())
+            Text(text)
+                .font(.system(size: LivType.label, weight: selected ? .medium : .regular))
+                .lineLimit(1)
+                .foregroundStyle(selected ? LivTheme.text : LivTheme.text2)
+                .padding(.horizontal, 12)
+                .frame(height: LivChip.tall)
+                .background(Capsule().fill(selected ? LivTheme.panel2 : .clear))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }

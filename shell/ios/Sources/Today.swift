@@ -120,7 +120,11 @@ struct TodayView: View {
                 // both already say which day this is, and the count was
                 // furniture — the list under it is the count.
                 if timedOpen.isEmpty && done.isEmpty && allDay.isEmpty {
-                    EmptyHint("Nothing scheduled")
+                    EmptyHint(
+                        "Nothing scheduled",
+                        detail: "Tasks and events with a time land here on their day.",
+                        glyph: .today
+                    )
                 }
                 ForEach(passed) { item in
                     timedLine(item, dimmed: true, next: false, doneNames: doneNames)
@@ -198,8 +202,13 @@ struct TodayView: View {
     /// The "N left" count went with it — the list under it is the count.
     private func header(today: Int64, left: Int) -> some View {
         HStack(spacing: 8) {
+            // THE SCREEN'S NAME, at the size the references give one.
+            // Todoist's "Inbox" and Notion Calendar's "August" both lead
+            // with a large bold left-aligned title and a lot of air
+            // above it; ours was `title` (20) semibold, which read as a
+            // section heading rather than as the name of where you are.
             Text(Civil.dayLabel(today))
-                .font(.system(size: LivType.title, weight: .semibold))
+                .font(.system(size: LivType.hero, weight: .bold))
                 .foregroundStyle(LivTheme.text)
             if box.busyRetrying { ProgressView().scaleEffect(0.7) }
             Spacer(minLength: 0)
@@ -220,15 +229,21 @@ struct TodayView: View {
         Button {
             park(lateOpen: .some(!open))
         } label: {
+            // A HEADING, NOT AN ALARM (polish pass, 2026-08-30).
+            //
+            // It was a red dot, then the word LATE in red bold kerned
+            // caps, then the count — three devices, and the dot said in
+            // a circle what the word beside it already said in letters.
+            // Being late is information, and information is what the
+            // other headings on this screen are: same size, same weight,
+            // same ink. The count is the honest headline and it stays.
             HStack(spacing: 7) {
-                Circle().fill(LivTheme.red).frame(width: 7, height: 7)
-                Text("LATE")
-                    .font(.system(size: LivType.label, weight: .bold))
-                    .kerning(0.6)
-                    .foregroundStyle(LivTheme.red)
-                Text("\(count) task\(count == 1 ? "" : "s")")
-                    .font(.system(size: LivType.caption).monospacedDigit())
-                    .foregroundStyle(LivTheme.muted)
+                Text("Late")
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(LivTheme.text2)
+                Text("\(count)")
+                    .font(.system(size: LivType.label).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
                 Spacer()
                 Image(systemName: open ? "chevron.up" : "chevron.down")
                     .font(.system(size: LivType.caption, weight: .semibold))
@@ -243,16 +258,19 @@ struct TodayView: View {
         .accessibilityHint(open ? "Hides the list" : "Shows the list")
     }
 
+    /// WHERE NOW IS. A hairline and a time, both in the accent — not a
+    /// filled red capsule and a 1.5pt red rule. It marks a position on a
+    /// list; it is not a warning, and red is the only word this app's
+    /// palette has for one.
     private func nowLine(_ now: Int64) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Text(Civil.timeString(now))
-                .font(.system(size: LivType.micro, weight: .bold).monospacedDigit())
-                .foregroundStyle(LivTheme.onAccent)
-                .padding(.horizontal, 4).padding(.vertical, 1)
-                .background(RoundedRectangle(cornerRadius: 4).fill(LivTheme.red))
-            Rectangle().fill(LivTheme.red).frame(height: 1.5)
+                .font(.system(size: LivType.caption).monospacedDigit())
+                .foregroundStyle(LivTheme.accent)
+                .frame(width: 52, alignment: .leading)
+            Rectangle().fill(LivTheme.accent).frame(height: 1)
         }
-        .frame(height: 18)
+        .frame(height: 20)
         .accessibilityHidden(true)
     }
 
@@ -313,25 +331,31 @@ struct TodayView: View {
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 6)
+            // QUIET, because the heading above already said it. This
+            // was red on every row, and with 42 late tasks that is a
+            // column of red running the length of the screen — the same
+            // thing Tasks was doing until 2026-08-30, and the same fix:
+            // a colour that appears on every row distinguishes nothing.
+            // "Late 42" carries it once; the date says HOW late, which
+            // is the part that differs per row and reads fine in ink.
             Text(Civil.dayLabel(Civil.day(of: row.due ?? 0)))
-                .font(.system(size: LivType.label).monospacedDigit())
-                .foregroundStyle(LivTheme.red)
-            // A VERB, in plain accent text (surface pass, owner
-            // 2026-08-18). It wore a filled capsule with a border, and
-            // eleven of them down a column of late tasks was the
-            // loudest thing on the screen — louder than the lateness it
-            // was offering to fix.
-            Button {
-                reschedule(row, toDay: today)
-            } label: {
-                Text("Today")
-                    .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.accent)
-                    .padding(.leading, 6)
-                    .frame(height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
+                .font(.system(size: LivType.caption).monospacedDigit())
+                .foregroundStyle(LivTheme.text3)
+            // THE RESCHEDULE VERBS ARE ALL IN ONE PLACE NOW.
+            //
+            // "Today" was a visible accent word on every late row, while
+            // "Move to tomorrow" and "Pick a day" lived on the row's
+            // swipe — two doors to one room, which is the thing standing
+            // rule 4 exists to stop. It also meant a column of 42 accent
+            // words down the screen: measured 2026-08-31, this surface
+            // was back to 0.96% saturated pixels with the Late list open,
+            // against the reference set's 0.01–0.58%, and the verb was
+            // the whole of it.
+            //
+            // All three are on the leading swipe together (see
+            // `rescheduleSwipe`), which is where iOS puts a row's verbs
+            // and where this row already had two of them. The row itself
+            // is now a name, a date and a tick.
         }
         .frame(minHeight: 44)
         .contentShape(Rectangle())
@@ -398,8 +422,20 @@ struct TodayView: View {
             }
             Spacer(minLength: 6)
         }
-        .frame(minHeight: 44)
-        .background(next ? LivTheme.tint(LivTheme.accent, 0.12) : Color.clear)
+        .frame(minHeight: 48)
+        // NEXT IS A MARK, NOT A BAND. This row wore an edge-to-edge
+        // accent-tinted background with square corners — the largest
+        // coloured area on the screen, to say one row is the next one.
+        // A 2pt rule in the leading margin says it in the space the
+        // layout already leaves empty.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(next ? LivTheme.accent : Color.clear)
+                .frame(width: 2)
+                // IN THE MARGIN, not in the row. Drawn at the row's own
+                // leading edge it landed on the first digit of the time.
+                .offset(x: -10)
+        }
         .contentShape(Rectangle())
         .onTapGesture { desk.open(row.id) }
         .overlay(alignment: .bottom) {
@@ -461,15 +497,21 @@ struct TodayView: View {
     /// "Tomorrow" on a two-hour meeting destroyed both, phase-5 recon.)
     @ViewBuilder private func rescheduleSwipe(_ row: EntityRow) -> some View {
         Button {
+            reschedule(row, toDay: Civil.todayDay())
+        } label: {
+            Label("Move to today", systemImage: "arrow.turn.up.left")
+        }
+        .tint(LivTheme.accent)
+        Button {
             reschedule(row, toDay: Civil.addDays(Civil.todayDay(), 1))
         } label: {
-            Label("Tomorrow", systemImage: "arrow.turn.up.right")
+            Label("Move to tomorrow", systemImage: "arrow.turn.up.right")
         }
         .tint(LivTheme.green)
         Button {
             duePick = TodayDuePick(entity: row.id)
         } label: {
-            Label("Pick", systemImage: "calendar")
+            Label("Pick a day", systemImage: "calendar")
         }
         .tint(LivTheme.accent)
     }
@@ -554,8 +596,20 @@ struct TodayView: View {
         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
+        // "MOVE TO TODAY", NOT "TODAY".
+        //
+        // A swipe verb labelled with a bare day name is ambiguous the
+        // moment the app also has a VIEW called Today — and SwiftUI puts
+        // swipe actions in the accessibility tree whether or not they are
+        // revealed, so this screen carried six hidden buttons labelled
+        // "Today" while the library's own Today row was on screen behind
+        // the panel. Anything tapping by label got the wrong one, which
+        // is how `drive.sh tour` started failing on 2026-08-31: a real
+        // ambiguity that nothing had stood in the right place to notice.
+        // It reads better for VoiceOver too — a verb should say what it
+        // does, not name a day and leave the rest implied.
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            Button("Today") { reschedule(row, toDay: Civil.todayDay()) }
+            Button("Move to today") { reschedule(row, toDay: Civil.todayDay()) }
                 .tint(LivTheme.accent)
         }
     }
@@ -630,10 +684,21 @@ struct TodayView: View {
     /// Context, never the row's own type: the type cell is a reference
     /// too, and it is the FIRST cell written — so the naive "first ref"
     /// chip read "task" on every task (recon, phase 5).
+    /// WHAT A ROW IS ATTACHED TO — an area, a project, a person. Never
+    /// its status.
+    ///
+    /// `status` was passing this filter because a select option is an
+    /// entity like any other, so it has a reference target. The result
+    /// was a "todo" chip under every open task on the screen: a column
+    /// of identical grey pills saying what the ring beside them already
+    /// says, under a heading that already scopes them. `nextLine` has
+    /// refused to draw one since BP-6 and said why in a comment; this is
+    /// the same rule, applied where it was being broken.
     private func contextChips(_ row: EntityRow) -> [String] {
         var out: [String] = []
         for cell in row.cells ?? [] {
-            guard cell.property != "type", cell.refTarget != nil,
+            guard cell.property != "type", cell.property != "status",
+                cell.refTarget != nil,
                 let value = cell.value, !value.isEmpty
             else { continue }
             if !out.contains(value) { out.append(value) }
@@ -707,34 +772,49 @@ private struct TodayDateStrip: View {
                 let isSelected = day == selected
                 let isToday = day == today
                 Button {
-                    selected = day
+                    withAnimation(LivMotion.pick) { selected = day }
                 } label: {
-                    VStack(spacing: 2) {
+                    // WEIGHT AND A RULE, NOT A FILLED TILE.
+                    //
+                    // The selected day was a solid accent block 44pt
+                    // tall, and with today's accent stroke beside it the
+                    // strip carried two saturated shapes across the top
+                    // of the screen — measured on 2026-08-30 as the
+                    // single loudest thing in the app, and the reason
+                    // Today read as 1.05% saturated pixels against
+                    // Todoist's 0.58% and Anytype's 0.01%.
+                    //
+                    // A day is selected. That is a small fact and it
+                    // gets a small mark: the number goes to full ink and
+                    // full weight, and a 2pt rule sits under it. Today
+                    // itself keeps a dot. Neither is a coloured area.
+                    VStack(spacing: 3) {
                         Text(Civil.weekdayLetter(day))
-                            .font(.system(size: LivType.micro, weight: .semibold))
-                            .foregroundStyle(
-                                isSelected ? LivTheme.onAccent : LivTheme.text3)
+                            .font(.system(size: LivType.caption))
+                            .foregroundStyle(LivTheme.text3)
                         Text("\(Civil.dayNumber(day))")
                             .font(
-                                .system(size: LivType.body, weight: .semibold)
-                                    .monospacedDigit()
+                                .system(
+                                    size: LivType.body,
+                                    weight: isSelected ? .semibold : .regular
+                                )
+                                .monospacedDigit()
                             )
                             .foregroundStyle(
-                                isSelected ? LivTheme.onAccent : LivTheme.text)
+                                isSelected ? LivTheme.text : LivTheme.text2)
+                        // Today's dot holds the row's height whether it
+                        // is drawn or not, so the numbers never shift.
+                        Circle()
+                            .fill(isToday ? LivTheme.accent : Color.clear)
+                            .frame(width: 4, height: 4)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: LivTheme.radius)
-                            .fill(isSelected ? LivTheme.accent : Color.clear)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: LivTheme.radius)
-                            .strokeBorder(
-                                isToday && !isSelected
-                                    ? LivTheme.accent : Color.clear,
-                                lineWidth: 1)
-                    )
+                    .frame(height: 46)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(isSelected ? LivTheme.text : Color.clear)
+                            .frame(height: 2)
+                    }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

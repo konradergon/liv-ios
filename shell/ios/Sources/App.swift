@@ -93,11 +93,18 @@ struct LivApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environmentObject(box)
-                .environmentObject(desk)
-                .environmentObject(outbox)
-                .environmentObject(workspaces)
+            // THE GLYPH SHEET, before the app. Mockup-first is the
+            // house rule for visible UI and a drawing cannot be reviewed
+            // in prose: `-glyph.sheet 1` shows the set and nothing else.
+            if UserDefaults.standard.bool(forKey: "glyph.sheet") {
+                GlyphSheet()
+            } else {
+                RootView()
+                    .environmentObject(box)
+                    .environmentObject(desk)
+                    .environmentObject(outbox)
+                    .environmentObject(workspaces)
+            }
         }
     }
 }
@@ -183,6 +190,36 @@ struct RootView: View {
         // same question the window's panel drag asks, so it is asked in
         // one place (standing rule 4).
         .recordCardHost(active: desk.deskInFront)
+        // PROPERTIES ARE A CARD (owner, 2026-08-29: "maybe card
+        // everywhere. start with one").
+        //
+        // They were a panel on the trailing edge, mirrored off the
+        // library's — which was right while the desktop's own metadata
+        // lived in a right rail. That reference is dropped: it is very
+        // early, and the end goal is one mobile and one desktop app
+        // mirroring each other rather than this one chasing that one.
+        //
+        // Anytype for iOS, doing the same job at the same size, opens
+        // properties as a sheet from the bottom with a grabber, reached
+        // from the object's ••• menu. So does a record's card here
+        // already, which is the second half of the point: the app had
+        // two containers for one idea.
+        .sheet(
+            isPresented: Binding(
+                get: { desk.inspectorShown && desk.openDoc != nil },
+                set: { if !$0 { desk.inspectorShown = false } })
+        ) {
+            if let id = desk.openDoc {
+                EntityInspector(id: id)
+                    .livOverlay(LivOverlay.properties)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(LivTheme.surface)
+                    .environmentObject(box)
+                    .environmentObject(desk)
+                    .environmentObject(workspaces)
+            }
+        }
         // Set on the WINDOW, not with preferredColorScheme. A sheet is a
         // separate presentation with its own root, so it never inherited
         // the scheme: flipping the appearance FROM Settings changed the

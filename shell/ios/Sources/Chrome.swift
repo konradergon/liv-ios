@@ -238,13 +238,19 @@ final class DeskModel: ObservableObject {
     /// event, file or scan?" is a question with one sensible answer
     /// (owner, 2026-08-28).
     var newNote: (() -> Void)?
-    /// One panel being dragged: which one, whether the drag OPENS or
-    /// CLOSES it, and the finger's travel so far. It lives on the MODEL
-    /// because the bottom bar and the pill, which travel with the desk,
-    /// are drawn by RootView, one level up.
+    /// The library being dragged: whether the drag OPENS or CLOSES it,
+    /// and the finger's travel so far. It lives on the MODEL because the
+    /// bottom bar and the pill, which travel with the desk, are drawn by
+    /// RootView, one level up.
+    ///
+    /// IT USED TO NAME WHICH PANEL. There were two — the library on the
+    /// leading edge and the note's properties on the trailing one — and
+    /// every member here had a `which == .library ? … : …` in it for the
+    /// mirror image. The properties became a card on 2026-08-29 (owner:
+    /// "maybe card everywhere. start with one"), so the enum had one
+    /// case left and every ternary had one live branch. A one-case enum
+    /// is a fork in the road with a wall down one side.
     struct PanelDrag: Equatable {
-        enum Which { case library, inspector }
-        let which: Which
         let opening: Bool
         var amount: CGFloat = 0
 
@@ -252,21 +258,16 @@ final class DeskModel: ObservableObject {
         /// closing one.
         var base: CGFloat { opening ? 0 : 1 }
 
-        /// Finger travel that makes this panel MORE visible. The library
-        /// comes from the left, so rightward is toward; the properties
-        /// come from the right, so leftward is.
-        var toward: CGFloat { which == .library ? amount : -amount }
-
-        /// 0 = fully off screen, 1 = fully in. `width` is the screen.
+        /// 0 = fully off screen, 1 = fully in. The library comes from the
+        /// left, so rightward travel is toward.
         func progress(_ width: CGFloat) -> CGFloat {
             guard width > 0 else { return base }
-            return min(1, max(0, base + toward / width))
+            return min(1, max(0, base + amount / width))
         }
 
         /// The travel that would land the panel exactly at `target`.
         func amount(for target: CGFloat, width: CGFloat) -> CGFloat {
-            let toward = (target - base) * width
-            return which == .library ? toward : -toward
+            (target - base) * width
         }
     }
 
@@ -292,73 +293,49 @@ final class DeskModel: ObservableObject {
             && !workspaceShown
     }
 
-    /// How far IN a panel is: 0 fully off screen, 1 fully home. ONE
+    /// How far IN the library is: 0 fully off screen, 1 fully home. ONE
     /// answer, because three things read it — the panel's own offset,
     /// the desk's travel, and the doors' fade — and a pixel of
     /// disagreement between them is visible.
-    func panelProgress(_ which: PanelDrag.Which) -> CGFloat {
-        let shown = which == .library ? libraryShown : inspectorShown
-        guard panelDrag?.which == which else { return shown ? 1 : 0 }
-        return panelDrag!.progress(Self.travel(which))
+    var panelProgress: CGFloat {
+        guard let drag = panelDrag else { return libraryShown ? 1 : 0 }
+        return drag.progress(Self.travel)
     }
 
-    /// HOW FAR A PANEL TRAVELS. The library stops short of the right edge
-    /// now (owner, 2026-08-23: "Panel should not be full screen!"), so its
-    /// travel is its own width and no longer the screen's. The properties
-    /// panel is unchanged — it is about the note in front of it and still
-    /// stands edge to edge (owner, 2026-08-15).
+    /// HOW FAR THE PANEL TRAVELS. It stops short of the right edge
+    /// (owner, 2026-08-23: "Panel should not be full screen!"), so its
+    /// travel is its own width and not the screen's.
     ///
-    /// ONE function, because the panel's offset, the desk's shift and the
+    /// ONE value, because the panel's offset, the desk's shift and the
     /// drag's settle all have to agree to the pixel. They read
     /// `UIScreen.main.bounds.width` from four places before this, which is
     /// four chances to disagree (standing rule 4).
-    static func travel(_: PanelDrag.Which) -> CGFloat {
-        LivPanel.width
-    }
+    static var travel: CGFloat { LivPanel.width }
 
-    /// The two panels do NOT move alike, and the reason is what each
-    /// one is (owner, 2026-08-17: "make the left panel parked on the
-    /// right and have you move to / from it").
+    /// How far the desk stands aside. The LIBRARY is a PLACE — the app's
+    /// primary menu — so it and the surface in front are one horizontal
+    /// strip: the menu is parked off the left edge, everything else is
+    /// parked to its right, and going between them is travel. Opening the
+    /// menu pushes the surface right; it waits there while you choose
+    /// (owner, 2026-08-17: "make the left panel parked on the right and
+    /// have you move to / from it").
     ///
-    /// The LIBRARY is a PLACE — the app's primary menu — so it and the
-    /// surface in front are one horizontal strip: the menu is parked off
-    /// the left edge, everything else is parked to its right, and going
-    /// between them is travel. Opening the menu pushes the surface a
-    /// whole screen right; it waits there while you choose.
-    ///
-    /// The PROPERTIES panel is about the note you are already looking
-    /// at, so it stays a CURTAIN over a surface that does not move
-    /// (owner, 2026-08-15: "maybe having properties panel behave like a
-    /// curtain though").
-    ///
-    /// This is the strip of 2026-08-15 restored, deliberately: it was
-    /// withdrawn the next day with the surface work it arrived in, and
-    /// it is right again now that the left panel is where the app's
-    /// views live.
-    /// How far the desk stands aside, and which way. The library pushes
-    /// it right, the properties panel pulls it left, and nothing opens
-    /// both at once.
-    var deskShift: CGFloat {
-        (panelProgress(.library) - panelProgress(.inspector)) * Self.travel(.library)
-    }
+    /// NOTHING ELSE PUSHES IT. The properties used to pull it the other
+    /// way, and they are a card now — a card lies OVER the desk, so the
+    /// desk does not move at all when it comes up. `drive.sh panel`
+    /// measures exactly that, because a sheet that still shoves the desk
+    /// is a panel in a sheet's clothes.
+    var deskShift: CGFloat { panelProgress * Self.travel }
 
-    /// Which panel is out, if either. The desk's mask, its shadow and
-    /// the wash that takes its touches all need to know which edge they
-    /// are answering to.
-    var openPanel: PanelDrag.Which? {
-        if panelProgress(.library) > 0 { return .library }
-        if panelProgress(.inspector) > 0 { return .inspector }
-        return nil
-    }
+    /// How far the panel is out, 0…1 — read by the desk's mask, its
+    /// shadow, and the wash that takes its touches.
+    var panelOut: CGFloat { panelProgress }
 
-    /// How far a panel — either one — is out, 0…1.
-    var panelOut: CGFloat {
-        max(panelProgress(.library), panelProgress(.inspector))
-    }
-
-    /// The metadata inspector covers the active entity tab's body.
-    /// Lifted to the model so DeskHost's floating chevron can drive it;
-    /// reset on every tab move — metadata is a visit, not a mode.
+    /// Is the note's properties CARD up? It was a panel on the trailing
+    /// edge until 2026-08-29 (owner: "maybe card everywhere. start with
+    /// one") and it is a sheet now, like the task and event cards beside
+    /// it — so this no longer takes part in any panel arithmetic. It is
+    /// reset on every tab move: metadata is a visit, not a mode.
     @Published var inspectorShown = UserDefaults.standard.bool(forKey: "desk.boot.inspector")
 
     // MARK: records — a card over where you stand, never a tab (Option C)

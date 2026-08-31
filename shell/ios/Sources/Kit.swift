@@ -1,6 +1,6 @@
 // liv iOS — the shared kit (design/ios.md §6–7). Compact density is law:
-// the budgets below are CODE, not convention. Chips render neutral; the
-// value's color is only the 6pt Hue dot. Amber = AI presence — the Inbox
+// the budgets below are CODE, not convention. Chips render neutral, and
+// wear a 6pt dot only when they stand for a KIND. Amber = AI presence — the Inbox
 // proposal capsule is the app's ONE in-app badge.
 
 import SwiftUI
@@ -11,25 +11,30 @@ struct SectionLabel: View {
     let text: String
     var trailing: String? = nil
     var trailingAction: (() -> Void)? = nil
-    /// A heading that names a KIND wears that kind's color as a small
-    /// dot. Nothing else does — a dot on every heading would say nothing.
-    var dot: Color? = nil
+    /// A short WARNING about the group, drawn once beside its name — "12
+    /// late". It is the only place this app raises its voice in a list,
+    /// and it exists so that individual rows do not have to: colouring
+    /// every overdue date turned a column of forty-seven dates red and
+    /// told you nothing you could act on.
+    var note: String? = nil
 
     init(
-        _ text: String, trailing: String? = nil, dot: Color? = nil,
+        _ text: String, trailing: String? = nil, note: String? = nil,
         trailingAction: (() -> Void)? = nil
     ) {
         self.text = text
         self.trailing = trailing
-        self.dot = dot
+        self.note = note
         self.trailingAction = trailingAction
     }
 
     var body: some View {
         HStack(spacing: 7) {
-            if let dot {
-                Circle().fill(dot).frame(width: 7, height: 7)
-            }
+            // NO DOT. A heading that named a kind used to wear that
+            // kind's colour as a 7pt circle. Nothing passed one — the
+            // parameter had zero callers on 2026-08-30 — and the device
+            // itself is the kind the polish pass is removing: a coloured
+            // dot beside a word that already says the thing (rule 6).
             // 13pt semibold text2, not 11pt bold text3 (owner,
             // 2026-08-06: "headings and UI text are too subtle"). One
             // recipe, 28 call sites — the whole app's section hierarchy
@@ -43,20 +48,31 @@ struct SectionLabel: View {
             Text(text)
                 .font(.system(size: LivType.label, weight: .medium))
                 .foregroundStyle(LivTheme.text2)
+            if let note {
+                Text(note)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.red)
+            }
             Spacer()
             if let trailing {
                 if let trailingAction {
+                    // THE SAME SIZE AS THE HEADING IT SITS BESIDE.
+                    // It was `body` (17) against the heading's `label`
+                    // (15), so the verb outweighed the words it belongs
+                    // to on all 28 of these. It keeps the accent — it is
+                    // the one live thing in the row — but it no longer
+                    // shouts over the heading.
                     Button(action: trailingAction) {
                         Text(trailing)
-                            .font(.system(size: LivType.body, weight: .medium))
+                            .font(.system(size: LivType.label, weight: .medium))
                             .foregroundStyle(LivTheme.accent)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 } else {
                     Text(trailing)
-                        .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.muted)
+                        .font(.system(size: LivType.label))
+                        .foregroundStyle(LivTheme.text2)
                 }
             }
         }
@@ -73,40 +89,51 @@ struct SectionLabel: View {
 
 // MARK: - ValueChip / AddChip
 
-/// The one chip recipe (O2): NEUTRAL body — panel2 fill, text2 ink,
-/// hairline capsule — with the value's color only as the 6pt leading Hue
-/// dot. `dotted: false` is the variant dates/recurrence/tier REQUIRE.
+/// The one chip recipe: a NEUTRAL capsule — one quiet fill, text2 ink,
+/// and nothing else.
+///
+/// ONE DEVICE, NOT TWO (polish pass, 2026-08-30). It carried a fill AND
+/// a hairline border, which is two ways of saying the same edge, and
+/// between this and `AddChip` that pair reached forty-odd call sites —
+/// the single biggest source of visual noise in the app. A filled shape
+/// does not also need to be outlined.
+///
+/// THE DOT IS GONE with it. A chip standing for a thing wore that
+/// thing's kind colour as a 6pt circle; the only remaining caller passed
+/// one for a reference chip, where the words already name the thing. A
+/// coloured dot next to a word that says the same thing is decoration.
 struct ValueChip: View {
     let text: String
-    var dotted: Bool = true
     var big: Bool = false
-    /// Overrides the dot's color. A chip standing for a THING (a kind, a
-    /// reference to another entity) wears that thing's kind color; every
-    /// other chip keeps the Hue hash, which is stable per word and means
-    /// nothing beyond "these two say the same thing".
-    var hue: Color? = nil
+    /// A leading GLYPH. Used by the Fields list, which is this app's
+    /// schema view: there a row of forty names needs finding, which is
+    /// what an icon is for.
+    var glyph: LivGlyph? = nil
 
-    init(_ text: String, dotted: Bool = true, big: Bool = false, hue: Color? = nil) {
+    init(_ text: String, big: Bool = false, glyph: LivGlyph? = nil) {
         self.text = text
-        self.dotted = dotted
         self.big = big
-        self.hue = hue
+        self.glyph = glyph
     }
 
     var body: some View {
         HStack(spacing: big ? 5 : 4) {
-            if dotted {
-                Circle().fill(hue ?? Hue.dot(text)).frame(width: 6, height: 6)
+            if let glyph {
+                LivIcon(glyph: glyph, color: LivTheme.text3, size: LivChip.glyph)
             }
+            // NEVER 11pt. The small chip's text was `micro`, which is the
+            // size reserved for a badge — a thing you glance at, not a
+            // word you read — and these chips carry area names, project
+            // names and dates. Both sizes are `caption` now, and the two
+            // variants differ in their padding alone.
             Text(text)
-                .font(.system(size: big ? 13 : 11))
+                .font(.system(size: LivType.caption))
                 .lineLimit(1)
         }
         .foregroundStyle(LivTheme.text2)
-        .padding(.horizontal, big ? 10 : 7)
-        .frame(height: big ? 24 : 17)
+        .padding(.horizontal, big ? 10 : 8)
+        .frame(height: big ? LivChip.tall : LivChip.height)
         .background(Capsule().fill(LivTheme.panel2))
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 }
 
@@ -125,16 +152,20 @@ struct AddChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: big ? 4 : 3) {
+            HStack(spacing: big ? 5 : 4) {
                 Image(systemName: "plus")
-                    .font(.system(size: big ? 9.5 : 8, weight: .semibold))
+                    .font(.system(size: LivChip.glyph - 3, weight: .semibold))
                 Text(label)
-                    .font(.system(size: big ? 13 : 11))
+                    .font(.system(size: LivType.caption))
                     .lineLimit(1)
             }
             .foregroundStyle(LivTheme.text3)
-            .padding(.horizontal, big ? 10 : 7)
-            .frame(height: big ? 24 : 17)
+            .padding(.horizontal, big ? 10 : 8)
+            .frame(height: big ? LivChip.tall : LivChip.height)
+            // HOLLOW is this chip's whole meaning — it is the ADD
+            // affordance, and standing empty beside filled values is how
+            // it says so. So it keeps its outline and takes no fill:
+            // still one device, the other one.
             .overlay(Capsule().strokeBorder(LivTheme.border2, lineWidth: 0.5))
             .contentShape(Capsule())
         }
@@ -178,8 +209,18 @@ struct StatusRing: View {
                                 .foregroundStyle(LivTheme.onAccent)
                         )
                 } else {
+                    // AN OPEN BOX IS INK, NOT COLOUR.
+                    //
+                    // The ring wore the status option's own hue whether
+                    // it was ticked or not, so a list of forty-seven
+                    // open tasks drew forty-seven coloured outlines down
+                    // its left edge — every reference draws that column
+                    // grey. The hue is what TICKING it means, so it is
+                    // kept for the filled state and only there: the
+                    // colour then marks the few rows that carry it
+                    // rather than the many that do not.
                     RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(hue ?? LivTheme.muted, lineWidth: 1.5)
+                        .strokeBorder(LivTheme.text3, lineWidth: 1.5)
                 }
             }
             .frame(width: compact ? 13 : 15, height: compact ? 13 : 15)

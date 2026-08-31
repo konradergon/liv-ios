@@ -99,11 +99,11 @@ struct LivMenuRow: View {
                     .foregroundStyle(tint(icon: false))
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
-                }
+                // NO TICK. The comment below already argued that a fill
+                // is found without reading and a tick is not — and then
+                // kept the tick anyway, so a chosen row carried three
+                // marks for one fact: a fill, a semibold word, and an
+                // accent checkmark. The fill is the one that works.
                 if chevron {
                     Image(systemName: "chevron.right")
                         .font(.system(size: LivType.caption, weight: .semibold))
@@ -112,11 +112,10 @@ struct LivMenuRow: View {
             }
             .padding(.horizontal, 16)
             .frame(height: LivRow.height)
-            // THE ONE YOU ARE ON, as a fill (owner's clips, 2026-08-20).
-            // ChatGPT's drawer marks the current destination with a soft
-            // rounded fill and no tick at all; ours had a tick and a
-            // semibold word, which you have to read to find. A fill is
-            // found without reading.
+            // THE ONE YOU ARE ON, as a fill and nothing else (owner's
+            // clips, 2026-08-20). ChatGPT's drawer marks the current
+            // destination with a soft rounded fill and no tick at all.
+            // The weight stays — it costs no ink — and the tick is gone.
             .background(
                 RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
                     .fill(selected ? LivTheme.panel2 : .clear)

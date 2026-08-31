@@ -134,7 +134,6 @@ struct MinimisedRecordPill: View {
         .frame(height: 38)
         .background(Capsule().fill(LivTheme.panel2))
         .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 

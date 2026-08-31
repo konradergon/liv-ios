@@ -28,9 +28,10 @@
 #   ./drive.sh tap <label>       tap by accessibility label, then re-read the surface
 #   ./drive.sh goto <view>       open the panel, pick <view>, assert it rendered
 #   ./drive.sh tour              every view in turn — the one that catches a dead repaint
-#   ./drive.sh panel             BOTH panels: not full screen, sliver live
+#   ./drive.sh panel             the library panel, and the properties card
 #   ./drive.sh bar               five keys, one row, disabled drawn as disabled
 #   ./drive.sh cycles            AttributeGraph cycles since boot
+#   ./drive.sh quiet             opening a note adds NO AttributeGraph cycles
 #
 # Build first (`./build.sh`); `boot` installs what it finds and refuses
 # to run against a bundle older than the sources.
@@ -162,7 +163,14 @@ wait_for_surface() {
 }
 
 cmd_boot() {
-  local where="${1:-}"
+  # A NAMED PLACE, ALWAYS. With no argument this used to launch and let
+  # the app restore wherever it was left, which meant "boot" landed
+  # somewhere different on every run: after a check that ended in an open
+  # document it came up IN that document, where the bar is hidden on
+  # purpose, and the next check failed with "the bar never drew"
+  # (2026-08-29). A ready state that depends on the previous run is not a
+  # ready state. `today` is a list view with the whole chrome up.
+  local where="${1:-today}"
   # INSTALL WHAT WAS JUST BUILT. `./build.sh` with no argument compiles
   # and stops; without this, every assertion below is made against
   # whatever build happened to be on the simulator. Caught on 2026-08-27
@@ -215,6 +223,35 @@ cmd_boot() {
   (( $(bar_count) >= 5 )) || { die "the bar never drew after boot.
       The body rendered but the chrome did not — look at Bar.swift and at
       whether the surface is drawing over it."; return 1 }
+
+  # AND WAIT FOR THE PLACE IT WAS ASKED FOR.
+  #
+  # `-desk.boot <where>` is applied on the FIRST DECODED SNAPSHOT, which
+  # is well after the first paint. Until then the app has already
+  # restored wherever it was left — and if that was an open note, the
+  # document surface is up, with the editor mounted and the keyboard
+  # rising, while this function is deciding it is ready. A check that
+  # read the note list in that window got the rows, tapped one a beat
+  # later, and was told there was no such row (seen 2026-08-30, and it
+  # is why `panel` failed once and passed on a re-run).
+  #
+  # Only the six feature views are checked: the other flags name an
+  # overlay (`library`, `search`, `switcher`) or a document (`desk`,
+  # `open`), and those do not name a surface this can compare against.
+  case "$where" in
+    today|tasks|inbox|calendar|everything|notes)
+      local want="$where"
+      for i in {1..24}; do
+        [[ "$(surfaces)" == "$want" ]] && break
+        perl -e 'select(undef,undef,undef,0.25)'
+      done
+      [[ "$(surfaces)" == "$want" ]] || {
+        die "asked to boot into '$where' and the screen shows '$(surfaces)'.
+      The boot flag is applied on the first decoded snapshot; if the app
+      is still showing what it restored, everything measured after this
+      is being measured on the wrong surface."; return 1 }
+      ;;
+  esac
 
   # NOTHING OVER THE SURFACE. A fresh launch has no panel and no sheet;
   # if one is on screen, this is not the launch it claims to be — and
@@ -426,49 +463,38 @@ cmd_tour() {
 # the desk, so when the panel opens it must travel right by the panel's
 # width and still be on screen. If the panel ever goes full-width again,
 # or the desk stops travelling with it, this fails.
-# BOTH PANELS, ONE CHECK.
+# THE PANEL, AND THE CARD THAT USED TO BE ONE.
 #
-# The library and the note's properties panel became the SAME panel on
-# 2026-08-28 — one `SidePanel`, one travel distance, one wash, differing
-# in nothing but which edge they stand on. A check that covered only the
-# library would leave half of that untested, and the half that is newer.
+# This was one body run twice, mirrored, while the note's properties
+# stood on the trailing edge as the library's twin. They are not twins
+# any more (owner, 2026-08-29: "maybe card everywhere. start with one"):
+# the properties come up as a sheet from the note's ••• menu, the way a
+# record's card already worked here and the way Anytype reaches its own.
 #
-# So this runs one body twice, mirrored. Everything it asserts is
-# GEOMETRY — where the desk's own chrome ended up — never whether a view
-# is mounted. A closed panel stays mounted and simply moves off screen,
-# so "is its marker in the tree" answers a different question than the
-# one being asked (learned the hard way, 2026-08-28).
+# So the first half checks the one panel that is still a panel, and the
+# second checks that the card has a door, comes up, and does NOT shove
+# the desk — because a card that pushes is a panel in a sheet's clothes.
+#
+# Everything asserted is GEOMETRY or a marker on screen, never whether a
+# view is mounted. A closed panel stays mounted and simply moves off
+# screen, so "is its marker in the tree" answers a different question
+# than the one being asked (learned the hard way, 2026-08-28).
 cmd_panel() {
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the panel check."; return 1 }
-  check_side library || return 1
-  check_side properties || return 1
-  say "ok    panels: both stand short of the far edge, push the desk the right way, and come back from a tap and a drag in the sliver"
+  check_library || return 1
+  check_properties_card || return 1
+  say "ok    panel: the library stands short of the edge and comes back from a tap and a drag; the properties card opens from the ••• and leaves the desk where it was"
   cmd_check
 }
 
-# One panel, by name. `library` opens from its own button and pushes the
-# desk RIGHT; `properties` opens with a drag in from the trailing edge
-# and pulls it LEFT.
-check_side() {
-  local which="$1" probe dir rest open_x screen_w mid_x
+# The library: opens from its own button and pushes the desk RIGHT.
+check_library() {
+  local which=library probe=Library dir=1 rest open_x screen_w mid_x
   screen_w=$(screen_width)
   (( screen_w > 0 )) || { die "could not read the screen width."; return 1 }
 
-  if [[ "$which" == library ]]; then
-    # The library door itself is the probe: it travels with the desk and
-    # it is the chrome that stays in the sliver on that side.
-    probe=Library; dir=1
-    cmd_boot >/dev/null 2>&1 || { die "could not boot before the library check."; return 1 }
-  else
-    # The properties panel only exists over an open document, and the
-    # ••• is the chrome that stays in ITS sliver.
-    probe="Note actions"; dir=-1
-    cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
-    local row
-    row=$(first_note) || { die "no note in the list to open."; return 1 }
-    cmd_tap "$row" || return 1
-    perl -e 'select(undef,undef,undef,1.2)'
-  fi
+  # The library door itself is the probe: it travels with the desk and it
+  # is the chrome that stays in the sliver.
+  cmd_boot >/dev/null 2>&1 || { die "could not boot before the library check."; return 1 }
 
   rest=$(button_x "$probe") || {
     die "no '$probe' on screen, so there is nothing to measure the desk by."
@@ -492,31 +518,11 @@ check_side() {
     return 1
   }
   # AND IT LEFT A SLIVER. A panel that takes the whole screen has no way
-  # back but a drag, which is the thing the owner rejected outright.
-  if [[ "$which" == library ]]; then
-    (( open_x + 40 <= screen_w )) || {
-      die "the desk was pushed off screen: '$probe' is at ${open_x} of ${screen_w}.
-        That is a full-screen panel with extra steps."; return 1 }
-  else
-    (( open_x >= 0 )) || {
-      die "the desk was pulled off screen: '$probe' is at ${open_x}.
-        That is a full-screen panel with extra steps."; return 1 }
-    # AND THE PANEL ITSELF STOPS SHORT. Measured from the panel's own
-    # marker, which sits at its content's leading edge: on this side that
-    # edge is IN the screen, so there is a number to read. (On the
-    # library's side the panel's leading edge is the screen's own, at 0,
-    # and the sliver is measured by the desk instead — above.)
-    local edge
-    edge=$(overlay_x properties) || {
-      die "the properties panel drew no marker to measure."; return 1 }
-    (( edge >= 40 )) || {
-      die "the properties panel starts at x=${edge}: it is full screen.
-        It has to stop short and leave a sliver of the desk, the same way
-        the library does (owner, 2026-08-23: 'Panel should not be full
-        screen!')."
-      return 1
-    }
-  fi
+  # back but a drag, which is the thing the owner rejected outright
+  # (2026-08-23: "Panel should not be full screen!").
+  (( open_x + 40 <= screen_w )) || {
+    die "the desk was pushed off screen: '$probe' is at ${open_x} of ${screen_w}.
+      That is a full-screen panel with extra steps."; return 1 }
 
   # THE SLIVER TAKES THE TOUCHES, and its one job is to bring the desk
   # back. You could work the desk through the gap while a panel was open
@@ -557,17 +563,54 @@ check_side() {
   }
 }
 
-# Open one panel by its own door: a button for the library, an edge drag
-# for the properties panel, which has no button by design.
+# THE PROPERTIES CARD. It is reached from the note's own ••• menu now,
+# and it is a sheet — so the desk must NOT travel when it opens. The
+# trailing edge drag that used to summon a panel is gone with the panel.
+check_properties_card() {
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  local row rest after moved
+  row=$(first_note) || { die "no note in the list to open."; return 1 }
+  cmd_tap "$row" || return 1
+  perl -e 'select(undef,undef,undef,1.2)'
+
+  # The ••• is both the card's door and the probe for the desk's position.
+  rest=$(button_x "Note actions") || {
+    die "no ••• on an open note, so the properties card has no door at all."
+    return 1
+  }
+  cmd_tap "Note actions" || return 1
+  perl -e 'select(undef,undef,undef,1.0)'
+  cmd_tap "Properties" || {
+    die "the note's ••• menu offers no Properties. That menu is the only
+      way in since the trailing panel was retired."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,1.6)'
+
+  [[ -n "$(overlays | grep -x properties)" ]] || {
+    die "tapped Properties and no card came up (overlays: $(overlays | tr '\n' ' '))."
+    return 1
+  }
+
+  # A CARD LIES OVER THE DESK; ONLY A PANEL PUSHES IT. If the chrome
+  # travelled, the sheet is still shoving the desk aside and the change
+  # is cosmetic. The ••• is behind the sheet at the medium detent, so
+  # read it from the tree, not from a screenshot.
+  after=$(button_x "Note actions") || after="$rest"
+  moved=$(( after > rest ? after - rest : rest - after ))
+  (( moved < 40 )) || {
+    die "the desk travelled ${moved}pt when the properties opened.
+      A card lies over the desk; only a panel pushes it."
+    return 1
+  }
+}
+
+# Open the library by its own door. (The properties had one of these too,
+# an edge drag, until they became a card — see check_properties_card.)
 open_side() {
   local i
   for i in {1..3}; do
-    if [[ "$1" == library ]]; then
-      cmd_tap "Library" >/dev/null 2>&1
-    else
-      axe swipe --udid "$UDID" --start-x $(( $(screen_width) - 5 )) --start-y 420 \
-        --end-x 120 --end-y 420 --duration 0.35 >/dev/null 2>&1
-    fi
+    cmd_tap "Library" >/dev/null 2>&1
     perl -e 'select(undef,undef,undef,1.4)'
     [[ -n "$(overlays | grep -x "$1")" ]] && return 0
   done
@@ -586,22 +629,6 @@ back_at_rest() {
   return 1
 }
 
-# The leading x of a panel's own marker — where the panel actually
-# starts, as opposed to where its full-width layout frame does.
-overlay_x() {
-  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
-import json, sys
-want = 'liv.overlay.' + sys.argv[1]
-d = json.load(sys.stdin)
-def w(n):
-    i = n.get('AXUniqueId') or n.get('identifier') or ''
-    f = n.get('frame') or {}
-    if i == want and f:
-        print(int(f.get('x', 0))); raise SystemExit
-    for c in n.get('children') or []: w(c)
-w(d if isinstance(d, dict) else d[0])
-raise SystemExit(1)" "$1"
-}
 
 screen_width() {
   axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
@@ -655,7 +682,7 @@ cmd_bar() {
   shape=$(bar_keys | python3 -c '
 import json, sys
 ks = json.load(sys.stdin)
-want = ["Back", "Forward", "Search", "New", "Tabs"]
+want = ["Back", "Forward", "Search", "New", "Desk."]
 if len(ks) != 5:
     print("COUNT %d" % len(ks)); raise SystemExit
 for k, w in zip(ks, want):
@@ -776,7 +803,7 @@ def w(n):
     l=n.get('AXLabel') or ''
     f=n.get('frame') or {}
     if n.get('type')=='Button' and f.get('y',0) > 700 and (
-        l in ('Back','Forward','Search','New') or l.startswith('Tabs')):
+        l in ('Back','Forward','Search','New') or l.startswith('Desk.')):
         out.append({'label': l, 'x': f.get('x',0), 'y': f.get('y',0),
                     'enabled': bool(n.get('enabled'))})
     for c in n.get('children') or []: w(c)
@@ -872,7 +899,7 @@ print(m.group(1) if m else '')" | grep -E '^[0-9]+$'
 bar_tab_label() {
   scan 'def walk(n):
     l = n.get("AXLabel") or ""
-    if l.startswith("Tabs."): print(l)
+    if l.startswith("Desk."): print(l)
     for c in n.get("children") or []: walk(c)' | head -1
 }
 
@@ -888,7 +915,7 @@ first_note() {
         ROWS.append((f.get("y", 0), l))
     for c in n.get("children") or []: walk(c)' \
     'ROWS = []
-SKIP = ("Tabs.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+SKIP = ("Desk.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
     'ROWS.sort()
 print(ROWS[0][1] if ROWS else "")' | grep .
 }
@@ -905,7 +932,7 @@ note_rows() {
         SEEN.append(l)
     for c in n.get("children") or []: walk(c)' \
     'SEEN = []
-SKIP = ("Tabs.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+SKIP = ("Desk.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
     'print(len(SEEN))'
 }
 
@@ -1228,6 +1255,49 @@ try: print(sum("cycle detected" in l for l in open(sys.argv[1], errors="ignore")
 except Exception: print(0)' "$CONSOLE"
 }
 
+# OPENING A NOTE ADDS NO ATTRIBUTEGRAPH CYCLES.
+#
+# It added 57 until 2026-08-30, every one of them through a single line:
+# `updateUIView` took first responder synchronously, so UIKit called
+# SwiftUI back into a transaction that was still running and the graph
+# was asked for a value it was already computing (EditorText.swift, and
+# the comment there has the whole chain). A cycle wedges that subtree's
+# update loop — bodies keep evaluating with the right values while the
+# pixels stop moving — which is the failure this harness was written for
+# in the first place, and the third time this app has hit it.
+#
+# So it gets a CHECK, not a warning. `cmd_check` warns about growth
+# since boot, and a warning is a thing you learn to scroll past. This
+# fails.
+#
+# The number is measured across ONE action, deliberately: the app boots
+# with two cycles of its own and has for as long as anyone has looked,
+# and asserting the total would make this check about that instead.
+cmd_quiet() {
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  local before after row
+  before=$(count_cycles)
+  row=$(first_note) || { die "no note in the list to open."; return 1 }
+  cmd_tap "$row" || return 1
+  perl -e 'select(undef,undef,undef,2.5)'
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "tapping a note did not open it — the count below would be measured
+      on the list, which is not the thing under test."; return 1 }
+  after=$(count_cycles)
+  local new=$(( after - before ))
+  (( new == 0 )) || {
+    die "opening a note fired $new AttributeGraph cycle(s).
+      Something took first responder, or otherwise re-entered SwiftUI,
+      from inside an update pass. Run it again under a debugger:
+        SIMCTL_CHILD_AG_PRINT_CYCLES=3 ./drive.sh boot notes
+      then read the digraph the graph prints for each one — and see
+      MarkdownEditor.updateUIView, which is where the last 57 came from."
+    return 1
+  }
+  say "ok    quiet: opening a note adds no AttributeGraph cycles (${before} at boot, ${after} after)"
+  cmd_check
+}
+
 # The ONE place this script exits, so every command can fail by
 # returning and still be caught by the command above it.
 case "${1:-}" in
@@ -1246,5 +1316,6 @@ case "${1:-}" in
   facets)  cmd_facets  || exit 1 ;;
   vault)   cmd_vault   || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
+  quiet)   cmd_quiet   || exit 1 ;;
   *) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

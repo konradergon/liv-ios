@@ -31,7 +31,6 @@ struct InboxView: View {
     @State private var settingsShown = false
     /// The proposal a ✕ is about to dismiss — rejection is PERMANENT
     /// (the clerk never re-asks), so it costs one ask.
-    @State private var confirmReject: ProposalRow?
     /// The transient acknowledgment: what routed, and how many
     /// transactions its Undo must take back.
     @State private var chipText: String?
@@ -91,15 +90,15 @@ struct InboxView: View {
     private var lens: InboxLens {
         InboxLens(rawValue: desk.position(.inbox) ?? "") ?? .route
     }
-    /// The orphan whose routing question is open — one at a time.
-    @State private var routing: UInt64?
 
     /// The two lenses, as the blueprint names and counts them.
     private func lensRow(unrouted: Int, tidy: Int) -> some View {
         HStack(spacing: 8) {
             ForEach(InboxLens.allCases, id: \.self) { l in
                 let count = l == .route ? unrouted : tidy
-                Button { desk.park(.inbox, at: l.rawValue) } label: {
+                Button {
+                    withAnimation(LivMotion.pick) { desk.park(.inbox, at: l.rawValue) }
+                } label: {
                     HStack(spacing: 6) {
                         Text(l.title)
                             .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
@@ -110,13 +109,25 @@ struct InboxView: View {
                                 .foregroundStyle(LivTheme.text3)
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .frame(height: 32)
-                    .background(Capsule().fill(lens == l ? LivTheme.panel2 : .clear))
-                    .overlay(
-                        Capsule().strokeBorder(
-                            lens == l ? Color.clear : LivTheme.border, lineWidth: 0.5))
-                    .contentShape(Capsule())
+                    // THE SAME MARK THE DAY STRIP USES: full ink, full
+                    // weight, and a 2pt rule under the chosen one.
+                    //
+                    // This was a pair of capsules — a fill on the chosen
+                    // one, an outline on the other — so both states were
+                    // decorated and the row read as two competing
+                    // buttons sitting under the title. The app now has
+                    // ONE way of saying "this is the one you are on"
+                    // (standing rule 4), and it is the quietest of the
+                    // three it used to have.
+                    .padding(.trailing, 18)
+                    .frame(height: 34)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(lens == l ? LivTheme.text : Color.clear)
+                            .frame(height: 2)
+                            .padding(.trailing, 18)
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -141,16 +152,36 @@ struct InboxView: View {
                 // "Route 6 · Tidy 2" could mean six things and twenty
                 // edits). Tidy counted PROPOSERS, which is a grouping
                 // detail nobody outside this file can see.
-                lensRow(unrouted: scraps.count, tidy: proposals.count)
+                // THE SCREEN'S NAME. It had none — the surface opened
+                // straight onto a row of filter pills, so nothing on it
+                // said where you were. Every reference leads with a
+                // large bold left-aligned title (Todoist's "Inbox" is
+                // the same word this screen is missing), and the whole
+                // top of the screen reads as chrome without it.
+                Text("Inbox")
+                    .font(.system(size: LivType.hero, weight: .bold))
+                    .foregroundStyle(LivTheme.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
+                lensRow(unrouted: scraps.count, tidy: proposals.count)
+                    .padding(.top, 6)
                     .padding(.bottom, 4)
                 if workspaces.lensOn {
                     // It explains an EXCEPTION: this one list ignores the
                     // workspace (owner, 2026-08-06).
+                    // PROSE, NOT A PILL. A capsule is the shape this app
+                    // uses for a value you can act on; this is a
+                    // sentence explaining why the list ignores the
+                    // workspace, and it cannot be tapped. It was also
+                    // the one chip on the screen with no neighbours, so
+                    // it read as a control that had lost its row.
                     HStack(spacing: 8) {
-                        ValueChip("all workspaces")
+                        Text("All workspaces")
+                            .font(.system(size: LivType.caption))
+                            .foregroundStyle(LivTheme.text3)
                         Spacer(minLength: 0)
                     }
+                    .padding(.top, 2)
                     .padding(.bottom, 6)
                 }
 
@@ -185,7 +216,26 @@ struct InboxView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        .contentMargins(.bottom, 16, for: .scrollContent)
+        // THE LIST CLOSES ITS OWN GAPS.
+        //
+        // Ticking a suggestion made it vanish and the rows below jump up
+        // a notch — the list simply redrew, because nothing here was
+        // animated (the app's old rule was "nothing springs", lifted by
+        // the owner on 2026-08-31). The motion is not decoration: it is
+        // what tells you the tick landed on the row you aimed at, and
+        // which gap closed.
+        //
+        // Keyed on the COUNTS rather than on the arrays, so it fires
+        // when something is accepted, dismissed or routed and not on
+        // every unrelated snapshot the box publishes.
+        .animation(LivMotion.list, value: scraps.count)
+        .animation(LivMotion.list, value: proposals.count)
+        // CLEAR THE BAR. This was a bare 16, so the last rows scrolled
+        // under the floating bottom bar and the final heading was cut
+        // through by it. Every other list in the app reserves the bar's
+        // own room plus a breath; two of them were reserving a literal
+        // that predates `LivBar.room` existing (standing rule 3).
+        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
@@ -193,18 +243,6 @@ struct InboxView: View {
                 .presentationDetents([.medium])
         }
         .sheet(isPresented: $settingsShown) { SettingsSheet() }
-        .confirmationDialog(
-            "The clerk never asks this again.",
-            isPresented: Binding(
-                get: { confirmReject != nil },
-                set: { if !$0 { confirmReject = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Dismiss forever", role: .destructive) {
-                if let p = confirmReject { box.reject(p) }
-                confirmReject = nil
-            }
-        }
         .overlay(alignment: .top) {
             if let text = chipText { chip(text) }
         }
@@ -216,11 +254,22 @@ struct InboxView: View {
 
     // MARK: route — a card per unrouted capture
 
+    /// THE ROUTING QUESTION IS A CARD, NOT AN ACCORDION.
+    ///
+    /// Tapping a capture used to push four buttons INTO the list under
+    /// the row, shoving everything below it down the screen (owner,
+    /// 2026-08-31: "the menu that appears clicking on items shouldn't
+    /// pop up in the list like that… look more like what you see in
+    /// Todoist"). Todoist answers a tap with a card from the bottom, and
+    /// so does this app already — `LivMenu` has taken a `from: .bottom`
+    /// since it was written, and the record card and the properties card
+    /// both work that way. One recipe, used (standing rule 4).
+    ///
+    /// The card also has room to say WHICH capture it is asking about,
+    /// which the four inline buttons never did.
     private func routeCard(_ row: EntityRow) -> some View {
         Button {
-            withAnimation(LivMotion.nav) {
-                routing = routing == row.id ? nil : row.id
-            }
+            desk.menu = routeMenu(row)
         } label: {
             routeFace(row)
         }
@@ -237,7 +286,7 @@ struct InboxView: View {
 
     private func routeFace(_ row: EntityRow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: LivRow.markGap) {
                 // QUIET, because this list is one kind by construction
                 // (owner, 2026-08-18: "colour only in mixed lists").
                 // Everything is genuinely mixed and keeps its tint; the
@@ -245,64 +294,83 @@ struct InboxView: View {
                 // was twenty identical yellow marks telling nothing
                 // apart — which is what the owner saw on 2026-08-20:
                 // "so many color blips and tags".
-                LivIcon(glyph: LivKind.glyph(of: row), color: LivTheme.text2, size: 19)
-                    .frame(width: 22)
+                LivIcon(glyph: LivKind.glyph(of: row), color: LivTheme.text3, size: 19)
+                    .frame(width: LivRow.mark)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
+                // REGULAR, like every other row title in the app and
+                // like the reference's. It was `medium`, which made this
+                // one list's titles heavier than the same words
+                // everywhere else.
                 Text(displayTitle(row))
-                    .font(.system(size: LivType.body, weight: .medium))
+                    .font(.system(size: LivType.body))
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(2)
                 Spacer(minLength: 8)
                 Text(stamp(row))
-                    .font(.system(size: LivType.label).monospacedDigit())
+                    .font(.system(size: LivType.caption).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)
             }
-            // THE VERBS ARE NOT ON EVERY ROW any more (BP-5 B3/B4): the
-            // blueprint's orphan row is one line — icon, title, source,
-            // one chip, age — and the routing question belongs to the
-            // row you PICKED. Four buttons on every row made a list of
-            // eight captures into thirty-two controls.
-            if routing == row.id {
-                HStack(spacing: 7) {
-                    routeVerb("Task", .task) { routeTask(row) }
-                    routeVerb("Event", .event) { routeEvent(row) }
-                    routeVerb("Note", .note) { route(row, to: "note", as: "Note") }
-                    routeVerb("Link", .link) { route(row, to: "link", as: "Link") }
-                }
-                .padding(.leading, LivRow.hairline)
-            }
         }
-        .padding(.vertical, 10)
+        // A ROW YOU CAN HIT. Measured on 2026-08-31 these came out at
+        // 40pt — under Apple's 44 touch minimum, and the tightest list
+        // in the app. The reference's single-line row is about 46 and
+        // its two-line row 57; `LivRow.height` is the app's own answer
+        // to the same question, so this asks for it rather than keeping
+        // a padding literal that agrees with nothing (standing rule 3).
+        .padding(.vertical, 11)
+        .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.leading, LivRow.hairline)
+                .padding(.leading, LivRow.hairline - LivRow.margin)
         }
     }
 
-    /// Full-width 32pt verbs — the old 24pt capsules four-abreast were a
-    /// mis-tap farm (phase-5 recon).
-    private func routeVerb(
-        _ label: String, _ glyph: LivGlyph, action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                LivIcon(glyph: glyph, color: LivTheme.text2, size: 15)
-                Text(label).font(.system(size: LivType.body, weight: .medium))
-            }
-            .foregroundStyle(LivTheme.text2)
-            .frame(maxWidth: .infinity)
-            .frame(height: 32)
-            .background(
-                RoundedRectangle(cornerRadius: 9).fill(LivTheme.panel2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 9))
-        }
-        .buttonStyle(.borderless)
+    /// DISMISSING ASKS IN THE SAME CARD EVERYTHING ELSE ASKS IN.
+    ///
+    /// It was a `.confirmationDialog`, and SwiftUI drew it as a POPOVER
+    /// with a little arrow tail, anchored part-way down the list and
+    /// lying across the bottom bar (owner, 2026-08-31: "a message
+    /// popping up at a random place at the bottom"). Where a system
+    /// dialog decides to put itself is not something this app can
+    /// control from here — but it does not need to, because it already
+    /// owns a card that comes up from the bottom edge every time and
+    /// knows how to draw a destructive row.
+    ///
+    /// It also gains what the dialog could not show: WHICH suggestion is
+    /// about to be dismissed forever.
+    private func rejectMenu(_ p: ProposalRow) -> LivMenu {
+        LivMenu(
+            id: "reject-\(p.id)",
+            from: .bottom,
+            subject: title(of: p),
+            subjectDetail: "The clerk never asks this again",
+            items: [
+                LivMenuItem(
+                    label: "Dismiss forever", glyph: .trash, destructive: true
+                ) { box.reject(p) }
+            ])
+    }
+
+    /// The four destinations, as the app's one menu. Glyphs so the card
+    /// reads as a list of KINDS rather than four words, and the capture's
+    /// own name as the subject so the question has a visible object.
+    private func routeMenu(_ row: EntityRow) -> LivMenu {
+        LivMenu(
+            id: "route-\(row.id)",
+            from: .bottom,
+            subject: displayTitle(row),
+            subjectDetail: "Unfiled capture",
+            items: [
+                LivMenuItem(label: "Task", glyph: .task) { routeTask(row) },
+                LivMenuItem(label: "Event", glyph: .event) { routeEvent(row) },
+                LivMenuItem(label: "Note", glyph: .note) {
+                    route(row, to: "note", as: "Note")
+                },
+                LivMenuItem(label: "Link", glyph: .link) {
+                    route(row, to: "link", as: "Link")
+                },
+            ])
     }
 
     /// Task = type + first open status, so it never lands in "No status"
@@ -373,17 +441,20 @@ struct InboxView: View {
     private func groupHeader(
         _ group: (author: String, rows: [ProposalRow])
     ) -> some View {
+        // THE SAME HEADING EVERY OTHER LIST USES. It was a literal ✦
+        // in amber, then the proposer's name in bold kerned caps, then
+        // the count — a decoration and a shout, on a heading whose job
+        // is to be findable when you look for it and invisible when you
+        // do not. `SectionLabel`'s own comment has said exactly that
+        // since 2026-08-18; this heading was hand-rolled and never got
+        // the message (standing rule 4).
         HStack(spacing: 7) {
-            Text("✦")
-                .font(.system(size: LivType.label))
-                .foregroundStyle(LivTheme.amber)
-            Text(group.author.uppercased())
-                .font(.system(size: LivType.label, weight: .bold))
-                .kerning(0.6)
-                .foregroundStyle(LivTheme.text3)
+            Text(group.author.capitalized)
+                .font(.system(size: LivType.label, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
             Text("\(group.rows.count)")
                 .font(.system(size: LivType.label).monospacedDigit())
-                .foregroundStyle(LivTheme.muted)
+                .foregroundStyle(LivTheme.text3)
             Spacer()
             if group.rows.count > 1 {
                 Button {
@@ -391,16 +462,14 @@ struct InboxView: View {
                         if !ok { refused() }
                     }
                 } label: {
+                    // A WORD, the way `SectionLabel` draws its trailing
+                    // verb — not a filled and outlined capsule. Three
+                    // devices for one link.
                     Text("Accept all")
-                        .font(.system(size: LivType.label, weight: .semibold))
+                        .font(.system(size: LivType.label, weight: .medium))
                         .foregroundStyle(LivTheme.accent)
-                        .padding(.horizontal, 9)
                         .frame(height: 24)
-                        .background(Capsule().fill(LivTheme.panel2))
-                        .overlay(
-                            Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5)
-                        )
-                        .contentShape(Capsule())
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
             }
@@ -415,8 +484,53 @@ struct InboxView: View {
         return livRowTitle(row)
     }
 
+    /// A SUGGESTION, IN THE SHAPE OF A TASK.
+    ///
+    /// Rebuilt 2026-08-30 against `~/Desktop/Throwaway/new/todoist-inbox.mov`,
+    /// measured frame by frame rather than approximated: an 18pt screen
+    /// margin, a 24pt circle, 15pt of air, the words at 57, a 17pt title
+    /// with a 13pt metadata line under it, and a hairline that starts at
+    /// the WORDS rather than at the screen edge. Ours is that shape at
+    /// this app's own 16pt margin — `LivRow.margin`, `.mark`, `.markGap`,
+    /// `.text`, which is also `.hairline`.
+    ///
+    /// THE CIRCLE IS THE ACCEPT. This row used to carry two 44pt buttons
+    /// on the right, so nine suggestions meant eighteen controls and a
+    /// column of ticks down the edge. Todoist empties its inbox by
+    /// ticking a circle on the left, and agreeing with a suggestion is
+    /// the same motion: you tick it and it goes. Accepting is not
+    /// destructive so it acts at once; dismissing IS a discard, so it
+    /// keeps a control of its own and still asks first — in the same
+    /// card the routing question uses (`rejectMenu`).
+    ///
+    /// What that buys beyond the look: the Inbox reads as a pile you can
+    /// empty, which is what an inbox is.
     private func suggestionRow(_ p: ProposalRow) -> some View {
         HStack(alignment: .center, spacing: 0) {
+            Button { box.accept(p) } label: {
+                // DRAWN AT 21, TAPPED AT 24 WIDE BY 44 TALL. The column
+                // is the reference's 24 and cannot grow without pushing
+                // every title right, but its HEIGHT is free — the row is
+                // taller than the circle either way. A `.padding(10)
+                // .contentShape().padding(-10)` pair was tried first to
+                // widen it and it made the button stop responding
+                // altogether: measured, reverted, not guessed at.
+                Circle()
+                    .strokeBorder(LivTheme.text3, lineWidth: 1.5)
+                    .frame(width: 21, height: 21)
+                    .frame(width: LivRow.mark, height: 44)
+                    .contentShape(Rectangle())
+            }
+            // BORDERLESS, NOT PLAIN. Inside a `List`, `.plain` hands the
+            // whole row to one tap target, so this circle drew correctly
+            // and did nothing at all — caught by tapping it and watching
+            // the Tidy count stay at 12. `.borderless` is what lets two
+            // controls in one row be pressed independently, which is why
+            // the buttons this replaced used it.
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Accept")
+            .padding(.trailing, LivRow.markGap)
+
             // A SENTENCE ABOUT YOUR THINGS, not a command diff (owner,
             // 2026-08-20: "so many color blips and tags, plus cryptic
             // messages crammed into rows"). The row used to lead with up
@@ -425,51 +539,51 @@ struct InboxView: View {
             // proposal's implementation, not its meaning, and left the
             // reader to guess WHICH note was about to change. The name
             // was on the wire the whole time (`ProposalRow.entity`).
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title(of: p))
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(LivTheme.text)
-                    .lineLimit(1)
-                if let reason = p.reason, !reason.isEmpty {
-                    Text(reason)
-                        .font(.system(size: LivType.label))
-                        .foregroundStyle(LivTheme.text2)
-                        .lineLimit(2)
-                }
-            }
-            Spacer(minLength: 4)
+            // ONE LINE: the NAME of the thing, and nothing else.
+            //
+            // The row carried the proposal's reason under the title —
+            // "exact duplicate → merge into #4269?" — at 13pt in the
+            // dimmest ink (owner, 2026-08-31: "tiny and should not
+            // appear directly there (if at all)"). Three things were
+            // wrong with it and they compound: it is small enough to be
+            // unreadable, it repeats what the group heading two rows up
+            // already says ("Dedupe"), and the part that is NOT in the
+            // heading is `#4269` — a raw entity id, which is jargon in a
+            // surface the owner reads (his rule, 2026-08-07: no jargon,
+            // say what it means).
+            //
+            // What is left is what Todoist's row is: a circle, a name,
+            // and a way out. The heading carries the reason for the
+            // whole group, which is the level the reason is actually
+            // true at.
+            Text(title(of: p))
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 8)
             Button {
-                confirmReject = p
+                desk.menu = rejectMenu(p)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: LivType.body, weight: .semibold))
+                    .font(.system(size: LivType.label))
                     .foregroundStyle(LivTheme.text3)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            Button {
-                box.accept(p)
-            } label: {
-                Image(systemName: "checkmark")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
+            .accessibilityLabel("Dismiss")
         }
-        .frame(minHeight: LivRow.tall)
+        .padding(.vertical, 6)
+        .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .onTapGesture {
             if let entity = p.entity { desk.open(entity) }
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                .padding(.leading, LivRow.hairline - LivRow.margin)
         }
     }
-
-    // MARK: the acknowledgment chip
 
     private func flash(_ text: String, undo: Int) {
         withAnimation(LivMotion.nav) {
@@ -502,7 +616,6 @@ struct InboxView: View {
         .frame(height: 36)
         .background(LivTheme.panel2, in: Capsule())
         .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
         .padding(.top, 8)
         .transition(.move(edge: .top).combined(with: .opacity))
     }

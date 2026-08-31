@@ -112,7 +112,11 @@ struct SettingsSheet: View {
             // vocabulary is data; the app already has a way to show data.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
-                    ForEach(fieldNames, id: \.self) { ValueChip($0) }
+                    // THE SCHEMA VIEW, so the glyphs live here — this is
+                    // a list you scan for a name, not a value you read.
+                    ForEach(fieldNames, id: \.self) {
+                        ValueChip($0, glyph: LivGlyph.field($0))
+                    }
                 }
                 .padding(.vertical, 1)
             }

@@ -965,8 +965,37 @@ struct MarkdownEditor: UIViewRepresentable {
             // so nothing else recomputes it here).
             context.coordinator.scheduleOutline(text)
         }
+        // TAKING FOCUS HAPPENS AFTER THE UPDATE, NEVER INSIDE IT.
+        //
+        // `updateUIView` runs while SwiftUI is part-way through its own
+        // update pass. Becoming first responder from in here calls back
+        // into SwiftUI synchronously — UIKit tells the hosting view the
+        // responder changed, and `_UIHostingView._didChange(toFirstRespon
+        // der:)` starts a fresh graph transaction on top of the one still
+        // running. The graph is then asked for a value it is already
+        // computing, which is the definition of a cycle.
+        //
+        // Measured 2026-08-30: opening a note fired 57 of them, every one
+        // through this line. 57 backtraces, sampled with a breakpoint on
+        // `AG::Graph::print_cycle`, all carried the same six frames —
+        // updateUIView -> becomeFirstResponder -> _setFirstResponder: ->
+        // _didChange(toFirstResponder:) -> runTransaction -> the graph.
+        // A cycle wedges that subtree's update loop: bodies keep
+        // evaluating with the right values while the pixels stop moving,
+        // which is the failure this app has now been bitten by three
+        // times (see LivBar.room and LivTopScrim for the other two).
+        //
+        // One hop of the main queue puts it after the transaction, and
+        // the caret still lands before anything is drawn. The guards are
+        // RE-CHECKED on arrival: a note closed in that hop must not pull
+        // the keyboard back up.
         if focused, !view.isFirstResponder, view.window != nil, editable {
-            view.becomeFirstResponder()
+            DispatchQueue.main.async { [weak view] in
+                guard let view, !view.isFirstResponder, view.window != nil,
+                    view.isEditable
+                else { return }
+                view.becomeFirstResponder()
+            }
         }
     }
 

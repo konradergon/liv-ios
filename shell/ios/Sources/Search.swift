@@ -174,10 +174,14 @@ struct SearchView: View {
                                 }
                             }
                         } header: {
+                            // NO KIND DOT. The heading names the kind
+                            // in words and every row under it already
+                            // carries that kind's glyph, so the circle
+                            // was the third telling (polish pass,
+                            // 2026-08-30).
                             SectionLabel(
                                 group.kind == .capture ? "captures" : group.kind.wire,
-                                trailing: "\(group.ids.count)",
-                                dot: group.kind.color
+                                trailing: "\(group.ids.count)"
                             )
                             .textCase(nil)
                             .padding(.horizontal, 16)

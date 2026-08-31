@@ -211,19 +211,16 @@ struct CalendarView: View {
                 // wear, and the app's one way of saying "this is the
                 // live one". OFF keeps the soft tint.
                 Text("Today")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(onToday ? LivTheme.canvas : LivTheme.accent)
-                    .padding(.horizontal, 11)
-                    .frame(height: 26)
-                    .background(
-                        Capsule().fill(
-                            onToday ? LivTheme.accent : LivTheme.accentSoft)
-                    )
-                    .overlay(
-                        Capsule().strokeBorder(
-                            onToday ? Color.clear : LivTheme.accent.opacity(0.5),
-                            lineWidth: 0.5)
-                    )
+                    // A WORD, like every other verb in the chrome. It was
+                    // a filled accent capsule with an accent border and
+                    // a second filled state on top — four devices for a
+                    // link that says "go back to today", sitting beside
+                    // two bare chevrons that do the same kind of job.
+                    // Dimmed when you are already there, which is the
+                    // only state worth drawing differently.
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(onToday ? LivTheme.text3 : LivTheme.accent)
+                    .padding(.horizontal, 8)
                     .frame(height: 40)
                     .contentShape(Rectangle())
             }
@@ -755,7 +752,9 @@ struct CalendarView: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(ink.opacity(moving ? 1 : 0.55), lineWidth: moving ? 1.5 : 0.5)
         )
-        .shadow(color: .black.opacity(moving ? 0.5 : 0), radius: moving ? 10 : 0, y: 4)
+        .shadow(
+            color: moving ? LivTheme.lift.color : .clear,
+            radius: moving ? LivTheme.lift.radius : 0, y: LivTheme.lift.y)
         .offset(x: frame.rect.minX, y: CGFloat(live) * unit)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         // No label on the container: labelling it flattens the subtree and
@@ -1021,27 +1020,33 @@ private struct MonthGridView: View, Equatable {
     /// ink on the rule that "the calendar says WHEN, never what kind" —
     /// which the blueprints reverse: three grey dots said only "busy",
     /// and the same three in teal, purple and orange say what the day
-    /// holds without opening it. On the SELECTED day they go back to one
-    /// ink: the cell is filled accent, and colour on colour is unreadable.
+    /// holds without opening it — and they keep saying it on the selected
+    /// day too, now that selection is not a coloured fill.
+    ///
+    /// SELECTION IS A RULE, NOT A TILE (polish pass, 2026-08-30). The
+    /// chosen day was a solid accent rounded-square 40pt tall, with a
+    /// second accent stroke on today beside it — the same pair the Today
+    /// strip carried, and the same fix: full ink and full weight for the
+    /// chosen day, a 2pt rule under it, and a dot for today. It also
+    /// gives the kind dots back, which the fill used to make unreadable.
     private func cell(_ c: CalCell) -> some View {
         let isSelected = c.day == selected
         return VStack(spacing: 3) {
             Text("\(c.number)")
                 .font(
-                    .system(size: LivType.body, weight: c.isToday ? .semibold : .regular)
-                        .monospacedDigit()
+                    .system(
+                        size: LivType.body,
+                        weight: isSelected ? .semibold : .regular
+                    )
+                    .monospacedDigit()
                 )
                 .foregroundStyle(
-                    isSelected
-                        ? LivTheme.onAccent
-                        : c.inMonth ? LivTheme.text : LivTheme.muted)
+                    c.inMonth ? LivTheme.text : LivTheme.text3)
             HStack(spacing: 2.5) {
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
                         .fill(
-                            i < c.dots.count
-                                ? (isSelected ? LivTheme.onAccent : c.dots[i])
-                                : Color.clear
+                            i < c.dots.count ? c.dots[i] : Color.clear
                         )
                         .frame(width: 4, height: 4)
                 }
@@ -1049,18 +1054,19 @@ private struct MonthGridView: View, Equatable {
         }
         .frame(maxWidth: .infinity)
         .frame(height: CalGrid.cellHeight)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .fill(isSelected ? LivTheme.accent : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .strokeBorder(
-                    c.isToday && !isSelected ? LivTheme.accent : Color.clear,
-                    lineWidth: 1)
-        )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(isSelected ? LivTheme.text : Color.clear)
+                .frame(width: 22, height: 2)
+        }
+        .overlay(alignment: .top) {
+            Circle()
+                .fill(c.isToday ? LivTheme.accent : Color.clear)
+                .frame(width: 4, height: 4)
+                .offset(y: -1)
+        }
         .contentShape(Rectangle())
-        .onTapGesture { onSelect(c.day) }
+        .onTapGesture { withAnimation(LivMotion.pick) { onSelect(c.day) } }
         .onLongPressGesture(minimumDuration: 0.45) { onHold(c.day) }
         .accessibilityLabel(Civil.dayLabel(c.day))
         .accessibilityValue(c.count == 0 ? "" : "\(c.count) items")
