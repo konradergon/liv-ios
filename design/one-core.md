@@ -23,6 +23,25 @@
 > cores should converge on, and **`core-plan.md`** for the order of work. This
 > document is left as written — it is the record of what was thought on
 > 2026-08-19, and rewriting it would erase the reasoning rather than correct it.
+>
+> ---
+>
+> **AND THE SUPERSESSION IS ITSELF DROPPED, 2026-08-29.** The owner: *"1. drop
+> Tauri."* The 2026-08-22 ruling above existed to protect an app that is no
+> longer a target, so the constraint it imposed has expired with it. The plan
+> it produced — `core.md`, `core-plan.md`, the whole convergence — is off the
+> schedule too. Nothing replaces it, because nothing needs to: this repo has
+> one core and one shell over it, and the SQLite crate has no shell at all.
+>
+> So §3's original recommendation (keep the log) is what stands, by default
+> rather than by argument. Its second half — *delete the SQLite crate* — is
+> **not** licence to go and do that: the crate lives outside this repo, which
+> is ask-first, and the owner has said not to touch that working copy. Dropping
+> Tauri means this tree stops aiming at it, not that anyone goes and removes it.
+>
+> The goal is unchanged: one mobile app and one desktop app that mirror each
+> other. What the desktop will BE is now an open question with no answer in
+> this document. Do not start one unasked.
 
 ---
 
