@@ -351,16 +351,21 @@ struct SearchView: View {
                 Text(v.label)
                     .strikethrough(v.excluded, color: LivTheme.red)
                 Text("\(v.count)")
-                    .font(.system(size: LivType.micro, weight: .medium).monospacedDigit())
-                    .foregroundStyle(v.active ? LivTheme.onAccent.opacity(0.7) : LivTheme.text3)
+                    .font(.system(size: LivType.caption).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
             }
-            .font(.system(size: LivType.label, weight: v.active ? .semibold : .regular))
+            // CHOSEN IS INK AND WEIGHT, not a saturated capsule. The
+            // same mark the Tasks filter row, the Inbox lens and the day
+            // strip use — this was the last chip in the app still
+            // filling itself with the accent and inverting its text
+            // (polish pass, 2026-08-31).
+            .font(.system(size: LivType.label, weight: v.active ? .medium : .regular))
             .foregroundStyle(
-                v.excluded ? LivTheme.red : (v.active ? LivTheme.onAccent : LivTheme.text))
-            .padding(.horizontal, 9)
-            .frame(height: 28)
+                v.excluded ? LivTheme.red : (v.active ? LivTheme.text : LivTheme.text2))
+            .padding(.horizontal, 11)
+            .frame(height: LivChip.tall)
             .background(
-                Capsule().fill(v.active ? LivTheme.accent : LivTheme.panel2))
+                Capsule().fill(v.active ? LivTheme.panel2 : .clear))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -430,14 +435,14 @@ private struct SearchCreateRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .fill(LivTheme.accentSoft)
+            // NO PLATE. A tinted tile behind a `+` that sits directly
+            // beside the word "Create" is a box drawn for its own sake:
+            // the row is already a row, and the words already say what
+            // the button does.
+            Image(systemName: "plus")
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.accent)
                 .frame(width: 24, height: 24)
-                .overlay(
-                    Image(systemName: "plus")
-                        .font(.system(size: LivType.label, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
-                )
             (Text("Create \"") + Text(query).fontWeight(.semibold)
                 + Text("\""))
                 .font(.system(size: LivType.body))
@@ -458,7 +463,7 @@ private struct SearchHitRow: View {
     var body: some View {
         HStack(spacing: 9) {
             // What the hit IS, before what it says.
-            IconChip(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 24)
+            LivIcon(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 22)
             Text(livRowTitle(row))
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)

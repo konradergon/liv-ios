@@ -153,6 +153,21 @@ struct LivMenuTitle: View {
 }
 
 /// The menu's subject: the thing every verb below it will act on.
+/// THE GRABBER, ONCE. `LivMenuHost` and `LivTopSheetHost` each carried
+/// their own copy of the same capsule — two types, one shape, and the
+/// kind of duplication that drifts (standing rule 4). It is drawn on
+/// every card in the app, and since 2026-08-31 it means what it looks
+/// like: the card follows the finger and a pull toward its own edge
+/// dismisses it.
+struct LivGrabber: View {
+    var body: some View {
+        Capsule()
+            .fill(LivTheme.panel2)
+            .frame(width: 36, height: 5)
+            .padding(.vertical, 8)
+    }
+}
+
 struct LivMenuSubject: View {
     let name: String
     var detail: String?
@@ -276,10 +291,7 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
             }
             .frame(height: min(content, UIScreen.main.bounds.height * 0.72))
             .onPreferenceChange(LivSheetHeight.self) { content = $0 }
-            Capsule()
-                .fill(LivTheme.panel2)
-                .frame(width: 36, height: 5)
-                .padding(.vertical, 8)
+            LivGrabber()
         }
         .padding(.top, LivSafeArea.top)
         .background(
@@ -338,10 +350,13 @@ struct LivMenuHost: ViewModifier {
     /// what is drawn).
     @State private var shown = false
     @State private var drawn: LivMenu?
+    /// How far the finger has pulled the card toward its own edge.
+    @State private var drag: CGFloat = 0
 
     func body(content: Content) -> some View {
         content.overlay {
             if active, let drawn {
+                let up = drawn.from == .bottom
                 ZStack(alignment: drawn.from == .top ? .top : .bottom) {
                     // The scrim: everything behind it is out of reach
                     // until this closes, and tapping it closes.
@@ -357,6 +372,42 @@ struct LivMenuHost: ViewModifier {
                                     .onAppear { height = geo.size.height }
                                     .onChange(of: geo.size.height) { _, h in height = h }
                             }
+                        )
+                        // THE GRABBER NOW TELLS THE TRUTH.
+                        //
+                        // Every card in this app draws the little
+                        // capsule that means "drag me away", and none of
+                        // them could be dragged — they closed by tapping
+                        // the scrim, and the grabber was decoration
+                        // promising an affordance that did not exist
+                        // (polish audit, 2026-08-30). A card is easier
+                        // to dismiss this way than by reaching for the
+                        // scrim, and it is what the phone has taught
+                        // everyone to try first.
+                        //
+                        // The threshold is distance OR speed: a short
+                        // flick closes, a long slow drag closes, and a
+                        // small accidental movement puts it back.
+                        .offset(y: drag)
+                        .gesture(
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { g in
+                                    let d = up ? g.translation.height
+                                        : -g.translation.height
+                                    drag = up ? max(0, d) : -max(0, d)
+                                }
+                                .onEnded { g in
+                                    let d = up ? g.translation.height
+                                        : -g.translation.height
+                                    let v = up ? g.predictedEndTranslation.height
+                                        : -g.predictedEndTranslation.height
+                                    if d > 90 || v > 220 {
+                                        withAnimation(LivMotion.nav) { drag = 0 }
+                                        close()
+                                    } else {
+                                        withAnimation(LivMotion.pick) { drag = 0 }
+                                    }
+                                }
                         )
                         // OFF SCREEN by exactly its own height, then home.
                         // The panel is always mounted while `drawn` is
@@ -406,7 +457,7 @@ struct LivMenuHost: ViewModifier {
         let up = menu.from == .bottom
         return VStack(spacing: 0) {
             if !up { Spacer(minLength: 0).frame(height: 4) }
-            if up { grabber }
+            if up { LivGrabber() }
             if let title = menu.title {
                 LivMenuTitle(text: title)
             }
@@ -417,7 +468,7 @@ struct LivMenuHost: ViewModifier {
                 row(item, divided: i > 0)
             }
             if up { Spacer(minLength: 0).frame(height: 4) }
-            if !up { grabber }
+            if !up { LivGrabber() }
         }
         .frame(maxWidth: .infinity)
         // The safe area on the attached edge, kept as SPACE inside the
@@ -435,12 +486,7 @@ struct LivMenuHost: ViewModifier {
         )
     }
 
-    private var grabber: some View {
-        Capsule()
-            .fill(LivTheme.panel2)
-            .frame(width: 36, height: 5)
-            .padding(.vertical, 8)
-    }
+
 
     private func row(_ item: LivMenuItem, divided: Bool) -> some View {
         LivMenuRow(

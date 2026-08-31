@@ -546,54 +546,21 @@ struct LivIcon: View {
     }
 }
 
-/// The carved icon chip — the blueprints' one icon treatment (owner,
-/// 2026-08-12): a SOLID square of the thing's colour with the glyph
-/// punched through in the surface BENEATH, like a stencil. Never a
-/// tinted box, never a bare boxed glyph. The owner's build notes: the
-/// glyph a bit larger than the mockups drew it, the corners slightly
-/// less round.
-struct IconChip: View {
-    let glyph: LivGlyph
-    let color: Color
-    var size: CGFloat = 28
-    /// What the carve reads through to. Canvas by default; a chip inside
-    /// a card passes the card's surface, or the stencil stops working.
-    var on: Color = LivTheme.canvas
+// `IconChip` IS GONE (2026-08-31). It filled a rounded square with the
+// kind's colour and carved the glyph out of it as a stencil — one per
+// row in Files, Search and the minimised record pill, so a mixed list
+// drew a column of saturated blocks. The references draw the glyph
+// itself in the kind's colour on no fill at all, which says the same
+// thing with a fraction of the ink; that is exactly `LivIcon`, which
+// this app already had. Two recipes for one mark is standing rule 4, and
+// the three call sites pass `LivIcon` now.
 
-    var body: some View {
-        RoundedRectangle(cornerRadius: size * 6 / 28, style: .continuous)
-            .fill(color)
-            .frame(width: size, height: size)
-            .overlay(LivIcon(glyph: glyph, color: on, size: size * 19 / 28))
-            .accessibilityHidden(true)
-    }
-}
-
-/// The properties mark: three overlapping rings, one per colour family.
-/// The one icon in the language that is not a single colour, so it is
-/// not a `LivGlyph` — and it is never boxed (blueprint: "the properties
-/// mark rides the card header bare").
-struct PropertiesMark: View {
-    var size: CGFloat = 20
-
-    var body: some View {
-        let s = size / 24
-        ZStack {
-            ring(LivTheme.green, x: 8.4, y: 9.6, s: s)
-            ring(LivTheme.purple, x: 15.6, y: 9.6, s: s)
-            ring(LivTheme.accent, x: 12, y: 15.4, s: s)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
-    }
-
-    private func ring(_ color: Color, x: CGFloat, y: CGFloat, s: CGFloat) -> some View {
-        Circle()
-            .strokeBorder(color, lineWidth: 1.8 * s)
-            .frame(width: 8.2 * s, height: 8.2 * s)
-            .offset(x: (x - 12) * s, y: (y - 12) * s)
-    }
-}
+// `PropertiesMark` IS GONE with it — three overlapping coloured rings,
+// and `grep` finds no caller anywhere in the shell. Dead when the
+// properties door became the ••• menu's first item (2026-08-29) and
+// never removed; the polish audit found it still drawing itself in the
+// source. When a decision makes code unnecessary, delete it in the same
+// change (owner, 2026-08-07).
 
 // MARK: - the contrast floor, measured
 

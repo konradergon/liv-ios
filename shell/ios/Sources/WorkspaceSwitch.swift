@@ -182,16 +182,7 @@ struct WorkspaceSwitcher: View {
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
                 .buttonStyle(.plain)
-                Button(action: saveWorkspace) {
-                    Text(editing == nil ? "Create" : "Save")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.onAccent)
-                        .padding(.horizontal, 14)
-                        .frame(height: 28)
-                        .background(Capsule().fill(LivTheme.accent))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
+                ConfirmPill(editing == nil ? "Create" : "Save", action: saveWorkspace)
                 .disabled(trimmed(draftName).isEmpty)
                 .opacity(trimmed(draftName).isEmpty ? 0.45 : 1)
             }
@@ -266,16 +257,7 @@ struct WorkspaceSwitcher: View {
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
                 .buttonStyle(.plain)
-                Button(action: createFilter) {
-                    Text("Save")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.onAccent)
-                        .padding(.horizontal, 14)
-                        .frame(height: 28)
-                        .background(Capsule().fill(LivTheme.accent))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
+                ConfirmPill("Save", action: createFilter)
                 .disabled(trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty)
                 .opacity(
                     trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty ? 0.45 : 1)

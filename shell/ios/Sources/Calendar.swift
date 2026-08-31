@@ -747,11 +747,25 @@ struct CalendarView: View {
             moving: moving, voice: voice, task: task, doneNames: doneNames
         )
         .frame(width: frame.rect.width, height: frame.rect.height, alignment: .topLeading)
+        // A TINTED BODY AND A COLOURED EDGE — the reference's shape.
+        //
+        // It was a tinted fill AND a stroke all the way round, the
+        // stroke made by an opacity on the kind's colour: two devices
+        // saying one thing, and a colour mixed by hand where `tint()`
+        // exists precisely so hues are not divided by eye. Notion
+        // Calendar draws a block as a washed body with a bar down its
+        // leading edge, which is where the kind's colour earns its
+        // keep — a 3pt bar reads at a glance where a half-strength
+        // hairline does not.
         .background(blockFill(ink, moving ? 0.36 : 0.2))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(ink.opacity(moving ? 1 : 0.55), lineWidth: moving ? 1.5 : 0.5)
-        )
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(ink)
+                .frame(width: 3)
+                .clipShape(
+                    RoundedRectangle(cornerRadius: 8).offset(x: 0))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .shadow(
             color: moving ? LivTheme.lift.color : .clear,
             radius: moving ? LivTheme.lift.radius : 0, y: LivTheme.lift.y)
@@ -1042,11 +1056,25 @@ private struct MonthGridView: View, Equatable {
                 )
                 .foregroundStyle(
                     c.inMonth ? LivTheme.text : LivTheme.text3)
+            // HOW BUSY, NOT WHAT KIND (polish pass, 2026-08-31).
+            //
+            // Each dot wore its entity's kind colour, so a month grid
+            // drew up to sixty saturated dots in six hues — the only
+            // colour on the screen, and confetti at this size. The
+            // blueprint added the colours on 2026-08-13 to say what a
+            // day holds without opening it; at 4pt across a month that
+            // is not a thing anyone reads, and the same three-dots-mean-
+            // busy signal survives in ink.
+            //
+            // The kind language is not lost — it is on every ROW, where
+            // a glyph is big enough to tell apart. This is the same
+            // ruling already applied to the search headings and the
+            // value chips.
             HStack(spacing: 2.5) {
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
                         .fill(
-                            i < c.dots.count ? c.dots[i] : Color.clear
+                            i < c.dots.count ? LivTheme.text3 : Color.clear
                         )
                         .frame(width: 4, height: 4)
                 }
@@ -1208,7 +1236,11 @@ enum CalClock {
     /// rule, the now-line and the blocks all measure from this one
     /// number. Before it existed there were four (0, 16, 44 and 60) and
     /// the hour rule ran straight through "09:00" (owner, 2026-08-10).
-    static let gutter: CGFloat = 46
+    /// 46 until 2026-08-31, when the type scale went up a notch and
+    /// "18:00" no longer fitted the 38pt it was given (`gutter - 8`) —
+    /// every hour label on the day view wrapped onto two lines. A column
+    /// sized for text has to be sized WITH the text.
+    static let gutter: CGFloat = 56
     /// The gap between the times and the first block, so a block's
     /// rounded corner never touches the rule's start.
     static let gutterGap: CGFloat = 14

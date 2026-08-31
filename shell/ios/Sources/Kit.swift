@@ -137,6 +137,37 @@ struct ValueChip: View {
     }
 }
 
+/// THE FORM CONFIRM: Create, Save — the one filled control on a sheet.
+///
+/// A primary action earns the accent, and there is exactly one per form,
+/// so this is not the kind of colour the polish pass went after. What it
+/// went after was the DUPLICATION: `WorkspaceSwitch` carried this shape
+/// twice, byte for byte, once for a workspace and once for a filter
+/// (standing rule 4 — the same shape drawn from two places is how two
+/// shapes start).
+struct ConfirmPill: View {
+    let label: String
+    let action: () -> Void
+
+    init(_ label: String, action: @escaping () -> Void) {
+        self.label = label
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: LivType.label, weight: .semibold))
+                .foregroundStyle(LivTheme.onAccent)
+                .padding(.horizontal, 16)
+                .frame(height: LivChip.tall + 4)
+                .background(Capsule().fill(LivTheme.accent))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// The chip-shaped add affordance (capture sheet's +Tag +Project row):
 /// hollow, muted — never competes with real values.
 struct AddChip: View {

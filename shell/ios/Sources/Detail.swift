@@ -356,7 +356,15 @@ struct EntityInspector: View {
                 HStack {
                     DetailRowLabel("status")
                     Spacer(minLength: 12)
-                    ValueChip(row.status ?? "")  // display-only; nothing to change it to
+                    // PLAIN TEXT. This row's own comment has said
+                    // "display-only; nothing to change it to" since it
+                    // was written, and it drew the value in the capsule
+                    // this app uses for values you CAN act on — a
+                    // control's clothes on a fact. Every other read-only
+                    // value in this panel is text.
+                    Text(row.status ?? "")
+                        .font(.system(size: LivType.body))
+                        .foregroundStyle(LivTheme.text2)
                 }
                 .frame(minHeight: LivRow.height)
             } else {

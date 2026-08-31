@@ -148,7 +148,7 @@ struct FileBody: View {
             // own rule. It was the only button on the screen, which made
             // a file look like something you could not read.
             HStack(spacing: 8) {
-                IconChip(glyph: .file(facts.fileClass), color: LivKind.file.color, size: 22)
+                LivIcon(glyph: .file(facts.fileClass), color: LivKind.file.color, size: 22)
                 if !facts.format.isEmpty { ValueChip(facts.format) }
                 Spacer(minLength: 0)
             }

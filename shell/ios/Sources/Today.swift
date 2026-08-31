@@ -507,7 +507,9 @@ struct TodayView: View {
         } label: {
             Label("Move to tomorrow", systemImage: "arrow.turn.up.right")
         }
-        .tint(LivTheme.green)
+        // ONE TINT: all three are "move this to a different day". See
+        // the same change in Tasks' tray.
+        .tint(LivTheme.accent)
         Button {
             duePick = TodayDuePick(entity: row.id)
         } label: {

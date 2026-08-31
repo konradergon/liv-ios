@@ -105,10 +105,9 @@ struct MinimisedRecordPill: View {
                 desk.restoreRecord()
             } label: {
                 HStack(spacing: 8) {
-                    IconChip(
+                    LivIcon(
                         glyph: LivKind.glyph(of: box.entity(id)),
-                        color: LivKind.color(of: box.entity(id)), size: 22,
-                        on: LivTheme.panel2)
+                        color: LivKind.color(of: box.entity(id)), size: 20)
                     Text(box.entity(id).map(livRowTitle) ?? "Untitled")
                         .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.text)

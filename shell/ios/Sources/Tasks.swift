@@ -422,6 +422,14 @@ struct TasksView: View {
             // The spec's full verb set (§6): Tonight / Tomorrow / Weekend /
             // Pick. Tonight matches the due sheet's 20:00; on a Friday,
             // Weekend IS tomorrow and drops out (eval §5.11).
+            // ONE TINT FOR ONE FAMILY OF VERBS. These are four ways of
+            // saying the same thing — move this to a different day — and
+            // they wore four different saturated colours, so the tray
+            // read as four unrelated buttons and the colours carried no
+            // information the WORDS did not already carry. iOS tints a
+            // tray by what an action IS, not by which one it is: one
+            // colour for scheduling, red for the destructive tray on the
+            // other edge.
             Button("Tonight") {
                 model.setSpan(
                     row.id, "due",
@@ -430,13 +438,13 @@ struct TasksView: View {
             }
             .tint(LivTheme.accent)
             Button("Tomorrow") { reschedule(row, to: TasksDates.tomorrow()) }
-                .tint(LivTheme.green)
+                .tint(LivTheme.accent)
             if TasksDates.weekend() != TasksDates.tomorrow() {
                 Button("Weekend") { reschedule(row, to: TasksDates.weekend()) }
-                    .tint(LivTheme.purple)
+                    .tint(LivTheme.accent)
             }
             Button("Pick") { duePick = TasksDuePick(entity: row.id) }
-                .tint(LivTheme.text2)
+                .tint(LivTheme.accent)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {

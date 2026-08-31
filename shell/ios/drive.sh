@@ -74,6 +74,24 @@ say()  { print -r -- "$1" }
 # prints FAIL and exits 0 is worse than no harness.
 die()  { print -r -- "FAIL  $1"; return 1 }
 
+# EVERY `axe` CALL IS BOUNDED. A HANG IS AS USELESS AS A LIE.
+#
+# `axe` talks to the simulator's accessibility server, and that server
+# stalls: on 2026-08-31 a `describe-ui` that normally takes 1.7s blocked
+# for over ten minutes while the app itself sat at 0% CPU with a healthy
+# tree. Nothing in this file had a time limit, so one stalled call took
+# the whole run with it and reported NOTHING — no pass, no fail, no
+# clue. That is the same fault as a check that lies, wearing different
+# clothes: the harness has to come back with an answer.
+#
+# `perl -e alarm` rather than `timeout`, which is not on a stock macOS
+# and would make this file depend on a homebrew coreutils being present.
+# Twenty seconds is far above the p100 of a healthy call and far below
+# the patience of whoever is waiting.
+axe() {
+  perl -e 'alarm shift; exec @ARGV' 20 "$(whence -p axe)" "$@"
+}
+
 container() { xcrun simctl get_app_container "$UDID" "$APP" data 2>/dev/null }
 
 # THE ACCESSIBILITY TREE, or nothing. Every reader below pipes through
@@ -568,10 +586,8 @@ check_library() {
 # trailing edge drag that used to summon a panel is gone with the panel.
 check_properties_card() {
   cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
-  local row rest after moved
-  row=$(first_note) || { die "no note in the list to open."; return 1 }
-  cmd_tap "$row" || return 1
-  perl -e 'select(undef,undef,undef,1.2)'
+  local rest after moved
+  open_first_note || return 1
 
   # The ••• is both the card's door and the probe for the desk's position.
   rest=$(button_x "Note actions") || {
@@ -905,6 +921,32 @@ bar_tab_label() {
 
 # The first row in Notes' list, by label — the door into a document now
 # that the root is a list rather than a grid of cards.
+# OPEN THE FIRST NOTE IN THE LIST, and do not report a failure that is
+# really a race.
+#
+# Two checks did this as `row=$(first_note)` then `cmd_tap "$row"`, and
+# the pair failed intermittently (seen twice: 2026-08-30 and 2026-08-31,
+# both times passing on a re-run). The label is read from one snapshot of
+# the tree and used against another: in between, the list can still be
+# settling after an install, and every row in this box is called
+# "Untitled, <date>", so a stale read finds nothing to match.
+#
+# Re-reading is the fix, not a longer sleep — a sleep long enough to be
+# safe on a busy machine is wasted on every healthy run. The success
+# condition is what the caller actually wants: a document on screen.
+open_first_note() {
+  local i row
+  for i in {1..3}; do
+    row=$(first_note) || { perl -e 'select(undef,undef,undef,0.5)'; continue }
+    cmd_tap "$row" >/dev/null 2>&1 || { perl -e 'select(undef,undef,undef,0.5)'; continue }
+    perl -e 'select(undef,undef,undef,0.8)'
+    [[ "$(cmd_surface)" == "document" ]] && return 0
+  done
+  die "could not open a note from the list after three tries.
+      The rows are there but tapping one did not land on a document."
+  return 1
+}
+
 first_note() {
   scan 'def walk(n):
     l = n.get("AXLabel") or ""
@@ -1277,12 +1319,8 @@ cmd_quiet() {
   cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
   local before after row
   before=$(count_cycles)
-  row=$(first_note) || { die "no note in the list to open."; return 1 }
-  cmd_tap "$row" || return 1
-  perl -e 'select(undef,undef,undef,2.5)'
-  [[ "$(cmd_surface)" == "document" ]] || {
-    die "tapping a note did not open it — the count below would be measured
-      on the list, which is not the thing under test."; return 1 }
+  open_first_note || return 1
+  perl -e 'select(undef,undef,undef,1.6)'
   after=$(count_cycles)
   local new=$(( after - before ))
   (( new == 0 )) || {
