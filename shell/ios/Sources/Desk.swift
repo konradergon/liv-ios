@@ -103,12 +103,12 @@ struct DeskHost: View {
                 )
                 .ignoresSafeArea()
             }
-            // Cast BACK onto the panel, no vertical offset — the panel is
-            // on the leading edge, so the shadow falls that way.
-            .shadow(
-                color: .black.opacity(LivPanel.shadowOpacity),
-                radius: LivPanel.shadowRadius,
-                x: -4, y: 0)
+            // NO SHADOW. It was cast back onto the panel and never
+            // arrived: the panel is `.zIndex(1)` and this Group has none
+            // (0), so the shadow painted under an opaque surface. Two
+            // days of the app's largest depth event being a hard
+            // one-pixel step. The panel draws its own edge now
+            // (Panel.swift), which is a line you can actually see.
             // A WASH, not a scrim: the reference fades the content to
             // ~50% and leaves the background alone, so this is the app's
             // own ground laid over the top. A black scrim in a dark theme

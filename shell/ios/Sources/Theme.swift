@@ -221,10 +221,10 @@ enum LivPanel {
     /// theme it is the canvas laid over the content, not shade.
     static let wash: CGFloat = 0.5
 
-    /// The shadow the desk casts back onto the panel. No vertical
-    /// offset; it reaches about 36pt.
-    static let shadowOpacity: CGFloat = 0.10
-    static let shadowRadius: CGFloat = 18
+    // The desk's shadow onto the panel lived here and is gone
+    // (2026-08-31): it never drew, because the panel sits above the desk
+    // in z and the shadow painted underneath it. Deleted with its one
+    // call site rather than left as two numbers nothing reads.
 }
 
 /// The screen, asked once. `UIScreen.main.bounds` is deprecated and was

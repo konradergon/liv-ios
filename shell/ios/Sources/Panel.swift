@@ -85,6 +85,23 @@ struct SidePanel<Content: View>: View {
             // follows, so the narrow panel comes out full-screen with its
             // rows centred. Order is the whole of it.
             .frame(width: width)
+            // AN EDGE, because the shadow never drew one.
+            //
+            // Sampled across `library.png` at y=500: the panel holds
+            // #232323 to x=319.67 and the desk's #1A1A1A starts at
+            // x=320.0 — a hard one-pixel step with no intermediate value
+            // anywhere in a 40pt band, where a radius-18 shadow would
+            // ramp through a dozen. It does not draw because the desk's
+            // Group has no zIndex (0) while this panel is zIndex 1, so
+            // the shadow paints UNDER an opaque surface. The app's
+            // largest depth event — 320pt of panel over the whole screen
+            // — was arriving at 1.07:1, less definition than a list
+            // separator. A hairline is 1.50:1 and costs no saturation.
+            .overlay(alignment: side == .leading ? .trailing : .leading) {
+                if width != nil {
+                    Rectangle().fill(LivTheme.border2).frame(width: 0.5)
+                }
+            }
             .frame(
                 maxWidth: .infinity,
                 alignment: side == .leading ? .leading : .trailing)

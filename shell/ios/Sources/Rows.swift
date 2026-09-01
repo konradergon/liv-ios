@@ -28,9 +28,26 @@ struct LivListRow<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 12) {
-            LivIcon(glyph: glyph, color: tint ?? LivTheme.text2, size: 20)
-                .frame(width: 22)
+        // ON THE ROW GRID, like every other row in the app.
+        //
+        // This drew its own numbers — a 22pt glyph slot, 12pt of air, and
+        // 2pt of padding around the whole thing — inside containers that
+        // pad 18. So its words began at 54 by coincidence while its
+        // hairline, which asks for `LivRow.hairline` (54, measured from
+        // the SCREEN), was applied INSIDE that inset frame and landed at
+        // 72. Measured off notes.png: the line missed the words it
+        // divides by eighteen points, down every list in the app.
+        //
+        // The tokens are the same ones the Inbox row uses, so there is
+        // one spine now: mark 24, gap 14, words and hairline at 54.
+        HStack(spacing: LivRow.markGap) {
+            // A STEP DOWN from the title. The glyph was `text2`, the
+            // same ink as the title beside it, so a row had no first and
+            // second voice at all — and with most titles being the
+            // placeholder "Untitled" (also text2) three things on the
+            // row read at one strength.
+            LivIcon(glyph: glyph, color: tint ?? LivTheme.text3, size: 19)
+                .frame(width: LivRow.mark)
             Text(title)
                 .font(.system(size: LivType.strong))
                 .foregroundStyle(untitled ? LivTheme.text2 : LivTheme.text)
@@ -38,7 +55,6 @@ struct LivListRow<Trailing: View>: View {
             Spacer(minLength: 10)
             trailing
         }
-        .padding(.horizontal, 2)
         .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
@@ -48,8 +64,10 @@ struct LivListRow<Trailing: View>: View {
                     .frame(height: 0.5)
                     // Starts where the TEXT starts: an inset hairline
                     // groups the rows, a full-width one cuts the screen
-                    // into slabs.
-                    .padding(.leading, LivRow.hairline)
+                    // into slabs. Measured from the ROW's own leading
+                    // edge, which is already inside the margin — hence
+                    // the subtraction, exactly as the Inbox does it.
+                    .padding(.leading, LivRow.hairline - LivRow.margin)
             }
         }
     }
@@ -65,14 +83,39 @@ extension LivListRow where Trailing == EmptyView {
 
 /// The quietest fact on a row: a date, a time, a count. One ink, one
 /// size, monospaced digits so a column of them lines up.
+/// A FACT IS DRAWN ONLY WHEN IT CHANGES.
+///
+/// Measured off `everything.png`: fourteen consecutive rows read "Mon 31
+/// Aug", right-aligned and monospaced, in the same ink as the titles
+/// beside them — and since most titles are the placeholder "Untitled",
+/// the screen was two ragged columns of near-identical grey. A date that
+/// is true of every row on screen tells you nothing about any of them.
+///
+/// It compares the RENDERED STRING, never the day. Both `tasksDue` and
+/// `whenLabel` return a TIME for today's rows, so comparing
+/// `Civil.day(of:)` would delete the second of two things due today at
+/// 09:00 and 20:00 — that is data loss, not a repeat.
+///
+/// Suppression rather than day-group headers, which two readings of this
+/// screen proposed: a header is only honest where the printed key is the
+/// SORT key, and Notes sorts on `recency` while printing `created`.
+func livNewFact(_ s: String?, after prev: String?) -> String? {
+    s == prev ? nil : s
+}
+
 struct LivRowFact: View {
     let text: String
     var emphasis: Bool = false
 
     var body: some View {
+        // THE ROW'S SECOND VOICE, and it has to sound like one. This was
+        // `label` (16) in `text2` — one step under an 18pt title in the
+        // SAME ink, which on a list of placeholder titles meant twelve
+        // identical-looking pairs down the screen. A fact is caption
+        // (14) in text3; only an emphasised one comes forward.
         Text(text)
-            .font(.system(size: LivType.label).monospacedDigit())
-            .foregroundStyle(emphasis ? LivTheme.text : LivTheme.text2)
+            .font(.system(size: LivType.caption).monospacedDigit())
+            .foregroundStyle(emphasis ? LivTheme.text : LivTheme.text3)
             .lineLimit(1)
     }
 }

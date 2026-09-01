@@ -137,6 +137,100 @@ struct ValueChip: View {
     }
 }
 
+/// A SEGMENTED CHOICE, in the app's own language.
+///
+/// It replaces `.pickerStyle(.segmented)`, whose selected thumb measures
+/// #6D6D72 — a grey that is not neutral (blue five points over red) and
+/// is not in `Palette`, sitting on a #232323 card. It was the single
+/// most off-key object in the app, and the only place a control still
+/// arrived with a colour nobody here chose.
+///
+/// The mark is the one this app uses everywhere else for "this is the
+/// one you are on": a quiet fill and full ink, no accent, no inversion.
+/// 44pt tall, because a control is a touch target before it is a shape.
+struct LivSegment<Value: Hashable>: View {
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(options, id: \.value) { option in
+                let on = option.value == selection
+                Button {
+                    withAnimation(LivMotion.pick) { selection = option.value }
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: LivType.label, weight: on ? .medium : .regular))
+                        .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background(
+                            RoundedRectangle(
+                                cornerRadius: LivTheme.radiusSm, style: .continuous
+                            )
+                            .fill(on ? LivTheme.panel2 : .clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? [.isSelected] : [])
+            }
+        }
+        .frame(height: 44)
+    }
+}
+
+/// A SWITCH, in the app's own language.
+///
+/// The two `Toggle(…).tint(accent)` this replaces were the app's only
+/// stock controls, and a system switch is a saturated slab about 51x31
+/// — on a screen measured at 0.74% saturated pixels against 0.05–0.19%
+/// everywhere else, the two of them were most of the difference.
+///
+/// The colour moves into the TRACK at a quarter strength rather than
+/// filling it, so "on" is legible without the control being the
+/// brightest thing on the screen. The knob is ink.
+struct LivSwitch: View {
+    @Binding var isOn: Bool
+    /// A switch the app has disabled still has to READ disabled — the
+    /// platform dims a stock control for free and a hand-built one gets
+    /// nothing.
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button {
+            withAnimation(LivMotion.pick) { isOn.toggle() }
+        } label: {
+            Capsule()
+                .fill(isOn ? LivTheme.tint(LivTheme.accent, 0.55) : LivTheme.panel2)
+                .frame(width: 46, height: 28)
+                .overlay(alignment: isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(isOn ? LivTheme.text : LivTheme.text3)
+                        .frame(width: 20, height: 20)
+                        .padding(4)
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// The switch above, as a `ToggleStyle`, so the two call sites keep
+/// reading as `Toggle(isOn:) { label }` and only the control changes.
+struct LivSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+            Spacer(minLength: 8)
+            LivSwitch(isOn: configuration.$isOn)
+        }
+    }
+}
+
 /// THE FORM CONFIRM: Create, Save — the one filled control on a sheet.
 ///
 /// A primary action earns the accent, and there is exactly one per form,

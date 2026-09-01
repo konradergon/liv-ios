@@ -36,6 +36,17 @@ struct NotesList: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                // THE SCREEN'S NAME. Notes, Everything and Tasks were the
+                // three surfaces with nothing at the top saying where you
+                // are — Today, Inbox and the Calendar all lead with one,
+                // and a list that starts at its first row reads as a
+                // fragment of a screen rather than a screen.
+                Text("Notes")
+                    .font(.system(size: LivType.hero, weight: .bold))
+                    .foregroundStyle(LivTheme.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
                 if rows.isEmpty {
                     EmptyHint(
                         "Nothing written yet",
@@ -52,7 +63,13 @@ struct NotesList: View {
                                 untitled: livRowIsUntitled(row),
                                 divided: i < rows.count - 1
                             ) {
-                                if let when = whenLabel(row) { LivRowFact(text: when) }
+                                // Only when it changes — see `livNewFact`.
+                                if let when = livNewFact(
+                                    whenLabel(row),
+                                    after: i == 0 ? nil : whenLabel(rows[i - 1]))
+                                {
+                                    LivRowFact(text: when)
+                                }
                             }
                         }
                         .livRowPress()
@@ -64,7 +81,7 @@ struct NotesList: View {
                     }
                 }
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, LivRow.margin)
         }
         // The bar floats; the last row must not sit under it. Same
         // number Today and Tasks use — four unrelated literals were

@@ -155,6 +155,18 @@ struct RootView: View {
                     .accessibilityHidden(desk.deskShift != 0)
                     .zIndex(2)
             }
+            // THE FLOOR THE BAR STANDS ON. Drawn before the bar and
+            // after the desk, so the list fades into the ground on its
+            // way down and the capsule is never something you read a row
+            // through. It travels and retires with the bar, or a scrim
+            // would sit on a screen whose bar has gone.
+            if !keyboard.up && desk.menu == nil {
+                LivBottomScrim()
+                    .offset(x: desk.deskShift)
+                    .offset(y: desk.chromeAway ? LivBar.clearance + 12 : 0)
+                    .allowsHitTesting(false)
+                    .zIndex(0)
+            }
             if !keyboard.up && desk.menu == nil {
                 BottomBar()
                     .padding(.horizontal, 12)

@@ -58,7 +58,7 @@ struct TrashView: View {
                                 }
                             }
                         }
-                        .padding(.horizontal, 18)
+                        .padding(.horizontal, LivRow.margin)
                     }
                 }
             }

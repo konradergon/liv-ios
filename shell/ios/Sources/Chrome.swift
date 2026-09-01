@@ -835,6 +835,45 @@ extension View {
 /// `allowsHitTesting` said (found live). A view hands it to
 /// `safeAreaInset`, which is also what reserves the room; the desk
 /// overlays it on the words.
+/// THE BAR'S FLOOR.
+///
+/// The bottom bar does not float, it ghosts. Sampled off `inbox.png`
+/// where nothing is behind it, the capsule's interior is #1A1A1A —
+/// bit-identical to the page — and its whole definition is a
+/// one-device-pixel rim. With a list behind it the rows read straight
+/// through: on `tasks.png` a title, a date and two row hairlines are all
+/// legible INSIDE the capsule.
+///
+/// A material would be the other answer, and the app already learned
+/// that glass over a dark ground on a simulator is not a look you can
+/// rely on. This is the same device `LivTopScrim` uses at the other end
+/// — the ground itself, faded in — so the list dissolves into the page
+/// before it reaches the bar, and the bar has something to sit on.
+///
+/// It is the ground, not a shade: in a dark theme a black scrim reads as
+/// the screen switching off.
+struct LivBottomScrim: View {
+    var body: some View {
+        LinearGradient(
+            stops: [
+                .init(color: LivTheme.canvas.opacity(0), location: 0),
+                // Solid by the time the bar's own top edge arrives, so
+                // nothing is ever half-visible behind a glyph.
+                .init(color: LivTheme.canvas, location: 0.34),
+                .init(color: LivTheme.canvas, location: 1),
+            ],
+            startPoint: .top, endPoint: .bottom
+        )
+        .frame(height: LivBar.clearance + 56)
+        // TO THE TRUE BOTTOM EDGE. Anchored inside the safe area it
+        // stopped about 30pt short, so the very last row came back at
+        // full strength UNDER the bar — the fade read as inverted.
+        .ignoresSafeArea(edges: .bottom)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct LivTopScrim: View {
     /// Does chrome float over this surface? The library door does on the
     /// desk, so the fade runs the full chrome row and the words stay

@@ -92,18 +92,15 @@ struct SettingsSheet: View {
     }
 
     private var appearanceRow: some View {
-        Picker(
-            "Appearance",
+        // OURS, NOT THE SYSTEM'S — see `LivSegment`. The stock control's
+        // thumb was #6D6D72, a grey with a blue cast that appears nowhere
+        // in `Palette`, and it was the ugliest object in the app.
+        LivSegment(
+            options: LivAppearance.allCases.map { ($0, $0.label) },
             selection: Binding(
                 get: { LivAppearance(rawValue: appearance) ?? .dark },
                 set: { appearance = $0.rawValue })
-        ) {
-            ForEach(LivAppearance.allCases) { mode in
-                Text(mode.label).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
-        .frame(minHeight: 30)
+        )
     }
 
     @ViewBuilder private var fieldsRow: some View {
@@ -218,8 +215,8 @@ struct SettingsSheet: View {
                     .font(.system(size: LivType.body))
                     .foregroundStyle(LivTheme.text)
             }
-            .tint(LivTheme.accent)
-            .frame(minHeight: 30)
+            .toggleStyle(LivSwitchStyle())
+            .frame(minHeight: 44)
         }
     }
 
@@ -230,13 +227,23 @@ struct SettingsSheet: View {
     // reminders currently ring at any hour.
 
     @ViewBuilder private var notifyRows: some View {
-        Toggle(isOn: notifyEnabled) {
+        // A SWITCH THAT CANNOT RING IS DRAWN OFF.
+        //
+        // This card contradicted itself: the switch sat ON, in the
+        // accent, directly above the line "Turned off for Liv in iOS
+        // Settings." Both were true of different things — the app's
+        // preference was on, the permission was refused — and a person
+        // reading the card sees one control and one sentence disagreeing.
+        // The permission is the one that decides whether anything
+        // happens, so it is the one the switch shows.
+        Toggle(isOn: notify.denied ? .constant(false) : notifyEnabled) {
             Text("Due reminders")
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
         }
-        .tint(LivTheme.accent)
-        .frame(minHeight: 30)
+        .toggleStyle(LivSwitchStyle())
+        .disabled(notify.denied)
+        .frame(minHeight: 44)
         if notify.enabled {
             // One switch, no lead times. A reminder rings when the thing
             // is due; the two pickers that used to sit here were invented

@@ -187,9 +187,25 @@ struct GlyphShape: Shape {
             pen.box(5, 3.75, 14, 16.5, 3)
             pen.line(8.5, 9, 15.5, 9)
             pen.line(8.5, 13, 13.5, 13)
-        case .task, .tasks:
+        // A PLACE AND A THING ARE NOT THE SAME MARK.
+        //
+        // These shared one drawing — a box with a TICK in it — and that
+        // tick made the mark say something false. `StatusRing` draws a
+        // ticked box to mean DONE, so every open task in a mixed list
+        // wore the done mark: `everything.png` showed four open tasks
+        // with ticks while `tasks.png` drew the same rows as empty
+        // rings, in the same app, at the same moment.
+        //
+        // The library ROW keeps the tick — "Tasks" is a place, and a
+        // ticked box is what the word looks like. A task ITSELF gets a
+        // rule, deliberately shorter than a note's 7 units so the two do
+        // not blur at the 19pt a list draws them at.
+        case .tasks:
             pen.box(4.5, 4.5, 15, 15, 4.5)
             pen.shape([(8.5, 12.3, 0), (11.1, 14.9, 0), (15.7, 9.5, 0)], closed: false)
+        case .task:
+            pen.box(4.5, 4.5, 15, 15, 4.5)
+            pen.line(9.5, 12, 14.5, 12)
         case .day:
             // CENTRED, and a size up. It was box(3.5, 4.5, 17, 16): the
             // centre sat at y 12.5 on a canvas whose centre is 12, so the
@@ -273,8 +289,12 @@ struct GlyphShape: Shape {
         case .file(let fileClass):
             pen.file(fileClass)
         case .today:
+            // THE RAYS NEED AIR. Strokes are round-capped, so at
+            // `from: 5.8` each ray's inner cap reached r 4.8 — exactly
+            // where the disc's own stroke ends — and the sun read as a
+            // single asterisk. A 1.2-unit gap makes it a sun.
             pen.circle(12, 12, 3.8)
-            pen.rays(12, 12, from: 5.8, to: 8, count: 8)
+            pen.rays(12, 12, from: 7, to: 9.4, count: 8)
         case .everything:
             // The archive box: a lid, a body, one label line.
             pen.box(2.5, 4, 19, 5, 1.5)

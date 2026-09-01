@@ -104,8 +104,10 @@ struct TodayView: View {
                     let open = lateOpen ?? (late.count <= Self.lateOpenByDefault)
                     lateHeader(late.count, open: open)
                     if open {
-                        ForEach(late) { row in
-                            lateLine(row, today: today, doneNames: doneNames)
+                        ForEach(Array(late.enumerated()), id: \.element.id) { i, row in
+                            lateLine(
+                                row, today: today, doneNames: doneNames,
+                                prev: i == 0 ? nil : late[i - 1])
                         }
                     }
                 }
@@ -322,9 +324,12 @@ struct TodayView: View {
     /// A late task: ring, title, the day it was due (red), and one-tap
     /// Today. Swipe: Tomorrow / Pick (the arbitrary date-and-time door).
     private func lateLine(
-        _ row: EntityRow, today: Int64, doneNames: Set<String>
+        _ row: EntityRow, today: Int64, doneNames: Set<String>, prev: EntityRow?
     ) -> some View {
-        HStack(spacing: 8) {
+        let dayOf: (EntityRow) -> String = {
+            Civil.dayLabel(Civil.day(of: $0.due ?? 0))
+        }
+        return HStack(spacing: 8) {
             StatusRing(done: false) { toggleStatus(row.id) }
             Text(displayTitle(row))
                 .font(.system(size: LivType.body))
@@ -338,7 +343,9 @@ struct TodayView: View {
             // a colour that appears on every row distinguishes nothing.
             // "Late 42" carries it once; the date says HOW late, which
             // is the part that differs per row and reads fine in ink.
-            Text(Civil.dayLabel(Civil.day(of: row.due ?? 0)))
+            // Only when it changes: fourteen late rows all reading
+            // "Sun 30 Aug" is one fact printed fourteen times.
+            Text(livNewFact(dayOf(row), after: prev.map(dayOf)) ?? "")
                 .font(.system(size: LivType.caption).monospacedDigit())
                 .foregroundStyle(LivTheme.text3)
             // THE RESCHEDULE VERBS ARE ALL IN ONE PLACE NOW.

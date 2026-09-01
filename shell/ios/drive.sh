@@ -1249,11 +1249,25 @@ has_field() {
 # there stops being read", owner 2026-08-18), so a bare row reads as 0.
 # Prints nothing only when the row is not on screen — which means the
 # panel is shut, and that is a different answer from "empty".
+# THE PANEL'S COUNT FOR ONE VIEW — from the panel's own ROW, which is a
+# Button.
+#
+# It matched any element with the right label, and on 2026-08-31 the
+# screens gained titles: `Text("Everything")` is a StaticText labelled
+# exactly "Everything", it appears in the tree before the panel's row,
+# and this read it, found no count on it and reported 0. The `lens` check
+# then said a filter had changed nothing — about a filter that works.
+#
+# Third label collision in two days (the others: 48 buttons called
+# "Today", three notes sharing a date). The lesson each time is the same:
+# a reader that asks only "what is this called" will eventually be
+# answered by the wrong thing. Asking for the TYPE as well costs one
+# clause and rules out every label that is merely text on a screen.
 panel_count() {
   scan 'def walk(n):
     l = n.get("AXLabel") or ""
     m = re.match(r"^" + VIEW + r"(, ([0-9]+))?$", l)
-    if m: print(m.group(2) or "0")
+    if m and n.get("type") == "Button": print(m.group(2) or "0")
     for c in n.get("children") or []: walk(c)' "VIEW = \"$1\"" | head -1
 }
 

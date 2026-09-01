@@ -43,13 +43,26 @@ struct EverythingView: View {
                 // the state, and the number was furniture. The slice
                 // picker is the only thing this screen needs at its
                 // head, because it changes what the list IS.
-                picker
+                // THE SCREEN'S NAME. Notes, Everything and Tasks were the
+                // three surfaces with nothing at the top saying where you
+                // are — Today, Inbox and the Calendar all lead with one,
+                // and a list that starts at its first row reads as a
+                // fragment of a screen rather than a screen.
+                Text("Everything")
+                    .font(.system(size: LivType.hero, weight: .bold))
+                    .foregroundStyle(LivTheme.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
+                    .padding(.bottom, 6)
+                picker
+                    .padding(.top, 0)
                     .padding(.bottom, 8)
                 if slice.isEmpty {
                     EmptyHint(empty)
                 } else {
-                    ForEach(slice) { row in line(row) }
+                    ForEach(Array(slice.enumerated()), id: \.element.id) { i, row in
+                        line(row, prev: i == 0 ? nil : slice[i - 1])
+                    }
                 }
             }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -153,18 +166,18 @@ struct EverythingView: View {
 
     // MARK: one row
 
-    private func line(_ row: EntityRow) -> some View {
+    private func line(_ row: EntityRow, prev: EntityRow?) -> some View {
         // A BUTTON, not a tap gesture (owner's clips, 2026-08-20). A
         // gesture opens the row and says nothing while it does it;
         // every app in the reference set lights the row under the
         // finger first. Eight rows in this app were gestures.
         Button { desk.open(row.id) } label: {
-            row_(row)
+            row_(row, prev: prev)
         }
         .livRowPress()
     }
 
-    private func row_(_ row: EntityRow) -> some View {
+    private func row_(_ row: EntityRow, prev: EntityRow?) -> some View {
         LivListRow(
             glyph: LivKind.glyph(of: row),
             // A MIXED list: the kind's colour is doing work here, so it
@@ -182,7 +195,11 @@ struct EverythingView: View {
             if let anchor = anchorChip(row) {
                 ValueChip(anchor)
             }
-            if let trailing = trailing(row) {
+            // Only when it changes — see `livNewFact`. Fourteen rows
+            // reading "Mon 31 Aug" said nothing about any of them.
+            if let trailing = livNewFact(
+                trailing(row), after: prev.flatMap { trailing($0) })
+            {
                 LivRowFact(text: trailing, emphasis: lens == .upcoming)
             }
         }

@@ -176,7 +176,13 @@ struct CalendarView: View {
             header(today: today)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                // THE HEAVIEST LINE IN THE APP IS GONE. A 0.5pt rule
+                // running bezel to bezel, about a point under a 32pt
+                // bold title's descenders — the app's only header
+                // divider, and the only place a line cuts the screen
+                // into slabs rather than grouping rows. Air does the
+                // same job without drawing anything.
+                .padding(.bottom, 14)
             dayPanel(items: items, today: today, doneNames: doneNames)
         }
         .background(LivTheme.canvas)
@@ -606,12 +612,25 @@ struct CalendarView: View {
                     .onTapGesture(coordinateSpace: .local) { point in
                         tapGrid(at: point, frames: frames)
                     }
-                    // Room for the first hour to sit above its own rule.
-                    // Applied OUTSIDE the tap gesture on purpose: the
-                    // gesture reads the grid's own coordinates, and this
-                    // must not shift what a tap means.
-                    .padding(.top, CalClock.labelRise)
+                    // (The room for the first hour's label moved to the
+                    // scroll view's own top margin — see below. Inside
+                    // the content it only ever rescued hour 0, because
+                    // `scrollTo(anchor: .top)` parks whichever hour you
+                    // asked for AT the viewport edge and the label hangs
+                    // above its band by `labelRise`.)
                 }
+                // ROOM FOR THE LABEL THAT IS SCROLLED TO.
+                //
+                // Each hour band is tagged with its rule at the band's
+                // top and draws its label `.offset(y: -labelRise)`.
+                // Offset does not extend layout bounds, so
+                // `scrollTo(hourAnchor(8), anchor: .top)` puts the RULE
+                // at the viewport's edge and the label hangs outside the
+                // clip — "08:00" arrived sliced through the middle while
+                // every hour below it was whole. On the scroll view this
+                // holds for whichever hour you land on; inside the
+                // content it only ever helped hour 0.
+                .contentMargins(.top, CalClock.labelRise + 8, for: .scrollContent)
                 // No scroll bar: it sat exactly on top of in-block controls
                 // (found live, 2026-08-05), and the hour labels already say
                 // where you are — Apple's day view shows none either.

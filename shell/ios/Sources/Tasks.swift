@@ -57,6 +57,19 @@ struct TasksView: View {
     var body: some View {
         let groups = visibleGroups()
         List {
+            // THE SCREEN'S NAME — see the same addition in Notes and
+            // Everything. This one sits above the filter chips, which
+            // are a control, not a heading.
+            Text("Tasks")
+                .font(.system(size: LivType.hero, weight: .bold))
+                .foregroundStyle(LivTheme.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+                .padding(.bottom, 2)
+                .listRowInsets(
+                    EdgeInsets(top: 0, leading: LivRow.margin, bottom: 0, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             chipRow
             if groups.allSatisfy({ $0.rows.isEmpty }) {
                 emptyRow
@@ -64,8 +77,8 @@ struct TasksView: View {
             ForEach(groups) { group in
                 groupHeader(group)
                 if !group.completes || expanded.contains(group.name) {
-                    ForEach(group.rows) { row in
-                        taskRow(row)
+                    ForEach(Array(group.rows.enumerated()), id: \.element.id) { i, row in
+                        taskRow(row, prev: i == 0 ? nil : group.rows[i - 1])
                     }
                 }
             }
@@ -374,10 +387,10 @@ struct TasksView: View {
 
     // MARK: rows
 
-    private func taskRow(_ row: EntityRow) -> some View {
+    private func taskRow(_ row: EntityRow, prev: EntityRow?) -> some View {
         let option = options.first { $0.name == row.status }
         let done = option?.completes == true
-        let due = tasksDue(row)
+        let due = livNewFact(tasksDue(row), after: prev.flatMap { tasksDue($0) })
         let chips = refChips(row)
         return HStack(spacing: 0) {
             StatusRing(done: done, hue: tasksOptionColor(option?.hue)) {
@@ -401,7 +414,8 @@ struct TasksView: View {
             Spacer(minLength: 8)
             if let due {
                 // Always text3 — see `groupHeader` for where the
-                // lateness went.
+                // lateness went — and only when it CHANGES, so five
+                // rows due "Sun 16 Aug" say it once (`livNewFact`).
                 Text(due)
                     .font(.system(size: LivType.caption).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)
