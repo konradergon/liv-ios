@@ -92,7 +92,39 @@ struct TabSwitcher: View {
 
     private var grid: some View {
         VStack(spacing: 0) {
+            // THE DESK STARTS AT THE THUMB.
+            //
+            // The grid filled from the top of the screen down, and it is
+            // opened by the numbered box on the BOTTOM bar — so the
+            // motion was: reach to the bottom, then reach back to the
+            // top for the thing you asked for. On a tall phone the first
+            // card sat about 700pt from where the finger already was
+            // (owner, 2026-08-31: "tabs should begin at bottom where
+            // thumb is").
+            //
+            // Two halves to it. A short desk SINKS: the content is given
+            // the container's height and aligned bottom, so three cards
+            // sit under your thumb instead of stranded at the ceiling. A
+            // long desk STARTS at the bottom and scrolls up, which is
+            // also where `newTabCard` lives — the one card you reach for
+            // without looking.
             ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    content
+                }
+                .containerRelativeFrame(.vertical, alignment: .bottom)
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollIndicators(.hidden)
+            // THE WAY OUT stays at the foot, under the grid — it is the
+            // one thing that must not move when the cards do.
+            footer
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        Group {
                 inactiveRow
                 if shown.isEmpty {
                     // NOTHING ON THE DESK. It drew a lone dashed card and
@@ -129,13 +161,6 @@ struct TabSwitcher: View {
                 // Nothing above it either: this ScrollView already
                 // starts below the status bar (measured: y=62 on a 912pt
                 // screen) and the grid owns the screen while it is up.
-            }
-            // NO SCRIM, AND NO ROOM FOR THE BAR. Nothing floats over
-            // this grid — it covers the screen, footer and all. The
-            // scrim was painting canvas over the first row's titles for
-            // nothing, which together with the band it reserved was the
-            // cut-off the owner reported (2026-08-28).
-            footer
         }
     }
 

@@ -180,7 +180,27 @@ struct LibraryPanel: View {
                         detail: counts.of(feature),
                         on: desk.state == feature
                     ) {
-                        desk.go(feature)
+                        // TAPPING THE VIEW YOU ARE IN GOES TO ITS ROOT.
+                        //
+                        // Notes' root is the LIST of notes; a document is
+                        // a tab on the desk, and the desk is app-wide, so
+                        // once any note was open Notes always drew the
+                        // document and the list could not be reached at
+                        // all without closing every tab (owner,
+                        // 2026-08-31: "you can't access note list without
+                        // closing all note tabs"). There was no door.
+                        //
+                        // This is the phone's own idiom — tap the tab you
+                        // are already on to go to its root — and it keeps
+                        // the other half working: arriving at Notes from
+                        // ANOTHER view still restores the document you
+                        // left, and the bar's numbered box is still how
+                        // you get back to it from the list.
+                        if desk.state == feature {
+                            desk.showList()
+                        } else {
+                            desk.go(feature)
+                        }
                         onDismiss()
                     }
                 }
