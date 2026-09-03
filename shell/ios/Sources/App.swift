@@ -161,13 +161,6 @@ struct RootView: View {
             // through. It travels and retires with the bar, or a scrim
             // would sit on a screen whose bar has gone.
             if !keyboard.up && desk.menu == nil {
-                LivBottomScrim()
-                    .offset(x: desk.deskShift)
-                    .offset(y: desk.chromeAway ? LivBar.clearance + 12 : 0)
-                    .allowsHitTesting(false)
-                    .zIndex(0)
-            }
-            if !keyboard.up && desk.menu == nil {
                 BottomBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)

@@ -73,7 +73,19 @@ struct DeskHost: View {
             // (owner, 2026-08-17). What must not land under the buttons
             // keeps `LivRow.topInset` for itself.
             .overlay(alignment: .top) { LivTopScrim() }
-            .ignoresSafeArea(edges: .top)
+            // AND THE SAME AT THE OTHER END, so a list dissolves into
+            // the ground before it reaches the floating bar instead of
+            // being read through it.
+            //
+            // IT LIVES ON THE SURFACE, not beside the bar. As a sibling
+            // of `BottomBar` in RootView's ZStack it ate the bar's taps
+            // — on Notes the numbered box stopped opening the switcher —
+            // and `.allowsHitTesting(false)` did not save it. A scrim
+            // that fades a surface's content is part of that surface,
+            // which is exactly where `LivTopScrim` already sits; put it
+            // here and it cannot compete with chrome drawn above it.
+            .overlay(alignment: .bottom) { LivBottomScrim() }
+            .ignoresSafeArea(edges: [.top, .bottom])
             // THE DESK AS A CARD. The panel stops 100pt short of the
             // right edge (owner, 2026-08-23: "Panel should not be full
             // screen!"), so the desk stays on screen beside it — pushed,
