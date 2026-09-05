@@ -44,7 +44,11 @@ struct DeskTab: Identifiable {
     var lastUsed: Int64
 }
 
-/// **Notes only, for now.** The team's ruling of 2026-08-22 is Reading B:
+/// **Not Notes only any more.** The other views' planes arrived with
+/// `.position(String)` and one desk (2026-08-28), so this reads as the
+/// stale half of a sentence whose other half shipped.
+///
+/// The team's ruling of 2026-08-22 is Reading B:
 /// each view owns a tab strip, and a tab is a saved POSITION inside that
 /// view. In Notes that position is a document, which is exactly what this
 /// case was before. The other views' cases arrive with their planes; in

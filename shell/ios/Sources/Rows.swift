@@ -103,6 +103,18 @@ func livNewFact(_ s: String?, after prev: String?) -> String? {
     s == prev ? nil : s
 }
 
+/// IS THIS ROW DONE? One predicate, because it was written twice —
+/// byte-identical bodies in `Calendar.swift` and `Today.swift`, which is
+/// standing rule 4 in its smallest form. `design/one-core.md` wants the
+/// tick predicate in Rust eventually, once entry status and cardinality
+/// go with it; until that batch is scheduled it lives here, once.
+///
+/// `doneNames` is the set of status options whose `completes` is true —
+/// the vocabulary decides what "done" means, never a hardcoded string.
+func livIsDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
+    row.status.map { doneNames.contains($0) } ?? false
+}
+
 struct LivRowFact: View {
     let text: String
     var emphasis: Bool = false

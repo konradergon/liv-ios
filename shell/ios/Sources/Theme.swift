@@ -546,21 +546,26 @@ enum LivInk {
 }
 
 enum LivTheme {
-    // SYSTEM COLOURS, on purpose (owner, 2026-08-15: "revert colors and
-    // faces to as system like as possible… we should do the surface
-    // appearance last and thoroughly").
+    // EVERY COLOUR IN THE APP, AND EVERY ONE OF THEM CHOSEN. The values
+    // are in `Palette` above, with the measurements they came from.
     //
-    // What this replaces: a palette derived from the app icon — a violet
-    // accent, a near-black ground, a hand-mixed kind set, all measured to
-    // a 7:1 floor. It was not wrong, it was EARLY: a bespoke surface
-    // pays off once the app's shapes have settled, and until then it is
-    // a second thing to keep true on every screen. The system's own
-    // semantic colours cost nothing to keep true, adapt to light, dark,
-    // increased contrast and accessibility tints for free, and read as
-    // "an iOS app" rather than as a look someone chose in a hurry.
+    // This block said "SYSTEM COLOURS, on purpose" until 2026-09-05,
+    // quoting the owner's 2026-08-15 "revert colors and faces to as
+    // system like as possible" — three lines above `accent`, which has
+    // read "ONE live colour, and it is ours" since the surface pass of
+    // 2026-08-30. A comment that contradicts the line under it is worse
+    // than no comment: it is the file telling you the opposite of what
+    // the code does.
     //
-    // The names below stay. When the surface pass comes, it changes the
-    // right-hand side of these lines and nothing else — which is the
+    // The history it recorded is worth keeping, because it is the reason
+    // the pass waited. An icon-derived palette was tried FIRST and
+    // reverted — not wrong, early: a bespoke surface pays off once the
+    // app's shapes have settled, and until then it is a second thing to
+    // keep true on every screen. The system's set held the place while
+    // the shapes moved. When they stopped, the owner asked for the
+    // surface that sentence had deferred.
+    //
+    // The names below never changed through any of it, which is the
     // whole reason colour lives in a type here (standing rule 3).
 
     /// The app's tint — ONE live colour, and it is ours. A muted denim

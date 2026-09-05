@@ -83,8 +83,8 @@ struct TodayView: View {
             taskOptions.filter { $0.completes == true }.compactMap(\.name))
         let all = agenda(for: selectedDay)
         let allDay = all.filter(\.allDay)
-        let timedOpen = all.filter { !$0.allDay && !isDone($0.row, doneNames) }
-        let done = all.filter { !$0.allDay && isDone($0.row, doneNames) }
+        let timedOpen = all.filter { !$0.allDay && !livIsDone($0.row, doneNames) }
+        let done = all.filter { !$0.allDay && livIsDone($0.row, doneNames) }
         let late = lateRows(today: today, doneNames: doneNames)
         let captured = capturedTodayCount(today: today)
         // The timeline knows the time (today only): what passed dims,
@@ -384,7 +384,7 @@ struct TodayView: View {
     ) -> some View {
         let row = item.row
         let task = livCanTick(row)
-        let done = isDone(row, doneNames)
+        let done = livIsDone(row, doneNames)
         let chips = contextChips(row)
         return HStack(spacing: 8) {
             Text(Civil.timeString(item.stamp))
@@ -472,7 +472,7 @@ struct TodayView: View {
                                 color: LivKind.color(of: item.row), size: 14)
                         } else if livCanTick(item.row) {
                             StatusRing(
-                                done: isDone(item.row, doneNames), compact: true
+                                done: livIsDone(item.row, doneNames), compact: true
                             ) {
                                 toggleStatus(item.row.id)
                             }
@@ -483,7 +483,7 @@ struct TodayView: View {
                             Text(displayTitle(item.row))
                                 .font(.system(size: LivType.body))
                                 .foregroundStyle(
-                                    isDone(item.row, doneNames)
+                                    livIsDone(item.row, doneNames)
                                         ? LivTheme.text3 : LivTheme.text)
                                 .lineLimit(1)
                                 .contentShape(Rectangle())
@@ -665,7 +665,7 @@ struct TodayView: View {
         datedRows.filter { row in
             guard row.kinds?.contains("task") == true, let due = row.due
             else { return false }
-            return Civil.day(of: due) < today && !isDone(row, doneNames)
+            return Civil.day(of: due) < today && !livIsDone(row, doneNames)
         }
         .sorted { ($0.due ?? 0) > ($1.due ?? 0) }
     }
@@ -684,9 +684,6 @@ struct TodayView: View {
     // MARK: predicates + acts
 
 
-    private func isDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
-        row.status.map { doneNames.contains($0) } ?? false
-    }
 
     private func displayTitle(_ row: EntityRow) -> String { livRowTitle(row) }
 
@@ -745,7 +742,7 @@ struct TodayView: View {
         guard let row = box.entity(id) else { return }
         let doneNames = Set(
             taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let target = isDone(row, doneNames)
+        let target = livIsDone(row, doneNames)
             ? taskOptions.first { $0.completes != true }
             : taskOptions.first { $0.completes == true }
         guard let name = target?.name, !name.isEmpty else { return }

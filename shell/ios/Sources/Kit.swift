@@ -182,10 +182,18 @@ struct LivSegment<Value: Hashable>: View {
 
 /// A SWITCH, in the app's own language.
 ///
-/// The two `Toggle(…).tint(accent)` this replaces were the app's only
-/// stock controls, and a system switch is a saturated slab about 51x31
-/// — on a screen measured at 0.74% saturated pixels against 0.05–0.19%
+/// The two `Toggle(…).tint(accent)` this replaces were the app's LOUDEST
+/// stock controls, and a system switch is a saturated slab about 51x31 —
+/// on a screen measured at 0.74% saturated pixels against 0.05–0.19%
 /// everywhere else, the two of them were most of the difference.
+///
+/// Not the only ones, which this said until 2026-09-05: two `DatePicker`s
+/// remain in `Detail.swift` (a graphical month, a compact clock). They
+/// take the app's accent from the subtree's `.tint`, so they are not
+/// wearing the system's blue — but the graphical one paints its own
+/// selected day and its own red "today", and the app has had its own
+/// month grid since the calendar's picker card. Replacing it is real
+/// work, not a token change, and it is not done.
 ///
 /// The colour moves into the TRACK at a quarter strength rather than
 /// filling it, so "on" is legible without the control being the

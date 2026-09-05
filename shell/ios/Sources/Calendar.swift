@@ -881,7 +881,7 @@ struct CalendarView: View {
         _ item: CalendarDayItem, name: String, span: String, length: Int,
         live: Int, moving: Bool, voice: String, task: Bool, doneNames: Set<String>
     ) -> some View {
-        let done = isDone(item.row, doneNames)
+        let done = livIsDone(item.row, doneNames)
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
                 if item.occurrence {
@@ -952,9 +952,6 @@ struct CalendarView: View {
 
 
 
-    private func isDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
-        row.status.map { doneNames.contains($0) } ?? false
-    }
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
@@ -962,7 +959,7 @@ struct CalendarView: View {
         guard let row = box.entity(id) else { return }
         let doneNames = Set(
             taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let target = isDone(row, doneNames)
+        let target = livIsDone(row, doneNames)
             ? taskOptions.first { $0.completes != true }
             : taskOptions.first { $0.completes == true }
         guard let name = target?.name, !name.isEmpty else { return }

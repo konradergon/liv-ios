@@ -18,7 +18,7 @@
 # (Surface.swift's markers) rather than what the model believes.
 #
 #   ./drive.sh boot [where]      relaunch (optionally via -desk.boot <where>) and check
-#   ./drive.sh grid              Notes' root is the tab grid, and unopenable on itself
+#   ./drive.sh grid              Notes' root is the LIST, and the box opens the switcher
 #   ./drive.sh create            + makes what the place holds, in one tap
 #   ./drive.sh desk              one desk of documents, the same in every view
 #   ./drive.sh lens              a saved filter actually narrows the app
@@ -92,7 +92,24 @@ axe() {
   perl -e 'alarm shift; exec @ARGV' 20 "$(whence -p axe)" "$@"
 }
 
-container() { xcrun simctl get_app_container "$UDID" "$APP" data 2>/dev/null }
+# AND `simctl`, FOR THE SAME REASON. `xcrun simctl io … screenshot` wedged
+# on 2026-08-31 with the app at 0% CPU and a healthy tree — the simulator's
+# own services, not ours, and only a restart cleared it. `axe` got its bound
+# that day and these did not, which left the same hang available through a
+# different door.
+#
+# 90s, not 20: a cold boot and an install of the whole bundle are slow by
+# nature, where an accessibility read is not. Still far under the ten
+# minutes a wedged call costs.
+#
+# NOT the backgrounded `launch --console-pty` (in `cmd_boot`): that one is
+# MEANT to outlive the call, because it is what captures the console for
+# the whole run. Bounding it would kill the log after 90 seconds.
+sim() {
+  perl -e 'alarm shift; exec @ARGV' 90 "$(whence -p xcrun)" simctl "$@"
+}
+
+container() { sim get_app_container "$UDID" "$APP" data 2>/dev/null }
 
 # THE ACCESSIBILITY TREE, or nothing. Every reader below pipes through
 # this, so a shut-down simulator or a dead app produces one clear line
@@ -198,10 +215,10 @@ cmd_boot() {
   local stale
   stale=$(find Sources -name '*.swift' -newer build/Liv.app/Liv 2>/dev/null | head -1)
   [[ -z "$stale" ]] || { die "build/Liv.app is older than $stale — run ./build.sh"; return 1 }
-  xcrun simctl boot "$UDID" >/dev/null 2>&1   # already-booted is fine
-  xcrun simctl install "$UDID" build/Liv.app >/dev/null 2>&1 \
+  sim boot "$UDID" >/dev/null 2>&1   # already-booted is fine
+  sim install "$UDID" build/Liv.app >/dev/null 2>&1 \
     || { die "install failed — the checks would have driven the OLD app"; return 1 }
-  xcrun simctl terminate "$UDID" "$APP" >/dev/null 2>&1
+  sim terminate "$UDID" "$APP" >/dev/null 2>&1
   # Let the terminate land. Running this straight after `suites.sh`
   # otherwise races its own last terminate and boots into nothing.
   perl -e 'select(undef,undef,undef,0.6)'
@@ -293,7 +310,7 @@ cmd_boot() {
 # hold, so they are checked before every assertion, not once at the top.
 cmd_check() {
   local booted
-  booted=$(xcrun simctl list devices 2>/dev/null | python3 -c "
+  booted=$(sim list devices 2>/dev/null | python3 -c "
 import sys
 print(1 if any('$UDID' in l and 'Booted' in l for l in sys.stdin) else 0)" 2>/dev/null)
   [[ "$booted" == "1" ]] || {
@@ -1321,7 +1338,7 @@ raise SystemExit(0 if (vault or legacy) else 1)' || {
   # produced three failures in a row here. Terminating is the only close
   # that always works — there is no Done button on this sheet, and a swipe
   # on a detent sheet is not reliably reproducible.
-  xcrun simctl terminate "$UDID" "$APP" >/dev/null 2>&1
+  sim terminate "$UDID" "$APP" >/dev/null 2>&1
   say "ok    vault: $verdict"
 }
 

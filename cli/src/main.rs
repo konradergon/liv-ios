@@ -1,9 +1,19 @@
-//! liv — a stand-in shell for milestone 3.
+//! liv — the headless CLI, and the VERIFICATION tool.
 //!
-//! A real shell (window, hotkey, popup) arrives with milestone 4, where the
-//! platform decision bites. Until then this binary is the thinnest possible
-//! orchestrator: parse arguments, open the session, run services, print what
-//! the renderer emitted. It owns no data and defines no commands.
+//! It was written as a stand-in for a shell that had not arrived. One has:
+//! `shell/ios` is the app. So this is not a placeholder any more, it is the
+//! second reader of the same box — the way to check what the app claims,
+//! from outside the app (CLAUDE.md: "cross-check writes against the box
+//! with the CLI. A builder's own report is not evidence").
+//!
+//! That job sets its rule: it should reach every verb the shell can reach,
+//! and today it does not (no undo, trash, restore, search, links, or most
+//! of the create verbs). Each gap is a thing the app can do that nothing
+//! else can confirm.
+//!
+//! Still the thinnest possible orchestrator: parse arguments, open the
+//! session, run services, print what the renderer emitted. It owns no data
+//! and defines no commands.
 
 mod satellite;
 
