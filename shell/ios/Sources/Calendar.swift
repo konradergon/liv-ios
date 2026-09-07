@@ -142,11 +142,6 @@ struct CalendarView: View {
     /// Where the bin sits, in WINDOW space, so the drag (which reports
     /// the finger in the same space) can tell when it is over it.
     @State private var trashZone: CGRect = .zero
-    /// A new event being NAMED in the grid. Nothing is written until the
-    /// name is submitted: tapping an hour used to create an untitled
-    /// event and throw you into the note editor to name it (owner,
-    /// 2026-08-06 — "setting names of calendar items should be done in
-    /// calendar", and an event is not a document).
     /// A page asked for by ‹ ›, Today or a month-away jump. The pager
     /// consumes it, slides, and hands the month back on landing — the
     /// drag itself lives down there, not here.
@@ -262,7 +257,7 @@ struct CalendarView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(Civil.dayLabel(selectedDay)). Pick a day")
-            if box.busyRetrying { ProgressView().scaleEffect(0.7) }
+            if box.busyRetrying { LivBusy() }
             Spacer()
             // A VERB, dressed as one. As plain accent text beside the
             // date it read as a label saying which day was selected
@@ -844,9 +839,12 @@ struct CalendarView: View {
 
     private func hourAnchor(_ hour: Int) -> String { "hour-\(hour)" }
 
-    /// The empty canvas: one tappable band per hour. A tap opens a NAMED
-    /// draft at that hour, right where you tapped; the write happens on
-    /// submit. Nothing untitled ever reaches the box.
+    /// The empty canvas: one tappable band per hour. A tap WRITES the
+    /// event at that hour and raises its card with the caret in the
+    /// name — see `create(on:minutes:allDay:)` for the ruling and the
+    /// reason. This said the opposite ("a NAMED draft… nothing untitled
+    /// ever reaches the box") until 2026-09-07: that was the 2026-08-06
+    /// behaviour, reversed a week later, and the comment outlived it.
     private var hourLines: some View {
         VStack(spacing: 0) {
             ForEach(0..<24, id: \.self) { hour in

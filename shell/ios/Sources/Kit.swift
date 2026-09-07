@@ -242,6 +242,53 @@ struct LivSwitch: View {
     }
 }
 
+/// THE ONE BUSY MARK.
+///
+/// The box is merely locked and a retry is scheduled — quiet busyness,
+/// never a fault, which is why it is `text3` and not the red.
+///
+/// It was drawn twice and identically (Today's header and the
+/// calendar's), and it was the last untinted system control left after
+/// the 2026-09-05 stock-control inventory that produced `LivSwitch` and
+/// `LivSegment` above: no `.tint`, so it came out in the system's
+/// secondary grey rather than a colour anybody here chose.
+///
+/// `scaleEffect`, NOT `controlSize` — `controlSize` does not resize a
+/// circular `ProgressView` on iOS, so swapping it silently restores the
+/// spinner to full size. The 0.7 stays in here rather than in
+/// `Theme.swift` because a recipe holds its own geometry, the way
+/// `LivSwitch` holds 46x28 and `LivSegment` holds 44.
+struct LivBusy: View {
+    var body: some View {
+        ProgressView()
+            .scaleEffect(0.7)
+            .tint(LivTheme.text3)
+    }
+}
+
+/// THE TRASH SWIPE, once.
+///
+/// Soft and undoable at every call site — never a hard delete; the row
+/// goes to Trash and comes back from it.
+///
+/// It was hand-built four times (Everything, Tasks, Notes, Inbox) and
+/// three of them passed no `.tint`, so SwiftUI painted them its own
+/// ~100%-saturation destructive red — the loudest pixels left in an app
+/// whose palette tops out at 62%.
+///
+/// This returns ONLY THE BUTTON, deliberately, so each site keeps its
+/// own `edge:` and its own `allowsFullSwipe:`. Those are not the same:
+/// Inbox passes `false` on purpose, so an unrouted capture cannot be
+/// thrown away by a thumb that kept going. A helper that wrapped the
+/// whole `.swipeActions` container would have flattened that.
+@ViewBuilder
+func livTrashAction(_ action: @escaping () -> Void) -> some View {
+    Button(role: .destructive, action: action) {
+        Label("Trash", systemImage: "trash")
+    }
+    .tint(LivTheme.red)
+}
+
 /// The switch above, as a `ToggleStyle`, so the two call sites keep
 /// reading as `Toggle(isOn:) { label }` and only the control changes.
 struct LivSwitchStyle: ToggleStyle {
@@ -421,13 +468,13 @@ struct CountTile: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 56)
             .background(
-                RoundedRectangle(cornerRadius: 12).fill(LivTheme.surface)
+                RoundedRectangle(cornerRadius: LivTheme.radiusCard).fill(LivTheme.surface)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: LivTheme.radiusCard)
                     .strokeBorder(LivTheme.border, lineWidth: 0.5)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
         }
         .buttonStyle(.plain)
     }

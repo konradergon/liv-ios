@@ -72,12 +72,7 @@ struct EverythingView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        // CLEAR THE BAR. This was a bare 16, so the last rows scrolled
-        // under the floating bottom bar and the final heading was cut
-        // through by it. Every other list in the app reserves the bar's
-        // own room plus a breath; two of them were reserving a literal
-        // that predates `LivBar.room` existing (standing rule 3).
-        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()  // full screen: no bar under it
         .background(LivTheme.canvas)
         .onAppear {
@@ -205,11 +200,7 @@ struct EverythingView: View {
         }
         .contentShape(Rectangle())
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                box.trash(row.id)
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
+            livTrashAction { box.trash(row.id) }
         }
     }
 

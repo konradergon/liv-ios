@@ -76,11 +76,21 @@ final class EditorBridge: ObservableObject {
 // MARK: - fonts
 
 private enum EditorFont {
-    // Bumped one step across the board (owner, 2026-07-31: "clearer,
-    // larger text") — reading comfort beats density in the editor.
-    static let body = UIFont.systemFont(ofSize: 16)
-    static let mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    static let codeInline = UIFont.monospacedSystemFont(ofSize: 14.5, weight: .regular)
+    // THE SIZES LIVE IN `LivType.Editor` (Theme.swift), not here. They
+    // were six literals in this file, dated 2026-07-31 — they predate
+    // `LivType` entirely — and standing rule 3 says a size lives in a
+    // type. Moved unchanged on 2026-09-07, values bit-identical, so the
+    // drift they carry is now visible where the rest of the scale is:
+    // this body is 16 while every list row that opens a note is 18.
+    //
+    // These are `UIFont`s because the editor draws with TextKit, which
+    // never sees a SwiftUI font — different UNITS, not different
+    // numbers.
+    static let body = UIFont.systemFont(ofSize: LivType.Editor.body)
+    static let mono = UIFont.monospacedSystemFont(
+        ofSize: LivType.Editor.mono, weight: .regular)
+    static let codeInline = UIFont.monospacedSystemFont(
+        ofSize: LivType.Editor.codeInline, weight: .regular)
 
     /// The list GUTTER: every list line's words start this far in, and a
     /// line that wraps carries on under its words rather than under its
@@ -114,9 +124,9 @@ private enum EditorFont {
 
     static func heading(_ level: Int) -> UIFont {
         switch level {
-        case 1: return .systemFont(ofSize: 25, weight: .bold)
-        case 2: return .systemFont(ofSize: 21, weight: .semibold)
-        default: return .systemFont(ofSize: 18, weight: .semibold)
+        case 1: return .systemFont(ofSize: LivType.Editor.h1, weight: .bold)
+        case 2: return .systemFont(ofSize: LivType.Editor.h2, weight: .semibold)
+        default: return .systemFont(ofSize: LivType.Editor.h3, weight: .semibold)
         }
     }
 
@@ -708,6 +718,11 @@ final class MarkdownTextView: UITextView {
         v.backgroundColor = .clear
         v.font = .systemFont(ofSize: LivType.hero, weight: .bold)
         v.textColor = LivInk.text
+        // THE CARET IS OURS. A UIViewRepresentable does not reliably
+        // inherit the SwiftUI tint, so without this the caret, the
+        // selection highlight and the drag handles in the app's main
+        // writing surface came out the device's blue (2026-09-07).
+        v.tintColor = LivInk.accent
         v.textContainerInset = .zero
         v.textContainer.lineFragmentPadding = 0
         v.returnKeyType = .done
@@ -742,6 +757,9 @@ final class MarkdownTextView: UITextView {
         backgroundColor = .clear
         font = EditorFont.body
         textColor = LivInk.text
+        // See `titleView` above: the body's caret needs this for the
+        // same reason the title's does.
+        tintColor = LivInk.accent
         // Both of these belong to a view that scrolls ITSELF. Embedded,
         // the card's own ScrollView owns the swipe-to-dismiss
         // (scrollDismissesKeyboard) and there is nothing to bounce —

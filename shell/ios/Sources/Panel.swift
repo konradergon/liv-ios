@@ -1,35 +1,46 @@
-// liv iOS — the side panels (design/ios.md §6 rev 6, owner 2026-08-03).
+// liv iOS — the side panel (design/ios.md §6 rev 6, owner 2026-08-03).
 // The app's mental model is three zones:
 //
 //   LEFT  — the library: everything about the APP. The global views,
 //           the workspace's views, the workspace switcher, Settings.
 //   CENTER — the desk: ONE editable thing. Tabs hold notes and nothing
 //           else — a view is a visit, a note is a tab.
-//   RIGHT — the properties panel: everything about THIS note. It
-//           DESCRIBES; the verbs live in the desk's ••• menu.
+//   RIGHT — everything about THIS note. It DESCRIBES; the verbs live in
+//           the desk's ••• menu.
 //
-// Rev 6 made both panels FULL-SCREEN (Notesnook's layout was the model).
-// The library was pulled back on 2026-08-23 (owner: "Panel should not be
-// full screen!") and now stops at LivPanel.width, leaving a sliver of the
-// desk; the properties panel is still edge to edge. Both are swiped into
-// from anywhere — the swipe lives on DeskHost, one gesture for open and
-// close, and it is also the way out: neither carries a close button.
+// SINGULAR since 2026-08-29: the right-hand zone became a CARD, not a
+// panel (Desk.swift, "One panel left"), so `SidePanel` below has exactly
+// one caller — the library. Rev 6 made both full-screen (Notesnook's
+// layout was the model); the library was pulled back on 2026-08-23
+// (owner: "Panel should not be full screen!") and stops at
+// LivPanel.width, leaving a sliver of the desk.
+//
+// It is swiped into from anywhere — the swipe lives on DeskHost, one
+// gesture for open and close, and it is also the way out: it carries no
+// close button.
+//
+// (Header rewritten 2026-09-07. It still described two live panels, a
+// properties panel standing "on the right, it does not float over
+// anything", and paint that "waits for the surface pass" — the card
+// landed on 2026-08-29 and the surface passes shipped.)
 
 import SwiftUI
 
 // MARK: - the slide-over container
 
-/// ONE recipe for both surfaces again (owner, 2026-08-15: "maybe we
-/// should keep properties stalled on the right not as a card for
-/// simplification's sake, and have the base appearance same as
-/// library"). The app's own ground, no radius, no shadow, no inset —
-/// the properties panel stands on the right, it does not float over
-/// anything.
+/// The app's own ground, no radius, no shadow, no inset: a place you
+/// go, not a thing that floats over one. It pushes the desk aside
+/// rather than covering it.
 ///
-/// The two still differ where it costs nothing: the LIBRARY pushes the
-/// desk off screen (it is a place) and the PROPERTIES panel slides over
-/// a desk that stays put (it is the desk's). That is motion, not paint,
-/// and paint waits for the surface pass.
+/// It was written as ONE RECIPE FOR BOTH SURFACES (owner, 2026-08-15:
+/// "have the base appearance same as library"), and it carried a
+/// `side:` and an optional `width` so the properties panel could stand
+/// on the right in the same clothes. That second caller went on
+/// 2026-08-29, when properties became a card — so both parameters were
+/// carrying a shape nothing asked for, and every reader had to work out
+/// which of the two branches ran. They were removed on 2026-09-07
+/// (standing rule 6). Bringing a right-hand panel back means mirroring
+/// two constants, which the comments below name.
 ///
 /// NO close button. It had a 40pt band of its own holding one chevron,
 /// then rode the first row, where it landed almost inside the title
@@ -39,14 +50,8 @@ import SwiftUI
 /// below is what remains for anyone not using a finger.
 struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
-    /// How wide the panel stands. `nil` = the whole screen.
-    var width: CGFloat? = nil
-    /// WHICH EDGE IT STANDS ON. The library is on the left, the
-    /// properties panel on the right, and past this line they are the
-    /// same panel (owner, 2026-08-28: "the note property panel being
-    /// identical in behavior as the left panel is best, but on the
-    /// right… ideally it shares code with the left panel").
-    var side: HorizontalEdge = .leading
+    /// How wide the panel stands, leaving the rest of the desk showing.
+    let width: CGFloat
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -65,20 +70,25 @@ struct SidePanel<Content: View>: View {
             // row a sixth of the way down a panel the owner had already
             // called too empty at the top (2026-08-28: "In the panel,
             // there is a huge cut-off that needs to go").
-            .safeAreaInset(edge: .top) { LivTopScrim(underChrome: false) }
-            // The properties panel leaves room for the bar. The library
-            // does not: its own foot floats and its list runs under it.
             //
-            // A LITERAL, deliberately. A `.safeAreaInset` whose height is
-            // derived from the safe area feeds itself — AttributeGraph
+            // NEVER DERIVE AN INSET'S HEIGHT FROM THE SAFE AREA. A
+            // `.safeAreaInset` that does feeds itself: AttributeGraph
             // reports a cycle and the surface stops repainting while its
-            // body keeps evaluating (2026-08-23).
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: width == nil ? LivBar.room : 0)
-            }
-            // A PANEL, not a curtain (owner, 2026-08-18): one step of tone
-        // above the canvas, flat — no shadow, no gradient, no border.
-        .background(LivTheme.panel)
+            // body keeps evaluating perfectly (2026-08-23, half a day
+            // and eight innocent suspects). `LivTopScrim` reads a
+            // literal, and so must anything added beside it.
+            .safeAreaInset(edge: .top) { LivTopScrim(underChrome: false) }
+            //
+            // NO BOTTOM INSET: the library's own foot floats and its
+            // list runs under it. There was one here until 2026-09-07,
+            // reserving `LivBar.room` when `width` was nil — the
+            // properties panel's branch, and nil since that panel became
+            // a card.
+            //
+            // A PANEL, not a curtain (owner, 2026-08-18): one step of
+            // tone above the canvas, flat — no shadow, no gradient, no
+            // border.
+            .background(LivTheme.panel)
             // WIDTH FIRST, THEN THE LEADING PIN, THEN the safe area.
             // Painting the background with `.ignoresSafeArea()` on the
             // COLOUR spreads it over the whole window whatever frame
@@ -97,14 +107,14 @@ struct SidePanel<Content: View>: View {
             // largest depth event — 320pt of panel over the whole screen
             // — was arriving at 1.07:1, less definition than a list
             // separator. A hairline is 1.50:1 and costs no saturation.
-            .overlay(alignment: side == .leading ? .trailing : .leading) {
-                if width != nil {
-                    Rectangle().fill(LivTheme.border2).frame(width: 0.5)
-                }
+            //
+            // The panel stands on the LEADING edge, so its hairline is
+            // on the TRAILING one — the two constants below are the pair
+            // to mirror if a right-hand panel ever wants this recipe.
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(LivTheme.border2).frame(width: 0.5)
             }
-            .frame(
-                maxWidth: .infinity,
-                alignment: side == .leading ? .leading : .trailing)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .ignoresSafeArea()
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)

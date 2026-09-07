@@ -617,7 +617,11 @@ struct PanelMark: View {
 struct LivIcon: View {
     let glyph: LivGlyph
     let color: Color
-    var size: CGFloat = 19
+    /// NO DEFAULT. It was `= 19`, a hand-typed second copy of
+    /// `LivRow.glyph`, and all seventeen call sites pass `size:`
+    /// anyway — so the number was never read and only stood there
+    /// waiting to disagree with the token (standing rules 3 and 6).
+    let size: CGFloat
 
     var body: some View {
         let stroke = StrokeStyle(

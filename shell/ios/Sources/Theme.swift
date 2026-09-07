@@ -163,6 +163,35 @@ enum LivType {
     static let display: CGFloat = 26
     /// A SCREEN's name, and a record's name field.
     static let hero: CGFloat = 32
+
+    /// THE EDITOR'S OWN SCALE, and the fact that it is a second one.
+    ///
+    /// The markdown editor draws with TextKit, so it needs `UIFont`
+    /// sizes rather than the steps above — but that is a reason for
+    /// different UNITS, not for different NUMBERS, and until 2026-09-07
+    /// these six lived as literals inside `EditorText.swift`, dated
+    /// 2026-07-31: they predate `LivType` entirely.
+    ///
+    /// They are moved here UNCHANGED, on purpose (design/editor-study.md:
+    /// "move the numbers to Theme.swift without changing them, so the
+    /// drift is visible"). And it is visible: `body` is 16 while every
+    /// list row that opens a note is `LivType.body` at 18, and `mono` is
+    /// 12 — `micro`, which this file calls "a badge, never a word you
+    /// have to read" — for a code block that is nothing but words.
+    ///
+    /// Closing that gap is NOT a token swap. `EditorFont.listGutter` is
+    /// calibrated against the widest marker at the CURRENT body size,
+    /// and the drawn checkbox and bullet are centred on `body.lineHeight`
+    /// — so a resize has to re-derive all three and be seen on a
+    /// simulator. It is its own rev, on the owner's word.
+    enum Editor {
+        static let body: CGFloat = 16
+        static let mono: CGFloat = 12
+        static let codeInline: CGFloat = 14.5
+        static let h1: CGFloat = 25
+        static let h2: CGFloat = 21
+        static let h3: CGFloat = 18
+    }
 }
 
 /// Row metrics. A list row was 46pt when its text was 11–13; the type
@@ -476,6 +505,19 @@ enum LivBar {
     /// indicator, so the bar's own height plus its gap is the whole
     /// requirement.
     static let room: CGFloat = height + gap + 8
+
+    /// THE ROOM A SCROLLING LIST LEAVES, which is `room` plus a hand's
+    /// width of air so the last row is not pinned under the glass.
+    ///
+    /// Written out as `LivBar.room + 24` at five call sites — Everything,
+    /// Inbox, Notes, Tasks and Today — three of which also carried a
+    /// prose copy of this same reason. One number, one place (standing
+    /// rules 3 and 4).
+    ///
+    /// Not to be confused with `room + gap` (App.swift), which is a
+    /// different number for a different job: the bar's own floor, not a
+    /// list's tail.
+    static let listRoom: CGFloat = room + 24
 }
 
 /// One consistent motion for the whole app (owner, 2026-07-31): navigation
@@ -600,6 +642,22 @@ private enum Palette {
     static let red = hex(0xD1575B, light: 0xB42D31)
     static let green = hex(0x51B87E, light: 0x257447)
     static let amber = hex(0xD29C56, light: 0x9F6923)
+
+    // THE CAMERA'S CHROME, and the reason it does not flip.
+    //
+    // A live viewfinder is whatever the lens is pointing at, so a
+    // control over it cannot take its ground from the app's scheme —
+    // there is no scheme out there. These two are scheme-INVARIANT for
+    // the same reason `onAccent` is: what they sit on is fixed.
+    //
+    // The dark was `cameraChromeFill` in Camera.swift until 2026-09-07,
+    // a hand-mixed green-cast near-black defined in a feature file. Its
+    // argument was sound and its home was not (standing rule 3).
+    static let cameraChrome = hex(0x1B2220)
+    /// Ink on the viewfinder. Deliberately the SAME white as `onAccent`
+    /// rather than a second one — two whites is the two-lists-held-true-
+    /// by-a-comment shape `LivInk` exists to have removed.
+    static let cameraInk = onAccent
 }
 
 /// The same tokens at the UIColor level, for the UIKit text stack (the
@@ -663,6 +721,11 @@ enum LivTheme {
     /// is one colour instead of the scheme-flipping pair it needed while
     /// the tint was the system's pale blue.
     static let onAccent = Color(Palette.onAccent)
+
+    /// The camera's two, which do not flip with the scheme — see
+    /// `Palette.cameraChrome` for why a viewfinder has no scheme.
+    static let cameraChrome = Color(Palette.cameraChrome)
+    static let cameraInk = Color(Palette.cameraInk)
 
     // ELEVATION, the system's ramp (surface pass, owner 2026-08-18: the
     // left panel "should feel like a panel, not a view or a curtain…
@@ -775,6 +838,14 @@ enum LivTheme {
 
     static let radius: CGFloat = 10
     static let radiusSm: CGFloat = 6
+    /// A SMALL CARD — a count tile, a tab on the desk. Between `radius`
+    /// and `radiusLg` because it is neither a control nor a sheet: it is
+    /// a card you can pick up.
+    ///
+    /// It was a hand-typed 12 in nine places (three in `Kit`, six in
+    /// `Tabs`) sitting beside the three named radii, which is how a
+    /// fourth radius starts.
+    static let radiusCard: CGFloat = 12
     /// A surface laid OVER another one — the slide-up menus, the
     /// properties card. Big enough to read as a separate sheet at a
     /// glance, which is the whole job of it.

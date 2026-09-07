@@ -852,24 +852,27 @@ final class KeyboardWatch: ObservableObject {
 /// as a second, duller rim. Below iOS 26 they come back, because a flat
 /// material with no rim has no edge at all.
 ///
-/// `tinted` is the ON state — the library door while the menu is open.
+/// NO ON STATE, and that is the decision rather than an omission. This
+/// said "`tinted` is the ON state — the library door while the menu is
+/// open" until 2026-09-07, and it had not been true since 2026-08-28:
+/// the door turning accent was called amateur, and it was also the
+/// wrong idea — a tint says "selected", and a door standing open is not
+/// a selection. The door says it is open by WIDENING PanelMark's
+/// column (`Glyph.swift`). The `tinted` flag itself outlived that by
+/// ten days, with both of its arms unreachable and a comment insisting
+/// they were live.
 struct LivGlass<S: Shape>: ViewModifier {
     let shape: S
-    var tinted = false
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             // NOT `.interactive()`: that variant takes the touch for its
             // own press effect, and a button wearing it stops firing
             // (the library door, found live 2026-08-17).
-            content.glassEffect(
-                tinted ? .regular.tint(LivTheme.accent) : .regular, in: shape)
+            content.glassEffect(.regular, in: shape)
         } else {
             content
-                .background(
-                    tinted ? AnyShapeStyle(LivTheme.accent) : AnyShapeStyle(.ultraThinMaterial),
-                    in: shape
-                )
+                .background(.ultraThinMaterial, in: shape)
                 .overlay(shape.stroke(LivTheme.border, lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         }
@@ -877,10 +880,9 @@ struct LivGlass<S: Shape>: ViewModifier {
 }
 
 extension View {
-    func livGlass<S: Shape>(in shape: S, tinted: Bool = false) -> some View {
-        modifier(LivGlass(shape: shape, tinted: tinted))
+    func livGlass<S: Shape>(in shape: S) -> some View {
+        modifier(LivGlass(shape: shape))
     }
-
 }
 
 /// THE SOFT EDGE. Every surface runs under the clock now (owner,

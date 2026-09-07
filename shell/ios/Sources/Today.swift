@@ -181,7 +181,7 @@ struct TodayView: View {
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
         // Room under the last row for the add button to sit over.
-        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
@@ -219,7 +219,7 @@ struct TodayView: View {
                 Text(Civil.dayLabel(today))
                     .font(.system(size: LivType.hero, weight: .bold))
                     .foregroundStyle(LivTheme.text)
-                if box.busyRetrying { ProgressView().scaleEffect(0.7) }
+                if box.busyRetrying { LivBusy() }
                 Spacer(minLength: 0)
             }
             areaLine(rows)

@@ -1,5 +1,139 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-07 — rev 52: what the audit left, and the comments that outlived their code
+
+The polish audit's own deferred list, re-derived against HEAD rather than
+trusted. Most of it was already closed: the calendar chrome retires (rev
+51), the segmented picker and both accent switches are `LivSegment` and
+`LivSwitch`, and the "stale spec jargon in `comms.rs`" was never real —
+all 36 distinct spec tags in the Rust tree resolve to a live doc, so
+nothing there was touched.
+
+What was actually open, and is now done.
+
+**DEAD CODE THAT LOOKED LIVE.** Three shapes, all with a comment
+insisting they worked.
+
+`LivGlass.tinted` carried a doc line reading "`tinted` is the ON state —
+the library door while the menu is open". That has been false since
+2026-08-28, when the door started saying it is open by widening
+PanelMark's column instead of turning accent (*a tint says "selected",
+and a door standing open is not a selection*). No call site ever passed
+`true`, so both arms of both branches were unreachable. Gone, with
+`FloatCircle` (no callers at all), `FloatCircleLabel.on` and
+`livTopButton`'s never-read `on:`.
+
+`.swipeActions` hung off a Notes row inside a `LazyVStack`, where the
+modifier is not honoured at all — five lines that looked like a feature
+and never ran once. Removed, and the hole it leaves is now stated in
+the file: Notes is the only content list with no swipe-to-trash, and
+giving it one means a List conversion that `drive.sh rows notes` has to
+sign off on.
+
+`Record.placeholder` branched on `livRowTitle(row) != "Untitled"` and
+called `livRowTitle(row)` in both arms — and the word has not been
+returned since 2026-09-06, when a nameless thing started reading as its
+kind. Three more comments still described the old behaviour (Tabs'
+accessibility label, two in `drive.sh` explaining its label-collision
+workaround); all corrected. So did two in Calendar, one of them an
+orphan block sitting on the wrong `@State`, the other claiming "nothing
+untitled ever reaches the box" — which is the reverse of the ruling
+seven lines further down, where tapping an hour writes the event
+immediately.
+
+**COLOUR AND SIZE NOBODY CHOSE.** The Trash was the last screen wearing
+system navigation furniture — a `NavigationStack`, a nav bar with the
+platform's own material, title font and hairline, and a `Done` button
+that, with no tint in the subtree, came out iOS blue. It draws its own
+header now, like every other sheet, and is dismissed by its grabber
+(`.presentationDragIndicator(.visible)`, which is not on by default —
+without it the screen would have had no way out). It also gains
+`LivOverlay.trash`: the nav bar was the only structure a driver could
+have keyed on, so the harness can see this surface for the first time.
+
+Three of the four trash swipe trays passed no `.tint` and so painted in
+the system's ~100%-saturation destructive red; the fourth used
+`LivTheme.red`. One recipe now, `livTrashAction`, returning only the
+BUTTON — each site keeps its own `allowsFullSwipe`, because Inbox's
+`false` is a deliberate guard against throwing away an unrouted capture
+and a wrapper around the whole tray would have flattened it.
+
+There was no `.tint` on the root, so every caret, selection handle and
+highlight in the app was the device's blue — the most-touched pixel in
+a writing app, in the one colour that changes underneath us when the
+phone's owner picks a different system tint. Set at the outermost point,
+plus `tintColor` on the editor's two UIKit text views, which do not
+reliably inherit it.
+
+The camera mixed its own near-black in a feature file and filled six
+controls with bare `.white`. Both are tokens now (`cameraChrome`,
+`cameraInk`), scheme-invariant on purpose: a live viewfinder has no
+scheme. `cameraInk` is defined AS `onAccent` rather than as a second
+white. The black behind the preview stays black — it is physical, not a
+surface.
+
+The editor ran a second, private type scale dated 2026-07-31, predating
+`LivType` entirely: six literals for the app's main reading surface.
+Moved to `LivType.Editor` **unchanged**, so the drift is visible where
+the rest of the scale is — the body is 16 while every row that opens a
+note is 18, and code is 12, which this file calls "a badge, never a word
+you have to read". Closing that gap is not a token swap: `listGutter` is
+calibrated to the widest marker at the current size and the drawn
+checkbox and bullet centre on the body's line height. Its own rev, on
+the owner's word.
+
+Also tokenised: `LivBar.listRoom` (`room + 24`, written out five times,
+three of them with a prose copy of the reason beside it),
+`LivTheme.radiusCard` (a hand-typed 12 in nine places, beside three
+named radii), and `LivIcon`'s dead `size` default, which was a second
+copy of `LivRow.glyph` that all seventeen call sites overrode.
+
+**TWO EDITOR VERBS THAT COULD NOT UNDO THEMSELVES.**
+
+Bold, italic and strike over a selection crossing a line only ever
+ADDED markers — a second tap gave `****a****`. The multi-line branch now
+strips when every non-empty line is already wrapped. It needs its own
+predicate: the single-line test reads the document either side of the
+selection, not a line's own ends. Two edges it has to get right — a
+length guard, or a line that IS the marker satisfies both hasPrefix and
+hasSuffix on the same character; and skipping empty lines, or a
+selection containing a blank one can never unwrap.
+
+The toolbar's numbered-list key always restarted at 1: it wrote the
+line's index inside the block being rewritten, while the Return key
+continued the count properly. One grammar, two answers. It seeds from
+the line IMMEDIATELY above — not the last match in a backwards walk,
+which would seed from the run's smallest number — comparing indent as
+the original whitespace, since a tab and two spaces are the same depth,
+and counting with a running total rather than the loop index, which
+counts headings and blanks too.
+
+Five assertions added to the in-app self-check for the two of them.
+
+**Left alone, and why.** The two `DatePicker`s in the due sheet: the
+month grid that would replace the graphical one is private to
+Calendar.swift, and the pager it would reuse is the thing the owner
+calls laggy — so this is a seam to cut deliberately, not a token swap,
+and the clock's real defect is that it lets you dial 11:47 while
+`CalClock` says times land on quarter hours. Search-by-property and the
+note-properties door are in `todo.org`, owner-reported: the first is a
+settled-zone change wanting a failing test and a cost test, the second
+is mockup-first. The day picker's frame rate needs a profiler on a
+device. The calendar's day mark is a visible design change the owner
+should see first.
+
+**NOT VERIFIED.** This ran on Linux with no Swift toolchain and no
+simulator, so none of it was compiled and none of it was seen. `cargo
+test` is green, which says nothing about any of the above. Before this
+is trusted: `shell/ios/build.sh`, then `suites.sh` (the editor
+self-check carries the five new assertions — break one on purpose and
+watch it fail first), then `drive.sh tour`, `panel`, `rows` and `bar`.
+The three things no static reading can settle are the Trash sheet's
+layout without its nav bar, the tinted full-swipe tray at Tasks, and
+whether the root tint reaches the two date pickers inside nested sheets
+— if it does, `Detail.swift:121` and `:1001` are now redundant.
+
+
 ## 2026-09-07 — rev 51: the chrome retires on every surface
 
 Owner: *"fix the calendar chrome not retiring."*

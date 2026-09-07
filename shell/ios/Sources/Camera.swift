@@ -12,12 +12,6 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Solid ink for controls sitting on the live viewfinder. The rest of the
-/// shell dropped blur materials (owner, 2026-07-29) and so does this — but
-/// a themed surface would vanish against a bright frame in light mode, so
-/// camera chrome carries its own opaque dark.
-private let cameraChromeFill = Color(red: 0x1B / 255, green: 0x22 / 255, blue: 0x20 / 255)
-
 // MARK: - session tray rows
 
 private struct CameraShot: Identifiable {
@@ -388,9 +382,9 @@ struct CameraFlow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: LivType.strong, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(LivTheme.cameraInk)
                 .frame(width: 32, height: 32)
-                .background(cameraChromeFill, in: Circle())
+                .background(LivTheme.cameraChrome, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -638,9 +632,9 @@ struct CameraFlow: View {
                             engine.shoot()
                         } label: {
                             ZStack {
-                                Circle().strokeBorder(.white, lineWidth: 3)
+                                Circle().strokeBorder(LivTheme.cameraInk, lineWidth: 3)
                                     .frame(width: 62, height: 62)
-                                Circle().fill(.white).frame(width: 50, height: 50)
+                                Circle().fill(LivTheme.cameraInk).frame(width: 50, height: 50)
                             }
                             .contentShape(Circle())
                         }
@@ -662,11 +656,11 @@ struct CameraFlow: View {
                 ZStack {
                     PhotosPicker(selection: $pickerItem, matching: .images) {
                         ZStack {
-                            Circle().strokeBorder(.white, lineWidth: 3)
+                            Circle().strokeBorder(LivTheme.cameraInk, lineWidth: 3)
                                 .frame(width: 62, height: 62)
                             Image(systemName: "photo.on.rectangle")
                                 .font(.system(size: LivType.display))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(LivTheme.cameraInk)
                         }
                         .contentShape(Circle())
                     }
@@ -695,10 +689,10 @@ struct CameraFlow: View {
             Text(scanning ? "Reading…" : "Scan text")
                 .font(.system(size: LivType.label, weight: .medium))
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(LivTheme.cameraInk)
         .padding(.horizontal, 11)
         .frame(height: 36)
-        .background(cameraChromeFill, in: Capsule())
+        .background(LivTheme.cameraChrome, in: Capsule())
         .contentShape(Capsule())
         .opacity(scanning ? 0.6 : 1)
     }

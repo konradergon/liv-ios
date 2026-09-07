@@ -113,6 +113,18 @@ struct LivApp: App {
                     .environmentObject(desk)
                     .environmentObject(outbox)
                     .environmentObject(workspaces)
+                    // THE CARET IS OURS TOO. There was no tint on the
+                    // root until 2026-09-07, so every text caret,
+                    // selection highlight and drag handle in the app
+                    // came out the device's blue — the most-touched
+                    // pixel in a writing app, in the one colour that
+                    // changes underneath us when the phone's owner picks
+                    // a different system tint. That is the whole reason
+                    // `Theme.swift` gives for having an accent at all.
+                    //
+                    // OUTERMOST, so it also wraps the presentations
+                    // RootView itself puts up.
+                    .tint(LivTheme.accent)
             }
         }
     }
@@ -285,6 +297,13 @@ struct RootView: View {
         .sheet(isPresented: $desk.trashShown) {
             TrashView()
                 .environmentObject(box)
+                .livOverlay(LivOverlay.trash)
+                // THE WAY OUT. The trash lost its `Done` button with its
+                // nav bar on 2026-09-07, and a sheet's grabber is NOT
+                // visible by default — without this the screen has no
+                // dismissal affordance at all. Every other themed sheet
+                // in the app already asks for it.
+                .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $desk.cameraShown) {
             CameraFlow(onDone: { ids in

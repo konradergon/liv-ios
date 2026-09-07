@@ -1,11 +1,24 @@
 // liv iOS — the metadata editor (design/ios.md §6). EntityInspector is
-// the desktop right-panel inspector, full-bleed: kinds, due shortcuts,
+// everything ABOUT a thing and nothing OF it: kinds, due shortcuts,
 // status menu, one compact row per property, trash + undo. Add-property
-// moved behind the Settings door (§10 — schema growth is not daily use);
-// the Details chip row still adds values for the fixed fields.
-// The Desk body owns the title; the inspector is hosted by the desk's
-// right-hand panel and by a record card, and nothing pushes it. Content
-// editing waits for M2 (CAS). Rows 40pt+, hairline separators, no cards.
+// lives behind the Settings door (§10 — schema growth is not daily use).
+//
+// It is hosted twice and pushes nothing: the properties sheet card
+// (App.swift) and the record card (Record.swift). The Desk body owns
+// the title.
+//
+// CONTENT editing is not here. It lands through `Box.setContent`, a
+// compare-and-swap on the base fingerprint with no force flag by
+// design — a stale base is re-read, never overwritten.
+//
+// Hairline separators, no cards.
+//
+// (Rewritten 2026-09-07. Three of this header's claims had rotted: it
+// called the inspector "the desktop right-panel inspector" — there is
+// no desktop shell since Tauri was dropped on 2026-08-29 — it named a
+// "Details chip row" that no longer exists anywhere in this file, and
+// it said content editing "waits for M2 (CAS)", which shipped. It also
+// carried a row height in prose, which is a token's job.)
 
 import SwiftUI
 
@@ -258,8 +271,9 @@ struct EntityInspector: View {
                 }
             }
             Spacer(minLength: 4)
-            // A mis-tap here WRITES cells — full 44pt targets, the
-            // FloatCircle rule (audit, 2026-08-04).
+            // A mis-tap here WRITES cells — so full 44pt targets, the
+            // platform's minimum and the app's own top-key size
+            // (`livTopKeyShape`). Audit, 2026-08-04.
             Button {
                 box.reject(proposal)
             } label: {

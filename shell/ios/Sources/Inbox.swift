@@ -233,12 +233,7 @@ struct InboxView: View {
         // every unrelated snapshot the box publishes.
         .animation(LivMotion.list, value: scraps.count)
         .animation(LivMotion.list, value: proposals.count)
-        // CLEAR THE BAR. This was a bare 16, so the last rows scrolled
-        // under the floating bottom bar and the final heading was cut
-        // through by it. Every other list in the app reserves the bar's
-        // own room plus a breath; two of them were reserving a literal
-        // that predates `LivBar.room` existing (standing rule 3).
-        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
@@ -277,13 +272,10 @@ struct InboxView: View {
             routeFace(row)
         }
         .livRowPress()
+        // `allowsFullSwipe: false` on purpose: an unrouted capture must
+        // not be thrown away by a thumb that kept going.
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
-                box.trash(row.id)  // soft, undoable
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
-            .tint(LivTheme.red)
+            livTrashAction { box.trash(row.id) }
         }
     }
 

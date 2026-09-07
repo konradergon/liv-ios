@@ -206,7 +206,7 @@ struct TabSwitcher: View {
             desk.newTab()
             desk.switcherShown = false
         } label: {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: LivTheme.radiusCard)
                 .strokeBorder(
                     LivTheme.border2,
                     style: StrokeStyle(lineWidth: 1, dash: [5, 4])
@@ -220,7 +220,7 @@ struct TabSwitcher: View {
                     }
                     .foregroundStyle(LivTheme.text3)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
         }
         .buttonStyle(.plain)
     }
@@ -607,22 +607,24 @@ struct TabCard: View {
             }
             .frame(height: 150)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(LivTheme.surface))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(RoundedRectangle(cornerRadius: LivTheme.radiusCard).fill(LivTheme.surface))
+            .clipShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: LivTheme.radiusCard)
                     .strokeBorder(
                         active ? LivTheme.accent : LivTheme.border,
                         lineWidth: active ? 1.5 : 0.5)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
         }
         .buttonStyle(.plain)
-        // TWO UNTITLED NOTES SOUND THE SAME. Every unnamed note reads
-        // back as "Untitled", so a screen reader gives a grid of them one
-        // word repeated and no way to tell which is which — and neither
-        // can a test driving by label. The excerpt is what a sighted
-        // person is telling them apart by, so it goes in the label too.
+        // TWO UNNAMED NOTES SOUND THE SAME. An unnamed note reads back
+        // as its KIND — "Note" (`livRowTitle`, 2026-09-06; it was
+        // "Untitled" before that) — so a screen reader gives a grid of
+        // them one word repeated and no way to tell which is which, and
+        // neither can a test driving by label. The excerpt is what a
+        // sighted person is telling them apart by, so it goes in the
+        // label too.
         .accessibilityLabel(spoken)
     }
 

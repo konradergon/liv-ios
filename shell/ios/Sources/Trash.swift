@@ -18,14 +18,29 @@ import SwiftUI
 /// can honestly offer.
 struct TrashView: View {
     @EnvironmentObject var box: BoxModel
-    @Environment(\.dismiss) private var dismiss
 
     private var rows: [EntityRow] {
         (box.snap?.trashed ?? []).compactMap { box.entity($0) }
     }
 
     var body: some View {
-        NavigationStack {
+        // NO NavigationStack, and no `Done` in a toolbar. This was the
+        // one screen in the app still wearing system navigation
+        // furniture: a nav bar with the platform's own chrome material,
+        // title font and hairline, and a confirmation-action button
+        // that — with no tint anywhere in the subtree — came out in iOS
+        // system blue. Every other sheet in the app draws its own header
+        // and is dismissed by its grabber; this one now does the same
+        // (2026-09-07).
+        VStack(alignment: .leading, spacing: 4) {
+            // ABOVE the Group, not inside the ScrollView: the empty
+            // branch is not in a ScrollView, so a header placed there
+            // would leave an empty trash with no name on it.
+            Text("Trash")
+                .font(.system(size: LivType.title, weight: .bold))
+                .foregroundStyle(LivTheme.text)
+                .padding(.horizontal, LivRow.cardInset + 4)
+                .padding(.top, 16)
             Group {
                 if rows.isEmpty {
                     EmptyHint(
@@ -62,14 +77,12 @@ struct TrashView: View {
                     }
                 }
             }
-            .background(LivTheme.canvas)
-            .navigationTitle("Trash")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
+        // FILL BOTH WAYS, so `canvas` paints the whole sheet. The empty
+        // branch is a hint that hugs its own text — without this the
+        // ground would stop under it and the sheet's default grey would
+        // show below.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(LivTheme.canvas)
     }
 }

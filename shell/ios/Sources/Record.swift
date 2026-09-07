@@ -286,16 +286,16 @@ struct RecordBody: View {
             .padding(.bottom, 14)
     }
 
-    /// A record with no name cell still has a title everywhere else in
-    /// the app — the core derives one from its first line. Showing
-    /// "Untitled" here would contradict the list you just tapped, so the
-    /// derived name is the PROMPT: it reads right, and typing over it is
-    /// what writes the name. Nothing is written by merely opening it.
+    /// THE SAME TITLE THE LIST SHOWED, as the prompt — so the field
+    /// reads right, typing over it is what writes the name, and nothing
+    /// is written by merely opening the card.
+    ///
+    /// It used to branch: `livRowTitle`, unless that came back
+    /// "Untitled", in which case… `livRowTitle` again. Both arms were
+    /// the same call, and the word itself has not been returned since
+    /// 2026-09-06, when a nameless thing started reading as its kind.
     private func placeholder(_ row: EntityRow) -> String {
-        let derived = livRowTitle(row)
-        if derived != "Untitled" { return derived }
-        // The one rule for a nameless thing (`livRowTitle`): its kind.
-        return livRowTitle(row)
+        livRowTitle(row)
     }
 
     private var storedName: String {

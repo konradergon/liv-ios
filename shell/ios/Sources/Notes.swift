@@ -73,20 +73,31 @@ struct NotesList: View {
                             }
                         }
                         .livRowPress()
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) { box.trash(row.id) } label: {
-                                Label("Trash", systemImage: "trash")
-                            }
-                        }
+                        // NO SWIPE-TO-TRASH HERE, and it is not an
+                        // oversight to fix in passing. A `.swipeActions`
+                        // tray hung off this row until 2026-09-07 and
+                        // never once ran: the modifier is honoured only
+                        // on rows of a `List` or `Form`, and this column
+                        // is a `LazyVStack` in a `ScrollView`. Every
+                        // other list that offers the gesture is a real
+                        // List (Everything, Tasks, Today, Inbox); Notes
+                        // is the one that is not, so five lines sat here
+                        // looking like a feature (standing rule 6).
+                        //
+                        // Giving the gesture back means converting this
+                        // column to a List, which is a real change and a
+                        // simulator-verified one: `drive.sh rows notes`
+                        // asserts a 56pt row, and a List brings cell
+                        // containers, default row insets and a min-row
+                        // height with it. The non-List idiom that works
+                        // today is `.contextMenu` (Detail.swift's row
+                        // menu); neither is built here.
                     }
                 }
             }
             .padding(.horizontal, LivRow.margin)
         }
-        // The bar floats; the last row must not sit under it. Same
-        // number Today and Tasks use — four unrelated literals were
-        // doing this job before LivBar.room existed, and 88 was one.
-        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas)
         .safeAreaInset(edge: .top) { LivTopScrim() }

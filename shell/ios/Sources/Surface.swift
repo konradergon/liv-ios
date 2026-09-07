@@ -84,6 +84,12 @@ enum LivOverlay {
     /// the trailing edge (2026-08-28).
     static let properties = "properties"
     static let settings = "settings"
+    /// The trash. It had no marker while it wore a `NavigationStack`,
+    /// which is also the only structure a driver could have keyed on —
+    /// so removing the nav bar (2026-09-07) is what made this necessary,
+    /// and what makes the surface visible to `drive.sh` for the first
+    /// time.
+    static let trash = "trash"
 }
 
 extension View {

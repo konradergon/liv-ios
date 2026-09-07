@@ -1388,8 +1388,9 @@ bar_tab_label() {
 # the pair failed intermittently (seen twice: 2026-08-30 and 2026-08-31,
 # both times passing on a re-run). The label is read from one snapshot of
 # the tree and used against another: in between, the list can still be
-# settling after an install, and every row in this box is called
-# "Untitled, <date>", so a stale read finds nothing to match.
+# settling after an install, and the unnamed rows in this box all read
+# alike — "Note, <date>" since 2026-09-06, "Untitled, <date>" before it
+# — so a stale read finds nothing to match.
 #
 # Re-reading is the fix, not a longer sleep — a sleep long enough to be
 # safe on a busy machine is wasted on every healthy run. The success
@@ -1398,8 +1399,10 @@ open_first_note() {
   # BY ITS OWN FRAME, not by its label — and that is not the ban being
   # broken, it is the same exception the library sliver already takes.
   #
-  # Every note in this box is called "Untitled, <date>", and the create
-  # check adds one per run, so three notes now share today's date. `axe
+  # The unnamed notes in this box all read "Note, <date>" (the kind
+  # word, from `livRowTitle` since 2026-09-06 — it was "Untitled"
+  # before), and the create check adds one per run, so three notes now
+  # share today's date. `axe
   # tap --label` REFUSES a label that matches more than one element
   # ("Multiple (3) accessibility elements matched… none expose
   # AXUniqueId"), which is the correct thing for it to do and leaves this

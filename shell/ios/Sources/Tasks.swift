@@ -93,7 +93,7 @@ struct TasksView: View {
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
         // Room under the last row for the add button to sit over.
-        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas.ignoresSafeArea())
         .sheet(item: $duePick) { p in
@@ -474,11 +474,7 @@ struct TasksView: View {
                 .tint(LivTheme.accent)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-                model.trash(row.id)  // soft, reversible — never a hard delete
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
+            livTrashAction { model.trash(row.id) }
         }
     }
 

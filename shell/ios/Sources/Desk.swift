@@ -746,22 +746,6 @@ struct DeskHost: View {
     }
 }
 
-/// One quiet floating control: 36pt circle, 44pt target.
-struct FloatCircle: View {
-    let symbol: String
-    var on: Bool = false
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            FloatCircleLabel(symbol: symbol, on: on)
-        }
-        .livTopButton(on: on)
-        .accessibilityLabel(label)
-    }
-}
-
 extension View {
     /// The top row's button dress: the SAME surface as the bottom bar
     /// (owner, 2026-08-15: "should be made of the same thing"; 2026-08-17:
@@ -797,7 +781,11 @@ extension View {
     /// test driving by label are not. In that position, put
     /// `.frame(width: 40, height: 40).contentShape(Rectangle())` inside
     /// the label instead — see the library door above (2026-08-24).
-    func livTopButton(on: Bool = false) -> some View {
+    ///
+    /// It took an `on:` flag until 2026-09-07 and never read it — the
+    /// only caller passing one was `FloatCircle`, which had no callers
+    /// of its own and went in the same change.
+    func livTopButton() -> some View {
         buttonStyle(.plain)
             .livTopKeyShape()
     }
@@ -818,7 +806,6 @@ extension View {
 /// (`livTopButton`); this is only what goes in it.
 struct FloatCircleLabel: View {
     let symbol: String
-    var on: Bool = false
 
     var body: some View {
         Image(systemName: symbol)
@@ -827,7 +814,12 @@ struct FloatCircleLabel: View {
             // the whole difference between an icon that announces
             // itself and one that is just there.
             .font(.system(size: LivType.title, weight: .light))
-            .foregroundStyle(on ? LivTheme.accent : LivTheme.text)
+            // FULL INK, always. There was an `on` state here that
+            // turned the glyph accent, reachable only through
+            // `FloatCircle` — which nothing called. A top door says it
+            // is open by its mark's geometry, never by going blue
+            // (see `LivGlass` in Chrome.swift for the same removal).
+            .foregroundStyle(LivTheme.text)
             // A FIXED square, so a wide glyph and a narrow one come out
             // the same button.
             .frame(width: 24, height: 24)
