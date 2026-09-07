@@ -214,7 +214,9 @@ struct RecordBody: View {
             if pendingName == fresh { pendingName = nil }
             // The same reseed guard the note title uses: an external
             // rename must land, a live edit must not be stomped.
-            if name != fresh, name == "" || name == old { name = fresh }
+            if let seed = LivName.reseed(draft: name, was: old, now: fresh) {
+                name = seed
+            }
         }
     }
 
@@ -298,9 +300,9 @@ struct RecordBody: View {
         livRowTitle(row)
     }
 
-    private var storedName: String {
-        (box.entity(id)?.cells ?? []).first { $0.property == "name" }?.value ?? ""
-    }
+    /// The name cell — `LivName.stored` since 2026-09-07, one reading
+    /// across the desk, this card and the properties card.
+    private var storedName: String { LivName.stored(box.entity(id)) }
 
     /// @FocusState set during a view update is dropped; one runloop hop
     /// later it takes.
@@ -319,17 +321,19 @@ struct RecordBody: View {
         notesShown = (box.entity(id)?.contentPrint ?? 0) != 0
     }
 
+    /// The rules live in `LivName.commit` (Kit.swift). This copy was
+    /// missing the desk's trashed-entity guard, which is exactly what a
+    /// second hand-written commit costs.
     private func commitName() {
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
-            name = stored  // an emptied field reverts, never erases the name
-            return
+        switch LivName.commit(typed: name, row: box.entity(id), pending: pendingName) {
+        case .write(let typed):
+            pendingName = typed
+            box.set(id, "name", typed)
+        case .revert(let stored):
+            name = stored
+        case .ignore:
+            break
         }
-        guard typed != stored, typed != pendingName else { return }
-        pendingName = typed
-        box.set(id, "name", typed)
     }
 
     // MARK: notes — the note editor, embedded

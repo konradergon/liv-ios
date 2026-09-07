@@ -1,15 +1,21 @@
-// liv iOS — Calendar (design/ios.md §6): a compact month grid (Mon-first,
-// six fixed weeks, ≤3 neutral ink dots per day — never a color rainbow)
-// over a FIXED day panel: all-day pills first, then rows chronologically.
-// `dated` is the full set (bucketed by civil day client-side); only
-// `occurrences` ride the snapshot window, so the grid re-windows over the
-// VISIBLE six-week span on every month change. Occurrence rows project
-// their SERIES entity — repeat glyph, read-only, tap opens the series.
-// A row tap opens a Desk tab (desk.open dismisses this window by the
-// chrome's own rule). Tapping an empty hour — or long-pressing a day for
-// an all-day one — opens an inline DRAFT with a name field: the box
-// learns nothing until you submit, and the workspace stamps what lands
-// (every creation door stamps, M4).
+// liv iOS — Calendar (design/ios.md §6): a full-height day timeline, with
+// the month grid behind the title as a JUMP card (Mon-first, six fixed
+// weeks, ≤3 neutral ink dots per day — never a colour rainbow, and the
+// chosen day marked by `LivDayMark`, the same disc the Today strip
+// draws). `dated` is the full set (bucketed by civil day client-side);
+// only `occurrences` ride the snapshot window, so the grid re-windows
+// over the VISIBLE six-week span on every month change. Occurrence rows
+// project their SERIES entity — repeat glyph, read-only, tap opens the
+// series. A row tap opens a Desk tab (desk.open dismisses this window by
+// the chrome's own rule).
+//
+// TAPPING AN EMPTY HOUR WRITES THE EVENT, there and then, and raises its
+// card with the caret in the name (owner, 2026-08-13: "naming of items
+// should be done in properties"). The workspace stamps what lands (every
+// creation door stamps, M4). This said the opposite — "opens an inline
+// DRAFT with a name field: the box learns nothing until you submit" —
+// until 2026-09-07; that was the 2026-08-06 behaviour, reversed a week
+// later, and three comments in this file outlived it.
 
 import SwiftUI
 import UIKit
@@ -30,50 +36,6 @@ private struct CalendarDayItem: Identifiable {
 }
 
 // MARK: - the month grid's data, decided before it is drawn
-
-/// One cell of the month grid, already decided: the number, whether it
-/// belongs to the month, and the colours of its dots. Everything the
-/// cell draws and nothing else, so a cell rebuilds when its DAY changes
-/// and not because a finger moved.
-private struct CalCell: Equatable {
-    let day: Int64
-    let number: Int
-    let inMonth: Bool
-    let isToday: Bool
-    let count: Int
-    /// Up to three, in kind colour (owner, 2026-08-13).
-    let dots: [Color]
-}
-
-/// One month's six weeks, ready to draw.
-private struct CalMonth: Equatable {
-    let month: Int64
-    let cells: [CalCell]
-}
-
-/// Build one month from the day buckets. Runs when the MONTH or the
-/// SNAPSHOT moves — never per frame of a drag, which is the whole point
-/// of the type (measured 2026-08-15: a 1.2s drag rebuilt 12,348 cells).
-private func calMonth(
-    _ month: Int64, today: Int64, byDay: [Int64: [CalendarDayItem]]
-) -> CalMonth {
-    let start = CalGrid.gridStart(month)
-    var cells: [CalCell] = []
-    cells.reserveCapacity(42)
-    for i in 0..<42 {
-        let day = Civil.addDays(start, i)
-        let items = byDay[day] ?? []
-        cells.append(
-            CalCell(
-                day: day,
-                number: Civil.dayNumber(day),
-                inMonth: CalGrid.firstOfMonth(day) == month,
-                isToday: day == today,
-                count: items.count,
-                dots: items.prefix(3).map { LivKind.color(of: $0.row) }))
-    }
-    return CalMonth(month: month, cells: cells)
-}
 
 // MARK: - the screen
 
@@ -198,9 +160,10 @@ struct CalendarView: View {
         // THE PICKER, WHEN YOU ASK FOR IT. The same grid, the same
         // cells, the same long-press — it just is not standing on the
         // screen the whole time.
+        .livCard(while: pickingDay)
         .sheet(isPresented: $pickingDay) {
             VStack(spacing: 0) {
-                weekdayRow
+                MonthWeekdayRow()
                     .padding(.horizontal, 16)
                     .padding(.top, 22)
                 monthPager(today: today, byDay: byDay)
@@ -216,6 +179,22 @@ struct CalendarView: View {
             .presentationDetents([.height(CalGrid.gridHeight + 72)])
             .presentationDragIndicator(.visible)
             .presentationBackground(LivTheme.canvas)
+            // THE DESK IS BEHIND A CARD WHILE THIS IS UP, so the
+            // window's panel recognizer must keep off. Without it a
+            // sideways drag on the Monday or Sunday column — the grid is
+            // padded 16pt, the edge escape claims the outer 24 —
+            // latched a panel BEHIND the sheet, and every touch move
+            // then republished `panelDrag` and re-ran this whole body:
+            // the day buckets, 126 picker cells and the hour grid, per
+            // frame, while the desk went `.disabled` under it. That is
+            // the owner's "date picker is laggy like before" (todo.org),
+            // and "like before" is exact — it is the same mechanism as
+            // the 2026-08-15 mini-calendar lag, reached through a door
+            // `deskInFront` did not know about. The modifier that holds
+            // the recognizer off is on the PRESENTING view below —
+            // `.livCard(while: pickingDay)` — because a sheet's content
+            // is its own environment root and cannot be relied on to
+            // find the desk.
         }
         .onAppear {
             loadWindow()
@@ -362,19 +341,6 @@ struct CalendarView: View {
         if animated { withAnimation(LivMotion.nav, land) } else { land() }
     }
 
-    // MARK: the grid — 6 fixed weeks, Mon-first, ~40pt cells
-
-    private var weekdayRow: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<7, id: \.self) { i in
-                Text(CalGrid.weekdayLetters[i])
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
     // MARK: the pager — three months side by side, the middle one shown
     //
     // The grid FOLLOWS the finger (owner, 2026-08-10: "not the
@@ -395,9 +361,14 @@ struct CalendarView: View {
     private func monthPager(
         today: Int64, byDay: [Int64: [CalendarDayItem]]
     ) -> some View {
-        MonthPagerView(
+        // COUNTS, not the items themselves — `calMonth` (Month.swift)
+        // needs only how many, and taking counts is what lets the grid
+        // stand outside this file. One pass over ~60 keys, once per
+        // pager build, not per cell.
+        let counts = byDay.mapValues(\.count)
+        return MonthPagerView(
             months: (-1...1).map {
-                calMonth(CalGrid.addMonths(monthFirst, $0), today: today, byDay: byDay)
+                calMonth(CalGrid.addMonths(monthFirst, $0), today: today, counts: counts)
             },
             selected: selectedDay,
             // PICKING CLOSES IT. The card exists to answer one
@@ -1188,107 +1159,6 @@ private struct MonthPagerView: View {
     }
 }
 
-/// Six weeks of one month, drawn from cells decided in advance.
-/// Equatable on purpose: its inputs are values, so SwiftUI can skip the
-/// whole grid while only the strip's offset is moving.
-private struct MonthGridView: View, Equatable {
-    let month: CalMonth
-    let selected: Int64
-    let onSelect: (Int64) -> Void
-    let onHold: (Int64) -> Void
-
-    /// The closures are the same code every time; only the data decides.
-    static func == (a: MonthGridView, b: MonthGridView) -> Bool {
-        a.month == b.month && a.selected == b.selected
-    }
-
-    var body: some View {
-        VStack(spacing: CalGrid.rowGap) {
-            ForEach(0..<6, id: \.self) { week in
-                HStack(spacing: CalGrid.rowGap) {
-                    ForEach(0..<7, id: \.self) { col in
-                        cell(month.cells[week * 7 + col])
-                    }
-                }
-            }
-        }
-    }
-
-    /// Today ringed accent, the selected day filled; both = filled wins
-    /// (the 7-day strip's rule). Long-press = the event door.
-    ///
-    /// The dots take the KIND colour of what is in the day (owner,
-    /// 2026-08-13: "apply the kind colors everywhere"). They were neutral
-    /// ink on the rule that "the calendar says WHEN, never what kind" —
-    /// which the blueprints reverse: three grey dots said only "busy",
-    /// and the same three in teal, purple and orange say what the day
-    /// holds without opening it — and they keep saying it on the selected
-    /// day too, now that selection is not a coloured fill.
-    ///
-    /// SELECTION IS A RULE, NOT A TILE (polish pass, 2026-08-30). The
-    /// chosen day was a solid accent rounded-square 40pt tall, with a
-    /// second accent stroke on today beside it — the same pair the Today
-    /// strip carried, and the same fix: full ink and full weight for the
-    /// chosen day, a 2pt rule under it, and a dot for today. It also
-    /// gives the kind dots back, which the fill used to make unreadable.
-    private func cell(_ c: CalCell) -> some View {
-        let isSelected = c.day == selected
-        return VStack(spacing: 3) {
-            Text("\(c.number)")
-                .font(
-                    .system(
-                        size: LivType.body,
-                        weight: isSelected ? .semibold : .regular
-                    )
-                    .monospacedDigit()
-                )
-                .foregroundStyle(
-                    c.inMonth ? LivTheme.text : LivTheme.text3)
-            // HOW BUSY, NOT WHAT KIND (polish pass, 2026-08-31).
-            //
-            // Each dot wore its entity's kind colour, so a month grid
-            // drew up to sixty saturated dots in six hues — the only
-            // colour on the screen, and confetti at this size. The
-            // blueprint added the colours on 2026-08-13 to say what a
-            // day holds without opening it; at 4pt across a month that
-            // is not a thing anyone reads, and the same three-dots-mean-
-            // busy signal survives in ink.
-            //
-            // The kind language is not lost — it is on every ROW, where
-            // a glyph is big enough to tell apart. This is the same
-            // ruling already applied to the search headings and the
-            // value chips.
-            HStack(spacing: 2.5) {
-                ForEach(0..<3, id: \.self) { i in
-                    Circle()
-                        .fill(
-                            i < c.dots.count ? LivTheme.text3 : Color.clear
-                        )
-                        .frame(width: 4, height: 4)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: CalGrid.cellHeight)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(isSelected ? LivTheme.text : Color.clear)
-                .frame(width: 22, height: 2)
-        }
-        .overlay(alignment: .top) {
-            Circle()
-                .fill(c.isToday ? LivTheme.accent : Color.clear)
-                .frame(width: 4, height: 4)
-                .offset(y: -1)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(LivMotion.pick) { onSelect(c.day) } }
-        .onLongPressGesture(minimumDuration: 0.45) { onHold(c.day) }
-        .accessibilityLabel(Civil.dayLabel(c.day))
-        .accessibilityValue(c.count == 0 ? "" : "\(c.count) items")
-    }
-}
-
 // MARK: - month math (packed civil days; Civil's private helpers re-derived)
 
 /// Components-in, components-out within one Gregorian calendar — a stamp
@@ -1302,7 +1172,14 @@ enum CalGrid {
     /// One day cell, and the six-week grid it lives in. The pager needs
     /// the grid's height as a NUMBER (a GeometryReader has none of its
     /// own), so it lives here rather than as a literal in two places.
-    static let cellHeight: CGFloat = 40
+    ///
+    /// 46 SINCE 2026-09-07, up from 40, to seat `LivDay.gridDisc` (28)
+    /// with the three busy dots still under it. Six of these plus the
+    /// row gaps is `gridHeight`, which is ALSO the picker sheet's detent
+    /// — so this number decides how tall that card stands. It stops at
+    /// 46 for that reason: at the week strip's 62 the card would be
+    /// 382pt, and the jump card would have become the screen (§37).
+    static let cellHeight: CGFloat = 46
     static let rowGap: CGFloat = 2
     static var gridHeight: CGFloat { cellHeight * 6 + rowGap * 5 }
     /// What counts as throwing the month, in points per second.
@@ -1665,19 +1542,19 @@ func livCalendarSelfCheck() -> [String] {
     // Packed civil DAYS here (YYYYMMDD), not stamps — Civil.todayDay's
     // vocabulary, which the grid speaks.
     let august = CalGrid.firstOfMonth(2_026_08_15)
-    let empty = calMonth(august, today: 2_026_08_15, byDay: [:])
+    let empty = calMonth(august, today: 2_026_08_15, counts: [:])
     check("a month is six weeks", empty.cells.count == 42, "\(empty.cells.count)")
     check(
         "August has 31 days in the month",
         empty.cells.filter(\.inMonth).count == 31,
         "\(empty.cells.filter(\.inMonth).count)")
-    check("an empty month has no dots", empty.cells.allSatisfy { $0.dots.isEmpty })
+    check("an empty month has no dots", empty.cells.allSatisfy { $0.dots == 0 })
     check(
         "the same month twice is equal — this is the skip",
-        calMonth(august, today: 2_026_08_15, byDay: [:]) == empty)
+        calMonth(august, today: 2_026_08_15, counts: [:]) == empty)
     check(
         "a different month is not equal",
-        calMonth(CalGrid.addMonths(august, 1), today: 2_026_08_15, byDay: [:]) != empty)
+        calMonth(CalGrid.addMonths(august, 1), today: 2_026_08_15, counts: [:]) != empty)
 
     return failures
 }

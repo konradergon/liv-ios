@@ -30,6 +30,10 @@ pub struct Hit {
 pub enum MatchField {
     Name,
     Cell,
+    /// What the thing is filed under — a Select or Reference cell.
+    /// APPENDED, not inserted: serde reads these lowercase off the wire,
+    /// so an older value still decodes.
+    Filed,
     Content,
     /// A pure-qualifier hit — no free-text term matched a field.
     Structured,
@@ -507,12 +511,28 @@ fn property_name(store: &Store, property: Id) -> String {
 }
 
 /// The searchable text of an entity, per field, `display`-flattened and
-/// lowercased. `cells` is every *other* Text/RichText cell — structured
-/// kinds (Number/DateTime/Bool/Select/Reference) are reached through
-/// qualifiers, never as incidental text.
+/// lowercased.
+///
+/// `cells` is every other Text/RichText cell. `filed` is what the thing
+/// is FILED UNDER — its Select and Reference cells, flattened through
+/// the same `display` that resolves an id to its name.
+///
+/// Until 2026-09-07 there was no `filed` tier and this doc read
+/// "structured kinds (Number/DateTime/Bool/Select/Reference) are reached
+/// through qualifiers, never as incidental text". The owner found what
+/// that costs (todo.org): a note filed under area "Testjunk" could not be
+/// found by typing "test" — and standing rule 5 says a user never types
+/// `area:Testjunk` to fix it, while rev 49 had just taken that grammar
+/// out of the field.
+///
+/// Number, DateTime and Bool stay OUT, and that is the half of the old
+/// rule worth keeping: it is what stops "2026" surfacing everything with
+/// a due date. A filing is a short human label somebody chose; a
+/// timestamp is not.
 struct Searchable {
     name: String,
     cells: String,
+    filed: String,
     content: String,
 }
 
@@ -531,23 +551,39 @@ fn searchable(store: &Store, entity: &Entity, extracted: &str) -> Searchable {
     }
 
     let mut cells = String::new();
+    let mut filed = String::new();
     for cell in &entity.cells {
         if cell.property == props::NAME || cell.property == props::CONTENT {
             continue;
         }
-        if matches!(cell.value, Value::Text(_) | Value::RichText(_)) {
-            if !cells.is_empty() {
-                cells.push(' ');
+        let bucket = match cell.value {
+            Value::Text(_) | Value::RichText(_) => Some(&mut cells),
+            // `display` already resolves an id to the option's or the
+            // referenced entity's name, so this is the same string the
+            // chip on the row shows.
+            Value::Select(_) | Value::Reference(_) => Some(&mut filed),
+            _ => None,
+        };
+        if let Some(bucket) = bucket {
+            if !bucket.is_empty() {
+                bucket.push(' ');
             }
-            cells.push_str(&flatten(&cell.value));
+            bucket.push_str(&flatten(&cell.value));
         }
     }
-    Searchable { name, cells, content }
+    Searchable { name, cells, filed, content }
 }
 
 /// One term's best field-match: whole-name equality > leading name prefix >
 /// a word-boundary prefix inside the name > a whole word in another cell >
-/// a whole word in the content body. Weight 0 = no match anywhere.
+/// a word-boundary PREFIX of something it is filed under > a whole word in
+/// the content body. Weight 0 = no match anywhere.
+///
+/// The filing tier takes `starts_word`, not `contains_word`, and that is
+/// the whole point of it: the owner's report was that typing "test" did
+/// not reach a note filed under "Testjunk". A filing is a short label and
+/// incremental typing is how anyone reaches one — where a body of text is
+/// long enough that a whole word is the honest unit.
 fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
     if text.name == term {
         (100.0, MatchField::Name)
@@ -557,6 +593,8 @@ fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
         (40.0, MatchField::Name)
     } else if contains_word(&text.cells, term) {
         (20.0, MatchField::Cell)
+    } else if starts_word(&text.filed, term) {
+        (15.0, MatchField::Filed)
     } else if contains_word(&text.content, term) {
         (10.0, MatchField::Content)
     } else {

@@ -655,24 +655,31 @@ check_library() {
   }
 }
 
-# THE PROPERTIES CARD. It is reached from the note's own ••• menu now,
-# and it is a sheet — so the desk must NOT travel when it opens. The
-# trailing edge drag that used to summon a panel is gone with the panel.
+# THE PROPERTIES CARD. It has its own key on the top row as of
+# 2026-09-07 — one tap, not a menu — and it is a sheet, so the desk must
+# NOT travel when it opens. The trailing edge drag that used to summon a
+# panel is gone with the panel.
+#
+# This tapped "Note actions" then "Properties" until the key existed,
+# and its die text said the ••• "is the only way in since the trailing
+# panel was retired". That was true for nine days. The ••• is still read
+# here, but only as the POSITION PROBE for the desk — the assertion
+# below needs a landmark that survives the sheet.
 check_properties_card() {
   cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
   local rest after moved
   open_first_note || return 1
 
-  # The ••• is both the card's door and the probe for the desk's position.
+  # The ••• is the probe for the desk's position, not the door.
   rest=$(button_x "Note actions") || {
-    die "no ••• on an open note, so the properties card has no door at all."
+    die "no ••• on an open note, so there is no landmark to measure the
+      desk's travel against."
     return 1
   }
-  cmd_tap "Note actions" || return 1
-  perl -e 'select(undef,undef,undef,1.0)'
   cmd_tap "Properties" || {
-    die "the note's ••• menu offers no Properties. That menu is the only
-      way in since the trailing panel was retired."
+    die "no Properties key on an open note's top row. It is a key of its
+      own since 2026-09-07 — it was an item in the ••• menu before that,
+      and it must not be in both (standing rule 4)."
     return 1
   }
   perl -e 'select(undef,undef,undef,1.6)'
@@ -695,8 +702,11 @@ check_properties_card() {
   }
 }
 
-# Open the library by its own door. (The properties had one of these too,
-# an edge drag, until they became a card — see check_properties_card.)
+# Open the library by its own door. (The properties had one of these
+# too, an edge drag, until they became a card on 2026-08-29 — see
+# check_properties_card. They have a KEY of their own again as of
+# 2026-09-07, which is a door, not the drag: a card over the desk, not a
+# panel pushing it.)
 open_side() {
   local i
   for i in {1..3}; do
@@ -800,10 +810,14 @@ print("OK %d %d %d" % tuple(int(ks[n]["enabled"]) for n in (0, 1, 4)))')
   # 3. ONE DOOR PER ROOM. A labelled "< Notes" used to sit top-left inside
   #    a document, beside a bar that already carries back and a way up to
   #    the grid. It is gone (owner, 2026-08-24) and must stay gone.
+  #    (The (i) properties door went on 2026-08-14 for the same rule —
+  #    which is history, not a prohibition on the Properties KEY added
+  #    2026-09-07. That key REPLACED the ••• menu's item; the room still
+  #    has one door.)
   labelled_back && {
     die "a labelled back is on screen beside the bar's own back key.
-      Two doors to one room — the reason the (i) properties door went on
-      2026-08-14, and standing rule 4."
+      Two doors to one room — the same standing rule 4 that retired the
+      (i) properties door on 2026-08-14."
     return 1
   }
 

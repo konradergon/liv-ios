@@ -134,7 +134,9 @@ struct FileBody: View {
         .onAppear(perform: arrive)
         .onChange(of: storedName) { old, fresh in
             if pendingName == fresh { pendingName = nil }
-            if name != fresh, name == "" || name == old { name = fresh }
+            if let seed = LivName.reseed(draft: name, was: old, now: fresh) {
+                name = seed
+            }
         }
     }
 
@@ -304,21 +306,24 @@ struct FileBody: View {
         return true
     }
 
-    private var storedName: String {
-        (box.entity(id)?.cells ?? []).first { $0.property == "name" }?.value ?? ""
-    }
+    /// The name cell, and the rules for writing it — `LivName`
+    /// (Kit.swift) since 2026-09-07. This was the FOURTH hand-written
+    /// copy of the same grammar (the desk's title, the record card, this
+    /// tab, and a fifth was about to be written for the properties
+    /// card); they had already drifted, and only the desk's carried the
+    /// trashed-entity guard.
+    private var storedName: String { LivName.stored(box.entity(id)) }
 
     private func commitName() {
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
+        switch LivName.commit(typed: name, row: box.entity(id), pending: pendingName) {
+        case .write(let typed):
+            pendingName = typed
+            box.set(id, "name", typed)
+        case .revert(let stored):
             name = stored
-            return
+        case .ignore:
+            break
         }
-        guard typed != stored, typed != pendingName else { return }
-        pendingName = typed
-        box.set(id, "name", typed)
     }
 }
 

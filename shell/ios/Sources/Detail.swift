@@ -100,6 +100,12 @@ struct EntityInspector: View {
 
     @State private var options: [StatusOption] = []
     @State private var showDueSheet = false
+    /// The name being typed. Seeded from the name CELL, never from
+    /// `row.title` — the wire title is derived, and putting it in the
+    /// field would make merely opening the card able to write it.
+    @State private var draftName = ""
+    @State private var nameSeeded = false
+    @FocusState private var nameFocused: Bool
     /// The field whose sheet is open. One sheet serves every property.
     @State private var editing: InspectorField?
 
@@ -133,9 +139,35 @@ struct EntityInspector: View {
         }
         .tint(LivTheme.accent)
         .onAppear {
+            seedName()
             box.statusOptions(kind: box.entity(id)?.kinds?.first ?? "") {
                 options = $0
             }
+        }
+        .onChange(of: LivName.stored(box.entity(id))) { old, fresh in
+            // The snapshot moved under us — an undo, or the desk's own
+            // title field, which edits the same cell. Compared against
+            // the OLD stored name; `LivName.reseed` carries the reason.
+            if let seed = LivName.reseed(draft: draftName, was: old, now: fresh) {
+                draftName = seed
+            }
+        }
+    }
+
+    /// Once per open. A note with no name cell seeds EMPTY, so the grey
+    /// prompt (the derived title) shows through and typing over it is
+    /// what writes the name — nothing is written by merely opening.
+    private func seedName() {
+        guard !nameSeeded else { return }
+        draftName = LivName.stored(box.entity(id))
+        nameSeeded = true
+    }
+
+    private func commitName() {
+        switch LivName.commit(typed: draftName, row: box.entity(id)) {
+        case .write(let typed): box.set(id, "name", typed)
+        case .revert(let stored): draftName = stored
+        case .ignore: break
         }
     }
 
@@ -156,18 +188,36 @@ struct EntityInspector: View {
                 // as a row further down (owner, 2026-08-06).
                 //
                 // Suppressed when embedded in a record, whose own name
-                // field is directly above this.
+                // field is directly above this — one card never shows
+                // two name fields.
+                //
+                // IT IS A FIELD NOW, not a label (owner, todo.org: *"the
+                // note property interface seems different from say task
+                // properties; you can't rename it in properties"*). A
+                // record card got an editable name and a note did not,
+                // so the same card said two different things about what
+                // a name is, and a note's could only be changed from the
+                // desk's own title.
+                //
+                // "name" stays in `skipSet`: this line IS the name row,
+                // and a second one further down would be the two-fields
+                // problem again. The seed/commit rules are
+                // `LivName`'s (Kit.swift) — the same ones the desk title
+                // and the record card use.
                 if scrolls {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(livRowTitle(row))
-                            .font(.system(size: LivType.display, weight: .semibold))
-                            .foregroundStyle(
-                                hasName(row) ? LivTheme.text : LivTheme.text3)
-                            .lineLimit(2)
-                        Spacer(minLength: 4)
-                    }
-                    .padding(.top, 10)
-                    .padding(.bottom, 8)
+                    TextField(livRowTitle(row), text: $draftName, axis: .vertical)
+                        .font(.system(size: LivType.display, weight: .semibold))
+                        .foregroundStyle(LivTheme.text)
+                        .lineLimit(1...3)
+                        .focused($nameFocused)
+                        .submitLabel(.done)
+                        .onSubmit(commitName)
+                        .onChange(of: nameFocused) { _, now in
+                            if !now { commitName() }
+                        }
+                        .accessibilityLabel("Name")
+                        .padding(.top, 10)
+                        .padding(.bottom, 8)
                 }
                 // NO KIND CHIP. It sat directly under the title as a
                 // pill of 11pt lowercase with a dot in it — "• note" —
@@ -432,12 +482,6 @@ struct EntityInspector: View {
                 // (2026-08-17).
                 "related",
             ] + InspectorField.core)
-    }
-
-    private func hasName(_ row: EntityRow) -> Bool {
-        (row.cells ?? []).contains {
-            $0.property == "name" && !($0.value ?? "").isEmpty
-        }
     }
 
     /// "Created Tue 4 Aug 18:52", or nothing if the box never said.
@@ -912,6 +956,10 @@ struct DetailDueSheet: View {
     @State private var time: Date
     /// The month calendar under "Choose a date" is showing.
     @State private var calendarShown = false
+    /// WHICH MONTH THE GRID IS LOOKING AT — deliberately not derived
+    /// from `date`, so paging to March to check something does not move
+    /// the due to March. Seeded from the due in `init`.
+    @State private var shownMonth: Int64
     /// How long this thing lasts, kept across every edit.
     @State private var spanMinutes: Int
     /// Whether this thing carries a clock time. An all-day event is a
@@ -938,6 +986,7 @@ struct DetailDueSheet: View {
             let day = Civil.day(of: due)
             let hm = due % 10_000
             _date = State(initialValue: Civil.date(day: day, hhmm: 1200) ?? now)
+            _shownMonth = State(initialValue: CalGrid.firstOfMonth(day))
             // The stored flag is the authority on whether this carries a
             // clock time. Also testing `hm != 0` re-read a real midnight
             // as "no time" and then quietly replaced it (review).
@@ -952,6 +1001,7 @@ struct DetailDueSheet: View {
         } else {
             let today = Civil.todayDay()
             _date = State(initialValue: now)
+            _shownMonth = State(initialValue: CalGrid.firstOfMonth(today))
             _timed = State(initialValue: true)
             _time = State(initialValue: LivDue.defaultTime(on: today))
         }
@@ -1047,28 +1097,144 @@ struct DetailDueSheet: View {
         }
     }
 
+    /// THE APP'S OWN MONTH, not the system's.
+    ///
+    /// This was `DatePicker(.graphical)` until 2026-09-07. It took the
+    /// app's accent from the subtree's `.tint`, so it was never wearing
+    /// the system's blue — but it painted its own selected-day fill and
+    /// its own red "today", against an app whose month grid says
+    /// selection with `LivDayMark`'s disc and marks today inside it.
+    /// Two month grids with two grammars, invisible only because they
+    /// never appeared on the same screen (standing rule 4).
+    ///
+    /// The grid it draws now is the calendar's, moved to `Month.swift`
+    /// in the same change so both screens can reach it. It is given no
+    /// counts — a due picker has no items to be busy with — and no
+    /// `onHold`: holding a day in the calendar creates an all-day event,
+    /// and there is nothing here to create.
+    ///
+    /// `shownMonth` is its own state and NOT derived from `date`,
+    /// because paging to look at March must not move the due to March.
     private var monthPicker: some View {
-        DatePicker("Due date", selection: $date, displayedComponents: .date)
-            .datePickerStyle(.graphical)
-            .labelsHidden()
-            .padding(.vertical, 4)
-            .onChange(of: date) { commit() }
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(LivMotion.nav) {
+                        shownMonth = CalGrid.addMonths(shownMonth, -1)
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: LivType.label, weight: .semibold))
+                        .foregroundStyle(LivTheme.text2)
+                        .frame(width: LivRow.touch, height: LivRow.touch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Previous month")
+                Text(CalGrid.title(shownMonth))
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(LivTheme.text)
+                    .frame(maxWidth: .infinity)
+                Button {
+                    withAnimation(LivMotion.nav) {
+                        shownMonth = CalGrid.addMonths(shownMonth, 1)
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: LivType.label, weight: .semibold))
+                        .foregroundStyle(LivTheme.text2)
+                        .frame(width: LivRow.touch, height: LivRow.touch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Next month")
+            }
+            MonthWeekdayRow()
+            MonthGridView(
+                month: calMonth(
+                    shownMonth, today: Civil.todayDay(), counts: [:]),
+                selected: Civil.day(of: date),
+                onSelect: { pick(day: $0) }
+            )
+            .equatable()
+        }
+        .padding(.vertical, 4)
     }
 
+    /// THE CLOCK, ON THE QUARTER HOUR.
+    ///
+    /// This was a compact `DatePicker(.hourAndMinute)`, and its real
+    /// fault was never that it looked like the system's: it let you dial
+    /// 11:47, while every time the CALENDAR places goes through
+    /// `CalClock.snap` on the rule that "times land on quarter hours —
+    /// 11:47 is never what anyone meant". Two surfaces of one app
+    /// disagreeing about what a time is (standing rule 4).
+    ///
+    /// Steppers rather than a wheel or a field: a due time is almost
+    /// always a nudge from the one already there, the app has no
+    /// time-string parser and standing rule 5 says a user does not type
+    /// one, and this way the quarter-hour law is in the CONTROL rather
+    /// than in a validator that has to reject what you typed.
     private var timeRow: some View {
         HStack(spacing: 8) {
             Text("At")
                 .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
             Spacer(minLength: 12)
-            DatePicker("Due time", selection: $time, displayedComponents: .hourAndMinute)
-                .labelsHidden()
+            Button { nudge(-CalClock.step) } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: LivRow.touch, height: LivRow.touch)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Fifteen minutes earlier")
+            // NOT `Civil.timeString`, which answers "" for 0000 on the
+            // rule that a date-only stamp carries no time. Here the
+            // clock always shows one, and midnight is a real 00:00.
+            Text(clockLabel)
+                .font(.system(size: LivType.strong).monospacedDigit())
+                .foregroundStyle(LivTheme.text)
+                .frame(minWidth: 68)
+                .accessibilityLabel("Due time")
+            Button { nudge(CalClock.step) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: LivRow.touch, height: LivRow.touch)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Fifteen minutes later")
         }
         .frame(minHeight: LivRow.height)
-        .onChange(of: time) {
-            timed = true  // setting a clock time is how an all-day thing gets one
-            commit()
+    }
+
+    /// The clock face, always four digits — see the note at its call
+    /// site for why this is not `Civil.timeString`.
+    private var clockLabel: String {
+        let hm = Civil.hhmm(of: time)
+        return String(format: "%02d:%02d", hm / 100, hm % 100)
+    }
+
+    /// Move the clock by one step, snapped, and write.
+    ///
+    /// It wraps within the day rather than running off either end: a due
+    /// at 23:45 nudged forward is 00:00 of the same day, not tomorrow —
+    /// the DAY is the other control's job, and a time control that
+    /// silently changed the date would be the "setting time after date
+    /// erases everything" complaint again.
+    private func nudge(_ minutes: Int) {
+        let day = Civil.day(of: date)
+        let now = CalClock.minutes(of: Civil.stamp(day: 0, hhmm: Civil.hhmm(of: time)))
+        let moved = (CalClock.snap(now) + minutes + 24 * 60) % (24 * 60)
+        if let stamped = Civil.date(day: day, hhmm: CalClock.hhmm(moved)) {
+            time = stamped
         }
+        // Setting a clock time is how an all-day thing gets one.
+        timed = true
+        commit()
     }
 
     private var clearRow: some View {

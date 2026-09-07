@@ -202,13 +202,15 @@ struct LivSegment<Value: Hashable>: View {
 /// on a screen measured at 0.74% saturated pixels against 0.05–0.19%
 /// everywhere else, the two of them were most of the difference.
 ///
-/// Not the only ones, which this said until 2026-09-05: two `DatePicker`s
-/// remain in `Detail.swift` (a graphical month, a compact clock). They
-/// take the app's accent from the subtree's `.tint`, so they are not
-/// wearing the system's blue — but the graphical one paints its own
-/// selected day and its own red "today", and the app has had its own
-/// month grid since the calendar's picker card. Replacing it is real
-/// work, not a token change, and it is not done.
+/// AND THE LAST ONES SINCE 2026-09-07. This said two `DatePicker`s
+/// remained in `Detail.swift` and that replacing them was "real work,
+/// not a token change, and it is not done". It was real work: the
+/// calendar's month grid moved to `Month.swift` so both screens could
+/// draw one grid, and the compact clock became a quarter-hour stepper —
+/// its true fault was never the look but that it let you dial 11:47
+/// while `CalClock` says times land on quarter hours. No stock control
+/// in this app now arrives with a colour or a grammar nobody here
+/// chose.
 ///
 /// The colour moves into the TRACK at a quarter strength rather than
 /// filling it, so "on" is legible without the control being the
@@ -239,6 +241,126 @@ struct LivSwitch: View {
         .opacity(enabled ? 1 : 0.4)
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// EDITING A NAME CELL — the rules, once.
+///
+/// Three surfaces let you type a name: the desk's document title, the
+/// record card's field, and (since 2026-09-07) the properties card. The
+/// first two each carried their own `storedName` + seed + commit, and
+/// the two had already diverged — the desk's version carries two guards
+/// that were each bought with a live bug, and the record's carries
+/// neither. A third hand-written copy in the inspector would have
+/// reintroduced both (standing rule 4).
+///
+/// These are pure decisions, not a view: each surface keeps its own
+/// `@State` draft and its own field, and asks here what to do.
+enum LivName {
+    /// THE NAME CELL, never `row.title`. The wire title is a derived
+    /// display string — "#id" for an empty note, the first content line
+    /// for a scrap, the KIND word for anything unnamed — and belongs in
+    /// the grey prompt, never in the field you are typing into.
+    static func stored(_ row: EntityRow?) -> String {
+        (row?.cells ?? []).first { $0.property == "name" }?.value ?? ""
+    }
+
+    /// What a commit should do.
+    enum Commit: Equatable {
+        /// Write this to the name cell.
+        case write(String)
+        /// Put this back in the field and write nothing — an emptied
+        /// field REVERTS, it never erases the name.
+        case revert(String)
+        /// Nothing to do.
+        case ignore
+    }
+
+    /// Decide, given what was typed and what the box holds.
+    ///
+    /// A GONE OR TRASHED ENTITY TAKES NO NAME. After a trash the entity
+    /// stops resolving, `stored` reads empty, and a naive equality guard
+    /// happily writes the old name back onto the trashed thing — the
+    /// stray transaction that broke the chip's Undo (found live,
+    /// 2026-08-02). That is why this takes the row and not just a string.
+    ///
+    /// `pending` is the last value the caller wrote, so a field that
+    /// commits twice (blur after submit) does not write twice.
+    static func commit(typed raw: String, row: EntityRow?, pending: String? = nil) -> Commit {
+        guard let row, row.trashed != true else { return .ignore }
+        let stored = stored(row)
+        let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if typed.isEmpty { return .revert(stored) }
+        guard typed != stored, typed != pending else { return .ignore }
+        return .write(typed)
+    }
+
+    /// The snapshot moved under us (an undo, another surface). Returns
+    /// the value to put in the field, or nil to leave the draft alone.
+    ///
+    /// COMPARED AGAINST THE OLD STORED NAME. Comparing against the new
+    /// one cannot work: by the time the change is observed the property
+    /// already reads the new value, so the guard could only ever fire on
+    /// an empty field — an external rename froze the title, and a later
+    /// commit then silently reverted it (audit, 2026-08-04).
+    static func reseed(draft: String, was old: String, now fresh: String) -> String? {
+        guard draft != fresh, draft.isEmpty || draft == old else { return nil }
+        return fresh
+    }
+}
+
+/// A DAY'S NUMBER, AND THE DISC THAT SAYS IT IS THE ONE YOU ARE ON.
+///
+/// One mark, three readings, no collision possible:
+///   selected            — ink disc, number knocked out
+///   today, selected     — ACCENT disc, number knocked out
+///   today, not selected — accent number, no disc
+///
+/// The knock-out is drawn in the GROUND, which reads on both discs and
+/// in both schemes: near-black on the ink disc and on the accent one in
+/// dark, white on both in light.
+///
+/// This is the correction rev 47 made standing (owner: *"today's date is
+/// marked by a tiny dot that is completely hidden by a horizontal bar
+/// when selected… you have a tendency to make UI elements tiny and
+/// subtle. Try to go for the opposite."*). It landed on Today's week
+/// strip and nowhere else, so until 2026-09-07 the calendar's month grid
+/// still drew the 4pt dot and 2pt rule the owner had just named — two
+/// marks for one idea, in one app (standing rule 4).
+///
+/// ONLY THE NUMBER AND ITS DISC. The two grids are not the same tile:
+/// the strip carries a weekday letter, and the month cell carries
+/// out-of-month dimming, three busy dots, a long press and its own
+/// accessibility label. Each caller keeps its tile; this is the mark
+/// they share. The diameter comes in because a month cell cannot carry
+/// the strip's 36 — see `LivDay` for the arithmetic.
+struct LivDayMark: View {
+    let number: Int
+    let selected: Bool
+    let today: Bool
+    let diameter: CGFloat
+    /// The ink when the day is neither selected nor today — the caller's
+    /// own, so the month grid can dim a day outside its month.
+    var rest: Color = LivTheme.text2
+
+    var body: some View {
+        Text("\(number)")
+            .font(
+                .system(
+                    size: LivType.body,
+                    weight: (selected || today) ? .semibold : .regular
+                )
+                .monospacedDigit()
+            )
+            .foregroundStyle(
+                selected ? LivTheme.canvas : (today ? LivTheme.accent : rest))
+            .frame(width: diameter, height: diameter)
+            .background(
+                Circle()
+                    .fill(
+                        selected
+                            ? (today ? LivTheme.accent : LivTheme.text)
+                            : Color.clear))
     }
 }
 

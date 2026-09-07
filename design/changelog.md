@@ -1,5 +1,115 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-07 — rev 53: the five that were deferred
+
+Rev 52 fixed thirteen audit items and named five it did not. This is
+those five, on the owner's word ("fix everything you mention here").
+
+**A THING IS FINDABLE BY WHAT IT IS FILED UNDER.** The owner's own
+repro (`todo.org`): a note assigned to area "Testjunk" could not be
+found by typing "test" — only the area itself came back.
+`searchable()` built its haystack from Text and RichText cells only, on
+a rule stated in `services/src/search.rs` and `design/p6-search-model.md`
+both: *structured kinds are reached through qualifiers, never as
+incidental text*. So a Select cell never entered the haystack at all,
+and the only route left was `area:Testjunk` — which standing rule 5 says
+a user never types, and which rev 49 had just removed from the field.
+
+Select and Reference now form a fourth `filed` tier, flattened through
+the same `display` that resolves an id to a name, scored 15 between a
+cell (20) and the body (10). It takes `starts_word`, not
+`contains_word`, and that IS the fix: with whole-word matching the
+owner's own "test…" still returns nothing. Number, DateTime and Bool
+stay out — that half of the old rule is what keeps "2026" from
+surfacing every due date, and it is now asserted rather than assumed.
+
+This is a settled zone, so: failing test first (`a_thing_is_found_by_what_it_is_filed_under`,
+which reproduces the owner's exact case), then the fix, then the
+now-wrong assertion AMENDED rather than worked around — a bare "done"
+used to find nothing and now finds the task filed under it. A cost test
+came with it (standing rule 2): measured 3.72x for a 4x box, which is
+the linear shape search is supposed to have. Both docs amended in the
+same change.
+
+**ONE MARK FOR "WHICH DAY AM I ON".** Rev 47 replaced a tiny dot and a
+horizontal bar with a disc after the owner named them — *"today's date
+is marked by a tiny dot that is completely hidden by a horizontal bar
+when selected. You have a tendency to make UI elements tiny and subtle.
+Try to go for the opposite."* — and it landed on Today's week strip
+only. The calendar's month grid still drew the exact pair: a 4pt accent
+dot above the number, a 22x2 ink rule below it. `LivDayMark` (Kit) is
+now the one mark, at two diameters in `LivDay`, because a month cell
+cannot carry the strip's 36 — the cell grew 40 → 46 and the disc is 28.
+Not the strip's 62: `gridHeight` is also the picker sheet's detent, and
+at 62 the jump card would stand 382pt and become the screen.
+
+**THE LAST TWO STOCK CONTROLS.** The due sheet's `DatePicker(.graphical)`
+painted its own selected day and its own red "today" — a second month
+grid with a second grammar, invisible only because the two never shared
+a screen. The calendar's grid moved to `Month.swift` (with
+`weekdayRow`, or the due sheet would have hand-rolled a second copy of
+the weekday letters) and both screens draw it. `CalCell.dots` went from
+`[Color]` to `Int` on the way: the colours were removed on 2026-08-31
+and the array they fed was left behind, allocating 126 discarded Colors
+per pager evaluation.
+
+The compact clock's real fault was never that it looked like the
+system's — it let you dial 11:47 while `CalClock` says *times land on
+quarter hours, 11:47 is never what anyone meant*. It is a quarter-hour
+stepper now, so the law is in the control rather than in a validator
+that rejects what you typed. It also removes a double write: `pick()`
+moved `date` and wrote, and the picker's `.onChange(of: date)` then
+wrote the identical span again — two transactions for one tap, hidden
+by the refresh coalescer.
+
+**PROPERTIES, ONE TAP.** *"Selecting properties from a menu is too slow
+and/or inconvenient since it's central in the app"* (owner). It has its
+own key on the top row now — MOVED, not added: the menu item went in
+the same change, because two doors to one room is exactly why the old
+(i) door was deleted on 2026-08-14. `drive.sh check_properties_card`
+moved with it in the same commit, or `drive.sh panel` would have gone
+red on the next run.
+
+*"You can't rename it in properties"* — the other half. A record card
+had an editable name and a note did not, so one card said two different
+things about what a name is. The inspector's title is a field now. That
+made FOUR hand-written copies of the same seed/commit/reseed grammar
+(the desk title, the record card, the file tab, and a fifth about to be
+written here), and they had drifted: only the desk's carried the
+trashed-entity guard that fixed the stray transaction breaking Undo,
+and only it compared a reseed against the OLD stored name. `LivName`
+(Kit) is the one grammar now, both guards included, and all four call
+sites read it.
+
+**THE DAY PICKER'S FRAME RATE.** Not the projection — the panel
+recognizer. It lives on the WINDOW, so while the picker sheet is up a
+sideways drag on the Monday or Sunday column (the grid is padded 16pt;
+`PanelDrag`'s edge escape claims the outer 24 and returns before the
+`pagerZone` veto is consulted) latches a panel BEHIND the sheet. Every
+touch move then republishes `panelDrag`, re-running the calendar's whole
+body — day buckets, 126 picker cells, the hour grid — per frame, while
+the desk goes `.disabled` underneath. That is verbatim the mechanism the
+code already names as the 2026-08-15 lag, which is why the owner's
+report says "laggy **like before**".
+
+`deskInFront` had four flags, each added one at a time after this same
+bug reached the owner. A fifth would have been the same mistake, so it
+is a COUNTER: `livCard(while:)` raises it, any surface can, and nothing
+has to get its name added to a list. It goes on the PRESENTING view —
+a sheet's content is its own environment root, which is why every sheet
+in this app hands its `environmentObject` in by hand.
+
+**NOT VERIFIED, again.** `cargo test` is green (408 passed, 0 failed,
++4 for the search work) and the search fix is genuinely tested — it is
+the only one of the five that could be. Everything Swift here is
+unbuilt and unseen: Linux, no toolchain, no simulator. The month-grid
+extraction and the properties-door move are the two most likely to need
+a second pass on a machine that can compile. Before trusting any of it:
+`build.sh`, `suites.sh` (the calendar self-check now asserts
+`$0.dots == 0`), then `drive.sh tour`, `panel` — which exercises the
+moved properties door — `rows`, `bar` and `grid`.
+
+
 ## 2026-09-07 — rev 52: what the audit left, and the comments that outlived their code
 
 The polish audit's own deferred list, re-derived against HEAD rather than

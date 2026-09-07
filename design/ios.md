@@ -503,7 +503,7 @@ Surfaces (bodies; mockups in the artifact):
 - **Tasks** — count tiles over a status-grouped flat list; groups from the
   vocabulary in vocabulary order; `completes` groups collapsed; inline
   quick-add into the active group.
-- **Calendar** — month grid (≤3 neutral dots per day, today ringed) over a
+- **Calendar** — month grid (≤3 neutral dots per day, today and the chosen day marked by `LivDayMark`'s disc — "ringed" until rev 52) over a
   fixed day panel (all-day pills, timed rows, occurrences with a repeat glyph
   opening the *series*). `liv_snapshot_window_at` over the visible range
   only.

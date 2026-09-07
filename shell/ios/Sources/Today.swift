@@ -803,7 +803,14 @@ struct TodayView: View {
 
 // MARK: - the 7-day strip
 
-/// Today ringed accent, the selected day filled; both = filled wins.
+/// Seven days, each marked by `LivDayMark`: the selected day wears an
+/// ink disc with its number knocked out, today wears the accent — and
+/// when today IS the selected day, an accent disc says both at once.
+///
+/// (This read "Today ringed accent, the selected day filled; both =
+/// filled wins" until 2026-09-07. Nothing has been ringed since rev 47
+/// replaced the ring and the 2pt rule with the disc, and "filled wins"
+/// described a collision the disc does not have.)
 private struct TodayDateStrip: View {
     @Binding var selected: Int64
     let today: Int64
@@ -844,37 +851,23 @@ private struct TodayDateStrip: View {
                     //   selected            — ink disc, number knocked out
                     //   today, selected     — ACCENT disc, number knocked out
                     //   today, not selected — accent number, no disc
+                    // The MARK is `LivDayMark` (Kit.swift) since
+                    // 2026-09-07 — this tile keeps only what is its own,
+                    // the weekday letter. The calendar's month grid draws
+                    // the same mark at its own diameter, so the app has
+                    // one answer to "which day am I on" instead of two.
                     VStack(spacing: 4) {
                         Text(Civil.weekdayLetter(day))
                             .font(.system(size: LivType.label))
                             .foregroundStyle(isSelected ? LivTheme.text2 : LivTheme.text3)
-                        Text("\(Civil.dayNumber(day))")
-                            .font(
-                                .system(
-                                    size: LivType.body,
-                                    weight: (isSelected || isToday) ? .semibold : .regular
-                                )
-                                .monospacedDigit()
-                            )
-                            .foregroundStyle(
-                                // Knocked out in the GROUND, which reads
-                                // on both discs and in both schemes:
-                                // near-black on the ink disc and on the
-                                // accent one in dark, white on both in
-                                // light.
-                                isSelected
-                                    ? LivTheme.canvas
-                                    : (isToday ? LivTheme.accent : LivTheme.text2))
-                            .frame(width: 36, height: 36)
-                            .background(
-                                Circle()
-                                    .fill(
-                                        isSelected
-                                            ? (isToday ? LivTheme.accent : LivTheme.text)
-                                            : Color.clear))
+                        LivDayMark(
+                            number: Civil.dayNumber(day),
+                            selected: isSelected,
+                            today: isToday,
+                            diameter: LivDay.disc)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 62)
+                    .frame(height: LivDay.strip)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

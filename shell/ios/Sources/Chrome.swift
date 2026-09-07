@@ -253,6 +253,18 @@ final class DeskModel: ObservableObject {
     /// The trash list — the only door to `liv_restore_at`.
     @Published var trashShown = false
     @Published var workspaceShown = false
+    /// ANY OTHER CARD A SURFACE PUTS UP over itself — the calendar's day
+    /// picker is the first, and the reason this exists.
+    ///
+    /// A COUNTER, NOT A FIFTH FLAG. Every name above was added to
+    /// `deskInFront` one at a time, each after the same bug reached the
+    /// owner: a drag near the bezel latches a panel behind whatever is
+    /// covering the desk, and every touch move then republishes
+    /// `panelDrag` and re-renders the surface underneath. The list is
+    /// the smell — a surface that puts up a card should not have to get
+    /// its name added here, so it raises this instead and any number of
+    /// them can be up at once.
+    @Published var cards = 0
     /// The workspace sheet should open with the NEW FILTER form already
     /// composing. Filters are reached from the library panel now; the
     /// form still lives in the sheet, so this is how the panel asks for
@@ -359,9 +371,17 @@ final class DeskModel: ObservableObject {
     /// A view is no longer one of these: it opens INSIDE the library
     /// (2026-08-15), which is a place on the strip, not a cover — the
     /// swipe back to the desk has to keep working while you are in one.
+    /// (2026-09-07: `cards` closes the list. The owner reported the same
+    /// lag a second time — *"the picker that comes up when you select
+    /// date title in calendar. It is low fps and laggy"* — and the cause
+    /// was the same mechanism reached through a door this list did not
+    /// know about. The `pagerZone` veto added on 2026-08-31 could not
+    /// help: `PanelDrag`'s edge escape returns true before the veto is
+    /// consulted, and the grid is padded only 16pt, so a sideways drag
+    /// on the Monday or Sunday column near the bezel latched anyway.)
     var deskInFront: Bool {
         !searchShown && !cameraShown && !settingsShown
-            && !workspaceShown
+            && !workspaceShown && cards == 0
     }
 
     /// How far IN the library is: 0 fully off screen, 1 fully home. ONE
@@ -883,6 +903,47 @@ extension View {
     func livGlass<S: Shape>(in shape: S) -> some View {
         modifier(LivGlass(shape: shape))
     }
+}
+
+/// "A CARD IS UP OVER THIS SURFACE" — raised for as long as the view is
+/// on screen, released when it leaves. (Named `LivOverDesk` because
+/// `LivCard` is already the app's raised-panel container in Rows.swift;
+/// the modifier that applies it is `livCard(while:)`.)
+///
+/// It exists so a surface that presents a sheet does not have to get its
+/// own name added to `DeskModel.deskInFront`. Four names were added
+/// there one at a time, each after the same bug reached the owner: the
+/// panel recognizer lives on the WINDOW, so it sees touches through
+/// anything that is merely drawn on top, latches a panel behind it, and
+/// then republishes on every touch move while the surface underneath
+/// re-renders.
+///
+/// The count is raised and lowered rather than set, so two cards at once
+/// cannot have the first one to close hand the desk back early.
+/// APPLIED TO THE PRESENTING VIEW, not to the sheet's content, and it
+/// takes the flag that presents it. A `.sheet`'s content is a separate
+/// presentation with its own environment root — which is why every
+/// sheet in this app hands its `environmentObject` in by hand — so a
+/// modifier inside one cannot be trusted to find the desk. The
+/// presenter always can.
+struct LivOverDesk: ViewModifier {
+    let up: Bool
+    @EnvironmentObject var desk: DeskModel
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: up) { _, now in
+                desk.cards = max(0, desk.cards + (now ? 1 : -1))
+            }
+            // A surface torn down with its card still up must not leave
+            // the count raised — the desk would never come back.
+            .onDisappear { if up { desk.cards = max(0, desk.cards - 1) } }
+    }
+}
+
+extension View {
+    /// Hold the desk's recognizer off while `up` is true.
+    func livCard(while up: Bool) -> some View { modifier(LivOverDesk(up: up)) }
 }
 
 /// THE SOFT EDGE. Every surface runs under the clock now (owner,

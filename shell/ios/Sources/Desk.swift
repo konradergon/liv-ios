@@ -200,6 +200,7 @@ struct DeskHost: View {
                 // The ••• is the open DOCUMENT's menu — share, export,
                 // trash — so it belongs to Docs and to nothing else.
                 if desk.state == .notes, let id = desk.openDoc {
+                    propertiesKey()
                     noteMenu(id)
                 }
             }
@@ -360,14 +361,12 @@ struct DeskHost: View {
 
     // MARK: the note's ••• menu (rev 6: SECONDARY verbs only)
 
-    /// Frequent actions get dedicated UI (owner principle) — Properties
-    /// left this menu for its own door. What remains ACTS on the
-    /// document, rarely: duplicate, share, trash.
-    /// The secondary verbs. Every tab is a document now (Option C), so
-    /// the kind branch that used to hide share/export is gone.
-    /// How far off its own edge a panel currently sits. A panel with no
-    /// drag in flight is simply open (0) — the transition handles its
-    /// arrival and departure as before.
+    // Four doc comments had stacked up here over one function, none of
+    // them about it — the residue of three deletions that each left
+    // their prose behind. The two that are still true have gone back to
+    // what they describe: the ••• menu's own doc is on `noteVerbs`, and
+    // the properties door's is on `propertiesKey`. Untangled 2026-09-07.
+
     /// Shut the panel. The wash and its drag both need this, and they
     /// must not each decide it for themselves.
     private func closePanel() { desk.setLibrary(false) }
@@ -421,6 +420,34 @@ struct DeskHost: View {
     /// under the button that opened them (owner, 2026-08-13). It was a
     /// SwiftUI `Menu`, which is a fourth look for the same idea; now it
     /// is the one menu, pointed the other way.
+    /// PROPERTIES, ONE TAP.
+    ///
+    /// It was an item inside the ••• menu, which is two taps and a read
+    /// for the thing the owner calls central to the app (todo.org:
+    /// *"selecting properties from a menu is too slow and/or
+    /// inconvenient since it's central in the app"*).
+    ///
+    /// MOVED, NOT ADDED. Leaving the menu item in place would have made
+    /// two doors to one room — which is precisely why the old (i) door
+    /// was deleted on 2026-08-14 (standing rule 4), so the item goes in
+    /// the same change.
+    ///
+    /// Not the edge drag it used to be, either: `PanelDrag.Which`, the
+    /// two-way claim and the two-panel desk push were all deleted when
+    /// the properties became a card, and the card is a system `.sheet`
+    /// with detents that `settleDrag` has no way to drive. Bringing the
+    /// gesture back means rebuilding that machinery.
+    private func propertiesKey() -> some View {
+        Button {
+            endEditing()
+            withAnimation(LivMotion.nav) { desk.inspectorShown = true }
+        } label: {
+            FloatCircleLabel(symbol: "slider.horizontal.3")
+        }
+        .livTopButton()
+        .accessibilityLabel("Properties")
+    }
+
     private func noteMenu(_ id: UInt64) -> some View {
         Button {
             endEditing()
@@ -432,16 +459,21 @@ struct DeskHost: View {
         .accessibilityLabel("Note actions")
     }
 
+    /// The SECONDARY verbs — what remains once Properties took its own
+    /// key: things that ACT on the document, rarely. Every tab is a
+    /// document now (Option C), so the kind branch that used to hide
+    /// share/export is gone.
     private func noteVerbs(_ id: UInt64) -> LivMenu {
         let row = box.entity(id)
         let isFile = TabShape.of(row) == .file
         var items: [LivMenuItem] = [
-            // FIRST, and the reason the ••• exists on a note at all now:
-            // the properties card has no edge gesture any more, so this
-            // is its door. Anytype reaches its own the same way.
-            LivMenuItem(label: "Properties", glyph: .settings) {
-                withAnimation(LivMotion.nav) { desk.inspectorShown = true }
-            },
+            // NO PROPERTIES ITEM. It was first in this list and was the
+            // stated reason the ••• existed on a note at all; it became
+            // its own key on the top row on 2026-09-07, because two taps
+            // is too many for the app's most central card and a menu you
+            // have to read is not a door (owner, todo.org). It is not
+            // ALSO here — one door to one room.
+            //
             // The owner's own name for it — the copy carries the
             // PROPERTIES, deliberately not the body.
             LivMenuItem(label: "Duplicate note", symbol: "plus.square.on.square") {
@@ -634,8 +666,7 @@ struct DeskHost: View {
     /// Files" produces markdown rather than a .txt of the same words.
     /// Neither writes to the box — sharing a note is a READ.
     private func shareNote(_ id: UInt64, asFile: Bool) {
-        let name = (box.entity(id)?.cells ?? [])
-            .first { $0.property == "name" }?.value ?? ""
+        let name = LivName.stored(box.entity(id))
         box.content(id) { doc in
             guard let doc, doc.missing != true else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -915,19 +946,17 @@ struct EntityTabBody: View {
             // reads the new value, so the old guard could only ever fire on
             // an empty field and an external rename froze the title, which
             // a later commit then silently reverted (audit, 2026-08-04).
-            if title != fresh, title == "" || title == old { title = fresh }
+            if let seed = LivName.reseed(draft: title, was: old, now: fresh) {
+                title = seed
+            }
         }
     }
 
     // MARK: title — lives in the editor's scroll view now
 
-    /// The NAME CELL, never row.title — the wire title is a derived
-    /// display string ("#id" for an empty note, the first content line for
-    /// a scrap) and belongs in the grey prompt, not in the field.
-    private var storedName: String {
-        (box.entity(id)?.cells ?? [])
-            .first { $0.property == "name" }?.value ?? ""
-    }
+    /// The name cell — `LivName.stored` since 2026-09-07, so the desk,
+    /// the record card and the properties card all read it one way.
+    private var storedName: String { LivName.stored(box.entity(id)) }
 
     private func seedTitle() {
         guard !titleSeeded else { return }
@@ -935,19 +964,14 @@ struct EntityTabBody: View {
         titleSeeded = true
     }
 
+    /// The rules live in `LivName.commit` (Kit.swift) — including the
+    /// trashed-entity guard this function used to carry alone, and which
+    /// the record card's own copy never had.
     private func commitTitle() {
-        // A gone or trashed note takes no name: after a trash, the entity
-        // stops resolving, storedName reads empty, and the equality guard
-        // below would happily write the old name back onto the trashed
-        // note — the stray transaction that broke the chip's Undo
-        // (found live, 2026-08-02).
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard typed != stored, !typed.isEmpty else {
-            title = stored  // an emptied field reverts, never erases the name
-            return
+        switch LivName.commit(typed: title, row: box.entity(id)) {
+        case .write(let typed): box.set(id, "name", typed)
+        case .revert(let stored): title = stored
+        case .ignore: break
         }
-        box.set(id, "name", typed)
     }
 }

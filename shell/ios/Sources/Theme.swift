@@ -194,6 +194,36 @@ enum LivType {
     }
 }
 
+/// A DAY'S MARK — the disc behind the number that says "this is the day
+/// you are on".
+///
+/// Rev 47 made the correction standing (owner: *"today's date is marked
+/// by a tiny dot that is completely hidden by a horizontal bar when
+/// selected. You have a tendency to make UI elements tiny and subtle.
+/// Try to go for the opposite."*). It landed on Today's week strip and
+/// nowhere else; the calendar's month grid kept the 2pt rule and the 4pt
+/// dot the owner had just named, until 2026-09-07.
+///
+/// TWO DIAMETERS, because the two grids carry different loads. The strip
+/// shows seven days in a full-width row and can afford 36. A month cell
+/// is one of seven columns and also stacks three busy dots under the
+/// number, so its disc is 28 in a cell grown from 40 to 46 — sized to
+/// what forty-two cells can carry, not copied from the strip.
+///
+/// The grid cannot simply take the strip's numbers: `CalGrid.gridHeight`
+/// is `cellHeight * 6 + rowGap * 5`, and it is also the picker sheet's
+/// detent. At the strip's 62 the card would stand 382pt tall, which is
+/// the jump card becoming the screen — the thing design/ios.md §37 says
+/// it deliberately is not.
+enum LivDay {
+    /// The week strip's disc, and the row it sits in.
+    static let disc: CGFloat = 36
+    static let strip: CGFloat = 62
+    /// The month grid's disc — smaller, because the cell also carries
+    /// the busy dots.
+    static let gridDisc: CGFloat = 28
+}
+
 /// Row metrics. A list row was 46pt when its text was 11–13; the type
 /// scale went up on 2026-08-10 and the rows had to go with it, or the
 /// bigger text would simply be more cramped in the same box (owner:

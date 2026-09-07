@@ -57,6 +57,11 @@ struct Fx {
     task_type: Id,
     note_type: Id,
     done_opt: Id,
+    // The owner's own repro (todo.org, 2026-09-07): a note FILED under an
+    // area, found by typing the area's name.
+    area: Id,
+    testjunk_opt: Id,
+    first_note: Id,
 }
 
 fn fixture() -> Fx {
@@ -86,6 +91,9 @@ fn fixture() -> Fx {
     let finish = store.allocate_id();
     let early = store.allocate_id();
     let late = store.allocate_id();
+    let area = store.allocate_id();
+    let testjunk_opt = store.allocate_id();
+    let first_note = store.allocate_id();
 
     let mut cmds = Vec::new();
 
@@ -96,6 +104,7 @@ fn fixture() -> Fx {
     def(&mut cmds, due, "due", "datetime");
     def(&mut cmds, archived, "archived", "bool");
     def(&mut cmds, summary, "summary", "text");
+    def(&mut cmds, area, "area", "select");
 
     // Select options and types (backstage named entities).
     work(&mut cmds, todo_opt, "todo");
@@ -104,6 +113,8 @@ fn fixture() -> Fx {
     work(&mut cmds, note_type, "note");
     add(&mut cmds, status, props::OPTIONS, Value::Reference(todo_opt));
     add(&mut cmds, status, props::OPTIONS, Value::Reference(done_opt));
+    work(&mut cmds, testjunk_opt, "Testjunk");
+    add(&mut cmds, area, props::OPTIONS, Value::Reference(testjunk_opt));
 
     // The ranking ladder for "report".
     live(&mut cmds, r_exact, "report");
@@ -152,12 +163,19 @@ fn fixture() -> Fx {
     live(&mut cmds, late, "ship late");
     add(&mut cmds, late, due, Value::DateTime(DateTime::date(2026, 7, 12)));
 
+    // FILED, NOT NAMED. The owner's repro: the words "test" and "junk"
+    // appear nowhere in this note's name or body — only in the area it
+    // is filed under.
+    live(&mut cmds, first_note, "First note");
+    add(&mut cmds, first_note, area, Value::Select(testjunk_opt));
+
     store.commit(cmds, "search fixture", Author::User).unwrap();
 
     Fx {
         store, r_exact, r_prefix, r_word, r_cell, r_body, anna, meeting,
         oldreport, laundry, grocery, finish, early, late, status, due,
-        archived, task_type, note_type, done_opt,
+        archived, task_type, note_type, done_opt, area, testjunk_opt,
+        first_note,
     }
 }
 
@@ -182,6 +200,52 @@ fn ranking_name_beats_cell_beats_content() {
     assert!(hits.windows(2).all(|w| w[0].score > w[1].score));
 }
 
+/// THE OWNER'S REPRO (todo.org, 2026-09-07): "I assigned note 'First
+/// note' to area 'Testjunk', but then in search, 'test…' only gave the
+/// literal property and 'First note' did not appear."
+///
+/// A thing is findable by what it is FILED UNDER. Before 2026-09-07 a
+/// Select or Reference cell never entered the haystack at all, so the
+/// only route was the qualifier grammar — which standing rule 5 says a
+/// user never types, and which rev 49 deliberately took out of the field.
+#[test]
+fn a_thing_is_found_by_what_it_is_filed_under() {
+    let fx = fixture();
+    // The whole word.
+    assert!(
+        ids(&fx, "testjunk").contains(&fx.first_note),
+        "a note filed under 'Testjunk' must be findable by the area's name");
+    // AND THE PREFIX, which is the half the owner actually typed. A
+    // filing chip is a short label and incremental typing is the point.
+    assert!(
+        ids(&fx, "test").contains(&fx.first_note),
+        "typing 'test' must reach it — the owner's own repro");
+    // The option ENTITY itself stays backstage: it is working, so the
+    // gate still hides it and the hit list is things, not furniture.
+    assert!(!ids(&fx, "testjunk").contains(&fx.testjunk_opt));
+}
+
+/// FILED RANKS BELOW A CELL AND ABOVE THE BODY. What a thing is called
+/// beats what is written about it, which beats what it is filed under,
+/// which beats a word buried in its text.
+#[test]
+fn a_filing_ranks_between_cells_and_content() {
+    let fx = fixture();
+    let hits = search::search(&fx.store, &search::parse(&fx.store, "testjunk"), 50, |_| String::new());
+    let hit = hits.iter().find(|h| h.id == fx.first_note).expect("the filed note");
+    assert!(hit.score > 10.0, "above a content hit, was {}", hit.score);
+    assert!(hit.score < 20.0, "below a cell hit, was {}", hit.score);
+}
+
+/// A NUMBER OR A DATE IS STILL NOT INCIDENTAL TEXT. This is the rule the
+/// p6 rationale actually protects — "2026" must not surface every thing
+/// with a due date — and it is untouched by the filing tier.
+#[test]
+fn a_date_is_not_free_text() {
+    let fx = fixture();
+    assert!(ids(&fx, "2026").is_empty(), "a due date must not answer a free-text year");
+}
+
 #[test]
 fn free_text_terms_are_anded() {
     let fx = fixture();
@@ -204,9 +268,15 @@ fn gates_exclude_working_trashed_and_archived() {
     let fx = fixture();
     assert!(ids(&fx, "secret").is_empty(), "a working entity must not surface");
     assert!(ids(&fx, "trashme").is_empty(), "a trashed entity must not surface");
-    // A Select value ("done") is not incidental free text, and the option
-    // entity named "done" is backstage — so a bare "done" finds nothing.
-    assert!(ids(&fx, "done").is_empty());
+    // The option ENTITY named "done" is backstage, so it never surfaces
+    // itself — but since 2026-09-07 a bare "done" DOES reach the thing
+    // filed under it, which is the whole point of the filing tier.
+    // Before that this line read `assert!(ids(&fx, "done").is_empty())`,
+    // on the rule that a Select value is not incidental free text; that
+    // rule cost the owner the search in todo.org and was amended, not
+    // worked around.
+    assert!(!ids(&fx, "done").contains(&fx.done_opt), "the option itself stays backstage");
+    assert_eq!(ids(&fx, "done"), vec![fx.finish], "but the task filed under it is found");
     // Archived is backstage by default; is:archived opts it back in.
     assert!(ids(&fx, "oldreport").is_empty());
     assert_eq!(ids(&fx, "oldreport is:archived"), vec![fx.oldreport]);

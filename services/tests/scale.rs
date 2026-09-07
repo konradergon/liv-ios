@@ -382,3 +382,54 @@ fn recency_is_not_rebuilt_on_every_read() {
          it is being rebuilt from history instead of maintained on append"
     );
 }
+
+/// The FILING TIER, added 2026-09-07 so a thing is findable by what it is
+/// filed under (services/src/search.rs, `Searchable::filed`).
+///
+/// It sits on the read path, so standing rule 2 applies: it is one more
+/// bucket filled from cells the loop was already walking, so a search
+/// must still cost what the BOX costs and no more. The shape to catch is
+/// the tempting wrong one — resolving each Select's option by scanning
+/// the store for it, which `display` would make easy and which would
+/// turn one search into O(box x cells).
+#[test]
+fn searching_by_a_filing_stays_linear_in_box_size() {
+    // Every note in both boxes is filed under the same area, so the
+    // filing tier does real work on every entity in both — the only
+    // thing that differs is how many entities there are.
+    fn filed(name: &str, box_size: usize) -> (std::path::PathBuf, Session) {
+        let (path, mut session) = boxed(name);
+        let now = DateTime::date(2026, 9, 7);
+        let area = content::birth_property(&mut session, "area", "select").unwrap();
+        content::add_option(&mut session, area, "Testjunk").unwrap();
+        for _ in 0..box_size {
+            let id = content::create_note(&mut session, now).unwrap();
+            content::set_property(&mut session, id, "area", "Testjunk").unwrap();
+        }
+        (path, session)
+    }
+    let (small_path, small_box) = filed("filed400", 400);
+    let (large_path, large_box) = filed("filed1600", 1600);
+    let ask = |session: &Session| {
+        time(|| {
+            let store = session.store();
+            let q = liv_services::search::parse(store, "test");
+            assert!(
+                !liv_services::search::search(store, &q, 50, |_| String::new()).is_empty(),
+                "the filed notes are found"
+            );
+        })
+    };
+    let ratio = best_ratio(5, || ask(&small_box), || ask(&large_box));
+    let _ = std::fs::remove_dir_all(small_path.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large_path.parent().unwrap());
+    // Measured 2026-09-07: 3.72x for a 4x box — search reads the whole
+    // box by design, so linear IS the right shape here. 8.0 leaves room
+    // for a slow CI machine while still catching the quadratic form,
+    // which would land near 16x.
+    assert!(
+        ratio < 8.0,
+        "a 4x larger box multiplied a filed search by {ratio:.2}x; \
+         the filing tier is resolving each option by scanning the store"
+    );
+}
