@@ -540,21 +540,23 @@ struct DeskHost: View {
     /// It supersedes 2026-08-12's "task and event don't belong in new
     /// tab" — that was aimed at the full-screen New Tab page and its
     /// four-way chooser, both long deleted, and neither is what this is.
-    /// What `+` makes, decided by where you are standing.
+    /// What `+` makes is `Feature.makes`' to say, since 2026-09-05 —
+    /// the bar prints the same answer under the key.
     ///
     /// Tasks and Today both go through `createRecord`, which already
     /// dates the task from `desk.contextDay` — so a task made in Today
     /// is due today and one made on a Calendar day is due that day,
     /// without this function knowing anything about dates.
     ///
-    /// Notes, Inbox and Everything all make a NOTE, and that is not a
-    /// fallback: `createNote` calls `adoptCapture`, so a note made from
-    /// the bar IS the capture the Inbox is a list of.
+    /// `createNote` calls `adoptCapture`, so a note made from the bar IS
+    /// the capture the Inbox is a list of.
     private func createHere() {
-        switch desk.state {
-        case .tasks, .today: createRecord(event: false)
-        case .calendar: createRecord(event: true)
-        case .notes, .inbox, .everything: createNote()
+        switch desk.state.makes {
+        case .task: createRecord(event: false)
+        case .event: createRecord(event: true)
+        // The rule only ever answers note, task or event; the rest of
+        // the kinds are what the long-press menu is for.
+        default: createNote()
         }
     }
 

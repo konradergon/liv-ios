@@ -25,6 +25,15 @@ struct LivApp: App {
             print("SPAN-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("SPAN-SELFCHECK \($0)") }
         }
+        // WHAT A KEYSTROKE COSTS, and whether it grows with the note
+        // (EditorCost.swift), same door: `-editor-cost.selfcheck 1`. The
+        // only cost test in the shell; the Rust ones all scale the
+        // NUMBER of notes, never the LENGTH of one.
+        if UserDefaults.standard.bool(forKey: "editor-cost.selfcheck") {
+            let failures = livEditorCostSelfCheck()
+            print("EDITCOST-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("EDITCOST-SELFCHECK \($0)") }
+        }
         // The workspace query grammar, same door:
         // `simctl launch … -workspace.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "workspace.selfcheck") {
@@ -293,12 +302,39 @@ struct RootView: View {
                 Outbox.shared.closeBatch(snapshot: box.snap)
             }
         }
+        // THE `liv://` DOOR. Warm and cold launch both, for a
+        // single-scene app; no UIApplicationDelegate needed.
+        .onOpenURL { Routes.shared.handle($0) }
         .onAppear {
             bindOutboxTitles()
             // A tapped notification lands as a desk tab (design/ios.md §3);
             // Notify parks a cold-launch tap until this wiring exists.
             Notify.shared.onOpen = { [weak desk] id in
                 desk?.open(id)
+            }
+            // A link from another app lands wherever it names. Assigning
+            // this flushes anything that arrived during the launch —
+            // `desk.newNote` is nil until DeskHost appears, so a cold
+            // `liv://capture` would otherwise be swallowed.
+            Routes.shared.apply = { [weak desk, weak box] route in
+                guard let desk else { return }
+                switch route {
+                case .capture: desk.newNote?()
+                case .capturePhoto: desk.cameraShown = true
+                case .view(let feature): desk.go(feature)
+                case .entity(let id):
+                    // ASK THE BOX BEFORE SAYING IT IS GONE. A link can
+                    // name something written since the last snapshot —
+                    // by the CLI, by an import, by anything that is not
+                    // this app — and the document body draws "This was
+                    // deleted." for an id the snapshot has not caught up
+                    // with yet. Seen twice on 2026-09-06 while measuring
+                    // with CLI-written notes. The body re-renders when
+                    // the snapshot lands, so one refresh is the whole
+                    // fix.
+                    if box?.live(id) == nil { box?.refresh() }
+                    desk.open(id)
+                }
             }
         }
         .onReceive(box.$snap) { snap in

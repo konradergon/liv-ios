@@ -192,8 +192,8 @@ struct EverythingView: View {
             // chips before the surface pass and none after it; one is
             // what the spec asks for, and it answers the question a
             // mixed list actually raises: what is this attached to.
-            if let anchor = anchorChip(row) {
-                ValueChip(anchor)
+            if let chip = livAnchorChip(of: row) {
+                chip.transition(.scale(scale: 0.85).combined(with: .opacity))
             }
             // Only when it changes — see `livNewFact`. Fourteen rows
             // reading "Mon 31 Aug" said nothing about any of them.
@@ -213,19 +213,6 @@ struct EverythingView: View {
         }
     }
 
-
-    /// The row's ONE anchor, in the blueprint's own order: project →
-    /// subject → people → area. First one that exists wins; nothing
-    /// renders when none does.
-    private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "tags", "people", "area"] {
-            let hit = (row.cells ?? []).first {
-                $0.property == property && !($0.value ?? "").isEmpty
-            }
-            if let value = hit?.value, !value.isEmpty { return value }
-        }
-        return nil
-    }
 
     /// Upcoming answers "when is it due"; the other slices answer "when did
     /// I catch it". Today reads as a time either way — a column of identical

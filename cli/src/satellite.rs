@@ -416,7 +416,7 @@ pub fn export(log_path: &str, root: &str) -> Result<(), String> {
 
 /// The one unsafe seam: call the C-ABI snapshot, copy the string out, free
 /// it with the paired free. Rust-to-Rust through the rlib — no dylib loading.
-fn snapshot_json(log_path: &str) -> Result<String, String> {
+pub fn snapshot_json(log_path: &str) -> Result<String, String> {
     let c_path = CString::new(log_path).map_err(|_| "the box path contains a NUL")?;
     let raw = unsafe { liv_ffi::liv_snapshot(c_path.as_ptr()) };
     if raw.is_null() {
@@ -425,6 +425,23 @@ fn snapshot_json(log_path: &str) -> Result<String, String> {
     let json = unsafe { CStr::from_ptr(raw) }
         .to_str()
         .map(str::to_string)
+        .map_err(|_| "the snapshot was not UTF-8".to_string());
+    unsafe { liv_ffi::liv_string_free(raw) };
+    json
+}
+
+/// The calendar's own read: the same snapshot narrowed to a span, which is
+/// what `liv_snapshot_window_at` gives the day and month surfaces. Its
+/// `occurrences` section has no other reader outside the app.
+pub fn snapshot_window_json(log_path: &str, from: i64, to: i64) -> Result<String, String> {
+    let c_path = CString::new(log_path).map_err(|_| "the box path contains a NUL")?;
+    let raw = unsafe { liv_ffi::liv_snapshot_window_at(c_path.as_ptr(), from, to) };
+    if raw.is_null() {
+        return Err("cannot snapshot the box (is it open elsewhere?)".into());
+    }
+    let json = unsafe { CStr::from_ptr(raw) }
+        .to_str()
+        .map(|s| s.to_string())
         .map_err(|_| "the snapshot was not UTF-8".to_string());
     unsafe { liv_ffi::liv_string_free(raw) };
     json

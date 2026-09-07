@@ -320,9 +320,7 @@ struct EntityInspector: View {
                         .font(.system(size: LivType.strong).monospacedDigit())
                         .foregroundStyle(LivTheme.text)
                 } else {
-                    Text("—")
-                        .font(.system(size: LivType.strong))
-                        .foregroundStyle(LivTheme.muted)
+                    DetailEmptyValue()
                 }
             }
             .frame(minHeight: LivRow.height)
@@ -363,7 +361,9 @@ struct EntityInspector: View {
                     // control's clothes on a fact. Every other read-only
                     // value in this panel is text.
                     Text(row.status ?? "")
-                        .font(.system(size: LivType.body))
+                        // The value column's own size, like every other
+                        // read-only value on this card (2026-09-05).
+                        .font(.system(size: LivType.strong))
                         .foregroundStyle(LivTheme.text2)
                 }
                 .frame(minHeight: LivRow.height)
@@ -379,11 +379,9 @@ struct EntityInspector: View {
                         DetailRowLabel("status")
                         Spacer(minLength: 12)
                         if let status = row.status, !status.isEmpty {
-                            ValueChip(status)
+                            ValueChip(status, big: true)
                         } else {
-                            Text("—")
-                                .font(.system(size: LivType.strong))
-                                .foregroundStyle(LivTheme.muted)
+                            DetailEmptyValue()
                         }
                     }
                     .frame(minHeight: LivRow.height)
@@ -455,14 +453,20 @@ struct EntityInspector: View {
                 DetailRowLabel(property)
                 Spacer(minLength: 12)
                 if held.isEmpty {
-                    Text("—")
-                        .font(.system(size: LivType.strong))
-                        .foregroundStyle(LivTheme.muted)
+                    DetailEmptyValue()
                 } else {
+                    // TWO, NOT THREE. The values are the column's own
+                    // size now, and three 20pt capsules after a 20pt
+                    // label do not fit the ~299pt left on the row — the
+                    // label carries `layoutPriority(1)`, so the CHIPS
+                    // are what gets squeezed, and a squeezed chip
+                    // truncates a project's name to nothing (each is
+                    // `lineLimit(1)`). Two whole names and a count beats
+                    // three shortened ones.
                     HStack(spacing: 5) {
-                        ForEach(held.prefix(3), id: \.self) { ValueChip($0) }
-                        if held.count > 3 {
-                            Text("+\(held.count - 3)")
+                        ForEach(held.prefix(2), id: \.self) { ValueChip($0, big: true) }
+                        if held.count > 2 {
+                            Text("+\(held.count - 2)")
                                 .font(.system(size: LivType.body).monospacedDigit())
                                 .foregroundStyle(LivTheme.text3)
                         }
@@ -583,10 +587,17 @@ struct InspectorValueSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(field.property.uppercased())
-                .font(.system(size: LivType.label, weight: .bold))
-                .kerning(0.6)
-                .foregroundStyle(LivTheme.text3)
+            // A SHEET TITLE, and sized like one (2026-09-05). It was
+            // 16pt bold UPPERCASE with kerning, in the dimmest ink —
+            // smaller and quieter than the 22pt rows underneath it, so
+            // the header of the screen ranked below its own list.
+            // Sentence case for the same reason the section labels
+            // dropped theirs on 2026-08-18: uppercase made every
+            // heading shout. Full ink plus weight is what outranks the
+            // rows now, not size alone.
+            Text(field.property.capitalized)
+                .font(.system(size: LivType.title, weight: .semibold))
+                .foregroundStyle(LivTheme.text)
             if !field.closed {
                 TextField("Search or create…", text: $typed)
                     .font(.system(size: LivType.title))
@@ -745,6 +756,14 @@ struct InspectorValueSheet: View {
                         .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                         .frame(width: 16)
+                } else if field.property == "area" {
+                    // AN AREA'S OWN MARK (2026-09-06, direction A): the
+                    // column the coloured dot vacated on 2026-08-29 holds
+                    // the area's drawing instead — a signal with something
+                    // to decode, in ink. Sorting becomes six drawings you
+                    // recognise, not six words.
+                    LivIcon(glyph: LivArea.glyph(named: label), color: LivTheme.text2, size: 19)
+                        .frame(width: 16)
                 } else {
                     // NO DOT. `Hue.dot` hashed the property's NAME to one
                     // of five colours — its own comment said it "means
@@ -777,6 +796,22 @@ struct InspectorValueSheet: View {
 }
 
 // MARK: - shared row pieces
+
+/// THE EMPTY VALUE — the em-dash a field shows when it holds nothing.
+///
+/// One view, because it was three copies (due, status, and every core
+/// filing field), each spelling out the same dash, the same size and the
+/// same ink. It is the TARGET the filled values were brought up to meet
+/// on 2026-09-05, not a thing to shrink: an empty field read 20pt while
+/// a filled one read 14, so the card said least about the fields that
+/// held most.
+private struct DetailEmptyValue: View {
+    var body: some View {
+        Text("—")
+            .font(.system(size: LivType.strong))
+            .foregroundStyle(LivTheme.muted)
+    }
+}
 
 private struct DetailRowLabel: View {
     let text: String

@@ -274,7 +274,7 @@ struct LibraryPanel: View {
                             .foregroundStyle(LivTheme.text)
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: LivType.caption, weight: .semibold))
                             .foregroundStyle(LivTheme.text2)
                     }
                     Text(counts.foot)
@@ -386,6 +386,8 @@ struct ViewCounts {
     private var events = 0
     private var everything = 0
     private var today = 0
+    /// Rows with no area cell — the pile that is not yet sorted.
+    private var unfiled = 0
 
     init(box: BoxModel, lens: WorkspaceModel) {
         let now = Civil.todayDay()
@@ -394,6 +396,9 @@ struct ViewCounts {
             // view is the number of rows that view will show.
             guard lens.admits(row) else { continue }
             everything += 1
+            if !(row.cells ?? []).contains(where: { $0.property == "area" && !($0.value ?? "").isEmpty }) {
+                unfiled += 1
+            }
             switch LivKind.of(row) {
             case .note: notes += 1
             case .task: tasks += 1
@@ -427,8 +432,11 @@ struct ViewCounts {
         }
     }
 
-    /// Obsidian's second line: what the workspace holds, in words.
+    /// What the workspace holds, and HOW MUCH OF IT IS SORTED. Obsidian's
+    /// foot says how big the vault is; Liv's says how much is unfiled,
+    /// which is the product page's second success test (2026-09-06).
     var foot: String {
-        "\(everything) item\(everything == 1 ? "" : "s")"
+        let items = "\(everything) item\(everything == 1 ? "" : "s")"
+        return unfiled > 0 ? items + " · \(unfiled) unfiled" : items
     }
 }

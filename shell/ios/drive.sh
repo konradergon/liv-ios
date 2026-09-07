@@ -19,6 +19,10 @@
 #
 #   ./drive.sh boot [where]      relaunch (optionally via -desk.boot <where>) and check
 #   ./drive.sh grid              Notes' root is the LIST, and the box opens the switcher
+#   ./drive.sh rows [view]       every row in that list is the SAME height
+#   ./drive.sh routes           liv:// links land where they name, and nowhere else
+#   ./drive.sh areas            Today counts the day by area of life under its date
+#   ./drive.sh chrome [view]     the doors retire on a scroll and come back (all six by default)
 #   ./drive.sh create            + makes what the place holds, in one tap
 #   ./drive.sh desk              one desk of documents, the same in every view
 #   ./drive.sh lens              a saved filter actually narrows the app
@@ -188,6 +192,47 @@ except Exception:
 print("\n".join(sorted(out)))' 2>/dev/null
 }
 
+# A SPRINGBOARD ALERT, if one is covering the app.
+#
+# The one-surface rule reads markers the app draws (`liv.surface.` /
+# `liv.overlay.`), so a system alert is invisible to it: on 2026-09-07 an
+# erased simulator asked "Liv Would Like to Send You Notifications", and
+# boot failed with "no surface marker appeared ... Check Surface.swift is
+# in the build" — an accusation against an app that was running perfectly.
+# A harness that names the wrong thing costs more than one that says
+# nothing. A Sheet with no `liv.` marker anywhere under it is not ours.
+#
+# READ `type`, NOT `AXType`. The first draft of this asked for `AXType`
+# and passed a synthetic test built with the same wrong key, then missed
+# the real alert on screen — a check calibrated against fiction. `axe`
+# spells it `type` (and `role` as `AXSheet`); only `AXUniqueId`, which
+# `surfaces()` reads, carries the AX prefix.
+system_alert() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c 'import json, sys
+hit = []
+def kind(n):
+    return str(n.get("type") or n.get("role") or "")
+def ours(n):
+    if str(n.get("AXUniqueId") or "").startswith("liv."): return True
+    return any(ours(c) for c in n.get("children") or [])
+def text(n, out):
+    lab = n.get("AXLabel") or n.get("AXValue") or ""
+    if lab: out.append(str(lab))
+    for c in n.get("children") or []: text(c, out)
+def walk(n):
+    if kind(n) in ("Sheet", "AXSheet", "Alert", "AXAlert") and not ours(n):
+        out = []
+        text(n, out)
+        if out: hit.append(out[0])
+    for c in n.get("children") or []: walk(c)
+try:
+    d = json.load(sys.stdin)
+    walk(d if isinstance(d, dict) else d[0])
+except Exception:
+    pass
+print(hit[0] if hit else "")' 2>/dev/null
+}
+
 wait_for_surface() {
   local i
   for i in {1..40}; do
@@ -230,10 +275,22 @@ cmd_boot() {
   local args=()
   [[ -n "$where" ]] && args=(-desk.boot "$where")
   ( xcrun simctl launch --console-pty "$UDID" "$APP" $args > "$CONSOLE" 2>&1 & echo $! > "$RUN/pid" )
-  wait_for_surface || { die "no surface marker appeared in 10s.
+  if ! wait_for_surface; then
+    local alert; alert="$(system_alert)"
+    if [[ -n "$alert" ]]; then
+      die "the system is covering the app with: $alert
+      That is a springboard alert, not the app — dismiss it once
+      (\`axe tap --udid $UDID --label Allow\`) and pre-grant the rest with
+      \`xcrun simctl privacy $UDID grant all $APP\`. An erased or new
+      simulator asks these on first launch."
+      return 1
+    fi
+    die "no surface marker appeared in 10s.
       Either the app did not start, or nothing on screen calls
       \`.livSurface()\` — and a harness that cannot see the surface
-      cannot tell you anything. Check Surface.swift is in the build."; return 1 }
+      cannot tell you anything. Check Surface.swift is in the build."
+    return 1
+  fi
   # SETTLE before saying ready. A surface marker appears while the app is
   # still decoding its first snapshot and burning a core; a tour started
   # in that window taps into a UI that is still moving and fails at
@@ -715,11 +772,11 @@ cmd_bar() {
   shape=$(bar_keys | python3 -c '
 import json, sys
 ks = json.load(sys.stdin)
-want = ["Back", "Forward", "Search", "New", "Desk."]
+want = ["Back", "Forward", "Search", "New", "open"]
 if len(ks) != 5:
     print("COUNT %d" % len(ks)); raise SystemExit
 for k, w in zip(ks, want):
-    if not k["label"].startswith(w):
+    if not k["label"].endswith(w):
         print("ORDER %s != %s" % (k["label"], w)); raise SystemExit
 if len({k["y"] for k in ks}) != 1:
     print("ROWS %s" % sorted({k["y"] for k in ks})); raise SystemExit
@@ -780,9 +837,20 @@ cards = []
 def walk(n):
     lab = n.get("AXLabel") or ""
     f = n.get("frame") or {}
-    # A card is a tall button in the body, not a bar key and not a row.
-    if n.get("type") == "Button" and lab and f.get("height", 0) > 100:
-        cards.append(((f["y"], f["x"]), lab))
+    # A card is a tall button in the body, not a bar key and not a row —
+    # and not the New-note card, which is a door out, not a tab.
+    #
+    # AND IT HAS TO BE ON SCREEN. The grid scrolls, and it now starts at
+    # the BOTTOM (rev 40), so with enough tabs open the earliest cards sit
+    # at a NEGATIVE y — off the top of the viewport. This walk sorted by y
+    # and picked the topmost, so `axe tap` aimed at an activation point
+    # nobody could reach and the check failed on a build that was fine.
+    # Found 2026-09-06 with thirteen tabs open; the first card was at
+    # y=-296.
+    y = f.get("y", 0)
+    if (n.get("type") == "Button" and lab and f.get("height", 0) > 100
+            and lab != "New note" and y >= 0 and y + f.get("height", 0) <= 912):
+        cards.append(((y, f["x"]), lab))
     for c in n.get("children") or []: walk(c)
 try:
     d = json.load(sys.stdin)
@@ -790,12 +858,20 @@ try:
 except Exception:
     pass
 # A label that appears TWICE cannot be tapped by label — axe refuses an
-# ambiguous match, and rightly. Prefer one that is unique on screen.
+# ambiguous match, and rightly. Only a UNIQUE label is an answer here.
+#
+# The old fallback returned cards[0] when none was unique, which handed
+# the caller a label `axe tap` would refuse and reported it as "no element
+# on screen after 3s" — a harness failure that reads exactly like a broken
+# app. Two nameless notes made in the same MINUTE share a card label
+# ("Note, created · 2026-09-07 15:01, note"), so the collision is ordinary
+# rather than rare; the caller falls back to the frame centre, the same
+# exception `open_first_note` already takes.
 from collections import Counter
 seen = Counter(lab for _, lab in cards)
 cards.sort()
 uniq = [lab for _, lab in cards if seen[lab] == 1]
-print(uniq[0] if uniq else (cards[0][1] if cards else ""))' 2>/dev/null)
+print(uniq[0] if uniq else "")' 2>/dev/null)
   [[ -n "$l" ]] || return 1
   print -r -- "$l"
 }
@@ -828,20 +904,343 @@ except Exception: print(0)'
 }
 
 # The bar's five keys as JSON, in x order.
+# THE NUMBERED BOX IS SPOKEN AS "3 documents open" (2026-09-05; it was
+# "Desk. 3 documents open" while the grid called itself the Desk). No
+# fixed prefix, so it is matched by shape wherever a check reads it.
 bar_keys() {
   axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
 import json,sys
 d=json.load(sys.stdin); out=[]
+def tab_key(l): return l.endswith(' open') and l.split(' ')[0].isdigit()
 def w(n):
     l=n.get('AXLabel') or ''
     f=n.get('frame') or {}
     if n.get('type')=='Button' and f.get('y',0) > 700 and (
-        l in ('Back','Forward','Search','New') or l.startswith('Desk.')):
+        l in ('Back','Forward','Search','New') or tab_key(l)):
         out.append({'label': l, 'x': f.get('x',0), 'y': f.get('y',0),
                     'enabled': bool(n.get('enabled'))})
     for c in n.get('children') or []: w(c)
 w(d if isinstance(d,dict) else d[0])
 print(json.dumps(sorted(out, key=lambda k: k['x'])))"
+}
+
+# THE CHROME LEAVES, AND TAKES ITS ROOM WITH IT.
+#
+# Added 2026-09-07. `livHidesChrome` has slid the doors off screen since
+# 2026-08-20 and no check has ever asserted it — the "what's left" audit
+# named that gap by name ("the harness has no scroll-retire check on any
+# view"). The owner then photographed the other half of it: the buttons
+# went, and the 52pt band reserved for them stayed, leaving a hole between
+# the clock and the day's title.
+#
+# So this asserts BOTH halves on one flick: the door goes above the top of
+# the screen, and the content rises into the band it vacated.
+#
+# AN ORDINARY SWIPE IS ENOUGH, and that is the point. Until 2026-09-07 it
+# was not: `DeskModel.scrolled` measured its threshold from an anchor that
+# was re-clamped to within 44pt of the live offset on every sample, so
+# `y > anchor + 44` was false by construction on a smooth scroll and only a
+# sample that happened to jump the whole threshold at once could trip it.
+# Calendar never tripped at all. The threshold measures from the last
+# direction CHANGE now, so this check drives it the way a thumb does.
+cmd_chrome() {
+  # EVERY SURFACE THAT HIDES ITS CHROME, unless one is named. All six
+  # call `livHidesChrome`, and Calendar is the one that silently did not
+  # work — a check that only ever ran on Today would have stayed green
+  # through the whole of 2026-09-07.
+  if (( $# == 0 )); then
+    local v
+    for v in today calendar inbox tasks everything notes; do
+      cmd_chrome "$v" || return 1
+    done
+    return 0
+  fi
+  local view="$1"
+  cmd_boot "$view" >/dev/null 2>&1 || { die "could not boot into $view."; return 1 }
+  # LET THE SURFACE SETTLE. Calendar scrolls itself to the current hour on
+  # appear (`openAtTheDay`); a swipe that lands during that animation is
+  # absorbed by it and the check reports a chrome that never moved.
+  perl -e 'select(undef,undef,undef,2.5)'
+  local before after
+  before=$(door_y)
+  [[ -n "$before" ]] || {
+    die "no library door on '$view' at rest, so there is nothing to retire."
+    return 1
+  }
+  (( before > 0 )) || {
+    die "the library door starts at ${before}, already off screen."
+    return 1
+  }
+
+  axe swipe --udid "$UDID" --start-x 210 --start-y 700 --end-x 210 --end-y 300 \
+    --duration 0.3 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,2.0)'
+
+  after=$(door_y)
+  if [[ -n "$after" ]] && (( after >= 0 )); then
+    die "flicked '$view' and the library door is still at ${after}.
+      The chrome retires on scroll (livHidesChrome). If this view never
+      retires it, say so in its own comment rather than leaving the
+      check green."
+    return 1
+  fi
+
+  # THE DOOR'S TRAVEL IS THE ASSERTION. It leaves by exactly the band it
+  # owns, `LivRow.topInset` — which is also the band `LivTopScrim`
+  # reserves and now gives back, so one number pins both halves.
+  #
+  # WHAT THIS CANNOT ASSERT, and why: "the content rose" is not readable
+  # from the tree on a scrolling surface, because the content moved for
+  # two reasons at once — the flick and the band. The first version
+  # compared the topmost label before and after and reported 138 -> 498,
+  # which is the list having scrolled, not the band having stayed. The
+  # band's own collapse was measured directly instead (Calendar's pinned
+  # title, 137 -> 85 with the band forced closed) and is recorded in
+  # design/ios.md rather than asserted here.
+  local travelled=$(( before - after ))
+  (( travelled >= 100 )) || {
+    die "the door only travelled ${travelled}pt (${before} -> ${after}).
+      It leaves by its whole band, about 114pt on a notched phone."
+    return 1
+  }
+  # AND THEY COME BACK. Scrolling the other way is how you get the
+  # furniture, so a check that only proved they leave would pass on a
+  # surface that had lost them for good.
+  axe swipe --udid "$UDID" --start-x 210 --start-y 300 --end-x 210 --end-y 720 \
+    --duration 0.3 >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,2.0)'
+  local home=$(door_y)
+  [[ -n "$home" ]] && (( home >= 0 )) || {
+    die "scrolled back up on '$view' and the doors did not return (y=${home:-absent})."
+    return 1
+  }
+  say "ok    chrome: on $view the doors retire (${before} -> ${after}, ${travelled}pt) and come back on the way up"
+  cmd_check
+}
+
+# Where the library door sits, or nothing when it is not in the tree.
+door_y() {
+  scan 'def walk(n):
+    if (n.get("AXLabel") or "") == "Library":
+        print(int((n.get("frame") or {}).get("y", 0)))
+    for c in n.get("children") or []: walk(c)' | head -1
+}
+
+# THE LINE ONLY LIV CAN PRINT. Today counts the day by area of life under
+# its date — "Work 3 · Home 1 · 2 unfiled" — since 2026-09-06 (direction A,
+# "the furniture shows"). It draws only when the day holds something, so
+# the check boots into Today, confirms the late pile is there, and asserts
+# that a StaticText carrying "unfiled" or a shipped area name sits between
+# the date and the day strip.
+cmd_areas() {
+  cmd_boot today >/dev/null 2>&1 || { die "could not boot into Today."; return 1 }
+  local line
+  line=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+areas = ('Work', 'Health', 'Money', 'Home', 'Family & Friends', 'Learning')
+hits = []
+def walk(n):
+    l = n.get('AXLabel') or ''
+    f = n.get('frame') or {}
+    if n.get('type') == 'StaticText' and 60 < f.get('y', 0) < 260 and (
+        'unfiled' in l or any(l.startswith(a + ' ') for a in areas)):
+        hits.append((round(f.get('y', 0)), f.get('x', 0), l))
+    for c in n.get('children') or []: walk(c)
+d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
+# SCREEN ORDER, left to right: the app puts the shipped areas first and
+# the unfiled count last, and the report should read the way the line does.
+hits.sort(); print(' · '.join(l for _, _, l in hits))")
+  [[ -n "$line" ]] || {
+    die "Today shows no area line under its date. With a late pile on
+      screen it must count the day by area, or say how much is unfiled."
+    return 1
+  }
+  say "ok    areas: Today counts the day by area — $line"
+  cmd_check
+}
+
+# THE `liv://` DOOR — the only way into this app from another one.
+#
+# Added 2026-09-05 with the scheme itself. `design/what-liv-is-for.md`
+# ranks catching things from other apps above any new feature, and the
+# links had been "designed, unbuilt" since 2026-08-10.
+#
+# SIMCTL OPENURL RAISES A SYSTEM ALERT ("Open in Liv?") because the URL
+# has no source app. That alert is a separate window, so `surfaces`
+# reports nothing at all while it is up — the first run of this check
+# read "none" three times and looked like a dead handler when the
+# handler was fine. Tap Open, then read.
+open_url() {
+  local url="$1"
+  xcrun simctl openurl "$UDID" "$url" >/dev/null 2>&1 || {
+    die "simctl refused to open $url."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,1.0)'
+  # The alert appears for a URL with no source app. It is the system's,
+  # not ours, and a person following a link from Mail sees the same one.
+  axe tap --udid "$UDID" --label "Open" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.6)'
+}
+
+cmd_routes() {
+  cmd_boot today >/dev/null 2>&1 || { die "could not boot before the route check."; return 1 }
+
+  # 1. A VIEW BY NAME. `liv://inbox` is the one the spec names; the other
+  #    five come free from the same `Feature` enum.
+  open_url "liv://inbox" || return 1
+  [[ "$(cmd_surface)" == "inbox" ]] || {
+    die "liv://inbox landed on '$(cmd_surface)', not the Inbox."
+    return 1
+  }
+  open_url "liv://tasks" || return 1
+  [[ "$(cmd_surface)" == "tasks" ]] || {
+    die "liv://tasks landed on '$(cmd_surface)', not Tasks."
+    return 1
+  }
+
+  # 2. AN UNKNOWN HOST CHANGES NOTHING. A link from another app must not
+  #    get to guess where you land, so an unparseable one is dropped in
+  #    silence rather than falling back to a default surface.
+  open_url "liv://nonsense" || return 1
+  [[ "$(cmd_surface)" == "tasks" ]] || {
+    die "liv://nonsense moved the app to '$(cmd_surface)'. An unknown route
+      must do nothing at all."
+    return 1
+  }
+
+  # 3. CAPTURE MAKES A NOTE AND PUTS THE CARET IN IT — the same door `+`
+  #    opens, so what it makes is an Inbox capture.
+  #
+  #    The count is read BEFORE, from Tasks: once the note is open the
+  #    caret is in it, the keyboard is up, and the bar retires under a
+  #    keyboard by design — so there is no numbered box to read after,
+  #    and the first draft of this check failed on that rather than on
+  #    anything being wrong.
+  local before keys=5
+  before=$(tab_count) || { die "no tab count before the capture route."; return 1 }
+  open_url "liv://capture" || return 1
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "liv://capture landed on '$(cmd_surface)', not a document."
+    return 1
+  }
+  #    THE RETIRED BAR IS THE ASSERTION. A capture whose caret is not in
+  #    it is a note you have to tap before you can type, which is the
+  #    thing this route exists to skip.
+  #
+  #    WAIT FOR IT, do not sample once. The keyboard animates in after
+  #    the document paints, so a single read a beat too early sees five
+  #    keys and reports a broken route about a working one — the same
+  #    flake `cmd_tap` was given a retry loop for (2026-08-27). Caught
+  #    here on the first deliberate break of this check.
+  local i
+  for i in {1..10}; do
+    keys=$(bar_keys | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+    [[ "$keys" == "0" ]] && break
+    perl -e 'select(undef,undef,undef,0.4)'
+  done
+  (( keys == 0 )) || {
+    die "liv://capture opened a document with the bar still up (${keys} keys),
+      so no keyboard came with it — the caret is not in the note."
+    return 1
+  }
+
+  say "ok    routes: liv://inbox and liv://tasks land, liv://capture opens a note with the caret in it (desk held ${before} first), an unknown host does nothing"
+  cmd_check
+}
+
+# EVERY ROW IN A LIST IS THE SAME HEIGHT — the thing twenty green checks
+# could not see.
+#
+# Added 2026-09-05, after the row-height unification shipped with a hole
+# in it: Tasks kept a leftover `.padding(.vertical, 4)` OUTSIDE the frame
+# that sets the height, so it padded the content first, the 56 floor
+# never bound, and a row carrying a chip drew 58 while its neighbours
+# drew 56. Nothing here measured a row, so the harness reported ten
+# PASSes over an uneven list. This check was watched failing at
+# "56pt x11, 58pt x1" before the padding came off.
+#
+# WHAT IT CAN AND CANNOT DO. It finds rows by geometry — wide, and in the
+# row band — because the accessibility tree offers nothing better. An
+# `.accessibilityIdentifier` on each row recipe was tried the same day
+# and reverted: SwiftUI hangs the identifier on a row's LEAVES (the ring
+# at 24, the glyph at 19, the title at 15), never on the row, so it
+# named everything except the thing being measured.
+#
+# Geometry alone cannot tell a row from the chrome above it. Measured on
+# Today: a screen title's block is 50.3, the day strip 58, the "Late"
+# collapse heading 60 — and the broken Tasks row was 58, between the two.
+# So the sweep runs this on NOTES and TASKS, whose columns hold rows and
+# nothing else in the band, and the other four are callable by hand and
+# will name their own chrome as an outlier. A check that is honest about
+# where it bites beats one that cries wolf on four screens.
+row_heights() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+from collections import Counter
+# BY POSITION, NOT BY NODE. A row is five or six nested groups sharing
+# one frame, so counting nodes counts the nesting; a (y, height) pair
+# counts the row.
+seen = set()
+def walk(n):
+    f = n.get('frame') or {}
+    h, w = f.get('height', 0), f.get('width', 0)
+    # LivRow.height is 56 and LivRow.band is 44, so 52 is the gap
+    # between a row and the tallest chrome. The ceiling keeps a card
+    # (150) and a whole section group out.
+    if w > 250 and 52 <= h <= 100:
+        seen.add((round(f.get('y', 0), 1), round(h, 1)))
+    for c in n.get('children') or []: walk(c)
+try:
+    d = json.load(sys.stdin)
+    walk(d if isinstance(d, dict) else d[0])
+except Exception:
+    pass
+hs = Counter(h for _, h in seen)
+print(json.dumps(sorted(hs.items(), key=lambda kv: -kv[1])))"
+}
+
+cmd_rows() {
+  local view="${1:-tasks}"
+  cmd_boot "$view" >/dev/null 2>&1 || { die "could not boot into $view."; return 1 }
+  # NORMALISE FIRST, the way `cmd_goto` does. Tasks remembers its filter
+  # across launches, so a run that left it on "Move" hands the next one
+  # an empty list and the check reports "no rows" about a build that is
+  # fine. "All" is the only slice guaranteed to hold something.
+  [[ "$view" == "tasks" ]] && { cmd_tap "All" >/dev/null 2>&1 || true }
+  local seen verdict
+  seen=$(row_heights) || { die "could not read $view's rows."; return 1 }
+  verdict=$(print -r -- "$seen" | python3 -c "
+import json, sys
+rows = json.load(sys.stdin)
+# EVERY ROW COUNTS, including one of a kind. An earlier draft ignored a
+# height seen once, to skip headers — and that is the exact shape of the
+# bug it was written for: ONE task carried a chip and drew 58 while ten
+# drew 56.
+if not rows:
+    print('NONE'); raise SystemExit
+if len(rows) > 1:
+    print('SPLIT ' + ', '.join('%spt x%d' % (h, n) for h, n in rows)); raise SystemExit
+h, n = rows[0]
+if float(h) != 56:
+    print('WRONG %spt x%d' % (h, n)); raise SystemExit
+print('OK %spt x%d' % (h, n))")
+  case "$verdict" in
+    NONE)   die "no rows on '$view' to measure. Is the list empty?"; return 1 ;;
+    WRONG*) die "'$view' draws its rows at ${verdict#WRONG }, not LivRow.height (56).
+      Every content list shares one row height."
+            return 1 ;;
+    SPLIT*) die "'$view' draws its rows at more than one height: ${verdict#SPLIT }.
+      One list, one beat (owner, 2026-09-05: 'make row height more consistent').
+      If one is a few points TALLER, look for a padding applied OUTSIDE the
+      frame that sets LivRow.height: it wraps the content first, so the 56
+      floor never binds."
+            return 1 ;;
+    OK*)    ;;
+    *)      die "could not read '$view' rows: $verdict"; return 1 ;;
+  esac
+  say "ok    rows: $view draws every row at ${verdict#OK }"
+  cmd_check
 }
 
 # NOTES REACHES NOTES, and the grid is the switcher over it.
@@ -863,6 +1262,22 @@ cmd_grid() {
       The grid is the tab SWITCHER; the root is the shelf."
     return 1
   }
+
+  # NOTHING OPEN IS A REAL STATE, and the one this check cannot run from:
+  # its last step opens "the first card", and with nothing open the only
+  # card is New note — a label the footer's + shares, and `axe` rightly
+  # refuses an ambiguous one. Found 2026-09-05; the check had been green
+  # only because the box always had tabs open when it ran. So open one
+  # note, and come back to the root, which is one tap away (rev 40).
+  if [[ "$(tab_count)" == "0" ]]; then
+    open_first_note || return 1
+    cmd_goto notes >/dev/null 2>&1 || { die "opened a note, but could not get back to Notes' root."; return 1 }
+    [[ "$(cmd_surface)" == "notes" ]] || {
+      die "picked Notes with a note open and it drew '$(cmd_surface)', not the list.
+      Tapping the view you are in goes to its root (rev 40)."
+      return 1
+    }
+  fi
 
   # THE HOLE THIS CHECK EXISTS FOR. The list must reach past the open
   # tabs — if the two numbers ever match again, the root has gone back to
@@ -905,8 +1320,36 @@ print(int(ks[4]["enabled"]) if len(ks) > 4 else "?")')
   # one from the grid is the only way to assert it is really gone — on
   # any other surface there was never one to find.
   local card
-  card=$(first_card) || { die "no tab card on the grid to open."; return 1 }
-  cmd_tap "$card" || return 1
+  card=$(first_card) || card=""
+  if [[ -n "$card" ]]; then
+    cmd_tap "$card" || return 1
+  else
+    # EVERY CARD SHARES ITS LABEL WITH ANOTHER — two nameless notes made
+    # in the same minute. Tap the first card's frame centre instead: the
+    # same exception `open_first_note` documents, and not a guess, since
+    # the frame is what the tree just reported.
+    local xy
+    xy=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+best = None
+def walk(n):
+    global best
+    f = n.get('frame') or {}
+    if (n.get('type') == 'Button' and (n.get('AXLabel') or '')
+            and f.get('height', 0) > 100 and f.get('y', 0) >= 0
+            and f.get('y', 0) + f.get('height', 0) <= 912
+            and (n.get('AXLabel') or '') != 'New note'):
+        key = (f.get('y', 0), f.get('x', 0))
+        if best is None or key < best[0]:
+            best = (key, int(f['x'] + f['width'] / 2), int(f['y'] + f['height'] / 2))
+    for c in n.get('children') or []: walk(c)
+d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
+print(f'{best[1]} {best[2]}' if best else '')")
+    [[ -n "$xy" ]] || { die "no tab card on the grid to open."; return 1 }
+    axe tap --udid "$UDID" -x ${xy%% *} -y ${xy##* } >/dev/null 2>&1
+    perl -e 'select(undef,undef,undef,1.2)'
+    card="the first card"
+  fi
   [[ "$(cmd_surface)" == "document" ]] || {
     die "tapped the card '$card' and the screen shows '$(cmd_surface)', not a document."
     return 1
@@ -932,7 +1375,7 @@ print(m.group(1) if m else '')" | grep -E '^[0-9]+$'
 bar_tab_label() {
   scan 'def walk(n):
     l = n.get("AXLabel") or ""
-    if l.startswith("Desk."): print(l)
+    if l.endswith(" open") and l.split(" ")[0].isdigit(): print(l)
     for c in n.get("children") or []: walk(c)' | head -1
 }
 
@@ -994,7 +1437,7 @@ first_note_point() {
         ROWS.append((f.get("y", 0), f))
     for c in n.get("children") or []: walk(c)' \
     'ROWS = []
-SKIP = ("Desk.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
     'ROWS.sort(key=lambda r: r[0])
 if ROWS:
     f = ROWS[0][1]
@@ -1011,7 +1454,7 @@ first_note() {
         ROWS.append((f.get("y", 0), l))
     for c in n.get("children") or []: walk(c)' \
     'ROWS = []
-SKIP = ("Desk.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
     'ROWS.sort()
 print(ROWS[0][1] if ROWS else "")' | grep .
 }
@@ -1028,7 +1471,7 @@ note_rows() {
         SEEN.append(l)
     for c in n.get("children") or []: walk(c)' \
     'SEEN = []
-SKIP = ("Desk.", "Library", "Note actions", "Back", "Forward", "Search", "New")' \
+SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
     'print(len(SEEN))'
 }
 
@@ -1214,28 +1657,103 @@ raise SystemExit(1 if bad else 0)' || {
       says whether narrowing by that value leaves anything."
     return 1
   }
-  # include -> exclude -> off, and the query text follows.
+
+  # THE PROPERTY NAMES ARE ON SCREEN. Until 2026-09-07 the band was one
+  # horizontal scroller holding every property side by side, so only the
+  # first was visible and the screen never said what you could narrow by
+  # (owner: "it isn't obvious how"). One row per property now, the name at
+  # the margin — so at least two names must be fully inside the screen.
+  local named
+  named=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
+import json, sys
+w = 0
+names = []
+def walk(n):
+    global w
+    f = n.get('frame') or {}
+    if n.get('type') == 'Application':
+        w = max(w, f.get('width', 0))
+    l = n.get('AXLabel') or ''
+    if (n.get('type') == 'StaticText' and l and l[:1].isupper() and ' ' not in l
+            and 100 < f.get('y', 0) < 460 and f.get('x', 0) < 40):
+        names.append((l, f.get('x', 0) + f.get('width', 0)))
+    for c in n.get('children') or []: walk(c)
+d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
+if not w: w = 440
+print(len([1 for _, right in names if right <= w]))")
+  (( named >= 2 )) || {
+    die "only ${named:-0} property name(s) are fully on screen in the facet band.
+      Every property gets its own row with its name at the margin; if they
+      are off the right edge again, the band is one scroller once more."
+    return 1
+  }
+
+  # ONE TAP INCLUDES, AND THE FIELD STAYS THE PERSON'S WORDS.
+  #
+  # This is the assertion the check exists for now, and it is the exact
+  # inverse of the one it carried until 2026-09-07: that one required the
+  # query text to CONTAIN a colon after a tap, which pinned the leak open
+  # (owner: "clunky things like 'type:foo' appearing in search bar").
   local first=$(print -r -- "$chips" | head -1)
   cmd_tap "$first" || return 1
   local q=$(query_text)
-  [[ "$q" == *":"* ]] || { die "tapping '$first' did not add a term; query is '$q'."; return 1 }
+  [[ "$q" == "note" ]] || {
+    die "tapping '$first' changed the search field to '$q'.
+      The field holds what the PERSON typed; a picked constraint is a chip
+      under it. Grammar in the field is standing rule 5 breaking."
+    return 1
+  }
   local lit=$(facet_chips | python3 -c '
 import sys
 print(next((l.strip() for l in sys.stdin if "included" in l), ""))')
   [[ -n "$lit" ]] || { die "tapped a chip and none reads as included."; return 1 }
-  cmd_tap "$lit" || return 1
+  # And the choice is VISIBLE as its own chip, which is the way back.
+  local line=$(constraint_chips)
+  [[ -n "$line" ]] || {
+    die "included a value and no constraint chip appeared under the field.
+      What you chose has to be on screen, or there is nothing to undo."
+    return 1
+  }
+
+  # EXCLUDE IS A NAMED VERB, not a second tap. Tap the constraint chip,
+  # take the middle row.
+  cmd_tap "$line" || return 1
+  local value=$(print -r -- "$line" | sed 's/^[a-z][a-z ]* //; s/,.*//')
+  cmd_tap "Hide $value" || {
+    die "the facet menu has no 'Hide $value' row. Exclusion is a verb in
+      words now, not a hidden third state of a tap."
+    return 1
+  }
   q=$(query_text)
-  [[ "$q" == *"-"* ]] || { die "second tap did not exclude; query is '$q'."; return 1 }
+  [[ "$q" == "note" ]] || {
+    die "hiding a value put '$q' in the search field. The '-type:x' spelling
+      is the storage format and must never be shown."
+    return 1
+  }
   local struck=$(facet_chips | python3 -c '
 import sys
 print(next((l.strip() for l in sys.stdin if "excluded" in l), ""))')
-  [[ -n "$struck" ]] || { die "excluded chip does not say so."; return 1 }
-  cmd_tap "$struck" || return 1
-  q=$(query_text)
-  [[ "$q" != *":"* ]] || { die "third tap did not clear the term; query is '$q'."; return 1 }
-  say "ok    facets: chips with counts, and include-exclude-off follows the query text"
+  [[ -n "$struck" ]] || { die "chose Hide and no chip reads as excluded."; return 1 }
+
+  # AND THE WAY OUT. Removing the constraint clears both marks.
+  cmd_tap "Remove $value" || return 1
+  [[ -z "$(constraint_chips)" ]] || {
+    die "removed the constraint and its chip is still under the field."
+    return 1
+  }
+  say "ok    facets: property names on screen, one tap includes, Hide excludes, and the field stays your words"
   cmd_tap "Close search" >/dev/null 2>&1 || true
   cmd_check
+}
+
+# THE CHIPS UNDER THE FIELD — what you chose, as opposed to what is on
+# offer in the band. Their labels end in ", only. Change" or ", hidden.
+# Change", which no facet chip can match (those end in a count).
+constraint_chips() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    if n.get("type") == "Button" and l.endswith(". Change"): print(l)
+    for c in n.get("children") or []: walk(c)'
 }
 
 # WAIT for the search sheet's field, rather than assuming the sheet is up.
@@ -1416,6 +1934,10 @@ case "${1:-}" in
   panel)   cmd_panel   || exit 1 ;;
   bar)     cmd_bar     || exit 1 ;;
   grid)    cmd_grid    || exit 1 ;;
+  rows)    cmd_rows "${2:-tasks}" || exit 1 ;;
+  routes)  cmd_routes  || exit 1 ;;
+  areas)   cmd_areas   || exit 1 ;;
+  chrome)  cmd_chrome ${2:+"$2"} || exit 1 ;;
   create)  cmd_create  || exit 1 ;;
   desk)    cmd_desk    || exit 1 ;;
   lens)    cmd_lens    || exit 1 ;;

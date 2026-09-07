@@ -294,7 +294,8 @@ struct RecordBody: View {
     private func placeholder(_ row: EntityRow) -> String {
         let derived = livRowTitle(row)
         if derived != "Untitled" { return derived }
-        return (row.kinds ?? []).contains("event") ? "New event" : "Untitled"
+        // The one rule for a nameless thing (`livRowTitle`): its kind.
+        return livRowTitle(row)
     }
 
     private var storedName: String {

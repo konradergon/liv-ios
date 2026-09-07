@@ -50,6 +50,30 @@ struct FileFacts {
     var url: URL { URL(fileURLWithPath: path) }
     var exists: Bool { FileManager.default.fileExists(atPath: path) }
 
+    /// The format as a phrase, for the one place that says it in words
+    /// rather than drawing it. "cpp file", "PDF", "Spreadsheet".
+    var formatWord: String {
+        switch fileClass {
+        case .pdf: return "PDF"
+        case .image: return "Image"
+        case .sheet: return "Spreadsheet"
+        case .slides: return "Slides"
+        case .document: return "Document"
+        case .text: return format.isEmpty ? "Text file" : "\(format) text file"
+        case .other: return format.isEmpty ? "File" : "\(format) file"
+        }
+    }
+
+    /// How big, in the shortest honest form. Empty when the file is gone
+    /// — the broken card says that instead.
+    var sizeWord: String {
+        guard
+            let size = try? FileManager.default
+                .attributesOfItem(atPath: path)[.size] as? Int64
+        else { return "" }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+    }
+
     /// What KIND of file, for a glyph and for how to show it. Derived
     /// from the format, never stored — one function, so the icon in a
     /// list and the body of a tab can never disagree.
@@ -122,9 +146,52 @@ struct FileBody: View {
     private func body(_ row: EntityRow, _ facts: FileFacts) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             nameField(facts)
-            if !facts.exists { brokenCard(facts) }
+            if !facts.exists {
+                brokenCard(facts)
+            } else {
+                heldCard(facts)
+            }
             Spacer(minLength: 0)
         }
+    }
+
+    /// WHAT LIV IS HOLDING, said plainly.
+    ///
+    /// The rest of this screen was empty (owner, 2026-09-06: "why does it
+    /// open unsupported file types without rendering them"). The refusal
+    /// to preview is deliberate and stands — "preview should not be a
+    /// functionality since it is absolutely useless" (owner, 2026-08-13),
+    /// and a read-only render of a Word file inside Liv is a screen that
+    /// looks like an editor and is not one.
+    ///
+    /// But "no preview" had been built as "no preview and no explanation",
+    /// which are different things. A tab that shows a name and then a
+    /// blank page does not read as a decision; it reads as a failure to
+    /// load. This says what the file is, where it is, and how big — the
+    /// facts Liv actually holds — and points at the one verb that opens
+    /// the bytes, which lives in the ••• menu.
+    private func heldCard(_ facts: FileFacts) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(facts.formatWord)
+                .font(.system(size: LivType.strong, weight: .semibold))
+                .foregroundStyle(LivTheme.text)
+            Text(facts.sizeWord.isEmpty ? facts.path : "\(facts.sizeWord) · \(facts.path)")
+                .font(.system(size: LivType.label, design: .monospaced))
+                .foregroundStyle(LivTheme.text3)
+                .lineLimit(2)
+                .truncationMode(.head)
+            // Format-neutral: an image has no "words", and a spreadsheet's
+            // owner is not an editor. The bytes stay where they are.
+            Text("Liv holds the reference and the filing. The file itself opens in the app that owns it: ••• → Open in…")
+                .font(.system(size: LivType.label))
+                .foregroundStyle(LivTheme.text2)
+                .padding(.top, 4)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     // MARK: name — a file's name in the box is yours to change, and
@@ -154,7 +221,15 @@ struct FileBody: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 56)
+        // CLEAR THE CHROME, the way every other surface does. This was a
+        // raw 56, which was the whole band back when the screen stopped
+        // at the safe area. Surfaces run under the status bar now
+        // (2026-08-17), so the band is `LivSafeArea.top + topChrome` —
+        // about 111 on a notched phone. At 56 the name field was drawn
+        // UNDER the library door and the •••, and a file with no name
+        // yet showed its placeholder there too: the screen read as a
+        // file with no name at all (owner, 2026-09-06, from a device).
+        .padding(.top, LivRow.topInset)
         .padding(.bottom, 12)
     }
 

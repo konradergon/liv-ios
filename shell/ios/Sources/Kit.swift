@@ -119,21 +119,36 @@ struct ValueChip: View {
     var body: some View {
         HStack(spacing: big ? 5 : 4) {
             if let glyph {
-                LivIcon(glyph: glyph, color: LivTheme.text3, size: LivChip.glyph)
+                LivIcon(
+                    glyph: glyph, color: LivTheme.text3,
+                    size: big ? LivChip.valueGlyph : LivChip.glyph)
             }
             // NEVER 11pt. The small chip's text was `micro`, which is the
             // size reserved for a badge — a thing you glance at, not a
             // word you read — and these chips carry area names, project
-            // names and dates. Both sizes are `caption` now, and the two
-            // variants differ in their padding alone.
+            // names and dates.
+            //
+            // THE TWO VARIANTS ARE TWO VOICES (owner, 2026-09-05: "tasks
+            // fields are especially small"). They differed in padding
+            // alone, both at `caption`, which was right for a chip
+            // trailing a row and wrong for the properties card: there the
+            // chip IS the value, and it sat at 14 in a column where an
+            // EMPTY field's em-dash reads 20. One column, one thing, two
+            // sizes — and the filled field was the smaller of the two.
             Text(text)
-                .font(.system(size: LivType.caption))
+                .font(.system(size: big ? LivType.strong : LivType.caption))
                 .lineLimit(1)
         }
         .foregroundStyle(LivTheme.text2)
-        .padding(.horizontal, big ? 10 : 8)
-        .frame(height: big ? LivChip.tall : LivChip.height)
-        .background(Capsule().fill(LivTheme.panel2))
+        .padding(.horizontal, big ? 12 : 8)
+        .frame(height: big ? LivChip.value : LivChip.height)
+        // GLASS, LIKE THE BAR (owner, 2026-09-06: "animations and glossy
+        // ui stuff is welcome"). A chip is a thing you can act on, and the
+        // app's one material for things you can act on is the bar's
+        // glass; a flat #2C2C2C fill was a second answer to the same
+        // question. Where glass is unavailable the modifier falls back
+        // to the thin material with the same hairline.
+        .livGlass(in: Capsule())
     }
 }
 
@@ -358,6 +373,12 @@ struct StatusRing: View {
             }
             .frame(width: compact ? 13 : 15, height: compact ? 13 : 15)
             .padding(compact ? 2 : 8)
+            // THE FINGER, NOT THE INK. The padding gives 31; the rows
+            // around this grew to 56 and the checkbox three lines away
+            // in the same list is `LivRow.touch`, so this was the one
+            // control in a Tasks row still under the minimum. Compact
+            // rings live inside a 26pt capsule and must not grow.
+            .frame(height: compact ? 17 : LivRow.touch)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -512,8 +533,55 @@ enum LivDue {
 /// The "#id" the core sends for an entity with no words at all is a
 /// placeholder, not a name — no list shows it.
 func livRowTitle(_ row: EntityRow) -> String {
-    livRowIsUntitled(row) ? "Untitled" : (row.title ?? "")
+    // A NAMELESS ROW SAYS WHAT IT IS. "Untitled" is Obsidian's word, and
+    // Apple Notes' and Notion's — the vault's word for a failure to name.
+    // The kind is furniture Liv has already given the thing, so a row
+    // with no name reads "Task" or "Note", in the muted ink the untitled
+    // flag already gives it (2026-09-06, direction A).
+    livRowIsUntitled(row) ? LivKind.of(row).word : (row.title ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// THE ROW'S ONE ANCHOR — the thing it is attached to — in one order:
+/// project, people, tags, area. Three surfaces carried their own copy of
+/// this loop and two of them disagreed on the order (Everything put tags
+/// before people). One helper, one order (standing rule 4, 2026-09-06).
+///
+/// Returns the property too, so a caller can give an AREA its mark.
+func livAnchor(of row: EntityRow) -> (property: String, value: String)? {
+    for property in ["project", "people", "tags", "area"] {
+        let hit = (row.cells ?? []).first {
+            $0.property == property && !($0.value ?? "").isEmpty
+        }
+        if let value = hit?.value, !value.isEmpty { return (property, value) }
+    }
+    return nil
+}
+
+/// The anchor as a chip: an area leads with its own mark.
+func livAnchorChip(of row: EntityRow) -> ValueChip? {
+    guard let anchor = livAnchor(of: row) else { return nil }
+    return ValueChip(
+        anchor.value,
+        glyph: anchor.property == "area" ? LivArea.glyph(named: anchor.value) : nil)
+}
+
+/// THE AREAS, IN A SENTENCE — for an empty state that shows the furniture
+/// instead of apologising. Reads the LIVE options off the snapshot, so an
+/// area the person minted is named too; capped so a long list stays a
+/// sentence.
+func livAreaSentence(_ snap: Snapshot?) -> String {
+    let live = (snap?.properties ?? [])
+        .first { $0.name == "area" }?.options?
+        .compactMap { $0.name }.filter { !$0.isEmpty } ?? []
+    let names = live.isEmpty ? Furnish.areaNames : live
+    let shown = Array(names.prefix(6))
+    var sentence = shown.dropLast().joined(separator: ", ")
+    if let last = shown.last {
+        sentence = shown.count > 1 ? sentence + " or " + last : last
+    }
+    if names.count > 6 { sentence += " and \(names.count - 6) more" }
+    return sentence
 }
 
 /// Whether that name is a placeholder, asked directly. A list that greys

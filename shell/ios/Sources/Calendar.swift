@@ -82,6 +82,20 @@ private struct LiftedBlock: Equatable {
     let id: UInt64
     /// Minutes-of-day where its start currently sits.
     let minutes: Int
+    /// THE FINGER IS STILL DOWN. False means the block has LANDED and is
+    /// holding its new place until the box catches up.
+    ///
+    /// Without the second state the block jumped on release (owner,
+    /// 2026-09-06: "Calendar event jumps when placed in grid"). The drop
+    /// cleared the lift immediately, so the block re-drew at the time it
+    /// still had in the snapshot — its OLD one — and stayed there for a
+    /// box write plus a snapshot decode before hopping to where the
+    /// finger had left it. You saw it snap back, then jump forward.
+    ///
+    /// Only `airborne` wears the lift's clothes: the shadow, the
+    /// brighter fill and the moving time. A landed block looks settled
+    /// while it waits.
+    var airborne: Bool = true
 }
 
 
@@ -212,6 +226,8 @@ struct CalendarView: View {
             loadWindow()
             box.statusOptions(kind: "task") { taskOptions = $0 }
         }
+        // The landed block lets go the moment the box agrees with it.
+        .onReceive(box.$snap) { _ in settle() }
         .onChange(of: monthFirst) { _, _ in loadWindow() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
@@ -281,7 +297,9 @@ struct CalendarView: View {
                     // two bare chevrons that do the same kind of job.
                     // Dimmed when you are already there, which is the
                     // only state worth drawing differently.
-                    .font(.system(size: LivType.label, weight: .medium))
+                    // A chrome verb-word is `body` everywhere else in
+                    // the app — Search's "Cancel", the card's "Done".
+                    .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(onToday ? LivTheme.text3 : LivTheme.accent)
                     .padding(.horizontal, 8)
                     .frame(height: 40)
@@ -434,6 +452,10 @@ struct CalendarView: View {
         let stamp = Civil.stamp(
             day: day, hhmm: allDay ? 0 : Int64(CalClock.hhmm(minutes)))
         box.createEvent(dueCivil: stamp, dateOnly: allDay) { id in
+            // Whatever happened, the draft box has done its job: either
+            // the real block is about to replace it, or nothing was made
+            // and it must not linger.
+            placing = nil
             guard id != 0 else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
@@ -498,6 +520,15 @@ struct CalendarView: View {
         var movable: Bool { !item.occurrence }
     }
 
+    /// WHERE A BLOCK IS RIGHT NOW, which is not always what the box says:
+    /// the one under your finger is wherever you have dragged it to.
+    private func liveStart(_ item: CalendarDayItem) -> Int {
+        if let held = lifted, held.id == item.row.id, !item.occurrence {
+            return held.minutes
+        }
+        return CalClock.minutes(of: item.stamp)
+    }
+
     private func frames(_ timed: [CalendarDayItem], width: CGFloat) -> [HourFrame] {
         let unit = CalClock.hourHeight / 60
         let spans = timed.map { item in
@@ -506,7 +537,21 @@ struct CalendarView: View {
                 length: CalClock.duration(start: item.stamp, end: item.row.dueEnd)
             )
         }
-        let slots = CalLayout.slots(spans)
+        // THE LANES FOLLOW THE FINGER (owner, 2026-09-06: "Calendar event
+        // jumps when placed in grid").
+        //
+        // The columns were shared out from the SNAPSHOT's times, so a
+        // block being dragged kept the lane its OLD time earned. Drag an
+        // event out of a clash and it stayed in its half-width column the
+        // whole way; the moment you let go the snapshot arrived, the
+        // clash was gone, and the block jumped sideways to full width.
+        // The jump was horizontal, which is why it survived every fix
+        // aimed at the vertical drop.
+        //
+        // Sharing the lanes out by where the blocks ARE means the width
+        // is right while you drag and nothing changes when you let go.
+        let slots = CalLayout.slots(
+            timed.indices.map { (start: liveStart(timed[$0]), length: spans[$0].length) })
         let left = CalClock.lane
         let right: CGFloat = 18
         let lane = max(40, width - left - right)
@@ -568,14 +613,17 @@ struct CalendarView: View {
                                         start: frame.item.stamp, duration: frame.length, by: dy))
                             },
                             onDrop: { id, dy, where_ in
-                                lifted = nil
                                 let onTrash = overTrash(where_)
                                 trashArmed = false
                                 guard let frame = frames.first(where: { $0.item.row.id == id })
-                                else { return }
+                                else {
+                                    lifted = nil
+                                    return
+                                }
                                 // Dropped on the bin: the item goes, soft
                                 // and undoable like every trash here.
                                 if onTrash {
+                                    lifted = nil
                                     UINotificationFeedbackGenerator()
                                         .notificationOccurred(.success)
                                     box.trash(id)
@@ -584,7 +632,16 @@ struct CalendarView: View {
                                 }
                                 let landed = CalClock.dragged(
                                     start: frame.item.stamp, duration: frame.length, by: dy)
-                                guard landed != frame.start else { return }
+                                guard landed != frame.start else {
+                                    lifted = nil
+                                    return
+                                }
+                                // THE BLOCK STAYS WHERE THE FINGER LEFT
+                                // IT. Cleared by `settle` when the
+                                // snapshot agrees, or by `commitMove` if
+                                // the write is refused.
+                                lifted = LiftedBlock(
+                                    id: id, minutes: landed, airborne: false)
                                 commitMove(frame.item, minutes: landed, length: frame.length)
                             },
                             onCancel: {
@@ -595,7 +652,11 @@ struct CalendarView: View {
                             onPlace: { minutes in placing = minutes },
                             onPlaceMove: { minutes in placing = minutes },
                             onPlaceDrop: { minutes in
-                                placing = nil
+                                // The draft box STAYS until the real one
+                                // exists — clearing it here left a hole
+                                // in the grid for a write plus a
+                                // snapshot, the same gap that made a
+                                // dropped block jump. `create` clears it.
                                 create(on: selectedDay, minutes: minutes, allDay: false)
                             }
                         )
@@ -755,9 +816,30 @@ struct CalendarView: View {
             end: hasEnd ? Civil.stamp(day: day, hhmm: CalClock.hhmm(minutes + length)) : 0,
             dateOnly: false
         ) { ok in
-            if !ok { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+            if !ok {
+                // The box refused it, so the picture must stop claiming
+                // otherwise: drop the hold and let the block spring back
+                // to the time it still has.
+                lifted = nil
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
             loadWindow()
         }
+    }
+
+    /// LET GO OF A LANDED BLOCK once the box agrees with it.
+    ///
+    /// The hold exists only to cover the gap between the finger lifting
+    /// and the snapshot arriving. It ends when the entity's own stamp is
+    /// where the finger left it — or when the entity is no longer on
+    /// this day at all, which is the same answer for a different reason.
+    private func settle() {
+        guard let held = lifted, !held.airborne else { return }
+        guard let row = box.entity(held.id), let due = row.due else {
+            lifted = nil
+            return
+        }
+        if CalClock.minutes(of: due) == held.minutes { lifted = nil }
     }
 
     private func hourAnchor(_ hour: Int) -> String { "hour-\(hour)" }
@@ -817,8 +899,12 @@ struct CalendarView: View {
     /// commits.
     private func block(_ frame: HourFrame, doneNames: Set<String>) -> some View {
         let item = frame.item
-        let moving = lifted?.id == item.row.id
-        let live = moving ? (lifted?.minutes ?? frame.start) : frame.start
+        let held = lifted?.id == item.row.id ? lifted : nil
+        // WHERE IT DRAWS: the hold wins over the snapshot, in the air and
+        // for the moment after it lands.
+        let live = held?.minutes ?? frame.start
+        // WHAT IT WEARS: only while the finger is on it.
+        let moving = held?.airborne == true
         let task = livCanTick(item.row)
         // The block wears what the thing IS. It used to be purple for a
         // task and blue for everything else, so an event — the calendar's
@@ -897,7 +983,10 @@ struct CalendarView: View {
                     .lineLimit(1)
                     .accessibilityLabel(voice)
             }
-            if length >= 45 || moving {
+            // 60, NOT 45. A 45-minute block has room for a name and a
+            // span only if neither is allowed to breathe; the second
+            // line was being squeezed rather than the type being wrong.
+            if length >= 60 || moving {
                 Text(moving ? CalClock.range(live, length) + " · moving" : span)
                     .font(.system(size: LivType.caption).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)

@@ -25,6 +25,53 @@ import SwiftUI
 
 // MARK: - what a thing is
 
+/// THE SIX AREAS OF LIFE, drawn. `what-liv-is-for.md` calls the furniture
+/// "the product", and until 2026-09-06 no screen showed it: Today was a
+/// column of "Untitled" that could have been any app's. These are the
+/// six the app arrives with (researched, not invented; 2026-07-27), each
+/// with a mark in the same pen that draws the note leaf and the tray —
+/// the one hand-made thing the app already had.
+///
+/// NO COLOUR, deliberately. Direction A adds not one saturated pixel:
+/// the marks draw in the ink tiers like every field glyph. Colour for
+/// areas is a separate direction ("Rooms"), which stacks on top of this
+/// one if the owner wants it later.
+///
+/// An area a person mints later has no mark of its own and wears the
+/// field's — `.area`, the four quarters — which is honest: it is an area,
+/// and it is theirs.
+enum LivArea: CaseIterable {
+    case work, health, money, home, family, learning
+
+    var name: String {
+        switch self {
+        case .work: return "Work"
+        case .health: return "Health"
+        case .money: return "Money"
+        case .home: return "Home"
+        case .family: return "Family & Friends"
+        case .learning: return "Learning"
+        }
+    }
+
+    var glyph: LivGlyph {
+        switch self {
+        case .work: return .work
+        case .health: return .health
+        case .money: return .money
+        case .home: return .home
+        case .family: return .people
+        case .learning: return .learning
+        }
+    }
+
+    /// The mark for an area's NAME, as a row's cell spells it. A name the
+    /// app did not ship wears the field's own mark.
+    static func glyph(named value: String) -> LivGlyph {
+        allCases.first { $0.name.caseInsensitiveCompare(value) == .orderedSame }?.glyph ?? .area
+    }
+}
+
 /// The seven kinds the app draws. A kind carries its colour and its
 /// glyph together, because a thing that is purple in one list and blue
 /// in the next is the exact defect this type exists to prevent.
@@ -123,6 +170,11 @@ enum LivGlyph: Equatable {
     case file(FileFacts.Class)
     // Places — the library's rows.
     case today, inbox, calendar, tasks, everything
+    // AREAS OF LIFE — the furniture the product page calls the product,
+    // drawn (2026-09-06, direction A: "the furniture shows"). Family &
+    // Friends reuses `.people`; the sixth mark is the field's own `.area`
+    // for any area a person mints later.
+    case work, health, money, home, learning
     // Furniture.
     case filter, settings, workspace, workspaces, plus, trash
     /// FIELDS — one per property family, for the properties panel.
@@ -232,6 +284,30 @@ struct GlyphShape: Shape {
             pen.box(13, 4, 7, 7, 1.8)
             pen.box(4, 13, 7, 7, 1.8)
             pen.box(13, 13, 7, 7, 1.8)
+        // ---- areas of life ----
+        case .work:
+            // A case with a handle: the day's work carried in.
+            pen.box(3, 7.5, 18, 12.5, 2.5)
+            pen.shape([(9, 7.5, 0), (9, 5.5, 1.5), (15, 5.5, 1.5), (15, 7.5, 0)], closed: false)
+            pen.line(3, 12.5, 21, 12.5)
+        case .health:
+            // A pulse: one beat across the line.
+            pen.shape(
+                [(3, 12.5, 0), (8, 12.5, 0), (10.2, 6.5, 0), (13.6, 18, 0), (15.8, 12.5, 0), (21, 12.5, 0)],
+                closed: false)
+        case .money:
+            // A note with its coin.
+            pen.box(3, 6.5, 18, 11.5, 2)
+            pen.circle(12, 12.25, 2.9)
+        case .home:
+            // A roof over a room.
+            pen.shape([(3.5, 11.5, 0), (12, 4.5, 0), (20.5, 11.5, 0)], closed: false)
+            pen.shape([(5.5, 10, 0), (5.5, 19.5, 1.5), (18.5, 19.5, 1.5), (18.5, 10, 0)], closed: false)
+        case .learning:
+            // An open book: two leaves from one spine.
+            pen.shape([(12, 6.5, 0), (12, 19.5, 0)], closed: false)
+            pen.shape([(12, 6.5, 0), (9.5, 5, 0), (3.5, 5.5, 1.5), (3.5, 18.5, 1.5), (9.5, 18, 0), (12, 19.5, 0)], closed: false)
+            pen.shape([(12, 6.5, 0), (14.5, 5, 0), (20.5, 5.5, 1.5), (20.5, 18.5, 1.5), (14.5, 18, 0), (12, 19.5, 0)], closed: false)
         case .project:
             // A folder: work with a lid on it.
             pen.shape(
@@ -725,6 +801,7 @@ struct GlyphSheet: View {
         ("due", .due), ("status", .status), ("area", .area),
         ("project", .project), ("tags", .tags), ("people", .people),
     ]
+    private static let areas: [(String, LivGlyph)] = LivArea.allCases.map { ($0.name, $0.glyph) }
     private static let existing: [(String, LivGlyph)] = [
         ("note", .note), ("task", .task), ("event", .event),
         ("person", .person), ("link", .link), ("calendar", .calendar),
@@ -735,6 +812,7 @@ struct GlyphSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
+                block("Areas of life", Self.areas)
                 block("Fields — new", Self.fields)
                 block("Existing, for comparison", Self.existing)
             }
@@ -834,6 +912,7 @@ func livGlyphSelfCheck() -> [String] {
             // Both digit widths: the numerals ride INSIDE the box, and a
             // two-digit count that overflows it would be invisible in
             // review and obvious on the day you open ten tabs.
+            .work, .health, .money, .home, .learning,
             .day(0), .day(9), .day(18), .day(31),
         ] + fileClasses.map { LivGlyph.file($0) }
     for glyph in drawn {

@@ -37,7 +37,7 @@ set -u
 path=(/usr/bin /bin /usr/sbin /sbin /opt/homebrew/bin $path)
 UDID=${LIV_UDID:-8E699FF6-03A1-433B-A602-C51A30B14E87}
 APP=app.liv.ios
-ALL=(spans workspace calendar share places tabs planes glyph palette editor)
+ALL=(spans workspace calendar share places tabs planes glyph palette editor editor-cost)
 
 suites=("$@")
 (( $# )) || suites=($ALL)

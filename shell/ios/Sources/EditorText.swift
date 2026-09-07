@@ -873,7 +873,18 @@ final class MarkdownTextView: UITextView {
 /// text and focus flow through the bindings; the save engine stays in
 /// NoteEditorModel, untouched.
 struct MarkdownEditor: UIViewRepresentable {
-    @Binding var text: String
+    /// THE BUFFER, by value. It was `@Binding` to a `@Published`
+    /// property, so every keystroke re-entered the SwiftUI graph and came
+    /// back down here to be compared against the view's own copy — a
+    /// document-length comparison to learn nothing had changed that this
+    /// view had not just done itself.
+    var text: String
+    /// HOW MANY TIMES THE MODEL HAS REPLACED THE TEXT (a load, a conflict
+    /// swap, a re-applied draft). The view follows THIS, not the string:
+    /// when it moves, the buffer is genuinely somebody else's.
+    var imposed: Int
+    /// A keystroke, going up. The text view has already changed itself.
+    var onEdit: (String) -> Void
     @Binding var focused: Bool
     /// The note's name cell, edited in the scrolling title line.
     @Binding var title: String
@@ -928,10 +939,17 @@ struct MarkdownEditor: UIViewRepresentable {
             view.titlePrompt.isHidden = !title.isEmpty
             view.refreshTitleLayout()
         }
-        if view.text != text {
+        if context.coordinator.appliedImposed != imposed {
+            context.coordinator.appliedImposed = imposed
             // Programmatic set (load, conflict swap, re-apply): keep the
             // caret sane. Styling arrives via the storage delegate — every
             // character mutation flows through it.
+            //
+            // THE COUNTER, NOT THE STRING (2026-09-06). Comparing
+            // `view.text != text` read the whole document on every
+            // keystroke to decide it had nothing to do. The model bumps
+            // `imposed` exactly when the words are its own, which is the
+            // question this branch was asking.
             let selected = view.selectedRange
             view.text = text
             let n = (text as NSString).length
@@ -1036,6 +1054,9 @@ struct MarkdownEditor: UIViewRepresentable {
         /// Has this mount already put the caret where it was left? One
         /// shot: after that the live caret is the truth (LivCaret).
         var restored = false
+        /// The `imposed` count this coordinator has already put into the
+        /// view, so an imposition is applied once and typing is free.
+        var appliedImposed = 0
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
@@ -1163,7 +1184,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // programmatic-set branch above is the only other place that
             // sets this, and typing never goes through it.
             restored = true
-            parent.text = textView.text
+            parent.onEdit(textView.text)
             trackLink(in: textView)
             scheduleOutline(textView.text)
             keepCaretVisible(textView)
@@ -1279,7 +1300,7 @@ struct MarkdownEditor: UIViewRepresentable {
             let result = EditOps.completeLink(
                 view.text, token: token, id: id, name: name)
             applyThroughSystem(result, to: view)
-            parent.text = view.text
+            parent.onEdit(view.text)
             parent.bridge.openLink = nil
             suppressedLink = nil
             scheduleOutline(view.text)

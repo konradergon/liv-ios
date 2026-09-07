@@ -46,11 +46,21 @@ final class DeskModel: ObservableObject {
     /// (Desk.swift).
     @Published private(set) var chromeAway = false
 
-    /// The offset the last decision was made at. Kept within
-    /// `chromeThreshold` of the live offset, so a direction change
-    /// answers on the next few points rather than having to undo the
-    /// whole scroll first.
+    /// WHERE THE CURRENT TRAVEL BEGAN — the offset the scroll last
+    /// turned around at. The distance from here is what the threshold
+    /// measures, so it only moves on a REVERSAL.
+    ///
+    /// It used to be clamped to within `chromeThreshold` of the live
+    /// offset on every sample, which meant it could never be more than
+    /// the threshold behind — so `y > anchor + threshold` was false by
+    /// construction on any smooth scroll, and the chrome only ever
+    /// retired when one geometry sample happened to jump the whole 44pt
+    /// at once. Measured on the Calendar, 2026-09-07: a swipe produced
+    /// 49 callbacks ending at y=795 and the chrome never moved.
     private var chromeAnchor: CGFloat = 0
+
+    /// Which way the last sample was going, so a turn can be spotted.
+    private var chromeDescending = true
 
     /// How far you must scroll before the chrome agrees you meant it.
     /// Small enough to feel immediate, large enough that the rubber-band
@@ -63,26 +73,74 @@ final class DeskModel: ObservableObject {
     private let chromeHome: CGFloat = 40
 
     /// One scroll offset, in points from the content's top.
+    ///
+    /// HYSTERESIS FROM THE LAST TURN, not from the last sample. Scroll
+    /// down `chromeThreshold` from wherever you last changed direction
+    /// and the chrome goes; scroll back up as far and it returns. Near
+    /// the top it is always home, whatever the direction.
     func scrolled(to y: CGFloat) {
+        guard Date() >= chromeSettled else { return }
+        // The band has just finished moving: this sample is the first
+        // honest one, so measure from HERE rather than from the number
+        // the animation left behind.
+        if lastScroll != y, chromeSettled != .distantPast {
+            chromeSettled = .distantPast
+            chromeAnchor = y
+            lastScroll = y
+            return
+        }
         if y <= chromeHome {
             chromeAnchor = y
+            chromeDescending = true
             setChrome(away: false)
             return
         }
-        if y > chromeAnchor + chromeThreshold { setChrome(away: true) }
-        if y < chromeAnchor - chromeThreshold { setChrome(away: false) }
-        chromeAnchor = min(max(chromeAnchor, y - chromeThreshold), y + chromeThreshold)
+        // A turn re-bases the measurement, so coming back costs the same
+        // as going did — and so a long smooth scroll in one direction
+        // keeps measuring from where it started.
+        let descending = y >= lastScroll
+        if descending != chromeDescending {
+            chromeDescending = descending
+            chromeAnchor = lastScroll
+        }
+        lastScroll = y
+        if descending {
+            if y > chromeAnchor + chromeThreshold { setChrome(away: true) }
+        } else {
+            if y < chromeAnchor - chromeThreshold { setChrome(away: false) }
+        }
     }
+
+    /// The previous sample, for spotting the turn.
+    private var lastScroll: CGFloat = 0
+
+    /// WHILE THE BAND IS MOVING, THE OFFSET IS THE BAND'S, NOT THE
+    /// FINGER'S. Retiring the chrome collapses the top inset, and that
+    /// collapse ANIMATES — so for the length of the animation every
+    /// scroll sample carries a slice of the inset's own travel. The
+    /// decision would then be reading its own output: traced on the
+    /// Calendar (2026-09-07) as 909 / 932 / 854 / 802 / 879 / 931 with
+    /// the doors flickering in and out on every frame.
+    ///
+    /// A constant correction cannot fix this, because the inset passes
+    /// through every value in between. Ignoring the samples until the
+    /// motion settles can, and costs nothing: nobody decides to reverse
+    /// a scroll within a fifth of a second of starting it.
+    private var chromeSettled: Date = .distantPast
 
     /// Back on screen, unconditionally — leaving a surface, opening a
     /// menu, anything that is not reading.
     func chromeHomeAgain() {
         chromeAnchor = 0
+        lastScroll = 0
+        chromeDescending = true
+        chromeSettled = .distantPast
         setChrome(away: false)
     }
 
     private func setChrome(away: Bool) {
         guard away != chromeAway else { return }
+        chromeSettled = Date().addingTimeInterval(LivMotion.navSeconds + 0.08)
         withAnimation(LivMotion.nav) { chromeAway = away }
     }
 
@@ -858,19 +916,46 @@ struct LivTopScrim: View {
     /// SidePanel, and it cost an hour again on 2026-08-28 — the panel
     /// simply never drew.
     var underChrome: Bool = true
+    @EnvironmentObject private var desk: DeskModel
+
+    /// THE BAND SHRINKS WHEN THE BUTTONS LEAVE (owner, 2026-09-07: "the
+    /// area is where the panel button is and reserved for that, but is
+    /// wasted space and looks odd when the buttons are dynamically
+    /// hidden", with a photograph of the Calendar).
+    ///
+    /// This inset is what RESERVES the doors' band, and until now it
+    /// reserved it unconditionally — so `livHidesChrome` slid the buttons
+    /// up by `LivRow.topInset` (Desk.swift) and left an empty 52pt strip
+    /// between the clock and the day's title. The buttons were gone and
+    /// their room was not.
+    ///
+    /// When they are away only the clock needs covering. `chromeAway` is
+    /// ordinary published state, not a safe-area read, so deriving the
+    /// height from it cannot feed the cycle `LivBar.room` documents.
+    /// Whether the band is the doors' full one, or the clock's alone.
+    private var tall: Bool { underChrome && !desk.chromeAway }
+
+    private var height: CGFloat { tall ? LivRow.topInset : LivSafeArea.top }
 
     var body: some View {
         // Solid where the clock is, then a fade under the controls: a
         // plain two-stop gradient left words legible behind the time.
+        // SOLID WHERE THE CLOCK IS, then a fade under the controls. The
+        // solid share is a FRACTION of the band, so when the band
+        // collapses to the status bar alone the same 0.45 would stop
+        // being solid a third of the way up the clock and a row
+        // scrolling past showed through beside it (measured 2026-09-07:
+        // a checkbox at 48/255 against a ground of 26). With no controls
+        // to fade under, almost all of the band is the clock.
         LinearGradient(
             stops: [
                 .init(color: LivTheme.canvas, location: 0),
-                .init(color: LivTheme.canvas, location: 0.45),
+                .init(color: LivTheme.canvas, location: tall ? 0.45 : 0.82),
                 .init(color: LivTheme.canvas.opacity(0), location: 1),
             ],
             startPoint: .top, endPoint: .bottom
         )
-        .frame(height: underChrome ? LivRow.topInset : LivSafeArea.top)
+        .frame(height: height)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }

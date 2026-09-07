@@ -188,8 +188,11 @@ struct InboxView: View {
                 if lens == .route {
                     if scraps.isEmpty {
                         // The blueprint's own copy (BP-5 B8).
+                        // "Nothing to route", not "Inbox zero" — that is
+                        // GTD's slogan, and this screen's own word for
+                        // its job is on the lens above it.
                         EmptyHint(
-                            "Inbox zero",
+                            "Nothing to route",
                             detail: "Anything you capture without deciding what it is waits here.",
                             glyph: .inbox
                         )
@@ -294,7 +297,9 @@ struct InboxView: View {
                 // was twenty identical yellow marks telling nothing
                 // apart — which is what the owner saw on 2026-08-20:
                 // "so many color blips and tags".
-                LivIcon(glyph: LivKind.glyph(of: row), color: LivTheme.text3, size: 19)
+                LivIcon(
+                    glyph: LivKind.glyph(of: row), color: LivTheme.text3,
+                    size: LivRow.glyph)
                     .frame(width: LivRow.mark)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
                 // REGULAR, like every other row title in the app and
@@ -306,9 +311,7 @@ struct InboxView: View {
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(2)
                 Spacer(minLength: 8)
-                Text(stamp(row))
-                    .font(.system(size: LivType.caption).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
+                LivRowFact(text: stamp(row))
             }
         }
         // A ROW YOU CAN HIT. Measured on 2026-08-31 these came out at
@@ -427,7 +430,7 @@ struct InboxView: View {
                     .foregroundStyle(LivTheme.accent)
                     .buttonStyle(.borderless)
             }
-            .frame(minHeight: 40)
+            .frame(minHeight: LivRow.band)
         } else {
             ForEach(groups, id: \.author) { group in
                 groupHeader(group)
@@ -564,10 +567,15 @@ struct InboxView: View {
             Button {
                 desk.menu = rejectMenu(p)
             } label: {
+                // THE APP'S OWN RECIPE for this exact action — the
+                // properties card's reject draws it at `body` semibold
+                // in 44x44. This was 16pt regular in 40x40: 60% of the
+                // accept circle's ink beside it, and under Apple's
+                // touch minimum in both axes.
                 Image(systemName: "xmark")
-                    .font(.system(size: LivType.label))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
-                    .frame(width: 40, height: 40)
+                    .frame(width: LivRow.touch, height: LivRow.touch)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)

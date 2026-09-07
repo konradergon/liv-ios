@@ -96,7 +96,9 @@ struct TodayView: View {
 
         List {
             Group {
-                header(today: today, left: timedOpen.count + late.count)
+                header(
+                    today: today,
+                    rows: late + timedOpen.map(\.row) + allDay.map(\.row))
                 TodayDateStrip(selected: dayBinding, today: today)
                     .padding(.vertical, 6)
 
@@ -122,9 +124,13 @@ struct TodayView: View {
                 // both already say which day this is, and the count was
                 // furniture — the list under it is the count.
                 if timedOpen.isEmpty && done.isEmpty && allDay.isEmpty {
+                    // The empty screen shows the FURNITURE rather than
+                    // apologising: the six areas by name, live off the
+                    // box, so an area you add is named too.
                     EmptyHint(
                         "Nothing scheduled",
-                        detail: "Tasks and events with a time land here on their day.",
+                        detail: "Anything with a time lands here on its day — in "
+                            + livAreaSentence(box.snap) + ".",
                         glyph: .today
                     )
                 }
@@ -202,21 +208,62 @@ struct TodayView: View {
     /// The DATE, not the view's name (owner, 2026-08-18: the name is on
     /// the bar; what this line is for is which day you are looking at).
     /// The "N left" count went with it — the list under it is the count.
-    private func header(today: Int64, left: Int) -> some View {
-        HStack(spacing: 8) {
-            // THE SCREEN'S NAME, at the size the references give one.
-            // Todoist's "Inbox" and Notion Calendar's "August" both lead
-            // with a large bold left-aligned title and a lot of air
-            // above it; ours was `title` (20) semibold, which read as a
-            // section heading rather than as the name of where you are.
-            Text(Civil.dayLabel(today))
-                .font(.system(size: LivType.hero, weight: .bold))
-                .foregroundStyle(LivTheme.text)
-            if box.busyRetrying { ProgressView().scaleEffect(0.7) }
-            Spacer(minLength: 0)
+    private func header(today: Int64, rows: [EntityRow]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                // THE SCREEN'S NAME, at the size the references give one.
+                // Todoist's "Inbox" and Notion Calendar's "August" both lead
+                // with a large bold left-aligned title and a lot of air
+                // above it; ours was `title` (20) semibold, which read as a
+                // section heading rather than as the name of where you are.
+                Text(Civil.dayLabel(today))
+                    .font(.system(size: LivType.hero, weight: .bold))
+                    .foregroundStyle(LivTheme.text)
+                if box.busyRetrying { ProgressView().scaleEffect(0.7) }
+                Spacer(minLength: 0)
+            }
+            areaLine(rows)
         }
         .padding(.top, 10)
         .padding(.bottom, 2)
+    }
+
+    /// THE LINE ONLY LIV CAN PRINT: the day counted by AREA OF LIFE —
+    /// "Work 3 · Home 1 · 2 unfiled" (2026-09-06, direction A). No other
+    /// app ships with areas, so no other app can say this at the top of
+    /// its first screen; it is the product page's "arrives already
+    /// organised" made visible, and the unfiled count is the honest tail
+    /// of it.
+    ///
+    /// It draws only when the day holds something. It is NOT the "N left"
+    /// count the owner cut from this spot on 2026-08-18 — that said how
+    /// many, this says where — but it is small text in the same place,
+    /// and it is the easiest line here to cut if it grates.
+    ///
+    /// The numbers ANIMATE when the day changes: `numericText` rolls the
+    /// digits rather than swapping them, the app's first use of it.
+    @ViewBuilder private func areaLine(_ rows: [EntityRow]) -> some View {
+        let counts = livAreaCounts(rows)
+        if !rows.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(Array(counts.named.enumerated()), id: \.offset) { i, pair in
+                    if i > 0 { Text("·").foregroundStyle(LivTheme.text3) }
+                    Text("\(pair.name) \(pair.count)")
+                        .contentTransition(.numericText())
+                }
+                if counts.unfiled > 0 {
+                    if !counts.named.isEmpty { Text("·").foregroundStyle(LivTheme.text3) }
+                    Text("\(counts.unfiled) unfiled")
+                        .foregroundStyle(LivTheme.text3)
+                        .contentTransition(.numericText())
+                }
+            }
+            .font(.system(size: LivType.label).monospacedDigit())
+            .foregroundStyle(LivTheme.text2)
+            .lineLimit(1)
+            .animation(LivMotion.list, value: counts.key)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
     }
 
     /// LATE means only what can still be DONE: incomplete tasks whose day
@@ -251,7 +298,7 @@ struct TodayView: View {
                     .font(.system(size: LivType.caption, weight: .semibold))
                     .foregroundStyle(LivTheme.text3)
             }
-            .frame(minHeight: 38)
+            .frame(minHeight: LivRow.band)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -266,13 +313,17 @@ struct TodayView: View {
     /// palette has for one.
     private func nowLine(_ now: Int64) -> some View {
         HStack(spacing: 8) {
+            // ONE CLOCK, ONE SIZE. This read 14 while `timedLine`'s
+            // time — the same string, in a 52pt column of the same
+            // width, twelve lines away — read 16.
             Text(Civil.timeString(now))
-                .font(.system(size: LivType.caption).monospacedDigit())
+                .font(.system(size: LivType.label).monospacedDigit())
                 .foregroundStyle(LivTheme.accent)
                 .frame(width: 52, alignment: .leading)
             Rectangle().fill(LivTheme.accent).frame(height: 1)
         }
-        .frame(height: 20)
+        // 22, because a 16pt line box is 19.1 and 20 left it 0.9pt.
+        .frame(height: 22)
         .accessibilityHidden(true)
     }
 
@@ -288,7 +339,7 @@ struct TodayView: View {
                 Spacer()
             }
             .foregroundStyle(LivTheme.muted)
-            .frame(minHeight: 38)
+            .frame(minHeight: LivRow.band)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -312,7 +363,7 @@ struct TodayView: View {
                     .foregroundStyle(LivTheme.accent)
                 Spacer()
             }
-            .frame(minHeight: 40)
+            .frame(minHeight: LivRow.band)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -345,9 +396,7 @@ struct TodayView: View {
             // is the part that differs per row and reads fine in ink.
             // Only when it changes: fourteen late rows all reading
             // "Sun 30 Aug" is one fact printed fourteen times.
-            Text(livNewFact(dayOf(row), after: prev.map(dayOf)) ?? "")
-                .font(.system(size: LivType.caption).monospacedDigit())
-                .foregroundStyle(LivTheme.text3)
+            LivRowFact(text: livNewFact(dayOf(row), after: prev.map(dayOf)) ?? "")
             // THE RESCHEDULE VERBS ARE ALL IN ONE PLACE NOW.
             //
             // "Today" was a visible accent word on every late row, while
@@ -364,7 +413,7 @@ struct TodayView: View {
             // and where this row already had two of them. The row itself
             // is now a name, a date and a tick.
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .onTapGesture { desk.open(row.id) }
         .overlay(alignment: .bottom) {
@@ -429,7 +478,7 @@ struct TodayView: View {
             }
             Spacer(minLength: 6)
         }
-        .frame(minHeight: 48)
+        .frame(minHeight: LivRow.height)
         // NEXT IS A MARK, NOT A BAND. This row wore an edge-to-edge
         // accent-tinted background with square corners — the largest
         // coloured area on the screen, to say one row is the next one.
@@ -559,18 +608,6 @@ struct TodayView: View {
             .map { $0 }
     }
 
-    /// The row's ONE anchor, in the blueprint's order: project → people
-    /// → subject → area. Nothing renders when it has none.
-    private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "people", "tags", "area"] {
-            let hit = (row.cells ?? []).first {
-                $0.property == property && !($0.value ?? "").isEmpty
-            }
-            if let value = hit?.value, !value.isEmpty { return value }
-        }
-        return nil
-    }
-
     /// A status that closes the thing. The vocabulary is the box's, so
     /// this asks the option list rather than guessing at words.
     private func isDoneStatus(_ row: EntityRow) -> Bool {
@@ -592,11 +629,11 @@ struct TodayView: View {
             // open, so a column of "todo" chips says nothing (BP-6's
             // rule — the section carries the status, the chip carries
             // what the thing is attached to).
-            if let anchor = anchorChip(row) {
-                ValueChip(anchor)
+            if let chip = livAnchorChip(of: row) {
+                chip.transition(.scale(scale: 0.85).combined(with: .opacity))
             }
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .onTapGesture { desk.open(row.id) }
         .overlay(alignment: .bottom) {
@@ -780,51 +817,97 @@ private struct TodayDateStrip: View {
                 Button {
                     withAnimation(LivMotion.pick) { selected = day }
                 } label: {
-                    // WEIGHT AND A RULE, NOT A FILLED TILE.
+                    // A DISC, NOT A DOT AND A RULE (owner, 2026-09-07:
+                    // "today's date is marked by a tiny dot that is
+                    // completely hidden by a horizontal bar when
+                    // selected. You have a tendency to make UI elements
+                    // tiny and subtle. Try to go for the opposite.")
                     //
-                    // The selected day was a solid accent block 44pt
-                    // tall, and with today's accent stroke beside it the
-                    // strip carried two saturated shapes across the top
-                    // of the screen — measured on 2026-08-30 as the
-                    // single loudest thing in the app, and the reason
-                    // Today read as 1.05% saturated pixels against
-                    // Todoist's 0.58% and Anytype's 0.01%.
+                    // The bug was literal: today wore a 4pt dot at the
+                    // foot of the tile and the selected day wore a 2pt
+                    // rule across the foot of the same tile, so selecting
+                    // today drew the rule straight over the dot and the
+                    // day you were on stopped being marked at all.
                     //
-                    // A day is selected. That is a small fact and it
-                    // gets a small mark: the number goes to full ink and
-                    // full weight, and a 2pt rule sits under it. Today
-                    // itself keeps a dot. Neither is a coloured area.
-                    VStack(spacing: 3) {
+                    // What it replaces, and why that went: on 2026-08-30
+                    // the selected day was a solid accent block 44pt tall
+                    // which, with today's accent stroke beside it, made
+                    // the strip the loudest thing in the app (Today
+                    // measured 1.05% saturated pixels against Todoist's
+                    // 0.58%). The answer then was to shrink both marks to
+                    // almost nothing. The answer now is one mark that is
+                    // unmistakable and still small in AREA: a 36pt disc
+                    // behind the number is about 0.3% of the screen, a
+                    // sixth of that block.
+                    //
+                    // One mark, three readings, no collision possible:
+                    //   selected            — ink disc, number knocked out
+                    //   today, selected     — ACCENT disc, number knocked out
+                    //   today, not selected — accent number, no disc
+                    VStack(spacing: 4) {
                         Text(Civil.weekdayLetter(day))
-                            .font(.system(size: LivType.caption))
-                            .foregroundStyle(LivTheme.text3)
+                            .font(.system(size: LivType.label))
+                            .foregroundStyle(isSelected ? LivTheme.text2 : LivTheme.text3)
                         Text("\(Civil.dayNumber(day))")
                             .font(
                                 .system(
                                     size: LivType.body,
-                                    weight: isSelected ? .semibold : .regular
+                                    weight: (isSelected || isToday) ? .semibold : .regular
                                 )
                                 .monospacedDigit()
                             )
                             .foregroundStyle(
-                                isSelected ? LivTheme.text : LivTheme.text2)
-                        // Today's dot holds the row's height whether it
-                        // is drawn or not, so the numbers never shift.
-                        Circle()
-                            .fill(isToday ? LivTheme.accent : Color.clear)
-                            .frame(width: 4, height: 4)
+                                // Knocked out in the GROUND, which reads
+                                // on both discs and in both schemes:
+                                // near-black on the ink disc and on the
+                                // accent one in dark, white on both in
+                                // light.
+                                isSelected
+                                    ? LivTheme.canvas
+                                    : (isToday ? LivTheme.accent : LivTheme.text2))
+                            .frame(width: 36, height: 36)
+                            .background(
+                                Circle()
+                                    .fill(
+                                        isSelected
+                                            ? (isToday ? LivTheme.accent : LivTheme.text)
+                                            : Color.clear))
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 46)
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(isSelected ? LivTheme.text : Color.clear)
-                            .frame(height: 2)
-                    }
+                    .frame(height: 62)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
     }
+}
+
+/// THE DAY BY AREA. Pure, so the cost check and the self-check can hold
+/// it: one pass over the rows, counting each area cell, and the rows
+/// with none as `unfiled`. Areas come out in the order the app ships
+/// them, then any minted ones by name — so "Work" is always first when
+/// present and the line does not shuffle as counts change.
+struct LivAreaCounts: Equatable {
+    var named: [(name: String, count: Int)] = []
+    var unfiled = 0
+    /// One value that changes whenever the line's words would, for the
+    /// animation to key on.
+    var key: String { named.map { "\($0.name)\($0.count)" }.joined() + "u\(unfiled)" }
+
+    static func == (a: LivAreaCounts, b: LivAreaCounts) -> Bool { a.key == b.key }
+}
+
+func livAreaCounts(_ rows: [EntityRow]) -> LivAreaCounts {
+    var tally: [String: Int] = [:]
+    var out = LivAreaCounts()
+    for row in rows {
+        let area = (row.cells ?? []).first { $0.property == "area" }?.value ?? ""
+        if area.isEmpty { out.unfiled += 1 } else { tally[area, default: 0] += 1 }
+    }
+    let shipped = LivArea.allCases.map(\.name)
+    let ordered = shipped.filter { tally[$0] != nil }
+        + tally.keys.filter { !shipped.contains($0) }.sorted()
+    out.named = ordered.map { ($0, tally[$0] ?? 0) }
+    return out
 }

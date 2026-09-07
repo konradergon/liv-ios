@@ -24,6 +24,11 @@ struct LivMenuItem: Identifiable {
     let label: String
     var glyph: LivGlyph?
     var symbol: String?
+    /// THE ONE YOU ARE ON. `LivMenuRow` has drawn a checkmark for this
+    /// since it was written; no menu had a state to mark until the
+    /// search facet menu (2026-09-07), which is three verbs of which
+    /// exactly one is true.
+    var selected = false
     /// A row that opens something further, marked the way a list marks it.
     var chevron = false
     var destructive = false
@@ -515,6 +520,7 @@ struct LivMenuHost: ViewModifier {
     private func row(_ item: LivMenuItem, divided: Bool) -> some View {
         LivMenuRow(
             label: item.label, glyph: item.glyph, symbol: item.symbol,
+            selected: item.selected,
             chevron: item.chevron, destructive: item.destructive, divided: divided
         ) {
             close()

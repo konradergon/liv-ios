@@ -46,7 +46,7 @@ struct LivListRow<Trailing: View>: View {
             // second voice at all — and with most titles being the
             // placeholder "Untitled" (also text2) three things on the
             // row read at one strength.
-            LivIcon(glyph: glyph, color: tint ?? LivTheme.text3, size: 19)
+            LivIcon(glyph: glyph, color: tint ?? LivTheme.text3, size: LivRow.glyph)
                 .frame(width: LivRow.mark)
             Text(title)
                 .font(.system(size: LivType.strong))
@@ -120,13 +120,21 @@ struct LivRowFact: View {
     var emphasis: Bool = false
 
     var body: some View {
-        // THE ROW'S SECOND VOICE, and it has to sound like one. This was
-        // `label` (16) in `text2` — one step under an 18pt title in the
-        // SAME ink, which on a list of placeholder titles meant twelve
-        // identical-looking pairs down the screen. A fact is caption
-        // (14) in text3; only an emphasised one comes forward.
+        // THE ROW'S SECOND VOICE, and it has to sound like one. It was
+        // `label` (16) in `text2` once — one step under an 18pt title in
+        // the SAME ink, which on a list of placeholder titles meant
+        // twelve identical-looking pairs down the screen. The fix was
+        // read as "make it smaller" and it went to caption (14) in
+        // text3, moving BOTH axes when only one had to.
+        //
+        // Back to `label` (2026-09-05), text3 kept. The ink is what
+        // separates the two voices — 4.5:1 against the title's full
+        // ink — and at 14 the date was 0.70 of the title beside it,
+        // where the reference the owner points at (Todoist: a 13pt date
+        // under a 17pt title) is 0.76. It was starved on both axes at
+        // once. Only an emphasised fact comes forward in ink.
         Text(text)
-            .font(.system(size: LivType.caption).monospacedDigit())
+            .font(.system(size: LivType.label).monospacedDigit())
             .foregroundStyle(emphasis ? LivTheme.text : LivTheme.text3)
             .lineLimit(1)
     }

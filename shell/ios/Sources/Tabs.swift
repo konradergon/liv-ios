@@ -132,7 +132,7 @@ struct TabSwitcher: View {
                     // one place a person reads prose, so it is where the
                     // app can say what this screen is.
                     EmptyHint(
-                        "Nothing on the Desk",
+                        "Nothing open",
                         detail:
                             "Notes you open stay here until you close them, "
                             + "whichever view you wander off to.",
@@ -142,6 +142,16 @@ struct TabSwitcher: View {
                 }
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(shown) { tab in card(tab) }
+                    // THE NEW CARD IS ALWAYS BOTTOM-RIGHT. The grid
+                    // flows left to right, so with nothing open the one
+                    // card you reach for stood in the LEFT column, under
+                    // the wrong thumb (owner, 2026-09-05: "should be
+                    // right since thumb is on the right in most hands").
+                    // An even count leaves the left cell of the last row
+                    // empty rather than move the card; the grid already
+                    // sinks to the bottom, so the card is at one place
+                    // however many are open.
+                    if shown.count.isMultiple(of: 2) { Color.clear }
                     newTabCard
                 }
                 .padding(.horizontal, 16)
@@ -234,12 +244,13 @@ struct TabSwitcher: View {
             Spacer()
             // The count agrees with what the grid SHOWS. Inactive tabs
             // are counted on their own row, the only place claiming them.
-            // THE WORD THE DESKTOP ALREADY USES. That app ships "New in
-            // Desk" and "a markdown note in this Desk"; this one had 617
-            // mentions of the desk in its code and none on screen. It is
-            // also plainer than "tabs", which is a browser's word for a
-            // thing this app only half is.
-            Text("\(desk.liveTabs.count) on the Desk")
+            // "ON THE DESK" WAS THE DESKTOP'S WORD, borrowed on
+            // 2026-08-23 because that app shipped "New in Desk". The
+            // desktop is dropped, and the bar's own key now reads "Open"
+            // (owner, 2026-09-05: the box "is for open notes") — this
+            // row says the same word, or the grid and the key that opens
+            // it name one thing two ways.
+            Text("\(desk.liveTabs.count) open")
                 .font(.system(size: LivType.body).monospacedDigit())
                 .foregroundStyle(LivTheme.text3)
             Spacer()

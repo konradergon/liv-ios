@@ -85,7 +85,11 @@ struct TasksView: View {
             inNotesSection
         }
         .listStyle(.plain)
-        .environment(\.defaultMinListRowHeight, 40)
+        // 10, like Today, Inbox and Everything: every openable row now
+        // states `LivRow.height` itself, so the List's floor only has to
+        // stay out of the way, and one number across the four lists
+        // beats four.
+        .environment(\.defaultMinListRowHeight, 10)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
         // Room under the last row for the add button to sit over.
@@ -291,7 +295,7 @@ struct TasksView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .strokeBorder(LivTheme.text3, lineWidth: 1.5)
                     .frame(width: 16, height: 16)
-                    .frame(width: 31, height: 40)
+                    .frame(width: 31, height: LivRow.touch)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -310,14 +314,15 @@ struct TasksView: View {
             } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "arrow.up.forward")
-                        .font(.system(size: LivType.micro, weight: .semibold))
+                        .font(.system(size: LivChip.glyph, weight: .semibold))
                     Text(source.isEmpty ? "note" : source)
                         .font(.system(size: LivType.caption, weight: .medium))
                         .lineLimit(1)
                 }
                 .foregroundStyle(LivTheme.text3)
                 .padding(.horizontal, 8)
-                .frame(height: 20)
+                // The app's chip height, not a raw 20 under it.
+                .frame(height: LivChip.height)
                 .background(Capsule().fill(LivTheme.panel2))
                 .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
                 .contentShape(Capsule())
@@ -325,7 +330,7 @@ struct TasksView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Open \(source.isEmpty ? "the note" : source)")
         }
-        .frame(minHeight: 40)
+        .frame(minHeight: LivRow.height)
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
                 .padding(.leading, 31)
@@ -407,7 +412,7 @@ struct TasksView: View {
                 .lineLimit(1)
                 if !chips.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(chips, id: \.self) { ValueChip($0) }
+                        ForEach(Array(chips.enumerated()), id: \.offset) { $0.element }
                     }
                 }
             }
@@ -416,13 +421,21 @@ struct TasksView: View {
                 // Always text3 — see `groupHeader` for where the
                 // lateness went — and only when it CHANGES, so five
                 // rows due "Sun 16 Aug" say it once (`livNewFact`).
-                Text(due)
-                    .font(.system(size: LivType.caption).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
+                LivRowFact(text: due)
             }
         }
-        .padding(.vertical, 4)
-        .frame(minHeight: 40)
+        // NO VERTICAL PADDING. It was here from when the row was 40,
+        // and it sits OUTSIDE the frame below — so it padded the content
+        // first and the 56 floor then never bound: a row carrying a chip
+        // drew 58 while its neighbours drew 56 (found 2026-09-05 by
+        // `drive.sh rows`, which was written to catch exactly this).
+        // Today draws the same title-over-chips stack with no padding.
+        // THE APP'S ROW HEIGHT, not this list's own. It was a raw 40,
+        // then a raw 44, while Notes, Everything and Inbox drew the same
+        // kind of row at `LivRow.height` — so Tasks read shorter than
+        // every list beside it and 40 was under Apple's touch minimum
+        // besides, with the whole row as the target.
+        .frame(minHeight: LivRow.height)
         .contentShape(Rectangle())
         .onTapGesture { desk.open(row.id) }  // rows open as Desk tabs
         .overlay(alignment: .bottom) {
@@ -519,14 +532,9 @@ struct TasksView: View {
     /// because the column already carries status"; empty fields do not
     /// render at all). The date is the row's right-hand fact already, so
     /// what is left to say here is what the task is attached to.
-    private func refChips(_ row: EntityRow) -> [String] {
-        for property in ["project", "people", "tags", "area"] {
-            let hit = (row.cells ?? []).first {
-                $0.property == property && !($0.value ?? "").isEmpty
-            }
-            if let value = hit?.value, !value.isEmpty { return [value] }
-        }
-        return []
+    private func refChips(_ row: EntityRow) -> [ValueChip] {
+        // One helper, one order (`livAnchor`); an area leads with its mark.
+        livAnchorChip(of: row).map { [$0] } ?? []
     }
 }
 
@@ -562,7 +570,11 @@ private struct TasksFilterChip: View {
     var body: some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: LivType.label, weight: selected ? .medium : .regular))
+                // `body`, not `label` (2026-09-05). This row decides
+                // which slice of the list you are looking at, and it sat
+                // at the same size as the group heading below it — a
+                // control reading as quietly as a caption.
+                .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
                 .lineLimit(1)
                 .foregroundStyle(selected ? LivTheme.text : LivTheme.text2)
                 .padding(.horizontal, 12)

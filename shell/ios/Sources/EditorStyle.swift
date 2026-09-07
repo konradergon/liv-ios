@@ -636,8 +636,18 @@ func livOutline(_ text: String) -> [OutlineItem] {
 /// routinely carries markdown markers. Everywhere a title STRING is shown
 /// (rows, cards, the ledger, notifications) the markers come off; the
 /// buffer itself is never touched. Pure, line-local.
+/// THE FIRST LINE, without reading the rest.
+///
+/// `components(separatedBy:)` allocated one String per line of the whole
+/// note to keep the first one — on every keystroke of any unnamed note,
+/// and once per row in Notes and in Share besides.
+func livFirstLine(_ raw: String) -> String {
+    guard let stop = raw.firstIndex(of: "\n") else { return raw }
+    return String(raw[raw.startIndex..<stop])
+}
+
 func livDisplayTitle(_ raw: String) -> String {
-    let line = raw.components(separatedBy: "\n").first ?? raw
+    let line = livFirstLine(raw)
     let shape = MarkScan.shape(line)
     if case .rule = shape.block { return "" }
     let n = line as NSString

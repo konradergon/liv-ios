@@ -33,6 +33,18 @@ import SwiftUI
 /// equal to the page, separated by a shadow alone", which does not
 /// survive translation into a dark theme — and the owner asked for
 /// Liquid Glass by name.
+///
+/// EVERY KEY HAS A WORD UNDER IT (owner, 2026-09-05). Two of the five
+/// were riddles: `+` made a different thing in every view and said
+/// nothing, and a box with a number in it is a browser's tab count only
+/// if you already know browsers. The owner asked for the bar to "hint
+/// user about what '+' creates and that '[n]' is for open notes", in
+/// the style of the Throwaway recordings — and of those, Todoist's bar
+/// is the one that puts a word under each glyph. So the `+` prints the
+/// kind it will make here (`Feature.makes`: Note, Task or Event — the
+/// same rule that makes it), the box prints "Open", and the other three
+/// print their names, because three bare keys beside two labelled ones
+/// would read as two bars.
 struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
 
@@ -43,14 +55,14 @@ struct BottomBar: View {
             key("magnifyingglass", "Search") { desk.searchShown = true }
             // TAP MAKES, HOLD ASKS. The menu is still one gesture away
             // and it is the same menu; what changed is which of the two
-            // costs more.
-            key("plus", "New", hold: { desk.createSomething() }) { desk.createHere?() }
+            // costs more. The word is what a tap makes HERE; spoken, it
+            // stays "New", which is also what the harness taps.
+            key("plus", desk.state.makes.word, spoken: "New", hold: { desk.createSomething() }) {
+                desk.createHere?()
+            }
             tabKey
         }
-        // The first and last glyph centres stand `endInset` from the
-        // capsule's ends; `endInset - slot/2` of padding puts them there
-        // while the six slots share the rest evenly.
-        .padding(.horizontal, LivBar.endInset - LivBar.height / 2)
+        .padding(.horizontal, LivBar.endPad)
         .frame(height: LivBar.height)
         .livGlass(in: Capsule())
         .padding(.horizontal, LivBar.sideInset)
@@ -84,44 +96,41 @@ struct BottomBar: View {
         return Button {
             desk.switcherShown = true
         } label: {
-            LivIcon(
-                glyph: .day(n),
-                color: LivTheme.text,
-                size: LivBar.glyph + 2
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: LivBar.height)
-            .contentShape(Rectangle())
+            // "OPEN", not "Desk": the word the owner used for what the
+            // box counts (2026-09-05), and the word the grid it opens
+            // now uses too. "Desk" was the dropped desktop's word.
+            slot("Open") {
+                LivIcon(glyph: .day(n), color: LivTheme.text, size: LivBar.glyphSlot)
+            }
+            .foregroundStyle(LivTheme.text)
         }
         .buttonStyle(.plain)
         // IT STOPPED BEING TRUE. "3 open in Calendar" named a plane per
         // view, and there is one desk now — the count is the same in
-        // every view, which is the whole point of it. This is also the
-        // only place the app says what the number means, so it is where
-        // the word the desktop already uses belongs (that app ships
-        // "New in Desk" and "a markdown note in this Desk").
-        .accessibilityLabel(
-            n == 1 ? "Desk. 1 document open" : "Desk. \(n) documents open")
+        // every view, which is the whole point of it.
+        .accessibilityLabel(n == 1 ? "1 document open" : "\(n) documents open")
     }
 
-    /// One key. Six of these share the capsule evenly, and each one's
+    /// One key. Five of these share the capsule evenly, and each one's
     /// TAP TARGET is its whole slot even though the glyph is ~22pt.
+    /// `word` is printed under the glyph; `spoken` is what VoiceOver
+    /// says when the two should differ (the `+` prints the kind it makes
+    /// and is spoken as "New").
     private func key(
-        _ icon: String, _ label: String, on: Bool = true,
+        _ icon: String, _ word: String, spoken: String? = nil, on: Bool = true,
         hold: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: LivBar.glyph, weight: .medium))
-                .foregroundStyle(LivTheme.text.opacity(on ? 1 : LivBar.disabledInk))
-                .frame(maxWidth: .infinity)
-                .frame(height: LivBar.height)
-                .contentShape(Rectangle())
+            slot(word) {
+                Image(systemName: icon)
+                    .font(.system(size: LivBar.glyph, weight: .medium))
+            }
+            .foregroundStyle(LivTheme.text.opacity(on ? 1 : LivBar.disabledInk))
         }
         .buttonStyle(.plain)
         .disabled(!on)
-        .accessibilityLabel(label)
+        .accessibilityLabel(spoken ?? word)
         // The hold is a SIMULTANEOUS gesture so it cannot eat the tap:
         // attached with `.onLongPressGesture`, the button stops firing
         // on a quick press and every key would have to be held.
@@ -132,5 +141,20 @@ struct BottomBar: View {
         // VoiceOver and Voice Control cannot press-and-hold, so the
         // menu has to be reachable as a named action too.
         .accessibilityAction(named: "More") { hold?() }
+    }
+
+    /// A glyph over its word, filling one slot. The glyph gets a fixed
+    /// box whatever its own height — a chevron is shorter than the
+    /// numbered box — so the five words share one baseline.
+    private func slot<Glyph: View>(_ word: String, @ViewBuilder glyph: () -> Glyph) -> some View {
+        VStack(spacing: LivBar.wordGap) {
+            glyph().frame(height: LivBar.glyphSlot)
+            Text(word)
+                .font(.system(size: LivType.caption, weight: .medium))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: LivBar.height)
+        .contentShape(Rectangle())
     }
 }

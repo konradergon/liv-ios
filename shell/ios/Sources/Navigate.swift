@@ -11,8 +11,11 @@ import SwiftUI
 
 // MARK: - the places
 
-/// The lens roster. Calendar is a v1 placeholder — its body renders
-/// EmptyHint("Calendar arrives with M3.") until M3.
+/// The lens roster. Six places, all built — Calendar last, and it is no
+/// longer "a v1 placeholder rendering EmptyHint until M3", which this
+/// comment claimed for as long as `Calendar.swift` has been ~1,850 lines
+/// of day timeline, month pager and drag-to-move.
+///
 /// NOTES IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
 /// equally… and the notes should remain separate"). It leads because it
 /// is where the words are, and its ROOT is the list of them; a note open
@@ -28,6 +31,23 @@ enum Feature: String, CaseIterable, Identifiable {
     /// the side panel makes a second one visible, which is exactly when
     /// two orderings become a bug (standing rule 4).
     static let inOrder: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
+
+    /// WHAT `+` MAKES HERE: the thing the view holds. A task in Tasks
+    /// and Today, an event in Calendar, a note everywhere else — and
+    /// a note is not a fallback: a note made from the bar IS the
+    /// capture Inbox is a list of.
+    ///
+    /// Declared once, on the view, because two things read it: the
+    /// bar's `+` does it, and the word under the `+` says it (owner,
+    /// 2026-09-05: "the bottom bar should hint user about what '+'
+    /// creates"). A switch in each would be one grammar twice.
+    var makes: LivKind {
+        switch self {
+        case .tasks, .today: return .task
+        case .calendar: return .event
+        case .notes, .inbox, .everything: return .note
+        }
+    }
 
     var title: String {
         switch self {
@@ -211,7 +231,35 @@ private struct LivChromeScroll: ViewModifier {
                     // lists carry different top insets, and a raw
                     // contentOffset would put "the top" in a different
                     // place on each one.
-                    geo.contentOffset.y + geo.contentInsets.top
+                    //
+                    // AND CLAMPED TO THE CONTENT, so the rubber-band at
+                    // either end is not travel. Past the last hour of a
+                    // day the calendar's grid stretches to ~824 and
+                    // springs back to 764: 60pt of "upward scroll" that
+                    // nobody performed, which is more than the chrome's
+                    // 44pt threshold, so the doors hid on the way down
+                    // and came straight back on the settle (measured
+                    // 2026-09-07). Clamping removes the phantom rather
+                    // than raising the threshold to outrun it.
+                    //
+                    // AND THE CHROME'S OWN BAND ADDED BACK. This measure
+                    // decides whether the chrome hides, and since
+                    // 2026-09-07 hiding it COLLAPSES the top inset by
+                    // `LivRow.topChrome` — so without this term the
+                    // decision changes its own input and the two flip
+                    // each other forever. Traced on the Calendar: the
+                    // offset oscillated 805 / 855 / 805 / 860 with the
+                    // doors flickering in and out on every sample.
+                    // Adding the band back while it is away makes the
+                    // number continuous across the transition, which is
+                    // what "how far down the content am I" should have
+                    // meant all along.
+                    let band = desk.chromeAway ? LivRow.topChrome : 0
+                    let y = geo.contentOffset.y + geo.contentInsets.top + band
+                    let visible = geo.containerSize.height
+                        - geo.contentInsets.top - geo.contentInsets.bottom
+                    let end = max(0, geo.contentSize.height - visible)
+                    return min(max(0, y), end)
                 } action: { _, y in
                     desk.scrolled(to: y)
                 }

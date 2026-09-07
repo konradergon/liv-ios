@@ -255,23 +255,50 @@ enum LivScreen {
 /// draws forty times; it gets a token like everything else that matters
 /// (standing rule 3).
 enum LivChip {
-    /// The ordinary chip. 17 was the old height, sized around 11pt text;
-    /// the text is `caption` (13) now — never `micro`, which is a badge
-    /// size — so the capsule grew with it.
+    /// The ordinary chip: a SECOND VOICE in a row, `caption` (14). 17
+    /// was the old height, sized around 11pt text, and the capsule grew
+    /// with the text. Never `micro`, which is a badge size.
     static let height: CGFloat = 24
     /// The roomier variant, for a chip that stands alone in a row rather
-    /// than in a run of them.
+    /// than in a run of them. Same text as `height`; padding is the
+    /// whole difference.
     static let tall: CGFloat = 30
+    /// A CHIP THAT IS A VALUE, not a second voice: the properties card,
+    /// where the chip is the whole answer to "what is this field?" and
+    /// every other value in that column is `strong` (20). A 20pt line
+    /// box is ~24, so 34 leaves 5 either side — `tall` (30) would sit a
+    /// descender on the capsule's edge, and `tall` is shared with the
+    /// filter chips besides.
+    static let value: CGFloat = 34
     /// A glyph inside a chip, and the only size one may be.
     static let glyph: CGFloat = 14
+    /// A glyph inside a `value` chip, scaled to its text the way `glyph`
+    /// is scaled to `caption`.
+    static let valueGlyph: CGFloat = 20
 }
 
 enum LivRow {
-    /// An ordinary list row: a label, a value, a chevron. 54 was the
-    /// number when a row's text was 16–18 and every row had a hairline
-    /// under it; the surface pass took the hairlines out of content
-    /// lists and the rows came down with them (owner, 2026-08-18:
-    /// "maximize simplicity… quiet, effortless").
+    /// THE ROW HEIGHT — every row that names a thing and opens it, and
+    /// a good deal more besides: the properties card's field rows, the
+    /// create menu's items, the workspace picker, the tab-switcher row.
+    /// 25 call sites. Move this number and all of them move.
+    ///
+    /// Until 2026-09-05 it was one list's number pretending to be a
+    /// token (owner: *"tasks rows still to low. make row height more
+    /// consistent"*). The six content views ran 42 / 44 / 48 / 56:
+    /// Notes, Everything and Inbox called this, and Tasks, Today and
+    /// Search each carried a raw literal instead — three different
+    /// ones, and Today alone used two. Scrolling from one view to the
+    /// next changed the beat of the list for no reason a reader could
+    /// name. A number with three callers and four values is not a rule;
+    /// it is a habit (standing rule 3). Those six are on it now.
+    ///
+    /// `drive.sh rows` asserts it from the screen.
+    ///
+    /// 54 was the number when a row's text was 16–18 and every row had
+    /// a hairline under it; the surface pass took the hairlines out of
+    /// content lists and the rows came down with them (owner,
+    /// 2026-08-18: "maximize simplicity… quiet, effortless").
     // THE ROWS GO UP WITH THE TEXT. This file's own lesson from
     // 2026-08-10: when the scale grew and the rows did not, the bigger
     // text was simply more cramped in the same box. 56 also clears
@@ -279,8 +306,25 @@ enum LivRow {
     // rows were measured at 40 on 2026-08-31, under the minimum, which
     // is part of why they read as small.
     static let height: CGFloat = 56
-    /// A row carrying a title and a second line under it.
+    /// A TALLER row, for one that carries its own controls under the
+    /// words rather than beside them — the clerk's proposal row is the
+    /// only caller.
     static let tall: CGFloat = 70
+    /// A CHROME row inside a content list — a collapse heading, a
+    /// notice, a "N captured today" banner. It does not name a thing you
+    /// open, so it does not take `height` and stays visibly shorter than
+    /// the rows above it. Four raw literals were doing this job, two at
+    /// 38 and two at 40 (2026-09-05).
+    ///
+    /// 44, not 40: three of the four are the whole hit area of a Button,
+    /// and this file argues the 44pt touch minimum twice. Still 12 short
+    /// of a content row, which is the distinction it exists to draw.
+    static let band: CGFloat = 44
+    /// THE TOUCH MINIMUM, Apple's. Not a row height — the hit area of a
+    /// control that lives inside one, where the ink is smaller than the
+    /// finger: a status ring, a checkbox, a reject cross. It was a raw
+    /// 44 in five places across two files.
+    static let touch: CGFloat = 44
     /// The band the top chrome owns: the two door circles and the
     /// workspace button centred between them. ANYTHING that speaks at
     /// the top of the screen — a banner, a notice, an acknowledgment —
@@ -301,6 +345,16 @@ enum LivRow {
     static let mark: CGFloat = 24
     /// Mark to words.
     static let markGap: CGFloat = 14
+
+    /// THE KIND MARK at the head of a LIST row — the leaf, the tray,
+    /// the ring. It was a raw `19` in `LivListRow` and a second raw `19`
+    /// in the Inbox's own row: one number, two copies, neither in a type
+    /// (standing rule 3).
+    ///
+    /// It does NOT claim every mark in the app. Search draws its hit
+    /// mark at 22 and Today's agenda at 17, both deliberately, because
+    /// those rows lead with something other than a 24pt mark column.
+    static let glyph: CGFloat = 19
 
     /// WHERE A ROW'S WORDS START — past the mark column.
     static let text: CGFloat = margin + mark + markGap
@@ -362,10 +416,24 @@ enum LivRow {
 /// THE BOTTOM BAR, measured off `bar-and-buttons-dynamic-hiding.MOV`
 /// (Obsidian for iOS) on 2026-08-23. The owner asked for "the same
 /// button set you'd expect in a browser or Obsidian — literally", so
-/// these are the reference's own proportions rather than ours.
+/// the capsule's proportions are the reference's own rather than ours.
+///
+/// THE LABELS ARE TODOIST'S (owner, 2026-09-05: the bar "should hint
+/// user about what '+' creates and that '[n]' is for open notes", in
+/// the style of the Throwaway recordings). Obsidian's bar is five bare
+/// glyphs; Todoist's is a glyph over a word, and that is the one form
+/// in the owner's references that SAYS what a key does. Measured off
+/// `todoist-inbox.mov`: glyph ~20, word ~11, ~6 between — a 24pt slot
+/// for our 22pt glyph and a word under it.
+///
+/// THE WORD IS `caption`, NOT `micro` (owner, 2026-09-05: "bump to 14").
+/// Todoist's own is ~11 and this app has been called too small four
+/// times; the reference is a floor to clear, not a ceiling.
 enum LivBar {
-    /// 57 measured; 56 keeps the capsule's radius a whole number.
-    static let height: CGFloat = 56
+    /// 57 measured off Obsidian for bare glyphs; 66 holds a 14pt word
+    /// under each one at the same margins (24 glyph + 2 + 17 line, and
+    /// ~11 of air top and bottom). Even, so the radius stays whole.
+    static let height: CGFloat = 66
     /// The breath between the bar and the screen's bottom edge.
     static let gap: CGFloat = 4
     /// How far the capsule stands in from each screen edge. The
@@ -374,7 +442,17 @@ enum LivBar {
     static let sideInset: CGFloat = 42
     /// From the capsule's end to the first glyph's centre.
     static let endInset: CGFloat = 34
+    /// The capsule's own horizontal padding, which puts the end glyphs
+    /// at `endInset`. It was written as `endInset - height / 2`, which
+    /// came to 6 by coincidence (a slot is a fifth of the capsule, not
+    /// its height) and would have moved when the bar grew.
+    static let endPad: CGFloat = 6
     static let glyph: CGFloat = 22
+    /// The slot every glyph sits in, chevron or box alike, so the words
+    /// under them share one baseline.
+    static let glyphSlot: CGFloat = glyph + 2
+    /// Between the glyph's slot and its word.
+    static let wordGap: CGFloat = 2
     /// DISABLED IS INK, and nothing else: same glyph, same size, same
     /// place. The reference's disabled grey is 31% of its enabled ink,
     /// with no plate, no border and no removal from the row.
