@@ -339,6 +339,7 @@ struct DeskHost: View {
         // that is where the button used to be.
         .livSheet(from: .bottom, isPresented: $desk.workspaceShown) {
             WorkspaceSwitcher(onClose: { desk.workspaceShown = false })
+                .livOverlay(LivOverlay.workspace)
                 .environmentObject(box)
                 .environmentObject(workspaces)
                 .environmentObject(desk)

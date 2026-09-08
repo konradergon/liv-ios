@@ -1,5 +1,49 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-08 — rev 55: a check for the card that had none
+
+The bar-over-the-workspace-card bug (rev 54) survived a week, and the
+harness could not have caught it if it had run every hour. Three reasons,
+two of them now fixed:
+
+**The card had no marker.** Every other cover carries a `LivOverlay` —
+library, tabs, properties, settings, trash — and the workspace card
+carried none, so no check could assert it was even on screen. It has
+`LivOverlay.workspace` now.
+
+**Its door had no name.** The button at the foot of the library panel
+took its accessibility label from its own contents — the active
+workspace's name plus the count line under it — so it changed with the
+box and no driver could tap it. It is `"Switch workspace"` now, and
+deliberately not `"Workspace"`: the card draws that word as its title,
+and `axe tap` refuses a label matching two elements. That collision has
+bitten this harness three times.
+
+**And the third is not fixed, because it cannot be from here.** The bug
+was WHICH OF THE TWO IS ON TOP, and z-order is paint — the accessibility
+tree has none of it. The trap is worse than a simple blind spot: the bar
+is `accessibilityHidden` whenever a panel is out, in the BROKEN build and
+the FIXED one, for different reasons. So "is the bar in the tree" reads
+green either way, and a check written on it would have been the harness
+lying again — the exact failure this script was written after. Seeing the
+paint needs a pixel off a screenshot, and `simctl io … screenshot` is the
+one call that has wedged this harness; that door is not worth opening for
+one assertion.
+
+So `drive.sh workspace` guards what it honestly can: the card opens from
+the panel's foot, it is marked, its title is below the half-way line —
+it RISES, it does not fall, which is the rule that already broke once
+when the button moved and the direction stayed behind — and it carries
+its own "New workspace" row. The layering stays an eyes-on check, and the
+check says so in its own output rather than implying it is covered.
+
+One assertion was written wrong and caught by reading it: `grep -c`
+prints a number at zero too, so `[[ -n … ]]` on a count can never fail.
+It is `grep -q` now. Nothing here was run — Linux, no simulator — so
+before this green is trusted, break one of its assertions on purpose and
+watch it fail, per the rule at the top of the script.
+
+
 ## 2026-09-08 — rev 54: the bar belongs to the view
 
 Owner: *"the bar should be 'part of' the right view… when opening

@@ -90,6 +90,11 @@ enum LivOverlay {
     /// and what makes the surface visible to `drive.sh` for the first
     /// time.
     static let trash = "trash"
+    /// The workspace / filter card, which hangs from the foot of the
+    /// library panel. It had no marker at all until 2026-09-08, so
+    /// nothing could assert it was even up — which is how the bar came
+    /// to be painting over it for a week without a check noticing.
+    static let workspace = "workspace"
 }
 
 extension View {

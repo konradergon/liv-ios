@@ -296,6 +296,14 @@ struct LibraryPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // NAMED, because its label was DERIVED — the workspace's own
+            // name plus the line under it, so it changed with the box and
+            // could not be tapped by a driver. "Switch workspace" and not
+            // "Workspace": the card this opens draws that word as its
+            // title, and a label matching two elements is refused by
+            // `axe tap` (the third such collision in two days,
+            // 2026-09-05).
+            .accessibilityLabel("Switch workspace")
 
             // A CIRCLE, one step of tone off the panel it sits on — the
             // shape both references use for the settings key, and the

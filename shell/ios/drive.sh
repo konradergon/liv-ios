@@ -34,6 +34,7 @@
 #   ./drive.sh tour              every view in turn — the one that catches a dead repaint
 #   ./drive.sh panel             the library panel, and the properties card
 #   ./drive.sh bar               five keys, one row, disabled drawn as disabled
+#   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
 #   ./drive.sh cycles            AttributeGraph cycles since boot
 #   ./drive.sh quiet             opening a note adds NO AttributeGraph cycles
 #
@@ -1939,6 +1940,80 @@ cmd_quiet() {
   cmd_check
 }
 
+# THE WORKSPACE CARD, AND WHAT IT HANGS OVER.
+#
+# Added 2026-09-08, after the card spent a week with the bottom bar
+# painted across it (owner: "when opening workspaces from the panel, the
+# bar is above that card"). Nothing here could see it: the card had no
+# `LivOverlay` marker, so no check could assert it was even up, and the
+# door that opens it had no accessibility label — its label was DERIVED
+# from the active workspace's name, so it changed with the box.
+#
+# WHAT THIS CANNOT ASSERT, and it is the very thing that was broken:
+# WHICH OF THE TWO IS ON TOP. Z-order is paint, and the accessibility
+# tree has none of it. Worse, the bar is `accessibilityHidden` while a
+# panel is out — in the broken build AND the fixed one, for different
+# reasons — so "is the bar in the tree" answers a different question and
+# would have read green throughout. Catching the paint needs a pixel
+# sampled off a screenshot, and `simctl io … screenshot` is the one call
+# that wedged this harness (see `sim` above); it is not worth that door
+# for one assertion. So this guards the FLOW and the GEOMETRY, and the
+# layering stays an eyes-on check.
+cmd_workspace() {
+  cmd_boot >/dev/null 2>&1 || { die "could not boot before the workspace check."; return 1 }
+  open_side library || return 1
+
+  cmd_tap "Switch workspace" || {
+    die "no 'Switch workspace' door at the foot of the library panel.
+      It is the only way to the workspace card."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,1.4)'
+
+  [[ -n "$(overlays | grep -x workspace)" ]] || {
+    die "tapped the workspace door and no card came up (overlays: $(overlays | tr '\n' ' '))."
+    return 1
+  }
+
+  # IT RISES FROM THE EDGE ITS BUTTON IS ON. The door is at the FOOT of
+  # the panel, so the card comes from the bottom — it fell from the top
+  # for nine days after the button moved and the direction stayed behind
+  # (owner, 2026-08-31: "some menus are popping up top down when the
+  # button is not at the top"). Its title is the highest thing in it, so
+  # the title's own y is where the card begins.
+  local top
+  top=$(scan 'def walk(n):
+    if (n.get("AXLabel") or "") == "Workspace":
+        f = n.get("frame") or {}
+        print(int(f.get("y", 0)))
+    for c in n.get("children") or []: walk(c)' | head -1)
+  [[ -n "$top" ]] || {
+    die "the card is up but draws no 'Workspace' title, so nothing on it
+      says what it is."
+    return 1
+  }
+  (( top > 400 )) || {
+    die "the workspace card begins at y=${top} — it is falling from the
+      TOP. It hangs from the panel's foot and must rise from the bottom."
+    return 1
+  }
+
+  # AND IT OFFERS THE ONE VERB THAT IS ONLY HERE.
+  #
+  # `grep -q`, not `grep -c`: a count always prints a number, so a `-n`
+  # test on it is true even at zero — an assertion that cannot fail.
+  # Written that way first, and caught by reading it rather than by
+  # running it.
+  tree | grep -q "New workspace" || {
+    die "the card is up but offers no 'New workspace' row."
+    return 1
+  }
+
+  say "ok    workspace: the card rises from the panel's foot (title at y=${top}),"
+  say "      and carries its own New workspace row. WHICH IS ON TOP — it or the"
+  say "      bar — is paint, and no check here can see it: look with your eyes."
+}
+
 # The ONE place this script exits, so every command can fail by
 # returning and still be caught by the command above it.
 case "${1:-}" in
@@ -1950,6 +2025,7 @@ case "${1:-}" in
   tour)    cmd_tour    || exit 1 ;;
   panel)   cmd_panel   || exit 1 ;;
   bar)     cmd_bar     || exit 1 ;;
+  workspace) cmd_workspace || exit 1 ;;
   grid)    cmd_grid    || exit 1 ;;
   rows)    cmd_rows "${2:-tasks}" || exit 1 ;;
   routes)  cmd_routes  || exit 1 ;;
