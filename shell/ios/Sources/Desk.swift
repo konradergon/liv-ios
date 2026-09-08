@@ -15,6 +15,11 @@ struct DeskHost: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
+    /// The bar and the pill retire under a keyboard, and they live here
+    /// now (2026-09-08), so the watch does too — it was `RootView`'s
+    /// while they were, and nothing else there read it.
+    @StateObject private var keyboard = KeyboardWatch()
+
     /// The drag lives on the model now (the bar reads it too); this is
     /// the short name for it in here.
     private typealias PanelDrag = DeskModel.PanelDrag
@@ -73,6 +78,30 @@ struct DeskHost: View {
             // (owner, 2026-08-17). What must not land under the buttons
             // keeps `LivRow.topInset` for itself.
             .overlay(alignment: .top) { LivTopScrim() }
+            // THE BAR IS PART OF THE SURFACE (owner, 2026-09-08: "the
+            // bar should be 'part of' the right view").
+            //
+            // It was a sibling of the whole app body in `RootView`'s
+            // ZStack, painted after it — so it floated over everything
+            // there is, and every cover that had to appear ABOVE it had
+            // to be hoisted out of the surface and re-hosted up there
+            // beside it. Three were: the one menu, the record card, the
+            // properties sheet. The workspace card was not, so it came
+            // up UNDERNEATH the bar, scrim and all — the same bug the
+            // menu had before it moved, with the reason still written
+            // above `livMenu` in App.swift.
+            //
+            // Inside the card, that whole class of bug is gone rather
+            // than fixed case by case: anything a surface puts over
+            // itself is over its bar, because its bar is part of it.
+            // Three special cases go with it — the bar no longer needs
+            // its own `deskShift` (the card travels and it travels
+            // with it), the library panel covers it by being a later
+            // sibling instead of by the bar retiring, and the wash that
+            // takes the desk's touches takes the bar's too, so a bar in
+            // the sliver is no longer live under a panel that says it
+            // has your attention.
+            .overlay(alignment: .bottom) { surfaceFoot }
             .ignoresSafeArea(edges: .top)
             // THE DESK AS A CARD. The panel stops 100pt short of the
             // right edge (owner, 2026-08-23: "Panel should not be full
@@ -320,6 +349,49 @@ struct DeskHost: View {
         .sheet(isPresented: $desk.settingsShown) { SettingsSheet() }
         .sheet(item: $share) { payload in
             ShareSheet(items: payload.items)
+        }
+    }
+
+    /// THE SURFACE'S OWN FOOT: the bar, and the pill that stands on it.
+    ///
+    /// Both were mounted in `RootView` until 2026-09-08 and both carried
+    /// `.offset(x: desk.deskShift)` by hand to fake travelling with a
+    /// desk they were not part of. They are part of it now, so the
+    /// offset is the card's and they inherit it.
+    @ViewBuilder private var surfaceFoot: some View {
+        ZStack(alignment: .bottom) {
+            // IT DOES NOT RETIRE FOR AN EMPTY DESK: the bar is the only
+            // way out of one, and its `+` is what the empty desk's hint
+            // points at. The pill follows the bar, since it is
+            // positioned against it.
+            //
+            // Both retire under a KEYBOARD: keyboard avoidance would
+            // park the bar above the editor's formatting row, two bars
+            // deep (owner, 2026-08-02).
+            // The bar FIRST, so the pill declared after it keeps the
+            // z order the two had as `zIndex(1)` and `zIndex(2)` in
+            // RootView. They do not overlap — the pill is padded up by
+            // the bar's whole room — but the order is the record of
+            // which stands on which.
+            if !keyboard.up && desk.menu == nil {
+                BottomBar()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .accessibilityHidden(desk.chromeAway)
+                    // OUT OF THE WAY WHILE YOU READ (owner's clips,
+                    // 2026-08-20). Its own height plus the safe area it
+                    // sits in, so it leaves the screen rather than
+                    // peeking over the edge. The extra 12 carries it
+                    // past the bottom safe area; both are pure
+                    // translations.
+                    .offset(y: desk.chromeAway ? LivBar.clearance + 12 : 0)
+                    .transition(.move(edge: .bottom).combined(with: .offset(y: 40)))
+            }
+            if let id = desk.minimisedRecord, !keyboard.up {
+                MinimisedRecordPill(id: id)
+                    .padding(.bottom, LivBar.room + LivBar.gap)
+                    .accessibilityHidden(desk.chromeAway)
+            }
         }
     }
 

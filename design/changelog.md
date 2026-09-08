@@ -1,5 +1,68 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-08 — rev 54: the bar belongs to the view
+
+Owner: *"the bar should be 'part of' the right view… when opening
+workspaces from the panel, the bar is above that card."*
+
+Both halves of that were one fact. The bar was a SIBLING of the whole
+app body in `RootView`'s ZStack, painted after it:
+
+    ZStack(alignment: .bottom) {
+        bodyView → DeskHost()      z 0
+        MinimisedRecordPill        zIndex(2)
+        BottomBar                  zIndex(1)
+    }
+
+So it floated over everything there is, and anything that had to appear
+ABOVE it could not simply be drawn by the surface that owned it — it had
+to be lifted out and re-hosted up there beside the bar. Three were: the
+one menu, the record card, and the properties sheet (which is a system
+sheet and got it free). The workspace card was not. It is hung on
+DeskHost, `livSheet` draws with `.overlay`, so it stayed at z 0 and the
+bar sat on top of it — scrim included.
+
+That was not a new bug. It is the same one the menu had, and App.swift
+still carried the note: *"the bar is drawn after the desk, so a menu
+hosted inside DeskHost came up underneath it and lost its last row."*
+The menu was moved; the workspace card never was.
+
+**The bar is the surface's own foot now** — an overlay inside the desk
+card, under the same mask, the same wash and the same `deskShift`. What
+that deletes is three special cases rather than one bug:
+
+- The bar no longer carries `.offset(x: desk.deskShift)` by hand to fake
+  travelling with a desk it was not part of. It travels because it is
+  part of it.
+- The library panel covers it by being a later sibling in DeskHost's own
+  ZStack, not by the bar being told to retire.
+- The wash that takes the desk's touches takes the bar's too. With a
+  panel out you could previously still work the bar in the sliver,
+  behind a panel that says it has your attention — the exact thing the
+  wash was added for on 2026-08-24, which the bar was outside of.
+
+And the workspace card is above the bar without anybody arranging it,
+because it is drawn over the surface and the bar is in the surface.
+
+`RootView`'s body is one child now. `KeyboardWatch` went with the bar
+and the pill to DeskHost, which is the only thing that read it.
+
+**What did NOT change:** the bar's absolute position, its five keys and
+their labels, the retire-on-scroll offset, and the keyboard rule. So
+`drive.sh bar` (which reads keys by label at y > 700), the capture check
+that asserts the bar is GONE under a keyboard, and the Notes-root check
+that asserts the numbered box is live should all still pass — but they
+are the first things to run, because position is exactly what this
+change moves and nothing here was compiled.
+
+**NOT VERIFIED.** Linux, no Swift toolchain, no simulator. `cargo test`
+is green (408) and says nothing about any of it. This is a layout
+change, so `drive.sh` is the whole verification: `bar` first, then
+`panel`, `tour`, `chrome` and `grid`. The two things to look at with
+your own eyes are the workspace card over the bar (the reported bug) and
+the bar in the sliver while the library is open.
+
+
 ## 2026-09-07 — rev 53: the five that were deferred
 
 Rev 52 fixed thirteen audit items and named five it did not. This is

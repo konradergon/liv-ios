@@ -138,7 +138,6 @@ struct RootView: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var keyboard = KeyboardWatch()
     @State private var bootApplied = false
     /// The furnishing pass runs once per launch, on the FIRST decoded
     /// snapshot. Cross-launch idempotence is Furnish's presence guards,
@@ -147,70 +146,32 @@ struct RootView: View {
     @State private var furnished = false
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // No persistent top bar (owner, 2026-07-31): the note takes the
-            // screen; Workspace and Settings live behind the desk's floating
-            // ••• (DeskHost). The body is the desk, edge to edge.
-            bodyView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // The bar retires while a PANEL is up — RootView draws it
-            // after the desk, so left alone it would float over the
-            // panel it should be behind. It also retires while a
-            // keyboard is up: keyboard avoidance would park it above the
-            // editor's formatting row, two bars deep (owner,
-            // 2026-08-02).
-            //
-            // It does NOT retire for an EMPTY desk: the bar is the only
-            // way out of one, and its `+` is what the empty desk's hint
-            // points at. The pill follows the bar, since it is
-            // positioned against it.
-            if let id = desk.minimisedRecord, !keyboard.up {
-                MinimisedRecordPill(id: id)
-                    .padding(.bottom, LivBar.room + LivBar.gap)
-                    // The pill belongs to the desk, so it travels with
-                    // it into the wings — either wing now that the
-                    // properties panel travels too, so there is nothing
-                    // left to fade under.
-                    .offset(x: desk.deskShift)
-                    .accessibilityHidden(desk.deskShift != 0)
-                    .zIndex(2)
-            }
-            // THE FLOOR THE BAR STANDS ON. Drawn before the bar and
-            // after the desk, so the list fades into the ground on its
-            // way down and the capsule is never something you read a row
-            // through. It travels and retires with the bar, or a scrim
-            // would sit on a screen whose bar has gone.
-            if !keyboard.up && desk.menu == nil {
-                BottomBar()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                    // IT TRAVELS WITH THE DESK. That reverses
-                    // 2026-08-17's "the bar does NOT travel with the
-                    // surface: it is four GLOBAL actions", which was
-                    // right while the panel covered the screen — the bar
-                    // was behind it either way — and is wrong now that
-                    // the panel stops 100pt short: a bar left behind
-                    // would sit on the panel's own foot.
-                    .offset(x: desk.deskShift)
-                    .accessibilityHidden(desk.chromeAway || desk.deskShift != 0)
-                    // OUT OF THE WAY WHILE YOU READ (owner's clips,
-                    // 2026-08-20). Its own height plus the safe area it
-                    // sits in, so it leaves the screen rather than
-                    // peeking over the edge.
-                    .offset(y: desk.chromeAway ? LivBar.clearance + 12 : 0)
-                    // The extra offset carries it past the bottom safe
-                    // area; the z keeps the exit above the opaque desk
-                    // (audit, 2026-08-01). Both are pure translations.
-                    .transition(.move(edge: .bottom).combined(with: .offset(y: 40)))
-                    .zIndex(1)
-            }
-        }
+        // ONE CHILD, and that is the point of it (2026-09-08).
+        //
+        // This ZStack also held the bottom bar and the minimised-record
+        // pill, painted after the body — so the bar floated over the
+        // whole app rather than belonging to the view under it, and
+        // every cover that had to appear above the bar had to be lifted
+        // out of its own surface and re-hosted up here beside it. The
+        // menu was, the record card was, the properties sheet is a
+        // system sheet and got it free; the workspace card was not, and
+        // came up underneath the bar (owner: "when opening workspaces
+        // from the panel, the bar is above that card").
+        //
+        // The bar is the surface's own foot now — see `surfaceFoot` in
+        // DeskHost — so a cover drawn over the surface is over its bar
+        // without anybody arranging it.
+        //
+        // No persistent top bar (owner, 2026-07-31): the note takes the
+        // screen; Workspace and Settings live behind the desk's floating
+        // ••• (DeskHost). The body is the desk, edge to edge.
+        bodyView
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LivTheme.canvas.ignoresSafeArea())
-        // The one menu is hosted HERE, above the bottom bar — the bar is
-        // drawn after the desk, so a menu hosted inside DeskHost came up
-        // underneath it and lost its last row. The card hosts its own
-        // when a card is the surface in front.
+        // The one menu is hosted HERE rather than in DeskHost so it
+        // covers the desk whole — its bar included, now that the bar is
+        // part of the desk. The card hosts its own when a card is the
+        // surface in front.
         .livMenu($desk.menu, active: desk.recordCard == nil)
         // Only when nothing covers the desk — see RecordCardHost. The
         // same question the window's panel drag asks, so it is asked in
