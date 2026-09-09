@@ -530,28 +530,45 @@ fn propose_area(
         return;
     }
     // The first filed mention names the area; every later one must agree.
-    let mut found: Option<(Id, &Named)> = None;
+    //
+    // THE CELL IS COPIED AS FOUND. The furnished `area` is a Select, but
+    // a box from before 2026-08-29 keeps it as TEXT and the shell leaves
+    // it so (Furnish.swift: "a legacy TEXT `area` … values keep flowing
+    // as text"). The first cut read a Select only, and on the owner's
+    // own box proposed the mention and never the area. Whatever kind the
+    // box keeps, the proposal writes the same kind back.
+    let mut found: Option<(&Value, &Named)> = None;
     for &at in mentioned {
         let named = &gazetteer.names[at];
-        let Some(Value::Select(option)) = store.get(named.id).and_then(|e| e.get(area)) else {
+        let Some(value) = store.get(named.id).and_then(|e| e.get(area)) else {
             continue;
         };
+        match value {
+            Value::Select(_) => {}
+            Value::Text(text) if !text.trim().is_empty() => {}
+            _ => continue,
+        }
         match found {
-            None => found = Some((*option, named)),
-            Some((first, _)) if first == *option => {}
+            None => found = Some((value, named)),
+            Some((first, _)) if first == value => {}
             Some(_) => return,
         }
     }
-    let Some((option, named)) = found else {
+    let Some((value, named)) = found else {
         return;
     };
-    let Some(Value::Text(name)) = store.get(option).and_then(|o| o.get(props::NAME)) else {
-        return;
+    let name = match value {
+        Value::Select(option) => match store.get(*option).and_then(|o| o.get(props::NAME)) {
+            Some(Value::Text(name)) => name.clone(),
+            _ => return,
+        },
+        Value::Text(text) => text.clone(),
+        _ => return,
     };
     proposals.push(Proposal {
         commands: vec![Command::AddCell {
             entity: entity.id,
-            cell: Cell { property: area, value: Value::Select(option) },
+            cell: Cell { property: area, value: value.clone() },
         }],
         label: format!("area {name}"),
         author: Author::Proposer("area".into()),

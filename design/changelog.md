@@ -38,6 +38,13 @@ Nine tests first; the sweep's cost fixture gained a filed name every
 body mentions (it had none, so the mentions proposer never ran in the
 test that guards it). `cargo test` green.
 
+*Amended the same day, from the simulator:* the owner's box keeps
+`area` as TEXT (it predates the select furniture, and Furnish leaves a
+legacy text area alone), and the proposer read a Select only — so Sam's
+mention was proposed and Sam's area was not. It now copies the cell as
+found, Select or Text, and writes the same kind back; a tenth test
+holds the text case.
+
 Shell: in Route, a scrap with a guess wears it as a chip — `Work?` —
 and one tap accepts the proposal and sets the kind: filed, same two
 writes and undo count as the card. Tidy does not repeat the question.

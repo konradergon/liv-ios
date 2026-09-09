@@ -442,6 +442,39 @@ fn a_stale_area_proposal_is_retracted_on_save() {
     cleanup(&path);
 }
 
+/// THE OWNER'S BOX IS OLDER THAN THE FURNITURE. Boxes from before
+/// 2026-08-29 carry `area` as a TEXT property, and Furnish.swift leaves
+/// it so ("a legacy TEXT `area` refuses options harmlessly — values keep
+/// flowing as text"). Found on the simulator the day the proposer
+/// shipped: Sam filed under Work, the mention proposed, the area not —
+/// because the proposer read a Select and Sam's cell was Text("Work").
+/// The proposer copies the cell it finds, whatever kind the box keeps.
+#[test]
+fn area_is_read_from_a_text_field_as_well() {
+    let (mut session, path) = boxed("area_text");
+    let area = liv_services::content::birth_property(&mut session, "area", "text").unwrap();
+    let sam = typed(&mut session, "note", "Sam Okafor", vec![]);
+    liv_services::content::set_property(&mut session, sam, "area", "Work").unwrap();
+    let scrap = capture(&mut session, "ask Sam Okafor about lunch");
+
+    let p = from(&clerk::sweep(session.store(), MONDAY), "area").expect("an area proposal");
+    assert!(
+        matches!(
+            p.commands.as_slice(),
+            [Command::AddCell { entity, cell }]
+                if *entity == scrap && cell.property == area && cell.value == Value::text("Work")
+        ),
+        "{:?}",
+        p.commands
+    );
+    assert!(p.reason.contains("Work"), "{}", p.reason);
+
+    // A blank text area is filed nowhere.
+    liv_services::content::set_property(&mut session, sam, "area", "").unwrap();
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
 #[test]
 fn a_typed_thing_gets_an_area_too() {
     // Filing is not only for scraps: a task that mentions Sam belongs
