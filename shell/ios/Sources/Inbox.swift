@@ -62,7 +62,27 @@ struct InboxView: View {
     /// Trash-first merge would render as a card whose ✓ returns 0 forever
     /// (the filed FFI chip). Until that lands, they stay out of the list.
     private var proposals: [ProposalRow] {
-        (box.snap?.inbox ?? []).filter { ($0.commands?.first?.kind ?? "") == "add" }
+        // A question about an unrouted capture is asked ON ITS ROW, in
+        // Route (`suggestedArea`), not a second time here: the clerk's
+        // area guess for a scrap is the routing question with an answer
+        // pencilled in, and two lenses both asking it would make the
+        // Inbox count one decision twice.
+        let unrouted = Set(scraps.map(\.id))
+        return (box.snap?.inbox ?? []).filter {
+            ($0.commands?.first?.kind ?? "") == "add"
+                && !($0.author == "area" && unrouted.contains($0.entity ?? 0))
+        }
+    }
+
+    /// THE CLERK'S GUESS AT WHERE THIS GOES (2026-09-09, owner's word):
+    /// the pending `area` proposal for a scrap, and the area it names.
+    /// The clerk reads it off what the capture mentions — a thought
+    /// about Sam belongs where Sam is filed (`clerk.rs`, `propose_area`).
+    private func suggestedArea(_ row: EntityRow) -> (p: ProposalRow, area: String)? {
+        guard let p = box.proposals(for: row.id).first(where: { $0.author == "area" }),
+            let area = p.commands?.first?.value, !area.isEmpty
+        else { return nil }
+        return (p, area)
     }
 
     /// Grouped by PROPOSER, first-appearance order — the archived shell's
@@ -303,7 +323,25 @@ struct InboxView: View {
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(2)
                 Spacer(minLength: 8)
-                LivRowFact(text: stamp(row))
+                if let guess = suggestedArea(row) {
+                    // THE ANSWER, PENCILLED IN. One tap says yes and
+                    // files it — the same two writes tapping the area in
+                    // the route card makes, with the clerk's consent
+                    // recorded on the way. The date the chip replaces is
+                    // the row's second voice; a question the row can
+                    // answer outranks it. Tapping the row still opens the
+                    // card, with every other area in it — the guess is
+                    // offered, never imposed.
+                    Button {
+                        fileSuggested(row, guess.p, under: guess.area)
+                    } label: {
+                        ValueChip("\(guess.area)?", glyph: LivArea.glyph(named: guess.area))
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("File under \(guess.area)")
+                } else {
+                    LivRowFact(text: stamp(row))
+                }
             }
         }
         // A ROW YOU CAN HIT. Measured on 2026-08-31 these came out at
@@ -367,9 +405,9 @@ struct InboxView: View {
     /// place question is asked first and the type question only when
     /// the answer is not the default.
     ///
-    /// The clerk still never proposes an area — that is settled-zone
-    /// work (`clerk.rs`) and waits for the owner's word; this is the
-    /// shell half, and it is what makes the pile shrink by a tap.
+    /// The clerk proposes an area since 2026-09-09 (`clerk.rs`,
+    /// `propose_area`, on the owner's word); the row wears its guess as
+    /// a chip (`suggestedArea`), and this card is the door past it.
     private func routeMenu(_ row: EntityRow) -> LivMenu {
         let areas = InspectorField.describe("area", in: box.snap).options
         var items: [LivMenuItem] = areas.map { name in
@@ -416,6 +454,20 @@ struct InboxView: View {
             guard ok else { return refused() }
             box.set(row.id, "area", area) { ok in
                 ok ? flash("Filed under \(area)", undo: 2) : flash("Routed to Note", undo: 1)
+            }
+        }
+    }
+
+    /// YES to the clerk's guess: the consent lands the area (its own
+    /// transaction, so the clerk's ledger records that this one was
+    /// taken), then the kind. Same two writes as `file`, same undo
+    /// count. A refused consent — the proposal went stale under the
+    /// finger — files nothing; the row simply redraws without the chip.
+    private func fileSuggested(_ row: EntityRow, _ p: ProposalRow, under area: String) {
+        box.accept(p) { ok in
+            guard ok else { return refused() }
+            box.setType(row.id, "note") { ok in
+                ok ? flash("Filed under \(area)", undo: 2) : flash("Area \(area) set", undo: 1)
             }
         }
     }

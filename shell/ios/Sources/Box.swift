@@ -690,9 +690,11 @@ final class BoxModel: ObservableObject {
     }
 
     /// Consent to ONE proposal. The fingerprint makes a stale consent a
-    /// refusal (returns 0), never a misapplied write.
-    func accept(_ p: ProposalRow) {
-        act("accept") {
+    /// refusal (returns 0), never a misapplied write. `done` is for a
+    /// caller that files on top of the consent (the Inbox's suggested
+    /// area, 2026-09-09) and must not write into a refusal.
+    func accept(_ p: ProposalRow, done: ((Bool) -> Void)? = nil) {
+        act("accept", done) {
             liv_accept_at(self.path, p.entity ?? 0, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
         }
     }

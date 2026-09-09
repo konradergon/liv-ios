@@ -215,6 +215,16 @@ fn the_clerk_sweep_stays_flat_as_the_box_grows() {
     fn written(name: &str, n: usize) -> (std::path::PathBuf, Session) {
         let (path, mut session) = boxed(name);
         let now = DateTime::date(2026, 8, 19);
+        // ONE NAMED THING, FILED, THAT EVERY BODY MENTIONS (2026-09-09).
+        // Without it the bodies below mention nobody the box knows, so
+        // the mentions proposer matched nothing and the area proposer —
+        // which reads the same mentions — would run on no entity at all.
+        // A cost test that skips the code it guards is not one.
+        let area = content::birth_property(&mut session, "area", "select").unwrap();
+        content::add_option(&mut session, area, "Home").unwrap();
+        let anna = content::create_note(&mut session, now).unwrap();
+        content::set_property(&mut session, anna, "name", "Anna").unwrap();
+        content::set_property(&mut session, anna, "area", "Home").unwrap();
         for i in 0..n {
             let id = content::create_note(&mut session, now).unwrap();
             // A DISTINCT name per note: identical names would land every
