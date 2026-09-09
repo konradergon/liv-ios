@@ -1,5 +1,31 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-09 — rev 58: a switcher pick lands on the note
+
+Owner, from the simulator: "when selecting a note from tabs when not
+inside Notes, nothing happens." Not intentional. The switcher's card
+called `focus`, which makes a tab active and changes no view; a
+document renders only in Notes and `openDoc` is nil elsewhere by design
+(`Chrome.swift`, the `state` guard). Left over from the desk going
+app-wide on 2026-08-28: while each view had its own plane the switcher
+never showed a note from Today, so `focus` was enough. The `revive`
+comment even claimed "a document opens where you are".
+
+`DeskModel.show(tab)`: a document goes through `openDocument`, the door
+every other open uses — lands in Notes, pushes the way back, closes the
+covers. A position tab (folded away on read since 08-28) keeps `focus`.
+Both switcher call sites use it. `-planes.selfcheck` asserts the pick
+from Today lands in Docs with back = Today; `drive.sh desk` now ends by
+opening the switcher from Today, tapping the first card by frame, and
+asserting the document surface — the assertion that would have caught
+this, since every model check passed.
+
+Also: `drive.sh` and `suites.sh` cd to their own directory like
+`build.sh`, so the same invocation works from the repo root.
+
+**NOT VERIFIED on the simulator** (Linux). `suites.sh planes` and
+`drive.sh desk` are the checks.
+
 ## 2026-09-09 — rev 57: route asks where, and the way back
 
 The second and third items from the direction review, on the owner's

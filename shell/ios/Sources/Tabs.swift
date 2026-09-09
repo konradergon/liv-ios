@@ -195,7 +195,7 @@ struct TabSwitcher: View {
             feature: desk.state,
             active: tab.id == desk.activeTabId,
             onOpen: {
-                desk.focus(tab.id)
+                desk.show(tab)
                 desk.switcherShown = false
             },
             onClose: { desk.close(tab.id) })
@@ -423,12 +423,14 @@ struct InactiveTabs: View {
     /// Back into the grid, and onto the screen: this is the only way a
     /// tab leaves the inactive list, exactly as Chrome does it.
     ///
-    /// It no longer has to CHANGE VIEW first. The shelf used to span six
-    /// planes, so reviving a Calendar tab from the Notes switcher had to
-    /// take you to the Calendar. Everything on one desk is a document,
-    /// and a document opens where you are.
+    /// The shelf used to span six planes, so reviving a Calendar tab
+    /// from the Notes switcher had to take you to the Calendar. There is
+    /// one desk of documents now, and a document is shown in Notes —
+    /// which `desk.show` takes you to. (This said "a document opens
+    /// where you are" and called `focus`, which changed no view at all;
+    /// see `DeskModel.show`.)
     private func revive(_ tab: DeskTab) {
-        desk.focus(tab.id)
+        desk.show(tab)
         close()
         desk.switcherShown = false
     }

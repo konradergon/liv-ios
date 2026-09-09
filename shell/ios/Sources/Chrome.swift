@@ -534,7 +534,30 @@ final class DeskModel: ObservableObject {
         for tab in planes.inactive { close(tab.id) }
     }
 
+    /// A tab picked from the switcher: onto the screen, not merely made
+    /// active. One desk (2026-08-28) meant the switcher opens from every
+    /// view, and its cards called `focus`, which sets the active tab and
+    /// nothing else — so from Today the tap closed the grid and Today
+    /// kept drawing, because a document renders only in Notes and
+    /// `openDoc` is nil elsewhere by design. Nothing happened, visibly,
+    /// until you walked to Notes (owner, 2026-09-09).
+    ///
+    /// A document goes through the one door every open goes through, so
+    /// it lands in Notes with the way back pushed, exactly as a row in a
+    /// list does. A position tab (pre-2026-08-28 planes, folded away on
+    /// read) has no document to show and keeps the old behaviour.
+    func show(_ tab: DeskTab) {
+        switch tab.content {
+        case .entity(let id): openDocument(id)
+        case .position: focus(tab.id)
+        }
+    }
+
     /// Activate a tab. Every activation path funnels here.
+    ///
+    /// Activation is NOT arrival: this leaves `state` alone, so a caller
+    /// that wants the tab on screen goes through `show` (from the
+    /// switcher) or `open` (from anywhere else).
     func focus(_ tabId: UUID) {
         // Stamp FIRST and unconditionally: re-opening the tab you are
         // already on is still using it, and the early return below would

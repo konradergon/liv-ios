@@ -320,6 +320,19 @@ func livPlacesSelfCheck() -> [String] {
     check("the list is Docs with no document", desk.state == .notes && desk.openDoc == nil)
     check("and nothing is beneath it", desk.back == nil)
 
+    // A TAB PICKED FROM THE SWITCHER, standing somewhere else, lands in
+    // Docs like any other open does — with the way back to where you
+    // stood. (Until 2026-09-09 the switcher only made the tab active,
+    // and from Today nothing visibly happened.)
+    desk.go(.today)
+    if let tab = desk.tabs.first(where: { $0.content == .entity(7) }) {
+        desk.show(tab)
+        check("a switcher pick lands in Docs", desk.state == .notes && desk.openDoc == 7, "\(desk.state) \(String(describing: desk.openDoc))")
+        check("and remembers where you stood", desk.back == .state(.today), "\(String(describing: desk.back))")
+    } else {
+        check("the tab for 7 is still on the desk", false)
+    }
+
     // Opening the SAME document again is not a step.
     desk.open(11)
     let before = desk.returns.count

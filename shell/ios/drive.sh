@@ -24,7 +24,7 @@
 #   ./drive.sh areas            Today counts the day by area of life under its date
 #   ./drive.sh chrome [view]     the doors retire on a scroll and come back (all six by default)
 #   ./drive.sh create            + makes what the place holds, in one tap
-#   ./drive.sh desk              one desk of documents, the same in every view
+#   ./drive.sh desk              one desk of documents, the same in every view; a switcher pick lands
 #   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
 #   ./drive.sh vault             the Vault card offers controls, or says why not
@@ -1604,7 +1604,48 @@ cmd_desk() {
     }
   done
   say "ok    desk: ${first} documents, the same set in all six views"
+
+  # AND A PICK FROM THE SWITCHER, STANDING SOMEWHERE ELSE, SHOWS THE NOTE.
+  #
+  # Until 2026-09-09 the switcher's card called `focus`, which made the
+  # tab active and changed no view — so from Today the grid closed and
+  # Today kept drawing. Every model check passed: the tab WAS active. Only
+  # the screen could say nothing had happened, so the assertion is the
+  # rendered surface. The card is found by its frame (the grid's cards
+  # are the only 150pt buttons on screen), for the reason `open_first_note`
+  # gives: two unnamed notes share one label.
+  cmd_goto today >/dev/null 2>&1 || { die "could not reach Today for the switcher pick."; return 1 }
+  cmd_tap "$(bar_tab_label)" || return 1
+  local x y
+  read x y <<< "$(first_card_point)"
+  [[ -n "${x:-}" ]] || { die "the switcher opened from Today but shows no card to pick."; return 1 }
+  axe tap --udid "$UDID" -x "$x" -y "$y" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.2)'
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "picked a card from the switcher while in Today and the screen shows
+      '$(cmd_surface)', not the document. The tab is probably active and
+      the view never changed — see DeskModel.show."
+    return 1
+  }
+  say "ok    desk: a switcher pick from Today lands on the document"
   cmd_check
+}
+
+# The first card in the switcher's grid, by frame — see `first_note_point`
+# for why a frame the tree just reported is not a guessed coordinate.
+first_card_point() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if (n.get("type") == "Button" and l and 140 < f.get("height", 0) < 160
+            and l != "New note"):
+        CARDS.append((f.get("y", 0), f.get("x", 0), f))
+    for c in n.get("children") or []: walk(c)' \
+    'CARDS = []' \
+    'CARDS.sort(key=lambda r: (r[0], r[1]))
+if CARDS:
+    f = CARDS[0][2]
+    print(int(f["x"] + f["width"] / 2), int(f["y"] + f["height"] / 2))'
 }
 
 cmd_lens() {
