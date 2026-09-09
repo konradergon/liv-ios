@@ -1,5 +1,50 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-09 — rev 56: the door carries a payload
+
+The first thing the direction review ranked (2026-09-08): `liv://capture`
+took no query string, so another app could open Liv to a blank but not
+hand it a sentence. That is a deep link, not a catch. The thesis
+(`what-liv-is-for.md:130-133`) says finishing this comes before any
+feature, and that without it the app "cannot be anyone's first reflex,
+however good the capture screen is." Fifty-four commits had shipped ahead
+of it.
+
+**`liv://capture?text=…&url=…`.** Either, both, words first, one line
+break between, trimmed; a blank payload is a bare capture. The text is
+SAVED first — through `liv_capture_at`, the verb the search field's
+find-or-create already uses, so no new verb and nothing in the settled
+zone — then stamped, focused and adopted as an Inbox capture. Those are
+the same three lines `createNote` runs for the note `+` makes, and they
+live once, in `DeskHost.catchText`, wired beside `newNote` and parked by
+`Routes` on a cold launch the same way. One rule for what a new thing is,
+not one per door.
+
+**A payload on any other route is ignored** — `liv://inbox?text=x` is
+still just Inbox — on the rule that already drops an unknown host: a
+link from another app does not get to smuggle text onto a surface that
+did not ask for it.
+
+**The suite the parser always promised.** `Route.init?` has said "PARSE
+ONLY — no side effects, so the suite can check every shape" since the
+door was built on 2026-09-06, and no suite existed. `-routes.selfcheck 1`
+now: fifteen shapes, including the two `drive.sh` cannot cheaply reach (a
+wrong scheme, a payload on the wrong host). `drive.sh routes` gained a
+fourth step that opens `liv://capture?text=caught%20from%20outside` and
+asserts the words are on screen.
+
+**What this buys today, with no Xcode project:** a Shortcut set to *Show
+in Share Sheet* calling `liv://capture?text=[Shortcut Input]` puts Liv in
+every app's share menu. That is the ceiling of a URL scheme and it is
+enough for the month to start. The real Share Extension is still the
+open fork.
+
+**NOT VERIFIED.** Linux, no Swift toolchain, no simulator. `cargo test`
+is green (408) and untouched. Before trusting it: `build.sh`, then
+`suites.sh routes` — break one of the fifteen on purpose first — then
+`drive.sh routes`, whose fourth step is the one that matters.
+
+
 ## 2026-09-08 — rev 55: a check for the card that had none
 
 The bar-over-the-workspace-card bug (rev 54) survived a week, and the

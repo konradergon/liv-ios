@@ -1160,7 +1160,23 @@ cmd_routes() {
     return 1
   }
 
-  say "ok    routes: liv://inbox and liv://tasks land, liv://capture opens a note with the caret in it (desk held ${before} first), an unknown host does nothing"
+  # 4. A CATCH WITH SOMETHING IN IT. `liv://capture?text=…` is how
+  #    another app HANDS Liv a sentence rather than opening it to a
+  #    blank — the half of the thesis's "catching things from other apps"
+  #    a URL scheme can do without a share extension (2026-09-09). The
+  #    text must be on screen: it is saved first and then shown.
+  open_url "liv://capture?text=caught%20from%20outside" || return 1
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "liv://capture?text= landed on '$(cmd_surface)', not a document."
+    return 1
+  }
+  tree | grep -q "caught from outside" || {
+    die "liv://capture?text=… opened a document without the text in it.
+      A catch is saved first and then shown; this one arrived empty."
+    return 1
+  }
+
+  say "ok    routes: liv://inbox and liv://tasks land, liv://capture opens a note with the caret in it (desk held ${before} first), liv://capture?text= lands with the text in it, an unknown host does nothing"
   cmd_check
 }
 

@@ -24,9 +24,17 @@ import Foundation
 /// unknown host is dropped in silence rather than guessed at, because
 /// the alternative is a link from another app deciding where you land.
 enum Route: Equatable {
-    /// A new note with the caret in it. The same door `+` opens, so the
-    /// note IS an Inbox capture (`createNote` calls `adoptCapture`).
-    case capture
+    /// A capture. With NOTHING in it, a new note with the caret in it —
+    /// the same door `+` opens. With a payload (`?text=`, `?url=`, or
+    /// both), the text is SAVED first and then shown: a catch is not a
+    /// draft. Either way the note is an Inbox capture.
+    ///
+    /// The payload is the half of "catching things from other apps" a
+    /// URL scheme can do without a share extension (2026-09-09). Until
+    /// then another app could open Liv to a blank, not hand it a
+    /// sentence — which the thesis says makes it nobody's first reflex,
+    /// however good the capture screen is.
+    case capture(String?)
     /// The camera, straight to the shutter.
     case capturePhoto
     /// A view, by name. The spec names `liv://inbox`; the other five
@@ -52,7 +60,7 @@ enum Route: Equatable {
         let rest = url.pathComponents.filter { $0 != "/" }
         switch (host, rest.first?.lowercased()) {
         case ("capture", nil):
-            self = .capture
+            self = .capture(Self.payload(of: url))
         case ("capture", "photo"):
             self = .capturePhoto
         case ("entity", let id?):
@@ -65,6 +73,60 @@ enum Route: Equatable {
             return nil
         }
     }
+
+    /// The catch itself: `?text=` and/or `?url=`, each trimmed, joined on
+    /// one line break with the words first, nil when there is nothing to
+    /// catch. A blank payload is a bare capture, not an empty note with a
+    /// space in it — `liv_capture_at` refuses empty text anyway, so the
+    /// door decides before the box has to.
+    ///
+    /// Only `capture` reads this: a payload on any other route is
+    /// ignored, on the same rule that drops an unknown host — a link
+    /// from another app does not get to smuggle text onto a surface that
+    /// did not ask for it.
+    private static func payload(of url: URL) -> String? {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func item(_ name: String) -> String? {
+            let raw = items.first { $0.name.lowercased() == name }?.value ?? ""
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let parts = [item("text"), item("url")].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+}
+
+// MARK: - self-check (run: simctl launch … -routes.selfcheck 1)
+
+/// EVERY SHAPE, NO DESK. `Route.init?` has said "PARSE ONLY — no side
+/// effects, so the suite can check every shape" since the door was
+/// built, and no suite did until 2026-09-09. These are the shapes
+/// `drive.sh routes` cannot cheaply reach (a wrong scheme, a payload on
+/// the wrong host) plus the ones it can, so a parser regression is
+/// caught in a second rather than in a boot.
+func livRoutesSelfCheck() -> [String] {
+    var fail: [String] = []
+    func check(_ label: String, _ ok: Bool) { if !ok { fail.append(label) } }
+    func route(_ s: String) -> Route? { URL(string: s).flatMap(Route.init) }
+
+    check("bare capture", route("liv://capture") == .capture(nil))
+    check("photo", route("liv://capture/photo") == .capturePhoto)
+    check("a view", route("liv://inbox") == .view(.inbox))
+    check("an entity", route("liv://entity/42") == .entity(42))
+    check("a bad entity id is nil", route("liv://entity/x") == nil)
+    check("unknown host is nil", route("liv://nonsense") == nil)
+    check("wrong scheme is nil", route("http://capture") == nil)
+    check("scheme is case-blind", route("LIV://capture") == .capture(nil))
+
+    // THE PAYLOAD.
+    check("text", route("liv://capture?text=hello%20there") == .capture("hello there"))
+    check("url", route("liv://capture?url=https%3A%2F%2Fx.y%2Fz") == .capture("https://x.y/z"))
+    check("both, words first", route("liv://capture?url=b&text=a") == .capture("a\nb"))
+    check("trimmed", route("liv://capture?text=%20%20a%20%20") == .capture("a"))
+    check("blank is a bare capture", route("liv://capture?text=%20%20") == .capture(nil))
+    check("payload on a view is ignored", route("liv://inbox?text=x") == .view(.inbox))
+    check("payload on photo is ignored", route("liv://capture/photo?text=x") == .capturePhoto)
+    return fail
 }
 
 /// THE DOOR ITSELF: parks what it cannot yet do, and does the rest.

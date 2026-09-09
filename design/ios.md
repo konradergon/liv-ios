@@ -1239,6 +1239,30 @@ need a real Xcode project with separate targets. That blocker is theirs;
 a URL scheme is a plist key and one modifier, and both survive this
 tree's `swiftc Sources/*.swift` + `cp Info.plist` build.
 
+> **Amended 2026-09-09 — the door carries a payload.** `liv://capture`
+> took no query string: another app could open Liv to a blank, not hand
+> it a sentence. That is a deep link, not a catch, and the thesis is
+> explicit that without catching from other apps the app "cannot be
+> anyone's first reflex, however good the capture screen is." It now
+> reads `?text=` and `?url=` (either, both — words first, one line
+> break between), trims them, and treats blank as bare. The text is
+> SAVED first through `liv_capture_at` — the verb the search field's
+> find-or-create already uses — then stamped, focused and adopted as an
+> Inbox capture, the same three lines `createNote` runs, so a catch and
+> a `+` are one rule (`DeskHost.catchText`). A payload on any other
+> route is ignored, on the same rule that drops an unknown host.
+>
+> This is the half of "catching things from other apps" a URL scheme
+> can do. A Shortcut set to *Show in Share Sheet* that calls
+> `liv://capture?text=[Shortcut Input]` puts Liv in every app's share
+> menu today, without the Xcode project the real extension needs.
+>
+> The parser also gained the suite this section always promised
+> (`Route.init?` has said "PARSE ONLY — so the suite can check every
+> shape" since it was written): `-routes.selfcheck 1`, fifteen shapes,
+> and `drive.sh routes` gained a fourth step that opens
+> `liv://capture?text=…` and asserts the text is on screen.
+
 **Two lessons from breaking the check on purpose**, which CLAUDE.md
 requires before trusting a green. The first break landed on a line the
 parser never reaches — a bare unknown host is caught by the view arm's

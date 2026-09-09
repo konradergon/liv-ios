@@ -92,6 +92,12 @@ struct LivApp: App {
             failures.forEach { print("PALETTE-SELFCHECK \($0)") }
         }
         // The markdown scan + edit operations (EditorStyle.swift), same
+        // The `liv://` parser, every shape, no desk: `-routes.selfcheck 1`.
+        if UserDefaults.standard.bool(forKey: "routes.selfcheck") {
+            let failures = livRoutesSelfCheck()
+            print("ROUTES-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("ROUTES-SELFCHECK \($0)") }
+        }
         // door: `simctl launch … -editor.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "editor.selfcheck") {
             let failures = livEditorSelfCheck()
@@ -299,7 +305,12 @@ struct RootView: View {
             Routes.shared.apply = { [weak desk, weak box] route in
                 guard let desk else { return }
                 switch route {
-                case .capture: desk.newNote?()
+                case .capture(let payload):
+                    if let payload {
+                        desk.catchText?(payload)
+                    } else {
+                        desk.newNote?()
+                    }
                 case .capturePhoto: desk.cameraShown = true
                 case .view(let feature): desk.go(feature)
                 case .entity(let id):

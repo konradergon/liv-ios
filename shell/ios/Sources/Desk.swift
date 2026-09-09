@@ -280,6 +280,7 @@ struct DeskHost: View {
             desk.createMenu = createMenu
             desk.createHere = createHere
             desk.newNote = createNote
+            desk.catchText = catchText
         }
         .fileImporter(
             isPresented: $picking, allowedContentTypes: [.item],
@@ -619,6 +620,25 @@ struct DeskHost: View {
                 return
             }
             creating = false
+            workspaces.stamp(id, in: box)
+            desk.requestFocus(id)
+            desk.adoptCapture(id)
+        }
+    }
+
+    /// A CATCH FROM OUTSIDE — `liv://capture?text=…` (2026-09-09). The
+    /// text is saved FIRST, through the same `liv_capture_at` the search
+    /// field's find-or-create uses; a catch is not a draft, and if you
+    /// can start it, it is saved. Then it is treated exactly as the note
+    /// `+` makes: stamped into the workspace, focused, adopted as an
+    /// Inbox capture — the same three lines as `createNote`, so there is
+    /// one rule for what a new thing is and not one per door.
+    private func catchText(_ text: String) {
+        guard !creating else { return }
+        creating = true
+        box.capture(text) { id in
+            creating = false
+            guard id != 0 else { return }
             workspaces.stamp(id, in: box)
             desk.requestFocus(id)
             desk.adoptCapture(id)

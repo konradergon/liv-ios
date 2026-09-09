@@ -308,6 +308,10 @@ final class DeskModel: ObservableObject {
     /// event, file or scan?" is a question with one sensible answer
     /// (owner, 2026-08-28).
     var newNote: (() -> Void)?
+    /// A catch from OUTSIDE with the text already in hand —
+    /// `liv://capture?text=…`. Wired by DeskHost beside `newNote`, and
+    /// parked by `Routes` on a cold launch the same way (2026-09-09).
+    var catchText: ((String) -> Void)?
     /// The library being dragged: whether the drag OPENS or CLOSES it,
     /// and the finger's travel so far. It lives on the MODEL because the
     /// bottom bar and the pill, which travel with the desk, are drawn by
