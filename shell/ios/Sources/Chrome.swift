@@ -705,6 +705,38 @@ final class DeskModel: ObservableObject {
         chromeHomeAgain()
     }
 
+    /// THE PANEL'S DOOR: land on the view you NAMED, never inside a
+    /// document (owner, 2026-09-09: *"sometimes when selecting Notes
+    /// from the panel it gets you to an open note instead of showing the
+    /// list"*).
+    ///
+    /// The panel had two branches. Tapping the view you were already in
+    /// went to its root; arriving from ANOTHER view called `go`, which
+    /// keeps whatever document is on the desk — so the same tap on the
+    /// same row landed on the list or in a note depending on state the
+    /// row does not show. "Sometimes" is the whole complaint: one tap,
+    /// one meaning.
+    ///
+    /// A POSITION SURVIVES, A DOCUMENT DOES NOT. The Calendar's month
+    /// and Today's day are where you left a tool — a scroll position,
+    /// still that view. A document is a different SURFACE wearing the
+    /// view's name, which is why it can be mistaken for a failed
+    /// navigation and a scrolled month cannot. `openDoc` is already
+    /// exactly "a document is on screen", so the rule needs no list of
+    /// features.
+    ///
+    /// The note is not lost or closed: it is still on the desk, and the
+    /// bar's numbered key opens the switcher that lands you back on it
+    /// from any view (rev 58).
+    func goToRoot(_ feature: Feature) {
+        if state == feature {
+            showList()
+            return
+        }
+        go(feature)
+        if openDoc != nil { showList() }
+    }
+
     /// Up, out of a document, to the list of them. The state does not
     /// change: you were in Docs the whole time.
     /// **The tabs stay open.** Before the plane came back this cleared

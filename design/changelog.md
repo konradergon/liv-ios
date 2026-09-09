@@ -1,5 +1,33 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-09 — rev 61: the panel lands on the view it names
+
+Owner: *"sometimes when selecting Notes from the panel it gets you to an
+open note instead of showing the list."* The panel had two branches —
+tapping the view you were in went to its root, arriving from another
+view called `go`, which keeps whatever document is on the desk. Same
+row, two outcomes, decided by state the row does not show. "Sometimes"
+was the whole complaint.
+
+`DeskModel.goToRoot` is one rule for both: land on the view, then drop a
+document if one would be drawn (`openDoc != nil`, which is already
+exactly that question — no list of features). A POSITION SURVIVES: the
+Calendar's month and Today's day are where you left a tool, still that
+view; a document is a different surface wearing the view's name. The
+note is not closed — the bar's numbered key opens the switcher and lands
+you back on it from anywhere (rev 58).
+
+The `liv://<view>` links go through the same door, and the `-desk.boot`
+flags' `notes` special case (a hand-spelled `go` + `showList`) is now
+that one call. `-places.selfcheck` asserts the landing, the surviving
+position, and the note still on the desk. `drive.sh`'s `allowed` let
+Notes answer with `document` — which is why `goto notes` could not tell
+this bug from a working navigation; every view answers with its own
+marker now.
+
+**NOT VERIFIED on the simulator** (Linux). `suites.sh places` and
+`drive.sh tour` are the checks.
+
 ## 2026-09-09 — rev 60: Liv in the share row
 
 Owner: "then implement share feature." A share extension —

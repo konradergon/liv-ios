@@ -466,12 +466,15 @@ cmd_tap() {
 # arriving at Notes with something open lands you back in it — which is
 # what a tab is for. `tabs` was the third, until the grid stopped being
 # Notes' root and became the switcher (2026-08-28).
-allowed() {
-  case "$1" in
-    notes) echo "notes document" ;;
-    *)     echo "$1" ;;
-  esac
-}
+# WHAT LANDING ON A VIEW MAY LOOK LIKE. Every view answers with its own
+# marker and nothing else.
+#
+# `notes` used to also allow `document`, because arriving at Notes from
+# another view restored whatever was open — so this check could not tell
+# a working navigation from the bug the owner hit on 2026-09-09
+# ("sometimes… it gets you to an open note instead of showing the
+# list"). One tap, one meaning, one allowed surface.
+allowed() { echo "$1" }
 
 # Is the library panel open? One sample; waiting out the animation is
 # wait_panel's job.

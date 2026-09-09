@@ -201,16 +201,17 @@ struct LibraryPanel: View {
                         // closing all note tabs"). There was no door.
                         //
                         // This is the phone's own idiom — tap the tab you
-                        // are already on to go to its root — and it keeps
-                        // the other half working: arriving at Notes from
-                        // ANOTHER view still restores the document you
-                        // left, and the bar's numbered box is still how
-                        // you get back to it from the list.
-                        if desk.state == feature {
-                            desk.showList()
-                        } else {
-                            desk.go(feature)
-                        }
+                        // are already on to go to its root.
+                        //
+                        // It used to be the ONLY half that did that:
+                        // arriving at Notes from another view called
+                        // `go`, which restores the document on the desk,
+                        // so the same row landed on the list or in a
+                        // note depending on invisible state (owner,
+                        // 2026-09-09: "sometimes"). `goToRoot` is one
+                        // rule for both — and the bar's numbered box is
+                        // still how you get back to the note.
+                        desk.goToRoot(feature)
                         onDismiss()
                     }
                 }

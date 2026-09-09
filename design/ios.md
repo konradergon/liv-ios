@@ -1003,6 +1003,49 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 51. A view row lands on the view (rev 61, owner 2026-09-09)
+
+Owner: *"sometimes when selecting Notes from the panel it gets you to an
+open note instead of showing the list."*
+
+The panel's row branched: `desk.state == feature` went to the view's
+root, anything else called `go`, which keeps the desk's document. So the
+Notes row meant the list when you were already in Notes and meant "the
+note you last had open" when you arrived from Today — the same row, two
+destinations, chosen by state the row does not show. §37 built the
+first branch as a door to the list ("you can't access note list without
+closing all note tabs") and left the second as it was; this is the other
+half of that fix.
+
+**`goToRoot` is the door.** Land on the view; if a document would then
+be drawn, show the list. The test is `openDoc != nil`, which already
+means "a document is on screen" (state is Notes AND the active tab is an
+entity), so the rule needs no list of features and gains nothing to keep
+in sync when a seventh view arrives.
+
+**A position survives, a document does not.** The Calendar's month and
+Today's day are where you left a tool — a scroll position, still that
+view, which is why a returned-to month never reads as a failed
+navigation. A document is a different SURFACE wearing the view's name.
+That is the whole distinction, and the desk has held it since
+2026-08-28: documents in one desk, one spot per tool.
+
+**Nothing is closed.** The note stays on the desk; the bar's numbered
+key opens the switcher, which lands you back on it from any view since
+rev 58. Before rev 58 that door did not work from outside Notes, which
+is part of why the panel was carrying the job.
+
+The `liv://<view>` links go through the same door — a link that names a
+view means the view — and the `-desk.boot` flags' `notes` case, which
+had spelled out `go` + `showList` with a comment about why, is now that
+one call.
+
+**The check that could not see it.** `drive.sh`'s `allowed` listed
+`document` as a valid answer for `notes`, so `goto notes` passed on both
+outcomes. Every view answers with its own marker now, and
+`-places.selfcheck` asserts the landing, the surviving position, and the
+note still on the desk.
+
 ## 50. Liv in the share row (rev 60, owner 2026-09-09)
 
 Owner: *"then implement share feature."* The share sheet — the row of

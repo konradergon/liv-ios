@@ -333,6 +333,22 @@ func livPlacesSelfCheck() -> [String] {
         check("the tab for 7 is still on the desk", false)
     }
 
+    // THE PANEL'S DOOR LANDS ON THE VIEW, not in a document. Until
+    // 2026-09-09 arriving at Notes from elsewhere restored whatever was
+    // open, so the same row meant two things.
+    desk.open(7)
+    desk.go(.today)
+    desk.goToRoot(.notes)
+    check("the panel lands on the list", desk.state == .notes && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
+    check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
+    // A POSITION IS NOT A DOCUMENT: a tool keeps where it was left.
+    desk.park(.calendar, at: "202609")
+    desk.goToRoot(.calendar)
+    check("a tool keeps its spot", desk.state == .calendar && desk.position(.calendar) == "202609")
+    // And the view you are IN still goes to its own root.
+    desk.goToRoot(.calendar)
+    check("tapping the view you are in is still its root", desk.state == .calendar)
+
     // Opening the SAME document again is not a step.
     desk.open(11)
     let before = desk.returns.count
