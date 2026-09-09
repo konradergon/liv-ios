@@ -21,6 +21,11 @@
 
 set -u
 
+# RUN FROM THIS DIRECTORY, WHEREVER INVOKED FROM — same as `build.sh`
+# and, since 2026-09-09, `drive.sh`. Without it, `shell/ios/suites.sh`
+# from the repo root cannot find `build/Liv.app` and refuses to run.
+cd "${0:A:h}"
+
 # PIN THE PATH BEFORE ANYTHING ELSE.
 #
 # This machine has plan9port early on PATH, and its `ps`, `grep` and

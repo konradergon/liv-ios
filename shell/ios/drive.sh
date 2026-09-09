@@ -44,6 +44,13 @@
 
 set -u
 
+# RUN FROM THIS DIRECTORY, WHEREVER INVOKED FROM. `build.sh` has always
+# done this; this script did not, so `shell/ios/drive.sh routes` from
+# the repo root looked for `build/Liv.app` under the root, found nothing,
+# and said "run ./build.sh first" one line after build.sh had printed
+# "built:" (2026-09-09). Every path below is relative to shell/ios.
+cd "${0:A:h}"
+
 # PIN THE PATH BEFORE ANYTHING ELSE.
 #
 # This machine has plan9port early on PATH, and its `ps`, `grep` and
