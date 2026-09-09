@@ -35,6 +35,7 @@
 #   ./drive.sh panel             the library panel, and the properties card
 #   ./drive.sh bar               five keys, one row, disabled drawn as disabled
 #   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
+#   ./drive.sh history           a note's ••• opens its version history as a card
 #   ./drive.sh cycles            AttributeGraph cycles since boot
 #   ./drive.sh quiet             opening a note adds NO AttributeGraph cycles
 #
@@ -2030,6 +2031,45 @@ cmd_workspace() {
   say "      bar — is paint, and no check here can see it: look with your eyes."
 }
 
+# THE HISTORY CARD. Every version of a note, from its ••• menu, as a card.
+#
+# Added 2026-09-09 with the card itself. The verb it reads has been in
+# the ABI since the history was built and nothing in the shell called it,
+# so the thesis's "read what you wrote three weeks ago, put it back" was
+# core-only; this asserts the door exists, opens, is marked, and names
+# itself. RESTORE is not driven here: it is a write to the box, and the
+# ffi tests already prove a restore appends a version and never rewrites
+# the log. What a driver can add is that the card is reachable at all.
+cmd_history() {
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  open_first_note || return 1
+
+  cmd_tap "Note actions" || return 1
+  perl -e 'select(undef,undef,undef,1.0)'
+  cmd_tap "History" || {
+    die "the note's ••• menu offers no History. A note's versions are the
+      thesis's own promise; the door to them is this menu."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,1.6)'
+
+  [[ -n "$(overlays | grep -x history)" ]] || {
+    die "tapped History and no card came up (overlays: $(overlays | tr '\n' ' '))."
+    return 1
+  }
+
+  # IT LISTS AT LEAST THE CURRENT VERSION. A note you could open has
+  # content, so its history is never empty; an empty card here means the
+  # read failed and the card is hiding it.
+  tree | grep -q '"current"' || {
+    die "the History card is up but shows no current version. The read
+      of liv_content_history_at came back empty for a note that has words."
+    return 1
+  }
+
+  say "ok    history: the note's ••• menu opens its version history as a card, marked, with the current version listed"
+}
+
 # The ONE place this script exits, so every command can fail by
 # returning and still be caught by the command above it.
 case "${1:-}" in
@@ -2042,6 +2082,7 @@ case "${1:-}" in
   panel)   cmd_panel   || exit 1 ;;
   bar)     cmd_bar     || exit 1 ;;
   workspace) cmd_workspace || exit 1 ;;
+  history) cmd_history   || exit 1 ;;
   grid)    cmd_grid    || exit 1 ;;
   rows)    cmd_rows "${2:-tasks}" || exit 1 ;;
   routes)  cmd_routes  || exit 1 ;;

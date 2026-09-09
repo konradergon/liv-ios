@@ -142,6 +142,9 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         Some((&"restore", rest)) => restore(&mut session, rest),
         Some((&"new", rest)) => birth(&mut session, rest),
         Some((&"content", rest)) => content(&session, rest),
+        // The shell's History card reads this seam (2026-09-09); the
+        // verification tool keeps every verb the shell can reach.
+        Some((&"versions", rest)) => versions(&session, rest),
         Some((&"content-set", rest)) => content_set(&mut session, rest),
         Some((&"export", rest)) => export(&session, rest),
         Some((&"search", words)) if !words.is_empty() => find(&session, &log_path, words, false),
@@ -157,7 +160,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
                   snapshot [--window FROM-YYYYMMDDHHMM TO-YYYYMMDDHHMM] | \
                   undo [N] | redo [N] | trash ID | restore ID | \
                   new note|task|event [NAME...] | \
-                  content ID | content-set ID [--base N] TEXT... | \
+                  content ID | content-set ID [--base N] TEXT... | versions ID | \
                   search WORDS... | lens WORDS... | \
                   export ID[,ID...] DEST [--group-by PROP]"
             .into()),
@@ -861,6 +864,39 @@ fn birth(session: &mut Session, rest: &[&str]) -> Result<(), String> {
 /// section is projected off exactly those lines, so a flattened body
 /// cannot answer whether a checkbox line is really there. This prints one
 /// line per break and the fingerprint the editor's compare-and-swap uses.
+/// Every past version of one entity's content, NEWEST first — the same
+/// list the phone's History card draws. `seq` is what a restore appends
+/// after, so `versions` before and after a restore is how you prove the
+/// log was appended to and never rewritten.
+fn versions(session: &Session, rest: &[&str]) -> Result<(), String> {
+    let id = entity_id(rest.first().ok_or("usage: liv versions ID")?)?;
+    let store = session.store();
+    store.get(id).ok_or(format!("no entity #{id}"))?;
+    let mut list = liv_services::content::content_history(store, id);
+    list.reverse();
+    if list.is_empty() {
+        println!("no content versions for #{id}");
+        return Ok(());
+    }
+    for v in &list {
+        let author = match &v.author {
+            Author::User => "user".to_string(),
+            Author::Proposer(name) => format!("proposer:{name}"),
+            Author::System => "system".to_string(),
+        };
+        println!(
+            "{:>4}  {}  {:<16} {} [{} span{}]",
+            v.seq,
+            v.time,
+            author,
+            v.label,
+            v.spans.len(),
+            if v.spans.len() == 1 { "" } else { "s" }
+        );
+    }
+    Ok(())
+}
+
 fn content(session: &Session, rest: &[&str]) -> Result<(), String> {
     let id = entity_id(rest.first().ok_or("usage: liv content ID")?)?;
     let store = session.store();

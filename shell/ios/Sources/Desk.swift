@@ -563,6 +563,14 @@ struct DeskHost: View {
                 })
         }
         if !isFile {
+            // EVERY VERSION IS STILL THERE — the thesis's promise, and
+            // until 2026-09-09 a promise the core kept and the shell
+            // never showed. A file has no history here: its bytes live
+            // on disk and the box holds a reference.
+            items.append(
+                LivMenuItem(label: "History", symbol: "clock.arrow.circlepath") {
+                    withAnimation(LivMotion.nav) { desk.historyShown = true }
+                })
             items.append(
                 LivMenuItem(label: "Share", symbol: "square.and.arrow.up") {
                     shareNote(id, asFile: false)

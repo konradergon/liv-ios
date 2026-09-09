@@ -193,6 +193,19 @@ struct ContentDoc: Decodable {
     var spans: [SpanJSON]?
 }
 
+/// One past version of an entity's content (liv_content_history_at).
+/// EVERY field Optional — the standing law. `spans` is the same shape
+/// `ContentDoc.spans` carries, so a restore is `SpanText.json` of it
+/// handed back to `setContent`.
+struct ContentVersion: Decodable {
+    var seq: UInt64?
+    /// Unix seconds — the core's `now()`.
+    var time: Int64?
+    var author: String?
+    var label: String?
+    var spans: [SpanJSON]?
+}
+
 /// One end of a link, as the box reports it (liv_links_at). EVERY field
 /// Optional — the standing law.
 struct LinkRow: Decodable, Identifiable, Equatable {
@@ -802,6 +815,37 @@ final class BoxModel: ObservableObject {
                     "content decode failed: \(String(describing: error), privacy: .public)")
             }
             DispatchQueue.main.async { done(doc) }
+        }
+    }
+
+    /// EVERY PAST VERSION of one entity's content, NEWEST first
+    /// (liv_content_history_at). The log is the history: each entry is a
+    /// whole content value, and restoring one is an ordinary `setContent`
+    /// of its spans over a freshly read base — the restore is appended as
+    /// a new version, and the log is never rewritten.
+    ///
+    /// The verb has been in the ABI and tested three times since the
+    /// history was built; until 2026-09-09 nothing in the shell called
+    /// it, so the thesis's "read what you wrote three weeks ago, put it
+    /// back" was core-only.
+    func history(_ id: UInt64, done: @escaping ([ContentVersion]) -> Void) {
+        let path = self.path
+        boxQueue.async {
+            guard let raw = liv_content_history_at(path, id) else {
+                self.verbFailed("history")
+                DispatchQueue.main.async { done([]) }
+                return
+            }
+            let json = String(cString: raw)
+            liv_string_free(raw)
+            var versions: [ContentVersion] = []
+            do {
+                versions = try JSONDecoder().decode([ContentVersion].self, from: Data(json.utf8))
+            } catch {
+                Self.log.error(
+                    "history decode failed: \(String(describing: error), privacy: .public)")
+            }
+            DispatchQueue.main.async { done(versions) }
         }
     }
 

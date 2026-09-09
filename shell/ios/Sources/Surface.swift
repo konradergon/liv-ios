@@ -95,6 +95,8 @@ enum LivOverlay {
     /// nothing could assert it was even up — which is how the bar came
     /// to be painting over it for a week without a check noticing.
     static let workspace = "workspace"
+    /// The open document's version history (2026-09-09).
+    static let history = "history"
 }
 
 extension View {

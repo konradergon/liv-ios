@@ -1210,6 +1210,45 @@ and it only became obvious when a frame was CROPPED AND LOOKED AT rather
 than reduced to a pair of numbers. A measurement can only find the thing
 it was pointed at.
 
+## 43. Route asks where, and the way back (rev 57, owner 2026-09-09)
+
+Owner: *"do the route asks where and the history card."* Both were named
+by the 2026-09-08 direction review as the second and third things that
+close the gap between the app and its own success test.
+
+**Route asks WHERE.** The Inbox's route card offered four kinds — Task,
+Event, Note, Link — which is the question the constitution refuses in as
+many words: *"where does this go?" must not be reincarnated as "what type
+is this?"*. And it filed nothing: a scrap routed to Note left the Inbox
+with no area and dropped into Everything's Unfiled slice, which nothing
+opens for you. Inbox-zero and filed were two states, and the app
+celebrated the first. The six areas lead now, plus any the person has
+added (read from the same property the inspector reads); one tap sets
+the area and the kind together, so the scrap is a filed note in one
+gesture — two writes, one undo, the count `routeTask` already uses. The
+kinds that are not a note stand one door behind, under "Not a note…".
+The clerk still never proposes an area; that is `clerk.rs`, settled, and
+waits for the owner's word.
+
+**The way back.** `liv_content_history_at` has been in the ABI and
+tested three times since the history was built, and no screen read it.
+The thesis's fourth paragraph — "read what you wrote three weeks ago,
+put it back" — was core-only. `HistoryCard` is one read of that verb
+(`Box.history`, standing rule 1), hosted as a system sheet beside the
+properties card so there is one container for one idea. Newest first,
+when and who and the first line, a Restore on every row but the current
+one. Restore is an ordinary `setContent` of the old spans over a freshly
+read base — appended as a new version, the log never rewritten — so it
+is undoable by restoring the one above it, and no confirmation card is
+put in front of a reversible verb. Restoring the note you are looking at
+needs nothing extra: the editor already reloads a clean buffer on a moved
+base and routes a dirty one through its own conflict banner. The CLI
+gains `versions ID` so a restore can be proved from outside the app.
+
+**Harness.** `drive.sh history` reaches the card and asserts it is
+marked and lists the current version. `drive.sh routes` is unchanged by
+the Route work — no check ever read the route card's labels.
+
 ## 42. The `liv://` door (rev 45, owner 2026-09-06)
 
 Owner: *"go next with the unimplemented things."*

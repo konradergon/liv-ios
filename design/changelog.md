@@ -1,5 +1,37 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-09 — rev 57: route asks where, and the way back
+
+The second and third items from the direction review, on the owner's
+word. Both are shell-only; the settled zone is untouched.
+
+**ROUTE ASKS WHERE, NOT WHAT.** The Inbox's route card offered Task,
+Event, Note, Link — the "what type is this?" the constitution refuses by
+name — and filed nothing: a scrap routed to Note left the Inbox with no
+area and landed in Unfiled, which nothing opens for you. The six areas
+lead now (plus any the person added), one tap sets area and kind
+together, and the non-note kinds are one door behind under "Not a
+note…". Two writes, one undo, the count `routeTask` already uses. The
+clerk proposing an area is `clerk.rs` and waits for the owner.
+
+**THE HISTORY CARD.** `liv_content_history_at` — in the ABI, tested
+three times, called from the shell nowhere. `HistoryCard`: one
+`Box.history` read, hosted as a system sheet beside the properties card;
+newest first, when/who/first line, Restore on every row but the current.
+Restore is `setContent` of the old spans over a fresh base, appended as
+a new version, so it undoes by restoring the one above; no confirmation
+in front of a reversible verb. Restoring the open note needs nothing:
+the editor already reloads a clean buffer and routes a dirty one through
+its own banner. CLI gains `versions ID`. `drive.sh history` reaches the
+card.
+
+**NOT VERIFIED on the simulator.** Linux. `cargo test` is green and the
+CLI verb is compiled and real. The Swift is hand-checked only. Before
+trusting it: `build.sh`, `drive.sh history`, then open a note, edit it
+twice, open History and Restore the first — and `liv versions ID` before
+and after to see the version appended.
+
+
 ## 2026-09-09 — rev 56: the door carries a payload
 
 The first thing the direction review ranked (2026-09-08): `liv://capture`

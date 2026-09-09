@@ -432,6 +432,10 @@ final class DeskModel: ObservableObject {
     /// it — so this no longer takes part in any panel arithmetic. It is
     /// reset on every tab move: metadata is a visit, not a mode.
     @Published var inspectorShown = UserDefaults.standard.bool(forKey: "desk.boot.inspector")
+    /// The open document's version history, as a card (2026-09-09). Same
+    /// shape as the properties card: a system sheet hosted by RootView,
+    /// gated on `openDoc`, reset wherever the inspector is.
+    @Published var historyShown = false
 
     // MARK: records — a card over where you stand, never a tab (Option C)
 
@@ -657,6 +661,7 @@ final class DeskModel: ObservableObject {
         setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
+        historyShown = false
         settingsShown = false
         objectWillChange.send()
     }
@@ -806,6 +811,7 @@ final class DeskModel: ObservableObject {
         withAnimation(LivMotion.nav) {
             menu = nil
             inspectorShown = false
+            historyShown = false
         }
         searchShown = false
         cameraShown = false

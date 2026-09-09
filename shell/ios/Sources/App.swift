@@ -213,6 +213,24 @@ struct RootView: View {
                     .environmentObject(workspaces)
             }
         }
+        // HISTORY IS A CARD, hosted exactly as the properties card is:
+        // the same detents, the same grabber, the same ground, gated on
+        // the same open document. One container for one idea.
+        .sheet(
+            isPresented: Binding(
+                get: { desk.historyShown && desk.openDoc != nil },
+                set: { if !$0 { desk.historyShown = false } })
+        ) {
+            if let id = desk.openDoc {
+                HistoryCard(id: id)
+                    .livOverlay(LivOverlay.history)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(LivTheme.surface)
+                    .environmentObject(box)
+                    .environmentObject(desk)
+            }
+        }
         // Set on the WINDOW, not with preferredColorScheme. A sheet is a
         // separate presentation with its own root, so it never inherited
         // the scheme: flipping the appearance FROM Settings changed the

@@ -347,25 +347,77 @@ struct InboxView: View {
             ])
     }
 
-    /// The four destinations, as the app's one menu. Glyphs so the card
-    /// reads as a list of KINDS rather than four words, and the capture's
-    /// own name as the subject so the question has a visible object.
+    /// ROUTE ASKS WHERE, NOT WHAT (2026-09-09).
+    ///
+    /// This offered four KINDS — Task, Event, Note, Link — which is the
+    /// question the constitution refuses in as many words: *"where does
+    /// this go?" must not be reincarnated as "what type is this?"*
+    /// (productivity_app.md). And it did not file anything: a scrap
+    /// routed to Note left the Inbox with no area, and dropped into
+    /// Everything's Unfiled slice, which nothing opens for you. So
+    /// Inbox-zero and filed were two different states, and the app
+    /// celebrated the first (`Inbox.swift:6`).
+    ///
+    /// Now the six areas lead — the furniture the thesis says makes
+    /// filing "a tap, not a project" — plus any the person has added,
+    /// read from the same property the inspector reads. Tapping one
+    /// makes the scrap a filed note in one gesture: area set, kind set,
+    /// out of the Inbox and out of Unfiled together. The kinds that are
+    /// not a note stand one door further, behind "Not a note…", so the
+    /// place question is asked first and the type question only when
+    /// the answer is not the default.
+    ///
+    /// The clerk still never proposes an area — that is settled-zone
+    /// work (`clerk.rs`) and waits for the owner's word; this is the
+    /// shell half, and it is what makes the pile shrink by a tap.
     private func routeMenu(_ row: EntityRow) -> LivMenu {
-        LivMenu(
+        let areas = InspectorField.describe("area", in: box.snap).options
+        var items: [LivMenuItem] = areas.map { name in
+            LivMenuItem(label: name, glyph: LivArea.glyph(named: name)) {
+                file(row, under: name)
+            }
+        }
+        items.append(
+            LivMenuItem(label: "Not a note…", symbol: "ellipsis.circle", chevron: true) {
+                desk.menu = kindMenu(row)
+            })
+        return LivMenu(
             id: "route-\(row.id)",
             from: .bottom,
             subject: displayTitle(row),
-            subjectDetail: "Unfiled capture",
+            subjectDetail: "Unfiled capture — where does it go?",
+            items: items)
+    }
+
+    /// The kinds that are not a note, one door behind the areas.
+    /// "Note" is not here: choosing an area already makes one.
+    private func kindMenu(_ row: EntityRow) -> LivMenu {
+        LivMenu(
+            id: "route-kind-\(row.id)",
+            from: .bottom,
+            subject: displayTitle(row),
+            subjectDetail: "What is it, then?",
             items: [
                 LivMenuItem(label: "Task", glyph: .task) { routeTask(row) },
                 LivMenuItem(label: "Event", glyph: .event) { routeEvent(row) },
-                LivMenuItem(label: "Note", glyph: .note) {
-                    route(row, to: "note", as: "Note")
-                },
                 LivMenuItem(label: "Link", glyph: .link) {
                     route(row, to: "link", as: "Link")
                 },
             ])
+    }
+
+    /// FILED, in one tap: a note, under an area. Two writes, so two
+    /// undos — the same count `routeTask` uses for type + status, and
+    /// for the same reason: one gesture, one undo, however many cells.
+    /// The type goes first so a failure there files nothing, rather
+    /// than leaving an area on a thing with no kind.
+    private func file(_ row: EntityRow, under area: String) {
+        box.setType(row.id, "note") { ok in
+            guard ok else { return refused() }
+            box.set(row.id, "area", area) { ok in
+                ok ? flash("Filed under \(area)", undo: 2) : flash("Routed to Note", undo: 1)
+            }
+        }
     }
 
     /// Task = type + first open status, so it never lands in "No status"
