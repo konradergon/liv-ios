@@ -12,11 +12,13 @@
 // audit sized this at "two plist entries and one handler" — which turned
 // out to be exactly right.
 //
-// WHAT THIS IS NOT. No share extension, no widgets, no App Intents:
-// those need a real Xcode project with separate targets, and that
-// blocker is theirs alone (design/ios-m1-eval.md). A URL scheme is a key
-// in the main bundle's plist and one modifier, and both survive this
-// tree's `swiftc Sources/*.swift` + `cp Info.plist` build.
+// WHAT THIS IS NOT. No widgets, no App Intents. This said "no share
+// extension" too, on the belief that one needs a real Xcode project;
+// it does not — ShareExtension/ is a second swiftc in build.sh
+// (2026-09-09). The two doors share one rule for what a catch is
+// (Catch.swift). A URL scheme is a key in the main bundle's plist and
+// one modifier, and both survive this tree's `swiftc Sources/*.swift`
+// + `cp Info.plist` build.
 
 import Foundation
 
@@ -74,11 +76,9 @@ enum Route: Equatable {
         }
     }
 
-    /// The catch itself: `?text=` and/or `?url=`, each trimmed, joined on
-    /// one line break with the words first, nil when there is nothing to
-    /// catch. A blank payload is a bare capture, not an empty note with a
-    /// space in it — `liv_capture_at` refuses empty text anyway, so the
-    /// door decides before the box has to.
+    /// The catch itself: `?text=` and/or `?url=`, made into one text by
+    /// `Catch.text` — the same rule the share sheet uses, so the two
+    /// doors from outside agree on what a catch is (standing rule 4).
     ///
     /// Only `capture` reads this: a payload on any other route is
     /// ignored, on the same rule that drops an unknown host — a link
@@ -87,12 +87,9 @@ enum Route: Equatable {
     private static func payload(of url: URL) -> String? {
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         func item(_ name: String) -> String? {
-            let raw = items.first { $0.name.lowercased() == name }?.value ?? ""
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            items.first { $0.name.lowercased() == name }?.value
         }
-        let parts = [item("text"), item("url")].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: "\n")
+        return Catch.text(item("text"), item("url"))
     }
 }
 

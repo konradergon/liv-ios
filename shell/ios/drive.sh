@@ -36,6 +36,7 @@
 #   ./drive.sh bar               five keys, one row, disabled drawn as disabled
 #   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
 #   ./drive.sh history           a note's ••• opens its version history as a card
+#   ./drive.sh spool             a catch the share sheet left is in the Inbox at the next launch
 #   ./drive.sh cycles            AttributeGraph cycles since boot
 #   ./drive.sh quiet             opening a note adds NO AttributeGraph cycles
 #
@@ -67,6 +68,8 @@ cd "${0:A:h}"
 path=(/usr/bin /bin /usr/sbin /sbin /opt/homebrew/bin $path)
 UDID=${LIV_UDID:-8E699FF6-03A1-433B-A602-C51A30B14E87}
 APP=app.liv.ios
+# The App Group the box and the share spool live in (Catch.swift).
+GROUP=group.liv.app
 RUN=${TMPDIR:-/tmp}/liv-drive
 mkdir -p "$RUN"
 CONSOLE="$RUN/console.txt"
@@ -2118,6 +2121,55 @@ cmd_history() {
   say "ok    history: the note's ••• menu opens its version history as a card, marked, with the current version listed"
 }
 
+# A CATCH THE SHARE SHEET LEFT IS IN THE INBOX AT THE NEXT LAUNCH
+# (2026-09-09). The extension itself runs inside ANOTHER app's share
+# sheet, which this harness cannot reach by label with any confidence.
+# What it can do is leave a file exactly where the extension leaves one
+# (Catch.swift: <group>/liv/spool/*.txt) and watch the app pick it up —
+# the half of the seam that lives in this tree, and the half that would
+# fail silently: an extension that saved to a folder nobody reads would
+# say "Saved to Liv" and be lying.
+cmd_spool() {
+  # Install first, so the group container exists to write into.
+  cmd_boot inbox >/dev/null 2>&1 || { die "could not boot into the Inbox."; return 1 }
+  local group
+  group=$(sim get_app_container "$UDID" "$APP" "$GROUP" 2>/dev/null)
+  [[ -n "$group" && -d "$group" ]] || {
+    die "no App Group container for $GROUP.
+      The box and the spool both live there (Catch.swift, LivGroup.id);
+      if simctl cannot name it the entitlement did not reach the bundle."
+    return 1
+  }
+  mkdir -p "$group/liv/spool"
+  local words="spooled from the share sheet $(date +%H%M%S)"
+  local file="$group/liv/spool/drive-$$.txt"
+  print -r -- "$words" > "$file"
+
+  # The drain runs at launch, so relaunch — the file was written after
+  # the first one.
+  cmd_boot inbox >/dev/null 2>&1 || { die "could not relaunch into the Inbox."; return 1 }
+  local i
+  for i in {1..10}; do
+    tree | grep -q "$words" && break
+    perl -e 'select(undef,undef,undef,0.5)'
+  done
+  tree | grep -q "$words" || {
+    die "a file in the spool did not become a capture: '$words' is not in the Inbox.
+      RootView.drainSpool reads <group>/liv/spool at launch and on every
+      foreground; check that it ran, and that Spool.dir resolves the same
+      container simctl just named ($group)."
+    return 1
+  }
+  [[ ! -e "$file" ]] || {
+    die "the catch is in the Inbox but its spool file is still there — it
+      will be caught AGAIN at the next foreground. Item.done() removes the
+      file once the box answers with an id."
+    return 1
+  }
+  say "ok    spool: a file left in the App Group spool is an Inbox capture at the next launch, and the file is gone"
+  cmd_check
+}
+
 # The ONE place this script exits, so every command can fail by
 # returning and still be caught by the command above it.
 case "${1:-}" in
@@ -2131,6 +2183,7 @@ case "${1:-}" in
   bar)     cmd_bar     || exit 1 ;;
   workspace) cmd_workspace || exit 1 ;;
   history) cmd_history   || exit 1 ;;
+  spool)   cmd_spool   || exit 1 ;;
   grid)    cmd_grid    || exit 1 ;;
   rows)    cmd_rows "${2:-tasks}" || exit 1 ;;
   routes)  cmd_routes  || exit 1 ;;

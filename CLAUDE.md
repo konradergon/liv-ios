@@ -28,6 +28,8 @@ views/      Rust — value display + rendering helpers (cross-platform)
 ffi/        Rust — the ONE C ABI (59 `liv_*` fns); staticlib + cdylib + rlib
 cli/        Rust — a headless CLI over the same core; the VERIFICATION tool
 shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
+shell/ios/ShareExtension/   the share-sheet extension: UIKit + Foundation only, no Rust;
+                            it spools text into the App Group and the app captures it
 ```
 
 Everything above `ffi/` is **platform-agnostic Rust** (it compiles for iOS and
@@ -115,7 +117,7 @@ cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 **The iOS shell has three of its own, and `cargo test` runs none of them.**
 
 ```
-shell/ios/build.sh          # one swiftc invocation; add `run` to boot a simulator
+shell/ios/build.sh          # two swiftc invocations (app + share extension); add `run` to boot a simulator
 shell/ios/suites.sh         # the ten launch-flag self-checks (the shell's unit tests)
 shell/ios/drive.sh          # drives the running app and asserts what is ON SCREEN
 ```
@@ -158,7 +160,9 @@ old codebase.
 1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
    second file calling the C ABI is a defect. (Measured 2026-08-28: 53
    calls over 41 distinct verbs, one file. Nine other Swift files mention
-   a verb NAME in a comment; none call one.)
+   a verb NAME in a comment; none call one.) The share extension is a
+   second BINARY and calls none either: it writes a file into the App
+   Group spool and the app captures it (`Catch.swift`).
 2. **Anything on the snapshot path OR THE WRITE PATH ships with a COST
    test**, not just a correctness one — see `services/tests/scale.rs` and
    `ffi/src/tests.rs` (`one_write_stays_flat_as_the_box_grows`). The

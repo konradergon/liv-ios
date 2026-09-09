@@ -636,6 +636,11 @@ Structure from ClickUp mobile; soul, tokens, and density from Liv:
   Group entitlements still need a real Xcode project (hand-rolled bundles
   can't carry them), and hands-on QA of the gesture wiring (swipes, chips,
   camera) which headless simctl can't drive.
+  **Update 2026-09-09 — that belief was wrong.** A hand-rolled bundle
+  carries entitlements through the linker (`-sectcreate __TEXT
+  __entitlements`) plus an ad-hoc signature, and an extension is one
+  more swiftc. Shipped as §50; the share extension is no longer
+  Xcode-gated. Widgets and App Intents were never re-examined.
   **Update 2026-08-02 — device builds work WITHOUT a project.**
   `./build.sh device run` builds for `aarch64-apple-ios`, signs, and
   installs on the owner's iPhone via `devicectl`. One-time bootstrap
@@ -998,6 +1003,96 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 50. Liv in the share row (rev 60, owner 2026-09-09)
+
+Owner: *"then implement share feature."* The share sheet — the row of
+apps every share button shows — is the door the thesis puts before any
+feature (`what-liv-is-for.md` §"the phone", 3), and the direction
+review's one open build. The Shortcut workaround (§42) put Liv in that
+row by proxy; this puts it there.
+
+**It did not need an Xcode project.** Three places in this tree said it
+did (M1 status below, Routes.swift, ios-m1-eval.md), and the belief
+went unexamined for seven weeks. An app extension is a bundle inside
+the app with a plist, a binary and a signature — the three things
+`build.sh` already assembled for the app. `share_extension()` is a
+second swiftc: `-application-extension` for the API restriction,
+`-e _NSExtensionMain` for the entry point, the entitlements linked into
+`__TEXT,__entitlements` for the simulator, ad-hoc signed inner bundle
+first. `ShareExtension/` holds one Swift file and two plists.
+
+**What it does is the least it can.** Read the words and the URL,
+write ONE text file into the App Group spool, say "Saved to Liv", go.
+The app turns the file into a capture at its next foreground
+(`RootView.drainSpool` → `box.capture` → stamped, not opened: a share
+is fire-and-forget, and the Inbox is where an unrouted capture waits).
+`Catch.swift` is the one file both binaries compile, and it holds the
+one rule for what words and a URL become — `Route.payload` calls the
+same function, so the two doors from outside agree (standing rule 4).
+
+**Why a spool and not the box.** The extension could link the Rust
+seam; it does not, for three reasons that each stand alone. Every
+`liv_*` call lives in `Box.swift` (standing rule 1) and the extension
+is a second binary. An extension has a memory ceiling and seconds to
+live, which is no place to open a box. And a second process writing
+the log while the app sleeps is a lock the app would then contend for.
+M1's design (§8, "busy flock ⇒ spool JSON drained by the main app")
+had this as the fallback; it is the only path, and plain text, because
+a catch is a sentence. The cost: a catch shows at the next foreground,
+not the instant it is shared — which is when you would look anyway.
+
+**Device builds.** The extension needs a provisioning profile of its
+own (`app.liv.ios.share`), and both profiles must carry the App Group,
+or it has nowhere to write. `build.sh device` builds and signs it when
+that profile is on disk and says so when it is not; the app builds
+either way. Same one-time Xcode setup as the app's profile.
+
+**Verification.** `drive.sh spool` leaves a file where the extension
+leaves one and asserts the capture is in the Inbox at the next launch
+and the file is gone — the half of the seam that lives here, and the
+half that would fail silently. The extension's own half is a hand
+test: Safari, share, Liv, then open Liv and look in the Inbox.
+
+**NOT VERIFIED on the simulator.** Linux, no Swift. The linker flags
+are Xcode's own for an extension target, but nothing here has been
+compiled; the first build will say.
+
+## 49. The clerk says where (rev 59, owner 2026-09-09)
+
+Owner: *"yes do the clerk change."* The third of the three the thesis
+promises — *"this looks due Friday, this mentions Anna"* — and the one
+the pile test hangs on: without it, every capture waited for a sorting
+session, and §43's Route only made the session a tap shorter.
+
+**The rule is the one a person uses.** A thought about Sam belongs
+where Sam is filed. `propose_area` reads the names a capture mentions
+(the same mentions the mentions proposer finds — found once, shared)
+and, when every filed one is filed under ONE area, proposes it. Two
+areas is a coin flip, and the clerk does not flip coins: it stays
+quiet and the mentions speak for themselves. A mention filed nowhere
+says nothing. Only for a thing with no area yet — suggests, never
+competes. One cell, so the decline key and the save-retraction rule
+apply unchanged; "area" joins the re-derivable list. No learning, no
+lexicon, no model: deterministic and explainable, `mentions "Sam" →
+Work?`.
+
+**Settled zone, so:** nine failing tests first (`services/tests/clerk.rs`,
+"the area proposer"), and the sweep's cost test now has a filed name
+every body mentions — it had none, so the mentions proposer had never
+run inside the test that guards it. Ratio unchanged.
+
+**The shell asks on the row.** In Route, a scrap the clerk has a guess
+for wears it as a chip — `Work?` — and one tap says yes: the consent
+lands the area (its own transaction, so the clerk's ledger records the
+yes), then the kind. Same two writes as tapping the area in the card,
+same undo count. Tapping the row still opens the card with every other
+area in it: offered, never imposed. Tidy does not list the same
+question again; a question about an unrouted capture is asked where
+the capture is.
+
+**NOT VERIFIED on the simulator** (Linux). `cargo test` is green.
+The Rust half is real; the chip is hand-checked Swift.
+
 ## 48. A control must not read its own output (rev 51, owner 2026-09-07)
 
 Owner: *"fix the calendar chrome not retiring."*
@@ -1273,10 +1368,11 @@ nothing. `Notify` met this exact problem with a cold notification tap;
 `Routes` copies its shape — hold the route, flush it when the closure
 assigns itself — rather than inventing a second one.
 
-**What this is not.** The share extension, widgets and App Intents all
-need a real Xcode project with separate targets. That blocker is theirs;
-a URL scheme is a plist key and one modifier, and both survive this
-tree's `swiftc Sources/*.swift` + `cp Info.plist` build.
+**What this is not.** Widgets and App Intents. This said the share
+extension too, and that a real Xcode project was the blocker; it was
+not (§50, three days later). A URL scheme is a plist key and one
+modifier, and both survive this tree's `swiftc Sources/*.swift` +
+`cp Info.plist` build.
 
 > **Amended 2026-09-09 — the door carries a payload.** `liv://capture`
 > took no query string: another app could open Liv to a blank, not hand

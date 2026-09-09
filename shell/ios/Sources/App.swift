@@ -145,6 +145,10 @@ struct RootView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var bootApplied = false
+    /// One spool drain at a time: `.onAppear` and the first `.active`
+    /// can both fire at launch, and two drains over one folder would
+    /// catch every file twice.
+    @State private var draining = false
     /// The furnishing pass runs once per launch, on the FIRST decoded
     /// snapshot. Cross-launch idempotence is Furnish's presence guards,
     /// never this flag (it only stops re-entry from the refreshes the
@@ -302,6 +306,7 @@ struct RootView: View {
             if phase == .active {
                 box.refresh()
                 Outbox.shared.scanAcks()
+                drainSpool()
             } else if phase == .background {
                 Outbox.shared.closeBatch(snapshot: box.snap)
             }
@@ -311,6 +316,10 @@ struct RootView: View {
         .onOpenURL { Routes.shared.handle($0) }
         .onAppear {
             bindOutboxTitles()
+            // A cold launch may never report a phase CHANGE to .active,
+            // so the spool is read here as well; `draining` keeps the
+            // two from overlapping.
+            drainSpool()
             // A tapped notification lands as a desk tab (design/ios.md §3);
             // Notify parks a cold-launch tap until this wiring exists.
             Notify.shared.onOpen = { [weak desk] id in
@@ -398,6 +407,43 @@ struct RootView: View {
                     .padding(.top, LivRow.topInset)
             }
         }
+    }
+
+    /// A CATCH THE SHARE SHEET LEFT (2026-09-09). The extension writes
+    /// a file into the App Group spool and goes (Catch.swift says why it
+    /// does not write the box itself); this turns each file into a
+    /// capture, oldest first, through the same `liv_capture_at` the
+    /// `liv://` door uses, and stamps it into the workspace the way that
+    /// door does. NOT focused or opened: a share is fire-and-forget, and
+    /// landing in a note you shared an hour ago when the app comes to the
+    /// front would be the wrong surprise. It is in the Inbox, where an
+    /// unrouted capture waits.
+    ///
+    /// The file is removed only once the box answered with an id, so a
+    /// refused catch (a busy box) waits for the next foreground rather
+    /// than being lost. The other way round — the app dying between the
+    /// write and the removal — catches it twice, which is the better of
+    /// the two mistakes.
+    private func drainSpool() {
+        guard !draining else { return }
+        let waiting = Spool.pending()
+        guard !waiting.isEmpty else { return }
+        draining = true
+        func next(_ i: Int) {
+            guard i < waiting.count else {
+                draining = false
+                return
+            }
+            let item = waiting[i]
+            box.capture(item.text) { id in
+                if id != 0 {
+                    item.done()
+                    workspaces.stamp(id, in: box)
+                }
+                next(i + 1)
+            }
+        }
+        next(0)
     }
 
     /// The outbox resolves ledger titles through the live box. A scrap

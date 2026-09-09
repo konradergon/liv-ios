@@ -1,5 +1,50 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-09 — rev 60: Liv in the share row
+
+Owner: "then implement share feature." A share extension —
+`shell/ios/ShareExtension/`, one Swift file and two plists — built by a
+second swiftc in `build.sh` (`share_extension()`): no Xcode project,
+which three places in this tree had said was required and was not.
+Entitlements ride the linker (`__TEXT,__entitlements`) and an ad-hoc
+signature; `Liv.entitlements` names the App Group both bundles share.
+
+The extension reads the words and the URL, writes one text file into
+`<group>/liv/spool/`, says "Saved to Liv", and goes. The app drains the
+spool at launch and every foreground (`RootView.drainSpool`) through the
+same `liv_capture_at` the `liv://` door uses — stamped, not opened.
+`Catch.swift` is the one file both binaries compile: `Catch.text` is the
+one rule for what a catch is, and `Route.payload` now calls it too.
+Why a spool and not the box: standing rule 1, an extension's memory
+ceiling, and a second writer on the log — ios.md §50.
+
+Device builds want a profile for `app.liv.ios.share` carrying the App
+Group; `build.sh device` builds the extension when it finds one and says
+so when it does not. `drive.sh spool` guards the app's half.
+
+**NOT VERIFIED on the simulator** (Linux). The first build will say.
+
+## 2026-09-09 — rev 59: the clerk says where
+
+Owner: "yes do the clerk change." `propose_area` (`services/src/clerk.rs`,
+settled zone, owner's word): a capture that mentions something filed
+under ONE area is proposed that area — `mentions "Sam" → Work?`. Two
+areas is a coin flip and the clerk stays quiet; a mention filed nowhere
+says nothing; a thing with an area already is left alone. One cell, so
+decline and save-retraction work unchanged; "area" is re-derivable. The
+mentions are found once (`mentions_in`) and read by both proposers.
+
+Nine tests first; the sweep's cost fixture gained a filed name every
+body mentions (it had none, so the mentions proposer never ran in the
+test that guards it). `cargo test` green.
+
+Shell: in Route, a scrap with a guess wears it as a chip — `Work?` —
+and one tap accepts the proposal and sets the kind: filed, same two
+writes and undo count as the card. Tidy does not repeat the question.
+`Box.accept` gained a `done`. ios.md §49.
+
+**NOT VERIFIED on the simulator** (Linux).
+
 ## 2026-09-09 — rev 58: a switcher pick lands on the note
 
 Owner, from the simulator: "when selecting a note from tabs when not
