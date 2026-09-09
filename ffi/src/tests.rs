@@ -77,6 +77,42 @@ fn snapshot_and_triage_roundtrip() {
 }
 
 /// A fresh box path with sidecars cleared; returns (PathBuf, CString).
+/// THE OWNER'S OWN FLOW, through the ABI the phone calls (2026-09-09).
+/// The clerk's area proposer passed nine service tests and then, on the
+/// simulator, proposed the mention and never the area. This walks the
+/// exact gestures — furnish `area`, a note named Sam filed under Work
+/// from the Properties card, a capture mentioning Sam — and reads the
+/// snapshot the shell reads.
+#[test]
+fn a_capture_mentioning_a_filed_note_is_proposed_its_area() {
+    let (path, c_path) = fresh_box("liv_ffi_area_proposal.log");
+    let c = |s: &str| CString::new(s).unwrap();
+    let area = unsafe {
+        liv_add_property_at(c_path.as_ptr(), c("area").as_ptr(), c("select").as_ptr())
+    };
+    assert_ne!(area, 0);
+    for name in ["Work", "Health"] {
+        assert_ne!(unsafe { liv_add_option_at(c_path.as_ptr(), area, c(name).as_ptr()) }, 0);
+    }
+    let sam = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), sam, c("name").as_ptr(), c("Sam").as_ptr()) }, 1);
+    assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), sam, c("area").as_ptr(), c("Work").as_ptr()) }, 1);
+
+    let scrap = unsafe { liv_capture_at(c_path.as_ptr(), c("Ask Sam about Lunch").as_ptr()) };
+    assert_ne!(scrap, 0);
+    let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+    let authors: Vec<String> = snap["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["entity"] == scrap)
+        .map(|p| p["author"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(authors.contains(&"mentions".to_string()), "{authors:?}");
+    assert!(authors.contains(&"area".to_string()), "the area never reached the wire: {authors:?}");
+    cleanup(&path);
+}
+
 fn fresh_box(name: &str) -> (std::path::PathBuf, CString) {
     // A per-box directory so the extraction cache (a sibling of the box)
     // is isolated per test — parallel tests must not share one cache.
