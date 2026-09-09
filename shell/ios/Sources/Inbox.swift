@@ -660,6 +660,16 @@ struct InboxView: View {
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 8)
+            if let value = proposedValue(p) {
+                // WHAT SAYING YES WRITES. The heading names the field and
+                // the title names the note; until 2026-09-09 nothing on
+                // the row named the VALUE, and an "Area" row read as
+                // "something with area" (owner, on the simulator). For a
+                // date or a mention the value is usually in the title's
+                // own words; for an area it never is.
+                ValueChip(value)
+                    .padding(.trailing, 6)
+            }
             Button {
                 desk.menu = rejectMenu(p)
             } label: {
@@ -687,6 +697,18 @@ struct InboxView: View {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
                 .padding(.leading, LivRow.hairline - LivRow.margin)
         }
+    }
+
+    /// The one value a ONE-CELL suggestion would write — an area, a date,
+    /// a name, a priority — as the wire displays it. Nothing for a
+    /// proposal of several commands: a merge's first cell is whatever the
+    /// loser happened to carry and says nothing about the merge, and a
+    /// promotion's heading already says what it makes.
+    private func proposedValue(_ p: ProposalRow) -> String? {
+        guard let commands = p.commands, commands.count == 1,
+            let value = commands[0].value, !value.isEmpty
+        else { return nil }
+        return value
     }
 
     private func flash(_ text: String, undo: Int) {
