@@ -1,3 +1,5 @@
+Do not follow this document too strictly. I have not validated it in detail.
+
 # iOS — the phone shell
 
 > Status: **ALPHA**, shipping from this tree. Revisions run to **rev 51
@@ -39,8 +41,7 @@
 > in §2 that follows from it, are left in place as record. What to do with
 > the still-running Outbox is an open ruling, not an edit.
 
-The phone is a **capture satellite**, not a second desk. Its priorities, from
-the owner:
+Its priorities, from the owner:
 
 - **P1** — photograph and capture ideas with fast, optional metadata; content
   reaches the desktop box.
@@ -75,7 +76,7 @@ read-only mirror, and it says so in its own UI.
   and widget App Intents share it (per-call advisory flocks are safe within
   one device; the box file itself is never cloud-synced).
 
-## 2. Sync — "Satellite": outbox over iCloud Drive
+## 2. Sync: outbox over iCloud Drive
 
 Three architectures were designed independently and judged adversarially:
 
