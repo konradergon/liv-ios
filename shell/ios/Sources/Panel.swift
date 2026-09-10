@@ -392,7 +392,6 @@ struct LibraryPanel: View {
 /// `design/core.md` §10 records — rebuild on read, once per render. This
 /// walks the entities once and answers from what it found.
 struct ViewCounts {
-    private var notes = 0
     private var tasks = 0
     private var inbox = 0
     private var events = 0
@@ -412,7 +411,6 @@ struct ViewCounts {
                 unfiled += 1
             }
             switch LivKind.of(row) {
-            case .note: notes += 1
             case .task: tasks += 1
             case .event: events += 1
             case .capture: inbox += 1
@@ -435,7 +433,6 @@ struct ViewCounts {
 
     func of(_ feature: Feature) -> String? {
         switch feature {
-        case .notes: return shown(notes)
         case .tasks: return shown(tasks)
         case .inbox: return shown(inbox)
         case .calendar: return shown(events)

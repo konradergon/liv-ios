@@ -183,8 +183,9 @@ struct TabSwitcher: View {
     /// one tap from a search that reaches the whole box, was the smaller
     /// of two searches.
     ///
-    /// (The grid was Notes' own surface for four days. It is the
-    /// switcher again since 2026-08-28 — the list is Notes' root.)
+    /// (The grid was the Notes view's own surface for four days. It is
+    /// the switcher again since 2026-08-28, and the list it stood in for
+    /// is `EverythingLens.notes` since 2026-09-10.)
     private var shown: [DeskTab] { desk.liveTabs }
 
     // MARK: cards
@@ -425,10 +426,10 @@ struct InactiveTabs: View {
     ///
     /// The shelf used to span six planes, so reviving a Calendar tab
     /// from the Notes switcher had to take you to the Calendar. There is
-    /// one desk of documents now, and a document is shown in Notes —
-    /// which `desk.show` takes you to. (This said "a document opens
-    /// where you are" and called `focus`, which changed no view at all;
-    /// see `DeskModel.show`.)
+    /// one desk of documents now, and a document lies over whichever view
+    /// you are in — which is what `desk.show` does. (This said "a
+    /// document opens where you are" and called `focus`, which changed no
+    /// view at all; see `DeskModel.show`.)
     private func revive(_ tab: DeskTab) {
         desk.show(tab)
         close()

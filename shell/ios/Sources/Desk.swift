@@ -50,28 +50,13 @@ struct DeskHost: View {
                     // surface with a new entity, and per-entity @State
                     // (the seeded title) must reseed on that flip.
                     EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
-                } else if desk.state == .notes {
-                    // NOTES' ROOT IS THE LIST AGAIN (2026-08-28).
-                    //
-                    // From 2026-08-24 it was the tab grid, on the
-                    // owner's "make sure it replaces notes list". The
-                    // argument against `NotesList` then was that search
-                    // reaches what the grid cannot. Measured on the
-                    // simulator four days later, that is not what
-                    // happened: the grid draws `desk.liveTabs`, so Notes
-                    // showed EIGHT of the box's hundred and thirty-four
-                    // notes and offered no route at all to the other
-                    // hundred and twenty-six. A surface named after a
-                    // thing has to contain it.
-                    //
-                    // The grid keeps its real job — it is the tab
-                    // switcher, opened by the numbered box on the bar.
-                    // One is the shelf, the other is what is on the desk.
-                    NotesList().livSurface(LivSurface.notes)
                 } else {
-                    // Another state entirely — Today, the calendar. The
-                    // views draw themselves (FeatureLayer is gone with
-                    // the layer it was).
+                    // THE VIEW. Every state draws itself (FeatureLayer is
+                    // gone with the layer it was), and since 2026-09-10
+                    // there is no longer a state that draws nothing so a
+                    // document can borrow its name: the list of notes is
+                    // `EverythingLens.notes`, and `NotesList` went with
+                    // the view it was the root of.
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
                 }

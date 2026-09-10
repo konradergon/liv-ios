@@ -343,7 +343,7 @@ struct RootView: View {
                 // same rule the panel's rows follow (2026-09-09):
                 // `liv://notes` means the list, not whatever note the
                 // desk happens to hold.
-                case .view(let feature): desk.go(feature)
+                case .view(let feature, let at): desk.go(feature, at: at)
                 case .entity(let id):
                     // ASK THE BOX BEFORE SAYING IT IS GONE. A link can
                     // name something written since the last snapshot —
@@ -500,10 +500,11 @@ struct RootView: View {
             }
         // The create menu, from the bar's `+`.
         case "newtab", "create": desk.createSomething()
-        // NOTES' ROOT, which is the LIST. This was `go` then `showList`,
-        // then `goToRoot`; since 2026-09-10 `go` lays the document down
-        // itself, so there is nothing left here to special-case.
-        case "notes", "docs": desk.go(.notes)
+        // THE LIST OF NOTES. It was a view of its own until 2026-09-10;
+        // it is a lens in Everything now, and the flag keeps its name
+        // because a rehearsal flag is a name for a SCREEN, and this is
+        // still that screen.
+        case "notes", "docs": desk.go(.everything, at: EverythingLens.notes.rawValue)
         default: break
         }
     }

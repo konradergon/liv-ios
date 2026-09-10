@@ -22,7 +22,7 @@
 #   ./drive.sh rows [view]       every row in that list is the SAME height
 #   ./drive.sh routes           liv:// links land where they name, and nowhere else
 #   ./drive.sh areas            Today counts the day by area of life under its date
-#   ./drive.sh chrome [view]     the doors retire on a scroll and come back (all six by default)
+#   ./drive.sh chrome [view]     the doors retire on a scroll and come back (all five by default)
 #   ./drive.sh create            + makes what the place holds, in one tap
 #   ./drive.sh desk              one desk of documents, the same in every view; a switcher pick lands
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
@@ -340,11 +340,16 @@ cmd_boot() {
   # later, and was told there was no such row (seen 2026-08-30, and it
   # is why `panel` failed once and passed on a re-run).
   #
-  # Only the six feature views are checked: the other flags name an
+  # Only the five feature views are checked: the other flags name an
   # overlay (`library`, `search`, `switcher`) or a document (`desk`,
   # `open`), and those do not name a surface this can compare against.
+  #
+  # `notes` is one of the others now. It still names a screen — the list
+  # of what you have written — but that screen is a LENS inside
+  # Everything since 2026-09-10, so the surface it lands on is
+  # `everything` and the flag's own name is not the answer.
   case "$where" in
-    today|tasks|inbox|calendar|everything|notes)
+    today|tasks|inbox|calendar|everything)
       local want="$where"
       for i in {1..24}; do
         [[ "$(surfaces)" == "$want" ]] && break
@@ -463,10 +468,6 @@ cmd_tap() {
 # WHICH SURFACES COUNT AS "you are in this view".
 #
 # Notes has two, and that is not slack: its root is the LIST, and it
-# resumes the DOCUMENT you had open. The desk keeps its active tab, so
-# arriving at Notes with something open lands you back in it — which is
-# what a tab is for. `tabs` was the third, until the grid stopped being
-# Notes' root and became the switcher (2026-08-28).
 # WHAT LANDING ON A VIEW MAY LOOK LIKE. Every view answers with its own
 # marker and nothing else.
 #
@@ -474,7 +475,8 @@ cmd_tap() {
 # another view restored whatever was open — so this check could not tell
 # a working navigation from the bug the owner hit on 2026-09-09
 # ("sometimes… it gets you to an open note instead of showing the
-# list"). One tap, one meaning, one allowed surface.
+# list"). One tap, one meaning, one allowed surface. Notes is not a view
+# at all since 2026-09-10, which settles it from the other end.
 allowed() { echo "$1" }
 
 # Is the library panel open? One sample; waiting out the animation is
@@ -547,7 +549,9 @@ cmd_goto() {
 # on screen. A body that stops repainting fails on the first hop.
 cmd_tour() {
   cmd_boot >/dev/null 2>&1 || { die "could not boot before the tour."; return 1 }
-  local views=(today notes inbox calendar tasks everything)
+  # FIVE, since Notes stopped being a view (2026-09-10). Its list is
+  # `EverythingLens.notes`, which `cmd_grid` walks to.
+  local views=(today inbox calendar tasks everything)
   local v why failed=0
   for v in $views; do
     print -n "  -> $v  "
@@ -560,7 +564,7 @@ cmd_tour() {
     fi
   done
   (( failed )) && { die "the tour did not complete. See above."; return 1 }
-  say "ok    tour: all six views rendered"
+  say "ok    tour: all five views rendered"
   cmd_check
 }
 
@@ -682,7 +686,7 @@ check_library() {
 # here, but only as the POSITION PROBE for the desk — the assertion
 # below needs a landmark that survives the sheet.
 check_properties_card() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   local rest after moved
   open_first_note || return 1
 
@@ -838,7 +842,7 @@ print("OK %d %d %d" % tuple(int(ks[n]["enabled"]) for n in (0, 1, 4)))')
   }
 
   # WHAT THE GRID DOES TO THIS KEY is `drive.sh grid`'s to say — it
-  # boots straight into Notes rather than driving there, because a note
+  # boots straight into the notes list rather than driving there, because a note
   # left open puts a keyboard up and the bar retires under one.
   say "ok    bar: five keys, one row, dead keys drawn dead, one door per room"
   cmd_check
@@ -974,13 +978,13 @@ print(json.dumps(sorted(out, key=lambda k: k['x'])))"
 # Calendar never tripped at all. The threshold measures from the last
 # direction CHANGE now, so this check drives it the way a thumb does.
 cmd_chrome() {
-  # EVERY SURFACE THAT HIDES ITS CHROME, unless one is named. All six
+  # EVERY SURFACE THAT HIDES ITS CHROME, unless one is named. All five
   # call `livHidesChrome`, and Calendar is the one that silently did not
   # work — a check that only ever ran on Today would have stayed green
   # through the whole of 2026-09-07.
   if (( $# == 0 )); then
     local v
-    for v in today calendar inbox tasks everything notes; do
+    for v in today calendar inbox tasks everything; do
       cmd_chrome "$v" || return 1
     done
     return 0
@@ -1302,10 +1306,20 @@ print('OK %spt x%d' % (h, n))")
 # you MORE than what you left open is to compare it against the count the
 # bar is already reporting.
 cmd_grid() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
-  [[ "$(cmd_surface)" == "notes" ]] || {
-    die "Notes' root draws '$(cmd_surface)', not the list of notes.
-      The grid is the tab SWITCHER; the root is the shelf."
+  # THE LIST IS A LENS NOW (2026-09-10). `-desk.boot notes` still names
+  # this screen and still lands on it; what changed is that the surface
+  # under it is Everything, with the Notes pill on. Both are asserted —
+  # the surface alone would pass on any lens.
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  [[ "$(cmd_surface)" == "everything" ]] || {
+    die "the notes list draws '$(cmd_surface)', not Everything.
+      Notes is EverythingLens.notes since 2026-09-10; the flag lands on
+      the view and parks the lens."
+    return 1
+  }
+  tree | grep -q "Notes" || {
+    die "landed on Everything but no Notes lens is on screen.
+      The pill row is the only door to the list now — see EverythingLens."
     return 1
   }
 
@@ -1317,10 +1331,10 @@ cmd_grid() {
   # note, and come back to the root, which is one tap away (rev 40).
   if [[ "$(tab_count)" == "0" ]]; then
     open_first_note || return 1
-    cmd_goto notes >/dev/null 2>&1 || { die "opened a note, but could not get back to Notes' root."; return 1 }
-    [[ "$(cmd_surface)" == "notes" ]] || {
-      die "picked Notes with a note open and it drew '$(cmd_surface)', not the list.
-      Tapping the view you are in goes to its root (rev 40)."
+    cmd_goto everything >/dev/null 2>&1 || { die "opened a note, but could not get back to the list."; return 1 }
+    [[ "$(cmd_surface)" == "everything" ]] || {
+      die "picked Everything with a note open and it drew '$(cmd_surface)', not the list.
+      Tapping the view you are in lays the document down (rev 62)."
       return 1
     }
   fi
@@ -1332,9 +1346,9 @@ cmd_grid() {
   open=$(tab_count) || { die "the bar reports no tab count to compare against."; return 1 }
   rows=$(note_rows)
   (( rows > open )) || {
-    die "Notes lists ${rows} rows while ${open} tabs are open.
-      The root is showing you what you left open, not what you have. That
-      is the 8-of-134 hole (2026-08-28) coming back."
+    die "the Notes lens lists ${rows} rows while ${open} tabs are open.
+      It is showing you what you left open, not what you have. That is
+      the 8-of-134 hole (2026-08-28) coming back."
     return 1
   }
 
@@ -1347,14 +1361,14 @@ import json, sys
 ks = json.load(sys.stdin)
 print(int(ks[4]["enabled"]) if len(ks) > 4 else "?")')
   [[ "$live" == "1" ]] || {
-    die "the numbered box reads '$live' on Notes' root; it must be live.
+    die "the numbered box reads '$live' on the notes list; it must be live.
       Its one reason to be dead was the grid being the root, and it is not."
     return 1
   }
   cmd_tap "$(bar_tab_label)" || return 1
-  # The grid is an OVERLAY now, not a surface: it covers Notes rather
-  # than replacing it, so the surface underneath stays `notes` and the
-  # thing to look for is the cover's own marker.
+  # The grid is an OVERLAY, not a surface: it covers the list rather
+  # than replacing it, so the surface underneath stays `everything` and
+  # the thing to look for is the cover's own marker.
   [[ -n "$(overlays | grep -x tabs)" ]] || {
     die "tapped the numbered box and no tab grid came up (overlays: $(overlays | tr '\n' ' ')).
       The box is the only door to the switcher."
@@ -1406,7 +1420,7 @@ print(f'{best[1]} {best[2]}' if best else '')")
       the back key, and the numbered box for the way up to the grid."
     return 1
   }
-  say "ok    grid: Notes lists ${rows} notes against ${open} open, the box opens the switcher, no labelled back in a document"
+  say "ok    grid: the Notes lens lists ${rows} notes against ${open} open, the box opens the switcher, no labelled back in a document"
   cmd_check
 }
 
@@ -1540,16 +1554,16 @@ SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
 # did not fire.
 cmd_create() {
   # A DOCUMENT PLACE makes a document, in one tap and with no menu.
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   cmd_tap "New" || return 1
   perl -e 'select(undef,undef,undef,1.8)'
   no_create_menu || {
-    die "+ in Notes opened the create menu. It is meant to make a note and
-      leave the menu to a long press."
+    die "+ in Everything opened the create menu. It is meant to make a note
+      and leave the menu to a long press."
     return 1
   }
   [[ "$(cmd_surface)" == "document" ]] || {
-    die "+ in Notes left the screen on '$(cmd_surface)', not a document.
+    die "+ in Everything left the screen on '$(cmd_surface)', not a document.
       A note is a document and opens as one."
     return 1
   }
@@ -1565,7 +1579,7 @@ cmd_create() {
       A task is a record: it opens as a card over Tasks, not as a document."
     return 1
   }
-  say "ok    create: one tap makes a note in Notes and a task in Tasks, no menu in either"
+  say "ok    create: one tap makes a note in Everything and a task in Tasks, no menu in either"
   cmd_check
 }
 
@@ -1591,9 +1605,9 @@ no_create_menu() {
 # It does not open anything: opening a note raises the keyboard, and the
 # bar retires under one, so there would be no count to read.
 cmd_desk() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   local first n v
-  first=$(tab_count) || { die "the bar reports no tab count in Notes."; return 1 }
+  first=$(tab_count) || { die "the bar reports no tab count on the notes list."; return 1 }
   (( first > 0 )) || {
     die "the desk is empty, so this check would pass on anything.
       Open a note or two on the simulator first."
@@ -1610,7 +1624,7 @@ cmd_desk() {
       return 1
     }
   done
-  say "ok    desk: ${first} documents, the same set in all six views"
+  say "ok    desk: ${first} documents, the same set in all five views"
 
   # AND A PICK FROM THE SWITCHER, STANDING SOMEWHERE ELSE, SHOWS THE NOTE.
   #
@@ -1669,16 +1683,17 @@ if CARDS:
 #      the surface before and the surface after were both `document`.
 #   2. A note opened from Today put you in Notes, so the panel's lit row
 #      named a view you never picked. `‹` is the readable half of that —
-#      it now uncovers Today.
+#      it now uncovers Today. (Notes is not a view at all since
+#      2026-09-10, so the wrong answer here would be `everything`.)
 #
 # Break it on purpose before trusting the green: make `land` set `state`
 # and leave `shown` alone, and step 1 goes red.
 cmd_under() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   open_first_note || return 1
   cmd_tap "Back" || return 1
-  [[ "$(cmd_surface)" == "notes" ]] || {
-    die "opened a note off the Notes list, pressed Back, and the screen shows
+  [[ "$(cmd_surface)" == "everything" ]] || {
+    die "opened a note off the notes list, pressed Back, and the screen shows
       '$(cmd_surface)'. Back out of a note lands on what was under it —
       here, the list you opened it from. A 'document' means the key did
       nothing at all, which is the bug this check exists for."
@@ -1687,7 +1702,7 @@ cmd_under() {
   say "ok    under: back out of a note opened off the list lands on the list"
 
   # AND FROM ANOTHER VIEW: the note lies OVER Today, so Back uncovers
-  # Today — not Notes, which you never picked.
+  # Today — not the list, which you never picked.
   cmd_goto today >/dev/null 2>&1 || { die "could not reach Today."; return 1 }
   cmd_tap "$(bar_tab_label)" || return 1
   local x y
@@ -1703,7 +1718,7 @@ cmd_under() {
   [[ "$(cmd_surface)" == "today" ]] || {
     die "opened a note from Today, pressed Back, and the screen shows
       '$(cmd_surface)', not Today. A document lies OVER the view you
-      opened it from; 'notes' means it still carries you there."
+      opened it from; 'everything' means it still carries you to the list."
     return 1
   }
   say "ok    under: a note opened from Today lies over Today, and Back uncovers it"
@@ -2047,7 +2062,7 @@ except Exception: print(0)' "$CONSOLE"
 # with two cycles of its own and has for as long as anyone has looked,
 # and asserting the total would make this check about that instead.
 cmd_quiet() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   local before after row
   before=$(count_cycles)
   open_first_note || return 1
@@ -2151,7 +2166,7 @@ cmd_workspace() {
 # ffi tests already prove a restore appends a version and never rewrites
 # the log. What a driver can add is that the card is reachable at all.
 cmd_history() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   open_first_note || return 1
 
   cmd_tap "Note actions" || return 1

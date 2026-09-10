@@ -89,6 +89,7 @@ struct EverythingView: View {
     private var empty: String {
         switch lens {
         case .all: return "Nothing yet. Everything you capture lands here."
+        case .notes: return "Nothing written yet. The + below starts one."
         case .upcoming: return "Nothing dated in the next seven days."
         case .unfiled: return "Nothing unfiled — every item has an area."
         }
@@ -140,6 +141,26 @@ struct EverythingView: View {
         switch lens {
         case .all:
             return all.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
+        case .notes:
+            // WHAT WAS THE NOTES VIEW, unchanged: documents only — a task
+            // is a record and opens as a card, so a list of things that
+            // open as a page is the honest content. Files count; a file
+            // is a document you work on.
+            //
+            // ORDERED BY WHAT YOU TOUCHED LAST, not by when you made it.
+            // That ordering is why this can beat the tab switcher: the
+            // note you were editing ten minutes ago is the first row, and
+            // unlike the switcher it also reaches the note you did NOT
+            // leave open. The key is the log's own `recency` — the seq of
+            // the last transaction that touched the entity, which is what
+            // search tiebreaks with, so the two can never disagree.
+            //
+            // It deliberately does not track "opened": reading a note
+            // without changing it does not bump it. No verb writes a
+            // visit, and a device-side one would disagree with search on
+            // every other surface.
+            return all.filter { TabShape.of($0) != .record }
+                .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
         case .unfiled:
             return all.filter { area($0) == nil }
                 .sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }

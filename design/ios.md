@@ -1004,6 +1004,50 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 53. Notes becomes a lens (rev 63, owner 2026-09-10)
+
+Owner: *"take the row out and making notes list a lens is a good idea."*
+The second of the three changes §52 opens, and the visible one.
+
+**Why it was never a place.** `+` already made a note in Notes, Inbox AND
+Everything alike, and Everything had three lenses where Notes had none.
+So Notes was Everything with a kind filter and fewer options — which is
+the owner's own diagnosis, and sharper than the study's.
+
+**`Feature.notes` is gone**, and with it `NotesList` (139 lines), the
+`LivSurface.notes` marker, the panel's sixth row and its note count. The
+list is `EverythingLens.notes`: the same filter (documents only, workspace
+admitted), the same recency order, drawn by Everything's own row. This
+reverses the 2026-08-18 ruling that made Notes a peer view ("Each state
+should be treated equally… and the notes should remain separate"), on the
+owner's word. The notes are still separate — one tap along a row of
+lenses.
+
+**A door may now name a place inside a view.** `go(_:at:)` parks on the
+way in, which is what keeps `liv://notes` working: it is a shipped link,
+so `Route` gained a one-entry alias table and it lands where it always
+did. The `-desk.boot notes` flag keeps its name for the same reason — a
+rehearsal flag names a SCREEN, and this is still that screen.
+
+**The migration names the old vocabulary.** `DeskPlanes.load` walked
+`Feature.inOrder` to fold v2's six per-view planes; reading the current
+roster would have silently stopped folding the `notes` plane — the one
+plane in v2 that held entities at all, so anyone still on v2 storage would
+have lost every open document. The six v2 names are a frozen list now.
+
+**Checks.** `drive.sh grid` asserts the flag lands on `everything` with a
+Notes lens on screen, and still guards the 8-of-134 hole against the bar's
+count. `tour` and `chrome` walk five views. `-places.selfcheck` covers the
+parking door; `-routes.selfcheck` covers the alias.
+
+**Not done, and deliberately.** `+` still makes what the view holds. It
+was approved alongside this, then held: it needs a second create door in
+Tasks AND Today, and the owner's read is that an add row in Today is
+undefined — the day holds tasks and events, and a row there has to pick
+one. Waiting for that answer beats guessing it. Removing Notes already
+takes out the case he named, since Notes and Everything are one place with
+one `+` now.
+
 ## 52. The desk holds its own state (rev 62, owner 2026-09-10)
 
 Owner: *"notes view serves too little purpose to be considered a place or
@@ -1044,7 +1088,7 @@ into the note.
 assertions, including the `‹`-does-nothing regression.
 
 Still open, and next: Notes leaves the panel and becomes a lens in
-Everything, and `+` stops varying by view.
+Everything (§53), and `+` stops varying by view (held — see §53).
 
 ## 51. A view row lands on the view (rev 61, owner 2026-09-09)
 

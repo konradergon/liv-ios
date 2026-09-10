@@ -21,12 +21,12 @@ import SwiftUI
 enum LivSurface {
     static let prefix = "liv.surface."
 
-    /// The desk's three bodies. The five feature views use their
+    /// The desk's two bodies. The five feature views use their
     /// `Feature.rawValue`, so there is one vocabulary, not two.
     ///
-    /// Notes' root: the list of every note (restored 2026-08-28, when
-    /// the grid-as-root was measured to be hiding 126 of them).
-    static let notes = "notes"
+    /// `notes` went with the view on 2026-09-10. The list of notes is
+    /// `EverythingLens.notes`, so the surface under it answers
+    /// `everything` — a lens is a place inside a view, not a view.
     static let document = "document"
 }
 

@@ -39,10 +39,16 @@ enum Route: Equatable {
     case capture(String?)
     /// The camera, straight to the shutter.
     case capturePhoto
-    /// A view, by name. The spec names `liv://inbox`; the other five
-    /// come free because they are the same `Feature` enum, and the
-    /// spec's own sentence trails off in a "…".
-    case view(Feature)
+    /// A view, by name, optionally at a position inside it
+    /// (`LivPosition`). The spec names `liv://inbox`; the other four come
+    /// free because they are the same `Feature` enum, and the spec's own
+    /// sentence trails off in a "…".
+    ///
+    /// The position is what keeps `liv://notes` working now that Notes is
+    /// a lens rather than a view (2026-09-10). A link that another app or
+    /// a shortcut already holds must not quietly stop working because the
+    /// screen moved house — `aliases` names the one that moved.
+    case view(Feature, at: String?)
     /// One entity, opened the way anything else opens it — `desk.open`
     /// decides tab or card from the entity's shape, so the spec's
     /// "opens as a Desk tab" comes out right for a note and correctly
@@ -69,12 +75,25 @@ enum Route: Equatable {
             guard let n = UInt64(id) else { return nil }
             self = .entity(n)
         case (let name, nil):
-            guard let feature = Feature(rawValue: name) else { return nil }
-            self = .view(feature)
+            if let feature = Feature(rawValue: name) {
+                self = .view(feature, at: nil)
+            } else if let alias = Self.aliases[name] {
+                self = .view(alias.0, at: alias.1)
+            } else {
+                return nil
+            }
         default:
             return nil
         }
     }
+
+    /// A HOST THAT NAMED A VIEW AND NO LONGER DOES. One entry, and it
+    /// should stay short: this is a compatibility list, not a second
+    /// naming scheme. `liv://notes` shipped, so it keeps working, and it
+    /// means what it always meant — the list of what you have written.
+    private static let aliases: [String: (Feature, String)] = [
+        "notes": (.everything, EverythingLens.notes.rawValue)
+    ]
 
     /// The catch itself: `?text=` and/or `?url=`, made into one text by
     /// `Catch.text` — the same rule the share sheet uses, so the two
@@ -108,7 +127,12 @@ func livRoutesSelfCheck() -> [String] {
 
     check("bare capture", route("liv://capture") == .capture(nil))
     check("photo", route("liv://capture/photo") == .capturePhoto)
-    check("a view", route("liv://inbox") == .view(.inbox))
+    check("a view", route("liv://inbox") == .view(.inbox, at: nil))
+    // THE ALIAS. `liv://notes` shipped while Notes was a view; it is a
+    // lens now and the link still lands on the same screen (2026-09-10).
+    check(
+        "a retired view name still lands",
+        route("liv://notes") == .view(.everything, at: "notes"))
     check("an entity", route("liv://entity/42") == .entity(42))
     check("a bad entity id is nil", route("liv://entity/x") == nil)
     check("unknown host is nil", route("liv://nonsense") == nil)
@@ -121,7 +145,7 @@ func livRoutesSelfCheck() -> [String] {
     check("both, words first", route("liv://capture?url=b&text=a") == .capture("a\nb"))
     check("trimmed", route("liv://capture?text=%20%20a%20%20") == .capture("a"))
     check("blank is a bare capture", route("liv://capture?text=%20%20") == .capture(nil))
-    check("payload on a view is ignored", route("liv://inbox?text=x") == .view(.inbox))
+    check("payload on a view is ignored", route("liv://inbox?text=x") == .view(.inbox, at: nil))
     check("payload on photo is ignored", route("liv://capture/photo?text=x") == .capturePhoto)
     return fail
 }

@@ -11,17 +11,26 @@ import SwiftUI
 
 // MARK: - the places
 
-/// The lens roster. Six places, all built — Calendar last, and it is no
+/// The lens roster. Five places, all built — Calendar last, and it is no
 /// longer "a v1 placeholder rendering EmptyHint until M3", which this
 /// comment claimed for as long as `Calendar.swift` has been ~1,850 lines
 /// of day timeline, month pager and drag-to-move.
 ///
-/// NOTES IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
-/// equally… and the notes should remain separate"). It leads because it
-/// is where the words are, and its ROOT is the list of them; a note open
-/// on the desk is one level inside it.
+/// **NOTES IS NOT ONE OF THEM** since 2026-09-10. Owner: *"notes view
+/// serves too little purpose to be considered a place or state. it just
+/// gives me a simple list and makes '+' act a bit different."* Both
+/// halves were true in the code — `+` made a note in Notes, Inbox AND
+/// Everything alike, and Everything had three lenses where Notes had
+/// none — so Notes was Everything with a kind filter and fewer options.
+/// It is `EverythingLens.notes` now (Positions.swift), which is what it
+/// always was.
+///
+/// This reverses the 2026-08-18 ruling that put it here ("Each state
+/// should be treated equally… and the notes should remain separate"), on
+/// the owner's own word. The notes are still separate — one tap along a
+/// row of lenses — and the list is unchanged.
 enum Feature: String, CaseIterable, Identifiable {
-    case notes, today, everything, inbox, tasks, calendar
+    case today, everything, inbox, tasks, calendar
 
     var id: String { rawValue }
 
@@ -30,7 +39,7 @@ enum Feature: String, CaseIterable, Identifiable {
     /// ever visible, so they were free to disagree. Putting the views in
     /// the side panel makes a second one visible, which is exactly when
     /// two orderings become a bug (standing rule 4).
-    static let inOrder: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
+    static let inOrder: [Feature] = [.today, .inbox, .calendar, .tasks, .everything]
 
     /// WHAT `+` MAKES HERE: the thing the view holds. A task in Tasks
     /// and Today, an event in Calendar, a note everywhere else — and
@@ -45,13 +54,12 @@ enum Feature: String, CaseIterable, Identifiable {
         switch self {
         case .tasks, .today: return .task
         case .calendar: return .event
-        case .notes, .inbox, .everything: return .note
+        case .inbox, .everything: return .note
         }
     }
 
     var title: String {
         switch self {
-        case .notes: return "Notes"
         case .today: return "Today"
         case .everything: return "Everything"
         case .inbox: return "Inbox"
@@ -63,7 +71,6 @@ enum Feature: String, CaseIterable, Identifiable {
     /// The blueprints' own drawing for each place (Glyph.swift).
     var glyph: LivGlyph {
         switch self {
-        case .notes: return .note
         case .today: return .today
         case .everything: return .everything
         case .inbox: return .inbox
@@ -175,16 +182,19 @@ enum LivCaret {
 
 // MARK: - a state's body
 
-/// The five states that are not Docs. They used to be a LAYER over the
-/// desk; they are the surface itself now (owner, 2026-08-18), which is
-/// what "each state treated equally" means once Docs is a state too.
+/// EVERY state's body. They used to be a LAYER over the desk; they are
+/// the surface itself now (owner, 2026-08-18), which is what "each state
+/// treated equally" means.
+///
+/// The `.notes` case that drew nothing ("Notes draws itself") went with
+/// the view, 2026-09-10. A document is a layer over whichever of these is
+/// underneath (`DeskModel.shown`), so no state has to stand aside for it.
 struct FeatureBody: View {
     let feature: Feature
 
     var body: some View {
         Group {
             switch feature {
-            case .notes: EmptyView()  // Notes draws itself (the tab grid / the editor)
             case .today: TodayView().livSurface(feature.rawValue)
             case .everything: EverythingView().livSurface(feature.rawValue)
             case .inbox: InboxView().livSurface(feature.rawValue)
@@ -286,8 +296,8 @@ func livPlacesSelfCheck() -> [String] {
 
     // A SCRATCH desk, on a workspace nobody has. This suite opens sixty
     // documents to prove the way-back stack is capped, and every one of
-    // them is a real tab write — on a plain `DeskModel()` that lands in
-    // the Notes plane of whatever workspace you are actually using. It
+    // them is a real tab write — on a plain `DeskModel()` that lands on
+    // the desk of whatever workspace you are actually using. It
     // survived only because the first snapshot sweeps ids the box does
     // not know (2026-08-23; the tabs and planes suites were fixed the
     // same way the day before).
@@ -344,9 +354,19 @@ func livPlacesSelfCheck() -> [String] {
     // open, so the same row meant two things. It needed its own verb
     // until 2026-09-10; `go` is the whole rule now.
     desk.open(7)
-    desk.go(.notes)
-    check("the panel lands on the list", desk.state == .notes && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
+    desk.go(.everything)
+    check("the panel lands on the view", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
     check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
+
+    // A DOOR MAY NAME A PLACE INSIDE A VIEW. `liv://notes` and
+    // `-desk.boot notes` mean Everything's Notes lens since the view was
+    // retired (2026-09-10), and the park has to happen even when the
+    // view is already the one you are standing in.
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
+    check("a door can park the view it opens", desk.position(.everything) == "notes", "\(String(describing: desk.position(.everything)))")
+    desk.go(.today)
+    desk.go(.everything, at: EverythingLens.upcoming.rawValue)
+    check("and does it arriving from elsewhere too", desk.state == .everything && desk.position(.everything) == "upcoming")
     // A POSITION IS NOT A DOCUMENT: a tool keeps where it was left.
     desk.park(.calendar, at: "202609")
     desk.go(.calendar)
@@ -359,15 +379,16 @@ func livPlacesSelfCheck() -> [String] {
     desk.go(.calendar)
     check("and asks for nothing when there is nothing over it", desk.state == .calendar)
 
-    // ‹ OUT OF A NOTE OPENED OFF THE NOTES LIST LANDS ON THE LIST. The
-    // regression this whole change is for: `land(.state(.notes))` used to
+    // ‹ OUT OF A NOTE OPENED OFF THE LIST LANDS ON THE LIST. The
+    // regression the desk-state change is for: `land(.state(…))` used to
     // put you where you already were, with the note still drawn on top,
     // so the key visibly did nothing.
-    desk.go(.notes)
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
     desk.open(21)
-    check("a note off the list is on the desk", desk.openDoc == 21 && desk.state == .notes)
+    check("a note off the list is on the desk", desk.openDoc == 21 && desk.state == .everything)
     desk.goBack()
-    check("back from it is the list, not nothing", desk.state == .notes && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
+    check("back from it is the list, not nothing", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
+    check("and the list is still on the Notes lens", desk.position(.everything) == "notes")
 
     // Opening the SAME document again is not a step.
     desk.open(11)

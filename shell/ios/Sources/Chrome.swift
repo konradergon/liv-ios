@@ -145,8 +145,10 @@ final class DeskModel: ObservableObject {
     }
 
     /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
-    /// changes it; there is no "no state" — Docs is one of them.
-    @Published var state: Feature = .notes
+    /// changes it; there is no "no state". `init` overwrites this with
+    /// Today, which is where the app launches; the declaration needs a
+    /// value and the first view in the panel's order is the honest one.
+    @Published var state: Feature = .today
 
     /// IS A DOCUMENT LYING ON THE DESK. **The desk's own state**, beside
     /// `state` rather than borrowed from it (2026-09-10,
@@ -209,12 +211,11 @@ final class DeskModel: ObservableObject {
 
     var activeTab: DeskTab? { planes.activeTab }
 
-    // MARK: positions — a tab in a view that is not Notes
+    // MARK: positions — where a view was left
 
-    /// Where the active tab of `feature` is parked, in that view's own
-    /// vocabulary (`Positions.swift`). `nil` means the plane has no tab
-    /// yet and the view shows its root — which is what no tabs has always
-    /// meant in Notes.
+    /// Where `feature` is parked, in that view's own vocabulary
+    /// (`Positions.swift`). `nil` means it has never been moved and the
+    /// view shows its root.
     func position(_ feature: Feature) -> String? { planes.position(feature) }
 
     /// Park the active tab at `token`. **Moving is what mints the tab**:
@@ -325,7 +326,7 @@ final class DeskModel: ObservableObject {
     /// kind".
     var createHere: (() -> Void)?
 
-    /// Make one note, no menu. `newTab` in the Notes grid uses this:
+    /// Make one note, no menu. `newTab` in the switcher grid uses this:
     /// every card in that grid is a document, so asking "note, task,
     /// event, file or scan?" is a question with one sensible answer
     /// (owner, 2026-08-28).
@@ -560,8 +561,8 @@ final class DeskModel: ObservableObject {
     /// active. One desk (2026-08-28) meant the switcher opens from every
     /// view, and its cards called `focus`, which sets the active tab and
     /// nothing else — so from Today the tap closed the grid and Today
-    /// kept drawing, because a document renders only in Notes and
-    /// `openDoc` is nil elsewhere by design. Nothing happened, visibly,
+    /// kept drawing, because a document then rendered only in Notes and
+    /// `openDoc` was nil elsewhere by design. Nothing happened, visibly,
     /// until you walked to Notes (owner, 2026-09-09).
     ///
     /// A document goes through the one door every open goes through, so
@@ -746,7 +747,14 @@ final class DeskModel: ObservableObject {
     /// The guard reads "nothing to do": naming the view you are standing
     /// in with nothing over it. With a document over it there is plenty
     /// to do — that tap is how you get out.
-    func go(_ feature: Feature) {
+    /// `at` parks the view at a position on the way in (`LivPosition`),
+    /// for a caller that means a PLACE INSIDE a view rather than the view
+    /// — `liv://notes` and the `-desk.boot notes` flag, which since
+    /// 2026-09-10 mean Everything's Notes lens. Parked before the
+    /// animation, so the surface draws the right lens on its first frame
+    /// instead of showing the old one and swapping.
+    func go(_ feature: Feature, at position: String? = nil) {
+        if let position { planes.park(feature, at: position) }
         guard feature != state || shown else { return }
         endEditing()
         returns.clear()

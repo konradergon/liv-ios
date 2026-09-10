@@ -298,6 +298,17 @@ struct DeskPlanes {
     /// followed it. READ-ONLY: nothing writes these keys any more.
     private static let legacyKey = "desk.tabs.v1"
 
+    /// THE SIX VIEWS V2 SAVED A PLANE FOR, spelled out rather than taken
+    /// from `Feature.allCases`.
+    ///
+    /// A migration reads what an OLD build wrote, so it has to name the
+    /// old vocabulary. `notes` left the roster on 2026-09-10 (it is a
+    /// lens in Everything now), and reading the current roster would have
+    /// silently stopped folding in the plane that held every open
+    /// document — the one plane in v2 that held entities at all. Never
+    /// remove a name from this list; it is what is on disk.
+    private static let v2Planes = ["notes", "today", "everything", "inbox", "tasks", "calendar"]
+
     /// The desk and the tools' spots, for one workspace.
     ///
     /// NOTHING SAVED IS THROWN AWAY. Three generations of key are read,
@@ -327,10 +338,14 @@ struct DeskPlanes {
         // v2: six planes. Entities to the desk, active positions to spots.
         var desk = DeskPlane()
         var migrated = false
-        for feature in Feature.inOrder {
-            guard let plane = Self.readPlane(WorkspaceModel.planeKey(workspace, feature.rawValue))
+        for name in Self.v2Planes {
+            guard let plane = Self.readPlane(WorkspaceModel.planeKey(workspace, name))
             else { continue }
             migrated = true
+            // A plane whose view no longer exists still gives up its
+            // DOCUMENTS — they belong to the desk, which every view
+            // shares. Only its position has nowhere to go.
+            let feature = Feature(rawValue: name)
             for tab in plane.tabs {
                 switch tab.content {
                 case .entity:
@@ -346,7 +361,7 @@ struct DeskPlanes {
                 case .position(let token):
                     // Only the one you were ON survives. The rest were
                     // duplicates of a place there is one of.
-                    if tab.id == plane.activeTabId { spots[feature] = token }
+                    if tab.id == plane.activeTabId, let feature { spots[feature] = token }
                 }
             }
         }
@@ -455,9 +470,9 @@ struct DeskPlanes {
     static func forgetScratch() {
         UserDefaults.standard.removeObject(forKey: WorkspaceModel.deskKey(scratchWorkspace))
         UserDefaults.standard.removeObject(forKey: WorkspaceModel.spotsKey(scratchWorkspace))
-        for feature in Feature.allCases {
+        for name in v2Planes {
             UserDefaults.standard.removeObject(
-                forKey: WorkspaceModel.planeKey(scratchWorkspace, feature.rawValue))
+                forKey: WorkspaceModel.planeKey(scratchWorkspace, name))
         }
     }
 
