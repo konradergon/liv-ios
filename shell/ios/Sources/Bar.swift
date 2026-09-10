@@ -40,11 +40,20 @@ import SwiftUI
 /// if you already know browsers. The owner asked for the bar to "hint
 /// user about what '+' creates and that '[n]' is for open notes", in
 /// the style of the Throwaway recordings — and of those, Todoist's bar
-/// is the one that puts a word under each glyph. So the `+` prints the
-/// kind it will make here (`Feature.makes`: Note, Task or Event — the
-/// same rule that makes it), the box prints "Open", and the other three
-/// print their names, because three bare keys beside two labelled ones
-/// would read as two bars.
+/// is the one that puts a word under each glyph.
+///
+/// THE `+` SAYS NOTE, AND IT SAYS IT EVERYWHERE (owner, 2026-09-10:
+/// *"'+' creates note everywhere. holding it lets you create
+/// anything."*). It used to print `Feature.makes` — Note here, Task
+/// there, Event on the Calendar — which is a word that changes under a
+/// key that does not move, and it is half of what the owner meant by
+/// the notes view "making '+' act a bit different". A key whose word
+/// you have to read before you press it is the riddle the words were
+/// added to end.
+///
+/// Tasks and the Calendar make their own things where those things
+/// LIVE: tap an empty hour, or type into the row at the top of Tasks.
+/// Nothing is lost, and the hold menu still makes any of the five.
 struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
 
@@ -57,8 +66,8 @@ struct BottomBar: View {
             // and it is the same menu; what changed is which of the two
             // costs more. The word is what a tap makes HERE; spoken, it
             // stays "New", which is also what the harness taps.
-            key("plus", desk.state.makes.word, spoken: "New", hold: { desk.createSomething() }) {
-                desk.createHere?()
+            key("plus", LivKind.note.word, spoken: "New", hold: { desk.createSomething() }) {
+                desk.newNote?()
             }
             tabKey
         }

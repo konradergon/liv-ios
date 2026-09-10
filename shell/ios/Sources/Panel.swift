@@ -207,6 +207,14 @@ struct LibraryPanel: View {
                         desk.go(feature)
                         onDismiss()
                     }
+                    // THE GROUPS ARE THE ORDER (`Feature.groups`, owner
+                    // 2026-09-10): Today, Inbox and Everything are
+                    // windows onto the box; Calendar and Tasks are the
+                    // two you add to. One empty half-row separates them,
+                    // the same separator the saved filters and Trash use
+                    // below, and no label — a heading over two rows
+                    // costs more than the rows do.
+                    .padding(.top, Feature.startsGroup(feature) ? LivPanel.row / 2 : 0)
                 }
 
                 // NO SECTION LABELS (owner, 2026-08-18: "eliminate

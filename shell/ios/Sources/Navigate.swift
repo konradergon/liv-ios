@@ -39,23 +39,34 @@ enum Feature: String, CaseIterable, Identifiable {
     /// ever visible, so they were free to disagree. Putting the views in
     /// the side panel makes a second one visible, which is exactly when
     /// two orderings become a bug (standing rule 4).
-    static let inOrder: [Feature] = [.today, .inbox, .calendar, .tasks, .everything]
-
-    /// WHAT `+` MAKES HERE: the thing the view holds. A task in Tasks
-    /// and Today, an event in Calendar, a note everywhere else — and
-    /// a note is not a fallback: a note made from the bar IS the
-    /// capture Inbox is a list of.
     ///
-    /// Declared once, on the view, because two things read it: the
-    /// bar's `+` does it, and the word under the `+` says it (owner,
-    /// 2026-09-05: "the bottom bar should hint user about what '+'
-    /// creates"). A switch in each would be one grammar twice.
-    var makes: LivKind {
-        switch self {
-        case .tasks, .today: return .task
-        case .calendar: return .event
-        case .inbox, .everything: return .note
-        }
+    /// IN TWO GROUPS, and the grouping is the order (owner, 2026-09-10:
+    /// *"i think they should be next to each other and separated a bit
+    /// from today, inbox, and everything which only are views into the
+    /// box"*).
+    ///
+    /// The first three are windows onto the box and nothing else: Today
+    /// is a day's worth of it, Inbox the part not yet addressed,
+    /// Everything all of it. The last two are the views you ADD to — the
+    /// only two that make something other than a note, and they make it
+    /// where it lives (an empty hour on the timeline, the row at the top
+    /// of Tasks). That is the same line the `+` change draws, so the
+    /// panel draws it too.
+    ///
+    /// Declared as the groups and flattened, never the other way round:
+    /// an order and a split kept as two facts is two facts to keep in
+    /// step (standing rule 4).
+    static let groups: [[Feature]] = [[.today, .inbox, .everything], [.calendar, .tasks]]
+
+    /// The roster in order, for everything that does not care about the
+    /// gap — the migration's key list, the tour, `position`.
+    static let inOrder: [Feature] = groups.flatMap { $0 }
+
+    /// True for the first row of every group after the first: the half
+    /// row of air that separates them, which is the same separator the
+    /// saved filters and Trash already use.
+    static func startsGroup(_ feature: Feature) -> Bool {
+        groups.dropFirst().contains { $0.first == feature }
     }
 
     var title: String {

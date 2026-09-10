@@ -310,26 +310,22 @@ final class DeskModel: ObservableObject {
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
     var createMenu: (() -> LivMenu)?
-    /// Make the thing the surface in front of you HOLDS, with no menu:
-    /// a task in Tasks, an event on the day Calendar is showing, a note
-    /// everywhere else (owner, 2026-08-28 — note creation was two taps
-    /// by every route, including the one you take most).
+    /// MAKE ONE NOTE, NO MENU — the bar's `+`, the switcher grid's new
+    /// card, and a bare `liv://capture`.
     ///
-    /// The menu is still there, on a long press. This inverts the cost:
-    /// the common thing is one tap and the exception is a tap and a
-    /// hold, where before everything cost two.
+    /// This was two hooks. `createHere` made "the thing the surface in
+    /// front of you holds" — a task in Tasks, an event on the Calendar,
+    /// a note everywhere else — and `newNote` made a note. On
+    /// 2026-09-10 the owner settled it the other way: *"'+' creates note
+    /// everywhere. holding it lets you create anything."* Tasks and the
+    /// Calendar make their own things where those things live, so `+`
+    /// stopped being the door that has to guess, and the two hooks
+    /// became one answer.
     ///
-    /// It is not a new axis. Creating already belongs to where you
-    /// stand — a capture in a filtered workspace inherits that
-    /// workspace's cells (`WorkspaceModel.stamp`) — so this extends
-    /// "where you are decides the cells" to "where you are decides the
-    /// kind".
-    var createHere: (() -> Void)?
-
-    /// Make one note, no menu. `newTab` in the switcher grid uses this:
-    /// every card in that grid is a document, so asking "note, task,
-    /// event, file or scan?" is a question with one sensible answer
-    /// (owner, 2026-08-28).
+    /// The 2026-08-28 ruling that put the menu behind a hold is
+    /// untouched and is the reason this works: the common thing is one
+    /// tap and every exception is a tap and a hold, where before
+    /// everything cost two.
     var newNote: (() -> Void)?
     /// A catch from OUTSIDE with the text already in hand —
     /// `liv://capture?text=…`. Wired by DeskHost beside `newNote`, and

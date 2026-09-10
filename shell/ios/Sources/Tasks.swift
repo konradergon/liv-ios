@@ -23,6 +23,15 @@ struct TasksView: View {
     /// The row whose "Pick" swipe verb is choosing a date (sheet item).
     @State private var duePick: TasksDuePick?
 
+    /// WHAT IS IN THE ADD ROW. Not a position: a half-typed name is not
+    /// a place you can come back to, and parking it would write to
+    /// UserDefaults on every keystroke.
+    @State private var adding = ""
+    /// Guards a double return while the write is in flight, the same
+    /// guard the create doors in `DeskHost` carry.
+    @State private var addingBusy = false
+    @FocusState private var addFocused: Bool
+
     /// WHERE YOU ARE in this view: the chip that is on, and the
     /// completes-groups you have unfolded. Not `@State` since 2026-08-22
     /// — it is what a Tasks tab HOLDS (design/tabs.md, Reading B), so it
@@ -71,6 +80,7 @@ struct TasksView: View {
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
             chipRow
+            addRow
             if groups.allSatisfy({ $0.rows.isEmpty }) {
                 emptyRow
             }
@@ -154,10 +164,131 @@ struct TasksView: View {
                 ? "Nothing matches this filter."
                 : workspaces.lensOn
                     ? "No tasks in \(workspaces.lensLabel). Switch to All to see the rest."
-                    : "No tasks yet. Add one below."
+                    // "Add one below" pointed at the bar's `+`, which
+                    // makes a note now (2026-09-10). The row above is
+                    // the door, and it is on screen saying so.
+                    : "No tasks yet. The row above starts one."
         )
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
+    }
+
+    // MARK: the add row
+
+    /// TYPE A TASK WHERE THE TASKS ARE (owner, 2026-09-10: *"tasks and
+    /// calendar lets you add their objects directly"*).
+    ///
+    /// The bar's `+` makes a note in every view now, so this is the door
+    /// it used to be here. It is the same spine as `taskRow` — a 15pt
+    /// mark in a 31pt column, the name at `LivType.strong`, the hairline
+    /// at 31 — because it becomes one of those rows the moment you hit
+    /// return.
+    ///
+    /// **IT NEVER MAKES A TASK THAT VANISHES.** A typed task carries
+    /// whatever the filter you are looking at demands: the chip's status,
+    /// or the vocabulary's first status that does not complete; and the
+    /// chip's project when a project chip is on. Without that, the row
+    /// you just typed would be filtered straight out of the list you
+    /// typed it into.
+    ///
+    /// **AND IT SETS NOTHING THE ROW DOES NOT SHOW.** No due date: this
+    /// row has no date on it, so it must not invent one. The `+` menu's
+    /// Task still opens the card, where the due is the first row and
+    /// `desk.contextDay` puts it on the day you are looking at — which is
+    /// how Today keeps making dated tasks. Same rule as the Calendar,
+    /// which takes the time from where your finger lands and nothing
+    /// else.
+    private var addRow: some View {
+        HStack(spacing: 0) {
+            // THE MARK COLUMN, matching `StatusRing`'s geometry (15pt of
+            // ink in 8pt of padding = 31) so the field starts exactly
+            // where every task name does. Ink, never colour: an open box
+            // is ink here (see `StatusRing`), and a `+` that is the only
+            // accent on the screen would shout.
+            Image(systemName: "plus")
+                .font(.system(size: LivType.caption, weight: .semibold))
+                .foregroundStyle(LivTheme.text3)
+                .frame(width: 15, height: 15)
+                .padding(8)
+                .frame(height: LivRow.touch)
+            TextField("New task", text: $adding)
+                .font(.system(size: LivType.strong))
+                .foregroundStyle(LivTheme.text)
+                .tint(LivTheme.accent)
+                .focused($addFocused)
+                .submitLabel(.return)
+                .onSubmit { commitAdd() }
+            Spacer(minLength: 8)
+            // ONLY WHILE THERE IS SOMETHING TO ADD. A verb that is
+            // always there and usually dead is furniture; return is the
+            // gesture this row is really for, and this is the thumb's
+            // copy of it.
+            if !adding.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button(action: commitAdd) {
+                    Text("Add")
+                        .font(.system(size: LivType.label, weight: .medium))
+                        .foregroundStyle(LivTheme.accent)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(minHeight: LivRow.height)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                .padding(.leading, 31)
+        }
+        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    /// The status a typed task takes: the chip you are filtered to, or
+    /// the first status in the vocabulary that does not complete — so a
+    /// name typed with no thought lands in To do and not in Done.
+    private var addStatus: String? {
+        if case .status(let s) = filter { return s }
+        return options.first { $0.completes != true }?.name
+    }
+
+    /// The project a typed task takes — only when a project chip is on,
+    /// and only so the row does not vanish (see `addRow`).
+    private var addProject: String? {
+        if case .project(let p) = filter { return p }
+        return nil
+    }
+
+    /// Create it, and keep the caret for the next one.
+    ///
+    /// The field is cleared BEFORE the write, not in its callback: the
+    /// box answers a beat later and by then the next name is already
+    /// being typed, so clearing there would eat it.
+    private func commitAdd() {
+        let name = adding.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !addingBusy else { return }
+        // READ THE FILTER NOW, not when the box answers. The chip you
+        // were looking at when you typed is the one that decides where
+        // this lands; a beat later it could be another.
+        let status = addStatus
+        let project = addProject
+        addingBusy = true
+        adding = ""
+        // SwiftUI resigns the field on submit; asking for it back after
+        // the submit has finished keeps the keyboard up for the second
+        // task, which is the whole point of typing in a list.
+        DispatchQueue.main.async { addFocused = true }
+        model.createTask { id in
+            addingBusy = false
+            guard id != 0 else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return
+            }
+            model.set(id, "name", name)
+            if let status { model.set(id, "status", status) }
+            if let project { model.set(id, "project", project) }
+            // The same stamp every other create door applies, so a task
+            // typed inside a filtered workspace belongs to it.
+            _ = workspaces.stamp(id, in: model)
+        }
     }
 
     // MARK: groups

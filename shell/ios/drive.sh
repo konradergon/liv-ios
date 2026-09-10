@@ -18,12 +18,12 @@
 # (Surface.swift's markers) rather than what the model believes.
 #
 #   ./drive.sh boot [where]      relaunch (optionally via -desk.boot <where>) and check
-#   ./drive.sh grid              Notes' root is the LIST, and the box opens the switcher
+#   ./drive.sh grid              the Notes lens is the LIST, and the box opens the switcher
 #   ./drive.sh rows [view]       every row in that list is the SAME height
 #   ./drive.sh routes           liv:// links land where they name, and nowhere else
 #   ./drive.sh areas            Today counts the day by area of life under its date
 #   ./drive.sh chrome [view]     the doors retire on a scroll and come back (all five by default)
-#   ./drive.sh create            + makes what the place holds, in one tap
+#   ./drive.sh create            + makes a NOTE everywhere; the Tasks add row makes a task
 #   ./drive.sh desk              one desk of documents, the same in every view; a switcher pick lands
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
 #   ./drive.sh lens              a saved filter actually narrows the app
@@ -1542,8 +1542,18 @@ SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
 #
 # `+` used to open a five-item menu everywhere, so making a note — the
 # thing you do most — cost two taps by every route (owner, 2026-08-28).
-# It now creates what the surface in front of you holds, and the menu
-# moved to a long press.
+# The menu moved to a long press and the tap started creating.
+#
+# WHAT IT CREATES IS A NOTE, EVERYWHERE, since 2026-09-10 (owner: "'+'
+# creates note everywhere. holding it lets you create anything."). It
+# used to create what the surface in front of you held — a task in
+# Tasks, an event on the Calendar — so the word under a key that does
+# not move changed as you walked. Tasks and the Calendar make their own
+# things where those things live instead: an empty hour on the timeline,
+# and the add row this check drives.
+#
+# A DOCUMENT PLACE is now every place, so the first two steps below are
+# the same assertion made twice, in the two views that used to differ.
 #
 # The long press is NOT checked here, and that is a tooling limit rather
 # than a choice: `axe` cannot generate one. A known-good shipping
@@ -1553,7 +1563,7 @@ SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
 # was verified by hand on 2026-08-28 — the full menu came up and the tap
 # did not fire.
 cmd_create() {
-  # A DOCUMENT PLACE makes a document, in one tap and with no menu.
+  # A NOTE, in one tap and with no menu.
   cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   cmd_tap "New" || return 1
   perl -e 'select(undef,undef,undef,1.8)'
@@ -1568,19 +1578,99 @@ cmd_create() {
     return 1
   }
 
-  # A RECORD PLACE makes a record, which opens as a card over where you
-  # stand rather than as a document — so the surface must NOT change.
+  # AND IT MAKES A NOTE IN TASKS TOO (owner, 2026-09-10: "'+' creates
+  # note everywhere"). The key used to make a task here and print the
+  # word "Task" under itself; a word that changes under a key that does
+  # not move is the riddle the words were added to end. Tasks makes its
+  # own things in its own add row, which the next step drives.
   cmd_boot tasks >/dev/null 2>&1 || { die "could not boot into Tasks."; return 1 }
   cmd_tap "New" || return 1
   perl -e 'select(undef,undef,undef,1.8)'
   no_create_menu || { die "+ in Tasks opened the create menu."; return 1 }
-  [[ "$(cmd_surface)" == "tasks" ]] || {
-    die "+ in Tasks left the screen on '$(cmd_surface)'.
-      A task is a record: it opens as a card over Tasks, not as a document."
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "+ in Tasks left the screen on '$(cmd_surface)', not a document.
+      It makes a NOTE now, in every view. A 'tasks' here means it is
+      still making a record and opening it as a card."
     return 1
   }
-  say "ok    create: one tap makes a note in Everything and a task in Tasks, no menu in either"
+
+  # THE ADD ROW IS THE TASK DOOR NOW, so it has to make a task that
+  # LANDS. A write returning an id proves nothing here: the row has to
+  # appear in the list you typed it into, which is what the status the
+  # add row picks is for. Counted before and after.
+  cmd_boot tasks >/dev/null 2>&1 || { die "could not boot back into Tasks."; return 1 }
+  local before after stamp
+  before=$(task_rows)
+  stamp="drive $(date +%H%M%S)"
+  cmd_tap "New task" || {
+    die "no add row on Tasks. It is the only one-tap door to a task now
+      that + makes a note (2026-09-10), so its absence is the whole
+      feature missing."
+    return 1
+  }
+  # THE KEYBOARD FIRST, the same wait the capture route makes: the bar
+  # retires under one, so no keys means the caret really is in the row
+  # and the type below will land there rather than on the surface.
+  local i keys=5
+  for i in {1..10}; do
+    keys=$(bar_keys | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+    [[ "$keys" == "0" ]] && break
+    perl -e 'select(undef,undef,undef,0.4)'
+  done
+  (( keys == 0 )) || {
+    die "tapped the Tasks add row and the bar is still up (${keys} keys),
+      so no keyboard came with it — the row is drawn but not a field."
+    return 1
+  }
+  axe type "$stamp" --udid "$UDID" >/dev/null 2>&1 || {
+    die "could not type into the Tasks add row."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,0.6)'
+  cmd_tap "Add" || {
+    die "typed into the add row and no Add verb appeared beside it."
+    return 1
+  }
+  perl -e 'select(undef,undef,undef,2.0)'
+  # RE-BOOT BEFORE READING. The add row keeps the caret for the next
+  # task, so the keyboard is still up and a List is lazy: rows under the
+  # keyboard are not in the tree at all, and counting them here would
+  # fail about the fold rather than about the write.
+  cmd_boot tasks >/dev/null 2>&1 || { die "could not boot back into Tasks to read the list."; return 1 }
+  after=$(task_rows)
+  (( after > before )) || {
+    die "typed '${stamp}' into the add row and Tasks lists ${after} rows
+      (was ${before}). Either it was not written, or it does not match
+      the filter you typed it into — the add row is meant to carry
+      whatever that filter demands. A very long list can also push the
+      new row under the fold; check with 'liv --log <box> list --all'."
+    return 1
+  }
+  tree | grep -q "$stamp" || {
+    die "the row count grew but '${stamp}' is not on screen, so either the
+      name did not reach the task or the new row is below the fold. Turn
+      on a status chip to shorten the list and run this again."
+    return 1
+  }
+  say "ok    create: one tap makes a note everywhere, and the Tasks add row makes a task that lands in the list (${before} -> ${after})"
   cmd_check
+}
+
+# How many task rows Tasks is drawing — the same wide-row shape
+# `note_rows` counts. The add row is not one: it is a field in an HStack,
+# not a Button, so it never enters this count whatever it holds.
+task_rows() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if (n.get("type") == "Button" and l and f.get("width", 0) > 200
+            and 40 < f.get("height", 0) < 90
+            and not l.startswith(SKIP)):
+        SEEN.append(l)
+    for c in n.get("children") or []: walk(c)' \
+    'SEEN = []
+SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
+    'print(len(SEEN))'
 }
 
 # True when the five-item create menu is NOT on screen.

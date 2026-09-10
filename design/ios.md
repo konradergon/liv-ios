@@ -1004,6 +1004,60 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 54. `+` makes a note, and the panel splits in two (rev 64, owner 2026-09-10)
+
+Owner: *"'+' creates note everywhere. holding it lets you create
+anything. tasks and calendar lets you add their objects directly. if so,
+i think they should be next to each other and separated a bit from today,
+inbox, and everything which only are views into the box."*
+
+The third of the three §52 opens. It was held on 2026-09-10 because `+`
+was the only one-tap create in Tasks and in Today, and an add row in
+Today is undefined — the day holds tasks and events, so a row there has
+to pick one. The owner's grouping settles it: **Today is a view, so it
+gets no add row.** Its dated task is not lost, it moves behind the hold —
+the menu's Task still runs `createRecord`, which reads `desk.contextDay`,
+so a task made from the hold menu in Today is still due the day you are
+looking at.
+
+**The key stops changing its word.** `Feature.makes` is deleted, and with
+it `DeskModel.createHere` — two hooks (`createHere` and `newNote`)
+collapse into one, and the bar prints `LivKind.note.word`. The 2026-08-28
+ruling that put the menu behind a hold is untouched and is what makes
+this work: the common thing is one tap, every exception is a tap and a
+hold.
+
+**Tasks gains the add row.** The first row under the chips, on
+`taskRow`'s own spine — a 15pt mark in a 31pt column, the name at
+`LivType.strong`, the hairline at 31 — because it becomes one of those
+rows on return. Two rules hold it:
+
+1. *It never makes a task that vanishes.* A typed task carries whatever
+   the filter demands: the chip's status, or the vocabulary's first
+   status that does not complete; and the chip's project when one is on.
+   The filter is read when you type, not when the box answers.
+2. *It sets nothing the row does not show.* No due date — the row has no
+   date on it. Same rule as the Calendar, which takes the time from where
+   your finger lands and nothing else.
+
+The caret stays for the next task, and the field is cleared before the
+write rather than in its callback: the box answers a beat later, by which
+time the next name is being typed.
+
+**The panel is two groups.** `Feature.groups` declares them and `inOrder`
+is the flattening, so the order and the split cannot drift apart
+(standing rule 4). Today, Inbox and Everything are windows onto the box;
+Calendar and Tasks are the two you add to. One empty half-row between
+them, the separator the saved filters and Trash already use, and no
+label — a heading over two rows costs more than the rows do.
+
+**Checks.** `drive.sh create` asserts `+` makes a note in Everything AND
+in Tasks (it used to assert the opposite in Tasks), then drives the add
+row end to end: tap it, wait for the bar to retire under the keyboard,
+type, Add, re-boot, and find the typed name in the list. The re-boot is
+load-bearing — a List is lazy and rows under the keyboard are not in the
+tree, so counting without it fails about the fold.
+
 ## 53. Notes becomes a lens (rev 63, owner 2026-09-10)
 
 Owner: *"take the row out and making notes list a lens is a good idea."*
@@ -1040,13 +1094,10 @@ Notes lens on screen, and still guards the 8-of-134 hole against the bar's
 count. `tour` and `chrome` walk five views. `-places.selfcheck` covers the
 parking door; `-routes.selfcheck` covers the alias.
 
-**Not done, and deliberately.** `+` still makes what the view holds. It
-was approved alongside this, then held: it needs a second create door in
-Tasks AND Today, and the owner's read is that an add row in Today is
-undefined — the day holds tasks and events, and a row there has to pick
-one. Waiting for that answer beats guessing it. Removing Notes already
-takes out the case he named, since Notes and Everything are one place with
-one `+` now.
+**Not done here, and deliberately.** `+` still made what the view held.
+It was approved alongside this and then held: it needed a second create
+door in Tasks AND Today, and an add row in Today was undefined. The owner
+settled it the same day — §54.
 
 ## 52. The desk holds its own state (rev 62, owner 2026-09-10)
 
@@ -1087,8 +1138,8 @@ into the note.
 `ffi` moves. `-places.selfcheck` gained the two behaviours above as
 assertions, including the `‹`-does-nothing regression.
 
-Still open, and next: Notes leaves the panel and becomes a lens in
-Everything (§53), and `+` stops varying by view (held — see §53).
+The other two: Notes leaves the panel and becomes a lens in Everything
+(§53), and `+` stops varying by view (§54).
 
 ## 51. A view row lands on the view (rev 61, owner 2026-09-09)
 

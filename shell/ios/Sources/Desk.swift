@@ -269,7 +269,6 @@ struct DeskHost: View {
         .background(LivTheme.canvas)
         .onAppear {
             desk.createMenu = createMenu
-            desk.createHere = createHere
             desk.newNote = createNote
             desk.catchText = catchText
         }
@@ -610,6 +609,21 @@ struct DeskHost: View {
     /// Birth an empty note and land in it: the editor takes the screen
     /// with the caret already in it. The workspace stamps it exactly as
     /// any other creation door does.
+    ///
+    /// **THIS IS WHAT `+` DOES, EVERYWHERE** (owner, 2026-09-10: *"'+'
+    /// creates note everywhere. holding it lets you create anything."*).
+    /// It used to be `createHere`, a switch on `Feature.makes` — a task
+    /// in Tasks, an event on the Calendar — so the key's word changed
+    /// under a key that did not move. Tasks and the Calendar make their
+    /// own things where those things live (the add row at the top of
+    /// Tasks; an empty hour on the timeline), which is what freed this.
+    ///
+    /// `createNote` calls `adoptCapture`, so a note made from the bar IS
+    /// the capture the Inbox is a list of. The menu's Task and Event
+    /// still go through `createRecord`, which dates from
+    /// `desk.contextDay` — so a task made from the hold menu in Today is
+    /// still due the day you are looking at. That is what the hold keeps
+    /// for the two views that lost the tap.
     private func createNote() {
         guard !creating else { return }
         creating = true
@@ -664,26 +678,6 @@ struct DeskHost: View {
     /// It supersedes 2026-08-12's "task and event don't belong in new
     /// tab" — that was aimed at the full-screen New Tab page and its
     /// four-way chooser, both long deleted, and neither is what this is.
-    /// What `+` makes is `Feature.makes`' to say, since 2026-09-05 —
-    /// the bar prints the same answer under the key.
-    ///
-    /// Tasks and Today both go through `createRecord`, which already
-    /// dates the task from `desk.contextDay` — so a task made in Today
-    /// is due today and one made on a Calendar day is due that day,
-    /// without this function knowing anything about dates.
-    ///
-    /// `createNote` calls `adoptCapture`, so a note made from the bar IS
-    /// the capture the Inbox is a list of.
-    private func createHere() {
-        switch desk.state.makes {
-        case .task: createRecord(event: false)
-        case .event: createRecord(event: true)
-        // The rule only ever answers note, task or event; the rest of
-        // the kinds are what the long-press menu is for.
-        default: createNote()
-        }
-    }
-
     private func createMenu() -> LivMenu {
         LivMenu(
             id: "create",
