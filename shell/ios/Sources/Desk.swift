@@ -41,7 +41,11 @@ struct DeskHost: View {
     var body: some View {
         ZStack(alignment: .top) {
             Group {
-                if let id = desk.openDoc, desk.state == .notes {
+                // THE DOCUMENT LAYER, over whichever view you are in.
+                // `openDoc` is non-nil only while one is laid down
+                // (`DeskModel.shown`), so this no longer asks Notes for
+                // permission to draw a note (2026-09-10).
+                if let id = desk.openDoc {
                     // Keyed by ENTITY: a serial capture rewrites the
                     // surface with a new entity, and per-entity @State
                     // (the seeded title) must reseed on that flip.
@@ -227,8 +231,10 @@ struct DeskHost: View {
                 .accessibilityLabel("Library")
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
-                // trash — so it belongs to Docs and to nothing else.
-                if desk.state == .notes, let id = desk.openDoc {
+                // trash — so it belongs to the document on screen and to
+                // nothing else. `openDoc` says exactly that; the
+                // `state == .notes` half it used to carry said it twice.
+                if let id = desk.openDoc {
                     propertiesKey()
                     noteMenu(id)
                 }
@@ -820,8 +826,9 @@ struct DeskHost: View {
         }
     }
 
-    /// Trash leaves the desk showing the LIST (a trashed note has no
-    /// business on it) and offers Undo on the chip — the box has no restore verb yet, and
+    /// Trash lays the document down (a trashed note has no business on
+    /// the desk), uncovering the view you opened it from, and offers Undo
+    /// on the chip — the box has no restore verb yet, and
     /// undo-right-after IS restore ONLY while the trash is the last
     /// transaction. So the order matters: end editing FIRST, which
     /// flushes any dirty title/body onto the serial lane ahead of the
@@ -831,7 +838,7 @@ struct DeskHost: View {
     private func trashNote(_ id: UInt64) {
         endEditing()
         box.trash(id)
-        desk.showList()
+        desk.layDown()
         flash("Moved to Trash", undo: {
             box.undo()
             desk.open(id)

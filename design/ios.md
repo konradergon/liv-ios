@@ -1004,6 +1004,48 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 52. The desk holds its own state (rev 62, owner 2026-09-10)
+
+Owner: *"notes view serves too little purpose to be considered a place or
+state. it just gives me a simple list and makes '+' act a bit
+different."* This is the first of the three changes that answer it, and
+the one the other two stand on
+(`design/navigation-study.md` §4.3).
+
+**The fault.** A document rendered only while `state == .notes`, so
+opening a note ANYWHERE moved you to Notes. One view was three things at
+once: a peer root in the panel, the list of every note, and the only
+surface a document could be drawn on. Every vague edge the owner kept
+hitting came off that one borrow.
+
+**The change.** `DeskModel` gets `shown` — is a document lying on the
+desk — beside `state`. `openDoc` guards on it instead of on
+`state == .notes`; `openDocument` sets it and never touches `state`;
+`land` lowers it on a `.state` step and raises it on a `.document` one;
+`DeskHost` picks the document layer by `openDoc` alone.
+
+**Two behaviours change, both the way the owner asked.** The lit panel
+row under a document is the view you opened it from, never *Notes*. And
+`‹` out of a note opened off the Notes list lands on the list — it used
+to land on `.state(.notes)`, where you already were, with the note still
+drawn on top, so the key visibly did nothing.
+
+**Two verbs go, one arrives.** `goToRoot` (§51) existed only to reconcile
+"arrive at a view" with "get out of a document"; with one fact to read
+they are one move, so `go` is the whole rule and the panel, the `liv://`
+links and the `-desk.boot` flags all call it. `showList` becomes
+`layDown` — lay the document down, uncovering the view — and stops
+deselecting the active tab, which was a second fact to keep in step for
+no visible difference. `‹` and the bar's numbered key still walk back
+into the note.
+
+**Nothing in the chrome moves**, and no line of `core`, `services` or
+`ffi` moves. `-places.selfcheck` gained the two behaviours above as
+assertions, including the `‹`-does-nothing regression.
+
+Still open, and next: Notes leaves the panel and becomes a lens in
+Everything, and `+` stops varying by view.
+
 ## 51. A view row lands on the view (rev 61, owner 2026-09-09)
 
 Owner: *"sometimes when selecting Notes from the panel it gets you to an

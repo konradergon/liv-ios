@@ -190,28 +190,21 @@ struct LibraryPanel: View {
                         detail: counts.of(feature),
                         on: desk.state == feature
                     ) {
-                        // TAPPING THE VIEW YOU ARE IN GOES TO ITS ROOT.
+                        // ONE ROW, ONE MEANING: the view you named, with
+                        // nothing over it. Tapping the view you are
+                        // already in lays the document down, which is the
+                        // phone's own idiom for going to a tab's root.
                         //
-                        // Notes' root is the LIST of notes; a document is
-                        // a tab on the desk, and the desk is app-wide, so
-                        // once any note was open Notes always drew the
-                        // document and the list could not be reached at
-                        // all without closing every tab (owner,
-                        // 2026-08-31: "you can't access note list without
-                        // closing all note tabs"). There was no door.
+                        // This used to need its own verb (`goToRoot`)
+                        // because a document was drawn by Notes wearing
+                        // it, so arriving at a view and getting out of a
+                        // document were two different moves. Since the
+                        // desk holds its own `shown` (2026-09-10) they
+                        // are one, and `go` is the whole rule.
                         //
-                        // This is the phone's own idiom — tap the tab you
-                        // are already on to go to its root.
-                        //
-                        // It used to be the ONLY half that did that:
-                        // arriving at Notes from another view called
-                        // `go`, which restores the document on the desk,
-                        // so the same row landed on the list or in a
-                        // note depending on invisible state (owner,
-                        // 2026-09-09: "sometimes"). `goToRoot` is one
-                        // rule for both — and the bar's numbered box is
-                        // still how you get back to the note.
-                        desk.goToRoot(feature)
+                        // The note is not closed — the bar's numbered box
+                        // is still how you get back to it, from any view.
+                        desk.go(feature)
                         onDismiss()
                     }
                 }

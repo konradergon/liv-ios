@@ -147,6 +147,26 @@ final class DeskModel: ObservableObject {
     /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
     /// changes it; there is no "no state" — Docs is one of them.
     @Published var state: Feature = .notes
+
+    /// IS A DOCUMENT LYING ON THE DESK. **The desk's own state**, beside
+    /// `state` rather than borrowed from it (2026-09-10,
+    /// design/navigation-study.md §4.3).
+    ///
+    /// Until now a document rendered only while `state == .notes`, so
+    /// opening a note from Today MOVED you to Notes. That one borrow is
+    /// what made Notes mean three things at once — a peer view, the list
+    /// of every note, and the only surface a document could be drawn on —
+    /// and it is what the owner kept hitting from the other end: the lit
+    /// panel row said Notes when the note came from Today, and `‹` out of
+    /// a note opened off the Notes list did nothing at all (it landed on
+    /// `.state(.notes)`, which is where you already were, with the
+    /// document still on top).
+    ///
+    /// With the desk holding its own answer, the view underneath a
+    /// document is the view you opened it from, and laying the document
+    /// down uncovers it. `state` never changes when a document opens.
+    @Published private(set) var shown = false
+
     /// One plane per view (`DeskPlanes`, Plane.swift). The strip you see
     /// is the current view's, so every caller of `tabs` and `activeTabId`
     /// below keeps working and none of them had to learn what a plane is
@@ -173,15 +193,17 @@ final class DeskModel: ObservableObject {
     /// same fact is how they start to disagree.
     /// The document ON SCREEN, not merely the one the desk has active.
     ///
-    /// The `state` guard is load-bearing since the desk went app-wide
-    /// (2026-08-28). While each view had its own plane, being in Today
-    /// meant reading Today's plane, which held positions and never an
-    /// entity — so this was nil there for free. One desk keeps its
-    /// active tab wherever you go, which is the point of it, and without
-    /// the guard `goBack()` from a note into Today reported the note as
-    /// still open (caught by `-places.selfcheck`).
+    /// The guard is load-bearing since the desk went app-wide
+    /// (2026-08-28): one desk keeps its active tab wherever you go, which
+    /// is the point of it, so "there is an active tab" is not "you are
+    /// looking at it" — without the guard `goBack()` out of a note
+    /// reported the note as still open (caught by `-places.selfcheck`).
+    ///
+    /// It used to be `state == .notes`, which answered the right question
+    /// with the wrong fact and cost a view its own identity. `shown` is
+    /// that fact, held where it belongs.
     var openDoc: UInt64? {
-        guard state == .notes, case .entity(let id)? = activeTab?.content else { return nil }
+        guard shown, case .entity(let id)? = activeTab?.content else { return nil }
         return id
     }
 
@@ -543,21 +565,24 @@ final class DeskModel: ObservableObject {
     /// until you walked to Notes (owner, 2026-09-09).
     ///
     /// A document goes through the one door every open goes through, so
-    /// it lands in Notes with the way back pushed, exactly as a row in a
-    /// list does. A position tab (pre-2026-08-28 planes, folded away on
-    /// read) has no document to show and keeps the old behaviour.
+    /// it lands on the desk with the way back pushed, exactly as a row in
+    /// a list does. A position tab (pre-2026-08-28 planes, folded away on
+    /// read) has no document to show, so picking one lays down whatever
+    /// is on the desk and leaves you in the view.
     func show(_ tab: DeskTab) {
         switch tab.content {
         case .entity(let id): openDocument(id)
-        case .position: focus(tab.id)
+        case .position:
+            layDown()
+            focus(tab.id)
         }
     }
 
     /// Activate a tab. Every activation path funnels here.
     ///
-    /// Activation is NOT arrival: this leaves `state` alone, so a caller
-    /// that wants the tab on screen goes through `show` (from the
-    /// switcher) or `open` (from anywhere else).
+    /// Activation is NOT arrival: this leaves `state` and `shown` alone,
+    /// so a caller that wants the tab on screen goes through `show` (from
+    /// the switcher) or `open` (from anywhere else).
     func focus(_ tabId: UUID) {
         // Stamp FIRST and unconditionally: re-opening the tab you are
         // already on is still using it, and the early return below would
@@ -680,7 +705,11 @@ final class DeskModel: ObservableObject {
         planes.adopt(workspace: id)
         returns.clear()
         switcherShown = false
-        state = .notes
+        // The other place's document does not come along. Where you are
+        // STANDING does: a workspace is a different set of things, not a
+        // different app, and being thrown to Notes on every switch was
+        // only ever the old borrow showing through.
+        shown = false
         setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
@@ -691,62 +720,64 @@ final class DeskModel: ObservableObject {
 
     // MARK: going places
 
-    /// The Go-to menu's one door. A state REPLACES the state you were in
-    /// — states are roots, never children of each other — and Docs keeps
-    /// whatever document was open, so "Notes" from the calendar puts you
-    /// back in the note you were writing.
+    /// THE ONE DOOR TO A VIEW — the panel's rows, the Go-to menu, a
+    /// `liv://` link that names a view, the rehearsal flags. A state
+    /// REPLACES the state you were in (states are roots, never children
+    /// of each other) and it LAYS THE DOCUMENT DOWN, so the view you
+    /// named is the view you get.
+    ///
+    /// This absorbed `goToRoot` on 2026-09-10. That verb existed to
+    /// reconcile two answers to "am I in a document" — the panel had one
+    /// branch for the view you were already in and another for arriving
+    /// from elsewhere, and the same row landed on the list or in a note
+    /// depending on state the row does not show (owner, 2026-09-09:
+    /// *"sometimes when selecting Notes from the panel it gets you to an
+    /// open note instead of showing the list"*). With `shown` there is
+    /// only one answer to reconcile, so there is only one door.
+    ///
+    /// A POSITION SURVIVES, A DOCUMENT DOES NOT. The Calendar's month and
+    /// Today's day are where you left a tool — a scroll position, still
+    /// that view. A document is a different SURFACE over it.
+    ///
+    /// The note is not lost or closed: it is still on the desk, and the
+    /// bar's numbered key opens the switcher that lands you back on it
+    /// from any view (rev 58).
+    ///
+    /// The guard reads "nothing to do": naming the view you are standing
+    /// in with nothing over it. With a document over it there is plenty
+    /// to do — that tap is how you get out.
     func go(_ feature: Feature) {
-        guard feature != state else { return }
+        guard feature != state || shown else { return }
         endEditing()
         returns.clear()
-        withAnimation(LivMotion.nav) { state = feature }
+        withAnimation(LivMotion.nav) {
+            state = feature
+            shown = false
+        }
         setLibrary(false)
         menu = nil
         chromeHomeAgain()
     }
 
-    /// THE PANEL'S DOOR: land on the view you NAMED, never inside a
-    /// document (owner, 2026-09-09: *"sometimes when selecting Notes
-    /// from the panel it gets you to an open note instead of showing the
-    /// list"*).
+    /// LAY THE DOCUMENT DOWN — the desk goes back to showing the view you
+    /// are standing in, whichever one that is.
     ///
-    /// The panel had two branches. Tapping the view you were already in
-    /// went to its root; arriving from ANOTHER view called `go`, which
-    /// keeps whatever document is on the desk — so the same tap on the
-    /// same row landed on the list or in a note depending on state the
-    /// row does not show. "Sometimes" is the whole complaint: one tap,
-    /// one meaning.
+    /// **The tabs stay open**, and so does the ACTIVE one. This is what
+    /// is on SCREEN, not what is on the desk: the note you were reading
+    /// is one tap away on the bar's numbered key. Was `showList`, which
+    /// deselected the tab as well — a second fact to keep in step, for no
+    /// visible difference.
     ///
-    /// A POSITION SURVIVES, A DOCUMENT DOES NOT. The Calendar's month
-    /// and Today's day are where you left a tool — a scroll position,
-    /// still that view. A document is a different SURFACE wearing the
-    /// view's name, which is why it can be mistaken for a failed
-    /// navigation and a scrolled month cannot. `openDoc` is already
-    /// exactly "a document is on screen", so the rule needs no list of
-    /// features.
-    ///
-    /// The note is not lost or closed: it is still on the desk, and the
-    /// bar's numbered key opens the switcher that lands you back on it
-    /// from any view (rev 58).
-    func goToRoot(_ feature: Feature) {
-        if state == feature {
-            showList()
-            return
-        }
-        go(feature)
-        if openDoc != nil { showList() }
-    }
-
-    /// Up, out of a document, to the list of them. The state does not
-    /// change: you were in Docs the whole time.
-    /// **The tabs stay open.** Before the plane came back this cleared
-    /// the one document slot; now it deselects, which is the same thing
-    /// on screen and a different thing underneath — your tabs are where
-    /// you left them.
-    func showList() {
+    /// The way back goes with it, as it does on every deliberate move:
+    /// you asked for the view, so `‹` is not a way back into the note.
+    /// `go` says these same three lines rather than calling this, because
+    /// `state` has to change inside the SAME animation as `shown` or the
+    /// old surface slides out while the new one is already drawn.
+    func layDown() {
+        guard shown else { return }
         endEditing()
         returns.clear()
-        withAnimation(LivMotion.nav) { planes.setActive(nil) }
+        withAnimation(LivMotion.nav) { shown = false }
     }
 
     /// Where `‹` on the bar would take you, or nil when there is nothing
@@ -758,7 +789,8 @@ final class DeskModel: ObservableObject {
     /// need it and `openDocument` computed it inline; three copies of
     /// one answer is how they start to disagree (standing rule 4).
     var here: LivPlace {
-        state == .notes && openDoc != nil ? .document(openDoc!) : .state(state)
+        if let id = openDoc { return .document(id) }
+        return .state(state)
     }
 
     /// The next place `›` would take you, or nil — which is most of the
@@ -785,12 +817,21 @@ final class DeskModel: ObservableObject {
             switch place {
             case .state(let feature):
                 state = feature
-                // Leaving Notes for Today does not CLOSE what you had
-                // open — the desk keeps it, and coming back resumes it.
-                // It stops being `openDoc` because you are not looking
-                // at it; the tab is still there.
+                // Stepping back out of a document does not CLOSE it —
+                // the desk keeps it, and stepping forward resumes it. It
+                // stops being `openDoc` because it is no longer on
+                // screen; the tab is still there.
+                //
+                // Laying it down is the whole of what changed here: this
+                // used to set `state` alone, so `‹` out of a note opened
+                // off the Notes list landed on `.state(.notes)` — where
+                // you already were, with the note still on top — and did
+                // nothing at all.
+                shown = false
             case .document(let id):
-                state = .notes
+                // The view underneath is whatever it was. A document is
+                // a surface over a view now, not a view of its own.
+                shown = true
                 focus(planes.open(entity: id))
             }
         }
@@ -847,10 +888,14 @@ final class DeskModel: ObservableObject {
             surfaceCleanup()
             return
         }
-        // Where the labelled back will go: the state you were in, or the
+        // Where the labelled back will go: the view you were in, or the
         // document you were reading before this one.
         returns.push(here)
-        state = .notes
+        // ONTO the view you are standing in, which does not change. The
+        // panel's lit row keeps saying Today while you read a note you
+        // opened from Today, and `‹` puts you back on Today's list of
+        // rows rather than on Notes (2026-09-10).
+        shown = true
         // Append or focus — the whole difference tabs make. Opening a
         // second note no longer replaces the first.
         focus(planes.open(entity: entityId))

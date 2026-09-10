@@ -25,6 +25,7 @@
 #   ./drive.sh chrome [view]     the doors retire on a scroll and come back (all six by default)
 #   ./drive.sh create            + makes what the place holds, in one tap
 #   ./drive.sh desk              one desk of documents, the same in every view; a switcher pick lands
+#   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
 #   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
 #   ./drive.sh vault             the Vault card offers controls, or says why not
@@ -1654,6 +1655,61 @@ if CARDS:
     print(int(f["x"] + f["width"] / 2), int(f["y"] + f["height"] / 2))'
 }
 
+# WHAT IS UNDER A DOCUMENT — the check for the desk holding its own state
+# (2026-09-10, design/ios.md §52).
+#
+# A document used to render only while `state == .notes`, so opening a
+# note ANYWHERE moved you to Notes. Two things fell out of that, and this
+# asserts both from the rendered surface, because the model was never
+# wrong about them — it was answering a different question:
+#
+#   1. `‹` out of a note opened off the Notes list did NOTHING. It landed
+#      on `.state(.notes)`, which is where you already were, with the
+#      note still drawn on top. Nothing else in this file could see it:
+#      the surface before and the surface after were both `document`.
+#   2. A note opened from Today put you in Notes, so the panel's lit row
+#      named a view you never picked. `‹` is the readable half of that —
+#      it now uncovers Today.
+#
+# Break it on purpose before trusting the green: make `land` set `state`
+# and leave `shown` alone, and step 1 goes red.
+cmd_under() {
+  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into Notes."; return 1 }
+  open_first_note || return 1
+  cmd_tap "Back" || return 1
+  [[ "$(cmd_surface)" == "notes" ]] || {
+    die "opened a note off the Notes list, pressed Back, and the screen shows
+      '$(cmd_surface)'. Back out of a note lands on what was under it —
+      here, the list you opened it from. A 'document' means the key did
+      nothing at all, which is the bug this check exists for."
+    return 1
+  }
+  say "ok    under: back out of a note opened off the list lands on the list"
+
+  # AND FROM ANOTHER VIEW: the note lies OVER Today, so Back uncovers
+  # Today — not Notes, which you never picked.
+  cmd_goto today >/dev/null 2>&1 || { die "could not reach Today."; return 1 }
+  cmd_tap "$(bar_tab_label)" || return 1
+  local x y
+  read x y <<< "$(first_card_point)"
+  [[ -n "${x:-}" ]] || { die "the switcher opened from Today but shows no card to pick."; return 1 }
+  axe tap --udid "$UDID" -x "$x" -y "$y" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.2)'
+  [[ "$(cmd_surface)" == "document" ]] || {
+    die "picked a card from the switcher in Today and got '$(cmd_surface)'."
+    return 1
+  }
+  cmd_tap "Back" || return 1
+  [[ "$(cmd_surface)" == "today" ]] || {
+    die "opened a note from Today, pressed Back, and the screen shows
+      '$(cmd_surface)', not Today. A document lies OVER the view you
+      opened it from; 'notes' means it still carries you there."
+    return 1
+  }
+  say "ok    under: a note opened from Today lies over Today, and Back uncovers it"
+  cmd_check
+}
+
 cmd_lens() {
   # DOES A SAVED FILTER ACTUALLY NARROW THE APP?
   #
@@ -2194,10 +2250,15 @@ case "${1:-}" in
   chrome)  cmd_chrome ${2:+"$2"} || exit 1 ;;
   create)  cmd_create  || exit 1 ;;
   desk)    cmd_desk    || exit 1 ;;
+  under)   cmd_under   || exit 1 ;;
   lens)    cmd_lens    || exit 1 ;;
   facets)  cmd_facets  || exit 1 ;;
   vault)   cmd_vault   || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
   quiet)   cmd_quiet   || exit 1 ;;
-  *) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  # The usage block, all of it. This said `2,33p`, which stopped at
+  # `goto` — everything added after it (tour, panel, bar, workspace,
+  # history, spool, cycles, quiet) was documented at the top of the file
+  # and invisible to anyone who ran the script for help.
+  *) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

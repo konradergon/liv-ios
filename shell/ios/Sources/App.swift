@@ -343,7 +343,7 @@ struct RootView: View {
                 // same rule the panel's rows follow (2026-09-09):
                 // `liv://notes` means the list, not whatever note the
                 // desk happens to hold.
-                case .view(let feature): desk.goToRoot(feature)
+                case .view(let feature): desk.go(feature)
                 case .entity(let id):
                     // ASK THE BOX BEFORE SAYING IT IS GONE. A link can
                     // name something written since the last snapshot —
@@ -480,11 +480,11 @@ struct RootView: View {
         case "inactive":
             desk.backdateTabsForRehearsal(days: LivTabs.defaultDays + 1)
             desk.switcherShown = true
-        case "today": desk.goToRoot(.today)
-        case "tasks": desk.goToRoot(.tasks)
-        case "inbox": desk.goToRoot(.inbox)
-        case "calendar": desk.goToRoot(.calendar)
-        case "everything": desk.goToRoot(.everything)
+        case "today": desk.go(.today)
+        case "tasks": desk.go(.tasks)
+        case "inbox": desk.go(.inbox)
+        case "calendar": desk.go(.calendar)
+        case "everything": desk.go(.everything)
         case "desk": if let id = newest.first { desk.open(id) }
         // Open one NAMED entity, for looking at a specific note without
         // driving the whole UI to reach it: `-desk.boot open -desk.open
@@ -501,11 +501,9 @@ struct RootView: View {
         // The create menu, from the bar's `+`.
         case "newtab", "create": desk.createSomething()
         // NOTES' ROOT, which is the LIST. This was `go` then `showList`,
-        // spelled out here because `showList` alone only clears the
-        // current view's tab and the flag never arrived where its
-        // comment said it did. `goToRoot` is that pair, for every view
-        // (2026-09-09), so the special case goes.
-        case "notes", "docs": desk.goToRoot(.notes)
+        // then `goToRoot`; since 2026-09-10 `go` lays the document down
+        // itself, so there is nothing left here to special-case.
+        case "notes", "docs": desk.go(.notes)
         default: break
         }
     }
