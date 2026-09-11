@@ -1004,6 +1004,37 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 55. The funnel, drawn open (rev 65, owner 2026-09-11)
+
+Owner: *"the filter icon is correct but a bit ugly."*
+
+It was, and the reason is arithmetic rather than taste. The mark was one
+closed six-point shape whose stem measured 3.2 units across (10.4 to
+13.6), while the pen is `lineWidth` — `size / 12` — which is 2.0 in the
+glyph's own 24-unit coordinates at any size. That left 1.2 units of
+daylight inside the stem, so it filled in and the mark read as a solid
+wedge, in the panel's rows at 21 and in `LensChip` at 14 alike.
+
+**A V and a stem**: two open strokes, nothing enclosed left to fill. Same
+funnel, same word, the daylight back. It is still the only wedge in the
+panel's column, so it tells itself apart from the ring, the tray, the
+three rules and the grid above it.
+
+**The rule this is an instance of**, written where the pen is: an
+enclosed shape in this pen needs its narrowest inside gap well clear of
+2.0 units, or the drawing closes up at row size. Check a new glyph's
+tightest passage before trusting it.
+
+**The word stays "filter", and that was a finding rather than a
+preference.** The owner asked about "lens". In this code the workspace's
+query and the active saved filter combine into one narrowing, and *that*
+is what is called the lens — `LensChip` draws it, `refreshLens` rebuilds
+it — so giving the name to one of its two halves would be wrong, not
+merely crowded. "View" is the other candidate and is what the five rows
+above are called throughout the code, the docs and `drive.sh`. The noun
+is also read twice: on the "New filter" row and the composer's title.
+Every other row carries the user's own name for the thing.
+
 ## 54. `+` makes a note, and the panel splits in two (rev 64, owner 2026-09-10)
 
 Owner: *"'+' creates note everywhere. holding it lets you create

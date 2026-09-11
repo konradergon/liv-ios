@@ -379,10 +379,28 @@ struct GlyphShape: Shape {
                 closed: false)
             pen.line(10, 13.5, 14, 13.5)
         case .filter:
-            // The funnel.
-            pen.shape(
-                [(4, 4.5, 0), (20, 4.5, 0), (13.6, 12.2, 0), (13.6, 19.5, 0), (10.4, 17.6, 0), (10.4, 12.2, 0)],
-                closed: true)
+            // THE FUNNEL, DRAWN OPEN (owner, 2026-09-11: "the filter icon
+            // is correct but a bit ugly").
+            //
+            // It was one closed six-point shape, and the ugliness was
+            // arithmetic rather than taste. Its stem measured 3.2 units
+            // across (10.4 to 13.6) while the pen is `lineWidth` — size
+            // / 12, which is 2.0 in these coordinates at the panel's
+            // 21pt. That left 1.2 units of daylight inside the stem, so
+            // it filled in and the mark read as a solid wedge.
+            //
+            // A V and a stem instead: two open strokes with no enclosed
+            // area left to fill. Same funnel, same word, all the
+            // daylight back — and it is the only wedge in the column, so
+            // it still tells itself apart from the ring, the tray, the
+            // three rules and the grid above it.
+            //
+            // THE RULE THIS IS AN INSTANCE OF: an enclosed shape in this
+            // pen needs its narrowest inside gap to stay well clear of
+            // 2.0 units, or the drawing closes up at row size. Check a
+            // new glyph's tightest passage before trusting it at 21pt.
+            pen.shape([(4, 5.5, 0), (12, 13.5, 0), (20, 5.5, 0)], closed: false)
+            pen.line(12, 13.5, 12, 19.5)
         case .trash:
             // A bin: lid, body, and two staves. Drawn rather than an SF
             // Symbol so it sits on the same optical weight as its
