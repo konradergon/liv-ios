@@ -31,6 +31,9 @@ struct TasksView: View {
     /// guard the create doors in `DeskHost` carry.
     @State private var addingBusy = false
     @FocusState private var addFocused: Bool
+    /// The last add was refused by the box. Drawn on the row itself —
+    /// a haptic alone is a message to a thumb, not to a reader.
+    @State private var addFailed = false
 
     /// WHERE YOU ARE in this view: the chip that is on, and the
     /// completes-groups you have unfolded. Not `@State` since 2026-08-22
@@ -205,9 +208,15 @@ struct TasksView: View {
             // where every task name does. Ink, never colour: an open box
             // is ink here (see `StatusRing`), and a `+` that is the only
             // accent on the screen would shout.
+            //
+            // IT GOES RED WHEN THE BOX REFUSED THE LAST ONE — the mark,
+            // not a word. It is where the eye already is, it costs the
+            // row no width, and (the reason it is not a label) it does
+            // not change this row's STRUCTURE, which is the fault this
+            // row was just fixed for.
             Image(systemName: "plus")
                 .font(.system(size: LivType.caption, weight: .semibold))
-                .foregroundStyle(LivTheme.text3)
+                .foregroundStyle(addFailed ? LivTheme.red : LivTheme.text3)
                 .frame(width: 15, height: 15)
                 .padding(8)
                 .frame(height: LivRow.touch)
@@ -218,21 +227,40 @@ struct TasksView: View {
                 .focused($addFocused)
                 .submitLabel(.return)
                 .onSubmit { commitAdd() }
-            Spacer(minLength: 8)
-            // ONLY WHILE THERE IS SOMETHING TO ADD. A verb that is
-            // always there and usually dead is furniture; return is the
-            // gesture this row is really for, and this is the thumb's
-            // copy of it.
-            if !adding.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button(action: commitAdd) {
-                    Text("Add")
-                        .font(.system(size: LivType.label, weight: .medium))
-                        .foregroundStyle(LivTheme.accent)
+                // A refusal is about the words that were refused; the
+                // next keystroke is a different sentence.
+                .onChange(of: adding) { _, _ in
+                    if addFailed { addFailed = false }
                 }
-                .buttonStyle(.plain)
+            // ALWAYS IN THE TREE, dimmed when there is nothing to add —
+            // the bar's own rule for a key that cannot fire (Bar.swift's
+            // `disabledInk`), and not merely a style choice here.
+            //
+            // It was wrapped in `if !adding.isEmpty`, so the FIRST
+            // keystroke inserted a sibling into this row while the field
+            // beside it held first responder. A row whose structure
+            // changes under an editing field is the one shape SwiftUI
+            // handles badly: it re-identifies the row, and the text can
+            // go with it — which looks exactly like typing doing nothing
+            // (owner, 2026-09-11: "adding a task from the add row does
+            // nothing visible"). Nothing is worth that; the row's width
+            // is not short of eight points.
+            Button(action: commitAdd) {
+                Text("Add")
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(LivTheme.accent)
+                    .opacity(typed.isEmpty ? LivBar.disabledInk : 1)
+                    .padding(.leading, 8)
             }
+            .buttonStyle(.plain)
+            .disabled(typed.isEmpty)
         }
         .frame(minHeight: LivRow.height)
+        // THE WHOLE ROW TAKES THE TAP, like `taskRow` beneath it — a
+        // 31pt mark and a short field left most of the row inert, so a
+        // thumb aimed at "the empty row" landed on nothing.
+        .contentShape(Rectangle())
+        .onTapGesture { addFocused = true }
         .overlay(alignment: .bottom) {
             Rectangle().fill(LivTheme.border).frame(height: 0.5)
                 .padding(.leading, 31)
@@ -240,6 +268,13 @@ struct TasksView: View {
         .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
+    }
+
+    /// What is in the field, trimmed — read by the verb and by whether
+    /// the verb is live, so the two can never disagree about whether
+    /// there is anything to add.
+    private var typed: String {
+        adding.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// The status a typed task takes: the chip you are filtered to, or
@@ -263,7 +298,7 @@ struct TasksView: View {
     /// box answers a beat later and by then the next name is already
     /// being typed, so clearing there would eat it.
     private func commitAdd() {
-        let name = adding.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = typed
         guard !name.isEmpty, !addingBusy else { return }
         // READ THE FILTER NOW, not when the box answers. The chip you
         // were looking at when you typed is the one that decides where
@@ -279,7 +314,18 @@ struct TasksView: View {
         model.createTask { id in
             addingBusy = false
             guard id != 0 else {
+                // GIVE THE WORDS BACK. The field is cleared the moment
+                // you hit return, because that IS the acknowledgment —
+                // but a refused create then ate the sentence and said
+                // nothing a person could see, which is the worst of both
+                // (a verb only ever reaches the log: `BoxModel.verbFailed`
+                // raises `boxFault` for a real fault and stays silent for
+                // a plain refusal). Put the name back and let the chip
+                // say so, so a failure is never mistaken for nothing.
+                adding = name
+                addFocused = true
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
+                addFailed = true
                 return
             }
             model.set(id, "name", name)
