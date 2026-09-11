@@ -88,10 +88,10 @@ struct EverythingView: View {
 
     private var empty: String {
         switch lens {
-        case .all: return "Nothing yet. Everything you capture lands here."
-        case .notes: return "Nothing written yet. The + below starts one."
-        case .upcoming: return "Nothing dated in the next seven days."
-        case .unfiled: return "Nothing unfiled — every item has an area."
+        case .all: return "Empty"
+        case .notes: return "Nothing written"
+        case .upcoming: return "Nothing due"
+        case .unfiled: return "All filed"
         }
     }
 

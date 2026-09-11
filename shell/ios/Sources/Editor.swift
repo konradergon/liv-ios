@@ -1222,7 +1222,7 @@ struct NoteEditor: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if bridge.outline.isEmpty {
-                    EmptyHint("No headings yet.")
+                    EmptyHint("No headings")
                 }
                 ForEach(bridge.outline) { item in
                     Button {

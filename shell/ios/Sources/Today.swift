@@ -124,15 +124,7 @@ struct TodayView: View {
                 // both already say which day this is, and the count was
                 // furniture — the list under it is the count.
                 if timedOpen.isEmpty && done.isEmpty && allDay.isEmpty {
-                    // The empty screen shows the FURNITURE rather than
-                    // apologising: the six areas by name, live off the
-                    // box, so an area you add is named too.
-                    EmptyHint(
-                        "Nothing scheduled",
-                        detail: "Anything with a time lands here on its day — in "
-                            + livAreaSentence(box.snap) + ".",
-                        glyph: .today
-                    )
+                    EmptyHint("Nothing scheduled")
                 }
                 ForEach(passed) { item in
                     timedLine(item, dimmed: true, next: false, doneNames: doneNames)

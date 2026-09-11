@@ -966,7 +966,7 @@ struct EntityTabBody: View {
             content
         } else {
             // A persisted tab whose entity left the box — dropped lazily.
-            EmptyHint("This was deleted.")
+            EmptyHint("Deleted")
                 .frame(maxHeight: .infinity)
         }
     }

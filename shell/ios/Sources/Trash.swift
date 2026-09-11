@@ -43,11 +43,7 @@ struct TrashView: View {
                 .padding(.top, 16)
             Group {
                 if rows.isEmpty {
-                    EmptyHint(
-                        "Nothing in the trash",
-                        detail: "Deleted things wait here until you put them back.",
-                        glyph: .trash
-                    )
+                    EmptyHint("Empty")
                     .padding(.top, 40)
                 } else {
                     ScrollView {

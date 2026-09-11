@@ -52,11 +52,7 @@ struct HistoryCard: View {
                     .padding(.top, 16)
                     .padding(.bottom, 8)
                 if loaded && versions.isEmpty {
-                    EmptyHint(
-                        "Nothing written yet",
-                        detail: "Each save adds a version here. None is ever thrown away.",
-                        glyph: .note
-                    )
+                    EmptyHint("No versions")
                     .padding(.top, 40)
                 } else {
                     ForEach(Array(versions.enumerated()), id: \.offset) { i, v in

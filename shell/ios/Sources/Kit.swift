@@ -619,42 +619,37 @@ struct CountTile: View {
 /// call sites are a passing state ("This was deleted") rather than a
 /// place you have landed and must now start from. Only a surface a user
 /// can sit and look at earns the glyph and the button.
+/// WHAT AN EMPTY SURFACE SAYS: one or two words, in the muted ink, and
+/// nothing else (owner, 2026-09-11: *"Ugly messages littered all over.
+/// For example when today is empty, you get a verbose message saying so.
+/// Should be two to one word indications, such as 'empty' or similar."*).
+///
+/// It used to take a `detail` sentence and a 30pt glyph as well, and six
+/// surfaces passed all three — so an empty day answered "Nothing
+/// scheduled" and then explained, in a sentence that named your six
+/// areas, what a day is for. An empty screen is the worst place in the
+/// app to teach it: you came to read something and there is nothing, and
+/// a paragraph is the app talking about itself.
+///
+/// THE RULE IS THE TYPE, not prose (standing rule 3). There is nowhere
+/// to put the sentence any more, so it cannot come back one surface at a
+/// time — which is how it arrived.
+///
+/// The furnished/unfurnished fork went with it: every empty state now
+/// draws at one weight in one ink, so none of them shouts louder than
+/// another about having nothing to say.
 struct EmptyHint: View {
     let text: String
-    /// The quieter second line. Says what the surface is FOR.
-    var detail: String? = nil
-    var glyph: LivGlyph? = nil
 
     init(_ text: String) { self.text = text }
 
-    init(_ text: String, detail: String? = nil, glyph: LivGlyph? = nil) {
-        self.text = text
-        self.detail = detail
-        self.glyph = glyph
-    }
-
-    private var furnished: Bool { detail != nil || glyph != nil }
-
     var body: some View {
-        VStack(spacing: 10) {
-            if let glyph {
-                LivIcon(glyph: glyph, color: LivTheme.text3, size: 30)
-                    .padding(.bottom, 2)
-            }
-            Text(text)
-                .font(.system(size: LivType.strong, weight: furnished ? .semibold : .regular))
-                .foregroundStyle(furnished ? LivTheme.text : LivTheme.muted)
-                .multilineTextAlignment(.center)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(LivTheme.text2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 280)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        Text(text)
+            .font(.system(size: LivType.strong))
+            .foregroundStyle(LivTheme.muted)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
     }
 }
 
@@ -733,24 +728,6 @@ func livAnchorChip(of row: EntityRow) -> ValueChip? {
     return ValueChip(
         anchor.value,
         glyph: anchor.property == "area" ? LivArea.glyph(named: anchor.value) : nil)
-}
-
-/// THE AREAS, IN A SENTENCE — for an empty state that shows the furniture
-/// instead of apologising. Reads the LIVE options off the snapshot, so an
-/// area the person minted is named too; capped so a long list stays a
-/// sentence.
-func livAreaSentence(_ snap: Snapshot?) -> String {
-    let live = (snap?.properties ?? [])
-        .first { $0.name == "area" }?.options?
-        .compactMap { $0.name }.filter { !$0.isEmpty } ?? []
-    let names = live.isEmpty ? Furnish.areaNames : live
-    let shown = Array(names.prefix(6))
-    var sentence = shown.dropLast().joined(separator: ", ")
-    if let last = shown.last {
-        sentence = shown.count > 1 ? sentence + " or " + last : last
-    }
-    if names.count > 6 { sentence += " and \(names.count - 6) more" }
-    return sentence
 }
 
 /// Whether that name is a placeholder, asked directly. A list that greys

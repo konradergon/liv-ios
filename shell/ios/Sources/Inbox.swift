@@ -211,11 +211,7 @@ struct InboxView: View {
                         // "Nothing to route", not "Inbox zero" — that is
                         // GTD's slogan, and this screen's own word for
                         // its job is on the lens above it.
-                        EmptyHint(
-                            "Nothing to route",
-                            detail: "Anything you capture without deciding what it is waits here.",
-                            glyph: .inbox
-                        )
+                        EmptyHint("Nothing to route")
                         .padding(.top, 32)
                     } else {
                         ForEach(scraps) { row in
@@ -224,7 +220,7 @@ struct InboxView: View {
                     }
                 } else {
                     if groups.isEmpty && !assistOff {
-                        EmptyHint("Nothing to tidy.")
+                        EmptyHint("Nothing to tidy")
                             .padding(.top, 32)
                     }
                     suggestedSection(groups)

@@ -131,13 +131,7 @@ struct TabSwitcher: View {
                     // left you to infer the rest. An empty state is the
                     // one place a person reads prose, so it is where the
                     // app can say what this screen is.
-                    EmptyHint(
-                        "Nothing open",
-                        detail:
-                            "Notes you open stay here until you close them, "
-                            + "whichever view you wander off to.",
-                        glyph: .note
-                    )
+                    EmptyHint("Nothing open")
                     .padding(.top, 40)
                 }
                 LazyVGrid(columns: columns, spacing: 10) {

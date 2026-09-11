@@ -171,11 +171,9 @@ struct SearchView: View {
             }
             if trimmed.isEmpty {
                 ScrollView {
-                    EmptyHint(
-                        "Search everything you have",
-                        detail: "Notes, tasks, events, files and people.",
-                        glyph: .everything
-                    )
+                    // NOT "Search": the field above already says that.
+                    // What this line is for is the SCOPE.
+                    EmptyHint("Everything you have")
                     .padding(.top, 40)
                 }
             } else if hits.isEmpty {

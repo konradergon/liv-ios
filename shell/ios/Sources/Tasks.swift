@@ -162,15 +162,14 @@ struct TasksView: View {
     }
 
     private var emptyRow: some View {
+        // The lens case still NAMES the lens: "None here" would hide the
+        // one fact that explains the emptiness.
         EmptyHint(
             filter != .all
-                ? "Nothing matches this filter."
+                ? "No matches"
                 : workspaces.lensOn
-                    ? "No tasks in \(workspaces.lensLabel). Switch to All to see the rest."
-                    // "Add one below" pointed at the bar's `+`, which
-                    // makes a note now (2026-09-10). The row above is
-                    // the door, and it is on screen saying so.
-                    : "No tasks yet. The row above starts one."
+                    ? "None in \(workspaces.lensLabel)"
+                    : "Empty"
         )
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)

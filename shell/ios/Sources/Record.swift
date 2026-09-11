@@ -197,7 +197,7 @@ struct RecordBody: View {
             if let row = box.entity(id) {
                 body(row)
             } else {
-                EmptyHint("This was deleted.")
+                EmptyHint("Deleted")
                     .frame(maxHeight: .infinity)
             }
         }

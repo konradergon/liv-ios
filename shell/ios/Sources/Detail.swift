@@ -119,7 +119,7 @@ struct EntityInspector: View {
             if let row = box.entity(id) {
                 list(row)
             } else {
-                EmptyHint("This was deleted.")
+                EmptyHint("Deleted")
                     .frame(maxHeight: .infinity, alignment: .top)
             }
         }
@@ -695,7 +695,7 @@ struct InspectorValueSheet: View {
                         row("Create \u{201C}\(trimmed)\u{201D}", accent: true) { add(trimmed) }
                     }
                     if all.isEmpty && trimmed.isEmpty {
-                        EmptyHint("Type to create one.")
+                        EmptyHint("Type to create")
                     }
                 }
             }

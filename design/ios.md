@@ -1004,6 +1004,41 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 56. An empty screen says one word (rev 66, owner 2026-09-11)
+
+Owner: *"Ugly messages littered all over. For example when today is
+empty, you get a verbose message saying so. Should be two to one word
+indications, such as 'empty' or similar."*
+
+`EmptyHint` took a headline, a `detail` sentence and a 30pt glyph, and
+six surfaces passed all three. An empty day answered "Nothing scheduled"
+and then explained, in a sentence that named your six areas, what a day
+is for. An empty screen is the worst place in the app to teach it: you
+came to read something, there is nothing, and a paragraph is the app
+talking about itself.
+
+**The type lost the sentence and the glyph.** There is nowhere to put
+them now, so they cannot come back one surface at a time — which is how
+they arrived (standing rule 3). The furnished/unfurnished fork went with
+them, so every empty state draws at one weight in the muted ink and none
+shouts louder than another about having nothing to say. `livAreaSentence`
+had one caller and went too (rule 6).
+
+**Eighteen call sites, each cut to one to three words.** "This was
+deleted." is *Deleted*, on all four surfaces that said it. The trash is
+*Empty*. Everything's four slices are *Empty*, *Nothing written*,
+*Nothing due*, *All filed*.
+
+Two kept more than a word, on purpose. Tasks under a workspace lens says
+*None in Home*, because the lens is the one fact that explains the
+emptiness. Search before you type says *Everything you have*, which
+names the scope; the old line said "Search everything you have", and the
+field directly above it already says Search.
+
+Two are not empty states and were cut differently. The camera's denied
+screen says *Camera is off* and leaves the remedy to the Open Settings
+button under it. The simulator's stand-in says *Simulator*.
+
 ## 55. The funnel, drawn open (rev 65, owner 2026-09-11)
 
 Owner: *"the filter icon is correct but a bit ugly."*

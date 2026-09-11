@@ -392,9 +392,10 @@ struct CameraFlow: View {
 
     private var deniedHint: some View {
         VStack(spacing: 2) {
-            EmptyHint(
-                "Camera access is off. Liv commits the photo at the shutter — allow the camera in Settings to shoot."
-            )
+            // A BLOCKED state, not an empty one — and its remedy is the
+            // button directly under it. The sentence explaining when the
+            // shutter commits was teaching at the worst possible moment.
+            EmptyHint("Camera is off")
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     openURL(url)
@@ -651,7 +652,7 @@ struct CameraFlow: View {
                     .frame(maxWidth: .infinity)
                 }
             } else {
-                EmptyHint("simulator: pick a photo to stand in for the shutter")
+                EmptyHint("Simulator")
                     .padding(.vertical, 0)
                 ZStack {
                     PhotosPicker(selection: $pickerItem, matching: .images) {
