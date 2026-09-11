@@ -489,29 +489,31 @@ enum LivRow {
 /// Todoist's own is ~11 and this app has been called too small four
 /// times; the reference is a floor to clear, not a ceiling.
 enum LivBar {
-    /// 57 measured off Obsidian for bare glyphs; 66 holds a 14pt word
-    /// under each one at the same margins (24 glyph + 2 + 17 line, and
-    /// ~11 of air top and bottom). Even, so the radius stays whole.
-    static let height: CGFloat = 66
+    /// 52, which is a 44pt touch target in 4pt of padding. It was 66 to
+    /// hold a 14pt word under each glyph; the words are gone (2026-09-11)
+    /// and so is the row they needed. Even, so the radius stays whole.
+    static let height: CGFloat = 52
     /// The breath between the bar and the screen's bottom edge.
     static let gap: CGFloat = 4
-    /// How far the capsule stands in from each screen edge. The
-    /// reference measures 43 of 430 — the bar is NARROWER than the text
-    /// column beside it, which is what stops it reading as a toolbar.
-    static let sideInset: CGFloat = 42
-    /// From the capsule's end to the first glyph's centre.
-    static let endInset: CGFloat = 34
-    /// The capsule's own horizontal padding, which puts the end glyphs
-    /// at `endInset`. It was written as `endInset - height / 2`, which
-    /// came to 6 by coincidence (a slot is a fifth of the capsule, not
-    /// its height) and would have moved when the bar grew.
-    static let endPad: CGFloat = 6
+    /// How far the OUTER pieces stand in from each screen edge. It was
+    /// 42 for one capsule, measured off Obsidian at 43 of 430. Three
+    /// pieces want the edges: at 42 they huddle in the middle and the
+    /// gaps between them stop reading as deliberate.
+    static let sideInset: CGFloat = 24
+    /// A piece's own horizontal padding, inside the glass.
+    static let piecePad: CGFloat = 4
+    /// The least air between two pieces. In practice they are pushed
+    /// apart by Spacers and stand much further; this is the floor that
+    /// keeps them three shapes rather than one broken one.
+    static let pieceGap: CGFloat = 12
+    /// One key's width inside a piece. Its HEIGHT is `LivRow.touch` —
+    /// the app's one touch floor, not a second copy of 44.
+    static let slot: CGFloat = 46
     static let glyph: CGFloat = 22
-    /// The slot every glyph sits in, chevron or box alike, so the words
-    /// under them share one baseline.
+    /// The box the numbered glyph draws in. It was sized so the words
+    /// under the five keys shared a baseline; it stays because the box
+    /// is a drawing with a digit in it and wants a fixed frame.
     static let glyphSlot: CGFloat = glyph + 2
-    /// Between the glyph's slot and its word.
-    static let wordGap: CGFloat = 2
     /// DISABLED IS INK, and nothing else: same glyph, same size, same
     /// place. The reference's disabled grey is 31% of its enabled ink,
     /// with no plate, no border and no removal from the row.

@@ -34,7 +34,7 @@
 #   ./drive.sh goto <view>       open the panel, pick <view>, assert it rendered
 #   ./drive.sh tour              every view in turn — the one that catches a dead repaint
 #   ./drive.sh panel             the library panel, and the properties card
-#   ./drive.sh bar               five keys, one row, disabled drawn as disabled
+#   ./drive.sh bar               five keys in three pieces, disabled drawn as disabled
 #   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
 #   ./drive.sh history           a note's ••• opens its version history as a card
 #   ./drive.sh spool             a catch the share sheet left is in the Inbox at the next launch
@@ -797,7 +797,15 @@ raise SystemExit(1)" "$1"
 # five keys, always" checks.
 cmd_bar() {
   cmd_boot >/dev/null 2>&1 || { die "could not boot before the bar check."; return 1 }
-  # 1. THE SHAPE. Five keys, in order, on one row — one capsule, not two.
+  # 1. THE SHAPE. Five keys, in order, on one row — and in THREE PIECES
+  #    since 2026-09-11, which is the thing this check could not see
+  #    before and the owner asked for by name.
+  #
+  #    The pieces are glass capsules and carry no accessibility node of
+  #    their own, so they are asserted by GEOMETRY: the gap between two
+  #    keys in the same piece is one slot, and the gap across a seam is
+  #    the Spacer, which is several times that. Put the bar back in one
+  #    capsule and every gap becomes equal, which is what trips this.
   local shape
   shape=$(bar_keys | python3 -c '
 import json, sys
@@ -810,11 +818,20 @@ for k, w in zip(ks, want):
         print("ORDER %s != %s" % (k["label"], w)); raise SystemExit
 if len({k["y"] for k in ks}) != 1:
     print("ROWS %s" % sorted({k["y"] for k in ks})); raise SystemExit
+gaps = [ks[i + 1]["x"] - ks[i]["x"] for i in range(4)]
+# within-piece: back|forward and new|box. across a seam: the other two.
+inside, seams = [gaps[0], gaps[3]], [gaps[1], gaps[2]]
+if min(seams) < 2 * max(inside):
+    print("FLAT %s" % [int(g) for g in gaps]); raise SystemExit
 print("OK %d %d %d" % tuple(int(ks[n]["enabled"]) for n in (0, 1, 4)))')
   case "$shape" in
     COUNT*) die "the bar has ${shape#COUNT } keys, not five: back, forward, search, new, tabs."; return 1 ;;
     ORDER*) die "the bar's keys are out of order: ${shape#ORDER }."; return 1 ;;
-    ROWS*)  die "the bar's keys sit on ${shape#ROWS } different rows. It is one capsule, not two."; return 1 ;;
+    ROWS*)  die "the bar's keys sit on ${shape#ROWS } different rows. The three pieces share one baseline."; return 1 ;;
+    FLAT*)  die "the bar's key gaps are ${shape#FLAT }, which is one evenly spaced row.
+      It is three pieces since 2026-09-11 — move, find, and make-and-reach —
+      so the two seam gaps must be far wider than the two inside them."
+            return 1 ;;
     OK*)    ;;
     *)      die "could not read the bar. Is a keyboard up? It retires under one."; return 1 ;;
   esac

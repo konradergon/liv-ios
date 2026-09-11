@@ -1004,6 +1004,63 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 58. The bar, in three pieces (rev 68, owner 2026-09-11)
+
+Owner: *"the bar is mainly ugly because it shows how it works more by
+inline text instead of icons. it also looks like too similar to
+obsidian's bar."* Then, on the drawings: *"do c, but flip search and
+create."*
+
+One capsule of five evenly spaced keys **is** Obsidian's bar — it was
+measured off the owner's own clip of it — so the words and the shape were
+one problem rather than two.
+
+```
+‹ ›            🔍            +  [3]
+move          find         make · reach
+```
+
+**The words are gone, and that reverses the owner's 2026-09-05 ruling on
+his own word.** That ruling was right when it was made: *"the bottom bar
+should hint user about what '+' creates and that '[n]' is for open
+notes"*, and at the time `+` printed `Feature.makes` — Note here, Task
+there, Event on the Calendar. A key whose meaning changed under a glyph
+that did not is a riddle, and a caption was the cheapest answer. The
+condition expired on 2026-09-10 (§54), when `+` became a note everywhere.
+
+**The one caption that was still working** is the numbered box's, because
+a box with a digit in it is a browser idiom. Dropping it is a bet that
+the digit reads alone. If it does not, that key alone gets its word back
+and the other four stay bare. Nothing here changes for VoiceOver, which
+never read the captions — the labels are untouched.
+
+**Three pieces, grouped by what they do.** With the captions gone the
+grouping is the only thing on the bar that says anything. Search stands
+alone in the middle because it is the one key that is about the whole box
+rather than about notes; the `+` sits with the numbered box, which is
+make-one and reach-the-open-ones. That is the owner's flip: in the
+drawing the `+` had the middle.
+
+**Both outer pieces are two keys wide**, which is what lets the middle be
+centred by a plain pair of Spacers. Add a key to one side and the middle
+stops being centred — keep them even, or centre it deliberately.
+
+**Tokens.** `height` 66 → 52, which is a 44pt touch target in 4pt of
+padding; the 66 existed to hold a 14pt word. `sideInset` 42 → 24, because
+three pieces want the edges and at 42 they huddle. `endInset` and
+`wordGap` are deleted with the shape that needed them, and `endPad`
+becomes `piecePad`. `room`, `listRoom` and `clearance` all derive from
+`height`, so every surface's bottom margin follows without being touched.
+A key's height is `LivRow.touch`, the app's one touch floor, rather than a
+second copy of 44.
+
+**The check could not see the shape and now can.** `drive.sh bar`
+asserted five keys in order on one row, which the old bar and the new one
+both satisfy. The pieces are glass and carry no accessibility node, so
+they are asserted by geometry: two keys inside a piece are one slot apart,
+two keys across a seam are a Spacer apart. Put the bar back in one capsule
+and every gap becomes equal, which is what trips it.
+
 ## 57. The app moves on a spring (rev 67, owner 2026-09-11)
 
 Asked why the app reads amateur, the owner answered: *"mainly motion but
