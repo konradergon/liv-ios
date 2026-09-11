@@ -627,7 +627,11 @@ struct PanelMark: View {
                     .padding(.leading, size * 0.16)
             }
             .frame(width: size, height: height)
-            .animation(.easeInOut(duration: 0.18), value: open)
+            // A MARK MOVING BETWEEN ITS STATES is `pick`'s whole job.
+            // This was a raw `.easeInOut(duration: 0.18)`, the one
+            // animation in the shell that named its own curve — which is
+            // exactly the drift standing rule 3 exists to stop.
+            .animation(LivMotion.pick, value: open)
             .accessibilityHidden(true)
     }
 }

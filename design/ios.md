@@ -1004,6 +1004,41 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 57. The app moves on a spring (rev 67, owner 2026-09-11)
+
+Asked why the app reads amateur, the owner answered: *"mainly motion but
+also type and spacing, more or less. we don't want too fancy but
+currently it wouldn't appeal to users."*
+
+**Motion, measured.** The shell makes 45 `withAnimation` calls. Thirty-five
+of them pass `LivMotion.nav`, and `nav` was `easeInOut(duration: 0.22)`.
+So one symmetric ease carried nearly the whole app: every sheet, card,
+menu and panel, the surface swap, the chrome retiring under a scroll. The
+two springs the file already owned, `list` and `pick`, covered twelve call
+sites between them. One animation in the shell named its own curve
+inline, a raw `easeInOut(duration: 0.18)` in `Glyph.swift`, which is the
+drift standing rule 3 exists to stop.
+
+A symmetric ease is the curve every prototype uses and nothing on the
+platform does. It starts and stops at the same rate, so a card arrives
+with no weight and a panel stops dead.
+
+**`nav` is `Animation.snappy` now**, the system's own spring, with
+`extraBounce: 0`. The system's rather than a hand-rolled one is the
+point: what reads expensive is matching the platform, not inventing a
+feel. No bounce because the ask was better, not fancier. `navSeconds`
+goes 0.22 to 0.30 — at 0.22 a spring and an ease read the same, which is
+to say too fast to have a shape — and the seven teardown timers that read
+that number follow it.
+
+**Still one token, deliberately.** A sheet rising and a surface swapping
+are a real distinction and a later pass. Forking it here would also fork
+`navSeconds`, which those timers depend on.
+
+Type and spacing are named and not yet touched. The ramp is eight sizes
+in `LivType` plus five more private to the editor, and some steps are a
+single point apart.
+
 ## 56. An empty screen says one word (rev 66, owner 2026-09-11)
 
 Owner: *"Ugly messages littered all over. For example when today is

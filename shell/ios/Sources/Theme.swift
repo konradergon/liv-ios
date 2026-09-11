@@ -562,7 +562,30 @@ enum LivBar {
 /// below: things that arrive and leave INSIDE a surface, which the app
 /// used to snap in and out with no motion at all.
 enum LivMotion {
-    static let nav = Animation.easeInOut(duration: navSeconds)
+    /// THE ONE CURVE MOST OF THE APP MOVES ON — 35 of the 45
+    /// `withAnimation` calls in the shell, plus two `.animation(value:)`
+    /// modifiers: every sheet, card, menu and panel, the surface swap,
+    /// and the chrome retiring under a scroll.
+    ///
+    /// IT WAS `easeInOut`, and that is most of why the app read amateur
+    /// (owner, 2026-09-11: *"mainly motion but also type and spacing…
+    /// currently it wouldn't appeal to users"*). A symmetric ease is the
+    /// curve every prototype uses and nothing on the platform does: it
+    /// starts and stops at the same rate, so a card arrives with no
+    /// weight and a panel stops dead. The app already owned two springs
+    /// and they covered twelve call sites out of forty-seven.
+    ///
+    /// `snappy` is the SYSTEM's spring, not a hand-rolled one, which is
+    /// the point — the thing that reads expensive here is matching the
+    /// platform rather than inventing a feel. `extraBounce: 0` keeps it
+    /// sober: the owner asked for better, not fancier, and a bar that
+    /// wobbles is worse than one that eases.
+    ///
+    /// One token still, deliberately. Splitting a sheet's rise from a
+    /// surface's swap is a real distinction and a later pass; doing it
+    /// here would also fork `navSeconds`, which seven teardown timers
+    /// read to know when the motion has landed.
+    static let nav = Animation.snappy(duration: navSeconds, extraBounce: 0)
 
     /// HOW A SURFACE REPLACES A SURFACE. Measured 2026-08-20: there was
     /// no transition declared on either branch point, so SwiftUI used
@@ -578,10 +601,15 @@ enum LivMotion {
     static let surface = AnyTransition.asymmetric(
         insertion: .move(edge: .trailing),
         removal: .move(edge: .leading))
-    /// The same duration as a NUMBER, for the one case that must wait
-    /// for the motion to land before swapping what is underneath (the
-    /// calendar's month pager). Two literals would drift.
-    static let navSeconds: Double = 0.22
+    /// The same duration as a NUMBER, for the seven places that must
+    /// wait for the motion to land before swapping or unmounting what is
+    /// underneath — the calendar's month pager, the chrome's settle
+    /// window, and every sheet's teardown. Two literals would drift.
+    ///
+    /// 0.30 since the curve became a spring. At 0.22 an ease and a
+    /// spring read about the same, which is to say too fast to have any
+    /// weight; a spring wants a little longer to show its shape.
+    static let navSeconds: Double = 0.30
 
     /// A ROW ARRIVING OR LEAVING A LIST.
     ///
