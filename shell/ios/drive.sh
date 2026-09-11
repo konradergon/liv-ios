@@ -1608,6 +1608,12 @@ cmd_create() {
       feature missing."
     return 1
   }
+  # THREE LABELS THAT SHARE A PREFIX live on this screen at once now —
+  # "New" (the bar), "New task" (this field) and "Add" (its verb). `axe
+  # tap --label` matches EXACTLY, which is why that is safe; if this
+  # check ever dies with "multiple elements matched", that assumption is
+  # what broke, not the feature.
+  #
   # THE KEYBOARD FIRST, the same wait the capture route makes: the bar
   # retires under one, so no keys means the caret really is in the row
   # and the type below will land there rather than on the surface.
