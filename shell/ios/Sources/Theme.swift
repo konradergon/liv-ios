@@ -169,24 +169,34 @@ enum LivType {
     /// The markdown editor draws with TextKit, so it needs `UIFont`
     /// sizes rather than the steps above — but that is a reason for
     /// different UNITS, not for different NUMBERS, and until 2026-09-07
-    /// these six lived as literals inside `EditorText.swift`, dated
+    /// these lived as literals inside `EditorText.swift`, dated
     /// 2026-07-31: they predate `LivType` entirely.
     ///
-    /// They are moved here UNCHANGED, on purpose (design/editor-study.md:
+    /// They were moved here UNCHANGED, on purpose (design/editor-study.md:
     /// "move the numbers to Theme.swift without changing them, so the
     /// drift is visible"). And it is visible: `body` is 16 while every
-    /// list row that opens a note is `LivType.body` at 18, and `mono` is
-    /// 12 — `micro`, which this file calls "a badge, never a word you
-    /// have to read" — for a code block that is nothing but words.
+    /// list row that opens a note is `LivType.body` at 18.
     ///
-    /// Closing that gap is NOT a token swap. `EditorFont.listGutter` is
-    /// calibrated against the widest marker at the CURRENT body size,
+    /// THE SECOND EXAMPLE THIS COMMENT USED TO GIVE WAS WRONG, and it
+    /// is worth recording why, because it is the reason to measure a
+    /// drift rather than read one off a list of numbers. It said `mono`
+    /// was 12 "for a code block that is nothing but words" — but the
+    /// font that size fed was never applied to anything. Its only call
+    /// site was `dim()`'s font override, and that went on the owner's
+    /// word on 2026-08-11 ("a marker is greyed, NEVER resized"); the
+    /// styler has no fenced-block branch to put it back. So a size with
+    /// no readers was being cited as visible drift. The size went on
+    /// 2026-09-12 under standing rule 6, and the rev that teaches the
+    /// styler the fence picks its own monospace size rather than
+    /// inheriting one nobody chose.
+    ///
+    /// Closing the `body` gap is NOT a token swap. `EditorFont.listGutter`
+    /// is calibrated against the widest marker at the CURRENT body size,
     /// and the drawn checkbox and bullet are centred on `body.lineHeight`
     /// — so a resize has to re-derive all three and be seen on a
     /// simulator. It is its own rev, on the owner's word.
     enum Editor {
         static let body: CGFloat = 16
-        static let mono: CGFloat = 12
         static let codeInline: CGFloat = 14.5
         static let h1: CGFloat = 25
         static let h2: CGFloat = 21

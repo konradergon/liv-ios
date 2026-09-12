@@ -83,12 +83,15 @@ private enum EditorFont {
     // drift they carry is now visible where the rest of the scale is:
     // this body is 16 while every list row that opens a note is 18.
     //
+    // One of the six is gone (2026-09-12): a 12pt monospace whose only
+    // reader had been removed on 2026-08-11 and which therefore drew
+    // nothing. See `LivType.Editor`'s own comment for why it is worth
+    // knowing that a cited drift was never on screen.
+    //
     // These are `UIFont`s because the editor draws with TextKit, which
     // never sees a SwiftUI font — different UNITS, not different
     // numbers.
     static let body = UIFont.systemFont(ofSize: LivType.Editor.body)
-    static let mono = UIFont.monospacedSystemFont(
-        ofSize: LivType.Editor.mono, weight: .regular)
     static let codeInline = UIFont.monospacedSystemFont(
         ofSize: LivType.Editor.codeInline, weight: .regular)
 
@@ -712,11 +715,17 @@ final class MarkdownTextView: UITextView {
     /// scrolls with the body: the title starts below the floating circles
     /// and slides up under them as you read. A separate SwiftUI header
     /// could never do that — it would stay pinned.
+    /// ONE TITLE FONT, read by the field and by its grey prompt. It was
+    /// the same expression written twice, which is the shape standing
+    /// rule 4 names — and the two have to agree or the prompt jumps to a
+    /// different size the moment you type over it.
+    static let titleFont = UIFont.systemFont(ofSize: LivType.hero, weight: .bold)
+
     let titleView: UITextView = {
         let v = UITextView()
         v.isScrollEnabled = false
         v.backgroundColor = .clear
-        v.font = .systemFont(ofSize: LivType.hero, weight: .bold)
+        v.font = MarkdownTextView.titleFont
         v.textColor = LivInk.text
         // THE CARET IS OURS. A UIViewRepresentable does not reliably
         // inherit the SwiftUI tint, so without this the caret, the
@@ -735,7 +744,7 @@ final class MarkdownTextView: UITextView {
     /// The derived title, in grey, when no name cell exists.
     let titlePrompt: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: LivType.hero, weight: .bold)
+        l.font = MarkdownTextView.titleFont
         l.textColor = LivInk.muted
         l.numberOfLines = 3
         l.lineBreakMode = .byTruncatingTail
@@ -803,9 +812,17 @@ final class MarkdownTextView: UITextView {
     /// layoutSubviews, and the whole document silently stops drawing
     /// (found live — the note went blank). Layout only positions; this
     /// runs from the update path instead.
-    /// The title's minimum height — one line of LivType.hero. Shared
-    /// with the initial inset above, which used to repeat the literal.
-    static let titleFloor: CGFloat = 32
+    ///
+    /// THE FLOOR IS THE TITLE'S POINT SIZE, not a rendered line of it.
+    /// It read `32` and the comment above it said "one line of
+    /// LivType.hero" — both are 32 today, so the literal was right and
+    /// the sentence was not: a rendered line of 32pt bold measures about
+    /// 37.5, so nothing has been floored by this since `hero` reached 32
+    /// on 2026-08-31. What it still does is SEED `titleHeight` before
+    /// the title has been measured once, which is the initial top inset
+    /// and one frame of it. Derived now, so it cannot fall behind `hero`
+    /// a second time.
+    static let titleFloor: CGFloat = LivType.hero
     private var titleHeight: CGFloat = MarkdownTextView.titleFloor
 
     func refreshTitleLayout() {
