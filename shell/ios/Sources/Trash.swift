@@ -36,11 +36,7 @@ struct TrashView: View {
             // ABOVE the Group, not inside the ScrollView: the empty
             // branch is not in a ScrollView, so a header placed there
             // would leave an empty trash with no name on it.
-            Text("Trash")
-                .font(.system(size: LivType.title, weight: .bold))
-                .foregroundStyle(LivTheme.text)
-                .padding(.horizontal, LivRow.cardInset + 4)
-                .padding(.top, 16)
+            LivSheetTitle("Trash")
             Group {
                 if rows.isEmpty {
                     EmptyHint("Empty")

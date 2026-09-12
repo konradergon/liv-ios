@@ -225,9 +225,7 @@ struct CalendarView: View {
             // Notion's own title works exactly this way.
             Button { pickingDay = true } label: {
                 HStack(spacing: 5) {
-                    Text(Civil.dayLabel(selectedDay))
-                        .font(.system(size: LivType.hero, weight: .bold))
-                        .foregroundStyle(LivTheme.text)
+                    LivScreenTitle(Civil.dayLabel(selectedDay))
                     Image(systemName: "chevron.down")
                         .font(.system(size: LivType.caption, weight: .semibold))
                         .foregroundStyle(LivTheme.text3)

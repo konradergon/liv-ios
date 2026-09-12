@@ -208,9 +208,7 @@ struct TodayView: View {
                 // with a large bold left-aligned title and a lot of air
                 // above it; ours was `title` (20) semibold, which read as a
                 // section heading rather than as the name of where you are.
-                Text(Civil.dayLabel(today))
-                    .font(.system(size: LivType.hero, weight: .bold))
-                    .foregroundStyle(LivTheme.text)
+                LivScreenTitle(Civil.dayLabel(today))
                 if box.busyRetrying { LivBusy() }
                 Spacer(minLength: 0)
             }

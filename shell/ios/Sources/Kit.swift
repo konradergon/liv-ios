@@ -87,6 +87,87 @@ struct SectionLabel: View {
     }
 }
 
+// MARK: - the two titles
+
+/// A SCREEN'S OWN NAME — hero(32), bold, full ink.
+///
+/// WHY THIS IS A TYPE NOW, and why it is only two of the six jobs the
+/// weight-and-ink census measured (2026-09-12).
+///
+/// That census found 149 pieces of text drawn in 64 different
+/// combinations of size, weight and ink, and named six jobs a reader
+/// would recognise. Four of them already live in types — `SectionLabel`
+/// (17 callers), `LivRowFact`, `LivMenuTitle`, and a list row's title
+/// inside `LivListRow` — so standing rule 3 is already satisfied for
+/// those, whatever else is true of them.
+///
+/// The two that had NO type are the two that were hand-rolled: a
+/// screen's name, copied identically at five sites, and a sheet's,
+/// copied identically at three. Those eight copies are the whole of what
+/// this change fixes, and because every copy was byte-identical it moves
+/// no pixels.
+///
+/// WHAT IS DELIBERATELY NOT HERE. A row's primary title is drawn with
+/// seven different triples across 21 sites, and a bare tappable word
+/// with three across thirteen. There is no canonical triple to put in a
+/// type, because nobody has picked one — and a name holding an answer
+/// nobody chose is prose with extra steps, which is the failure standing
+/// rule 3 exists to name rather than an instance of obeying it. Those
+/// two are visible decisions and they are the owner's.
+///
+/// NO WEIGHT RAMP EITHER, for the same reason. `Theme.swift` declares
+/// eight sizes and zero weights, and the tempting fix is a weight scale
+/// beside the type scale. But a weight is never chosen on its own: it is
+/// chosen WITH a size and an ink, for a job. The place it belongs is
+/// inside the job's own type, which is where it already sits for every
+/// job that has one.
+///
+/// THE LAYOUT STAYS WITH THE CALLER. Three of the five screens wrap this
+/// in a full-width frame and 10pt of top padding; the Calendar and Today
+/// put it in an `HStack` beside a chevron or a busy mark. Unlike
+/// `SectionLabel`, whose room was the thing that had drifted, these five
+/// agreed on the type and disagreed on the frame — so the type takes the
+/// half they agreed on.
+struct LivScreenTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: LivType.hero, weight: .bold))
+            .foregroundStyle(LivTheme.text)
+    }
+}
+
+/// A SHEET'S OWN NAME — title(22), bold, full ink, and the inset and top
+/// room all three callers already gave it.
+///
+/// Here the room DOES belong to the type: History, Settings and Trash
+/// wrote the same `LivRow.cardInset + 4` and the same top 16 as well as
+/// the same font and ink, so all four lines were the copy.
+///
+/// ONE THING THIS DOES NOT SETTLE. `LivMenuTitle` draws the same size in
+/// SEMIBOLD, so a title on a card is still two weights depending on
+/// which kind of card it is. Converging them is a visible change in one
+/// direction or the other — bold is also the screen title's weight, so
+/// reusing it here blurs the rank between the screen you are in and the
+/// sheet on top of it, which argues for semibold; and semibold at 22
+/// against an owner who has called this app's text too small three times
+/// argues for bold. That is a judgement, so it is left alone and the two
+/// weights are written down here rather than discovered again later.
+struct LivSheetTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: LivType.title, weight: .bold))
+            .foregroundStyle(LivTheme.text)
+            .padding(.horizontal, LivRow.cardInset + 4)
+            .padding(.top, 16)
+    }
+}
+
 // MARK: - ValueChip / AddChip
 
 /// The one chip recipe: a NEUTRAL capsule — one quiet fill, text2 ink,

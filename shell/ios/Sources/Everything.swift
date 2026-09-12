@@ -48,9 +48,7 @@ struct EverythingView: View {
                 // are — Today, Inbox and the Calendar all lead with one,
                 // and a list that starts at its first row reads as a
                 // fragment of a screen rather than a screen.
-                Text("Everything")
-                    .font(.system(size: LivType.hero, weight: .bold))
-                    .foregroundStyle(LivTheme.text)
+                LivScreenTitle("Everything")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
                     .padding(.bottom, 6)

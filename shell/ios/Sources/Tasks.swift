@@ -72,9 +72,7 @@ struct TasksView: View {
             // THE SCREEN'S NAME — see the same addition in Notes and
             // Everything. This one sits above the filter chips, which
             // are a control, not a heading.
-            Text("Tasks")
-                .font(.system(size: LivType.hero, weight: .bold))
-                .foregroundStyle(LivTheme.text)
+            LivScreenTitle("Tasks")
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 10)
                 .padding(.bottom, 2)

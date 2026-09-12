@@ -178,9 +178,7 @@ struct InboxView: View {
                 // large bold left-aligned title (Todoist's "Inbox" is
                 // the same word this screen is missing), and the whole
                 // top of the screen reads as chrome without it.
-                Text("Inbox")
-                    .font(.system(size: LivType.hero, weight: .bold))
-                    .foregroundStyle(LivTheme.text)
+                LivScreenTitle("Inbox")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
                 lensRow(unrouted: scraps.count, tidy: proposals.count)

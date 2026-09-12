@@ -45,11 +45,7 @@ struct HistoryCard: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Text("History")
-                    .font(.system(size: LivType.title, weight: .bold))
-                    .foregroundStyle(LivTheme.text)
-                    .padding(.horizontal, LivRow.cardInset + 4)
-                    .padding(.top, 16)
+                LivSheetTitle("History")
                     .padding(.bottom, 8)
                 if loaded && versions.isEmpty {
                     EmptyHint("No versions")

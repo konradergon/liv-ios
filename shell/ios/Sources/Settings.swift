@@ -45,11 +45,7 @@ struct SettingsSheet: View {
         // two steps are for; nothing here used them.
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Settings")
-                    .font(.system(size: LivType.title, weight: .bold))
-                    .foregroundStyle(LivTheme.text)
-                    .padding(.horizontal, LivRow.cardInset + 4)
-                    .padding(.top, 16)
+                LivSheetTitle("Settings")
                 // What a person actually came here to change, first.
                 LivCard(label: "Appearance") { appearanceRow.padding(12) }
                 if box.snap?.assist != nil {
