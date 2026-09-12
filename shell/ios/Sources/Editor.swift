@@ -1282,7 +1282,7 @@ struct NoteEditor: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .padding(.horizontal, 10)
     }
 

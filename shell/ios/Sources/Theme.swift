@@ -745,7 +745,6 @@ enum LivInk {
     static let text = Palette.text
     static let text2 = Palette.text2
     static let text3 = Palette.text3
-    static let muted = Palette.text2
     static let border = Palette.hairline
     /// Style-panel key fill — kept for any full-size key surface.
     static let keyFill = Palette.fill
@@ -823,7 +822,6 @@ enum LivTheme {
     /// untouched, where white is already the right ground.
     static let canvas = Color(Palette.canvas)
     static let surface = Color(Palette.surface)
-    static let panel = Color(Palette.surface)
     /// A quiet fill for a lit row, a chip, a well — never a border.
     static let panel2 = Color(Palette.fill)
     /// The lightest possible mark of "this row is the one you are on".
@@ -837,13 +835,22 @@ enum LivTheme {
     /// answers a touch before it acts.
     static let pressed = Color(Palette.fill)
 
-    // THREE ink tiers, not four. `muted` was a second name for `text2`
-    // and both were `.secondaryLabel`; it stays as an alias so the call
-    // sites need not all move at once, but there is one value.
+    // THREE ink tiers, and now three NAMES for them.
+    //
+    // `muted` was a second name for `text2` — same `Palette.text2`, same
+    // pixels — and it stayed "so the call sites need not all move at
+    // once". They have all moved now (2026-09-12). The staged migration
+    // was not staged: it sat at 14 sites for five days across thirteen
+    // commits, having gone 20 → 22 → 17 → 14 in three weeks. A rule with
+    // two names is a rule a reader has to guess at, which is how one app
+    // ends up drawing 149 pieces of text in 64 different ways.
+    //
+    // `panel` went the same way, into `surface`. `pressed` did NOT: it is
+    // also `Palette.fill`, but it names a JOB — a row under the finger —
+    // and a name that says why is the kind standing rule 3 asks for.
     static let text = Color(Palette.text)
     static let text2 = Color(Palette.text2)
     static let text3 = Color(Palette.text3)
-    static let muted = Color(Palette.text2)
     /// A hairline, and it is meant to be nearly invisible: #2E2E2E on
     /// #1A1A1A is the same whisper the references draw. A separator you
     /// can see across the room is a border, and this app does not draw

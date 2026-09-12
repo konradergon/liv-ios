@@ -191,7 +191,7 @@ struct FileBody: View {
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
     }
@@ -250,7 +250,7 @@ struct FileBody: View {
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .overlay(
             RoundedRectangle(cornerRadius: LivTheme.radius)
                 .strokeBorder(LivTheme.red.opacity(0.5), lineWidth: 0.5)

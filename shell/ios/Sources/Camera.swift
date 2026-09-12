@@ -445,7 +445,7 @@ struct CameraFlow: View {
                 .frame(height: 30)
                 .background(
                     RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                        .fill(LivTheme.panel)
+                        .fill(LivTheme.surface)
                 )
             chipRow
         }
@@ -471,7 +471,7 @@ struct CameraFlow: View {
                     LivTheme.panel2.overlay(
                         Image(systemName: "photo")
                             .font(.system(size: LivType.body))
-                            .foregroundStyle(LivTheme.muted)
+                            .foregroundStyle(LivTheme.text2)
                     )
                 }
             }
@@ -562,7 +562,7 @@ struct CameraFlow: View {
                     .frame(height: 30)
                     .background(
                         RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                            .fill(LivTheme.panel)
+                            .fill(LivTheme.surface)
                     )
                     Button { applyChip(chipText) } label: {
                         Text("Add")

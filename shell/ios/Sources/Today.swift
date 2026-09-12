@@ -330,7 +330,7 @@ struct TodayView: View {
                     .font(.system(size: LivType.body).monospacedDigit())
                 Spacer()
             }
-            .foregroundStyle(LivTheme.muted)
+            .foregroundStyle(LivTheme.text2)
             .frame(minHeight: LivRow.band)
             .contentShape(Rectangle())
         }
@@ -430,7 +430,7 @@ struct TodayView: View {
         return HStack(spacing: 8) {
             Text(Civil.timeString(item.stamp))
                 .font(.system(size: LivType.label).monospacedDigit())
-                .foregroundStyle(dimmed ? LivTheme.muted : LivTheme.text3)
+                .foregroundStyle(dimmed ? LivTheme.text2 : LivTheme.text3)
                 // Wide enough for "09:00" at the platform's body size —
                 // it was cut for 15pt type and wrapped to two lines the
                 // moment the scale grew (2026-08-18).
@@ -460,7 +460,7 @@ struct TodayView: View {
                 Text(displayTitle(row))
                     .font(.system(size: LivType.body))
                     .foregroundStyle(
-                        dimmed || done ? LivTheme.muted : LivTheme.text)
+                        dimmed || done ? LivTheme.text2 : LivTheme.text)
                     .lineLimit(1)
                 if !chips.isEmpty {
                     HStack(spacing: 4) {

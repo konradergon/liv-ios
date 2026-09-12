@@ -669,7 +669,7 @@ struct InspectorValueSheet: View {
                     .padding(.horizontal, 12)
                     .frame(height: 40)
                     .background(
-                        RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
+                        RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.surface))
             }
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -867,7 +867,7 @@ private struct DetailEmptyValue: View {
     var body: some View {
         Text("—")
             .font(.system(size: LivType.strong))
-            .foregroundStyle(LivTheme.muted)
+            .foregroundStyle(LivTheme.text2)
     }
 }
 
@@ -1246,7 +1246,7 @@ struct DetailDueSheet: View {
             HStack {
                 Text("Clear")
                     .font(.system(size: LivType.strong))
-                    .foregroundStyle(has ? LivTheme.red : LivTheme.muted)
+                    .foregroundStyle(has ? LivTheme.red : LivTheme.text2)
                 Spacer()
             }
             .frame(minHeight: LivRow.height)

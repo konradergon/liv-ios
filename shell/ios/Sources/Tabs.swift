@@ -584,7 +584,7 @@ struct TabCard: View {
                 .padding(.horizontal, 10)
                 Text(excerpt)
                     .font(.system(size: LivType.micro))
-                    .foregroundStyle(LivTheme.muted)
+                    .foregroundStyle(LivTheme.text2)
                     .lineLimit(4)
                     .multilineTextAlignment(.leading)
                     .padding(.horizontal, 10)
@@ -600,7 +600,7 @@ struct TabCard: View {
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 20)
-                .background(LivTheme.panel)
+                .background(LivTheme.surface)
             }
             .frame(height: 150)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -672,7 +672,7 @@ struct TabCard: View {
         // A position is a PLACE, and places have no kind colour — the
         // library's rows are bare and colourless (owner, 2026-08-13).
         if token != nil { return LivTheme.text3 }
-        return row == nil ? LivTheme.muted : LivKind.color(of: row)
+        return row == nil ? LivTheme.text2 : LivKind.color(of: row)
     }
 
     private var footer: String {

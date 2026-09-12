@@ -829,7 +829,7 @@ struct CalendarView: View {
                         .padding(.leading, CalClock.gutter)
                     Text(String(format: "%02d:00", hour))
                         .font(.system(size: LivType.caption).monospacedDigit())
-                        .foregroundStyle(LivTheme.muted)
+                        .foregroundStyle(LivTheme.text2)
                         .frame(width: CalClock.gutter - 8, alignment: .trailing)
                         .offset(y: -CalClock.labelRise)
                 }

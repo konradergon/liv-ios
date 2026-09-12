@@ -263,7 +263,7 @@ enum MarkStyler {
         func dim(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             storage.addAttributes(
-                [.font: font, .foregroundColor: LivInk.muted], range: abs(r))
+                [.font: font, .foregroundColor: LivInk.text2], range: abs(r))
         }
 
         /// Syntax OFF the caret's line has no glyphs at all — not clear
@@ -430,9 +430,9 @@ enum MarkStyler {
                 if content.length > 0 {
                     storage.addAttributes(
                         [
-                            .foregroundColor: LivInk.muted,
+                            .foregroundColor: LivInk.text2,
                             .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                            .strikethroughColor: LivInk.muted,
+                            .strikethroughColor: LivInk.text2,
                         ], range: abs(content))
                 }
             }
@@ -463,7 +463,7 @@ enum MarkStyler {
                 // the drawn rule could never sit where the dashes sat
                 // (found measuring, 2026-08-07).
                 storage.addAttribute(
-                    .foregroundColor, value: LivInk.muted,
+                    .foregroundColor, value: LivInk.text2,
                     range: abs(NSRange(location: 0, length: lineLen)))
             } else {
                 let ruleStyle = NSMutableParagraphStyle()
@@ -615,7 +615,7 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 y: rect.minY + EditorFont.ruleCenterFromTop - 0.5,
                 width: container.size.width - container.lineFragmentPadding * 2 - inset * 2,
                 height: 1)
-            LivInk.muted.setFill()
+            LivInk.text2.setFill()
             UIBezierPath(rect: line).fill()
         }
         storage.enumerateAttribute(.livBullet, in: charRange) { value, range, _ in
@@ -666,7 +666,7 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 check.stroke()
             } else {
                 path.lineWidth = 1.5
-                LivInk.muted.setStroke()
+                LivInk.text2.setStroke()
                 path.stroke()
             }
         }
@@ -745,7 +745,7 @@ final class MarkdownTextView: UITextView {
     let titlePrompt: UILabel = {
         let l = UILabel()
         l.font = MarkdownTextView.titleFont
-        l.textColor = LivInk.muted
+        l.textColor = LivInk.text2
         l.numberOfLines = 3
         l.lineBreakMode = .byTruncatingTail
         l.isUserInteractionEnabled = false

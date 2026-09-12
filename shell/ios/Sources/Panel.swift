@@ -88,7 +88,7 @@ struct SidePanel<Content: View>: View {
             // A PANEL, not a curtain (owner, 2026-08-18): one step of
             // tone above the canvas, flat — no shadow, no gradient, no
             // border.
-            .background(LivTheme.panel)
+            .background(LivTheme.surface)
             // WIDTH FIRST, THEN THE LEADING PIN, THEN the safe area.
             // Painting the background with `.ignoresSafeArea()` on the
             // COLOUR spreads it over the whole window whatever frame

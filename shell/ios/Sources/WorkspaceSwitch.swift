@@ -277,7 +277,7 @@ struct WorkspaceSwitcher: View {
             .autocorrectionDisabled()
             .padding(.horizontal, 10)
             .frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
+            .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.surface))
             .overlay(
                 RoundedRectangle(cornerRadius: LivTheme.radiusSm)
                     .strokeBorder(LivTheme.border, lineWidth: 0.5)

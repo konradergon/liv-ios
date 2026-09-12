@@ -482,7 +482,7 @@ struct TasksView: View {
             }
             Text((line.text ?? "").isEmpty ? "empty line" : (line.text ?? ""))
                 .font(.system(size: LivType.strong))
-                .foregroundStyle((line.text ?? "").isEmpty ? LivTheme.muted : LivTheme.text)
+                .foregroundStyle((line.text ?? "").isEmpty ? LivTheme.text2 : LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 8)
             Button {
@@ -583,7 +583,7 @@ struct TasksView: View {
                 )
                 .font(.system(size: LivType.strong))
                 .foregroundStyle(
-                    (row.title ?? "").isEmpty ? LivTheme.muted : LivTheme.text
+                    (row.title ?? "").isEmpty ? LivTheme.text2 : LivTheme.text
                 )
                 .lineLimit(1)
                 if !chips.isEmpty {

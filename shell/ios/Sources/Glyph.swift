@@ -737,7 +737,7 @@ func livPaletteSelfCheck() -> [String] {
     let dimFloor = 4.5
     let inks: [(String, Color, Double)] = [
         ("text", LivTheme.text, inkFloor), ("text2", LivTheme.text2, inkFloor),
-        ("text3", LivTheme.text3, dimFloor), ("muted", LivTheme.muted, inkFloor),
+        ("text3", LivTheme.text3, dimFloor),
     ]
     let marks: [(String, Color)] =
         [("accent", LivTheme.accent)] + LivKind.allCases.map { ($0.wire, $0.color) }

@@ -338,7 +338,7 @@ struct SearchView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.muted)
+                        .foregroundStyle(LivTheme.text2)
                 }
                 .buttonStyle(.plain)
             }
