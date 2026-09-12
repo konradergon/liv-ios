@@ -1004,6 +1004,180 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 61. The vault card could only ever apologise (rev 73, owner 2026-09-11)
+
+Owner: *"Settings. What is the point of 'Fields'? And Vault section is
+just noice that nobody needs to see."* Two items, and only one of them
+is a verdict.
+
+**The card had one reachable state, and it was an apology.**
+`vault_root_of` walks up from the log and requires two directory names:
+the parent must be `box`, its parent must be `.liv`. `BoxPath.resolve`
+puts the log under the App Group container at `<container>/liv/liv.log`,
+whose parent is named `liv`. So `isVault` is false on every iOS install
+short of pointing `LIV_BOX_PATH` at a vault by hand. All five vault verbs
+open with the same guard and return early, so Sync and Rebuild could not
+have worked even had the card drawn them.
+
+**What went with it** (standing rule 6 — the card was their only caller):
+`vaultRows`, `vaultLine`, `shortRoot`, `finding`, `vaultButton`,
+`syncVault`, `rebuildVault` and four `@State` vars; and in `Box.swift`
+`LivVaultStatus`, `LivVaultFinding`, `vaultStatus`, `vaultSync`,
+`vaultRebuild`, `vaultFindings`. 260 lines out.
+
+**O14 STANDS and the ABI is untouched.** The box is still the one truth
+and `library/` is still a rebuildable projection; the five FFI verbs and
+`liv vault` in the CLI keep every one of their doors. This is a statement
+about the phone, not about the projection: a vault is a folder you keep
+your own way on a computer, and a phone's box lives in a sandbox
+container with no such folder around it. A desktop shell over this core
+is where these verbs have a reachable surface.
+
+**`drive.sh vault` became `drive.sh settings`**, turned around rather
+than deleted. It asserted the card said either its controls or the reason
+there were none, and it only ever passed through the second branch — a
+check guarding an apology. It now asserts Appearance, Reminders and
+Fields are on screen and that none of the vault's words are, so it fails
+if the card comes back.
+
+**Fields is NOT decided here**, because it is the question in the owner's
+sentence rather than the verdict, and §10 records it as the app's one
+schema door on purpose. The measurement, for when he rules: a field
+minted from this card can never receive a value from the phone.
+`fieldRow` is the only editable row in the inspector, it has one call
+site, and that site iterates `InspectorField.core` — the four hardcoded
+names `area`, `project`, `tags`, `people`. The "Other" section renders
+cells that already hold values and is a plain `HStack` with no gesture.
+So a minted field is reachable from the CLI and from a desktop, and from
+nowhere on the phone. Either it earns a door or it loses the card.
+
+## 60. The log can say when it has been overwritten (rev 72)
+
+Not a complaint, and not cosmetic — a defect the Settings audit turned up
+while answering §61.
+
+**Three notices nobody could ever see.** The FFI raises them in `hit()`,
+on every box open, before any projection is considered: the log is
+SHORTER than the cache last proved, the log was REPLACED in place (same
+length, new inode), or a conflicted copy of it exists beside it. Each
+means something outside the app wrote over an append-only source. The
+open defends itself — it refuses the fast path and replays honestly, so
+nothing is adopted silently — but *telling* the person is a separate job,
+and `liv_vault_alerts_at` is the only verb that does it.
+
+**The drain sat behind `guard st?.isVault == true`**, which §61 shows is
+false on every phone. So the app had never shown one of these, and since
+the verb is read-and-clear the static they queue in was never drained
+either.
+
+**They are notices about the LOG, not about the folder.** They are raised
+whether or not a vault exists and would be just as true of a box that is
+not in one, so asking for them behind a question about the projection was
+the category error. `box.vaultAlerts` is called unconditionally now and
+they draw in their own card, which appears only when there is something
+to say.
+
+That separation is also what made §61 safe: whatever happens to the vault
+card, the log keeps its voice.
+
+**Not assertable from a boot.** The card appears only when the log has
+actually been tampered with. To provoke it: open the box, quit, copy a
+shorter earlier `liv.log` over it, re-open.
+
+## 59. What the type-and-spacing audit actually found (revs 69–71, 2026-09-12)
+
+§57 named type and spacing and did not touch them. This is the pass, and
+the honest headline is that **most of what was proposed was wrong.**
+
+Seven readers measured the shell — the type ramp, the editor's second
+scale, every layout literal, per-surface vertical rhythm, weight and ink,
+the two questioned Settings cards, and every card's rise edge. They
+produced 41 proposals. Each then went to three hostile verifiers: one
+checking every call site by hand, one checking it against the dated
+rulings in this file and in `Theme.swift`, one checking it against the
+owner's own *"we don't want too fancy"*. **Seventeen of the twenty-two
+that were verified were refuted**, and the refutations were better than
+the proposals.
+
+**Type is not where the defect is.** There are ZERO raw font-size
+literals left in the shell — every `.font(` and `ofSize:` resolves to a
+token — so the drift standing rule 3 predicts has already been paid off.
+What the census found instead was crowding: 171 of 216 `LivType` call
+sites sit inside the 6pt band label–body–strong–title. That is a real
+measurement and it did not survive contact. Merging steps was refuted
+because the "colliding" sizes never co-occur on a screen; the merged
+ramp is an artifact of the audit's own spreadsheet. Moving the list row's
+title to one size needs the owner's word, not a swap.
+
+**What was taken, and all of it is small:**
+
+- `RecordBody.inCard` was a flag with one value; §13 is what makes the
+  other arm unreachable, so the branch, its 56pt arm and the prose
+  describing it all go. Zero pixels (rev 69).
+- The Inbox was the only one of the five feature views whose empty hint
+  added room — 32pt on top of `EmptyHint`'s own 24 — where Today,
+  Everything and Tasks add none. `EmptyHint` supplies 24; twelve of the
+  eighteen sites add nothing; four overlays add 40. Also three no-op zero
+  paddings, which is the complete set in the shell (rev 70).
+- The Inbox's proposal heading owned 14/2 — its own numbers, from before
+  `sectionTop`/`sectionBottom` existed — while all seventeen
+  `SectionLabel` headings own 18/4. Its own comment has confessed this
+  since it was written. The Accept-all verb's `.frame(height: 24)` went
+  with it: it made one heading two heights, and `SectionLabel`'s trailing
+  verb has never carried one (rev 70).
+- The editor's `mono` at 12 drew nothing. Its only reader was `dim()`'s
+  font override, removed on the owner's word on 2026-08-11, and the
+  styler has no fence branch to put it back — so `LivType.Editor`'s own
+  comment was citing a size with no readers as visible drift. Deleted,
+  and the comment now records that a cited drift was never on screen.
+  `titleFloor` reads `LivType.hero` rather than a literal 32, and the
+  title font is hoisted to one constant instead of two copies (rev 71).
+
+**What was refused, and why it is worth writing down:**
+
+- *Today's late/next hairlines at `LivRow.hairline`.* The 39pt gap is
+  real, but 54 is the 24pt-mark grid's number — `margin + mark + markGap`
+  — and those rows lead with a 31pt `StatusRing` and an 8pt gap, so their
+  words start at 55 and the token lands correctly only by a 1pt
+  coincidence. `Theme.swift` carries a recorded carve-out saying exactly
+  that Today's agenda rows are not on the mark grid. Encoding a false
+  derivation in a token reference is standing rule 3 inverted. The gap
+  stays open, deliberately.
+- *Today's `Late` heading onto `sectionTop`/`sectionBottom`.* It is a
+  collapse heading on a 44pt `LivRow.band`, and Tasks' collapse heading
+  goes through `SectionLabel` at 41.1 with no band — so adding section
+  air would widen the spread between the app's three collapse headings
+  from 18.9 to 24.9pt while making two source literals agree. If
+  uniformity there is wanted, the cheaper move is the opposite one.
+- *The editor's h1/h2 to 26/22.* It removes every one-point step in the
+  merged ramp and makes the editor's own ladder worse: 16/18/21/25 has a
+  monotonically rising ratio, 16/18/22/26 rises then falls.
+- *`Editor.body` 16 → 18.* This is the one editor size this file names as
+  drift and the one a reader would see, and it stays gated on the owner's
+  word: `listGutter` is calibrated against the widest marker at the
+  current body size and the drawn checkbox and bullet are centred on
+  `body.lineHeight`.
+
+**The card-direction question is answered by the code.** The owner asked
+whether all cards should come from the bottom. Twenty-one surfaces have a
+visible arrival direction; twenty come from the bottom and one comes from
+the top, and twelve of the twenty-one are system `.sheet`s that cannot
+come from the top on iPhone at all. The rule is already recorded in
+`Menu.swift` and was made a parameter on 2026-08-31 for exactly this
+reason: **a card comes from the edge its button is on.** The one that
+comes from the top is the note's ••• menu, whose button is top chrome, so
+it is obeying the rule rather than breaking it. Two candidate violations
+are named in the reply and not changed, because either answer to the
+owner's question settles them differently.
+
+**Three dimensions were left unverified** — weight and ink, and the
+verifiers for the Settings and card findings — because the run hit a
+usage limit at 72 of 131 agents. The Settings and card claims were then
+checked by hand, which is what §60 and §61 stand on. Weight and ink is
+untouched: its census is worth reading (64 distinct size/weight/ink
+triples over 149 `Text` sites, and `Theme.swift` declares no weights at
+all) and none of it has been through a hostile pass.
+
 ## 58. The bar, in three pieces (rev 68, owner 2026-09-11)
 
 Owner: *"the bar is mainly ugly because it shows how it works more by
