@@ -554,54 +554,6 @@ struct StatusRing: View {
     }
 }
 
-// MARK: - CountTile
-
-/// The dashboard count tile (Today's 2×2, Tasks header): count over an
-/// uppercase label. Danger = the Overdue red.
-struct CountTile: View {
-    let count: Int
-    let label: String
-    var danger: Bool = false
-    let action: () -> Void
-
-    init(
-        count: Int, label: String, danger: Bool = false,
-        action: @escaping () -> Void
-    ) {
-        self.count = count
-        self.label = label
-        self.danger = danger
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(count)")
-                    .font(.system(size: LivType.title, weight: .bold).monospacedDigit())
-                    .foregroundStyle(danger ? LivTheme.red : LivTheme.text)
-                Text(label.uppercased())
-                    .font(.system(size: LivType.micro, weight: .semibold))
-                    .kerning(0.5)
-                    .foregroundStyle(LivTheme.text3)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 56)
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radiusCard).fill(LivTheme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radiusCard)
-                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - EmptyHint
 
 /// AN EMPTY SURFACE STILL SAYS SOMETHING (owner's clips, 2026-08-20).
@@ -646,7 +598,7 @@ struct EmptyHint: View {
     var body: some View {
         Text(text)
             .font(.system(size: LivType.strong))
-            .foregroundStyle(LivTheme.muted)
+            .foregroundStyle(LivTheme.text2)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
@@ -754,38 +706,3 @@ func livCanTick(_ row: EntityRow) -> Bool {
     row.kinds?.contains("task") == true || row.status != nil
 }
 
-/// The face every create-menu verb wears: 46pt tall, full width, rounded,
-/// a hairline border, primary filled with the accent.
-///
-/// ONE recipe, because two of them already drifted: "Add a file" was
-/// hand-dressed to match and copied the fill but not the BORDER. In dark
-/// mode that passed, since surface (#1E1E20) reads against canvas
-/// (#161618). In light mode both are #FFFFFF — the border IS the shape —
-/// so the button had no shape at all (owner, 2026-08-10).
-struct LivVerbFace: ViewModifier {
-    var primary = false
-
-    func body(content: Content) -> some View {
-        content
-            .font(.system(size: LivType.strong, weight: primary ? .semibold : .regular))
-            .foregroundStyle(primary ? LivTheme.onAccent : LivTheme.text)
-            .frame(maxWidth: .infinity)
-            .frame(height: LivRow.height)
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radius)
-                    .fill(primary ? LivTheme.accent : LivTheme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radius)
-                    .strokeBorder(
-                        primary ? Color.clear : LivTheme.border, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radius))
-    }
-}
-
-extension View {
-    func livVerbFace(primary: Bool = false) -> some View {
-        modifier(LivVerbFace(primary: primary))
-    }
-}
