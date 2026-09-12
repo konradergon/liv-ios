@@ -436,6 +436,7 @@ struct SearchView: View {
                             .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .livDoor()
                         .accessibilityLabel(
                             "\(term.property) \(term.value), "
                                 + (term.exclude ? "hidden" : "only") + ". Change")
@@ -484,6 +485,7 @@ struct SearchView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .livDoor()
         // THE SECOND DOOR to the verbs, for someone who already knows:
         // hold a chip to hide its value without including it first. The
         // same simultaneous gesture the bar's `+` uses, so the tap still

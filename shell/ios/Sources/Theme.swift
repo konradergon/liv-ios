@@ -316,6 +316,16 @@ enum LivScreen {
         (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
             .screen.bounds.width ?? 430
     }()
+
+    /// The same read, for height. Added 2026-09-12 with the card-from-its
+    /// door motion, which needs to know where a bottom-anchored card sits
+    /// before it has been measured. `Menu.swift` was reading
+    /// `UIScreen.main.bounds.height` on every evaluation of a card's
+    /// body, which is exactly what the note above says not to do.
+    static let height: CGFloat = {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
+            .screen.bounds.height ?? 932
+    }()
 }
 
 /// A CHIP, in one place. Three capsule recipes were hand-copied across

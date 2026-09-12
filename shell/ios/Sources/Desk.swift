@@ -905,6 +905,7 @@ extension View {
     /// of its own and went in the same change.
     func livTopButton() -> some View {
         buttonStyle(.plain)
+            .livDoor()
             .livTopKeyShape()
     }
 

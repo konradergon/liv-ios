@@ -146,6 +146,7 @@ struct BottomBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .livDoor()
         .disabled(!on)
         .accessibilityLabel(spoken)
         // The hold is a SIMULTANEOUS gesture so it cannot eat the tap:

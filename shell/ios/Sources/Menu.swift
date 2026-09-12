@@ -128,6 +128,11 @@ struct LivMenuRow: View {
             .contentShape(Rectangle())
         }
         .livRowPress()
+        // A ROW IS A DOOR TOO. A menu raised from a menu row — the trash
+        // confirm, "Not a note…" — grows out of the row you touched
+        // rather than sliding up from an edge 400pt away, which is the
+        // case the owner's diagnosis explains best.
+        .livDoor()
         .overlay(alignment: .top) {
             if divided {
                 Rectangle().fill(LivTheme.border).frame(height: 0.5)
@@ -208,6 +213,99 @@ struct LivMenuSubject: View {
     }
 }
 
+// MARK: - where the card came from
+
+/// THE LAST DOOR PRESSED, in screen coordinates.
+///
+/// Owner, 2026-09-12: *"the chrome looks independent from the buttons
+/// that invoke them … some animations make it visually look like
+/// something 'comes out' or 'expands' from the buttons, which is what
+/// should happen instead of a card sliding on top."*
+///
+/// That is a better diagnosis than the one it replaces. The app already
+/// had a rule — a card comes from the edge its button is on — and the
+/// rule was right but approximate: it picks one of two edges for a
+/// button that is at a POINT. Grow the card from the point and the edge
+/// stops being a setting anyone can get wrong. The two violations the
+/// audit found on 2026-09-12, the trash confirm raised from inside a
+/// top-hanging card and Search's facet menu raised from chips near the
+/// top, both simply cease to exist.
+///
+/// How a door marks itself is `livDoor()`, below.
+enum LivDoors {
+    /// Written by `livDoor()` when a door is tapped, read once when the
+    /// card it raises is built. Not published: nothing re-renders on a
+    /// tap, and a card reads it exactly once.
+    static var lastPressed: CGRect?
+
+    /// Where a door sits INSIDE a card that is about to appear, as a
+    /// `UnitPoint` for `scaleEffect(_:anchor:)`. Values outside 0...1 are
+    /// legal and are the normal case: a card at the bottom of the screen
+    /// grows from a button above its own top edge.
+    static func anchor(in card: CGRect) -> UnitPoint? {
+        guard let door = lastPressed, card.width > 0, card.height > 0 else {
+            return nil
+        }
+        return UnitPoint(
+            x: (door.midX - card.minX) / card.width,
+            y: (door.midY - card.minY) / card.height)
+    }
+}
+
+/// A DOOR: a control that raises a card, marking where it is so the card
+/// can grow out of it.
+///
+/// WHY A MODIFIER AND NOT A `ButtonStyle`. A style was the first shape of
+/// this: it reads `configuration.isPressed`, SwiftUI's own press
+/// tracking, and adds no recogniser at all. But a button has ONE style,
+/// and this app's doors already spend theirs — `LivMenuRow` wears
+/// `livRowPress`, which is where a menu row's touch feedback comes from,
+/// and `LivTheme.pressed` exists because eight row sites once had none
+/// and the owner noticed. A door would have had to choose between its
+/// press feedback and its origin. One modifier that composes with
+/// whatever style a button already wears beats two mechanisms.
+///
+/// WHY A TAP AND NOT A DRAG. The other tempting one-liner records every
+/// touch from a zero-distance `DragGesture` on the root: no per-door
+/// change at all, and automatically right for a menu raised from another
+/// menu. A zero-distance drag recogniser above a scroll view is also the
+/// version that can quietly break scrolling, and there is no simulator
+/// here to find out. A `TapGesture` cannot: a scroll is a pan, and a
+/// simultaneous tap does not claim it.
+///
+/// A door that forgets to wear this is not a defect, only a card that
+/// still slides — `LivMenuHost` falls back to the offset it always used
+/// when no origin is known.
+extension View {
+    func livDoor() -> some View { modifier(LivDoor()) }
+}
+
+struct LivDoor: ViewModifier {
+    @State private var box: CGRect = .zero
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { box = geo.frame(in: .global) }
+                        .onChange(of: geo.frame(in: .global)) { _, f in box = f }
+                }
+            )
+            // BOTH WAYS A DOOR OPENS. Several menus in this app are
+            // raised by a HOLD rather than a tap — the bar's `+`, a
+            // Search chip — so a tap-only recorder would leave exactly
+            // those cards sliding. 0.3 is under the 0.45 those holds
+            // use, so the origin is recorded before the menu is asked
+            // for. Neither gesture claims a scroll: a scroll is a pan,
+            // which is not a tap and which cancels a long press.
+            .simultaneousGesture(TapGesture().onEnded { LivDoors.lastPressed = box })
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.3)
+                    .onEnded { _ in LivDoors.lastPressed = box })
+    }
+}
+
 // MARK: - a sheet from the TOP
 
 /// A whole SCREEN of content, arriving from the top edge — the same
@@ -253,6 +351,11 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
     @State private var content: CGFloat = 200
     @State private var shown = false
     @State private var drawn = false
+    /// The door this card is growing out of — see `LivDoors`. Named
+    /// `origin` and not `from` because this host already has a `from`,
+    /// which is the EDGE. Two different questions: which edge the card
+    /// hangs off, and which point it grew from.
+    @State private var origin: UnitPoint?
 
     func body(content: Content) -> some View {
         content.overlay {
@@ -271,7 +374,16 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
                                     .onChange(of: geo.size.height) { _, h in height = h }
                             }
                         )
-                        .offset(y: shown ? 0 : (from == .top ? -height : height))
+                        // OUT OF ITS DOOR, or off its edge — the same
+                        // rule as the menu host, applied to the app's only
+                        // other cover it owns.
+                        .scaleEffect(
+                            shown || origin == nil ? 1 : 0.86,
+                            anchor: origin ?? .center)
+                        .opacity(origin == nil || shown ? 1 : 0)
+                        .offset(
+                            y: origin != nil || shown
+                                ? 0 : (from == .top ? -height : height))
                 }
                 .ignoresSafeArea()
                 .accessibilityAction(.escape) { isPresented = false }
@@ -281,10 +393,21 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
         .onAppear(perform: sync)
     }
 
+    /// Where the card will be, in screen coordinates. Same reasoning as
+    /// the menu host's: resolved BEFORE the card is told to appear, not
+    /// inside its own `GeometryReader`, whose `onAppear` and the async
+    /// below run in an order SwiftUI does not promise.
+    private func cardBox() -> CGRect {
+        CGRect(
+            x: 0, y: from == .top ? 0 : LivScreen.height - height,
+            width: LivScreen.width, height: height)
+    }
+
     /// Mount first, THEN slide — the menu's own rule.
     private func sync() {
         if isPresented {
             drawn = true
+            origin = LivDoors.anchor(in: cardBox())
             shown = false
             DispatchQueue.main.async {
                 withAnimation(LivMotion.nav) { shown = true }
@@ -317,7 +440,7 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
                         }
                     )
             }
-            .frame(height: min(content, UIScreen.main.bounds.height * 0.72))
+            .frame(height: min(content, LivScreen.height * 0.72))
             .onPreferenceChange(LivSheetHeight.self) { content = $0 }
             if !up { LivGrabber() }
         }
@@ -389,6 +512,11 @@ struct LivMenuHost: ViewModifier {
     @State private var drawn: LivMenu?
     /// How far the finger has pulled the card toward its own edge.
     @State private var drag: CGFloat = 0
+    /// WHERE THIS CARD IS GROWING FROM — the door's centre, expressed
+    /// inside the card's own box. Nil means no door was recorded, and the
+    /// card slides from its edge the way it always did. Named `origin`
+    /// rather than `from`, which on a `LivMenu` means the EDGE.
+    @State private var origin: UnitPoint?
 
     func body(content: Content) -> some View {
         content.overlay {
@@ -446,11 +574,28 @@ struct LivMenuHost: ViewModifier {
                                     }
                                 }
                         )
-                        // OFF SCREEN by exactly its own height, then home.
+                        // OUT OF THE DOOR, or off the edge (owner,
+                        // 2026-09-12). With a door recorded the card
+                        // grows from it and fades in; with none it slides
+                        // off screen by exactly its own height, which is
+                        // what every card did before.
+                        //
+                        // 0.86 rather than 0: a card that starts at
+                        // nothing reads as a pop, and the ask was better
+                        // rather than fancier. It is small enough to be a
+                        // growth and large enough that the words inside
+                        // never scale through illegibility.
+                        //
                         // The panel is always mounted while `drawn` is
-                        // set, so this is a real slide in BOTH directions
+                        // set, so this is real motion in BOTH directions
                         // — a `.transition` on an `if` gave neither.
-                        .offset(y: shown ? 0 : (drawn.from == .top ? -height : height))
+                        .scaleEffect(
+                            shown || origin == nil ? 1 : 0.86,
+                            anchor: origin ?? .center)
+                        .opacity(origin == nil || shown ? 1 : 0)
+                        .offset(
+                            y: origin != nil || shown
+                                ? 0 : (drawn.from == .top ? -height : height))
                 }
                 .ignoresSafeArea()
                 .accessibilityAction(.escape) { close() }
@@ -460,11 +605,28 @@ struct LivMenuHost: ViewModifier {
         .onAppear(perform: sync)
     }
 
+    /// Where the card will be, in screen coordinates: full width, hung
+    /// from whichever edge it comes from, as tall as the last one was.
+    private func cardBox(_ edge: VerticalEdge) -> CGRect {
+        CGRect(
+            x: 0, y: edge == .top ? 0 : LivScreen.height - height,
+            width: LivScreen.width, height: height)
+    }
+
     /// Mount first, THEN slide: a view inserted and offset in the same
     /// frame has nowhere to travel from.
     private func sync() {
         if let menu {
+            // THE ANCHOR IS RESOLVED BEFORE THE CARD IS TOLD TO APPEAR,
+            // and deliberately not inside the card's own `GeometryReader`.
+            // That reader's `onAppear` and the async below both run after
+            // this, in an order SwiftUI does not promise — and if the
+            // anchor lands second the card is already at scale 1 and the
+            // growth never happens. So it is computed here from the
+            // screen and the last measured height, which is exact for
+            // every card after the first and close for the first.
             drawn = menu
+            origin = LivDoors.anchor(in: cardBox(menu.from))
             shown = false
             // The motion is asked for EXPLICITLY, here, rather than left
             // to an `.animation(value:)` on the modified content — that

@@ -284,6 +284,7 @@ struct InboxView: View {
             routeFace(row)
         }
         .livRowPress()
+        .livDoor()
         // `allowsFullSwipe: false` on purpose: an unrouted capture must
         // not be thrown away by a thumb that kept going.
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -693,6 +694,7 @@ struct InboxView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .livDoor()
             .accessibilityLabel("Dismiss")
         }
         .padding(.vertical, 6)

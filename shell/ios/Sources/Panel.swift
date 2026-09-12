@@ -298,6 +298,7 @@ struct LibraryPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .livDoor()
             // NAMED, because its label was DERIVED — the workspace's own
             // name plus the line under it, so it changed with the box and
             // could not be tapped by a driver. "Switch workspace" and not
