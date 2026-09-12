@@ -373,7 +373,7 @@ struct TodayView: View {
         return HStack(spacing: 8) {
             StatusRing(done: false) { toggleStatus(row.id) }
             Text(displayTitle(row))
-                .font(.system(size: LivType.body))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 6)
@@ -456,7 +456,7 @@ struct TodayView: View {
             .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayTitle(row))
-                    .font(.system(size: LivType.body))
+                    .font(.system(size: LivType.strong))
                     .foregroundStyle(
                         dimmed || done ? LivTheme.text2 : LivTheme.text)
                     .lineLimit(1)
@@ -520,7 +520,7 @@ struct TodayView: View {
                             desk.open(item.row.id)
                         } label: {
                             Text(displayTitle(item.row))
-                                .font(.system(size: LivType.body))
+                                .font(.system(size: LivType.strong))
                                 .foregroundStyle(
                                     livIsDone(item.row, doneNames)
                                         ? LivTheme.text3 : LivTheme.text)
@@ -611,7 +611,7 @@ struct TodayView: View {
         HStack(spacing: 8) {
             StatusRing(done: false) { toggleStatus(row.id) }
             Text(displayTitle(row))
-                .font(.system(size: LivType.body))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 8)

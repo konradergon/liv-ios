@@ -144,7 +144,7 @@ struct SearchView: View {
                     close()
                 } label: {
                     Text("Cancel")
-                        .font(.system(size: LivType.body, weight: .medium))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                         .contentShape(Rectangle())
                 }
@@ -644,7 +644,7 @@ private struct SearchHitRow: View {
             // What the hit IS, before what it says.
             LivIcon(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 22)
             Text(livRowTitle(row))
-                .font(.system(size: LivType.body))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 8)

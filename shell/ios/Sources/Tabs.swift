@@ -387,7 +387,7 @@ struct InactiveTabs: View {
                 close()
             } label: {
                 Text("Close all")
-                    .font(.system(size: LivType.body, weight: .medium))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.accent)
                     .frame(height: 32)
                     .padding(.horizontal, 8)

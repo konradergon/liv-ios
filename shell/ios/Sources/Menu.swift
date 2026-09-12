@@ -149,7 +149,15 @@ struct LivMenuTitle: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: LivType.title, weight: .semibold))
+            // BOLD, matching `LivSheetTitle` (owner, 2026-09-12). A title
+            // on a card was two weights depending on which kind of card
+            // it was: bold in Settings, Trash and History, semibold here.
+            // The argument against bold is that it is also the SCREEN
+            // title's weight, so reusing it blurs the rank between the
+            // screen and the sheet over it — but the rank is already
+            // carried by ten points of size (32 against 22), and the
+            // owner has called this app's text too small three times.
+            .font(.system(size: LivType.title, weight: .bold))
             .foregroundStyle(LivTheme.text)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)

@@ -306,12 +306,15 @@ struct InboxView: View {
                     size: LivRow.glyph)
                     .frame(width: LivRow.mark)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
-                // REGULAR, like every other row title in the app and
-                // like the reference's. It was `medium`, which made this
-                // one list's titles heavier than the same words
-                // everywhere else.
+                // REGULAR AND `strong`, like every other row title in
+                // the app. The weight was fixed first: it was `medium`,
+                // which made this one list's titles heavier than the
+                // same words everywhere else. The comment then claimed
+                // consistency while the SIZE was still wrong — 18 here
+                // against 20 in Everything, Links, Trash and Tasks — and
+                // said so above the line that was wrong (2026-09-12).
                 Text(displayTitle(row))
-                    .font(.system(size: LivType.body))
+                    .font(.system(size: LivType.strong))
                     .foregroundStyle(LivTheme.text)
                     .lineLimit(2)
                 Spacer(minLength: 8)

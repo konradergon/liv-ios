@@ -55,7 +55,7 @@ struct TrashView: View {
                                         box.restore(row.id)
                                     } label: {
                                         Text("Put back")
-                                            .font(.system(size: LivType.body, weight: .medium))
+                                            .font(.system(size: LivType.body, weight: .semibold))
                                             .foregroundStyle(LivTheme.accent)
                                             .padding(.horizontal, 12)
                                             .frame(height: 44)

@@ -103,7 +103,7 @@ struct LinksSection: View {
         if rows.count > Self.shown && !expanded.wrappedValue {
             Button { expanded.wrappedValue = true } label: {
                 Text("Show all \(rows.count)")
-                    .font(.system(size: LivType.body, weight: .medium))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.accent)
                     .frame(height: 44)
                     .frame(maxWidth: .infinity, alignment: .leading)

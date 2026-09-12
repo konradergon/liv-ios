@@ -244,7 +244,7 @@ struct TasksView: View {
             // is not short of eight points.
             Button(action: commitAdd) {
                 Text("Add")
-                    .font(.system(size: LivType.label, weight: .medium))
+                    .font(.system(size: LivType.body, weight: .semibold))
                     .foregroundStyle(LivTheme.accent)
                     .opacity(typed.isEmpty ? LivBar.disabledInk : 1)
                     .padding(.leading, 8)

@@ -100,7 +100,7 @@ struct HistoryCard: View {
                     restore(v)
                 } label: {
                     Text(restoring == v.seq ? "Restoring…" : "Restore")
-                        .font(.system(size: LivType.label, weight: .medium))
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                         .padding(.horizontal, 12)
                         .frame(height: LivRow.touch)

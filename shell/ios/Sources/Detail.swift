@@ -916,7 +916,26 @@ private struct DetailRowLabel: View {
                 // 15pt + 46pt rows: the library panel's density (rev 6 —
                 // "make the grouping UI akin to how the left panel looks").
                 .font(.system(size: LivType.strong))
-                .foregroundStyle(LivTheme.text3)
+                // text2, NOT text3 (owner, 2026-09-12: in this panel the
+                // value is the half that should stand out).
+                //
+                // It already did. A bare value — a date, a plain cell —
+                // draws at full ink, and a `ValueChip` carries its own
+                // fill, which is what makes a chip the foreground object
+                // rather than its ink. So the pair had its hierarchy; the
+                // defect was underneath it. Every property name in this
+                // panel was drawn at strong(20) in text3, the tier
+                // `livPaletteSelfCheck` exempts from the app's 7:1 read
+                // floor on the stated grounds that it holds "a
+                // placeholder, a timestamp, the ✕ on a chip". Forty rows
+                // of 20pt words are none of those, and at 4.53:1 they
+                // were the dimmest readable thing in the app.
+                //
+                // text2 is 7.07:1 and still a clear step under a value at
+                // full ink. Nothing else moves: `ValueChip` is shared
+                // with 24 sites across the app and is not this panel's to
+                // change.
+                .foregroundStyle(LivTheme.text2)
                 .lineLimit(1)
         }
         .layoutPriority(1)
