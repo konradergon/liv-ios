@@ -975,103 +975,22 @@ final class BoxModel: ObservableObject {
 
     // MARK: the vault — a projection, never a second truth
 
-    /// What the folder around the box is, if anything.
-    ///
-    /// The ruling is O14 (`design/p20j-files-projection.md` §1): the box
-    /// stays the ONE truth and the vault folder is a total, continuously
-    /// reconciled, rebuildable PROJECTION with an inbound ingest channel.
-    /// An external edit is not truth until ingested — a window of
-    /// scan-at-open plus a debounce, which the design flags as its one
-    /// honest cost (F1).
-    ///
-    /// `legacy` means the box is not inside a vault folder, so there is no
-    /// projection to speak of. Cheap: no scan.
-    struct LivVaultStatus {
-        let mode: String
-        let root: String
-        let files: Int
-        var isVault: Bool { mode == "vault" }
-    }
-
-    /// One divergence the last scan found. `kind` is
-    /// conflict | missing | newfile | masschange | orphan | edited.
-    struct LivVaultFinding: Identifiable {
-        let kind: String
-        let path: String
-        let count: Int
-        var id: String { kind + ":" + path }
-    }
-
-    func vaultStatus(done: @escaping (LivVaultStatus?) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            var out: LivVaultStatus?
-            if let raw = liv_vault_status_at(path) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                struct Wire: Decodable { var mode: String?; var root: String?; var files: Int? }
-                if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
-                    out = LivVaultStatus(
-                        mode: w.mode ?? "legacy", root: w.root ?? "", files: w.files ?? 0)
-                }
-            }
-            DispatchQueue.main.async { done(out) }
-        }
-    }
-
-    /// Scan, ingest every tier-A finding as ONE "vault-edit" transaction,
-    /// adopt, re-project. One user action, one transaction, one undo step.
-    /// `nil` means busy or legacy — never a silent no-op.
-    func vaultSync(done: @escaping ((edited: Int, created: Int, surfaced: Int)?) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            var out: (edited: Int, created: Int, surfaced: Int)?
-            if let raw = liv_vault_sync_at(path) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                struct Wire: Decodable { var edited: Int?; var created: Int?; var surfaced: Int? }
-                if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
-                    out = (w.edited ?? 0, w.created ?? 0, w.surfaced ?? 0)
-                }
-            }
-            DispatchQueue.main.async {
-                done(out)
-                if let out, out.edited + out.created > 0 { self.refresh() }
-            }
-        }
-    }
-
-    /// Re-materialize every file from an empty manifest, so the folder
-    /// returns byte-identical even when the manifest lies. This is the
-    /// half of "rebuildable" the constitution permits: the projection
-    /// rebuilds from the log, never the log from the files.
-    /// Returns the file count, or nil on busy/legacy/failure.
-    func vaultRebuild(done: @escaping (Int?) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            let n = liv_vault_rebuild_at(path)
-            DispatchQueue.main.async { done(n < 0 ? nil : Int(n)) }
-        }
-    }
-
-    /// A read-only scan: what has diverged, without ingesting any of it.
-    func vaultFindings(all: Bool = false, done: @escaping ([LivVaultFinding]) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            var out: [LivVaultFinding] = []
-            if let raw = liv_vault_findings_at(path, all ? 1 : 0) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                struct Wire: Decodable { var kind: String?; var path: String?; var count: Int? }
-                let wire = (try? JSONDecoder().decode([Wire].self, from: Data(json.utf8))) ?? []
-                out = wire.compactMap { w in
-                    guard let k = w.kind else { return nil }
-                    return LivVaultFinding(kind: k, path: w.path ?? "", count: w.count ?? 0)
-                }
-            }
-            DispatchQueue.main.async { done(out) }
-        }
-    }
+    // THE VAULT'S FOUR OTHER DOORS ARE GONE (2026-09-12), with the card
+    // that was their only caller: `LivVaultStatus`, `LivVaultFinding`,
+    // `vaultStatus`, `vaultSync`, `vaultRebuild`, `vaultFindings`.
+    //
+    // Not because the projection is a bad idea — because on a phone none
+    // of them could ever do anything. `vault_root_of` wants the log at
+    // `<root>/.liv/box/<log>`; `BoxPath.resolve` puts it under an App
+    // Group container at `<container>/liv/liv.log`. Every one of those
+    // verbs opens with its own `vault_root_of` guard and returns early,
+    // so the wrappers marshalled a refusal. Standing rule 6, and the
+    // owner's word on the card they fed.
+    //
+    // The five FFI verbs and the CLI's `liv vault` keep them: a vault is
+    // a folder on a computer, and that is where a shell over this core
+    // has a reachable surface for them. Restoring the phone's reach is
+    // this comment plus a caller.
 
     /// The vault's self-defense notices — a length regression, an in-place
     /// replacement, a conflicted-copy sibling. READ AND CLEAR: whoever

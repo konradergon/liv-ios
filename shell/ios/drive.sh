@@ -28,7 +28,7 @@
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
 #   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
-#   ./drive.sh vault             the Vault card offers controls, or says why not
+#   ./drive.sh settings         the Settings cards render, and the vault is gone
 #   ./drive.sh surface           name the surface actually on screen
 #   ./drive.sh tap <label>       tap by accessibility label, then re-read the surface
 #   ./drive.sh goto <view>       open the panel, pick <view>, assert it rendered
@@ -2092,16 +2092,24 @@ query_text() {
     for c in n.get("children") or []: walk(c)' ''
 }
 
-# THE VAULT CARD: the folder promise, and whether it says anything at all.
+# SETTINGS: the cards that render, and the one that no longer does.
 #
-# Five liv_vault_* verbs backed this in Rust and no client called any of
-# them, so "your work sits in an ordinary folder" had nothing behind it on
-# the phone. This does not test the projection itself (that needs a vault
-# fixture and LIV_BOX_PATH); it asserts the card exists and is HONEST in
-# whichever mode the box is in — either it offers the controls, or it says
-# plainly why there are none. A card that renders empty is the failure.
-cmd_vault() {
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the vault check."; return 1 }
+# This was `vault`, and it asserted the Vault card said EITHER its
+# controls or the reason there were none. It only ever passed through the
+# second branch, because `isVault` is false on every iOS install —
+# `vault_root_of` wants the log at `<root>/.liv/box/<log>` and the app
+# puts it at `<container>/liv/liv.log`. So the check guarded an apology.
+#
+# The card went on 2026-09-12 (owner: "Vault section is just noice that
+# nobody needs to see"). This is the same check turned around: the three
+# always-on cards are on screen, and none of the vault's words are. It
+# fails if the card comes back, which is the only way this can regress.
+#
+# The log-notice card is deliberately NOT asserted here. It appears only
+# when the log has actually been overwritten, which needs a tampered
+# fixture rather than a boot.
+cmd_settings() {
+  cmd_boot >/dev/null 2>&1 || { die "could not boot before the settings check."; return 1 }
   cmd_tap "Library" || return 1
   cmd_tap "Settings" || return 1
   perl -e 'select(undef,undef,undef,1.5)'
@@ -2110,27 +2118,25 @@ cmd_vault() {
   print -r -- "$said" | python3 -c '
 import sys
 t = sys.stdin.read()
-vault = all(k in t for k in ("Folder", "Files", "Sync now", "Rebuild"))
-legacy = "not inside a vault folder" in t
-raise SystemExit(0 if (vault or legacy) else 1)' || {
-    die "the Vault card says neither the controls nor the reason there are none.
-      Either it offers Folder/Files/Sync/Rebuild, or it explains that this box
-      is not inside a vault folder. Rendering nothing is the failure."
+want = ["Appearance", "Reminders", "Fields"]
+missing = [w for w in want if w not in t]
+gone = ["Folder", "Sync now", "Rebuild", "not inside a vault folder"]
+back = [g for g in gone if g in t]
+if missing: print("MISSING " + ", ".join(missing))
+if back: print("VAULT IS BACK: " + ", ".join(back))
+raise SystemExit(1 if (missing or back) else 0)' || {
+    die "the Settings sheet is not what it should be. It must show Appearance,
+      Reminders and Fields, and must show none of the vault's words — the card
+      was deleted because it could never render anything but an apology."
     return 1
   }
-  local verdict
-  if print -r -- "$said" | python3 -c 'import sys; raise SystemExit(0 if "not inside a vault folder" in sys.stdin.read() else 1)'; then
-    verdict="legacy box, and the card says so rather than showing dead controls"
-  else
-    verdict="folder, file count, Sync and Rebuild all on screen"
-  fi
   # PUT THE SCREEN BACK. A check that opens a sheet and walks away hands
   # the next one a screen it did not ask for; that is how a passing build
   # produced three failures in a row here. Terminating is the only close
   # that always works — there is no Done button on this sheet, and a swipe
   # on a detent sheet is not reliably reproducible.
   sim terminate "$UDID" "$APP" >/dev/null 2>&1
-  say "ok    vault: $verdict"
+  say "ok    settings: three cards on screen, and no vault"
 }
 
 settings_text() {
@@ -2381,7 +2387,7 @@ case "${1:-}" in
   under)   cmd_under   || exit 1 ;;
   lens)    cmd_lens    || exit 1 ;;
   facets)  cmd_facets  || exit 1 ;;
-  vault)   cmd_vault   || exit 1 ;;
+  settings) cmd_settings || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
   quiet)   cmd_quiet   || exit 1 ;;
   # The usage block, all of it. This said `2,33p`, which stopped at

@@ -25,18 +25,12 @@ struct SettingsSheet: View {
     /// Dark, light, or follow the system — device state, never a cell.
     @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
 
-    /// The vault card's state. Read on appear, refreshed after a sync or a
-    /// rebuild — never polled: a projection that is quiet has nothing to say.
-    @State private var vault: BoxModel.LivVaultStatus?
-    @State private var findings: [BoxModel.LivVaultFinding] = []
-    /// THE LOG'S OWN NOTICES, and NOT the vault's — see `logCard`.
+    /// THE LOG'S OWN NOTICES, and NOT the vault's — see `logRows`.
     ///
     /// READ AND CLEAR on the Rust side, so these are held here once drained
     /// and shown until the sheet closes. Dropping them would be losing the
     /// only notice a length regression ever gets.
     @State private var alerts: [String] = []
-    @State private var vaultBusy = false
-    @State private var vaultSaid: String?
 
     var body: some View {
         // GROUPS AS CARDS (owner's clips, 2026-08-20). ChatGPT's
@@ -62,12 +56,10 @@ struct SettingsSheet: View {
                 }
                 LivCard(label: "Reminders") { notifyRows.padding(12) }
                 LivCard(label: "Fields") { fieldsRow.padding(12) }
-                // ONLY WHEN SOMETHING IS WRONG WITH THE LOG — and above
-                // the vault, because it is not about the vault.
+                // ONLY WHEN SOMETHING IS WRONG WITH THE LOG.
                 if !alerts.isEmpty {
                     LivCard(label: "The log") { logRows.padding(12) }
                 }
-                LivCard(label: "Vault") { vaultRows.padding(12) }
                 // No Advanced drawer. It held the phone→desk handoff
                 // (status, ledger, Ship now, the satellite path) and the
                 // store's own facts, and it went with every other
@@ -84,7 +76,7 @@ struct SettingsSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(LivTheme.canvas)
         .onAppear {
-            loadVault()
+            loadLogNotices()
         }
     }
 
@@ -319,136 +311,37 @@ struct SettingsSheet: View {
         }
     }
 
-    // MARK: the vault
+    // THE VAULT CARD IS GONE (owner, 2026-09-11: "Vault section is just
+    // noice that nobody needs to see"), and the measurement agrees with
+    // him more strongly than he knew: it could never show anything else.
+    //
+    // `vault_root_of` wants the log at `<root>/.liv/box/<log>` and checks
+    // both directory names; `BoxPath.resolve` puts it at
+    // `<container>/liv/liv.log`, whose parent is named `liv`. So
+    // `isVault` is false on every iOS install, every vault verb bails on
+    // its own `vault_root_of` guard before doing anything, and the card
+    // had exactly one reachable state: a sentence apologising that there
+    // was nothing to project. `drive.sh vault` only ever passed through
+    // that branch, and went with it.
+    //
+    // What went, under standing rule 6: `vaultRows`, `vaultLine`,
+    // `shortRoot`, `finding`, `vaultButton`, `syncVault`, `rebuildVault`,
+    // the four `@State` vars they read, and in `Box.swift` the four
+    // wrappers and two types nothing else called. `vaultAlerts` STAYS —
+    // it is about the log, not the folder, and the commit before this one
+    // is why.
+    //
+    // This is not a claim that the projection was a bad idea. It is a
+    // claim about the phone: the box lives in an App Group container, and
+    // a vault is a folder you keep your own way. A desktop shell over the
+    // same core is where these verbs have a reachable surface, and the
+    // FFI and the CLI keep all five for it.
 
-    /// THE FOLDER IS A PROJECTION, NOT A SECOND TRUTH (O14,
-    /// `design/p20j-files-projection.md` §1). The box is the one truth and
-    /// lives inside the folder; `library/` is written FROM the log and can
-    /// be deleted and rebuilt byte-identical. An edit made in another app
-    /// is not truth until it is ingested, which is what Sync does.
-    ///
-    /// Five verbs backed all of this in Rust and no client called any of
-    /// them, so the promise that your work sits in an ordinary folder had
-    /// nothing behind it on the phone.
-    @ViewBuilder private var vaultRows: some View {
-        if let vault, vault.isVault {
-            vaultLine("Folder", vault.root.isEmpty ? "—" : shortRoot(vault.root))
-            vaultLine("Files", "\(vault.files)")
-            HStack(spacing: 8) {
-                vaultButton("Sync now", busy: vaultBusy) { syncVault() }
-                vaultButton("Rebuild", busy: vaultBusy) { rebuildVault() }
-            }
-            .padding(.top, 10)
-            if let vaultSaid {
-                Text(vaultSaid)
-                    .font(.system(size: LivType.label).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
-                    .padding(.top, 8)
-            }
-            // The log's own notices used to be drawn here, which is what
-            // hid them: they are raised on every open and have nothing to
-            // do with the projection, and this whole branch is unreachable
-            // on a phone. They have their own card now (`logRows`).
-            //
-            // Only speak when something is WRONG. A quiet vault says nothing.
-            if !findings.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(findings) { f in
-                        Text(finding(f))
-                            .font(.system(size: LivType.label))
-                            .foregroundStyle(LivTheme.text2)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.top, 10)
-            }
-        } else {
-            Text("This box is not inside a vault folder, so there is nothing to project.")
-                .font(.system(size: LivType.label))
-                .foregroundStyle(LivTheme.text3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func vaultLine(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text)
-            Spacer(minLength: 12)
-            Text(value)
-                .font(.system(size: LivType.label).monospacedDigit())
-                .foregroundStyle(LivTheme.text3)
-                .lineLimit(1)
-                .truncationMode(.head)
-        }
-        .frame(minHeight: 30)
-    }
-
-    /// The tail of the path. The whole thing is a sandbox URL a person
-    /// cannot act on, and it would wrap three lines to say so.
-    private func shortRoot(_ p: String) -> String {
-        let parts = p.split(separator: "/")
-        return parts.suffix(2).joined(separator: "/")
-    }
-
-    private func finding(_ f: BoxModel.LivVaultFinding) -> String {
-        let what = f.path.isEmpty ? "\(f.count) files" : shortRoot(f.path)
-        return "\(f.kind) · \(what)"
-    }
-
-    private func vaultButton(
-        _ title: String, busy: Bool, action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: LivType.label, weight: .medium))
-                .foregroundStyle(busy ? LivTheme.text3 : LivTheme.accent)
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(Capsule().fill(LivTheme.panel2))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(busy)
-    }
-
-    private func loadVault() {
-        // THE LOG'S NOTICES ARE NOT THE VAULT'S, so they are not asked
-        // for behind the vault's guard. See `logRows`.
+    /// Drain the log's notices, once, on appear. Never polled: a log that
+    /// has not been tampered with has nothing to say, and the verb is
+    /// read-and-clear, so asking twice would lose them.
+    private func loadLogNotices() {
         box.vaultAlerts { alerts = $0 }
-        box.vaultStatus { st in
-            vault = st
-            guard st?.isVault == true else { return }
-            box.vaultFindings { findings = $0 }
-        }
-    }
-
-    private func syncVault() {
-        vaultBusy = true
-        vaultSaid = nil
-        box.vaultSync { result in
-            vaultBusy = false
-            guard let r = result else {
-                vaultSaid = "Busy — try again in a moment."
-                return
-            }
-            // One transaction, so one sentence.
-            vaultSaid = "Ingested \(r.edited) edited, \(r.created) new"
-                + (r.surfaced > 0 ? ", \(r.surfaced) surfaced" : "") + "."
-            loadVault()
-        }
-    }
-
-    private func rebuildVault() {
-        vaultBusy = true
-        vaultSaid = nil
-        box.vaultRebuild { n in
-            vaultBusy = false
-            vaultSaid = n.map { "Rewrote \($0) files from the log." }
-                ?? "Busy — try again in a moment."
-            loadVault()
-        }
     }
 
 }
