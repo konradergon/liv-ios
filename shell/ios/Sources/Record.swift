@@ -74,7 +74,7 @@ struct RecordCard: View {
     var body: some View {
         // The same focus request a new note claims: "New task" must land
         // you typing the name, not looking at an empty field.
-        RecordBody(id: id, autoFocus: desk.consumeFocus(id), inCard: true)
+        RecordBody(id: id, autoFocus: desk.consumeFocus(id))
             // A card is a NEW view per record. Following a [[link]] from
             // one record to another only reassigns desk.recordCard, so
             // without this SwiftUI reuses the view and the embedded
@@ -105,10 +105,9 @@ struct MinimisedRecordPill: View {
                 desk.restoreRecord()
             } label: {
                 HStack(spacing: 8) {
-                    IconChip(
+                    LivIcon(
                         glyph: LivKind.glyph(of: box.entity(id)),
-                        color: LivKind.color(of: box.entity(id)), size: 22,
-                        on: LivTheme.panel2)
+                        color: LivKind.color(of: box.entity(id)), size: 20)
                     Text(box.entity(id).map(livRowTitle) ?? "Untitled")
                         .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.text)
@@ -134,7 +133,6 @@ struct MinimisedRecordPill: View {
         .frame(height: 38)
         .background(Capsule().fill(LivTheme.panel2))
         .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
@@ -176,9 +174,6 @@ struct RecordBody: View {
     let id: UInt64
     /// A record created a moment ago: open with the caret in the name.
     var autoFocus: Bool = false
-    /// Inside a card there are no floating doors overhead, so the name
-    /// does not need to duck under them.
-    var inCard: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -199,7 +194,7 @@ struct RecordBody: View {
             if let row = box.entity(id) {
                 body(row)
             } else {
-                EmptyHint("This was deleted.")
+                EmptyHint("Deleted")
                     .frame(maxHeight: .infinity)
             }
         }
@@ -216,7 +211,9 @@ struct RecordBody: View {
             if pendingName == fresh { pendingName = nil }
             // The same reseed guard the note title uses: an external
             // rename must land, a live edit must not be stomped.
-            if name != fresh, name == "" || name == old { name = fresh }
+            if let seed = LivName.reseed(draft: name, was: old, now: fresh) {
+                name = seed
+            }
         }
     }
 
@@ -229,7 +226,7 @@ struct RecordBody: View {
                 // date edited there are the same code.
                 EntityInspector(id: id, scrolls: false)
                 notesSection
-                if inCard { trashRow }
+                trashRow
             }
             .padding(.bottom, 40)
         }
@@ -242,6 +239,14 @@ struct RecordBody: View {
     /// destructive row, at the bottom where destructive things belong,
     /// and only in the card (the properties PANEL keeps its ••• two
     /// inches away and still only describes — owner, 2026-08-02).
+    ///
+    /// "Only in the card" is now true BY CONSTRUCTION rather than by a
+    /// flag: a record is a card and never a tab (§13, owner 2026-08-08),
+    /// so `RecordBody` has exactly one construction site and it is
+    /// `RecordCard`. The `inCard` parameter that used to guard this row
+    /// was never false, and went on 2026-09-12. Should a record ever get
+    /// a second home, that ruling is what has to be reversed first —
+    /// and whoever reverses it re-reads this row.
     ///
     /// Soft and reversible like every trash in this app.
     private var trashRow: some View {
@@ -284,24 +289,28 @@ struct RecordBody: View {
                 if !now { commitName() }
             }
             .padding(.horizontal, 16)
-            .padding(.top, inCard ? 18 : 56)
+            // 18, not the 56 a screen's name needs: this body is only
+            // ever a card, and inside a card there are no floating doors
+            // overhead for the name to duck under.
+            .padding(.top, 18)
             .padding(.bottom, 14)
     }
 
-    /// A record with no name cell still has a title everywhere else in
-    /// the app — the core derives one from its first line. Showing
-    /// "Untitled" here would contradict the list you just tapped, so the
-    /// derived name is the PROMPT: it reads right, and typing over it is
-    /// what writes the name. Nothing is written by merely opening it.
+    /// THE SAME TITLE THE LIST SHOWED, as the prompt — so the field
+    /// reads right, typing over it is what writes the name, and nothing
+    /// is written by merely opening the card.
+    ///
+    /// It used to branch: `livRowTitle`, unless that came back
+    /// "Untitled", in which case… `livRowTitle` again. Both arms were
+    /// the same call, and the word itself has not been returned since
+    /// 2026-09-06, when a nameless thing started reading as its kind.
     private func placeholder(_ row: EntityRow) -> String {
-        let derived = livRowTitle(row)
-        if derived != "Untitled" { return derived }
-        return (row.kinds ?? []).contains("event") ? "New event" : "Untitled"
+        livRowTitle(row)
     }
 
-    private var storedName: String {
-        (box.entity(id)?.cells ?? []).first { $0.property == "name" }?.value ?? ""
-    }
+    /// The name cell — `LivName.stored` since 2026-09-07, one reading
+    /// across the desk, this card and the properties card.
+    private var storedName: String { LivName.stored(box.entity(id)) }
 
     /// @FocusState set during a view update is dropped; one runloop hop
     /// later it takes.
@@ -320,17 +329,19 @@ struct RecordBody: View {
         notesShown = (box.entity(id)?.contentPrint ?? 0) != 0
     }
 
+    /// The rules live in `LivName.commit` (Kit.swift). This copy was
+    /// missing the desk's trashed-entity guard, which is exactly what a
+    /// second hand-written commit costs.
     private func commitName() {
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
-            name = stored  // an emptied field reverts, never erases the name
-            return
+        switch LivName.commit(typed: name, row: box.entity(id), pending: pendingName) {
+        case .write(let typed):
+            pendingName = typed
+            box.set(id, "name", typed)
+        case .revert(let stored):
+            name = stored
+        case .ignore:
+            break
         }
-        guard typed != stored, typed != pendingName else { return }
-        pendingName = typed
-        box.set(id, "name", typed)
     }
 
     // MARK: notes — the note editor, embedded

@@ -46,11 +46,21 @@ final class DeskModel: ObservableObject {
     /// (Desk.swift).
     @Published private(set) var chromeAway = false
 
-    /// The offset the last decision was made at. Kept within
-    /// `chromeThreshold` of the live offset, so a direction change
-    /// answers on the next few points rather than having to undo the
-    /// whole scroll first.
+    /// WHERE THE CURRENT TRAVEL BEGAN — the offset the scroll last
+    /// turned around at. The distance from here is what the threshold
+    /// measures, so it only moves on a REVERSAL.
+    ///
+    /// It used to be clamped to within `chromeThreshold` of the live
+    /// offset on every sample, which meant it could never be more than
+    /// the threshold behind — so `y > anchor + threshold` was false by
+    /// construction on any smooth scroll, and the chrome only ever
+    /// retired when one geometry sample happened to jump the whole 44pt
+    /// at once. Measured on the Calendar, 2026-09-07: a swipe produced
+    /// 49 callbacks ending at y=795 and the chrome never moved.
     private var chromeAnchor: CGFloat = 0
+
+    /// Which way the last sample was going, so a turn can be spotted.
+    private var chromeDescending = true
 
     /// How far you must scroll before the chrome agrees you meant it.
     /// Small enough to feel immediate, large enough that the rubber-band
@@ -63,32 +73,102 @@ final class DeskModel: ObservableObject {
     private let chromeHome: CGFloat = 40
 
     /// One scroll offset, in points from the content's top.
+    ///
+    /// HYSTERESIS FROM THE LAST TURN, not from the last sample. Scroll
+    /// down `chromeThreshold` from wherever you last changed direction
+    /// and the chrome goes; scroll back up as far and it returns. Near
+    /// the top it is always home, whatever the direction.
     func scrolled(to y: CGFloat) {
+        guard Date() >= chromeSettled else { return }
+        // The band has just finished moving: this sample is the first
+        // honest one, so measure from HERE rather than from the number
+        // the animation left behind.
+        if lastScroll != y, chromeSettled != .distantPast {
+            chromeSettled = .distantPast
+            chromeAnchor = y
+            lastScroll = y
+            return
+        }
         if y <= chromeHome {
             chromeAnchor = y
+            chromeDescending = true
             setChrome(away: false)
             return
         }
-        if y > chromeAnchor + chromeThreshold { setChrome(away: true) }
-        if y < chromeAnchor - chromeThreshold { setChrome(away: false) }
-        chromeAnchor = min(max(chromeAnchor, y - chromeThreshold), y + chromeThreshold)
+        // A turn re-bases the measurement, so coming back costs the same
+        // as going did — and so a long smooth scroll in one direction
+        // keeps measuring from where it started.
+        let descending = y >= lastScroll
+        if descending != chromeDescending {
+            chromeDescending = descending
+            chromeAnchor = lastScroll
+        }
+        lastScroll = y
+        if descending {
+            if y > chromeAnchor + chromeThreshold { setChrome(away: true) }
+        } else {
+            if y < chromeAnchor - chromeThreshold { setChrome(away: false) }
+        }
     }
+
+    /// The previous sample, for spotting the turn.
+    private var lastScroll: CGFloat = 0
+
+    /// WHILE THE BAND IS MOVING, THE OFFSET IS THE BAND'S, NOT THE
+    /// FINGER'S. Retiring the chrome collapses the top inset, and that
+    /// collapse ANIMATES — so for the length of the animation every
+    /// scroll sample carries a slice of the inset's own travel. The
+    /// decision would then be reading its own output: traced on the
+    /// Calendar (2026-09-07) as 909 / 932 / 854 / 802 / 879 / 931 with
+    /// the doors flickering in and out on every frame.
+    ///
+    /// A constant correction cannot fix this, because the inset passes
+    /// through every value in between. Ignoring the samples until the
+    /// motion settles can, and costs nothing: nobody decides to reverse
+    /// a scroll within a fifth of a second of starting it.
+    private var chromeSettled: Date = .distantPast
 
     /// Back on screen, unconditionally — leaving a surface, opening a
     /// menu, anything that is not reading.
     func chromeHomeAgain() {
         chromeAnchor = 0
+        lastScroll = 0
+        chromeDescending = true
+        chromeSettled = .distantPast
         setChrome(away: false)
     }
 
     private func setChrome(away: Bool) {
         guard away != chromeAway else { return }
+        chromeSettled = Date().addingTimeInterval(LivMotion.navSeconds + 0.08)
         withAnimation(LivMotion.nav) { chromeAway = away }
     }
 
     /// WHICH STATE YOU ARE IN. The bar's key names it and the Go-to menu
-    /// changes it; there is no "no state" — Docs is one of them.
-    @Published var state: Feature = .notes
+    /// changes it; there is no "no state". `init` overwrites this with
+    /// Today, which is where the app launches; the declaration needs a
+    /// value and the first view in the panel's order is the honest one.
+    @Published var state: Feature = .today
+
+    /// IS A DOCUMENT LYING ON THE DESK. **The desk's own state**, beside
+    /// `state` rather than borrowed from it (2026-09-10,
+    /// design/navigation-study.md §4.3).
+    ///
+    /// Until now a document rendered only while `state == .notes`, so
+    /// opening a note from Today MOVED you to Notes. That one borrow is
+    /// what made Notes mean three things at once — a peer view, the list
+    /// of every note, and the only surface a document could be drawn on —
+    /// and it is what the owner kept hitting from the other end: the lit
+    /// panel row said Notes when the note came from Today, and `‹` out of
+    /// a note opened off the Notes list did nothing at all (it landed on
+    /// `.state(.notes)`, which is where you already were, with the
+    /// document still on top).
+    ///
+    /// With the desk holding its own answer, the view underneath a
+    /// document is the view you opened it from, and laying the document
+    /// down uncovers it. `state` never changes when a document opens.
+    @Published private(set) var shown = false
+
     /// One plane per view (`DeskPlanes`, Plane.swift). The strip you see
     /// is the current view's, so every caller of `tabs` and `activeTabId`
     /// below keeps working and none of them had to learn what a plane is
@@ -115,26 +195,27 @@ final class DeskModel: ObservableObject {
     /// same fact is how they start to disagree.
     /// The document ON SCREEN, not merely the one the desk has active.
     ///
-    /// The `state` guard is load-bearing since the desk went app-wide
-    /// (2026-08-28). While each view had its own plane, being in Today
-    /// meant reading Today's plane, which held positions and never an
-    /// entity — so this was nil there for free. One desk keeps its
-    /// active tab wherever you go, which is the point of it, and without
-    /// the guard `goBack()` from a note into Today reported the note as
-    /// still open (caught by `-places.selfcheck`).
+    /// The guard is load-bearing since the desk went app-wide
+    /// (2026-08-28): one desk keeps its active tab wherever you go, which
+    /// is the point of it, so "there is an active tab" is not "you are
+    /// looking at it" — without the guard `goBack()` out of a note
+    /// reported the note as still open (caught by `-places.selfcheck`).
+    ///
+    /// It used to be `state == .notes`, which answered the right question
+    /// with the wrong fact and cost a view its own identity. `shown` is
+    /// that fact, held where it belongs.
     var openDoc: UInt64? {
-        guard state == .notes, case .entity(let id)? = activeTab?.content else { return nil }
+        guard shown, case .entity(let id)? = activeTab?.content else { return nil }
         return id
     }
 
     var activeTab: DeskTab? { planes.activeTab }
 
-    // MARK: positions — a tab in a view that is not Notes
+    // MARK: positions — where a view was left
 
-    /// Where the active tab of `feature` is parked, in that view's own
-    /// vocabulary (`Positions.swift`). `nil` means the plane has no tab
-    /// yet and the view shows its root — which is what no tabs has always
-    /// meant in Notes.
+    /// Where `feature` is parked, in that view's own vocabulary
+    /// (`Positions.swift`). `nil` means it has never been moved and the
+    /// view shows its root.
     func position(_ feature: Feature) -> String? { planes.position(feature) }
 
     /// Park the active tab at `token`. **Moving is what mints the tab**:
@@ -195,6 +276,18 @@ final class DeskModel: ObservableObject {
     /// The trash list — the only door to `liv_restore_at`.
     @Published var trashShown = false
     @Published var workspaceShown = false
+    /// ANY OTHER CARD A SURFACE PUTS UP over itself — the calendar's day
+    /// picker is the first, and the reason this exists.
+    ///
+    /// A COUNTER, NOT A FIFTH FLAG. Every name above was added to
+    /// `deskInFront` one at a time, each after the same bug reached the
+    /// owner: a drag near the bezel latches a panel behind whatever is
+    /// covering the desk, and every touch move then republishes
+    /// `panelDrag` and re-renders the surface underneath. The list is
+    /// the smell — a surface that puts up a card should not have to get
+    /// its name added here, so it raises this instead and any number of
+    /// them can be up at once.
+    @Published var cards = 0
     /// The workspace sheet should open with the NEW FILTER form already
     /// composing. Filters are reached from the library panel now; the
     /// form still lives in the sheet, so this is how the panel asks for
@@ -217,34 +310,40 @@ final class DeskModel: ObservableObject {
     /// verbs — the same shape as `shapeOf` above, and the reason the
     /// model can offer a menu it has no way to build itself.
     var createMenu: (() -> LivMenu)?
-    /// Make the thing the surface in front of you HOLDS, with no menu:
-    /// a task in Tasks, an event on the day Calendar is showing, a note
-    /// everywhere else (owner, 2026-08-28 — note creation was two taps
-    /// by every route, including the one you take most).
+    /// MAKE ONE NOTE, NO MENU — the bar's `+`, the switcher grid's new
+    /// card, and a bare `liv://capture`.
     ///
-    /// The menu is still there, on a long press. This inverts the cost:
-    /// the common thing is one tap and the exception is a tap and a
-    /// hold, where before everything cost two.
+    /// This was two hooks. `createHere` made "the thing the surface in
+    /// front of you holds" — a task in Tasks, an event on the Calendar,
+    /// a note everywhere else — and `newNote` made a note. On
+    /// 2026-09-10 the owner settled it the other way: *"'+' creates note
+    /// everywhere. holding it lets you create anything."* Tasks and the
+    /// Calendar make their own things where those things live, so `+`
+    /// stopped being the door that has to guess, and the two hooks
+    /// became one answer.
     ///
-    /// It is not a new axis. Creating already belongs to where you
-    /// stand — a capture in a filtered workspace inherits that
-    /// workspace's cells (`WorkspaceModel.stamp`) — so this extends
-    /// "where you are decides the cells" to "where you are decides the
-    /// kind".
-    var createHere: (() -> Void)?
-
-    /// Make one note, no menu. `newTab` in the Notes grid uses this:
-    /// every card in that grid is a document, so asking "note, task,
-    /// event, file or scan?" is a question with one sensible answer
-    /// (owner, 2026-08-28).
+    /// The 2026-08-28 ruling that put the menu behind a hold is
+    /// untouched and is the reason this works: the common thing is one
+    /// tap and every exception is a tap and a hold, where before
+    /// everything cost two.
     var newNote: (() -> Void)?
-    /// One panel being dragged: which one, whether the drag OPENS or
-    /// CLOSES it, and the finger's travel so far. It lives on the MODEL
-    /// because the bottom bar and the pill, which travel with the desk,
-    /// are drawn by RootView, one level up.
+    /// A catch from OUTSIDE with the text already in hand —
+    /// `liv://capture?text=…`. Wired by DeskHost beside `newNote`, and
+    /// parked by `Routes` on a cold launch the same way (2026-09-09).
+    var catchText: ((String) -> Void)?
+    /// The library being dragged: whether the drag OPENS or CLOSES it,
+    /// and the finger's travel so far. It lives on the MODEL because the
+    /// bottom bar and the pill, which travel with the desk, are drawn by
+    /// RootView, one level up.
+    ///
+    /// IT USED TO NAME WHICH PANEL. There were two — the library on the
+    /// leading edge and the note's properties on the trailing one — and
+    /// every member here had a `which == .library ? … : …` in it for the
+    /// mirror image. The properties became a card on 2026-08-29 (owner:
+    /// "maybe card everywhere. start with one"), so the enum had one
+    /// case left and every ternary had one live branch. A one-case enum
+    /// is a fork in the road with a wall down one side.
     struct PanelDrag: Equatable {
-        enum Which { case library, inspector }
-        let which: Which
         let opening: Bool
         var amount: CGFloat = 0
 
@@ -252,26 +351,34 @@ final class DeskModel: ObservableObject {
         /// closing one.
         var base: CGFloat { opening ? 0 : 1 }
 
-        /// Finger travel that makes this panel MORE visible. The library
-        /// comes from the left, so rightward is toward; the properties
-        /// come from the right, so leftward is.
-        var toward: CGFloat { which == .library ? amount : -amount }
-
-        /// 0 = fully off screen, 1 = fully in. `width` is the screen.
+        /// 0 = fully off screen, 1 = fully in. The library comes from the
+        /// left, so rightward travel is toward.
         func progress(_ width: CGFloat) -> CGFloat {
             guard width > 0 else { return base }
-            return min(1, max(0, base + toward / width))
+            return min(1, max(0, base + amount / width))
         }
 
         /// The travel that would land the panel exactly at `target`.
         func amount(for target: CGFloat, width: CGFloat) -> CGFloat {
-            let toward = (target - base) * width
-            return which == .library ? toward : -toward
+            (target - base) * width
         }
     }
 
     /// Which panel the finger is currently dragging. nil = none.
     @Published var panelDrag: PanelDrag?
+
+    /// WHERE A SURFACE PAGES SIDEWAYS ON ITS OWN, in window coordinates.
+    ///
+    /// The panel is dragged in from anywhere (owner, 2026-08-08), which
+    /// is right everywhere except on top of something that already means
+    /// something by a sideways drag. The calendar's month grid is the
+    /// only such place in the app; it publishes its frame here and the
+    /// window recognizer refuses to start inside it.
+    ///
+    /// NOT `@Published`: the recognizer reads it through a closure at
+    /// touch time, and publishing it would re-render the desk every time
+    /// the grid's frame settled.
+    var pagerZone: CGRect = .zero
 
     /// The desk is the surface in FRONT — nothing full-screen covers it.
     ///
@@ -287,79 +394,67 @@ final class DeskModel: ObservableObject {
     /// A view is no longer one of these: it opens INSIDE the library
     /// (2026-08-15), which is a place on the strip, not a cover — the
     /// swipe back to the desk has to keep working while you are in one.
+    /// (2026-09-07: `cards` closes the list. The owner reported the same
+    /// lag a second time — *"the picker that comes up when you select
+    /// date title in calendar. It is low fps and laggy"* — and the cause
+    /// was the same mechanism reached through a door this list did not
+    /// know about. The `pagerZone` veto added on 2026-08-31 could not
+    /// help: `PanelDrag`'s edge escape returns true before the veto is
+    /// consulted, and the grid is padded only 16pt, so a sideways drag
+    /// on the Monday or Sunday column near the bezel latched anyway.)
     var deskInFront: Bool {
         !searchShown && !cameraShown && !settingsShown
-            && !workspaceShown
+            && !workspaceShown && cards == 0
     }
 
-    /// How far IN a panel is: 0 fully off screen, 1 fully home. ONE
+    /// How far IN the library is: 0 fully off screen, 1 fully home. ONE
     /// answer, because three things read it — the panel's own offset,
     /// the desk's travel, and the doors' fade — and a pixel of
     /// disagreement between them is visible.
-    func panelProgress(_ which: PanelDrag.Which) -> CGFloat {
-        let shown = which == .library ? libraryShown : inspectorShown
-        guard panelDrag?.which == which else { return shown ? 1 : 0 }
-        return panelDrag!.progress(Self.travel(which))
+    var panelProgress: CGFloat {
+        guard let drag = panelDrag else { return libraryShown ? 1 : 0 }
+        return drag.progress(Self.travel)
     }
 
-    /// HOW FAR A PANEL TRAVELS. The library stops short of the right edge
-    /// now (owner, 2026-08-23: "Panel should not be full screen!"), so its
-    /// travel is its own width and no longer the screen's. The properties
-    /// panel is unchanged — it is about the note in front of it and still
-    /// stands edge to edge (owner, 2026-08-15).
+    /// HOW FAR THE PANEL TRAVELS. It stops short of the right edge
+    /// (owner, 2026-08-23: "Panel should not be full screen!"), so its
+    /// travel is its own width and not the screen's.
     ///
-    /// ONE function, because the panel's offset, the desk's shift and the
+    /// ONE value, because the panel's offset, the desk's shift and the
     /// drag's settle all have to agree to the pixel. They read
     /// `UIScreen.main.bounds.width` from four places before this, which is
     /// four chances to disagree (standing rule 4).
-    static func travel(_: PanelDrag.Which) -> CGFloat {
-        LivPanel.width
-    }
+    static var travel: CGFloat { LivPanel.width }
 
-    /// The two panels do NOT move alike, and the reason is what each
-    /// one is (owner, 2026-08-17: "make the left panel parked on the
-    /// right and have you move to / from it").
+    /// How far the desk stands aside. The LIBRARY is a PLACE — the app's
+    /// primary menu — so it and the surface in front are one horizontal
+    /// strip: the menu is parked off the left edge, everything else is
+    /// parked to its right, and going between them is travel. Opening the
+    /// menu pushes the surface right; it waits there while you choose
+    /// (owner, 2026-08-17: "make the left panel parked on the right and
+    /// have you move to / from it").
     ///
-    /// The LIBRARY is a PLACE — the app's primary menu — so it and the
-    /// surface in front are one horizontal strip: the menu is parked off
-    /// the left edge, everything else is parked to its right, and going
-    /// between them is travel. Opening the menu pushes the surface a
-    /// whole screen right; it waits there while you choose.
-    ///
-    /// The PROPERTIES panel is about the note you are already looking
-    /// at, so it stays a CURTAIN over a surface that does not move
-    /// (owner, 2026-08-15: "maybe having properties panel behave like a
-    /// curtain though").
-    ///
-    /// This is the strip of 2026-08-15 restored, deliberately: it was
-    /// withdrawn the next day with the surface work it arrived in, and
-    /// it is right again now that the left panel is where the app's
-    /// views live.
-    /// How far the desk stands aside, and which way. The library pushes
-    /// it right, the properties panel pulls it left, and nothing opens
-    /// both at once.
-    var deskShift: CGFloat {
-        (panelProgress(.library) - panelProgress(.inspector)) * Self.travel(.library)
-    }
+    /// NOTHING ELSE PUSHES IT. The properties used to pull it the other
+    /// way, and they are a card now — a card lies OVER the desk, so the
+    /// desk does not move at all when it comes up. `drive.sh panel`
+    /// measures exactly that, because a sheet that still shoves the desk
+    /// is a panel in a sheet's clothes.
+    var deskShift: CGFloat { panelProgress * Self.travel }
 
-    /// Which panel is out, if either. The desk's mask, its shadow and
-    /// the wash that takes its touches all need to know which edge they
-    /// are answering to.
-    var openPanel: PanelDrag.Which? {
-        if panelProgress(.library) > 0 { return .library }
-        if panelProgress(.inspector) > 0 { return .inspector }
-        return nil
-    }
+    /// How far the panel is out, 0…1 — read by the desk's mask, its
+    /// shadow, and the wash that takes its touches.
+    var panelOut: CGFloat { panelProgress }
 
-    /// How far a panel — either one — is out, 0…1.
-    var panelOut: CGFloat {
-        max(panelProgress(.library), panelProgress(.inspector))
-    }
-
-    /// The metadata inspector covers the active entity tab's body.
-    /// Lifted to the model so DeskHost's floating chevron can drive it;
-    /// reset on every tab move — metadata is a visit, not a mode.
+    /// Is the note's properties CARD up? It was a panel on the trailing
+    /// edge until 2026-08-29 (owner: "maybe card everywhere. start with
+    /// one") and it is a sheet now, like the task and event cards beside
+    /// it — so this no longer takes part in any panel arithmetic. It is
+    /// reset on every tab move: metadata is a visit, not a mode.
     @Published var inspectorShown = UserDefaults.standard.bool(forKey: "desk.boot.inspector")
+    /// The open document's version history, as a card (2026-09-09). Same
+    /// shape as the properties card: a system sheet hosted by RootView,
+    /// gated on `openDoc`, reset wherever the inspector is.
+    @Published var historyShown = false
 
     // MARK: records — a card over where you stand, never a tab (Option C)
 
@@ -458,7 +553,33 @@ final class DeskModel: ObservableObject {
         for tab in planes.inactive { close(tab.id) }
     }
 
+    /// A tab picked from the switcher: onto the screen, not merely made
+    /// active. One desk (2026-08-28) meant the switcher opens from every
+    /// view, and its cards called `focus`, which sets the active tab and
+    /// nothing else — so from Today the tap closed the grid and Today
+    /// kept drawing, because a document then rendered only in Notes and
+    /// `openDoc` was nil elsewhere by design. Nothing happened, visibly,
+    /// until you walked to Notes (owner, 2026-09-09).
+    ///
+    /// A document goes through the one door every open goes through, so
+    /// it lands on the desk with the way back pushed, exactly as a row in
+    /// a list does. A position tab (pre-2026-08-28 planes, folded away on
+    /// read) has no document to show, so picking one lays down whatever
+    /// is on the desk and leaves you in the view.
+    func show(_ tab: DeskTab) {
+        switch tab.content {
+        case .entity(let id): openDocument(id)
+        case .position:
+            layDown()
+            focus(tab.id)
+        }
+    }
+
     /// Activate a tab. Every activation path funnels here.
+    ///
+    /// Activation is NOT arrival: this leaves `state` and `shown` alone,
+    /// so a caller that wants the tab on screen goes through `show` (from
+    /// the switcher) or `open` (from anywhere else).
     func focus(_ tabId: UUID) {
         // Stamp FIRST and unconditionally: re-opening the tab you are
         // already on is still using it, and the early return below would
@@ -581,40 +702,86 @@ final class DeskModel: ObservableObject {
         planes.adopt(workspace: id)
         returns.clear()
         switcherShown = false
-        state = .notes
+        // The other place's document does not come along. Where you are
+        // STANDING does: a workspace is a different set of things, not a
+        // different app, and being thrown to Notes on every switch was
+        // only ever the old borrow showing through.
+        shown = false
         setLibrary(false, animated: false)
         menu = nil
         inspectorShown = false
+        historyShown = false
         settingsShown = false
         objectWillChange.send()
     }
 
     // MARK: going places
 
-    /// The Go-to menu's one door. A state REPLACES the state you were in
-    /// — states are roots, never children of each other — and Docs keeps
-    /// whatever document was open, so "Notes" from the calendar puts you
-    /// back in the note you were writing.
-    func go(_ feature: Feature) {
-        guard feature != state else { return }
+    /// THE ONE DOOR TO A VIEW — the panel's rows, the Go-to menu, a
+    /// `liv://` link that names a view, the rehearsal flags. A state
+    /// REPLACES the state you were in (states are roots, never children
+    /// of each other) and it LAYS THE DOCUMENT DOWN, so the view you
+    /// named is the view you get.
+    ///
+    /// This absorbed `goToRoot` on 2026-09-10. That verb existed to
+    /// reconcile two answers to "am I in a document" — the panel had one
+    /// branch for the view you were already in and another for arriving
+    /// from elsewhere, and the same row landed on the list or in a note
+    /// depending on state the row does not show (owner, 2026-09-09:
+    /// *"sometimes when selecting Notes from the panel it gets you to an
+    /// open note instead of showing the list"*). With `shown` there is
+    /// only one answer to reconcile, so there is only one door.
+    ///
+    /// A POSITION SURVIVES, A DOCUMENT DOES NOT. The Calendar's month and
+    /// Today's day are where you left a tool — a scroll position, still
+    /// that view. A document is a different SURFACE over it.
+    ///
+    /// The note is not lost or closed: it is still on the desk, and the
+    /// bar's numbered key opens the switcher that lands you back on it
+    /// from any view (rev 58).
+    ///
+    /// The guard reads "nothing to do": naming the view you are standing
+    /// in with nothing over it. With a document over it there is plenty
+    /// to do — that tap is how you get out.
+    /// `at` parks the view at a position on the way in (`LivPosition`),
+    /// for a caller that means a PLACE INSIDE a view rather than the view
+    /// — `liv://notes` and the `-desk.boot notes` flag, which since
+    /// 2026-09-10 mean Everything's Notes lens. Parked before the
+    /// animation, so the surface draws the right lens on its first frame
+    /// instead of showing the old one and swapping.
+    func go(_ feature: Feature, at position: String? = nil) {
+        if let position { planes.park(feature, at: position) }
+        guard feature != state || shown else { return }
         endEditing()
         returns.clear()
-        withAnimation(LivMotion.nav) { state = feature }
+        withAnimation(LivMotion.nav) {
+            state = feature
+            shown = false
+        }
         setLibrary(false)
         menu = nil
         chromeHomeAgain()
     }
 
-    /// Up, out of a document, to the list of them. The state does not
-    /// change: you were in Docs the whole time.
-    /// **The tabs stay open.** Before the plane came back this cleared
-    /// the one document slot; now it deselects, which is the same thing
-    /// on screen and a different thing underneath — your tabs are where
-    /// you left them.
-    func showList() {
+    /// LAY THE DOCUMENT DOWN — the desk goes back to showing the view you
+    /// are standing in, whichever one that is.
+    ///
+    /// **The tabs stay open**, and so does the ACTIVE one. This is what
+    /// is on SCREEN, not what is on the desk: the note you were reading
+    /// is one tap away on the bar's numbered key. Was `showList`, which
+    /// deselected the tab as well — a second fact to keep in step, for no
+    /// visible difference.
+    ///
+    /// The way back goes with it, as it does on every deliberate move:
+    /// you asked for the view, so `‹` is not a way back into the note.
+    /// `go` says these same three lines rather than calling this, because
+    /// `state` has to change inside the SAME animation as `shown` or the
+    /// old surface slides out while the new one is already drawn.
+    func layDown() {
+        guard shown else { return }
         endEditing()
         returns.clear()
-        withAnimation(LivMotion.nav) { planes.setActive(nil) }
+        withAnimation(LivMotion.nav) { shown = false }
     }
 
     /// Where `‹` on the bar would take you, or nil when there is nothing
@@ -626,7 +793,8 @@ final class DeskModel: ObservableObject {
     /// need it and `openDocument` computed it inline; three copies of
     /// one answer is how they start to disagree (standing rule 4).
     var here: LivPlace {
-        state == .notes && openDoc != nil ? .document(openDoc!) : .state(state)
+        if let id = openDoc { return .document(id) }
+        return .state(state)
     }
 
     /// The next place `›` would take you, or nil — which is most of the
@@ -653,12 +821,21 @@ final class DeskModel: ObservableObject {
             switch place {
             case .state(let feature):
                 state = feature
-                // Leaving Notes for Today does not CLOSE what you had
-                // open — the desk keeps it, and coming back resumes it.
-                // It stops being `openDoc` because you are not looking
-                // at it; the tab is still there.
+                // Stepping back out of a document does not CLOSE it —
+                // the desk keeps it, and stepping forward resumes it. It
+                // stops being `openDoc` because it is no longer on
+                // screen; the tab is still there.
+                //
+                // Laying it down is the whole of what changed here: this
+                // used to set `state` alone, so `‹` out of a note opened
+                // off the Notes list landed on `.state(.notes)` — where
+                // you already were, with the note still on top — and did
+                // nothing at all.
+                shown = false
             case .document(let id):
-                state = .notes
+                // The view underneath is whatever it was. A document is
+                // a surface over a view now, not a view of its own.
+                shown = true
                 focus(planes.open(entity: id))
             }
         }
@@ -715,10 +892,14 @@ final class DeskModel: ObservableObject {
             surfaceCleanup()
             return
         }
-        // Where the labelled back will go: the state you were in, or the
+        // Where the labelled back will go: the view you were in, or the
         // document you were reading before this one.
         returns.push(here)
-        state = .notes
+        // ONTO the view you are standing in, which does not change. The
+        // panel's lit row keeps saying Today while you read a note you
+        // opened from Today, and `‹` puts you back on Today's list of
+        // rows rather than on Notes (2026-09-10).
+        shown = true
         // Append or focus — the whole difference tabs make. Opening a
         // second note no longer replaces the first.
         focus(planes.open(entity: entityId))
@@ -734,6 +915,7 @@ final class DeskModel: ObservableObject {
         withAnimation(LivMotion.nav) {
             menu = nil
             inspectorShown = false
+            historyShown = false
         }
         searchShown = false
         cameraShown = false
@@ -804,24 +986,27 @@ final class KeyboardWatch: ObservableObject {
 /// as a second, duller rim. Below iOS 26 they come back, because a flat
 /// material with no rim has no edge at all.
 ///
-/// `tinted` is the ON state — the library door while the menu is open.
+/// NO ON STATE, and that is the decision rather than an omission. This
+/// said "`tinted` is the ON state — the library door while the menu is
+/// open" until 2026-09-07, and it had not been true since 2026-08-28:
+/// the door turning accent was called amateur, and it was also the
+/// wrong idea — a tint says "selected", and a door standing open is not
+/// a selection. The door says it is open by WIDENING PanelMark's
+/// column (`Glyph.swift`). The `tinted` flag itself outlived that by
+/// ten days, with both of its arms unreachable and a comment insisting
+/// they were live.
 struct LivGlass<S: Shape>: ViewModifier {
     let shape: S
-    var tinted = false
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             // NOT `.interactive()`: that variant takes the touch for its
             // own press effect, and a button wearing it stops firing
             // (the library door, found live 2026-08-17).
-            content.glassEffect(
-                tinted ? .regular.tint(LivTheme.accent) : .regular, in: shape)
+            content.glassEffect(.regular, in: shape)
         } else {
             content
-                .background(
-                    tinted ? AnyShapeStyle(LivTheme.accent) : AnyShapeStyle(.ultraThinMaterial),
-                    in: shape
-                )
+                .background(.ultraThinMaterial, in: shape)
                 .overlay(shape.stroke(LivTheme.border, lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         }
@@ -829,10 +1014,50 @@ struct LivGlass<S: Shape>: ViewModifier {
 }
 
 extension View {
-    func livGlass<S: Shape>(in shape: S, tinted: Bool = false) -> some View {
-        modifier(LivGlass(shape: shape, tinted: tinted))
+    func livGlass<S: Shape>(in shape: S) -> some View {
+        modifier(LivGlass(shape: shape))
     }
+}
 
+/// "A CARD IS UP OVER THIS SURFACE" — raised for as long as the view is
+/// on screen, released when it leaves. (Named `LivOverDesk` because
+/// `LivCard` is already the app's raised-panel container in Rows.swift;
+/// the modifier that applies it is `livCard(while:)`.)
+///
+/// It exists so a surface that presents a sheet does not have to get its
+/// own name added to `DeskModel.deskInFront`. Four names were added
+/// there one at a time, each after the same bug reached the owner: the
+/// panel recognizer lives on the WINDOW, so it sees touches through
+/// anything that is merely drawn on top, latches a panel behind it, and
+/// then republishes on every touch move while the surface underneath
+/// re-renders.
+///
+/// The count is raised and lowered rather than set, so two cards at once
+/// cannot have the first one to close hand the desk back early.
+/// APPLIED TO THE PRESENTING VIEW, not to the sheet's content, and it
+/// takes the flag that presents it. A `.sheet`'s content is a separate
+/// presentation with its own environment root — which is why every
+/// sheet in this app hands its `environmentObject` in by hand — so a
+/// modifier inside one cannot be trusted to find the desk. The
+/// presenter always can.
+struct LivOverDesk: ViewModifier {
+    let up: Bool
+    @EnvironmentObject var desk: DeskModel
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: up) { _, now in
+                desk.cards = max(0, desk.cards + (now ? 1 : -1))
+            }
+            // A surface torn down with its card still up must not leave
+            // the count raised — the desk would never come back.
+            .onDisappear { if up { desk.cards = max(0, desk.cards - 1) } }
+    }
+}
+
+extension View {
+    /// Hold the desk's recognizer off while `up` is true.
+    func livCard(while up: Bool) -> some View { modifier(LivOverDesk(up: up)) }
 }
 
 /// THE SOFT EDGE. Every surface runs under the clock now (owner,
@@ -845,6 +1070,14 @@ extension View {
 /// `allowsHitTesting` said (found live). A view hands it to
 /// `safeAreaInset`, which is also what reserves the room; the desk
 /// overlays it on the words.
+
+// THERE IS NO BOTTOM SCRIM. One lived here for a day: a fade to the
+// ground under the floating bar, so a list dissolved into the page
+// instead of being read through the capsule. The owner looked at it and
+// said no (2026-09-05: "remove the bottom fade. just ugh"), which is the
+// end of it — a soft edge at the top is there because words genuinely
+// run under the clock, and the bar has no such problem to solve.
+
 struct LivTopScrim: View {
     /// Does chrome float over this surface? The library door does on the
     /// desk, so the fade runs the full chrome row and the words stay
@@ -860,19 +1093,46 @@ struct LivTopScrim: View {
     /// SidePanel, and it cost an hour again on 2026-08-28 — the panel
     /// simply never drew.
     var underChrome: Bool = true
+    @EnvironmentObject private var desk: DeskModel
+
+    /// THE BAND SHRINKS WHEN THE BUTTONS LEAVE (owner, 2026-09-07: "the
+    /// area is where the panel button is and reserved for that, but is
+    /// wasted space and looks odd when the buttons are dynamically
+    /// hidden", with a photograph of the Calendar).
+    ///
+    /// This inset is what RESERVES the doors' band, and until now it
+    /// reserved it unconditionally — so `livHidesChrome` slid the buttons
+    /// up by `LivRow.topInset` (Desk.swift) and left an empty 52pt strip
+    /// between the clock and the day's title. The buttons were gone and
+    /// their room was not.
+    ///
+    /// When they are away only the clock needs covering. `chromeAway` is
+    /// ordinary published state, not a safe-area read, so deriving the
+    /// height from it cannot feed the cycle `LivBar.room` documents.
+    /// Whether the band is the doors' full one, or the clock's alone.
+    private var tall: Bool { underChrome && !desk.chromeAway }
+
+    private var height: CGFloat { tall ? LivRow.topInset : LivSafeArea.top }
 
     var body: some View {
         // Solid where the clock is, then a fade under the controls: a
         // plain two-stop gradient left words legible behind the time.
+        // SOLID WHERE THE CLOCK IS, then a fade under the controls. The
+        // solid share is a FRACTION of the band, so when the band
+        // collapses to the status bar alone the same 0.45 would stop
+        // being solid a third of the way up the clock and a row
+        // scrolling past showed through beside it (measured 2026-09-07:
+        // a checkbox at 48/255 against a ground of 26). With no controls
+        // to fade under, almost all of the band is the clock.
         LinearGradient(
             stops: [
                 .init(color: LivTheme.canvas, location: 0),
-                .init(color: LivTheme.canvas, location: 0.45),
+                .init(color: LivTheme.canvas, location: tall ? 0.45 : 0.82),
                 .init(color: LivTheme.canvas.opacity(0), location: 1),
             ],
             startPoint: .top, endPoint: .bottom
         )
-        .frame(height: underChrome ? LivRow.topInset : LivSafeArea.top)
+        .frame(height: height)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }

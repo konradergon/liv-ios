@@ -3,24 +3,29 @@
 // dark/light pair resolved by the system's appearance machinery, and a
 // Settings row picks Dark, Light, or System.
 //
-// THE COLOURS ARE THE SYSTEM'S (owner, 2026-08-15: "revert colors and
-// faces to as system like as possible… we should do the surface
-// appearance last and thoroughly"). An icon-derived palette — violet,
-// pink, amber, measured to a 7:1 floor — came first and was reverted;
-// the paragraph describing it lived on at the top of this file for five
-// days after the code below stopped doing it, which is what a comment
-// that outlives its code looks like.
+// THE COLOURS ARE OURS, as of 2026-08-30 — see `Palette` below for the
+// measurements they came from. They were the system's semantic set from
+// 2026-08-15 ("revert colors and faces to as system like as possible…
+// we should do the surface appearance last and thoroughly"), which was
+// the right call at the time and is now spent: the owner has asked for
+// exactly the surface appearance that sentence deferred, and named the
+// system look as the thing to get away from.
 //
-// THE SURFACE PASS ARRIVED 2026-08-20, and it is the one this file
-// predicted: "when the surface pass comes, it changes the right-hand
-// side of these lines and nothing else". It did not repaint anything.
-// It gave the app the shapes its reference set shares — a card, one
-// row, one hairline inset, a press state — because measuring showed
-// the app's roughness was never the colours; it was thirteen row
-// recipes with five heights and five separator insets.
+// This is the SECOND surface pass. The first, on 2026-08-20, repainted
+// nothing on purpose — it gave the app the shapes its reference set
+// shares (a card, one row, one hairline inset, a press state), because
+// measuring showed the roughness then was never the colours; it was
+// thirteen row recipes with five heights and five separator insets.
+// That groundwork is why this pass could be mostly one file.
+//
+// An icon-derived palette was tried before either of them and reverted,
+// and the paragraph describing it lived on at the top of this file for
+// five days after the code stopped doing it — which is what a comment
+// that outlives its code looks like, and why this one was rewritten in
+// the same change as the values.
 //
 // `livPaletteSelfCheck` still measures contrast rather than trusting
-// anyone's eye.
+// anyone's eye, and its floors went up with this pass.
 
 import SwiftUI
 import UIKit
@@ -114,9 +119,6 @@ enum LivAppearance: String, CaseIterable, Identifiable {
     }
 }
 
-/// One consistent motion for the whole app (owner, 2026-07-31): navigation
-/// areas move from and into view — nothing rotates, nothing fades in
-/// combination, nothing springs. One curve, one duration, everywhere.
 /// The TYPE SCALE. Until 2026-08-10 sizes were prose: 19 distinct values
 /// across 253 call sites, 86 of them under 12pt — against the owner's own
 /// "no micro-text" rule, and the exact drift CLAUDE.md's rule 3 predicts
@@ -128,30 +130,108 @@ enum LivAppearance: String, CaseIterable, Identifiable {
 /// for readability"). The old band each step replaces is named so the
 /// next person can see what was merged into what.
 enum LivType {
-    // THE PLATFORM'S SCALE (owner, 2026-08-18: "ui text is just too
-    // small throughout, and dimmed"). The app was reading a full step
-    // under iOS: our `body` was 15, which is the system's *subheadline*,
-    // and every list row, button and value sat on it. These are Apple's
-    // own sizes now — body 17, subheadline 15, footnote 13 — so the app
-    // reads like the rest of the phone instead of like a dense
-    // desktop tool shrunk onto it.
+    // ONE STEP ABOVE THE PLATFORM (owner, 2026-08-31: "things are too
+    // small in general" — the THIRD time, after 2026-08-10 "text is too
+    // small… could in places be a notch bigger" and 2026-08-18 "ui text
+    // is just too small throughout").
     //
-    /// A badge, the ✕ on a chip — never a word you have to read.
-    static let micro: CGFloat = 11
-    /// Chips, stamps, counts.
-    static let caption: CGFloat = 13
-    /// Uppercase section labels, secondary detail.
-    static let label: CGFloat = 15
-    /// The app's ORDINARY text: list rows, values, buttons. iOS body.
-    static let body: CGFloat = 17
+    // Twice the answer was to move UP to Apple's own scale: body 15 →
+    // 17, which is the system's body. That is where it sat, and the app
+    // still read small — so the answer is not "match the platform"
+    // any more. Liv is a reading-and-deciding app, not a dense
+    // inspector, and its owner wants it comfortable at arm's length.
+    // Every step goes up one notch past iOS.
+    //
+    // Measured against the references first, so this is not just
+    // bigger-because-asked: Todoist's row title is 17–18 and its screen
+    // title is 34. `body` at 18 and `hero` at 32 sit right beside them —
+    // this is the reference set's size, arrived at from underneath.
+    //
+    /// A badge — never a word you have to read.
+    static let micro: CGFloat = 12
+    /// Chips, stamps, counts, a row's second line.
+    static let caption: CGFloat = 14
+    /// Section labels, secondary detail.
+    static let label: CGFloat = 16
+    /// The app's ORDINARY text: list rows, values, buttons.
+    static let body: CGFloat = 18
     /// Emphasised rows, the create-menu verbs.
-    static let strong: CGFloat = 18
-    /// Screen and sheet titles.
-    static let title: CGFloat = 20
+    static let strong: CGFloat = 20
+    /// Sheet titles.
+    static let title: CGFloat = 22
     /// An entity's name in the properties panel.
-    static let display: CGFloat = 24
-    /// A record's name field.
-    static let hero: CGFloat = 28
+    static let display: CGFloat = 26
+    /// A SCREEN's name, and a record's name field.
+    static let hero: CGFloat = 32
+
+    /// THE EDITOR'S OWN SCALE, and the fact that it is a second one.
+    ///
+    /// The markdown editor draws with TextKit, so it needs `UIFont`
+    /// sizes rather than the steps above — but that is a reason for
+    /// different UNITS, not for different NUMBERS, and until 2026-09-07
+    /// these lived as literals inside `EditorText.swift`, dated
+    /// 2026-07-31: they predate `LivType` entirely.
+    ///
+    /// They were moved here UNCHANGED, on purpose (design/editor-study.md:
+    /// "move the numbers to Theme.swift without changing them, so the
+    /// drift is visible"). And it is visible: `body` is 16 while every
+    /// list row that opens a note is `LivType.body` at 18.
+    ///
+    /// THE SECOND EXAMPLE THIS COMMENT USED TO GIVE WAS WRONG, and it
+    /// is worth recording why, because it is the reason to measure a
+    /// drift rather than read one off a list of numbers. It said `mono`
+    /// was 12 "for a code block that is nothing but words" — but the
+    /// font that size fed was never applied to anything. Its only call
+    /// site was `dim()`'s font override, and that went on the owner's
+    /// word on 2026-08-11 ("a marker is greyed, NEVER resized"); the
+    /// styler has no fenced-block branch to put it back. So a size with
+    /// no readers was being cited as visible drift. The size went on
+    /// 2026-09-12 under standing rule 6, and the rev that teaches the
+    /// styler the fence picks its own monospace size rather than
+    /// inheriting one nobody chose.
+    ///
+    /// Closing the `body` gap is NOT a token swap. `EditorFont.listGutter`
+    /// is calibrated against the widest marker at the CURRENT body size,
+    /// and the drawn checkbox and bullet are centred on `body.lineHeight`
+    /// — so a resize has to re-derive all three and be seen on a
+    /// simulator. It is its own rev, on the owner's word.
+    enum Editor {
+        static let body: CGFloat = 16
+        static let codeInline: CGFloat = 14.5
+        static let h1: CGFloat = 25
+        static let h2: CGFloat = 21
+        static let h3: CGFloat = 18
+    }
+}
+
+/// A DAY'S MARK — the disc behind the number that says "this is the day
+/// you are on".
+///
+/// Rev 47 made the correction standing (owner: *"today's date is marked
+/// by a tiny dot that is completely hidden by a horizontal bar when
+/// selected. You have a tendency to make UI elements tiny and subtle.
+/// Try to go for the opposite."*). It landed on Today's week strip and
+/// nowhere else; the calendar's month grid kept the 2pt rule and the 4pt
+/// dot the owner had just named, until 2026-09-07.
+///
+/// TWO DIAMETERS, because the two grids carry different loads. The strip
+/// shows seven days in a full-width row and can afford 36. A month cell
+/// is one of seven columns and also stacks three busy dots under the
+/// number, so its disc is 28 in a cell grown from 40 to 46 — sized to
+/// what forty-two cells can carry, not copied from the strip.
+///
+/// The grid cannot simply take the strip's numbers: `CalGrid.gridHeight`
+/// is `cellHeight * 6 + rowGap * 5`, and it is also the picker sheet's
+/// detent. At the strip's 62 the card would stand 382pt tall, which is
+/// the jump card becoming the screen — the thing design/ios.md §37 says
+/// it deliberately is not.
+enum LivDay {
+    /// The week strip's disc, and the row it sits in.
+    static let disc: CGFloat = 36
+    static let strip: CGFloat = 62
+    /// The month grid's disc — smaller, because the cell also carries
+    /// the busy dots.
+    static let gridDisc: CGFloat = 28
 }
 
 /// Row metrics. A list row was 46pt when its text was 11–13; the type
@@ -189,7 +269,8 @@ enum LivPanel {
     static let inset: CGFloat = 28
 
     /// One rhythm for the whole panel: nav rows and list rows alike.
-    static let row: CGFloat = 53
+    /// Grew with the type scale on 2026-08-31, like `LivRow.height`.
+    static let row: CGFloat = 57
 
     /// The lit row's fill sits 12pt from each panel edge — 16pt OUTSIDE
     /// the text inset, so the fill is the row plus its padding rather
@@ -209,10 +290,10 @@ enum LivPanel {
     /// theme it is the canvas laid over the content, not shade.
     static let wash: CGFloat = 0.5
 
-    /// The shadow the desk casts back onto the panel. No vertical
-    /// offset; it reaches about 36pt.
-    static let shadowOpacity: CGFloat = 0.10
-    static let shadowRadius: CGFloat = 18
+    // The desk's shadow onto the panel lived here and is gone
+    // (2026-08-31): it never drew, because the panel sits above the desk
+    // in z and the shadow painted underneath it. Deleted with its one
+    // call site rather than left as two numbers nothing reads.
 }
 
 /// The screen, asked once. `UIScreen.main.bounds` is deprecated and was
@@ -237,15 +318,82 @@ enum LivScreen {
     }()
 }
 
+/// A CHIP, in one place. Three capsule recipes were hand-copied across
+/// Today, Tasks and Search with different heights and paddings, and the
+/// two in `Kit` disagreed with all of them. A chip is a shape this app
+/// draws forty times; it gets a token like everything else that matters
+/// (standing rule 3).
+enum LivChip {
+    /// The ordinary chip: a SECOND VOICE in a row, `caption` (14). 17
+    /// was the old height, sized around 11pt text, and the capsule grew
+    /// with the text. Never `micro`, which is a badge size.
+    static let height: CGFloat = 24
+    /// The roomier variant, for a chip that stands alone in a row rather
+    /// than in a run of them. Same text as `height`; padding is the
+    /// whole difference.
+    static let tall: CGFloat = 30
+    /// A CHIP THAT IS A VALUE, not a second voice: the properties card,
+    /// where the chip is the whole answer to "what is this field?" and
+    /// every other value in that column is `strong` (20). A 20pt line
+    /// box is ~24, so 34 leaves 5 either side — `tall` (30) would sit a
+    /// descender on the capsule's edge, and `tall` is shared with the
+    /// filter chips besides.
+    static let value: CGFloat = 34
+    /// A glyph inside a chip, and the only size one may be.
+    static let glyph: CGFloat = 14
+    /// A glyph inside a `value` chip, scaled to its text the way `glyph`
+    /// is scaled to `caption`.
+    static let valueGlyph: CGFloat = 20
+}
+
 enum LivRow {
-    /// An ordinary list row: a label, a value, a chevron. 54 was the
-    /// number when a row's text was 16–18 and every row had a hairline
-    /// under it; the surface pass took the hairlines out of content
-    /// lists and the rows came down with them (owner, 2026-08-18:
-    /// "maximize simplicity… quiet, effortless").
-    static let height: CGFloat = 52
-    /// A row carrying a title and a second line under it.
-    static let tall: CGFloat = 62
+    /// THE ROW HEIGHT — every row that names a thing and opens it, and
+    /// a good deal more besides: the properties card's field rows, the
+    /// create menu's items, the workspace picker, the tab-switcher row.
+    /// 25 call sites. Move this number and all of them move.
+    ///
+    /// Until 2026-09-05 it was one list's number pretending to be a
+    /// token (owner: *"tasks rows still to low. make row height more
+    /// consistent"*). The six content views ran 42 / 44 / 48 / 56:
+    /// Notes, Everything and Inbox called this, and Tasks, Today and
+    /// Search each carried a raw literal instead — three different
+    /// ones, and Today alone used two. Scrolling from one view to the
+    /// next changed the beat of the list for no reason a reader could
+    /// name. A number with three callers and four values is not a rule;
+    /// it is a habit (standing rule 3). Those six are on it now.
+    ///
+    /// `drive.sh rows` asserts it from the screen.
+    ///
+    /// 54 was the number when a row's text was 16–18 and every row had
+    /// a hairline under it; the surface pass took the hairlines out of
+    /// content lists and the rows came down with them (owner,
+    /// 2026-08-18: "maximize simplicity… quiet, effortless").
+    // THE ROWS GO UP WITH THE TEXT. This file's own lesson from
+    // 2026-08-10: when the scale grew and the rows did not, the bigger
+    // text was simply more cramped in the same box. 56 also clears
+    // Apple's 44pt touch minimum with room to spare — the Inbox's Route
+    // rows were measured at 40 on 2026-08-31, under the minimum, which
+    // is part of why they read as small.
+    static let height: CGFloat = 56
+    /// A TALLER row, for one that carries its own controls under the
+    /// words rather than beside them — the clerk's proposal row is the
+    /// only caller.
+    static let tall: CGFloat = 70
+    /// A CHROME row inside a content list — a collapse heading, a
+    /// notice, a "N captured today" banner. It does not name a thing you
+    /// open, so it does not take `height` and stays visibly shorter than
+    /// the rows above it. Four raw literals were doing this job, two at
+    /// 38 and two at 40 (2026-09-05).
+    ///
+    /// 44, not 40: three of the four are the whole hit area of a Button,
+    /// and this file argues the 44pt touch minimum twice. Still 12 short
+    /// of a content row, which is the distinction it exists to draw.
+    static let band: CGFloat = 44
+    /// THE TOUCH MINIMUM, Apple's. Not a row height — the hit area of a
+    /// control that lives inside one, where the ink is smaller than the
+    /// finger: a status ring, a checkbox, a reject cross. It was a raw
+    /// 44 in five places across two files.
+    static let touch: CGFloat = 44
     /// The band the top chrome owns: the two door circles and the
     /// workspace button centred between them. ANYTHING that speaks at
     /// the top of the screen — a banner, a notice, an acknowledgment —
@@ -253,12 +401,43 @@ enum LivRow {
     /// (owner, 2026-08-15: "the message is on top of each other").
     static let topChrome: CGFloat = 52
 
-    /// WHERE A HAIRLINE STARTS — at the text, past the glyph column.
-    /// Measured 2026-08-20: the app drew its row separators at five
-    /// different insets (36, 32, 31, full width, none) across thirteen
-    /// hand-rolled row recipes, which is why a list and a menu never
-    /// looked like the same app. One number now.
-    static let hairline: CGFloat = 36
+    // THE ROW GRID, measured off `~/Desktop/Throwaway/new/todoist-inbox.mov`
+    // frame by frame (2026-08-30), the way the panel's numbers were read
+    // off its own reference. Todoist's inbox row is: an 18pt screen
+    // margin, a 24pt circle, 15pt of air, then the words at 57. Ours is
+    // the same shape at this app's own 16pt margin.
+    //
+    /// The screen's own margin. Every surface starts here.
+    static let margin: CGFloat = 16
+    /// The leading MARK column: a checkbox, a kind glyph, a status ring.
+    /// One width, so a list of tasks and a list of notes share a spine.
+    static let mark: CGFloat = 24
+    /// Mark to words.
+    static let markGap: CGFloat = 14
+
+    /// THE KIND MARK at the head of a LIST row — the leaf, the tray,
+    /// the ring. It was a raw `19` in `LivListRow` and a second raw `19`
+    /// in the Inbox's own row: one number, two copies, neither in a type
+    /// (standing rule 3).
+    ///
+    /// It does NOT claim every mark in the app. Search draws its hit
+    /// mark at 22 and Today's agenda at 17, both deliberately, because
+    /// those rows lead with something other than a 24pt mark column.
+    static let glyph: CGFloat = 19
+
+    /// WHERE A ROW'S WORDS START — past the mark column.
+    static let text: CGFloat = margin + mark + markGap
+
+    /// WHERE A HAIRLINE STARTS, and it is the same place as the words.
+    ///
+    /// Measured 2026-08-20 the app drew separators at five different
+    /// insets across thirteen hand-rolled recipes; one number fixed that,
+    /// but the number was 36 and no row's text began at 36 — so every
+    /// hairline started 18pt to the left of the words it divided.
+    /// Todoist's begins exactly at its text column, which is what makes
+    /// the mark column read as a clear spine down the list rather than
+    /// as an indent. Derived now, so the two cannot drift apart.
+    static let hairline: CGFloat = text
 
     /// The gap a CARD leaves at the screen's edges. A card is how the
     /// reference apps group rows — Apple Notes, Obsidian's overflow
@@ -306,19 +485,45 @@ enum LivRow {
 /// THE BOTTOM BAR, measured off `bar-and-buttons-dynamic-hiding.MOV`
 /// (Obsidian for iOS) on 2026-08-23. The owner asked for "the same
 /// button set you'd expect in a browser or Obsidian — literally", so
-/// these are the reference's own proportions rather than ours.
+/// the capsule's proportions are the reference's own rather than ours.
+///
+/// THE LABELS ARE TODOIST'S (owner, 2026-09-05: the bar "should hint
+/// user about what '+' creates and that '[n]' is for open notes", in
+/// the style of the Throwaway recordings). Obsidian's bar is five bare
+/// glyphs; Todoist's is a glyph over a word, and that is the one form
+/// in the owner's references that SAYS what a key does. Measured off
+/// `todoist-inbox.mov`: glyph ~20, word ~11, ~6 between — a 24pt slot
+/// for our 22pt glyph and a word under it.
+///
+/// THE WORD IS `caption`, NOT `micro` (owner, 2026-09-05: "bump to 14").
+/// Todoist's own is ~11 and this app has been called too small four
+/// times; the reference is a floor to clear, not a ceiling.
 enum LivBar {
-    /// 57 measured; 56 keeps the capsule's radius a whole number.
-    static let height: CGFloat = 56
+    /// 52, which is a 44pt touch target in 4pt of padding. It was 66 to
+    /// hold a 14pt word under each glyph; the words are gone (2026-09-11)
+    /// and so is the row they needed. Even, so the radius stays whole.
+    static let height: CGFloat = 52
     /// The breath between the bar and the screen's bottom edge.
     static let gap: CGFloat = 4
-    /// How far the capsule stands in from each screen edge. The
-    /// reference measures 43 of 430 — the bar is NARROWER than the text
-    /// column beside it, which is what stops it reading as a toolbar.
-    static let sideInset: CGFloat = 42
-    /// From the capsule's end to the first glyph's centre.
-    static let endInset: CGFloat = 34
+    /// How far the OUTER pieces stand in from each screen edge. It was
+    /// 42 for one capsule, measured off Obsidian at 43 of 430. Three
+    /// pieces want the edges: at 42 they huddle in the middle and the
+    /// gaps between them stop reading as deliberate.
+    static let sideInset: CGFloat = 24
+    /// A piece's own horizontal padding, inside the glass.
+    static let piecePad: CGFloat = 4
+    /// The least air between two pieces. In practice they are pushed
+    /// apart by Spacers and stand much further; this is the floor that
+    /// keeps them three shapes rather than one broken one.
+    static let pieceGap: CGFloat = 12
+    /// One key's width inside a piece. Its HEIGHT is `LivRow.touch` —
+    /// the app's one touch floor, not a second copy of 44.
+    static let slot: CGFloat = 46
     static let glyph: CGFloat = 22
+    /// The box the numbered glyph draws in. It was sized so the words
+    /// under the five keys shared a baseline; it stays because the box
+    /// is a drawing with a digit in it and wants a fixed frame.
+    static let glyphSlot: CGFloat = glyph + 2
     /// DISABLED IS INK, and nothing else: same glyph, same size, same
     /// place. The reference's disabled grey is 31% of its enabled ink,
     /// with no plate, no border and no removal from the row.
@@ -342,10 +547,57 @@ enum LivBar {
     /// indicator, so the bar's own height plus its gap is the whole
     /// requirement.
     static let room: CGFloat = height + gap + 8
+
+    /// THE ROOM A SCROLLING LIST LEAVES, which is `room` plus a hand's
+    /// width of air so the last row is not pinned under the glass.
+    ///
+    /// Written out as `LivBar.room + 24` at five call sites — Everything,
+    /// Inbox, Notes, Tasks and Today — three of which also carried a
+    /// prose copy of this same reason. One number, one place (standing
+    /// rules 3 and 4).
+    ///
+    /// Not to be confused with `room + gap` (App.swift), which is a
+    /// different number for a different job: the bar's own floor, not a
+    /// list's tail.
+    static let listRoom: CGFloat = room + 24
 }
 
+/// One consistent motion for the whole app (owner, 2026-07-31): navigation
+/// areas move from and into view — nothing rotates, nothing fades in
+/// combination. One curve, one duration for NAVIGATION.
+///
+/// "NOTHING SPRINGS" WAS LIFTED on 2026-08-31 (owner: "i said somewhere
+/// that animations should be used little. ignore that now. modern apps
+/// have animations"). The navigation rule above stands — a surface
+/// replacing a surface is still one easing, because a spring on a
+/// full-screen move reads as wobble. What the lift buys is `list`
+/// below: things that arrive and leave INSIDE a surface, which the app
+/// used to snap in and out with no motion at all.
 enum LivMotion {
-    static let nav = Animation.easeInOut(duration: navSeconds)
+    /// THE ONE CURVE MOST OF THE APP MOVES ON — 35 of the 45
+    /// `withAnimation` calls in the shell, plus two `.animation(value:)`
+    /// modifiers: every sheet, card, menu and panel, the surface swap,
+    /// and the chrome retiring under a scroll.
+    ///
+    /// IT WAS `easeInOut`, and that is most of why the app read amateur
+    /// (owner, 2026-09-11: *"mainly motion but also type and spacing…
+    /// currently it wouldn't appeal to users"*). A symmetric ease is the
+    /// curve every prototype uses and nothing on the platform does: it
+    /// starts and stops at the same rate, so a card arrives with no
+    /// weight and a panel stops dead. The app already owned two springs
+    /// and they covered twelve call sites out of forty-seven.
+    ///
+    /// `snappy` is the SYSTEM's spring, not a hand-rolled one, which is
+    /// the point — the thing that reads expensive here is matching the
+    /// platform rather than inventing a feel. `extraBounce: 0` keeps it
+    /// sober: the owner asked for better, not fancier, and a bar that
+    /// wobbles is worse than one that eases.
+    ///
+    /// One token still, deliberately. Splitting a sheet's rise from a
+    /// surface's swap is a real distinction and a later pass; doing it
+    /// here would also fork `navSeconds`, which seven teardown timers
+    /// read to know when the motion has landed.
+    static let nav = Animation.snappy(duration: navSeconds, extraBounce: 0)
 
     /// HOW A SURFACE REPLACES A SURFACE. Measured 2026-08-20: there was
     /// no transition declared on either branch point, so SwiftUI used
@@ -361,62 +613,188 @@ enum LivMotion {
     static let surface = AnyTransition.asymmetric(
         insertion: .move(edge: .trailing),
         removal: .move(edge: .leading))
-    /// The same duration as a NUMBER, for the one case that must wait
-    /// for the motion to land before swapping what is underneath (the
-    /// calendar's month pager). Two literals would drift.
-    static let navSeconds: Double = 0.22
+    /// The same duration as a NUMBER, for the seven places that must
+    /// wait for the motion to land before swapping or unmounting what is
+    /// underneath — the calendar's month pager, the chrome's settle
+    /// window, and every sheet's teardown. Two literals would drift.
+    ///
+    /// 0.30 since the curve became a spring. At 0.22 an ease and a
+    /// spring read about the same, which is to say too fast to have any
+    /// weight; a spring wants a little longer to show its shape.
+    static let navSeconds: Double = 0.30
+
+    /// A ROW ARRIVING OR LEAVING A LIST.
+    ///
+    /// Ticking a suggestion in the Inbox used to make it vanish and the
+    /// rows below it jump up a notch — the list simply redrew. Every
+    /// reference animates that: Todoist slides the row out and closes
+    /// the gap behind it, and the motion is what tells you the tick
+    /// landed on the row you aimed at.
+    ///
+    /// A spring, not an easing, and a gentle one: `response` is the time
+    /// it takes to cover the distance, `damping` at 0.86 settles without
+    /// visible bounce. Slower than `nav` on purpose — a list closing a
+    /// gap is a small event that should read as physical, where
+    /// navigation should get out of the way.
+    static let list = Animation.spring(response: 0.34, dampingFraction: 0.86)
+
+    /// A SELECTION MARK MOVING between the things it can mark — the
+    /// lens underline, the day strip's rule, a filter chip's fill. Quick
+    /// and tight: the mark should arrive about when your finger lifts.
+    static let pick = Animation.spring(response: 0.28, dampingFraction: 0.9)
+}
+
+/// THE PALETTE, ONCE — every colour the app has, as a dark/light pair.
+///
+/// THE SURFACE PASS OF 2026-08-30. The file above has predicted this
+/// twice: "when the surface pass comes, it changes the right-hand side
+/// of these lines and nothing else", and the self-check's own promise
+/// that "when the surface pass makes the palette ours again, the ink
+/// floor goes back to 7:1 and marks get a 3:1 floor". Both are kept
+/// below. What changed is that the colours are now CHOSEN.
+///
+/// They were the system's semantic set, and the owner has rejected that
+/// (2026-08-30: "avoid gradients, default/system-looking colors,
+/// arbitrary colors"). Nothing here is arbitrary either — every number
+/// was measured off the three reference recordings in
+/// `~/Desktop/Throwaway/new` (Todoist, Notion Calendar, Anytype), by
+/// counting pixels rather than by eye:
+///
+///   GROUND. Todoist #1D1D1D, Anytype #1A1A1C, Notion #222222 — all
+///   neutral, all lifted off black. Ours is #1A1A1A, and it is NEUTRAL:
+///   the system's dark ground is #1C1C1E, which carries a blue cast
+///   (blue two points over red) that tints every grey in the app.
+///
+///   ELEVATION. Each reference steps about +9 per channel to raise a
+///   sheet. #1A1A1A → #232323 → #2C2C2E. Three steps, no shadow, no
+///   gradient — a step of tone does it, flat.
+///
+///   INK. Todoist's secondary text is #9D9D9D, Anytype's #8D8D8F. Ours
+///   is #A5A5A5, one notch up, which is what 7:1 on this ground costs.
+///
+///   COLOUR IS ALMOST ABSENT. Measured across the frames: saturated
+///   pixels are 0.58% of a Todoist screen, 0.31% of Notion Calendar's,
+///   0.01% of Anytype's. Liv's Today was 1.05% and Tasks 1.85% — two to
+///   six times as loud — and every one of Liv's colours was at 100%
+///   saturation, where the loudest routine colour in any reference is
+///   Todoist's red at 57%. So no colour here exceeds 62%, and the marks
+///   are drawn small.
+///
+/// Both schemes are checked by `livPaletteSelfCheck`: every ink clears
+/// 4.5:1 on its ground (the two read tiers clear 7:1), every mark clears
+/// 3:1, and no two marks sit within 0.12 of each other in RGB.
+private enum Palette {
+    // Ground and elevation.
+    static let canvas = hex(0x1A1A1A, light: 0xFFFFFF)
+    static let surface = hex(0x232323, light: 0xF6F6F6)
+    static let fill = hex(0x2C2C2C, light: 0xEDEDED)
+    static let selection = hex(0x242424, light: 0xF1F1F1)
+    static let hairline = hex(0x2E2E2E, light: 0xE4E4E4)
+    static let hairline2 = hex(0x3A3A3A, light: 0xD3D3D3)
+
+    // Ink. Three tiers and no more.
+    static let text = hex(0xF5F5F5, light: 0x161616)   // 15.96:1 / 18.10:1
+    static let text2 = hex(0xA5A5A5, light: 0x575757)  //  7.07:1 /  7.23:1
+    static let text3 = hex(0x828282, light: 0x757575)  //  4.53:1 /  4.61:1
+
+    // The one live colour, and the kind marks. Hue/saturation/lightness
+    // are spread so that no two read alike in either scheme — the search
+    // that placed them is the reason `task` is violet-blue rather than
+    // sitting on top of the accent.
+    static let accent = hex(0x5B8BC2, light: 0x3167A5)
+    static let onAccent = UIColor.white
+    static let violet = hex(0xC698D7, light: 0xA63DAE)  // a note
+    static let indigo = hex(0x9277CF, light: 0x644AC9)  // a task
+    static let teal = hex(0x47B8A9, light: 0x1F7A6E)    // an event
+    static let orange = hex(0xCF6A30, light: 0xB64D20)  // a file, a link
+    static let pink = hex(0xD27FA3, light: 0xAD3468)    // a person
+    static let yellow = hex(0xE4DA95, light: 0x81710E)  // a capture
+    static let red = hex(0xD1575B, light: 0xB42D31)
+    static let green = hex(0x51B87E, light: 0x257447)
+    static let amber = hex(0xD29C56, light: 0x9F6923)
+
+    // THE CAMERA'S CHROME, and the reason it does not flip.
+    //
+    // A live viewfinder is whatever the lens is pointing at, so a
+    // control over it cannot take its ground from the app's scheme —
+    // there is no scheme out there. These two are scheme-INVARIANT for
+    // the same reason `onAccent` is: what they sit on is fixed.
+    //
+    // The dark was `cameraChromeFill` in Camera.swift until 2026-09-07,
+    // a hand-mixed green-cast near-black defined in a feature file. Its
+    // argument was sound and its home was not (standing rule 3).
+    static let cameraChrome = hex(0x1B2220)
+    /// Ink on the viewfinder. Deliberately the SAME white as `onAccent`
+    /// rather than a second one — two whites is the two-lists-held-true-
+    /// by-a-comment shape `LivInk` exists to have removed.
+    static let cameraInk = onAccent
 }
 
 /// The same tokens at the UIColor level, for the UIKit text stack (the
 /// markdown editor draws with TextKit, which never sees SwiftUI Color).
 ///
-/// These MIRROR LivTheme's values exactly; when one moves, the other
-/// moves in the same change.
+/// They no longer MIRROR LivTheme — they read the same `Palette`, so the
+/// two cannot drift. The old pair was two lists of system colours held
+/// in agreement by a comment asking the next person to remember
+/// (standing rule 4: one grammar, one parser).
 enum LivInk {
-    static let accent = UIColor.tintColor
-    static let onAccent = UIColor.white
-    static let surface = UIColor { $0.userInterfaceStyle == .light
-        ? .secondarySystemBackground : .tertiarySystemBackground }
-    static let panel2 = UIColor.tertiarySystemFill
-    static let text = UIColor.label
-    static let text2 = UIColor.secondaryLabel
-    static let text3 = UIColor.tertiaryLabel
-    static let muted = UIColor.secondaryLabel
-    static let border = UIColor.separator
+    static let accent = Palette.accent
+    static let onAccent = Palette.onAccent
+    static let surface = Palette.surface
+    static let panel2 = Palette.fill
+    static let text = Palette.text
+    static let text2 = Palette.text2
+    static let text3 = Palette.text3
+    static let border = Palette.hairline
     /// Style-panel key fill — kept for any full-size key surface.
-    static let keyFill = UIColor.tertiarySystemFill
+    static let keyFill = Palette.fill
 }
 
 enum LivTheme {
-    // SYSTEM COLOURS, on purpose (owner, 2026-08-15: "revert colors and
-    // faces to as system like as possible… we should do the surface
-    // appearance last and thoroughly").
+    // EVERY COLOUR IN THE APP, AND EVERY ONE OF THEM CHOSEN. The values
+    // are in `Palette` above, with the measurements they came from.
     //
-    // What this replaces: a palette derived from the app icon — a violet
-    // accent, a near-black ground, a hand-mixed kind set, all measured to
-    // a 7:1 floor. It was not wrong, it was EARLY: a bespoke surface
-    // pays off once the app's shapes have settled, and until then it is
-    // a second thing to keep true on every screen. The system's own
-    // semantic colours cost nothing to keep true, adapt to light, dark,
-    // increased contrast and accessibility tints for free, and read as
-    // "an iOS app" rather than as a look someone chose in a hurry.
+    // This block said "SYSTEM COLOURS, on purpose" until 2026-09-05,
+    // quoting the owner's 2026-08-15 "revert colors and faces to as
+    // system like as possible" — three lines above `accent`, which has
+    // read "ONE live colour, and it is ours" since the surface pass of
+    // 2026-08-30. A comment that contradicts the line under it is worse
+    // than no comment: it is the file telling you the opposite of what
+    // the code does.
     //
-    // The names below stay. When the surface pass comes, it changes the
-    // right-hand side of these lines and nothing else — which is the
+    // The history it recorded is worth keeping, because it is the reason
+    // the pass waited. An icon-derived palette was tried FIRST and
+    // reverted — not wrong, early: a bespoke surface pays off once the
+    // app's shapes have settled, and until then it is a second thing to
+    // keep true on every screen. The system's set held the place while
+    // the shapes moved. When they stopped, the owner asked for the
+    // surface that sentence had deferred.
+    //
+    // The names below never changed through any of it, which is the
     // whole reason colour lives in a type here (standing rule 3).
 
-    /// The app's tint: the system's, which follows the device.
-    static let accent = Color.accentColor
-    static let accentSoft = Color.accentColor.opacity(0.15)
-    /// A note's own colour. PURPLE, not the tint's own blue family: a
+    /// The app's tint — ONE live colour, and it is ours. A muted denim
+    /// (H212 S46 L56 in dark), not the device's blue: the system tint is
+    /// what "default-looking" means, and it also changes underneath the
+    /// app when the owner of the phone picks a different one.
+    static let accent = Color(Palette.accent)
+    /// A wash of the tint, mixed INTO the ground rather than laid over
+    /// it at an opacity — see `tint(_:_:)` below for why.
+    static let accentSoft = tint(Color(Palette.accent), 0.18)
+    /// A note's own colour. VIOLET, well away from the tint's blue: a
     /// thing and the chrome that acts on it must never say the same
     /// word, and the palette self-check holds us to it.
-    static let noteViolet = Color(.systemPurple)
-    /// Ink ON the tint — a filled button, a lit toggle. White on the
-    /// light-blue dark-mode tint reads at 3.2:1, so the dark scheme puts
-    /// black there instead and both clear the floor.
-    static let onAccent = Color(
-        UIColor { $0.userInterfaceStyle == .light ? .white : .black })
+    static let noteViolet = Color(Palette.violet)
+    /// Ink ON the tint — a filled button, a lit toggle. White clears 3:1
+    /// on both schemes' accent now (3.51:1 dark, 5.81:1 light), so this
+    /// is one colour instead of the scheme-flipping pair it needed while
+    /// the tint was the system's pale blue.
+    static let onAccent = Color(Palette.onAccent)
+
+    /// The camera's two, which do not flip with the scheme — see
+    /// `Palette.cameraChrome` for why a viewfinder has no scheme.
+    static let cameraChrome = Color(Palette.cameraChrome)
+    static let cameraInk = Color(Palette.cameraInk)
 
     // ELEVATION, the system's ramp (surface pass, owner 2026-08-18: the
     // left panel "should feel like a panel, not a view or a curtain…
@@ -442,47 +820,60 @@ enum LivTheme {
     /// between them are unchanged, so nothing that depended on one
     /// surface reading as raised above another has moved; light is
     /// untouched, where white is already the right ground.
-    static let canvas = Color(
-        UIColor { $0.userInterfaceStyle == .light
-            ? .systemBackground : .secondarySystemBackground })
-    static let surface = Color(
-        UIColor { $0.userInterfaceStyle == .light
-            ? .secondarySystemBackground : .tertiarySystemBackground })
-    static let panel = Color(
-        UIColor { $0.userInterfaceStyle == .light
-            ? .secondarySystemBackground : .tertiarySystemBackground })
+    static let canvas = Color(Palette.canvas)
+    static let surface = Color(Palette.surface)
     /// A quiet fill for a lit row, a chip, a well — never a border.
-    static let panel2 = Color(.tertiarySystemFill)
+    static let panel2 = Color(Palette.fill)
     /// The lightest possible mark of "this row is the one you are on".
-    static let selection = Color(.quaternarySystemFill)
+    /// One step off the ground, and nothing else: the references mark a
+    /// selected row with weight or a tick, never with a coloured band.
+    static let selection = Color(Palette.selection)
     /// A row UNDER THE FINGER. Measured 2026-08-20: the app had no
     /// custom button style anywhere, and eight row sites used
     /// `.onTapGesture`, which gives no feedback at all — a tap either
     /// worked or seemed not to. Every app in the owner's reference set
     /// answers a touch before it acts.
-    static let pressed = Color(.quaternarySystemFill)
+    static let pressed = Color(Palette.fill)
 
-    // The four text tiers + hairlines, the system's own.
-    static let text = Color(.label)
-    static let text2 = Color(.secondaryLabel)
-    static let text3 = Color(.tertiaryLabel)
-    static let muted = Color(.secondaryLabel)
-    static let border = Color(.separator)
-    static let border2 = Color(.opaqueSeparator)
+    // THREE ink tiers, and now three NAMES for them.
+    //
+    // `muted` was a second name for `text2` — same `Palette.text2`, same
+    // pixels — and it stayed "so the call sites need not all move at
+    // once". They have all moved now (2026-09-12). The staged migration
+    // was not staged: it sat at 14 sites for five days across thirteen
+    // commits, having gone 20 → 22 → 17 → 14 in three weeks. A rule with
+    // two names is a rule a reader has to guess at, which is how one app
+    // ends up drawing 149 pieces of text in 64 different ways.
+    //
+    // `panel` went the same way, into `surface`. `pressed` did NOT: it is
+    // also `Palette.fill`, but it names a JOB — a row under the finger —
+    // and a name that says why is the kind standing rule 3 asks for.
+    static let text = Color(Palette.text)
+    static let text2 = Color(Palette.text2)
+    static let text3 = Color(Palette.text3)
+    /// A hairline, and it is meant to be nearly invisible: #2E2E2E on
+    /// #1A1A1A is the same whisper the references draw. A separator you
+    /// can see across the room is a border, and this app does not draw
+    /// borders.
+    static let border = Color(Palette.hairline)
+    static let border2 = Color(Palette.hairline2)
 
-    // The semantic set — the ONLY value colors (O2: VALUE_HEX retired),
-    // each the system's shade of that word.
-    static let green = Color(.systemGreen)
-    static let red = Color(.systemRed)
-    static let amber = Color(.systemOrange)
-    /// Indigo, kept under the old name's slot: a TASK's colour, one
-    /// step from a note's purple.
-    static let purple = Color(.systemIndigo)
+    // The semantic set — the ONLY value colours (O2: VALUE_HEX retired).
+    // Each is the muted shade of that word: none exceeds 62% saturation,
+    // against the system set's 85–100%.
+    static let green = Color(Palette.green)
+    static let red = Color(Palette.red)
+    static let amber = Color(Palette.amber)
+    /// A TASK's colour, kept under the old name's slot: violet-blue, and
+    /// deliberately far from both the accent and a note's violet — the
+    /// three were within a hair of each other when they were the
+    /// system's blue, indigo and purple.
+    static let purple = Color(Palette.indigo)
     // The rest of the KIND language (blueprints, 2026-08-12).
-    static let teal = Color(.systemTeal)
-    static let orange = Color(.systemOrange)
-    static let pink = Color(.systemPink)
-    static let yellow = Color(.systemYellow)
+    static let teal = Color(Palette.teal)
+    static let orange = Color(Palette.orange)
+    static let pink = Color(Palette.pink)
+    static let yellow = Color(Palette.yellow)
 
     /// A tint that is a COLOUR, not a translucency.
     ///
@@ -507,8 +898,31 @@ enum LivTheme {
             })
     }
 
+    /// THE ONE SHADOW, and it is only for something a finger has picked
+    /// up and is moving.
+    ///
+    /// This file says two hundred lines above that "nothing in this app
+    /// uses a shadow or a gradient to say raised — a step of tone does
+    /// it, flat", and on 2026-08-30 there were six shadows in five
+    /// different recipes, two of them byte-identical copies in different
+    /// files. Three were deleted (a chip, its duplicate, a pill: each
+    /// already had a fill and a hairline, which is enough separation on
+    /// this ground). The desk keeps its own, measured off the panel
+    /// reference and living in `LivPanel`. What is left is this: a block
+    /// being DRAGGED, where the shadow is not decoration but the whole
+    /// point — it is what says the thing has left the surface.
+    static let lift = (color: Color.black.opacity(0.45), radius: 10.0, y: 4.0)
+
     static let radius: CGFloat = 10
     static let radiusSm: CGFloat = 6
+    /// A SMALL CARD — a count tile, a tab on the desk. Between `radius`
+    /// and `radiusLg` because it is neither a control nor a sheet: it is
+    /// a card you can pick up.
+    ///
+    /// It was a hand-typed 12 in nine places (three in `Kit`, six in
+    /// `Tabs`) sitting beside the three named radii, which is how a
+    /// fourth radius starts.
+    static let radiusCard: CGFloat = 12
     /// A surface laid OVER another one — the slide-up menus, the
     /// properties card. Big enough to read as a separate sheet at a
     /// glance, which is the whole job of it.
@@ -536,27 +950,12 @@ enum LivTheme {
 // (Glyph.swift): a kind's color and its drawing are one decision, and
 // splitting them is what let a task draw a blue chip with a tick in it.
 
-enum Hue {
-    static func hash(_ display: String) -> UInt64 {
-        var h: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in display.precomposedStringWithCanonicalMapping.utf8 {
-            h ^= UInt64(byte)
-            h = h &* 0x0000_0100_0000_01b3
-        }
-        return h
-    }
-
-    /// Five steps around the icon's three arms — violet, pink, amber and
-    /// the light ends of two of them. It used to be Apple's semantic five
-    /// (purple, green, amber, red, blue), which put a green and a system
-    /// blue on screen that exist nowhere in the mark.
-    private static let set: [Color] = [
-        LivTheme.noteViolet, LivTheme.purple, LivTheme.amber, LivTheme.pink,
-        LivTheme.orange,
-    ]
-
-    /// A display string's dot color — stable per string, semantic set only.
-    static func dot(_ display: String) -> Color {
-        set[Int(hash(display) % UInt64(set.count))]
-    }
-}
+// `Hue` IS GONE (2026-08-29). It hashed a display string to one of five
+// colours, stable per word — and its own doc admitted that meant
+// "nothing beyond 'these two say the same thing'".
+//
+// A coloured dot is read as a signal. Five hues down a list of property
+// names is a code with nothing to decode, and at 6pt in an otherwise
+// grey app it was the loudest thing on the screen. Colour now appears
+// only where it carries something: a KIND (a note is violet, a task
+// indigo) and a status option's own hue, which a person chose.

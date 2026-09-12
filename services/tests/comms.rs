@@ -1,7 +1,7 @@
 //! Comms (P20g, BP-15): message ingestion. One batch = ONE transaction =
 //! one undo; external-id is the dedupe key — re-import is a no-op, and a
 //! REFRESH updates only the feed-owned cells (from/sent/body/source),
-//! never yours (subjects, a cleared unread). Senders resolve to person
+//! never yours (tags, a cleared unread). Senders resolve to person
 //! entities when a name matches; unresolved senders stay feed-owned text.
 
 use liv_core::*;
@@ -77,10 +77,10 @@ fn reimport_is_a_no_op_and_refresh_updates_only_feed_owned() {
     let outcome = comms::import_messages(&mut session, &[drop_a()]).unwrap();
     assert_eq!((outcome.created, outcome.updated, outcome.skipped), (0, 0, 1));
 
-    // The user files it (yours) and reads it (unread cleared). Subjects
-    // is schema-on-read — birthed at first use, like the shell's door.
-    content::birth_property(&mut session, "subjects", "text").unwrap();
-    content::set_property(&mut session, id, "subjects", "money").unwrap();
+    // The user files it (yours) and reads it (unread cleared). Tags is
+    // schema-on-read — birthed at first use, like the shell's door.
+    content::birth_property(&mut session, "tags", "text").unwrap();
+    content::set_property(&mut session, id, "tags", "money").unwrap();
     content::set_property(&mut session, id, "unread", "false").unwrap();
 
     // The feed edits the body (a refresh): feed-owned updates, yours stay.
@@ -96,8 +96,8 @@ fn reimport_is_a_no_op_and_refresh_updates_only_feed_owned() {
         row.get(content_prop),
         Some(Value::Text(t)) if t.contains("måndag")
     ));
-    let subjects = liv_services::property_id(store, "subjects").unwrap();
-    assert!(row.get(subjects).is_some(), "yours: subjects survived the refresh");
+    let tags = liv_services::property_id(store, "tags").unwrap();
+    assert!(row.get(tags).is_some(), "yours: tags survived the refresh");
     let unread = liv_services::property_id(store, "unread").unwrap();
     assert!(
         matches!(row.get(unread), Some(Value::Bool(false))),

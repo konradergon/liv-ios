@@ -127,7 +127,8 @@ the second is a separate feature if it is wanted.
 
 ## Order of work
 
-Every phase: shell only, and the gate is the eight launch-flag self-checks.
+Every phase: shell only, and the gate is the ten launch-flag self-checks
+(`suites.sh`; it was eight when this was written).
 
 | | | |
 |---|---|---|

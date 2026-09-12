@@ -1,35 +1,46 @@
-// liv iOS — the side panels (design/ios.md §6 rev 6, owner 2026-08-03).
+// liv iOS — the side panel (design/ios.md §6 rev 6, owner 2026-08-03).
 // The app's mental model is three zones:
 //
 //   LEFT  — the library: everything about the APP. The global views,
 //           the workspace's views, the workspace switcher, Settings.
 //   CENTER — the desk: ONE editable thing. Tabs hold notes and nothing
 //           else — a view is a visit, a note is a tab.
-//   RIGHT — the properties panel: everything about THIS note. It
-//           DESCRIBES; the verbs live in the desk's ••• menu.
+//   RIGHT — everything about THIS note. It DESCRIBES; the verbs live in
+//           the desk's ••• menu.
 //
-// Rev 6 made both panels FULL-SCREEN (Notesnook's layout was the model).
-// The library was pulled back on 2026-08-23 (owner: "Panel should not be
-// full screen!") and now stops at LivPanel.width, leaving a sliver of the
-// desk; the properties panel is still edge to edge. Both are swiped into
-// from anywhere — the swipe lives on DeskHost, one gesture for open and
-// close, and it is also the way out: neither carries a close button.
+// SINGULAR since 2026-08-29: the right-hand zone became a CARD, not a
+// panel (Desk.swift, "One panel left"), so `SidePanel` below has exactly
+// one caller — the library. Rev 6 made both full-screen (Notesnook's
+// layout was the model); the library was pulled back on 2026-08-23
+// (owner: "Panel should not be full screen!") and stops at
+// LivPanel.width, leaving a sliver of the desk.
+//
+// It is swiped into from anywhere — the swipe lives on DeskHost, one
+// gesture for open and close, and it is also the way out: it carries no
+// close button.
+//
+// (Header rewritten 2026-09-07. It still described two live panels, a
+// properties panel standing "on the right, it does not float over
+// anything", and paint that "waits for the surface pass" — the card
+// landed on 2026-08-29 and the surface passes shipped.)
 
 import SwiftUI
 
 // MARK: - the slide-over container
 
-/// ONE recipe for both surfaces again (owner, 2026-08-15: "maybe we
-/// should keep properties stalled on the right not as a card for
-/// simplification's sake, and have the base appearance same as
-/// library"). The app's own ground, no radius, no shadow, no inset —
-/// the properties panel stands on the right, it does not float over
-/// anything.
+/// The app's own ground, no radius, no shadow, no inset: a place you
+/// go, not a thing that floats over one. It pushes the desk aside
+/// rather than covering it.
 ///
-/// The two still differ where it costs nothing: the LIBRARY pushes the
-/// desk off screen (it is a place) and the PROPERTIES panel slides over
-/// a desk that stays put (it is the desk's). That is motion, not paint,
-/// and paint waits for the surface pass.
+/// It was written as ONE RECIPE FOR BOTH SURFACES (owner, 2026-08-15:
+/// "have the base appearance same as library"), and it carried a
+/// `side:` and an optional `width` so the properties panel could stand
+/// on the right in the same clothes. That second caller went on
+/// 2026-08-29, when properties became a card — so both parameters were
+/// carrying a shape nothing asked for, and every reader had to work out
+/// which of the two branches ran. They were removed on 2026-09-07
+/// (standing rule 6). Bringing a right-hand panel back means mirroring
+/// two constants, which the comments below name.
 ///
 /// NO close button. It had a 40pt band of its own holding one chevron,
 /// then rode the first row, where it landed almost inside the title
@@ -39,14 +50,8 @@ import SwiftUI
 /// below is what remains for anyone not using a finger.
 struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
-    /// How wide the panel stands. `nil` = the whole screen.
-    var width: CGFloat? = nil
-    /// WHICH EDGE IT STANDS ON. The library is on the left, the
-    /// properties panel on the right, and past this line they are the
-    /// same panel (owner, 2026-08-28: "the note property panel being
-    /// identical in behavior as the left panel is best, but on the
-    /// right… ideally it shares code with the left panel").
-    var side: HorizontalEdge = .leading
+    /// How wide the panel stands, leaving the rest of the desk showing.
+    let width: CGFloat
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -65,29 +70,51 @@ struct SidePanel<Content: View>: View {
             // row a sixth of the way down a panel the owner had already
             // called too empty at the top (2026-08-28: "In the panel,
             // there is a huge cut-off that needs to go").
-            .safeAreaInset(edge: .top) { LivTopScrim(underChrome: false) }
-            // The properties panel leaves room for the bar. The library
-            // does not: its own foot floats and its list runs under it.
             //
-            // A LITERAL, deliberately. A `.safeAreaInset` whose height is
-            // derived from the safe area feeds itself — AttributeGraph
+            // NEVER DERIVE AN INSET'S HEIGHT FROM THE SAFE AREA. A
+            // `.safeAreaInset` that does feeds itself: AttributeGraph
             // reports a cycle and the surface stops repainting while its
-            // body keeps evaluating (2026-08-23).
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: width == nil ? LivBar.room : 0)
-            }
-            // A PANEL, not a curtain (owner, 2026-08-18): one step of tone
-        // above the canvas, flat — no shadow, no gradient, no border.
-        .background(LivTheme.panel)
+            // body keeps evaluating perfectly (2026-08-23, half a day
+            // and eight innocent suspects). `LivTopScrim` reads a
+            // literal, and so must anything added beside it.
+            .safeAreaInset(edge: .top) { LivTopScrim(underChrome: false) }
+            //
+            // NO BOTTOM INSET: the library's own foot floats and its
+            // list runs under it. There was one here until 2026-09-07,
+            // reserving `LivBar.room` when `width` was nil — the
+            // properties panel's branch, and nil since that panel became
+            // a card.
+            //
+            // A PANEL, not a curtain (owner, 2026-08-18): one step of
+            // tone above the canvas, flat — no shadow, no gradient, no
+            // border.
+            .background(LivTheme.surface)
             // WIDTH FIRST, THEN THE LEADING PIN, THEN the safe area.
             // Painting the background with `.ignoresSafeArea()` on the
             // COLOUR spreads it over the whole window whatever frame
             // follows, so the narrow panel comes out full-screen with its
             // rows centred. Order is the whole of it.
             .frame(width: width)
-            .frame(
-                maxWidth: .infinity,
-                alignment: side == .leading ? .leading : .trailing)
+            // AN EDGE, because the shadow never drew one.
+            //
+            // Sampled across `library.png` at y=500: the panel holds
+            // #232323 to x=319.67 and the desk's #1A1A1A starts at
+            // x=320.0 — a hard one-pixel step with no intermediate value
+            // anywhere in a 40pt band, where a radius-18 shadow would
+            // ramp through a dozen. It does not draw because the desk's
+            // Group has no zIndex (0) while this panel is zIndex 1, so
+            // the shadow paints UNDER an opaque surface. The app's
+            // largest depth event — 320pt of panel over the whole screen
+            // — was arriving at 1.07:1, less definition than a list
+            // separator. A hairline is 1.50:1 and costs no saturation.
+            //
+            // The panel stands on the LEADING edge, so its hairline is
+            // on the TRAILING one — the two constants below are the pair
+            // to mirror if a right-hand panel ever wants this recipe.
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(LivTheme.border2).frame(width: 0.5)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .ignoresSafeArea()
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
@@ -163,9 +190,31 @@ struct LibraryPanel: View {
                         detail: counts.of(feature),
                         on: desk.state == feature
                     ) {
+                        // ONE ROW, ONE MEANING: the view you named, with
+                        // nothing over it. Tapping the view you are
+                        // already in lays the document down, which is the
+                        // phone's own idiom for going to a tab's root.
+                        //
+                        // This used to need its own verb (`goToRoot`)
+                        // because a document was drawn by Notes wearing
+                        // it, so arriving at a view and getting out of a
+                        // document were two different moves. Since the
+                        // desk holds its own `shown` (2026-09-10) they
+                        // are one, and `go` is the whole rule.
+                        //
+                        // The note is not closed — the bar's numbered box
+                        // is still how you get back to it, from any view.
                         desk.go(feature)
                         onDismiss()
                     }
+                    // THE GROUPS ARE THE ORDER (`Feature.groups`, owner
+                    // 2026-09-10): Today, Inbox and Everything are
+                    // windows onto the box; Calendar and Tasks are the
+                    // two you add to. One empty half-row separates them,
+                    // the same separator the saved filters and Trash use
+                    // below, and no label — a heading over two rows
+                    // costs more than the rows do.
+                    .padding(.top, Feature.startsGroup(feature) ? LivPanel.row / 2 : 0)
                 }
 
                 // NO SECTION LABELS (owner, 2026-08-18: "eliminate
@@ -237,7 +286,7 @@ struct LibraryPanel: View {
                             .foregroundStyle(LivTheme.text)
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: LivType.caption, weight: .semibold))
                             .foregroundStyle(LivTheme.text2)
                     }
                     Text(counts.foot)
@@ -249,6 +298,14 @@ struct LibraryPanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // NAMED, because its label was DERIVED — the workspace's own
+            // name plus the line under it, so it changed with the box and
+            // could not be tapped by a driver. "Switch workspace" and not
+            // "Workspace": the card this opens draws that word as its
+            // title, and a label matching two elements is refused by
+            // `axe tap` (the third such collision in two days,
+            // 2026-09-05).
+            .accessibilityLabel("Switch workspace")
 
             // A CIRCLE, one step of tone off the panel it sits on — the
             // shape both references use for the settings key, and the
@@ -343,12 +400,13 @@ struct LibraryPanel: View {
 /// `design/core.md` §10 records — rebuild on read, once per render. This
 /// walks the entities once and answers from what it found.
 struct ViewCounts {
-    private var notes = 0
     private var tasks = 0
     private var inbox = 0
     private var events = 0
     private var everything = 0
     private var today = 0
+    /// Rows with no area cell — the pile that is not yet sorted.
+    private var unfiled = 0
 
     init(box: BoxModel, lens: WorkspaceModel) {
         let now = Civil.todayDay()
@@ -357,8 +415,10 @@ struct ViewCounts {
             // view is the number of rows that view will show.
             guard lens.admits(row) else { continue }
             everything += 1
+            if !(row.cells ?? []).contains(where: { $0.property == "area" && !($0.value ?? "").isEmpty }) {
+                unfiled += 1
+            }
             switch LivKind.of(row) {
-            case .note: notes += 1
             case .task: tasks += 1
             case .event: events += 1
             case .capture: inbox += 1
@@ -381,7 +441,6 @@ struct ViewCounts {
 
     func of(_ feature: Feature) -> String? {
         switch feature {
-        case .notes: return shown(notes)
         case .tasks: return shown(tasks)
         case .inbox: return shown(inbox)
         case .calendar: return shown(events)
@@ -390,8 +449,11 @@ struct ViewCounts {
         }
     }
 
-    /// Obsidian's second line: what the workspace holds, in words.
+    /// What the workspace holds, and HOW MUCH OF IT IS SORTED. Obsidian's
+    /// foot says how big the vault is; Liv's says how much is unfiled,
+    /// which is the product page's second success test (2026-09-06).
     var foot: String {
-        "\(everything) item\(everything == 1 ? "" : "s")"
+        let items = "\(everything) item\(everything == 1 ? "" : "s")"
+        return unfiled > 0 ? items + " · \(unfiled) unfiled" : items
     }
 }

@@ -43,13 +43,23 @@ struct EverythingView: View {
                 // the state, and the number was furniture. The slice
                 // picker is the only thing this screen needs at its
                 // head, because it changes what the list IS.
-                picker
+                // THE SCREEN'S NAME. Notes, Everything and Tasks were the
+                // three surfaces with nothing at the top saying where you
+                // are — Today, Inbox and the Calendar all lead with one,
+                // and a list that starts at its first row reads as a
+                // fragment of a screen rather than a screen.
+                LivScreenTitle("Everything")
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
+                    .padding(.bottom, 6)
+                picker
                     .padding(.bottom, 8)
                 if slice.isEmpty {
                     EmptyHint(empty)
                 } else {
-                    ForEach(slice) { row in line(row) }
+                    ForEach(Array(slice.enumerated()), id: \.element.id) { i, row in
+                        line(row, prev: i == 0 ? nil : slice[i - 1])
+                    }
                 }
             }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -59,7 +69,7 @@ struct EverythingView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        .contentMargins(.bottom, 16, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()  // full screen: no bar under it
         .background(LivTheme.canvas)
         .onAppear {
@@ -75,9 +85,10 @@ struct EverythingView: View {
 
     private var empty: String {
         switch lens {
-        case .all: return "Nothing yet. Everything you capture lands here."
-        case .upcoming: return "Nothing dated in the next seven days."
-        case .unfiled: return "Nothing unfiled — every item has an area."
+        case .all: return "Empty"
+        case .notes: return "Nothing written"
+        case .upcoming: return "Nothing due"
+        case .unfiled: return "All filed"
         }
     }
 
@@ -127,6 +138,26 @@ struct EverythingView: View {
         switch lens {
         case .all:
             return all.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
+        case .notes:
+            // WHAT WAS THE NOTES VIEW, unchanged: documents only — a task
+            // is a record and opens as a card, so a list of things that
+            // open as a page is the honest content. Files count; a file
+            // is a document you work on.
+            //
+            // ORDERED BY WHAT YOU TOUCHED LAST, not by when you made it.
+            // That ordering is why this can beat the tab switcher: the
+            // note you were editing ten minutes ago is the first row, and
+            // unlike the switcher it also reaches the note you did NOT
+            // leave open. The key is the log's own `recency` — the seq of
+            // the last transaction that touched the entity, which is what
+            // search tiebreaks with, so the two can never disagree.
+            //
+            // It deliberately does not track "opened": reading a note
+            // without changing it does not bump it. No verb writes a
+            // visit, and a device-side one would disagree with search on
+            // every other surface.
+            return all.filter { TabShape.of($0) != .record }
+                .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
         case .unfiled:
             return all.filter { area($0) == nil }
                 .sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
@@ -148,18 +179,18 @@ struct EverythingView: View {
 
     // MARK: one row
 
-    private func line(_ row: EntityRow) -> some View {
+    private func line(_ row: EntityRow, prev: EntityRow?) -> some View {
         // A BUTTON, not a tap gesture (owner's clips, 2026-08-20). A
         // gesture opens the row and says nothing while it does it;
         // every app in the reference set lights the row under the
         // finger first. Eight rows in this app were gestures.
         Button { desk.open(row.id) } label: {
-            row_(row)
+            row_(row, prev: prev)
         }
         .livRowPress()
     }
 
-    private func row_(_ row: EntityRow) -> some View {
+    private func row_(_ row: EntityRow, prev: EntityRow?) -> some View {
         LivListRow(
             glyph: LivKind.glyph(of: row),
             // A MIXED list: the kind's colour is doing work here, so it
@@ -174,36 +205,23 @@ struct EverythingView: View {
             // chips before the surface pass and none after it; one is
             // what the spec asks for, and it answers the question a
             // mixed list actually raises: what is this attached to.
-            if let anchor = anchorChip(row) {
-                ValueChip(anchor)
+            if let chip = livAnchorChip(of: row) {
+                chip.transition(.scale(scale: 0.85).combined(with: .opacity))
             }
-            if let trailing = trailing(row) {
+            // Only when it changes — see `livNewFact`. Fourteen rows
+            // reading "Mon 31 Aug" said nothing about any of them.
+            if let trailing = livNewFact(
+                trailing(row), after: prev.flatMap { trailing($0) })
+            {
                 LivRowFact(text: trailing, emphasis: lens == .upcoming)
             }
         }
         .contentShape(Rectangle())
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                box.trash(row.id)
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
+            livTrashAction { box.trash(row.id) }
         }
     }
 
-
-    /// The row's ONE anchor, in the blueprint's own order: project →
-    /// subject → people → area. First one that exists wins; nothing
-    /// renders when none does.
-    private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "tags", "people", "area"] {
-            let hit = (row.cells ?? []).first {
-                $0.property == property && !($0.value ?? "").isEmpty
-            }
-            if let value = hit?.value, !value.isEmpty { return value }
-        }
-        return nil
-    }
 
     /// Upcoming answers "when is it due"; the other slices answer "when did
     /// I catch it". Today reads as a time either way — a column of identical

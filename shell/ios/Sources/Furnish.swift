@@ -17,9 +17,10 @@ import Foundation
 enum Furnish {
     /// The six areas — the RESEARCHED canon (PARA, Wheel of Life, Things,
     /// Ultimate Brain; 2026-07-27), not invention. Fixed. No create-new.
-    static let areaNames = [
-        "Work", "Health", "Money", "Home", "Family & Friends", "Learning",
-    ]
+    /// The names live ONCE, on `LivArea` (Glyph.swift) beside the marks
+    /// that draw them — a name and its mark drifting apart would be the
+    /// exact defect one table exists to prevent (2026-09-06).
+    static var areaNames: [String] { LivArea.allCases.map(\.name) }
 
     /// The text fields the capture/camera chips write. `area` is separate:
     /// it is a select, born with its options.

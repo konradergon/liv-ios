@@ -244,6 +244,255 @@ fn the_sweep_never_proposes_tier_or_private() {
     cleanup(&path);
 }
 
+// ---- 2026-09-09: the area proposer — "this mentions Anna" files it ----
+//
+// The thesis (`design/what-liv-is-for.md`): *"Liv also offers what it
+// thinks: this looks due Friday, this mentions Anna. You say yes or no."*
+// Dates and mentions shipped with clerk v0; the third thing — WHERE a
+// capture goes — never did, so the pile test ("most of what you catch
+// ends up findable without a sorting session") was unmet by
+// construction. The rule is the one a person uses: a thought about Sam
+// belongs where Sam is filed. Owner's word, 2026-09-09.
+
+/// The `area` select the shell furnishes on first open (Furnish.swift).
+/// The Rust seed does not carry it, so a test that wants it builds it.
+fn furnished(session: &mut Session) -> Id {
+    let area = liv_services::content::birth_property(session, "area", "select").unwrap();
+    for name in ["Work", "Health", "Money", "Home", "Family & Friends", "Learning"] {
+        liv_services::content::add_option(session, area, name).unwrap();
+    }
+    area
+}
+
+/// A named note, filed under an area — the thing a capture can mention.
+fn filed(session: &mut Session, name: &str, area: &str) -> Id {
+    let id = typed(session, "note", name, vec![]);
+    liv_services::content::set_property(session, id, "area", area).unwrap();
+    id
+}
+
+fn option(session: &Session, area: Id, name: &str) -> Id {
+    liv_services::content::find_option(session.store(), area, name).unwrap()
+}
+
+#[test]
+fn a_mention_of_something_filed_proposes_its_area() {
+    let (mut session, path) = boxed("area_mention");
+    let area = furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    let scrap = capture(&mut session, "ask Sam Okafor about the budget");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    let p = from(&proposals, "area").expect("an area proposal");
+    let work = option(&session, area, "Work");
+    assert!(
+        matches!(
+            p.commands.as_slice(),
+            [Command::AddCell { entity, cell }]
+                if *entity == scrap && cell.property == area && cell.value == Value::Select(work)
+        ),
+        "one cell, the area: {:?}",
+        p.commands
+    );
+    // In words a person reads: who was mentioned, where they are filed.
+    assert!(p.reason.contains("Sam Okafor") && p.reason.contains("Work"), "{}", p.reason);
+    assert!(!p.reason.contains('#') && !p.label.contains('#'), "{} / {}", p.reason, p.label);
+
+    session.propose(p.clone()).unwrap();
+    session.accept(0).unwrap();
+    assert_eq!(session.store().get(scrap).unwrap().get(area), Some(&Value::Select(work)));
+
+    // Filed: the proposer stays quiet — it suggests, never competes.
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn area_is_quiet_when_the_mentions_disagree() {
+    let (mut session, path) = boxed("area_disagree");
+    furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    filed(&mut session, "Anna Lind", "Family & Friends");
+    capture(&mut session, "lunch with Sam Okafor and Anna Lind");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    // Two areas is a coin flip, and the clerk does not flip coins…
+    assert!(from(&proposals, "area").is_none(), "{proposals:?}");
+    // …but the mentions themselves still arrive.
+    assert_eq!(proposals.iter().filter(|p| p.author == Author::Proposer("mentions".into())).count(), 2);
+    cleanup(&path);
+}
+
+#[test]
+fn mentions_that_agree_propose_once_and_name_the_first() {
+    let (mut session, path) = boxed("area_agree");
+    furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    filed(&mut session, "Priya Nair", "Work");
+    capture(&mut session, "Priya Nair and Sam Okafor want the deck by friday");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    let areas: Vec<&Proposal> =
+        proposals.iter().filter(|p| p.author == Author::Proposer("area".into())).collect();
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    // The gazetteer walks in id order, so Sam (filed first) is the name
+    // the reason gives — the same order the mentions come in.
+    assert!(areas[0].reason.contains("Sam Okafor"), "{}", areas[0].reason);
+    cleanup(&path);
+}
+
+#[test]
+fn area_is_quiet_for_a_mention_that_is_not_filed() {
+    let (mut session, path) = boxed("area_unfiled");
+    furnished(&mut session);
+    typed(&mut session, "note", "Anna Lind", vec![]); // known, but filed nowhere
+    capture(&mut session, "lunch with Anna Lind");
+
+    let proposals = clerk::sweep(session.store(), MONDAY);
+    assert!(from(&proposals, "mentions").is_some());
+    assert!(from(&proposals, "area").is_none(), "{proposals:?}");
+    cleanup(&path);
+}
+
+#[test]
+fn area_is_quiet_when_the_capture_already_has_one() {
+    let (mut session, path) = boxed("area_held");
+    furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    let scrap = capture(&mut session, "Sam Okafor recommended a physio");
+    liv_services::content::set_property(&mut session, scrap, "area", "Health").unwrap();
+
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn area_is_quiet_without_the_furniture() {
+    // A box the shell never furnished has no `area` at all: the proposer
+    // must stay silent rather than invent the property.
+    let (mut session, path) = boxed("area_bare");
+    typed(&mut session, "note", "Sam Okafor", vec![]);
+    capture(&mut session, "ask Sam Okafor");
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn a_declined_area_is_not_re_asked() {
+    let (mut session, path) = boxed("area_declined");
+    furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    filed(&mut session, "Priya Nair", "Work");
+    let scrap = capture(&mut session, "ask Sam Okafor");
+
+    let p = from(&clerk::sweep(session.store(), MONDAY), "area").unwrap();
+    session.propose(p).unwrap();
+    session.reject(0).unwrap();
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+
+    // The refusal binds (proposer, entity, property): rewriting the
+    // words to mention someone ELSE in Work asks nothing either.
+    let base = liv_services::content::content_fingerprint(
+        session.store().get(scrap).unwrap().get(props::CONTENT),
+    );
+    liv_services::content::set_content(
+        &mut session,
+        scrap,
+        vec![Span::Text(TextSpan::plain("ask Priya Nair instead"))],
+        base,
+    )
+    .unwrap();
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn a_stale_area_proposal_is_retracted_on_save() {
+    // The proposer reads the words, so its draft is re-derivable and a
+    // content save retracts it (the rule `content_save_keeps_proposals…`
+    // guards from the other side).
+    let (mut session, path) = boxed("area_stale");
+    furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    let now = DateTime::at(2026, 9, 9, 12, 0);
+    let note = liv_services::content::create_note(&mut session, now).unwrap();
+    liv_services::content::set_content(
+        &mut session,
+        note,
+        vec![Span::Text(TextSpan::plain("ask Sam Okafor about the budget"))],
+        0,
+    )
+    .unwrap();
+    let p = from(&clerk::sweep(session.store(), MONDAY), "area").unwrap();
+    session.propose(p).unwrap();
+    assert_eq!(session.store().pending().len(), 1);
+
+    let base = liv_services::content::content_fingerprint(
+        session.store().get(note).unwrap().get(props::CONTENT),
+    );
+    liv_services::content::set_content(
+        &mut session,
+        note,
+        vec![Span::Text(TextSpan::plain("the budget, on my own"))],
+        base,
+    )
+    .unwrap();
+    assert!(session.store().pending().is_empty(), "the draft outlived the words it read");
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
+/// THE OWNER'S BOX IS OLDER THAN THE FURNITURE. Boxes from before
+/// 2026-08-29 carry `area` as a TEXT property, and Furnish.swift leaves
+/// it so ("a legacy TEXT `area` refuses options harmlessly — values keep
+/// flowing as text"). Found on the simulator the day the proposer
+/// shipped: Sam filed under Work, the mention proposed, the area not —
+/// because the proposer read a Select and Sam's cell was Text("Work").
+/// The proposer copies the cell it finds, whatever kind the box keeps.
+#[test]
+fn area_is_read_from_a_text_field_as_well() {
+    let (mut session, path) = boxed("area_text");
+    let area = liv_services::content::birth_property(&mut session, "area", "text").unwrap();
+    let sam = typed(&mut session, "note", "Sam Okafor", vec![]);
+    liv_services::content::set_property(&mut session, sam, "area", "Work").unwrap();
+    let scrap = capture(&mut session, "ask Sam Okafor about lunch");
+
+    let p = from(&clerk::sweep(session.store(), MONDAY), "area").expect("an area proposal");
+    assert!(
+        matches!(
+            p.commands.as_slice(),
+            [Command::AddCell { entity, cell }]
+                if *entity == scrap && cell.property == area && cell.value == Value::text("Work")
+        ),
+        "{:?}",
+        p.commands
+    );
+    assert!(p.reason.contains("Work"), "{}", p.reason);
+
+    // A blank text area is filed nowhere.
+    liv_services::content::set_property(&mut session, sam, "area", "").unwrap();
+    assert!(from(&clerk::sweep(session.store(), MONDAY), "area").is_none());
+    cleanup(&path);
+}
+
+#[test]
+fn a_typed_thing_gets_an_area_too() {
+    // Filing is not only for scraps: a task that mentions Sam belongs
+    // where Sam is, and the proposal is the same one cell.
+    let (mut session, path) = boxed("area_task");
+    let area = furnished(&mut session);
+    filed(&mut session, "Sam Okafor", "Work");
+    let task = task_note(&mut session, "send Sam Okafor the invoice");
+
+    let p = from(&clerk::sweep(session.store(), MONDAY), "area").expect("an area proposal");
+    let work = option(&session, area, "Work");
+    assert!(matches!(
+        p.commands.as_slice(),
+        [Command::AddCell { entity, cell }] if *entity == task && cell.value == Value::Select(work)
+    ));
+    cleanup(&path);
+}
+
 /// 2026-07-06 is a Monday.
 const MONDAY: DateTime = DateTime {
     civil: 202607060000,

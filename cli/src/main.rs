@@ -1,9 +1,20 @@
-//! liv — a stand-in shell for milestone 3.
+//! liv — the headless CLI, and the VERIFICATION tool.
 //!
-//! A real shell (window, hotkey, popup) arrives with milestone 4, where the
-//! platform decision bites. Until then this binary is the thinnest possible
-//! orchestrator: parse arguments, open the session, run services, print what
-//! the renderer emitted. It owns no data and defines no commands.
+//! It was written as a stand-in for a shell that had not arrived. One has:
+//! `shell/ios` is the app. So this is not a placeholder any more, it is the
+//! second reader of the same box — the way to check what the app claims,
+//! from outside the app (CLAUDE.md: "cross-check writes against the box
+//! with the CLI. A builder's own report is not evidence").
+//!
+//! That job sets its rule: it should reach every verb the shell can reach.
+//! On 2026-09-05 it did not — no undo, trash, restore, search, snapshot or
+//! birth verbs — and each gap was a thing the app could do that nothing
+//! else could confirm. Those are here now. What is still missing is named
+//! in the usage line, not in a comment that can drift from it.
+//!
+//! Still the thinnest possible orchestrator: parse arguments, open the
+//! session, run services, print what the renderer emitted. It owns no data
+//! and defines no commands.
 
 mod satellite;
 
@@ -67,6 +78,18 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         return satellite::export(&log_path, root);
     }
 
+    // THE SNAPSHOT the shell decodes, printed verbatim — the one command
+    // that can answer "is the app showing what the box holds?" for the
+    // seven wire sections no other CLI command reaches (trashed, inbox,
+    // assist, workspaces, views, noteTasks, occurrences).
+    //
+    // It goes here, above `Session::open`, for the same reason
+    // satellite-export does: it reads through the C seam, which opens and
+    // LOCKS the box itself, and the session below already holds that lock.
+    if let Some((&"snapshot", flags)) = rest.split_first() {
+        return snapshot(&log_path, flags);
+    }
+
     let mut session = Session::open(&log_path).map_err(|e| e.to_string())?;
     liv_services::seed_if_fresh(&mut session).map_err(|e| e.to_string())?;
 
@@ -112,6 +135,20 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         // The satellite drain (design/ios.md §2.2): the phone's outbox
         // becomes box entities, one transaction per batch.
         Some((&"drain", rest)) => satellite::drain(&mut session, rest),
+        // THE VERBS THE SHELL HAD AND THIS DID NOT (2026-09-05).
+        Some((&"undo", rest)) => step_back(&mut session, rest, false),
+        Some((&"redo", rest)) => step_back(&mut session, rest, true),
+        Some((&"trash", rest)) => trash(&mut session, rest),
+        Some((&"restore", rest)) => restore(&mut session, rest),
+        Some((&"new", rest)) => birth(&mut session, rest),
+        Some((&"content", rest)) => content(&session, rest),
+        // The shell's History card reads this seam (2026-09-09); the
+        // verification tool keeps every verb the shell can reach.
+        Some((&"versions", rest)) => versions(&session, rest),
+        Some((&"content-set", rest)) => content_set(&mut session, rest),
+        Some((&"export", rest)) => export(&session, rest),
+        Some((&"search", words)) if !words.is_empty() => find(&session, &log_path, words, false),
+        Some((&"lens", words)) if !words.is_empty() => find(&session, &log_path, words, true),
         _ => Err("usage: liv [--log FILE] [today] | add TEXT... | \
                   list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
                   inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
@@ -119,7 +156,13 @@ fn dispatch(args: &[String]) -> Result<(), String> {
                   habit NAME... [--points N] [--cadence TEXT] | \
                   checkin HABIT-ID [DAY] | habits | \
                   time [TARGET-ID START END] | rename-value PROP OLD NEW... | \
-                  drain SATELLITE-ROOT | satellite-export SATELLITE-ROOT"
+                  drain SATELLITE-ROOT | satellite-export SATELLITE-ROOT | \
+                  snapshot [--window FROM-YYYYMMDDHHMM TO-YYYYMMDDHHMM] | \
+                  undo [N] | redo [N] | trash ID | restore ID | \
+                  new note|task|event [NAME...] | \
+                  content ID | content-set ID [--base N] TEXT... | versions ID | \
+                  search WORDS... | lens WORDS... | \
+                  export ID[,ID...] DEST [--group-by PROP]"
             .into()),
     }
 }
@@ -673,4 +716,335 @@ fn vault(session: &mut Session, log_path: &str, sub: &[&str]) -> Result<(), Stri
         }
         Some(other) => Err(format!("unknown vault subcommand: {other}")),
     }
+}
+
+// ---- the verbs the shell had and this did not (2026-09-05) ----
+
+/// THE WHOLE SNAPSHOT, as JSON, exactly as the shell decodes it.
+///
+/// `list` renders a table through `liv-views`; this prints the wire. They
+/// answer different questions: `list` says what the box holds, this says
+/// what the app was HANDED. Seven sections have no other reader outside
+/// the app — trashed, inbox, assist, workspaces, views, noteTasks,
+/// occurrences — so a bug in any of them was previously only visible on
+/// a phone screen.
+fn snapshot(log_path: &str, flags: &[&str]) -> Result<(), String> {
+    let json = match flags {
+        [] => satellite::snapshot_json(log_path)?,
+        ["--window", from, to] => {
+            let from: i64 = from.parse().map_err(|_| "--window FROM must be YYYYMMDDHHMM")?;
+            let to: i64 = to.parse().map_err(|_| "--window TO must be YYYYMMDDHHMM")?;
+            satellite::snapshot_window_json(log_path, from, to)?
+        }
+        _ => return Err("usage: liv snapshot [--window FROM TO]".into()),
+    };
+    println!("{json}");
+    Ok(())
+}
+
+/// UNDO, AND REDO. The shell has only the first — there is no `liv_redo_at`
+/// verb, so the app's undo is one-way (design/spec-alignment.md) — but
+/// `Session::redo` exists and the CLI links the crate rather than the C
+/// ABI, so it can reach it. That asymmetry is worth being able to
+/// demonstrate rather than only describe.
+///
+/// N repeats, because the Inbox's undo chip is itself a loop: one tap
+/// there reverses a whole accept-all.
+fn step_back(session: &mut Session, rest: &[&str], forward: bool) -> Result<(), String> {
+    let times: u32 = match rest.first() {
+        None => 1,
+        Some(n) => n.parse().map_err(|_| format!("not a count: {n}"))?,
+    };
+    let word = if forward { "redo" } else { "undo" };
+    for step in 0..times {
+        let done = if forward {
+            session.redo(Author::User)
+        } else {
+            session.undo(Author::User)
+        };
+        match done {
+            Ok(seq) => println!("{word} → seq {seq}"),
+            Err(e) => {
+                if step == 0 {
+                    return Err(e.to_string());
+                }
+                println!("nothing left to {word} after {step}");
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The id every command takes: bare or with a leading '#'.
+fn entity_id(arg: &str) -> Result<Id, String> {
+    arg.trim_start_matches('#')
+        .parse()
+        .map_err(|_| format!("not an entity id: {arg}"))
+}
+
+/// TRASH — the same seam both shell verbs use. `liv_trash_at` and
+/// `liv_trash_workspace_at` both land on `content::trash_workspace`, so
+/// one command covers the pair.
+fn trash(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let id = entity_id(rest.first().ok_or("usage: liv trash ID")?)?;
+    if session.store().get(id).is_none() {
+        return Err(format!("no entity #{id}"));
+    }
+    liv_services::content::trash_workspace(session, id).map_err(|e| format!("{e:?}"))?;
+    println!("#{id} → Trash");
+    Ok(())
+}
+
+/// RESTORE — the other half, and the reason the verb was added in August:
+/// a door that only goes one way is the bug, not the feature.
+fn restore(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let id = entity_id(rest.first().ok_or("usage: liv restore ID")?)?;
+    if session.store().get(id).is_none() {
+        return Err(format!("no entity #{id}"));
+    }
+    session
+        .commit(
+            vec![liv_core::Command::Restore { entity: id }],
+            format!("restore {id}"),
+            Author::User,
+        )
+        .map_err(|e| e.to_string())?;
+    println!("#{id} restored");
+    Ok(())
+}
+
+/// BIRTH: note, task or event.
+///
+/// `add` is CAPTURE — an untyped scrap the clerk quarantines — and
+/// `route` types one afterwards. That pair is NOT the same as being born:
+/// `create_task` writes the type's default status in the SAME
+/// transaction, and `create_event` writes a due cell at birth. A CLI
+/// task built the old way differed from an app task in its cells, which
+/// is exactly the kind of drift this tool exists to catch.
+fn birth(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (kind, words) = rest
+        .split_first()
+        .ok_or("usage: liv new note|task|event [NAME...]")?;
+    let now = civil_today();
+    let id = match *kind {
+        "note" => liv_services::content::create_note(session, now),
+        "task" => liv_services::content::create_task(session, now),
+        // The app dates an event from the surface you stand on; the CLI
+        // stands nowhere, so today at 09:00 — the same default the bar
+        // uses when it has no day of its own.
+        "event" => liv_services::content::create_event(session, now, now),
+        other => return Err(format!("liv new takes note, task or event, not {other}")),
+    }
+    .map_err(|e| e.to_string())?;
+    if !words.is_empty() {
+        let text = words.join(" ");
+        session
+            .commit(
+                vec![liv_core::Command::AddCell {
+                    entity: id,
+                    cell: liv_core::Cell {
+                        property: props::NAME,
+                        value: Value::text(&text),
+                    },
+                }],
+                format!("name {text}"),
+                Author::User,
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    println!("#{id} is a new {kind}");
+    Ok(())
+}
+
+/// A NOTE'S BODY, with its LINE STRUCTURE and its fingerprint.
+///
+/// `list --columns content` already prints the words, but the renderer
+/// flattens every break to a space — and the Tasks view's "In notes"
+/// section is projected off exactly those lines, so a flattened body
+/// cannot answer whether a checkbox line is really there. This prints one
+/// line per break and the fingerprint the editor's compare-and-swap uses.
+/// Every past version of one entity's content, NEWEST first — the same
+/// list the phone's History card draws. `seq` is what a restore appends
+/// after, so `versions` before and after a restore is how you prove the
+/// log was appended to and never rewritten.
+fn versions(session: &Session, rest: &[&str]) -> Result<(), String> {
+    let id = entity_id(rest.first().ok_or("usage: liv versions ID")?)?;
+    let store = session.store();
+    store.get(id).ok_or(format!("no entity #{id}"))?;
+    let mut list = liv_services::content::content_history(store, id);
+    list.reverse();
+    if list.is_empty() {
+        println!("no content versions for #{id}");
+        return Ok(());
+    }
+    for v in &list {
+        let author = match &v.author {
+            Author::User => "user".to_string(),
+            Author::Proposer(name) => format!("proposer:{name}"),
+            Author::System => "system".to_string(),
+        };
+        println!(
+            "{:>4}  {}  {:<16} {} [{} span{}]",
+            v.seq,
+            v.time,
+            author,
+            v.label,
+            v.spans.len(),
+            if v.spans.len() == 1 { "" } else { "s" }
+        );
+    }
+    Ok(())
+}
+
+fn content(session: &Session, rest: &[&str]) -> Result<(), String> {
+    let id = entity_id(rest.first().ok_or("usage: liv content ID")?)?;
+    let store = session.store();
+    let entity = store.get(id).ok_or(format!("no entity #{id}"))?;
+    let spans = liv_services::content::content_spans(entity);
+    let fingerprint = liv_services::content::content_fingerprint(entity.get(props::CONTENT));
+    let mut line = String::new();
+    for span in &spans {
+        match span {
+            liv_core::Span::Break(_) => {
+                println!("{line}");
+                line.clear();
+            }
+            other => line.push_str(&span_text(other)),
+        }
+    }
+    if !line.is_empty() {
+        println!("{line}");
+    }
+    println!("fingerprint: {fingerprint}");
+    Ok(())
+}
+
+/// The words in one span, whatever kind it is. A Ref prints as the id it
+/// points at, in the app's own `#id` shape.
+fn span_text(span: &liv_core::Span) -> String {
+    match span {
+        liv_core::Span::Text(t) => t.text.clone(),
+        liv_core::Span::Ref(id) => format!("#{id}"),
+        _ => String::new(),
+    }
+}
+
+/// THE EDITOR'S SAVE, compare-and-swap included.
+///
+/// `set ID content "..."` already writes, but it makes ONE span with no
+/// breaks and checks no base, where the shell's save refuses a stale
+/// write outright. Multi-line text goes in with `\n`; the base defaults
+/// to what is there now, which still refuses a change made mid-flight.
+fn content_set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
+    let (id_arg, rest) = rest
+        .split_first()
+        .ok_or("usage: liv content-set ID [--base N] TEXT...")?;
+    let id = entity_id(id_arg)?;
+    let (base, words): (Option<u64>, &[&str]) = match rest {
+        ["--base", n, tail @ ..] => (
+            Some(n.parse().map_err(|_| format!("not a fingerprint: {n}"))?),
+            tail,
+        ),
+        all => (None, all),
+    };
+    if words.is_empty() {
+        return Err("usage: liv content-set ID [--base N] TEXT...".into());
+    }
+    let store = session.store();
+    let entity = store.get(id).ok_or(format!("no entity #{id}"))?;
+    let base = base
+        .unwrap_or_else(|| liv_services::content::content_fingerprint(entity.get(props::CONTENT)));
+    let text = words.join(" ").replace("\\n", "\n");
+    let spans = liv_services::content::plain_spans(&text);
+    let fingerprint = liv_services::content::set_content(session, id, spans, base)
+        .map_err(|e| format!("{e:?}"))?;
+    println!("#{id} written, fingerprint: {fingerprint}");
+    Ok(())
+}
+
+/// SEARCH AND LENS — the grammar the app's filters are actually written
+/// in, which `list --where` is not.
+///
+/// The two modes are OPPOSITE for the same token: search WIDENS on
+/// `is:archived`, a lens RESTRICTS. Saved views and workspaces store
+/// their query as one of these strings, so without this nothing outside
+/// the app could answer "does this lens admit these ids" — `drive.sh
+/// lens` could only assert what a screen showed.
+fn find(session: &Session, log_path: &str, words: &[&str], lens: bool) -> Result<(), String> {
+    use liv_services::search;
+    let store = session.store();
+    let raw = words.join(" ");
+    let mode = if lens { search::Mode::Lens } else { search::Mode::Search };
+    let sq = search::parse_mode(store, &raw, mode);
+    // The file text a hit can match on — the same closure `liv_search_at`
+    // builds, so a CLI search and an app search see one corpus.
+    let file_prop = property_by_name(store, "file").ok();
+    let format_prop = property_by_name(store, "format").ok();
+    let cache = liv_services::files::cache_dir(log_path);
+    let extracted = |entity: &liv_core::Entity| -> String {
+        let Some(fp) = file_prop else { return String::new() };
+        let Some(Value::File(file)) = entity.get(fp) else { return String::new() };
+        let format = format_prop
+            .and_then(|p| entity.get(p))
+            .and_then(|v| match v {
+                Value::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .unwrap_or("");
+        liv_services::files::extracted_text(&cache, file, format)
+    };
+    let hits = search::search(store, &sq, 200, extracted);
+    if hits.is_empty() {
+        println!("no {}", if lens { "matches" } else { "hits" });
+        return Ok(());
+    }
+    for hit in &hits {
+        let name = store
+            .get(hit.id)
+            .and_then(|e| e.get(props::NAME))
+            .map(|v| liv_views::display(store, v))
+            .unwrap_or_else(|| "untitled".into());
+        println!("#{:<6} {}", hit.id, name);
+    }
+    println!("{} shown", hits.len());
+    Ok(())
+}
+
+/// BULK EXPORT — the box out to a folder of markdown.
+///
+/// `liv_export_at` has shipped since P15c with no caller in either
+/// client, so the whole planner (collision-safe names, group-by folders)
+/// was untested outside its unit tests. The door belongs here rather
+/// than on the phone: a phone has nowhere to put a folder.
+fn export(session: &Session, rest: &[&str]) -> Result<(), String> {
+    let (ids_arg, rest) = rest
+        .split_first()
+        .ok_or("usage: liv export ID[,ID...] DEST [--group-by PROP]")?;
+    let (dest, rest) = rest
+        .split_first()
+        .ok_or("usage: liv export ID[,ID...] DEST [--group-by PROP]")?;
+    let store = session.store();
+    let ids: Vec<Id> = ids_arg
+        .split(',')
+        .map(|one| entity_id(one.trim()))
+        .collect::<Result<_, _>>()?;
+    for id in &ids {
+        if store.get(*id).is_none() {
+            return Err(format!("no entity #{id}"));
+        }
+    }
+    let group_by: Vec<Id> = match rest {
+        [] => Vec::new(),
+        ["--group-by", prop] => vec![property_by_name(store, prop)?],
+        _ => return Err("usage: liv export ID[,ID...] DEST [--group-by PROP]".into()),
+    };
+    let plan = liv_services::export::export_plan(store, &ids, &group_by);
+    let written = liv_services::export::export_write(&plan, std::path::Path::new(dest))
+        .map_err(|e| e.to_string())?;
+    // `export_write` counts FILES, not bytes — it returns one per file
+    // actually written, which can be fewer than the plan holds if a copy
+    // source has gone missing.
+    println!("{written} of {} file(s) → {dest}", plan.files.len());
+    Ok(())
 }

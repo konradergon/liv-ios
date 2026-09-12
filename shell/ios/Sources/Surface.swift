@@ -21,12 +21,12 @@ import SwiftUI
 enum LivSurface {
     static let prefix = "liv.surface."
 
-    /// The desk's three bodies. The five feature views use their
+    /// The desk's two bodies. The five feature views use their
     /// `Feature.rawValue`, so there is one vocabulary, not two.
     ///
-    /// Notes' root: the list of every note (restored 2026-08-28, when
-    /// the grid-as-root was measured to be hiding 126 of them).
-    static let notes = "notes"
+    /// `notes` went with the view on 2026-09-10. The list of notes is
+    /// `EverythingLens.notes`, so the surface under it answers
+    /// `everything` — a lens is a place inside a view, not a view.
     static let document = "document"
 }
 
@@ -84,6 +84,19 @@ enum LivOverlay {
     /// the trailing edge (2026-08-28).
     static let properties = "properties"
     static let settings = "settings"
+    /// The trash. It had no marker while it wore a `NavigationStack`,
+    /// which is also the only structure a driver could have keyed on —
+    /// so removing the nav bar (2026-09-07) is what made this necessary,
+    /// and what makes the surface visible to `drive.sh` for the first
+    /// time.
+    static let trash = "trash"
+    /// The workspace / filter card, which hangs from the foot of the
+    /// library panel. It had no marker at all until 2026-09-08, so
+    /// nothing could assert it was even up — which is how the bar came
+    /// to be painting over it for a week without a check noticing.
+    static let workspace = "workspace"
+    /// The open document's version history (2026-09-09).
+    static let history = "history"
 }
 
 extension View {

@@ -357,14 +357,15 @@ struct LensChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            LivIcon(glyph: .filter, color: LivTheme.accent, size: 12)
+            LivIcon(glyph: .filter, color: LivTheme.accent, size: LivChip.glyph)
             Text(label)
                 .font(.system(size: LivType.caption, weight: .medium))
                 .lineLimit(1)
         }
         .foregroundStyle(LivTheme.accent)
         .padding(.horizontal, 7)
-        .frame(height: 17)
+        // The app's chip height. 17 was a raw number seven under it.
+        .frame(height: LivChip.height)
         .background(Capsule().fill(LivTheme.accentSoft))
         .accessibilityLabel("Filtered by \(label)")
     }

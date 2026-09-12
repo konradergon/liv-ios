@@ -166,15 +166,17 @@ private struct LinkRowView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Unlink \(name)")
-            } else if link.fromBody == true {
-                // The whole reason this row has no ✕: the link lives in
-                // the words, so the words are where it is removed.
-                Image(systemName: "text.quote")
-                    .font(.system(size: LivType.caption))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 40, height: 44)
-                    .accessibilityLabel("Typed in the note")
             }
+            // A LINK TYPED IN THE BODY USED TO GET A GLYPH HERE — a
+            // 40x44 `text.quote` you could not press, standing in the
+            // column where every other row has its ✕. It said "this one
+            // is different" by occupying the space of a control and
+            // doing nothing, which is the worst of both: it read as a
+            // broken button and it explained nothing. The row already
+            // reads differently — it has no ✕ — and that IS the
+            // statement (the link lives in the words, so the words are
+            // where it is removed). Its meaning moves to the row's
+            // accessibility hint, where it can be a sentence.
         }
     }
 

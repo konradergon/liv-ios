@@ -50,6 +50,30 @@ struct FileFacts {
     var url: URL { URL(fileURLWithPath: path) }
     var exists: Bool { FileManager.default.fileExists(atPath: path) }
 
+    /// The format as a phrase, for the one place that says it in words
+    /// rather than drawing it. "cpp file", "PDF", "Spreadsheet".
+    var formatWord: String {
+        switch fileClass {
+        case .pdf: return "PDF"
+        case .image: return "Image"
+        case .sheet: return "Spreadsheet"
+        case .slides: return "Slides"
+        case .document: return "Document"
+        case .text: return format.isEmpty ? "Text file" : "\(format) text file"
+        case .other: return format.isEmpty ? "File" : "\(format) file"
+        }
+    }
+
+    /// How big, in the shortest honest form. Empty when the file is gone
+    /// — the broken card says that instead.
+    var sizeWord: String {
+        guard
+            let size = try? FileManager.default
+                .attributesOfItem(atPath: path)[.size] as? Int64
+        else { return "" }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+    }
+
     /// What KIND of file, for a glyph and for how to show it. Derived
     /// from the format, never stored — one function, so the icon in a
     /// list and the body of a tab can never disagree.
@@ -103,14 +127,16 @@ struct FileBody: View {
             } else if let row = box.entity(id), let facts = FileFacts.of(row) {
                 body(row, facts)
             } else {
-                EmptyHint("This file was deleted.")
+                EmptyHint("Deleted")
                     .frame(maxHeight: .infinity)
             }
         }
         .onAppear(perform: arrive)
         .onChange(of: storedName) { old, fresh in
             if pendingName == fresh { pendingName = nil }
-            if name != fresh, name == "" || name == old { name = fresh }
+            if let seed = LivName.reseed(draft: name, was: old, now: fresh) {
+                name = seed
+            }
         }
     }
 
@@ -122,9 +148,52 @@ struct FileBody: View {
     private func body(_ row: EntityRow, _ facts: FileFacts) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             nameField(facts)
-            if !facts.exists { brokenCard(facts) }
+            if !facts.exists {
+                brokenCard(facts)
+            } else {
+                heldCard(facts)
+            }
             Spacer(minLength: 0)
         }
+    }
+
+    /// WHAT LIV IS HOLDING, said plainly.
+    ///
+    /// The rest of this screen was empty (owner, 2026-09-06: "why does it
+    /// open unsupported file types without rendering them"). The refusal
+    /// to preview is deliberate and stands — "preview should not be a
+    /// functionality since it is absolutely useless" (owner, 2026-08-13),
+    /// and a read-only render of a Word file inside Liv is a screen that
+    /// looks like an editor and is not one.
+    ///
+    /// But "no preview" had been built as "no preview and no explanation",
+    /// which are different things. A tab that shows a name and then a
+    /// blank page does not read as a decision; it reads as a failure to
+    /// load. This says what the file is, where it is, and how big — the
+    /// facts Liv actually holds — and points at the one verb that opens
+    /// the bytes, which lives in the ••• menu.
+    private func heldCard(_ facts: FileFacts) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(facts.formatWord)
+                .font(.system(size: LivType.strong, weight: .semibold))
+                .foregroundStyle(LivTheme.text)
+            Text(facts.sizeWord.isEmpty ? facts.path : "\(facts.sizeWord) · \(facts.path)")
+                .font(.system(size: LivType.label, design: .monospaced))
+                .foregroundStyle(LivTheme.text3)
+                .lineLimit(2)
+                .truncationMode(.head)
+            // Format-neutral: an image has no "words", and a spreadsheet's
+            // owner is not an editor. The bytes stay where they are.
+            Text("Liv holds the reference and the filing. The file itself opens in the app that owns it: ••• → Open in…")
+                .font(.system(size: LivType.label))
+                .foregroundStyle(LivTheme.text2)
+                .padding(.top, 4)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
     }
 
     // MARK: name — a file's name in the box is yours to change, and
@@ -148,13 +217,21 @@ struct FileBody: View {
             // own rule. It was the only button on the screen, which made
             // a file look like something you could not read.
             HStack(spacing: 8) {
-                IconChip(glyph: .file(facts.fileClass), color: LivKind.file.color, size: 22)
+                LivIcon(glyph: .file(facts.fileClass), color: LivKind.file.color, size: 22)
                 if !facts.format.isEmpty { ValueChip(facts.format) }
                 Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 56)
+        // CLEAR THE CHROME, the way every other surface does. This was a
+        // raw 56, which was the whole band back when the screen stopped
+        // at the safe area. Surfaces run under the status bar now
+        // (2026-08-17), so the band is `LivSafeArea.top + topChrome` —
+        // about 111 on a notched phone. At 56 the name field was drawn
+        // UNDER the library door and the •••, and a file with no name
+        // yet showed its placeholder there too: the screen read as a
+        // file with no name at all (owner, 2026-09-06, from a device).
+        .padding(.top, LivRow.topInset)
         .padding(.bottom, 12)
     }
 
@@ -173,7 +250,7 @@ struct FileBody: View {
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .overlay(
             RoundedRectangle(cornerRadius: LivTheme.radius)
                 .strokeBorder(LivTheme.red.opacity(0.5), lineWidth: 0.5)
@@ -229,21 +306,24 @@ struct FileBody: View {
         return true
     }
 
-    private var storedName: String {
-        (box.entity(id)?.cells ?? []).first { $0.property == "name" }?.value ?? ""
-    }
+    /// The name cell, and the rules for writing it — `LivName`
+    /// (Kit.swift) since 2026-09-07. This was the FOURTH hand-written
+    /// copy of the same grammar (the desk's title, the record card, this
+    /// tab, and a fifth was about to be written for the properties
+    /// card); they had already drifted, and only the desk's carried the
+    /// trashed-entity guard.
+    private var storedName: String { LivName.stored(box.entity(id)) }
 
     private func commitName() {
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
+        switch LivName.commit(typed: name, row: box.entity(id), pending: pendingName) {
+        case .write(let typed):
+            pendingName = typed
+            box.set(id, "name", typed)
+        case .revert(let stored):
             name = stored
-            return
+        case .ignore:
+            break
         }
-        guard typed != stored, typed != pendingName else { return }
-        pendingName = typed
-        box.set(id, "name", typed)
     }
 }
 

@@ -1,7 +1,14 @@
-//! The one C seam the macOS shell crosses — milestone 4, reshaped by the
-//! single-writer lock of the review: the agent holds no session. Capture
-//! opens the box, writes, and closes — the lock lives for milliseconds,
-//! so the CLI stays usable while the agent sits in the menu bar.
+//! THE ONE C SEAM. Every shell crosses here and nowhere else.
+//!
+//! It says "the macOS shell" no longer: that shell was deleted on
+//! 2026-08-19 and the Tauri app was dropped on 2026-08-29, so the only
+//! caller today is `shell/ios` (see CLAUDE.md). A second shell is still
+//! the goal and what it will be is undecided — which changes nothing
+//! here, because the seam was never shaped for a particular one.
+//!
+//! The shape it WAS given by the review still holds: no shell holds a
+//! session. A capture opens the box, writes, and closes, so the lock
+//! lives for milliseconds and the CLI stays usable alongside.
 //!
 //! The clerk is not run here: pending proposals are re-derived by the
 //! sweep at every open, so the next `liv inbox` sees exactly what this

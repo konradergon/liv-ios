@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The one entitlement both bundles carry: the App Group the box and
+	     the share spool live in (Catch.swift, LivGroup.id). For the
+	     simulator build.sh embeds this file into each binary and ad-hoc
+	     signs with it; a device build takes its entitlements from the
+	     provisioning profile instead, which must carry the same group. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.liv.app</string>
+	</array>
+</dict>
+</plist>

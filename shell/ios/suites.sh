@@ -21,6 +21,11 @@
 
 set -u
 
+# RUN FROM THIS DIRECTORY, WHEREVER INVOKED FROM — same as `build.sh`
+# and, since 2026-09-09, `drive.sh`. Without it, `shell/ios/suites.sh`
+# from the repo root cannot find `build/Liv.app` and refuses to run.
+cd "${0:A:h}"
+
 # PIN THE PATH BEFORE ANYTHING ELSE.
 #
 # This machine has plan9port early on PATH, and its `ps`, `grep` and
@@ -37,7 +42,7 @@ set -u
 path=(/usr/bin /bin /usr/sbin /sbin /opt/homebrew/bin $path)
 UDID=${LIV_UDID:-8E699FF6-03A1-433B-A602-C51A30B14E87}
 APP=app.liv.ios
-ALL=(spans workspace calendar share places tabs planes glyph palette editor)
+ALL=(spans workspace calendar share places tabs planes glyph palette editor editor-cost routes)
 
 suites=("$@")
 (( $# )) || suites=($ALL)

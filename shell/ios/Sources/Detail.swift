@@ -1,11 +1,24 @@
 // liv iOS — the metadata editor (design/ios.md §6). EntityInspector is
-// the desktop right-panel inspector, full-bleed: kinds, due shortcuts,
+// everything ABOUT a thing and nothing OF it: kinds, due shortcuts,
 // status menu, one compact row per property, trash + undo. Add-property
-// moved behind the Settings door (§10 — schema growth is not daily use);
-// the Details chip row still adds values for the fixed fields.
-// The Desk body owns the title; the inspector is hosted by the desk's
-// right-hand panel and by a record card, and nothing pushes it. Content
-// editing waits for M2 (CAS). Rows 40pt+, hairline separators, no cards.
+// lives behind the Settings door (§10 — schema growth is not daily use).
+//
+// It is hosted twice and pushes nothing: the properties sheet card
+// (App.swift) and the record card (Record.swift). The Desk body owns
+// the title.
+//
+// CONTENT editing is not here. It lands through `Box.setContent`, a
+// compare-and-swap on the base fingerprint with no force flag by
+// design — a stale base is re-read, never overwritten.
+//
+// Hairline separators, no cards.
+//
+// (Rewritten 2026-09-07. Three of this header's claims had rotted: it
+// called the inspector "the desktop right-panel inspector" — there is
+// no desktop shell since Tauri was dropped on 2026-08-29 — it named a
+// "Details chip row" that no longer exists anywhere in this file, and
+// it said content editing "waits for M2 (CAS)", which shipped. It also
+// carried a row height in prose, which is a token's job.)
 
 import SwiftUI
 
@@ -23,10 +36,26 @@ struct InspectorField: Identifiable {
     let kind: String
     /// Several values at once (membership, addCell) versus one (set).
     let multi: Bool
-    /// A closed vocabulary: non-empty for a select. No create row.
+    /// The vocabulary a select already holds. NOT a closed one any more
+    /// — see `closed`.
     let options: [String]
+    /// The property's own id, so a new option can be minted against it.
+    let propertyId: UInt64
 
-    var closed: Bool { !options.isEmpty }
+    /// NOTHING IS CLOSED (owner, 2026-08-29: "make sure areas are not
+    /// fixed anymore").
+    ///
+    /// A select used to refuse the create row, on §10's fixed furniture:
+    /// six areas, researched not invented, and `what-liv-is-for.md` said
+    /// in as many words that areas "don't grow". That is amended there,
+    /// with the reason and the date.
+    ///
+    /// The six are still what the app arrives with, and that was always
+    /// the more important half — a person opens Liv and does not have to
+    /// design a system. What changes is that the walls the doc admitted
+    /// to ("someone whose life doesn't divide into these six areas will
+    /// feel the walls") are no longer walls.
+    var closed: Bool { false }
 
     /// The fields every note shows even when empty — the "zero fill
     /// pressure" core (design/editor-study.md §8: two filled fields is a
@@ -53,7 +82,8 @@ struct InspectorField: Identifiable {
             property: property,
             kind: row?.kind ?? "text",
             multi: isMulti(property),
-            options: options)
+            options: options,
+            propertyId: row?.id ?? 0)
     }
 }
 
@@ -70,6 +100,12 @@ struct EntityInspector: View {
 
     @State private var options: [StatusOption] = []
     @State private var showDueSheet = false
+    /// The name being typed. Seeded from the name CELL, never from
+    /// `row.title` — the wire title is derived, and putting it in the
+    /// field would make merely opening the card able to write it.
+    @State private var draftName = ""
+    @State private var nameSeeded = false
+    @FocusState private var nameFocused: Bool
     /// The field whose sheet is open. One sheet serves every property.
     @State private var editing: InspectorField?
 
@@ -83,7 +119,7 @@ struct EntityInspector: View {
             if let row = box.entity(id) {
                 list(row)
             } else {
-                EmptyHint("This was deleted.")
+                EmptyHint("Deleted")
                     .frame(maxHeight: .infinity, alignment: .top)
             }
         }
@@ -103,9 +139,35 @@ struct EntityInspector: View {
         }
         .tint(LivTheme.accent)
         .onAppear {
+            seedName()
             box.statusOptions(kind: box.entity(id)?.kinds?.first ?? "") {
                 options = $0
             }
+        }
+        .onChange(of: LivName.stored(box.entity(id))) { old, fresh in
+            // The snapshot moved under us — an undo, or the desk's own
+            // title field, which edits the same cell. Compared against
+            // the OLD stored name; `LivName.reseed` carries the reason.
+            if let seed = LivName.reseed(draft: draftName, was: old, now: fresh) {
+                draftName = seed
+            }
+        }
+    }
+
+    /// Once per open. A note with no name cell seeds EMPTY, so the grey
+    /// prompt (the derived title) shows through and typing over it is
+    /// what writes the name — nothing is written by merely opening.
+    private func seedName() {
+        guard !nameSeeded else { return }
+        draftName = LivName.stored(box.entity(id))
+        nameSeeded = true
+    }
+
+    private func commitName() {
+        switch LivName.commit(typed: draftName, row: box.entity(id)) {
+        case .write(let typed): box.set(id, "name", typed)
+        case .revert(let stored): draftName = stored
+        case .ignore: break
         }
     }
 
@@ -126,29 +188,49 @@ struct EntityInspector: View {
                 // as a row further down (owner, 2026-08-06).
                 //
                 // Suppressed when embedded in a record, whose own name
-                // field is directly above this.
+                // field is directly above this — one card never shows
+                // two name fields.
+                //
+                // IT IS A FIELD NOW, not a label (owner, todo.org: *"the
+                // note property interface seems different from say task
+                // properties; you can't rename it in properties"*). A
+                // record card got an editable name and a note did not,
+                // so the same card said two different things about what
+                // a name is, and a note's could only be changed from the
+                // desk's own title.
+                //
+                // "name" stays in `skipSet`: this line IS the name row,
+                // and a second one further down would be the two-fields
+                // problem again. The seed/commit rules are
+                // `LivName`'s (Kit.swift) — the same ones the desk title
+                // and the record card use.
                 if scrolls {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(livRowTitle(row))
-                            .font(.system(size: LivType.display, weight: .semibold))
-                            .foregroundStyle(
-                                hasName(row) ? LivTheme.text : LivTheme.text3)
-                            .lineLimit(2)
-                        Spacer(minLength: 4)
-                    }
-                    .padding(.top, 10)
-                    .padding(.bottom, 8)
+                    TextField(livRowTitle(row), text: $draftName, axis: .vertical)
+                        .font(.system(size: LivType.display, weight: .semibold))
+                        .foregroundStyle(LivTheme.text)
+                        .lineLimit(1...3)
+                        .focused($nameFocused)
+                        .submitLabel(.done)
+                        .onSubmit(commitName)
+                        .onChange(of: nameFocused) { _, now in
+                            if !now { commitName() }
+                        }
+                        .accessibilityLabel("Name")
+                        .padding(.top, 10)
+                        .padding(.bottom, 8)
                 }
-                HStack(spacing: 8) {
-                    // The kind words the box actually holds, each in its
-                    // own kind color — not the value hash, which spread
-                    // "note" and "event" over the same green.
-                    ForEach(row.kinds ?? [], id: \.self) {
-                        ValueChip($0, hue: LivKind.named($0).color)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.bottom, 4)
+                // NO KIND CHIP. It sat directly under the title as a
+                // pill of 11pt lowercase with a dot in it — "• note" —
+                // which is micro-text (owner, 2026-08-18: "eliminate
+                // unnecessary small text and labels") saying what the
+                // surface around it already says. You opened this panel
+                // from a note; it is a note.
+                //
+                // The kind is not lost: it is the card's own label in the
+                // switcher, the colour of a calendar block, and the hue
+                // of a chip that links to another entity — every place
+                // where two kinds sit side by side and the difference is
+                // worth a word (2026-08-29).
                 SectionLabel("Schedule")
                 dueRow(row)
                 if showsStatus(row) {
@@ -239,8 +321,9 @@ struct EntityInspector: View {
                 }
             }
             Spacer(minLength: 4)
-            // A mis-tap here WRITES cells — full 44pt targets, the
-            // FloatCircle rule (audit, 2026-08-04).
+            // A mis-tap here WRITES cells — so full 44pt targets, the
+            // platform's minimum and the app's own top-key size
+            // (`livTopKeyShape`). Audit, 2026-08-04.
             Button {
                 box.reject(proposal)
             } label: {
@@ -301,9 +384,7 @@ struct EntityInspector: View {
                         .font(.system(size: LivType.strong).monospacedDigit())
                         .foregroundStyle(LivTheme.text)
                 } else {
-                    Text("—")
-                        .font(.system(size: LivType.strong))
-                        .foregroundStyle(LivTheme.muted)
+                    DetailEmptyValue()
                 }
             }
             .frame(minHeight: LivRow.height)
@@ -337,7 +418,17 @@ struct EntityInspector: View {
                 HStack {
                     DetailRowLabel("status")
                     Spacer(minLength: 12)
-                    ValueChip(row.status ?? "")  // display-only; nothing to change it to
+                    // PLAIN TEXT. This row's own comment has said
+                    // "display-only; nothing to change it to" since it
+                    // was written, and it drew the value in the capsule
+                    // this app uses for values you CAN act on — a
+                    // control's clothes on a fact. Every other read-only
+                    // value in this panel is text.
+                    Text(row.status ?? "")
+                        // The value column's own size, like every other
+                        // read-only value on this card (2026-09-05).
+                        .font(.system(size: LivType.strong))
+                        .foregroundStyle(LivTheme.text2)
                 }
                 .frame(minHeight: LivRow.height)
             } else {
@@ -352,11 +443,9 @@ struct EntityInspector: View {
                         DetailRowLabel("status")
                         Spacer(minLength: 12)
                         if let status = row.status, !status.isEmpty {
-                            ValueChip(status)
+                            ValueChip(status, big: true)
                         } else {
-                            Text("—")
-                                .font(.system(size: LivType.strong))
-                                .foregroundStyle(LivTheme.muted)
+                            DetailEmptyValue()
                         }
                     }
                     .frame(minHeight: LivRow.height)
@@ -395,12 +484,6 @@ struct EntityInspector: View {
             ] + InspectorField.core)
     }
 
-    private func hasName(_ row: EntityRow) -> Bool {
-        (row.cells ?? []).contains {
-            $0.property == "name" && !($0.value ?? "").isEmpty
-        }
-    }
-
     /// "Created Tue 4 Aug 18:52", or nothing if the box never said.
     private func createdLine(_ row: EntityRow) -> String? {
         let raw = (row.cells ?? [])
@@ -428,14 +511,20 @@ struct EntityInspector: View {
                 DetailRowLabel(property)
                 Spacer(minLength: 12)
                 if held.isEmpty {
-                    Text("—")
-                        .font(.system(size: LivType.strong))
-                        .foregroundStyle(LivTheme.muted)
+                    DetailEmptyValue()
                 } else {
+                    // TWO, NOT THREE. The values are the column's own
+                    // size now, and three 20pt capsules after a 20pt
+                    // label do not fit the ~299pt left on the row — the
+                    // label carries `layoutPriority(1)`, so the CHIPS
+                    // are what gets squeezed, and a squeezed chip
+                    // truncates a project's name to nothing (each is
+                    // `lineLimit(1)`). Two whole names and a count beats
+                    // three shortened ones.
                     HStack(spacing: 5) {
-                        ForEach(held.prefix(3), id: \.self) { ValueChip($0) }
-                        if held.count > 3 {
-                            Text("+\(held.count - 3)")
+                        ForEach(held.prefix(2), id: \.self) { ValueChip($0, big: true) }
+                        if held.count > 2 {
+                            Text("+\(held.count - 2)")
                                 .font(.system(size: LivType.body).monospacedDigit())
                                 .foregroundStyle(LivTheme.text3)
                         }
@@ -474,7 +563,7 @@ struct EntityInspector: View {
                 Button {
                     desk.open(target)
                 } label: {
-                    ValueChip(v.value, hue: LivKind.color(of: box.entity(target)))
+                    ValueChip(v.value)
                 }
                 .buttonStyle(.plain)
             } else {
@@ -556,10 +645,17 @@ struct InspectorValueSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(field.property.uppercased())
-                .font(.system(size: LivType.label, weight: .bold))
-                .kerning(0.6)
-                .foregroundStyle(LivTheme.text3)
+            // A SHEET TITLE, and sized like one (2026-09-05). It was
+            // 16pt bold UPPERCASE with kerning, in the dimmest ink —
+            // smaller and quieter than the 22pt rows underneath it, so
+            // the header of the screen ranked below its own list.
+            // Sentence case for the same reason the section labels
+            // dropped theirs on 2026-08-18: uppercase made every
+            // heading shout. Full ink plus weight is what outranks the
+            // rows now, not size alone.
+            Text(field.property.capitalized)
+                .font(.system(size: LivType.title, weight: .semibold))
+                .foregroundStyle(LivTheme.text)
             if !field.closed {
                 TextField("Search or create…", text: $typed)
                     .font(.system(size: LivType.title))
@@ -573,7 +669,7 @@ struct InspectorValueSheet: View {
                     .padding(.horizontal, 12)
                     .frame(height: 40)
                     .background(
-                        RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
+                        RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.surface))
             }
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -599,7 +695,7 @@ struct InspectorValueSheet: View {
                         row("Create \u{201C}\(trimmed)\u{201D}", accent: true) { add(trimmed) }
                     }
                     if all.isEmpty && trimmed.isEmpty {
-                        EmptyHint("Type to create one.")
+                        EmptyHint("Type to create")
                     }
                 }
             }
@@ -668,13 +764,30 @@ struct InspectorValueSheet: View {
             dismiss()
             return
         }
+        // A SELECT NEEDS THE OPTION TO EXIST FIRST. `set` refuses a value
+        // with no matching option — that refusal is the core's, and it is
+        // right: a select's values are entities, not strings. So mint it,
+        // then write it, and let the write wait for the mint.
+        if field.kind == "select", field.propertyId != 0,
+            !field.options.contains(where: { same($0, value) })
+        {
+            box.addOption(field.propertyId, value) { [self] _ in write(value) }
+            typed = ""
+            if !field.multi { dismiss() }
+            return
+        }
+        write(value)
+        typed = ""
+    }
+
+    /// The write itself, once the vocabulary is known to hold the value.
+    private func write(_ value: String) {
         if field.multi {
             box.addCell(id, field.property, value)
         } else {
             box.set(id, field.property, value)
             dismiss()  // one value means the question is answered
         }
-        typed = ""
     }
 
     private func remove(_ value: String) {
@@ -701,9 +814,23 @@ struct InspectorValueSheet: View {
                         .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.accent)
                         .frame(width: 16)
-                } else {
-                    Circle().fill(Hue.dot(label)).frame(width: 7, height: 7)
+                } else if field.property == "area" {
+                    // AN AREA'S OWN MARK (2026-09-06, direction A): the
+                    // column the coloured dot vacated on 2026-08-29 holds
+                    // the area's drawing instead — a signal with something
+                    // to decode, in ink. Sorting becomes six drawings you
+                    // recognise, not six words.
+                    LivIcon(glyph: LivArea.glyph(named: label), color: LivTheme.text2, size: 19)
                         .frame(width: 16)
+                } else {
+                    // NO DOT. `Hue.dot` hashed the property's NAME to one
+                    // of five colours — its own comment said it "means
+                    // nothing beyond 'these two say the same thing'". A
+                    // reader takes a coloured dot for a signal, so five
+                    // hues down a settings list read as a code with
+                    // nothing to decode. The column stays, so the labels
+                    // still line up (2026-08-29).
+                    Color.clear.frame(width: 16, height: 7)
                 }
                 Text(label)
                     .font(.system(size: LivType.title))
@@ -728,37 +855,63 @@ struct InspectorValueSheet: View {
 
 // MARK: - shared row pieces
 
+/// THE EMPTY VALUE — the em-dash a field shows when it holds nothing.
+///
+/// One view, because it was three copies (due, status, and every core
+/// filing field), each spelling out the same dash, the same size and the
+/// same ink. It is the TARGET the filled values were brought up to meet
+/// on 2026-09-05, not a thing to shrink: an empty field read 20pt while
+/// a filled one read 14, so the card said least about the fields that
+/// held most.
+private struct DetailEmptyValue: View {
+    var body: some View {
+        Text("—")
+            .font(.system(size: LivType.strong))
+            .foregroundStyle(LivTheme.text2)
+    }
+}
+
 private struct DetailRowLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
 
-    /// Each field's COLOR — no glyph. Icons here were tried on
-    /// 2026-08-12 and rejected the same day: a clock for "due" and a tag
-    /// for "tags" are pictures of the word beside them, which reads
-    /// as noise rather than information (owner: "icons for properties
-    /// are confusing, but color indication of some sort is ok"). A dot
-    /// is the owner's own metaphor — it says which family a field
-    /// belongs to and claims nothing more.
+    /// NO DOT, AND NO GLYPH (owner, 2026-08-29: "the dots are a bit
+    /// ugly, as well as colors in general").
     ///
-    /// Kind chips elsewhere (a note, a task, an event) keep their glyphs:
-    /// there the icon says what a THING is, which a word does not.
-    private static let hues: [String: Color] = [
-        "due": LivTheme.teal,
-        "status": LivTheme.accent,
-        "area": LivTheme.amber,
-        "project": LivTheme.green,
-        "tags": LivTheme.purple,
-        "people": LivTheme.pink,
-    ]
-
+    /// This reverses 2026-08-12, and the earlier decision is worth
+    /// keeping visible because it was not arbitrary. Icons were tried
+    /// that day and rejected the same day — a clock for "due" and a tag
+    /// for "tags" are pictures of the word beside them — and a
+    /// hand-picked colour per family went in instead, on the owner's
+    /// "icons for properties are confusing, but color indication of some
+    /// sort is ok".
+    ///
+    /// What changed is the company they kept. Six fully-saturated system
+    /// hues at 8pt were the loudest thing on a screen that is otherwise
+    /// greys, and they sat beside a hash-coloured dot that meant nothing
+    /// at all, so the whole device read as decoration. The family a field
+    /// belongs to is already said by the section it sits under —
+    /// Schedule, Filing, Links — which is a word rather than a code.
+    ///
+    /// Kind chips elsewhere (a note, a task, an event) keep their colour:
+    /// there it says what a THING is, and two kinds do sit side by side.
+    /// NO GLYPH ON A VALUE ROW.
+    ///
+    /// One was added on 2026-08-29, following the desktop's
+    /// `PropertyIcon`, and taken off the same day. Anytype for iOS —
+    /// which does the same job on the same screen size — draws its
+    /// property rows as label and value with nothing between, and shows
+    /// a glyph only in the SCHEMA view, where you are picking among
+    /// properties rather than reading one object's values. Its rows read
+    /// cleaner, and the reason generalises: an icon beside "due" is a
+    /// picture of the word next to it (the 2026-08-12 finding), whereas
+    /// an icon beside a property in a list of forty is how you find the
+    /// one you want.
+    ///
+    /// The glyphs moved to `Settings → Fields`, which is this app's
+    /// schema view.
     var body: some View {
         HStack(spacing: 10) {
-            if let color = Self.hues[text.lowercased()] {
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-                    .frame(width: 26, alignment: .center)
-            }
             Text(text)
                 // 15pt + 46pt rows: the library panel's density (rev 6 —
                 // "make the grouping UI akin to how the left panel looks").
@@ -803,6 +956,10 @@ struct DetailDueSheet: View {
     @State private var time: Date
     /// The month calendar under "Choose a date" is showing.
     @State private var calendarShown = false
+    /// WHICH MONTH THE GRID IS LOOKING AT — deliberately not derived
+    /// from `date`, so paging to March to check something does not move
+    /// the due to March. Seeded from the due in `init`.
+    @State private var shownMonth: Int64
     /// How long this thing lasts, kept across every edit.
     @State private var spanMinutes: Int
     /// Whether this thing carries a clock time. An all-day event is a
@@ -829,6 +986,7 @@ struct DetailDueSheet: View {
             let day = Civil.day(of: due)
             let hm = due % 10_000
             _date = State(initialValue: Civil.date(day: day, hhmm: 1200) ?? now)
+            _shownMonth = State(initialValue: CalGrid.firstOfMonth(day))
             // The stored flag is the authority on whether this carries a
             // clock time. Also testing `hm != 0` re-read a real midnight
             // as "no time" and then quietly replaced it (review).
@@ -843,6 +1001,7 @@ struct DetailDueSheet: View {
         } else {
             let today = Civil.todayDay()
             _date = State(initialValue: now)
+            _shownMonth = State(initialValue: CalGrid.firstOfMonth(today))
             _timed = State(initialValue: true)
             _time = State(initialValue: LivDue.defaultTime(on: today))
         }
@@ -938,28 +1097,144 @@ struct DetailDueSheet: View {
         }
     }
 
+    /// THE APP'S OWN MONTH, not the system's.
+    ///
+    /// This was `DatePicker(.graphical)` until 2026-09-07. It took the
+    /// app's accent from the subtree's `.tint`, so it was never wearing
+    /// the system's blue — but it painted its own selected-day fill and
+    /// its own red "today", against an app whose month grid says
+    /// selection with `LivDayMark`'s disc and marks today inside it.
+    /// Two month grids with two grammars, invisible only because they
+    /// never appeared on the same screen (standing rule 4).
+    ///
+    /// The grid it draws now is the calendar's, moved to `Month.swift`
+    /// in the same change so both screens can reach it. It is given no
+    /// counts — a due picker has no items to be busy with — and no
+    /// `onHold`: holding a day in the calendar creates an all-day event,
+    /// and there is nothing here to create.
+    ///
+    /// `shownMonth` is its own state and NOT derived from `date`,
+    /// because paging to look at March must not move the due to March.
     private var monthPicker: some View {
-        DatePicker("Due date", selection: $date, displayedComponents: .date)
-            .datePickerStyle(.graphical)
-            .labelsHidden()
-            .padding(.vertical, 4)
-            .onChange(of: date) { commit() }
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(LivMotion.nav) {
+                        shownMonth = CalGrid.addMonths(shownMonth, -1)
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: LivType.label, weight: .semibold))
+                        .foregroundStyle(LivTheme.text2)
+                        .frame(width: LivRow.touch, height: LivRow.touch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Previous month")
+                Text(CalGrid.title(shownMonth))
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(LivTheme.text)
+                    .frame(maxWidth: .infinity)
+                Button {
+                    withAnimation(LivMotion.nav) {
+                        shownMonth = CalGrid.addMonths(shownMonth, 1)
+                    }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: LivType.label, weight: .semibold))
+                        .foregroundStyle(LivTheme.text2)
+                        .frame(width: LivRow.touch, height: LivRow.touch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Next month")
+            }
+            MonthWeekdayRow()
+            MonthGridView(
+                month: calMonth(
+                    shownMonth, today: Civil.todayDay(), counts: [:]),
+                selected: Civil.day(of: date),
+                onSelect: { pick(day: $0) }
+            )
+            .equatable()
+        }
+        .padding(.vertical, 4)
     }
 
+    /// THE CLOCK, ON THE QUARTER HOUR.
+    ///
+    /// This was a compact `DatePicker(.hourAndMinute)`, and its real
+    /// fault was never that it looked like the system's: it let you dial
+    /// 11:47, while every time the CALENDAR places goes through
+    /// `CalClock.snap` on the rule that "times land on quarter hours —
+    /// 11:47 is never what anyone meant". Two surfaces of one app
+    /// disagreeing about what a time is (standing rule 4).
+    ///
+    /// Steppers rather than a wheel or a field: a due time is almost
+    /// always a nudge from the one already there, the app has no
+    /// time-string parser and standing rule 5 says a user does not type
+    /// one, and this way the quarter-hour law is in the CONTROL rather
+    /// than in a validator that has to reject what you typed.
     private var timeRow: some View {
         HStack(spacing: 8) {
             Text("At")
                 .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
             Spacer(minLength: 12)
-            DatePicker("Due time", selection: $time, displayedComponents: .hourAndMinute)
-                .labelsHidden()
+            Button { nudge(-CalClock.step) } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: LivRow.touch, height: LivRow.touch)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Fifteen minutes earlier")
+            // NOT `Civil.timeString`, which answers "" for 0000 on the
+            // rule that a date-only stamp carries no time. Here the
+            // clock always shows one, and midnight is a real 00:00.
+            Text(clockLabel)
+                .font(.system(size: LivType.strong).monospacedDigit())
+                .foregroundStyle(LivTheme.text)
+                .frame(minWidth: 68)
+                .accessibilityLabel("Due time")
+            Button { nudge(CalClock.step) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.text2)
+                    .frame(width: LivRow.touch, height: LivRow.touch)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Fifteen minutes later")
         }
         .frame(minHeight: LivRow.height)
-        .onChange(of: time) {
-            timed = true  // setting a clock time is how an all-day thing gets one
-            commit()
+    }
+
+    /// The clock face, always four digits — see the note at its call
+    /// site for why this is not `Civil.timeString`.
+    private var clockLabel: String {
+        let hm = Civil.hhmm(of: time)
+        return String(format: "%02d:%02d", hm / 100, hm % 100)
+    }
+
+    /// Move the clock by one step, snapped, and write.
+    ///
+    /// It wraps within the day rather than running off either end: a due
+    /// at 23:45 nudged forward is 00:00 of the same day, not tomorrow —
+    /// the DAY is the other control's job, and a time control that
+    /// silently changed the date would be the "setting time after date
+    /// erases everything" complaint again.
+    private func nudge(_ minutes: Int) {
+        let day = Civil.day(of: date)
+        let now = CalClock.minutes(of: Civil.stamp(day: 0, hhmm: Civil.hhmm(of: time)))
+        let moved = (CalClock.snap(now) + minutes + 24 * 60) % (24 * 60)
+        if let stamped = Civil.date(day: day, hhmm: CalClock.hhmm(moved)) {
+            time = stamped
         }
+        // Setting a clock time is how an all-day thing gets one.
+        timed = true
+        commit()
     }
 
     private var clearRow: some View {
@@ -971,7 +1246,7 @@ struct DetailDueSheet: View {
             HStack {
                 Text("Clear")
                     .font(.system(size: LivType.strong))
-                    .foregroundStyle(has ? LivTheme.red : LivTheme.muted)
+                    .foregroundStyle(has ? LivTheme.red : LivTheme.text2)
                 Spacer()
             }
             .frame(minHeight: LivRow.height)

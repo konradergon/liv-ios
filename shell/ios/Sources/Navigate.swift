@@ -11,14 +11,26 @@ import SwiftUI
 
 // MARK: - the places
 
-/// The lens roster. Calendar is a v1 placeholder — its body renders
-/// EmptyHint("Calendar arrives with M3.") until M3.
-/// NOTES IS ONE OF THEM (owner, 2026-08-18: "Each state should be treated
-/// equally… and the notes should remain separate"). It leads because it
-/// is where the words are, and its ROOT is the list of them; a note open
-/// on the desk is one level inside it.
+/// The lens roster. Five places, all built — Calendar last, and it is no
+/// longer "a v1 placeholder rendering EmptyHint until M3", which this
+/// comment claimed for as long as `Calendar.swift` has been ~1,850 lines
+/// of day timeline, month pager and drag-to-move.
+///
+/// **NOTES IS NOT ONE OF THEM** since 2026-09-10. Owner: *"notes view
+/// serves too little purpose to be considered a place or state. it just
+/// gives me a simple list and makes '+' act a bit different."* Both
+/// halves were true in the code — `+` made a note in Notes, Inbox AND
+/// Everything alike, and Everything had three lenses where Notes had
+/// none — so Notes was Everything with a kind filter and fewer options.
+/// It is `EverythingLens.notes` now (Positions.swift), which is what it
+/// always was.
+///
+/// This reverses the 2026-08-18 ruling that put it here ("Each state
+/// should be treated equally… and the notes should remain separate"), on
+/// the owner's own word. The notes are still separate — one tap along a
+/// row of lenses — and the list is unchanged.
 enum Feature: String, CaseIterable, Identifiable {
-    case notes, today, everything, inbox, tasks, calendar
+    case today, everything, inbox, tasks, calendar
 
     var id: String { rawValue }
 
@@ -27,11 +39,38 @@ enum Feature: String, CaseIterable, Identifiable {
     /// ever visible, so they were free to disagree. Putting the views in
     /// the side panel makes a second one visible, which is exactly when
     /// two orderings become a bug (standing rule 4).
-    static let inOrder: [Feature] = [.today, .notes, .inbox, .calendar, .tasks, .everything]
+    ///
+    /// IN TWO GROUPS, and the grouping is the order (owner, 2026-09-10:
+    /// *"i think they should be next to each other and separated a bit
+    /// from today, inbox, and everything which only are views into the
+    /// box"*).
+    ///
+    /// The first three are windows onto the box and nothing else: Today
+    /// is a day's worth of it, Inbox the part not yet addressed,
+    /// Everything all of it. The last two are the views you ADD to — the
+    /// only two that make something other than a note, and they make it
+    /// where it lives (an empty hour on the timeline, the row at the top
+    /// of Tasks). That is the same line the `+` change draws, so the
+    /// panel draws it too.
+    ///
+    /// Declared as the groups and flattened, never the other way round:
+    /// an order and a split kept as two facts is two facts to keep in
+    /// step (standing rule 4).
+    static let groups: [[Feature]] = [[.today, .inbox, .everything], [.calendar, .tasks]]
+
+    /// The roster in order, for everything that does not care about the
+    /// gap — the migration's key list, the tour, `position`.
+    static let inOrder: [Feature] = groups.flatMap { $0 }
+
+    /// True for the first row of every group after the first: the half
+    /// row of air that separates them, which is the same separator the
+    /// saved filters and Trash already use.
+    static func startsGroup(_ feature: Feature) -> Bool {
+        groups.dropFirst().contains { $0.first == feature }
+    }
 
     var title: String {
         switch self {
-        case .notes: return "Notes"
         case .today: return "Today"
         case .everything: return "Everything"
         case .inbox: return "Inbox"
@@ -43,7 +82,6 @@ enum Feature: String, CaseIterable, Identifiable {
     /// The blueprints' own drawing for each place (Glyph.swift).
     var glyph: LivGlyph {
         switch self {
-        case .notes: return .note
         case .today: return .today
         case .everything: return .everything
         case .inbox: return .inbox
@@ -155,16 +193,19 @@ enum LivCaret {
 
 // MARK: - a state's body
 
-/// The five states that are not Docs. They used to be a LAYER over the
-/// desk; they are the surface itself now (owner, 2026-08-18), which is
-/// what "each state treated equally" means once Docs is a state too.
+/// EVERY state's body. They used to be a LAYER over the desk; they are
+/// the surface itself now (owner, 2026-08-18), which is what "each state
+/// treated equally" means.
+///
+/// The `.notes` case that drew nothing ("Notes draws itself") went with
+/// the view, 2026-09-10. A document is a layer over whichever of these is
+/// underneath (`DeskModel.shown`), so no state has to stand aside for it.
 struct FeatureBody: View {
     let feature: Feature
 
     var body: some View {
         Group {
             switch feature {
-            case .notes: EmptyView()  // Notes draws itself (the tab grid / the editor)
             case .today: TodayView().livSurface(feature.rawValue)
             case .everything: EverythingView().livSurface(feature.rawValue)
             case .inbox: InboxView().livSurface(feature.rawValue)
@@ -211,7 +252,35 @@ private struct LivChromeScroll: ViewModifier {
                     // lists carry different top insets, and a raw
                     // contentOffset would put "the top" in a different
                     // place on each one.
-                    geo.contentOffset.y + geo.contentInsets.top
+                    //
+                    // AND CLAMPED TO THE CONTENT, so the rubber-band at
+                    // either end is not travel. Past the last hour of a
+                    // day the calendar's grid stretches to ~824 and
+                    // springs back to 764: 60pt of "upward scroll" that
+                    // nobody performed, which is more than the chrome's
+                    // 44pt threshold, so the doors hid on the way down
+                    // and came straight back on the settle (measured
+                    // 2026-09-07). Clamping removes the phantom rather
+                    // than raising the threshold to outrun it.
+                    //
+                    // AND THE CHROME'S OWN BAND ADDED BACK. This measure
+                    // decides whether the chrome hides, and since
+                    // 2026-09-07 hiding it COLLAPSES the top inset by
+                    // `LivRow.topChrome` — so without this term the
+                    // decision changes its own input and the two flip
+                    // each other forever. Traced on the Calendar: the
+                    // offset oscillated 805 / 855 / 805 / 860 with the
+                    // doors flickering in and out on every sample.
+                    // Adding the band back while it is away makes the
+                    // number continuous across the transition, which is
+                    // what "how far down the content am I" should have
+                    // meant all along.
+                    let band = desk.chromeAway ? LivRow.topChrome : 0
+                    let y = geo.contentOffset.y + geo.contentInsets.top + band
+                    let visible = geo.containerSize.height
+                        - geo.contentInsets.top - geo.contentInsets.bottom
+                    let end = max(0, geo.contentSize.height - visible)
+                    return min(max(0, y), end)
                 } action: { _, y in
                     desk.scrolled(to: y)
                 }
@@ -238,8 +307,8 @@ func livPlacesSelfCheck() -> [String] {
 
     // A SCRATCH desk, on a workspace nobody has. This suite opens sixty
     // documents to prove the way-back stack is capped, and every one of
-    // them is a real tab write — on a plain `DeskModel()` that lands in
-    // the Notes plane of whatever workspace you are actually using. It
+    // them is a real tab write — on a plain `DeskModel()` that lands on
+    // the desk of whatever workspace you are actually using. It
     // survived only because the first snapshot sweeps ids the box does
     // not know (2026-08-23; the tabs and planes suites were fixed the
     // same way the day before).
@@ -253,9 +322,13 @@ func livPlacesSelfCheck() -> [String] {
     desk.go(.calendar)
     check("state replaces state", desk.state == .calendar && desk.back == nil)
 
-    // A document is INSIDE Docs, and it remembers where you came from.
+    // A DOCUMENT IS A SURFACE OVER THE VIEW YOU ARE IN, and it remembers
+    // where you came from. Until 2026-09-10 it moved you to Notes, which
+    // is what made the panel's lit row lie and `‹` off the Notes list do
+    // nothing.
     desk.open(7)
-    check("opening a document lands in Docs", desk.state == .notes, "\(desk.state)")
+    check("a document lands on the desk", desk.shown)
+    check("and does not move you", desk.state == .calendar, "\(desk.state)")
     check("the open document is the one asked for", desk.openDoc == 7)
     check("back goes where you came from", desk.back == .state(.calendar), "\(String(describing: desk.back))")
 
@@ -264,13 +337,69 @@ func livPlacesSelfCheck() -> [String] {
     check("the second document replaces the first", desk.openDoc == 9)
     check("back is the note you were reading", desk.back == .document(7))
     desk.goBack()
-    check("stepping back re-opens it", desk.openDoc == 7 && desk.state == .notes)
+    check("stepping back re-opens it", desk.openDoc == 7 && desk.state == .calendar)
     check("and it does not push itself back on", desk.back == .state(.calendar))
 
-    // Up, out of the document, to the list — the state does not change.
-    desk.showList()
-    check("the list is Docs with no document", desk.state == .notes && desk.openDoc == nil)
+    // Lay it down and the view is uncovered — the state never moved.
+    desk.layDown()
+    check("laying it down leaves the view", desk.state == .calendar && desk.openDoc == nil)
+    check("and the tab is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
     check("and nothing is beneath it", desk.back == nil)
+
+    // A TAB PICKED FROM THE SWITCHER, standing somewhere else, comes up
+    // like any other open does — over the view you are in, with the way
+    // back to it. (Until 2026-09-09 the switcher only made the tab
+    // active, and from Today nothing visibly happened.)
+    desk.go(.today)
+    if let tab = desk.tabs.first(where: { $0.content == .entity(7) }) {
+        desk.show(tab)
+        check("a switcher pick shows the document", desk.openDoc == 7, "\(String(describing: desk.openDoc))")
+        check("over the view you were standing in", desk.state == .today, "\(desk.state)")
+        check("and remembers where you stood", desk.back == .state(.today), "\(String(describing: desk.back))")
+    } else {
+        check("the tab for 7 is still on the desk", false)
+    }
+
+    // THE PANEL'S DOOR LANDS ON THE VIEW, not in a document. Until
+    // 2026-09-09 arriving at Notes from elsewhere restored whatever was
+    // open, so the same row meant two things. It needed its own verb
+    // until 2026-09-10; `go` is the whole rule now.
+    desk.open(7)
+    desk.go(.everything)
+    check("the panel lands on the view", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
+    check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
+
+    // A DOOR MAY NAME A PLACE INSIDE A VIEW. `liv://notes` and
+    // `-desk.boot notes` mean Everything's Notes lens since the view was
+    // retired (2026-09-10), and the park has to happen even when the
+    // view is already the one you are standing in.
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
+    check("a door can park the view it opens", desk.position(.everything) == "notes", "\(String(describing: desk.position(.everything)))")
+    desk.go(.today)
+    desk.go(.everything, at: EverythingLens.upcoming.rawValue)
+    check("and does it arriving from elsewhere too", desk.state == .everything && desk.position(.everything) == "upcoming")
+    // A POSITION IS NOT A DOCUMENT: a tool keeps where it was left.
+    desk.park(.calendar, at: "202609")
+    desk.go(.calendar)
+    check("a tool keeps its spot", desk.state == .calendar && desk.position(.calendar) == "202609")
+    // TAPPING THE VIEW YOU ARE IN, with a document over it, is how you
+    // get out of the document — and with nothing over it, it is a no-op.
+    desk.open(7)
+    desk.go(.calendar)
+    check("the row you are on lays the document down", desk.state == .calendar && desk.openDoc == nil)
+    desk.go(.calendar)
+    check("and asks for nothing when there is nothing over it", desk.state == .calendar)
+
+    // ‹ OUT OF A NOTE OPENED OFF THE LIST LANDS ON THE LIST. The
+    // regression the desk-state change is for: `land(.state(…))` used to
+    // put you where you already were, with the note still drawn on top,
+    // so the key visibly did nothing.
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
+    desk.open(21)
+    check("a note off the list is on the desk", desk.openDoc == 21 && desk.state == .everything)
+    desk.goBack()
+    check("back from it is the list, not nothing", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
+    check("and the list is still on the Notes lens", desk.position(.everything) == "notes")
 
     // Opening the SAME document again is not a step.
     desk.open(11)
@@ -293,7 +422,7 @@ func livPlacesSelfCheck() -> [String] {
     check("back leaves a forward step", fresh.forward == .document(3), "\(String(describing: fresh.forward))")
     check("and back went where it said", fresh.state == .today && fresh.openDoc == nil)
     fresh.goForward()
-    check("forward returns you", fresh.openDoc == 3 && fresh.state == .notes)
+    check("forward returns you", fresh.openDoc == 3 && fresh.state == .today)
     check("and nothing is left ahead", fresh.forward == nil)
     check("while back is where you came from", fresh.back == .state(.today))
     // A FRESH navigation ends the forward journey — you cannot go

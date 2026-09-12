@@ -20,16 +20,36 @@ as a service helper.
 2. **Searchable text comes from `views::display`, not a hand-rolled
    flatten.** `display(store,&Value)` resolves a `Ref` span to the
    target's NAME, so a wiki-linked `[[Anna]]` is findable by "anna" —
-   search sees exactly what the shell renders. Free text matches only
-   **NAME + CONTENT + other Text/RichText cells**; structured kinds
-   (Number/DateTime/Bool/Select/Reference) are reached through
-   qualifiers, never as incidental text (so "2026" does not surface
-   every due date).
+   search sees exactly what the shell renders. Free text matches
+   **NAME + CONTENT + other Text/RichText cells + what a thing is FILED
+   UNDER** (its Select and Reference cells, flattened through the same
+   `display`). Number, DateTime and Bool are reached through qualifiers
+   only, never as incidental text — that is what keeps "2026" from
+   surfacing every due date.
+
+   > **Amended 2026-09-07.** This read "structured kinds
+   > (Number/DateTime/Bool/Select/Reference) are reached through
+   > qualifiers, never as incidental text". The owner found what that
+   > cost (`todo.org`): a note filed under area "Testjunk" could not be
+   > found by typing "test", because a Select cell never entered the
+   > haystack at all. The only route left was `area:Testjunk` — which
+   > standing rule 5 says a user never types, and which rev 49 had just
+   > removed from the field. Select and Reference joined the haystack as
+   > their own `filed` tier; the numeric kinds did not, since the
+   > rationale above is about them and stays true. A filing is a short
+   > label a person chose; a timestamp is not.
 
 3. **One word-boundary primitive, shared.** `clerk::contains_word`
    ("anna" matches "call anna friday", not "susanna") becomes `pub`;
    both clerk and search call it. Search adds `starts_word` (prefix, for
    incremental-typing feel), scored below whole-word.
+
+   The `filed` tier takes `starts_word` rather than `contains_word`, and
+   that is the point of it: the owner's report was that "test" did not
+   reach "Testjunk". A filing is a short label where incremental typing
+   is the whole interaction; a body of text is long enough that a whole
+   word is the honest unit. Ranking: name 100/60/40 > cell 20 > **filed
+   15** > content 10.
 
 4. **Facet counts are `run()` re-run with one extra constraint.** For a
    candidate value `v` of property `P`, `count = run(base +

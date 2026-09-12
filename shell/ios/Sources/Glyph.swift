@@ -25,6 +25,53 @@ import SwiftUI
 
 // MARK: - what a thing is
 
+/// THE SIX AREAS OF LIFE, drawn. `what-liv-is-for.md` calls the furniture
+/// "the product", and until 2026-09-06 no screen showed it: Today was a
+/// column of "Untitled" that could have been any app's. These are the
+/// six the app arrives with (researched, not invented; 2026-07-27), each
+/// with a mark in the same pen that draws the note leaf and the tray —
+/// the one hand-made thing the app already had.
+///
+/// NO COLOUR, deliberately. Direction A adds not one saturated pixel:
+/// the marks draw in the ink tiers like every field glyph. Colour for
+/// areas is a separate direction ("Rooms"), which stacks on top of this
+/// one if the owner wants it later.
+///
+/// An area a person mints later has no mark of its own and wears the
+/// field's — `.area`, the four quarters — which is honest: it is an area,
+/// and it is theirs.
+enum LivArea: CaseIterable {
+    case work, health, money, home, family, learning
+
+    var name: String {
+        switch self {
+        case .work: return "Work"
+        case .health: return "Health"
+        case .money: return "Money"
+        case .home: return "Home"
+        case .family: return "Family & Friends"
+        case .learning: return "Learning"
+        }
+    }
+
+    var glyph: LivGlyph {
+        switch self {
+        case .work: return .work
+        case .health: return .health
+        case .money: return .money
+        case .home: return .home
+        case .family: return .people
+        case .learning: return .learning
+        }
+    }
+
+    /// The mark for an area's NAME, as a row's cell spells it. A name the
+    /// app did not ship wears the field's own mark.
+    static func glyph(named value: String) -> LivGlyph {
+        allCases.first { $0.name.caseInsensitiveCompare(value) == .orderedSame }?.glyph ?? .area
+    }
+}
+
 /// The seven kinds the app draws. A kind carries its colour and its
 /// glyph together, because a thing that is purple in one list and blue
 /// in the next is the exact defect this type exists to prevent.
@@ -123,8 +170,47 @@ enum LivGlyph: Equatable {
     case file(FileFacts.Class)
     // Places — the library's rows.
     case today, inbox, calendar, tasks, everything
+    // AREAS OF LIFE — the furniture the product page calls the product,
+    // drawn (2026-09-06, direction A: "the furniture shows"). Family &
+    // Friends reuses `.people`; the sixth mark is the field's own `.area`
+    // for any area a person mints later.
+    case work, health, money, home, learning
     // Furniture.
     case filter, settings, workspace, workspaces, plus, trash
+    /// FIELDS — one per property family, for the properties panel.
+    ///
+    /// Icons here were tried on 2026-08-12 and rejected the same day
+    /// ("icons for properties are confusing"), and hand-picked colours
+    /// went in instead. Those colours came out on 2026-08-29 for being
+    /// the loudest thing on a grey screen — which left the rows bare.
+    ///
+    /// The desktop had already found the third answer: its `PropertyIcon`
+    /// is "flat, monochrome LINE icons (Obsidian-style)", with a note
+    /// that coloured tiles were removed for reading "heavy and
+    /// 'designed'" and that colour is reserved for file identity, never
+    /// metadata fields. These are that, drawn with this app's own pen so
+    /// the two shells read as one product.
+    ///
+    /// TWO OF THE SIX FIELD MARKS SURVIVE, and they survive as AREA
+    /// marks rather than as field marks: `.area` is what
+    /// `LivArea.glyph(named:)` falls back to for a name this app did not
+    /// ship, and `.people` is the mark the Family & Friends area wears.
+    ///
+    /// `due`, `status`, `project` and `tags` went on 2026-09-12 with the
+    /// Settings Fields card, which was the last thing that could show
+    /// one. Their only route to a screen had been `LivGlyph.field(_:)`,
+    /// the name-to-mark lookup that card called, and the inspector is
+    /// closed to them by a dated ruling: `DetailRowLabel` says "NO DOT,
+    /// AND NO GLYPH" (owner, 2026-08-29), recording that field icons
+    /// were tried on 2026-08-12 and rejected the same day because "a
+    /// clock for 'due' and a tag for 'tags' are pictures of the word
+    /// beside them". So there was nowhere for them to go back to.
+    ///
+    /// The drawings were careful and two of them record a failed first
+    /// attempt. `git log --diff-filter=D -S'case .tags'` finds them if a
+    /// desktop shell ever wants the vocabulary back.
+    case area, people
+
     /// A NUMBER IN A BOX — the bar's tab key (owner, 2026-08-23: "just
     /// have tabs as they appeared before when you clicked the numbered
     /// box"). Obsidian's fifth key is this shape with today's date in
@@ -158,9 +244,25 @@ struct GlyphShape: Shape {
             pen.box(5, 3.75, 14, 16.5, 3)
             pen.line(8.5, 9, 15.5, 9)
             pen.line(8.5, 13, 13.5, 13)
-        case .task, .tasks:
+        // A PLACE AND A THING ARE NOT THE SAME MARK.
+        //
+        // These shared one drawing — a box with a TICK in it — and that
+        // tick made the mark say something false. `StatusRing` draws a
+        // ticked box to mean DONE, so every open task in a mixed list
+        // wore the done mark: `everything.png` showed four open tasks
+        // with ticks while `tasks.png` drew the same rows as empty
+        // rings, in the same app, at the same moment.
+        //
+        // The library ROW keeps the tick — "Tasks" is a place, and a
+        // ticked box is what the word looks like. A task ITSELF gets a
+        // rule, deliberately shorter than a note's 7 units so the two do
+        // not blur at the 19pt a list draws them at.
+        case .tasks:
             pen.box(4.5, 4.5, 15, 15, 4.5)
             pen.shape([(8.5, 12.3, 0), (11.1, 14.9, 0), (15.7, 9.5, 0)], closed: false)
+        case .task:
+            pen.box(4.5, 4.5, 15, 15, 4.5)
+            pen.line(9.5, 12, 14.5, 12)
         case .day:
             // CENTRED, and a size up. It was box(3.5, 4.5, 17, 16): the
             // centre sat at y 12.5 on a canvas whose centre is 12, so the
@@ -168,6 +270,49 @@ struct GlyphShape: Shape {
             // visible, and the owner saw it (2026-08-28). 18x17 centred
             // on (12, 12); the digit needs no offset to sit in it.
             pen.box(3, 3.5, 18, 17, 3.5)
+        // ---- areas of life, and the two marks that name them ----
+        case .area:
+            // Four quarters: the areas of a life, which is what this
+            // field divides. Deliberately not a folder — that is
+            // `project`, one level down.
+            pen.box(4, 4, 7, 7, 1.8)
+            pen.box(13, 4, 7, 7, 1.8)
+            pen.box(4, 13, 7, 7, 1.8)
+            pen.box(13, 13, 7, 7, 1.8)
+        case .work:
+            // A case with a handle: the day's work carried in.
+            pen.box(3, 7.5, 18, 12.5, 2.5)
+            pen.shape([(9, 7.5, 0), (9, 5.5, 1.5), (15, 5.5, 1.5), (15, 7.5, 0)], closed: false)
+            pen.line(3, 12.5, 21, 12.5)
+        case .health:
+            // A pulse: one beat across the line.
+            pen.shape(
+                [(3, 12.5, 0), (8, 12.5, 0), (10.2, 6.5, 0), (13.6, 18, 0), (15.8, 12.5, 0), (21, 12.5, 0)],
+                closed: false)
+        case .money:
+            // A note with its coin.
+            pen.box(3, 6.5, 18, 11.5, 2)
+            pen.circle(12, 12.25, 2.9)
+        case .home:
+            // A roof over a room.
+            pen.shape([(3.5, 11.5, 0), (12, 4.5, 0), (20.5, 11.5, 0)], closed: false)
+            pen.shape([(5.5, 10, 0), (5.5, 19.5, 1.5), (18.5, 19.5, 1.5), (18.5, 10, 0)], closed: false)
+        case .learning:
+            // An open book: two leaves from one spine.
+            pen.shape([(12, 6.5, 0), (12, 19.5, 0)], closed: false)
+            pen.shape([(12, 6.5, 0), (9.5, 5, 0), (3.5, 5.5, 1.5), (3.5, 18.5, 1.5), (9.5, 18, 0), (12, 19.5, 0)], closed: false)
+            pen.shape([(12, 6.5, 0), (14.5, 5, 0), (20.5, 5.5, 1.5), (20.5, 18.5, 1.5), (14.5, 18, 0), (12, 19.5, 0)], closed: false)
+        case .people:
+            // Two, because the field is plural: `.person`'s own drawing
+            // shifted left, and a second head with one shoulder behind
+            // it. The first attempt drew the second figure as two open
+            // strokes and they read as a chevron floating beside a head.
+            pen.circle(9.2, 8.6, 3.4)
+            pen.shape(
+                [(15.4, 20.3, 0), (15.4, 15.3, 4.0), (3.0, 15.3, 4.0), (3.0, 20.3, 0)],
+                closed: false)
+            pen.circle(17.3, 7.4, 2.5)
+            pen.shape([(21.2, 15.6, 0), (21.2, 13.4, 3.0), (17.6, 13.4, 0)], closed: false)
         case .event, .calendar:
             pen.box(3, 5, 18, 16, 2.5)
             pen.line(8, 3, 8, 7)
@@ -195,8 +340,12 @@ struct GlyphShape: Shape {
         case .file(let fileClass):
             pen.file(fileClass)
         case .today:
+            // THE RAYS NEED AIR. Strokes are round-capped, so at
+            // `from: 5.8` each ray's inner cap reached r 4.8 — exactly
+            // where the disc's own stroke ends — and the sun read as a
+            // single asterisk. A 1.2-unit gap makes it a sun.
             pen.circle(12, 12, 3.8)
-            pen.rays(12, 12, from: 5.8, to: 8, count: 8)
+            pen.rays(12, 12, from: 7, to: 9.4, count: 8)
         case .everything:
             // The archive box: a lid, a body, one label line.
             pen.box(2.5, 4, 19, 5, 1.5)
@@ -205,10 +354,28 @@ struct GlyphShape: Shape {
                 closed: false)
             pen.line(10, 13.5, 14, 13.5)
         case .filter:
-            // The funnel.
-            pen.shape(
-                [(4, 4.5, 0), (20, 4.5, 0), (13.6, 12.2, 0), (13.6, 19.5, 0), (10.4, 17.6, 0), (10.4, 12.2, 0)],
-                closed: true)
+            // THE FUNNEL, DRAWN OPEN (owner, 2026-09-11: "the filter icon
+            // is correct but a bit ugly").
+            //
+            // It was one closed six-point shape, and the ugliness was
+            // arithmetic rather than taste. Its stem measured 3.2 units
+            // across (10.4 to 13.6) while the pen is `lineWidth` — size
+            // / 12, which is 2.0 in these coordinates at the panel's
+            // 21pt. That left 1.2 units of daylight inside the stem, so
+            // it filled in and the mark read as a solid wedge.
+            //
+            // A V and a stem instead: two open strokes with no enclosed
+            // area left to fill. Same funnel, same word, all the
+            // daylight back — and it is the only wedge in the column, so
+            // it still tells itself apart from the ring, the tray, the
+            // three rules and the grid above it.
+            //
+            // THE RULE THIS IS AN INSTANCE OF: an enclosed shape in this
+            // pen needs its narrowest inside gap to stay well clear of
+            // 2.0 units, or the drawing closes up at row size. Check a
+            // new glyph's tightest passage before trusting it at 21pt.
+            pen.shape([(4, 5.5, 0), (12, 13.5, 0), (20, 5.5, 0)], closed: false)
+            pen.line(12, 13.5, 12, 19.5)
         case .trash:
             // A bin: lid, body, and two staves. Drawn rather than an SF
             // Symbol so it sits on the same optical weight as its
@@ -435,7 +602,11 @@ struct PanelMark: View {
                     .padding(.leading, size * 0.16)
             }
             .frame(width: size, height: height)
-            .animation(.easeInOut(duration: 0.18), value: open)
+            // A MARK MOVING BETWEEN ITS STATES is `pick`'s whole job.
+            // This was a raw `.easeInOut(duration: 0.18)`, the one
+            // animation in the shell that named its own curve — which is
+            // exactly the drift standing rule 3 exists to stop.
+            .animation(LivMotion.pick, value: open)
             .accessibilityHidden(true)
     }
 }
@@ -443,7 +614,11 @@ struct PanelMark: View {
 struct LivIcon: View {
     let glyph: LivGlyph
     let color: Color
-    var size: CGFloat = 19
+    /// NO DEFAULT. It was `= 19`, a hand-typed second copy of
+    /// `LivRow.glyph`, and all seventeen call sites pass `size:`
+    /// anyway — so the number was never read and only stood there
+    /// waiting to disagree with the token (standing rules 3 and 6).
+    let size: CGFloat
 
     var body: some View {
         let stroke = StrokeStyle(
@@ -468,54 +643,21 @@ struct LivIcon: View {
     }
 }
 
-/// The carved icon chip — the blueprints' one icon treatment (owner,
-/// 2026-08-12): a SOLID square of the thing's colour with the glyph
-/// punched through in the surface BENEATH, like a stencil. Never a
-/// tinted box, never a bare boxed glyph. The owner's build notes: the
-/// glyph a bit larger than the mockups drew it, the corners slightly
-/// less round.
-struct IconChip: View {
-    let glyph: LivGlyph
-    let color: Color
-    var size: CGFloat = 28
-    /// What the carve reads through to. Canvas by default; a chip inside
-    /// a card passes the card's surface, or the stencil stops working.
-    var on: Color = LivTheme.canvas
+// `IconChip` IS GONE (2026-08-31). It filled a rounded square with the
+// kind's colour and carved the glyph out of it as a stencil — one per
+// row in Files, Search and the minimised record pill, so a mixed list
+// drew a column of saturated blocks. The references draw the glyph
+// itself in the kind's colour on no fill at all, which says the same
+// thing with a fraction of the ink; that is exactly `LivIcon`, which
+// this app already had. Two recipes for one mark is standing rule 4, and
+// the three call sites pass `LivIcon` now.
 
-    var body: some View {
-        RoundedRectangle(cornerRadius: size * 6 / 28, style: .continuous)
-            .fill(color)
-            .frame(width: size, height: size)
-            .overlay(LivIcon(glyph: glyph, color: on, size: size * 19 / 28))
-            .accessibilityHidden(true)
-    }
-}
-
-/// The properties mark: three overlapping rings, one per colour family.
-/// The one icon in the language that is not a single colour, so it is
-/// not a `LivGlyph` — and it is never boxed (blueprint: "the properties
-/// mark rides the card header bare").
-struct PropertiesMark: View {
-    var size: CGFloat = 20
-
-    var body: some View {
-        let s = size / 24
-        ZStack {
-            ring(LivTheme.green, x: 8.4, y: 9.6, s: s)
-            ring(LivTheme.purple, x: 15.6, y: 9.6, s: s)
-            ring(LivTheme.accent, x: 12, y: 15.4, s: s)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
-    }
-
-    private func ring(_ color: Color, x: CGFloat, y: CGFloat, s: CGFloat) -> some View {
-        Circle()
-            .strokeBorder(color, lineWidth: 1.8 * s)
-            .frame(width: 8.2 * s, height: 8.2 * s)
-            .offset(x: (x - 12) * s, y: (y - 12) * s)
-    }
-}
+// `PropertiesMark` IS GONE with it — three overlapping coloured rings,
+// and `grep` finds no caller anywhere in the shell. Dead when the
+// properties door became the ••• menu's first item (2026-08-29) and
+// never removed; the polish audit found it still drawing itself in the
+// source. When a decision makes code unnecessary, delete it in the same
+// change (owner, 2026-08-07).
 
 // MARK: - the contrast floor, measured
 
@@ -562,13 +704,13 @@ enum LivContrast {
 /// Every colour a person reads, against the ground it is read on, in
 /// BOTH schemes: `simctl launch … -palette.selfcheck 1`.
 ///
-/// The floor is WCAG AA (4.5:1), not the AAA 7:1 it was until
-/// 2026-08-15. The palette is the system's own semantic set now (owner:
-/// "revert colors and faces to as system like as possible"), and Apple
-/// designs those to AA — `secondaryLabel` on `systemBackground` is about
-/// 4.6:1. Holding the system to a standard it does not claim would mean
-/// this check failing on colours nobody here chose. When the surface
-/// pass comes and the palette is ours again, the floor goes back up.
+/// THE FLOOR WENT BACK UP ON 2026-08-30, as this comment promised it
+/// would. From 2026-08-15 it was WCAG AA (4.5:1) because the palette was
+/// the system's own semantic set, and Apple designs those to AA — so
+/// holding them to the AAA 7:1 they do not claim would only have failed
+/// on colours nobody here chose. The palette is ours again (the surface
+/// pass), so the two tiers a person READS clear 7:1, and marks are held
+/// to 3:1 against the ground for the first time.
 func livPaletteSelfCheck() -> [String] {
     var fail: [String] = []
     // What a colour has to do decides what is asserted about it.
@@ -580,27 +722,60 @@ func livPaletteSelfCheck() -> [String] {
     // as possible" — and Apple does not claim AAA for it.)
     //
     // A MARK is not read, it is TOLD APART: a dot, a chip, a glyph's
-    // tint. Apple's vivid colours are 1.5–2.3:1 on white and always have
-    // been; holding systemYellow to a contrast floor would only mean
-    // failing on a colour nobody here chose. What matters for the icon
-    // language is that no two kinds look alike, and that is asserted
-    // below, in both schemes.
+    // tint. Two things are asserted about one: that no two kinds look
+    // alike, and — since 2026-08-30 — that each is at least 3:1 against
+    // the ground it sits on. That floor was not applied while the marks
+    // were Apple's vivid set, which is 1.5–2.3:1 on white; ours are
+    // chosen, so they can be held to it.
+    // READ tiers clear AAA. `text3` is the dimmest tier and it is held
+    // to AA instead:
+    // pushing it to 7:1 would land it on top of `text2` and the app
+    // would have two secondary greys and no tertiary one. The
+    // references agree: Anytype draws its placeholders at about 3.4:1,
+    // and this is stricter than that.
+    let inkFloor = 7.0
+    let dimFloor = 4.5
+    // THE EXEMPTION IS SOUND; ITS STATED SCOPE IS NOT. This comment used
+    // to say text3 is "a placeholder, a timestamp, the ✕ on a chip", and
+    // that is the argument for holding it to AA rather than AAA. Measured
+    // 2026-09-12, 16 of its Text sites are none of those: whole sentences
+    // ("Showing N of M — narrow the search"; "The saved version is shown.
+    // Your edit is kept."), file paths, and — the loudest one —
+    // `DetailRowLabel`, which draws EVERY property name in the panel at
+    // strong(20) in this tier, at the same triple as the value beside it,
+    // so that pair has no hierarchy in either direction.
     //
-    // When the surface pass makes the palette ours again, the ink floor
-    // goes back to 7:1 and marks get a 3:1 floor against the ground.
-    let inkFloor = 4.5
-    let inks: [(String, Color)] = [
-        ("text", LivTheme.text), ("text2", LivTheme.text2),
-        ("text3", LivTheme.text3), ("muted", LivTheme.muted),
+    // Nothing is changed here, because the fix is a visible one and it is
+    // not a blanket swap: moving both halves of a label/value pair to
+    // text2 leaves them equally undifferentiated, one step brighter. The
+    // decision about which half comes forward is the owner's, and the
+    // exemption stays exactly as it is until he makes it. What is fixed
+    // is the sentence claiming the tier is only used for things it is not.
+
+    let inks: [(String, Color, Double)] = [
+        ("text", LivTheme.text, inkFloor), ("text2", LivTheme.text2, inkFloor),
+        ("text3", LivTheme.text3, dimFloor),
     ]
     let marks: [(String, Color)] =
         [("accent", LivTheme.accent)] + LivKind.allCases.map { ($0.wire, $0.color) }
     for dark in [true, false] {
         let scheme = dark ? "dark" : "light"
-        for (name, color) in inks {
+        for (name, color, floor) in inks {
             let r = LivContrast.ratio(color, LivTheme.canvas, dark: dark)
-            if r < inkFloor {
-                fail.append("\(scheme): \(name) is \(String(format: "%.2f", r)):1 on the canvas")
+            if r < floor {
+                fail.append(
+                    "\(scheme): \(name) is \(String(format: "%.2f", r)):1 on the canvas "
+                        + "(floor \(String(format: "%.1f", floor)))")
+            }
+        }
+        // A MARK against the ground. New on 2026-08-30 and the other
+        // half of the promise above: a dot or a glyph tint you cannot
+        // separate from the canvas is not quiet, it is missing.
+        for (name, color) in marks {
+            let r = LivContrast.ratio(color, LivTheme.canvas, dark: dark)
+            if r < 3.0 {
+                fail.append(
+                    "\(scheme): the \(name) mark is \(String(format: "%.2f", r)):1 on the canvas")
             }
         }
         // Ink ON the tint — a filled button, a lit toggle. 3:1 is the
@@ -629,6 +804,63 @@ func livPaletteSelfCheck() -> [String] {
         }
     }
     return fail
+}
+
+// MARK: - the sheet (`simctl launch … -glyph.sheet 1`)
+
+/// EVERY GLYPH, DRAWN, at the size the app uses them.
+///
+/// Mockup-first is the house rule for visible UI, and a glyph is the one
+/// thing you cannot review in prose — "a folder with a lid" describes a
+/// hundred drawings. This renders the set so a change can be looked at
+/// before it is wired into anything.
+struct GlyphSheet: View {
+    /// The two marks that name an area. Four field marks stood here
+    /// until 2026-09-12 — see `LivGlyph`'s own note on where they went.
+    private static let named: [(String, LivGlyph)] = [
+        ("area", .area), ("people", .people),
+    ]
+    private static let areas: [(String, LivGlyph)] = LivArea.allCases.map { ($0.name, $0.glyph) }
+    private static let existing: [(String, LivGlyph)] = [
+        ("note", .note), ("task", .task), ("event", .event),
+        ("person", .person), ("link", .link), ("calendar", .calendar),
+        ("today", .today), ("inbox", .inbox), ("everything", .everything),
+        ("filter", .filter), ("settings", .settings), ("trash", .trash),
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                block("Areas of life", Self.areas)
+                block("Area marks", Self.named)
+                block("Existing, for comparison", Self.existing)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, LivRow.topInset)
+            .padding(.bottom, 40)
+        }
+        .background(LivTheme.canvas.ignoresSafeArea())
+    }
+
+    private func block(_ title: String, _ items: [(String, LivGlyph)]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionLabel(title)
+            // At 22 (the properties row) and at 40, because a stroke that
+            // reads at one size can close up at the other.
+            ForEach(items, id: \.0) { name, glyph in
+                HStack(spacing: 22) {
+                    LivIcon(glyph: glyph, color: LivTheme.text2, size: 22)
+                        .frame(width: 30)
+                    LivIcon(glyph: glyph, color: LivTheme.text, size: 40)
+                        .frame(width: 48)
+                    Text(name)
+                        .font(.system(size: LivType.body))
+                        .foregroundStyle(LivTheme.text3)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - self-check (`simctl launch … -glyph.selfcheck 1`)
@@ -699,6 +931,7 @@ func livGlyphSelfCheck() -> [String] {
             // Both digit widths: the numerals ride INSIDE the box, and a
             // two-digit count that overflows it would be invisible in
             // review and obvious on the day you open ten tabs.
+            .work, .health, .money, .home, .learning,
             .day(0), .day(9), .day(18), .day(31),
         ] + fileClasses.map { LivGlyph.file($0) }
     for glyph in drawn {

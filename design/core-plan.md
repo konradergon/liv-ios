@@ -1,5 +1,12 @@
 # Building the core — the phased plan
 
+> **TAURI IS DROPPED, 2026-08-29** (owner: *"1. drop Tauri"*). This document
+> was written for a world with a second, existing shell to accommodate. There
+> is none now — `shell/ios/` is the only shell, over the core in `core/`. Read
+> this for its ARGUMENT and its measurements, which did not stop being true;
+> do not read it as scheduled work. A second shell is still the goal, but what
+> it will be is undecided, and nothing here is waiting on a start date.
+
 > **Status:** rewritten 2026-08-22, second direction. The design is `core.md`, the
 > encoding is `op-format.md`, the decisions are `core-decisions.md`.
 >

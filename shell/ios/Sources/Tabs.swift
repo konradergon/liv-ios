@@ -92,10 +92,60 @@ struct TabSwitcher: View {
 
     private var grid: some View {
         VStack(spacing: 0) {
+            // THE DESK STARTS AT THE THUMB.
+            //
+            // The grid filled from the top of the screen down, and it is
+            // opened by the numbered box on the BOTTOM bar — so the
+            // motion was: reach to the bottom, then reach back to the
+            // top for the thing you asked for. On a tall phone the first
+            // card sat about 700pt from where the finger already was
+            // (owner, 2026-08-31: "tabs should begin at bottom where
+            // thumb is").
+            //
+            // Two halves to it. A short desk SINKS: the content is given
+            // the container's height and aligned bottom, so three cards
+            // sit under your thumb instead of stranded at the ceiling. A
+            // long desk STARTS at the bottom and scrolls up, which is
+            // also where `newTabCard` lives — the one card you reach for
+            // without looking.
             ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    content
+                }
+                .containerRelativeFrame(.vertical, alignment: .bottom)
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollIndicators(.hidden)
+            // THE WAY OUT stays at the foot, under the grid — it is the
+            // one thing that must not move when the cards do.
+            footer
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        Group {
                 inactiveRow
+                if shown.isEmpty {
+                    // NOTHING ON THE DESK. It drew a lone dashed card and
+                    // left you to infer the rest. An empty state is the
+                    // one place a person reads prose, so it is where the
+                    // app can say what this screen is.
+                    EmptyHint("Nothing open")
+                    .padding(.top, 40)
+                }
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(shown) { tab in card(tab) }
+                    // THE NEW CARD IS ALWAYS BOTTOM-RIGHT. The grid
+                    // flows left to right, so with nothing open the one
+                    // card you reach for stood in the LEFT column, under
+                    // the wrong thumb (owner, 2026-09-05: "should be
+                    // right since thumb is on the right in most hands").
+                    // An even count leaves the left cell of the last row
+                    // empty rather than move the card; the grid already
+                    // sinks to the bottom, so the card is at one place
+                    // however many are open.
+                    if shown.count.isMultiple(of: 2) { Color.clear }
                     newTabCard
                 }
                 .padding(.horizontal, 16)
@@ -112,23 +162,9 @@ struct TabSwitcher: View {
                 // cut-off… pushes the grid way down almost half-way
                 // towards the middle").
                 //
-                // Now it protects without pushing: an overlay below, and
-                // room reserved here only where something is standing.
-                // Nothing above it: this ScrollView already starts below
-                // the status bar (measured: y=62 on a 912pt screen) and
-                // the grid owns the screen while it is up.
-            }
-            // Still needed, and this is why: a ScrollView that touches
-            // the top safe area draws its content THROUGH it, so a
-            // scrolled card row slides under the clock and the Dynamic
-            // Island — and a card's ✕ resting behind the Island cannot
-            // be tapped, because that region belongs to the system.
-            // NO SCRIM, AND NO ROOM FOR THE BAR. Nothing floats over
-            // this grid — it covers the screen, footer and all. The
-            // scrim was painting canvas over the first row's titles for
-            // nothing, which together with the band it reserved was the
-            // cut-off the owner reported (2026-08-28).
-            footer
+                // Nothing above it either: this ScrollView already
+                // starts below the status bar (measured: y=62 on a 912pt
+                // screen) and the grid owns the screen while it is up.
         }
     }
 
@@ -137,10 +173,13 @@ struct TabSwitcher: View {
     /// It used to be narrowed by a "Search tabs" field in a header, with
     /// a collapse chevron beside it. Both are gone (owner, 2026-08-24:
     /// "you can remove the collapse button and search tabs from tab
-    /// view"). The grid is the Notes surface now, not a sheet you peer
-    /// into, so there is nothing to collapse; and a field that searches
-    /// the tabs you can already see, one tap from a search that reaches
-    /// the whole box, was the smaller of two searches.
+    /// view"). A field that searches the documents you can already see,
+    /// one tap from a search that reaches the whole box, was the smaller
+    /// of two searches.
+    ///
+    /// (The grid was the Notes view's own surface for four days. It is
+    /// the switcher again since 2026-08-28, and the list it stood in for
+    /// is `EverythingLens.notes` since 2026-09-10.)
     private var shown: [DeskTab] { desk.liveTabs }
 
     // MARK: cards
@@ -151,7 +190,7 @@ struct TabSwitcher: View {
             feature: desk.state,
             active: tab.id == desk.activeTabId,
             onOpen: {
-                desk.focus(tab.id)
+                desk.show(tab)
                 desk.switcherShown = false
             },
             onClose: { desk.close(tab.id) })
@@ -162,7 +201,7 @@ struct TabSwitcher: View {
             desk.newTab()
             desk.switcherShown = false
         } label: {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: LivTheme.radiusCard)
                 .strokeBorder(
                     LivTheme.border2,
                     style: StrokeStyle(lineWidth: 1, dash: [5, 4])
@@ -172,11 +211,11 @@ struct TabSwitcher: View {
                     VStack(spacing: 4) {
                         Image(systemName: "plus")
                             .font(.system(size: LivType.title, weight: .medium))
-                        Text("New tab").font(.system(size: LivType.caption, weight: .medium))
+                        Text("New note").font(.system(size: LivType.caption, weight: .medium))
                     }
                     .foregroundStyle(LivTheme.text3)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
         }
         .buttonStyle(.plain)
     }
@@ -196,14 +235,17 @@ struct TabSwitcher: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("New tab")
+            .accessibilityLabel("New note")
             Spacer()
             // The count agrees with what the grid SHOWS. Inactive tabs
             // are counted on their own row, the only place claiming them.
-            Text(
-                "\(desk.liveTabs.count) "
-                    + (desk.liveTabs.count == 1 ? "tab" : "tabs")
-            )
+            // "ON THE DESK" WAS THE DESKTOP'S WORD, borrowed on
+            // 2026-08-23 because that app shipped "New in Desk". The
+            // desktop is dropped, and the bar's own key now reads "Open"
+            // (owner, 2026-09-05: the box "is for open notes") — this
+            // row says the same word, or the grid and the key that opens
+            // it name one thing two ways.
+            Text("\(desk.liveTabs.count) open")
                 .font(.system(size: LivType.body).monospacedDigit())
                 .foregroundStyle(LivTheme.text3)
             Spacer()
@@ -246,7 +288,7 @@ struct TabSwitcher: View {
                     Text("Inactive")
                         .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.text)
-                    ValueChip(LivTabs.label(LivTabs.days), dotted: false)
+                    ValueChip(LivTabs.label(LivTabs.days))
                     Spacer(minLength: 0)
                     Text("\(total)")
                         .font(.system(size: LivType.body).monospacedDigit())
@@ -376,12 +418,14 @@ struct InactiveTabs: View {
     /// Back into the grid, and onto the screen: this is the only way a
     /// tab leaves the inactive list, exactly as Chrome does it.
     ///
-    /// It no longer has to CHANGE VIEW first. The shelf used to span six
-    /// planes, so reviving a Calendar tab from the Notes switcher had to
-    /// take you to the Calendar. Everything on one desk is a document,
-    /// and a document opens where you are.
+    /// The shelf used to span six planes, so reviving a Calendar tab
+    /// from the Notes switcher had to take you to the Calendar. There is
+    /// one desk of documents now, and a document lies over whichever view
+    /// you are in — which is what `desk.show` does. (This said "a
+    /// document opens where you are" and called `focus`, which changed no
+    /// view at all; see `DeskModel.show`.)
     private func revive(_ tab: DeskTab) {
-        desk.focus(tab.id)
+        desk.show(tab)
         close()
         desk.switcherShown = false
     }
@@ -540,7 +584,7 @@ struct TabCard: View {
                 .padding(.horizontal, 10)
                 Text(excerpt)
                     .font(.system(size: LivType.micro))
-                    .foregroundStyle(LivTheme.muted)
+                    .foregroundStyle(LivTheme.text2)
                     .lineLimit(4)
                     .multilineTextAlignment(.leading)
                     .padding(.horizontal, 10)
@@ -556,26 +600,28 @@ struct TabCard: View {
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 20)
-                .background(LivTheme.panel)
+                .background(LivTheme.surface)
             }
             .frame(height: 150)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(LivTheme.surface))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(RoundedRectangle(cornerRadius: LivTheme.radiusCard).fill(LivTheme.surface))
+            .clipShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: LivTheme.radiusCard)
                     .strokeBorder(
                         active ? LivTheme.accent : LivTheme.border,
                         lineWidth: active ? 1.5 : 0.5)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radiusCard))
         }
         .buttonStyle(.plain)
-        // TWO UNTITLED NOTES SOUND THE SAME. Every unnamed note reads
-        // back as "Untitled", so a screen reader gives a grid of them one
-        // word repeated and no way to tell which is which — and neither
-        // can a test driving by label. The excerpt is what a sighted
-        // person is telling them apart by, so it goes in the label too.
+        // TWO UNNAMED NOTES SOUND THE SAME. An unnamed note reads back
+        // as its KIND — "Note" (`livRowTitle`, 2026-09-06; it was
+        // "Untitled" before that) — so a screen reader gives a grid of
+        // them one word repeated and no way to tell which is which, and
+        // neither can a test driving by label. The excerpt is what a
+        // sighted person is telling them apart by, so it goes in the
+        // label too.
         .accessibilityLabel(spoken)
     }
 
@@ -619,14 +665,14 @@ struct TabCard: View {
         return LivKind.of(row).wire
     }
 
-    /// The kind's own colour, not a hash of the word: this dot used to
-    /// come out of `Hue.dot`, which spreads any string over five colours
-    /// — so a tab's dot said nothing about what the tab held.
+    /// The kind's own colour. This dot used to come from a hash of the
+    /// word, which said nothing about what the tab held; that hash is
+    /// gone entirely (2026-08-29) and kind colour is what is left.
     private var kindColor: Color {
         // A position is a PLACE, and places have no kind colour — the
         // library's rows are bare and colourless (owner, 2026-08-13).
         if token != nil { return LivTheme.text3 }
-        return row == nil ? LivTheme.muted : LivKind.color(of: row)
+        return row == nil ? LivTheme.text2 : LivKind.color(of: row)
     }
 
     private var footer: String {

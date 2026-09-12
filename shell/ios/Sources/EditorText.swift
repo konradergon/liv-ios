@@ -76,11 +76,24 @@ final class EditorBridge: ObservableObject {
 // MARK: - fonts
 
 private enum EditorFont {
-    // Bumped one step across the board (owner, 2026-07-31: "clearer,
-    // larger text") — reading comfort beats density in the editor.
-    static let body = UIFont.systemFont(ofSize: 16)
-    static let mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    static let codeInline = UIFont.monospacedSystemFont(ofSize: 14.5, weight: .regular)
+    // THE SIZES LIVE IN `LivType.Editor` (Theme.swift), not here. They
+    // were six literals in this file, dated 2026-07-31 — they predate
+    // `LivType` entirely — and standing rule 3 says a size lives in a
+    // type. Moved unchanged on 2026-09-07, values bit-identical, so the
+    // drift they carry is now visible where the rest of the scale is:
+    // this body is 16 while every list row that opens a note is 18.
+    //
+    // One of the six is gone (2026-09-12): a 12pt monospace whose only
+    // reader had been removed on 2026-08-11 and which therefore drew
+    // nothing. See `LivType.Editor`'s own comment for why it is worth
+    // knowing that a cited drift was never on screen.
+    //
+    // These are `UIFont`s because the editor draws with TextKit, which
+    // never sees a SwiftUI font — different UNITS, not different
+    // numbers.
+    static let body = UIFont.systemFont(ofSize: LivType.Editor.body)
+    static let codeInline = UIFont.monospacedSystemFont(
+        ofSize: LivType.Editor.codeInline, weight: .regular)
 
     /// The list GUTTER: every list line's words start this far in, and a
     /// line that wraps carries on under its words rather than under its
@@ -114,9 +127,9 @@ private enum EditorFont {
 
     static func heading(_ level: Int) -> UIFont {
         switch level {
-        case 1: return .systemFont(ofSize: 25, weight: .bold)
-        case 2: return .systemFont(ofSize: 21, weight: .semibold)
-        default: return .systemFont(ofSize: 18, weight: .semibold)
+        case 1: return .systemFont(ofSize: LivType.Editor.h1, weight: .bold)
+        case 2: return .systemFont(ofSize: LivType.Editor.h2, weight: .semibold)
+        default: return .systemFont(ofSize: LivType.Editor.h3, weight: .semibold)
         }
     }
 
@@ -250,7 +263,7 @@ enum MarkStyler {
         func dim(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             storage.addAttributes(
-                [.font: font, .foregroundColor: LivInk.muted], range: abs(r))
+                [.font: font, .foregroundColor: LivInk.text2], range: abs(r))
         }
 
         /// Syntax OFF the caret's line has no glyphs at all — not clear
@@ -417,9 +430,9 @@ enum MarkStyler {
                 if content.length > 0 {
                     storage.addAttributes(
                         [
-                            .foregroundColor: LivInk.muted,
+                            .foregroundColor: LivInk.text2,
                             .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                            .strikethroughColor: LivInk.muted,
+                            .strikethroughColor: LivInk.text2,
                         ], range: abs(content))
                 }
             }
@@ -450,7 +463,7 @@ enum MarkStyler {
                 // the drawn rule could never sit where the dashes sat
                 // (found measuring, 2026-08-07).
                 storage.addAttribute(
-                    .foregroundColor, value: LivInk.muted,
+                    .foregroundColor, value: LivInk.text2,
                     range: abs(NSRange(location: 0, length: lineLen)))
             } else {
                 let ruleStyle = NSMutableParagraphStyle()
@@ -602,7 +615,7 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 y: rect.minY + EditorFont.ruleCenterFromTop - 0.5,
                 width: container.size.width - container.lineFragmentPadding * 2 - inset * 2,
                 height: 1)
-            LivInk.muted.setFill()
+            LivInk.text2.setFill()
             UIBezierPath(rect: line).fill()
         }
         storage.enumerateAttribute(.livBullet, in: charRange) { value, range, _ in
@@ -653,7 +666,7 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 check.stroke()
             } else {
                 path.lineWidth = 1.5
-                LivInk.muted.setStroke()
+                LivInk.text2.setStroke()
                 path.stroke()
             }
         }
@@ -702,12 +715,23 @@ final class MarkdownTextView: UITextView {
     /// scrolls with the body: the title starts below the floating circles
     /// and slides up under them as you read. A separate SwiftUI header
     /// could never do that — it would stay pinned.
+    /// ONE TITLE FONT, read by the field and by its grey prompt. It was
+    /// the same expression written twice, which is the shape standing
+    /// rule 4 names — and the two have to agree or the prompt jumps to a
+    /// different size the moment you type over it.
+    static let titleFont = UIFont.systemFont(ofSize: LivType.hero, weight: .bold)
+
     let titleView: UITextView = {
         let v = UITextView()
         v.isScrollEnabled = false
         v.backgroundColor = .clear
-        v.font = .systemFont(ofSize: LivType.hero, weight: .bold)
+        v.font = MarkdownTextView.titleFont
         v.textColor = LivInk.text
+        // THE CARET IS OURS. A UIViewRepresentable does not reliably
+        // inherit the SwiftUI tint, so without this the caret, the
+        // selection highlight and the drag handles in the app's main
+        // writing surface came out the device's blue (2026-09-07).
+        v.tintColor = LivInk.accent
         v.textContainerInset = .zero
         v.textContainer.lineFragmentPadding = 0
         v.returnKeyType = .done
@@ -720,8 +744,8 @@ final class MarkdownTextView: UITextView {
     /// The derived title, in grey, when no name cell exists.
     let titlePrompt: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: LivType.hero, weight: .bold)
-        l.textColor = LivInk.muted
+        l.font = MarkdownTextView.titleFont
+        l.textColor = LivInk.text2
         l.numberOfLines = 3
         l.lineBreakMode = .byTruncatingTail
         l.isUserInteractionEnabled = false
@@ -742,6 +766,9 @@ final class MarkdownTextView: UITextView {
         backgroundColor = .clear
         font = EditorFont.body
         textColor = LivInk.text
+        // See `titleView` above: the body's caret needs this for the
+        // same reason the title's does.
+        tintColor = LivInk.accent
         // Both of these belong to a view that scrolls ITSELF. Embedded,
         // the card's own ScrollView owns the swipe-to-dismiss
         // (scrollDismissesKeyboard) and there is nothing to bounce —
@@ -785,9 +812,17 @@ final class MarkdownTextView: UITextView {
     /// layoutSubviews, and the whole document silently stops drawing
     /// (found live — the note went blank). Layout only positions; this
     /// runs from the update path instead.
-    /// The title's minimum height — one line of LivType.hero. Shared
-    /// with the initial inset above, which used to repeat the literal.
-    static let titleFloor: CGFloat = 32
+    ///
+    /// THE FLOOR IS THE TITLE'S POINT SIZE, not a rendered line of it.
+    /// It read `32` and the comment above it said "one line of
+    /// LivType.hero" — both are 32 today, so the literal was right and
+    /// the sentence was not: a rendered line of 32pt bold measures about
+    /// 37.5, so nothing has been floored by this since `hero` reached 32
+    /// on 2026-08-31. What it still does is SEED `titleHeight` before
+    /// the title has been measured once, which is the initial top inset
+    /// and one frame of it. Derived now, so it cannot fall behind `hero`
+    /// a second time.
+    static let titleFloor: CGFloat = LivType.hero
     private var titleHeight: CGFloat = MarkdownTextView.titleFloor
 
     func refreshTitleLayout() {
@@ -873,7 +908,18 @@ final class MarkdownTextView: UITextView {
 /// text and focus flow through the bindings; the save engine stays in
 /// NoteEditorModel, untouched.
 struct MarkdownEditor: UIViewRepresentable {
-    @Binding var text: String
+    /// THE BUFFER, by value. It was `@Binding` to a `@Published`
+    /// property, so every keystroke re-entered the SwiftUI graph and came
+    /// back down here to be compared against the view's own copy — a
+    /// document-length comparison to learn nothing had changed that this
+    /// view had not just done itself.
+    var text: String
+    /// HOW MANY TIMES THE MODEL HAS REPLACED THE TEXT (a load, a conflict
+    /// swap, a re-applied draft). The view follows THIS, not the string:
+    /// when it moves, the buffer is genuinely somebody else's.
+    var imposed: Int
+    /// A keystroke, going up. The text view has already changed itself.
+    var onEdit: (String) -> Void
     @Binding var focused: Bool
     /// The note's name cell, edited in the scrolling title line.
     @Binding var title: String
@@ -928,10 +974,17 @@ struct MarkdownEditor: UIViewRepresentable {
             view.titlePrompt.isHidden = !title.isEmpty
             view.refreshTitleLayout()
         }
-        if view.text != text {
+        if context.coordinator.appliedImposed != imposed {
+            context.coordinator.appliedImposed = imposed
             // Programmatic set (load, conflict swap, re-apply): keep the
             // caret sane. Styling arrives via the storage delegate — every
             // character mutation flows through it.
+            //
+            // THE COUNTER, NOT THE STRING (2026-09-06). Comparing
+            // `view.text != text` read the whole document on every
+            // keystroke to decide it had nothing to do. The model bumps
+            // `imposed` exactly when the words are its own, which is the
+            // question this branch was asking.
             let selected = view.selectedRange
             view.text = text
             let n = (text as NSString).length
@@ -965,8 +1018,37 @@ struct MarkdownEditor: UIViewRepresentable {
             // so nothing else recomputes it here).
             context.coordinator.scheduleOutline(text)
         }
+        // TAKING FOCUS HAPPENS AFTER THE UPDATE, NEVER INSIDE IT.
+        //
+        // `updateUIView` runs while SwiftUI is part-way through its own
+        // update pass. Becoming first responder from in here calls back
+        // into SwiftUI synchronously — UIKit tells the hosting view the
+        // responder changed, and `_UIHostingView._didChange(toFirstRespon
+        // der:)` starts a fresh graph transaction on top of the one still
+        // running. The graph is then asked for a value it is already
+        // computing, which is the definition of a cycle.
+        //
+        // Measured 2026-08-30: opening a note fired 57 of them, every one
+        // through this line. 57 backtraces, sampled with a breakpoint on
+        // `AG::Graph::print_cycle`, all carried the same six frames —
+        // updateUIView -> becomeFirstResponder -> _setFirstResponder: ->
+        // _didChange(toFirstResponder:) -> runTransaction -> the graph.
+        // A cycle wedges that subtree's update loop: bodies keep
+        // evaluating with the right values while the pixels stop moving,
+        // which is the failure this app has now been bitten by three
+        // times (see LivBar.room and LivTopScrim for the other two).
+        //
+        // One hop of the main queue puts it after the transaction, and
+        // the caret still lands before anything is drawn. The guards are
+        // RE-CHECKED on arrival: a note closed in that hop must not pull
+        // the keyboard back up.
         if focused, !view.isFirstResponder, view.window != nil, editable {
-            view.becomeFirstResponder()
+            DispatchQueue.main.async { [weak view] in
+                guard let view, !view.isFirstResponder, view.window != nil,
+                    view.isEditable
+                else { return }
+                view.becomeFirstResponder()
+            }
         }
     }
 
@@ -1007,6 +1089,9 @@ struct MarkdownEditor: UIViewRepresentable {
         /// Has this mount already put the caret where it was left? One
         /// shot: after that the live caret is the truth (LivCaret).
         var restored = false
+        /// The `imposed` count this coordinator has already put into the
+        /// view, so an imposition is applied once and typing is free.
+        var appliedImposed = 0
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
@@ -1134,7 +1219,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // programmatic-set branch above is the only other place that
             // sets this, and typing never goes through it.
             restored = true
-            parent.text = textView.text
+            parent.onEdit(textView.text)
             trackLink(in: textView)
             scheduleOutline(textView.text)
             keepCaretVisible(textView)
@@ -1250,7 +1335,7 @@ struct MarkdownEditor: UIViewRepresentable {
             let result = EditOps.completeLink(
                 view.text, token: token, id: id, name: name)
             applyThroughSystem(result, to: view)
-            parent.text = view.text
+            parent.onEdit(view.text)
             parent.bridge.openLink = nil
             suppressedLink = nil
             scheduleOutline(view.text)

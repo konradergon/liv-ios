@@ -118,6 +118,10 @@ struct PanelDragInstaller: UIViewRepresentable {
     /// A drag moving `dx` may claim a panel (something to open or close
     /// in that direction).
     let mayClaim: (CGFloat) -> Bool
+    /// A rectangle, in WINDOW coordinates, that pages horizontally on
+    /// its own and must therefore never lose a sideways drag to a panel.
+    /// `.zero` means there is no such place on screen.
+    let pagerZone: () -> CGRect
     let onLatch: (CGFloat) -> Void
     let onMove: (CGFloat) -> Void
     let onEnd: (_ translation: CGFloat, _ velocity: CGFloat) -> Void
@@ -131,6 +135,7 @@ struct PanelDragInstaller: UIViewRepresentable {
     func updateUIView(_ host: PanelDragHost, context: Context) {
         context.coordinator.active = active
         context.coordinator.mayClaim = mayClaim
+        context.coordinator.pagerZone = pagerZone
         context.coordinator.onLatch = onLatch
         context.coordinator.onMove = onMove
         context.coordinator.onEnd = onEnd
@@ -141,6 +146,7 @@ struct PanelDragInstaller: UIViewRepresentable {
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var active: () -> Bool = { true }
+        var pagerZone: () -> CGRect = { .zero }
         var mayClaim: (CGFloat) -> Bool = { _ in true }
         var onLatch: (CGFloat) -> Void = { _ in }
         var onMove: (CGFloat) -> Void = { _ in }
@@ -163,6 +169,25 @@ struct PanelDragInstaller: UIViewRepresentable {
             if point.x < 24 || point.x > window.bounds.width - 24 {
                 return true
             }
+            // A SURFACE THAT PAGES SIDEWAYS KEEPS ITS OWN SIDEWAYS
+            // DRAGS.
+            //
+            // The check below vetoes a horizontally scrollable
+            // UIScrollView, which is the right idea and missed the one
+            // place in the app that needed it: the calendar's month
+            // pager is a SwiftUI HStack with an `.offset`, not a scroll
+            // view, so nothing here saw it. Swiping right on the month
+            // grid opened the library instead of turning the month
+            // (owner, 2026-08-31), and both gestures ran on every touch
+            // — which is also why it felt slow, since latching a panel
+            // disables DeskHost's whole tree mid-drag.
+            //
+            // A frame rather than a view type, because the thing to
+            // exclude is a REGION the calendar knows about and this file
+            // cannot name.
+            let zone = pagerZone()
+            if !zone.isEmpty, zone.contains(point) { return false }
+
             var view = window.hitTest(point, with: nil)
             while let v = view {
                 let name = String(describing: type(of: v))

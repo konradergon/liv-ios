@@ -518,6 +518,145 @@ with a CLI cross-check against the box.
   flatten notice to still-unsupported shapes; add the source-mode toggle.
   Zero core change; the codec self-check grows with it.
 
+## 13. How the editor works, and what it costs (2026-09-06)
+
+Owner: *"how is the markdown editor implemented? How can we do it faster
+and more extensible / modular?"* — and, on the first answer: *"my notes
+are just test junk and you shouldn't make an argument like 'your largest
+note is n lines'."* That correction stands at the head of this section,
+because it invalidated a conclusion and changed the order of the work.
+
+### 13.1 How it works
+
+**Your notes are not stored as markdown.** In the box a body is a list of
+pieces (`core/src/value.rs`): a run of text carrying flags, a paragraph
+break that says what kind of paragraph follows, or a link to another
+entity. No `#` and no `**` is ever written to disk — the core says so
+outright.
+
+The editor turns that into markdown text to edit it, and back again to
+save it: `SpanText.spansToText` on the way in, `SpanText.textToSpans` on
+the way out, two seconds after you stop typing. **Markdown here is a
+display convention and the editor's working format, not a storage
+format.** That one fact explains the 600-line codec, the "this will be
+flattened" banner, and much of why three files reached 958, 1492 and 1805
+lines.
+
+Nothing is hidden or rewritten as you type. The markers stay in the text
+as real characters; the editor paints over them, greys them, and gives
+them zero width when the caret is elsewhere. That painting is why the
+editor is on TextKit 1: `shouldGenerateGlyphs`, the hook that makes a
+character take no space, has no TextKit 2 equivalent.
+
+Saving never overwrites. Each save carries a fingerprint of what it
+started from; if the note moved underneath, the box refuses, the editor
+shows the box's version and keeps yours as a draft. There is no force
+flag.
+
+### 13.2 What it costs, measured
+
+Measured 2026-09-06 on the simulator with notes written for the purpose —
+4,000 lines (310 KB) and 8,000 lines (600 KB) — sampled with `sample` on
+the process rather than timed through the harness.
+
+- **Typing** cost about 2 ms a keystroke at 310 KB and 6 ms at 600 KB.
+  Under the frame budget, and growing with the note.
+- **Opening** cost about half a second of CPU at 600 KB, in the full
+  styling pass over every line plus the body's JSON round trip.
+- **Not the cost:** TextKit layout. `drawGlyphs` and
+  `shouldGenerateGlyphs` together were under 0.2% of samples.
+
+The growth was three whole-document reads per keystroke, none of which
+had to be there: `NoteEditorModel.dirty` compared the entire buffer
+against the stored copy; `updateUIView` compared the entire buffer against
+the text view's own copy; and `livDisplayTitle` split the whole note into
+lines to keep the first one.
+
+**The lesson about the first answer.** The first analysis rejected fixing
+this, partly on the ground that the largest note on this machine was under
+3,000 characters. That is not a fact about the design, it is a fact about
+a test box, and the owner said so. A design has to hold for a note of any
+length. **Where a claim about cost rests on today's data rather than on
+the shape of the work, it is not an argument.**
+
+### 13.3 What changed
+
+- **The buffer left the SwiftUI graph.** `NoteEditorModel.text` is no
+  longer `@Published`. The text view owns the text while you type; the
+  model holds the same string for the save engine, and a published
+  `imposed` counter tells the view when the MODEL changed the text (a
+  load, a conflict swap, a re-applied draft). `updateUIView` compares that
+  counter instead of the string.
+- **Dirty is counted, not compared** (`LivEdits`). The comparison got one
+  thing right for free — text typed while a save is in flight stays dirty,
+  because the comparison ran against what that save actually wrote — so
+  each save marks itself with the buffer it left with and cleans only up
+  to that mark. One deliberate difference: typing a character and deleting
+  it again now says dirty where the comparison said clean, costing one
+  redundant save, which the core treats as a no-op.
+- **`livFirstLine`** reads to the first newline instead of splitting the
+  note. It also pays off outside the editor, in Notes' rows and in Share.
+- **A cost self-check**, `suites.sh editor-cost`, asserts the SHAPE the
+  way `services/tests/scale.rs` does: doubling a note must not double the
+  per-keystroke work. Watched failing at ratio 2.02 before the fix and
+  passing after.
+
+Measured after, same gesture and same note: `updateUIView`, `dirty` and
+`livDisplayTitle` are gone from the profile entirely. What remains on the
+typing path is the one-paragraph restyle, which is correct, and the
+resolution of the theme's dynamic `UIColor` closures inside it, which is
+the next thing to look at.
+
+### 13.4 What is still open, in order
+
+Un-gated, and none of it needs an Xcode project or a package:
+
+1. **The code fence is one grammar in two places, and it is a live bug.**
+   `MarkScan.shape` has no fence branch while `SpanText.textToSpans` keeps
+   its own fence state, so inside a ``` block a `- [ ] x` line is drawn
+   with a **tappable checkbox that `EditOps.toggleTask` will flip** —
+   editing code the box stores as code. Teach the styler the fence; do not
+   remove it from the codec, which would re-open the 2026-08-20 data loss.
+   (Standing rule 4, and the highest-value item left.)
+2. **One marker table.** `"- [ ] "`, `"> "`, `"#"×n` are written in
+   `EditOps.returnKey`, `EditOps.setBlock` and `SpanText.marker`. This
+   duplication already leaked one `]` per save once.
+3. **Split the three files at the MARK comments they already carry** —
+   the self-checks alone are ~580 lines. Do this before the grammar work,
+   so that work lands in small files.
+4. **The remaining per-keystroke leaks:** `refreshTitleLayout` measures
+   before its guard; `updateRuleReveal` restyles the caret's paragraph
+   twice when it has only grown; the theme's dynamic colours are resolved
+   per attribute application.
+5. **Move `SpanText.textToSpans` and the JSON encode off the main thread**
+   in `flush`, keeping the rule that a retry never re-reads a base that
+   moved under it.
+6. **`EditorFont` defines a second type scale** (body 16) beside
+   `LivType.body` (18). Move the numbers to `Theme.swift` without changing
+   them, so the drift is visible.
+
+Gated, needing the owner's word:
+
+7. **Take the whole-box snapshot off the autosave tick.** Every save
+   rebuilds and re-decodes a picture of the whole box, roughly every two
+   seconds of typing. This is the only work on the typing path whose cost
+   grows with the BOX rather than the note.
+8. **Stop shipping every note's body in every snapshot** — measured at
+   ~70% of the JSON with 100 notes. It changes the meaning of an existing
+   wire field, so it is not purely additive.
+9. **`strip_block_marker` has no callout branch** (`services/src/content.rs`)
+   while its own comment claims it mirrors `MarkScan` "to the letter", so a
+   `> [!warning] Mind the step` line is named differently in a list than
+   in the editor.
+
+**Rejected, with reasons:** a TextKit 2 migration (`shouldGenerateGlyphs`
+has no equivalent, and layout is not the measured cost); SwiftUI's
+`TextEditor` (no attributes, no layout hook, no `shouldChangeTextIn`);
+splitting `MarkStyler` into a pure value plus an applier (a rewrite of the
+392 lines where every visual regression has lived, buying modularity and
+no speed); and deleting the codec's fence branch, which would re-open a
+known data loss.
+
 ## 12. Open owner decisions
 
 > **Ruled by the owner, 2026-07-30:** 1 yes · 2 yes · 3 A · 4 confirmed ·

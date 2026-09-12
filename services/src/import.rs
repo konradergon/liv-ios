@@ -39,7 +39,7 @@ pub enum ImportItem {
 }
 
 /// Reference cells stamped on every committed entity — the funnel's inherited
-/// project/area/subject, as `(property, target)` pairs. The surface resolves
+/// project/area/tags, as `(property, target)` pairs. The surface resolves
 /// which property is "project"; the service stays agnostic.
 #[derive(Default)]
 pub struct ImportDefaults {

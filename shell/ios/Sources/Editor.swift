@@ -607,13 +607,76 @@ enum SaveOutcome {
     case clean, saved, stale, busy, invalid
 }
 
+/// HOW FAR THE BUFFER HAS RUN AHEAD OF THE BOX, counted rather than
+/// compared.
+///
+/// The editor used to answer "is this note dirty?" by comparing the whole
+/// buffer against the last thing it saved. Correct, and O(note) on every
+/// keystroke. The comparison earned its keep in one place, which is the
+/// only reason this is a pair of counters and not a flag: a save takes a
+/// COPY of the buffer and travels, and anything typed while it is away
+/// belongs to the NEXT save. A flag set false on arrival would drop those
+/// keystrokes; comparing against what actually landed did not.
+///
+/// So a save marks itself with the buffer it left with, and cleans only
+/// up to that mark.
+struct LivEdits: Equatable {
+    /// Keystrokes since this note was loaded.
+    private(set) var typed = 0
+    /// The mark of the newest save that has landed.
+    private(set) var saved = 0
+
+    var dirty: Bool { typed != saved }
+
+    mutating func edited() { typed &+= 1 }
+
+    /// The buffer a save is leaving with.
+    func inFlight() -> Int { typed }
+
+    /// That save landed. NEVER moves backwards: a retry can put two saves
+    /// in the air, and the older one arriving second must not undo the
+    /// newer one's mark.
+    mutating func landed(_ mark: Int) { saved = max(saved, mark) }
+
+    /// The box's own words arrived — nothing to save.
+    mutating func settle() { saved = typed }
+}
+
 /// The editor's whole state machine. Every save presents the base
 /// fingerprint back to the seam — a save is to a value, never a moment —
 /// and a refused (stale) save NEVER overwrites: the fresh content comes
 /// back, the draft waits in memory behind a banner.
 final class NoteEditorModel: ObservableObject {
-    /// The editing buffer. The one place the user's words live.
-    @Published var text = ""
+    /// THE EDITING BUFFER, and it is NOT `@Published` (2026-09-06).
+    ///
+    /// It used to be, and every keystroke therefore pushed the whole
+    /// document into the SwiftUI graph: the body re-evaluated, the
+    /// representable was rebuilt, `updateUIView` compared the entire
+    /// string against the view's own copy to decide it had not changed,
+    /// and `dirty` compared it against the stored copy as well. Two
+    /// whole-document comparisons and a graph invalidation, per
+    /// character, for a change the text view had already made itself.
+    ///
+    /// The text view owns the text while you type — it is the thing you
+    /// are typing into. This holds the same string so the save engine
+    /// has something to send, and `imposed` below is how the model
+    /// tells the view when the model, not the user, changed it.
+    var text = ""
+
+    /// A COUNTER, BUMPED WHEN THE MODEL REPLACES THE TEXT — a load, a
+    /// conflict swap, a re-applied draft. This is published; the buffer
+    /// is not. `updateUIView` sets `view.text` when this moves and
+    /// otherwise leaves the view alone, so typing no longer costs a
+    /// document-length comparison.
+    @Published private(set) var imposed = 0
+
+    /// The first line, with its markdown markers taken off — what an
+    /// unnamed note shows as its title. Published, because the buffer
+    /// is not: the view can no longer derive it per keystroke.
+    /// Recomputed only when the FIRST LINE changes, which is almost
+    /// never while you are typing further down.
+    @Published private(set) var derivedTitle = ""
+    private var firstLine = ""
     @Published private(set) var loaded = false
     /// The box opened and holds no such entity.
     @Published private(set) var missing = false
@@ -632,10 +695,23 @@ final class NoteEditorModel: ObservableObject {
     private(set) var draft: String?
     private(set) var base: UInt64 = 0
 
-    /// What the box holds right now, as text. Dirty is a comparison, so a
-    /// note that is merely READ is never re-written — no open-and-flatten.
-    private var storedText = ""
-    var dirty: Bool { loaded && !missing && text != storedText }
+    /// WHAT THE BOX HAS versus WHAT YOU HAVE TYPED, counted.
+    ///
+    /// This was `text != storedText` — O(note) on every keystroke. The
+    /// comparison did get one thing right for free, and the counter has
+    /// to keep it: text typed WHILE a save is in flight must stay dirty,
+    /// because that save carried an older buffer. `LivEdits` marks each
+    /// save with the buffer it left with and only cleans up to that
+    /// mark.
+    ///
+    /// One deliberate difference: type a character and delete it again
+    /// and the counter still says dirty where the comparison said clean,
+    /// so one redundant save goes out. That is safe — the core's
+    /// `set_content` treats writing what is already there as a no-op
+    /// before it checks the base — and it is the price of not reading
+    /// the whole note to answer a question about one keystroke.
+    private var edits = LivEdits()
+    var dirty: Bool { loaded && !missing && edits.dirty }
 
     private weak var box: BoxModel?
     private var id: UInt64 = 0
@@ -722,10 +798,38 @@ final class NoteEditorModel: ObservableObject {
                 // "optimise" trashed rows out of `entities`.
                 isKnown: { [weak box] id in box?.entity(id) != nil })
             let fresh = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
-            self.storedText = fresh
-            self.text = fresh
             self.loaded = true
+            self.impose(fresh, dirty: false)
         }
+    }
+
+    /// A KEYSTROKE. The text view has already changed itself; this
+    /// records it, marks the buffer dirty and arms the save clocks.
+    func userEdited(_ fresh: String) {
+        text = fresh
+        edits.edited()
+        refreshDerivedTitle()
+        textChanged()
+    }
+
+    /// THE MODEL CHANGING THE TEXT: a load, a conflict swap, a
+    /// re-applied draft. The view is told by `imposed`; whether the
+    /// result is dirty depends on where the words came from — the box's
+    /// own words are clean, a re-applied draft is not.
+    private func impose(_ fresh: String, dirty: Bool) {
+        text = fresh
+        if dirty { edits.edited() } else { edits.settle() }
+        refreshDerivedTitle()
+        imposed &+= 1
+    }
+
+    /// The title costs a LINE, not a document — and only when that line
+    /// has actually moved.
+    private func refreshDerivedTitle() {
+        let head = livFirstLine(text)
+        guard head != firstLine else { return }
+        firstLine = head
+        derivedTitle = livDisplayTitle(head)
     }
 
     // MARK: typing → transactions (the macOS loss budget, verbatim)
@@ -776,11 +880,14 @@ final class NoteEditorModel: ObservableObject {
         checkpointTimer?.invalidate()
         checkpointTimer = nil
         let payload = text
+        // The buffer this save is leaving with. Keystrokes after this
+        // line belong to the next one.
+        let mark = edits.inFlight()
         // Ruling 5: a token pointing at nothing in THIS box saves as text,
         // never as a Ref the core would refuse.
         let known: (UInt64) -> Bool = { [weak box] id in box?.entity(id) != nil }
         let spans = SpanText.textToSpans(payload, isKnown: known)
-        attempt(box: box, json: SpanText.json(spans), payload: payload, base: base, retries: 3) {
+        attempt(box: box, json: SpanText.json(spans), mark: mark, base: base, retries: 3) {
             [weak self] outcome in
             guard let self = self else {
                 done?(outcome)
@@ -799,7 +906,7 @@ final class NoteEditorModel: ObservableObject {
     /// The base rides with the payload, captured together in flush(): a
     /// retry may never re-read a base that moved under it.
     private func attempt(
-        box: BoxModel, json: String, payload: String, base: UInt64, retries: Int,
+        box: BoxModel, json: String, mark: Int, base: UInt64, retries: Int,
         done: @escaping (SaveOutcome) -> Void
     ) {
         box.setContent(id, spansJson: json, base: base) { [weak self] status, fresh in
@@ -810,9 +917,11 @@ final class NoteEditorModel: ObservableObject {
             switch status {
             case 1:
                 self.base = fresh
-                // What the box now holds. Anything typed since stays dirty
-                // by comparison — no generation counter needed.
-                self.storedText = payload
+                // What the box now holds. Anything typed since this save
+                // LEFT stays dirty: `mark` is the buffer it carried, and
+                // cleaning only up to that mark is what the old
+                // whole-string comparison did for free.
+                self.edits.landed(mark)
                 self.flattens = false  // the stored value is this plain text now
                 self.conflicted = false
                 self.saveFailed = false
@@ -828,7 +937,7 @@ final class NoteEditorModel: ObservableObject {
                             return
                         }
                         self.attempt(
-                            box: box, json: json, payload: payload, base: base,
+                            box: box, json: json, mark: mark, base: base,
                             retries: retries - 1, done: done)
                     }
                 } else {
@@ -879,8 +988,7 @@ final class NoteEditorModel: ObservableObject {
                 isKnown: { [weak box] id in box?.entity(id) != nil })
             let theirs = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
             self.draft = mine
-            self.storedText = theirs
-            self.text = theirs
+            self.impose(theirs, dirty: false)
             self.conflicted = true
             done(.stale)
         }
@@ -890,7 +998,9 @@ final class NoteEditorModel: ObservableObject {
     /// saves the ordinary way (re-read then save — the seam's only overwrite).
     func reapplyDraft() {
         guard let draft = draft else { return }
-        text = draft
+        // The user's words over the box's fresh base: imposed on the
+        // view, and dirty, because they still have to be saved.
+        impose(draft, dirty: true)
         self.draft = nil
         conflicted = false
         flush()
@@ -971,8 +1081,9 @@ struct NoteEditor: View {
         // Embedded there is no title line to prompt, and this scans the
         // WHOLE text — on every keystroke, for something never drawn.
         guard showsTitle, title.isEmpty else { return "" }
-        let derived = livDisplayTitle(model.text)
-        return derived.isEmpty ? "Untitled" : derived
+        // The model keeps this, recomputed only when the first line
+        // moves — the buffer is no longer in the graph to scan here.
+        return model.derivedTitle.isEmpty ? "Untitled" : model.derivedTitle
     }
 
     var body: some View {
@@ -999,7 +1110,6 @@ struct NoteEditor: View {
             || desk.recordCard != nil) { _, up in
             if up { bridge.dismissLink() }
         }
-        .onChange(of: model.text) { _, _ in model.textChanged() }
         .onChange(of: focused) { _, now in
             if !now { model.flush() }
         }
@@ -1043,7 +1153,8 @@ struct NoteEditor: View {
         // same plain string. Swipe down inside the text to dismiss the
         // keyboard (keyboardDismissMode = .interactive).
         MarkdownEditor(
-            text: $model.text, focused: $focused,
+            text: model.text, imposed: model.imposed,
+            onEdit: { model.userEdited($0) }, focused: $focused,
             title: $title, titlePrompt: derivedPrompt, onTitleCommit: onTitleCommit,
             editable: model.loaded && !model.missing,
             bridge: bridge, onOpenRef: onOpenRef,
@@ -1111,7 +1222,7 @@ struct NoteEditor: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if bridge.outline.isEmpty {
-                    EmptyHint("No headings yet.")
+                    EmptyHint("No headings")
                 }
                 ForEach(bridge.outline) { item in
                     Button {
@@ -1171,7 +1282,7 @@ struct NoteEditor: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .padding(.horizontal, 10)
     }
 

@@ -1,5 +1,7 @@
-//! Clerk v0 — milestone 5. Regex-grade proposers, exactly the two the
-//! constitution names: dates in text, mentions of known names.
+//! Clerk v0 — milestone 5. Regex-grade proposers, the two the
+//! constitution names — dates in text, mentions of known names — and,
+//! since 2026-09-09, the third thing the product thesis promises: where
+//! a capture goes, read off what it mentions (`propose_area`).
 //!
 //! The clerk reads through the same store every view reads, writes nothing,
 //! and returns proposals — the only thing a proposer can express. It runs
@@ -29,6 +31,10 @@ struct Vocabulary {
     status: Option<Id>,
     task_type: Option<Id>,
     todo: Option<Id>,
+    /// The select the shell furnishes on first open (Furnish.swift).
+    /// Absent in a box nothing furnished — the proposer stays silent
+    /// rather than invent the property.
+    area: Option<Id>,
 }
 
 impl Vocabulary {
@@ -40,6 +46,7 @@ impl Vocabulary {
             status: property_id(store, "status"),
             task_type: find_type(store, "task"),
             todo: todo_option(store),
+            area: property_id(store, "area"),
         })
     }
 }
@@ -98,7 +105,7 @@ pub fn assist_enabled(store: &Store) -> bool {
 /// 2026-08-07).
 pub fn rederivable(author: &Author) -> bool {
     matches!(author, Author::Proposer(name)
-        if ["dates", "mentions", "priority", "promotion", "dedupe"]
+        if ["dates", "mentions", "area", "priority", "promotion", "dedupe"]
             .contains(&name.as_str()))
 }
 
@@ -120,8 +127,9 @@ pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
 
     // Deterministic order, or triage lies: the inbox is re-derived by
     // every process, and "accept 2" must mean the same proposal the user
-    // just read. Entities by id; per entity, dates before mentions;
-    // the gazetteer arrives sorted from run().
+    // just read. Entities by id; per entity, dates, then mentions, then
+    // the area those mentions imply; the gazetteer arrives sorted from
+    // run().
     let mut entities: Vec<&Entity> = store.entities().collect();
     entities.sort_by_key(|e| e.id);
 
@@ -148,7 +156,11 @@ pub fn sweep(store: &Store, _today: DateTime) -> Vec<Proposal> {
             _ => None,
         };
         propose_dates(&vocabulary, entity, &text, anchor, &mut proposals);
-        propose_mentions(&vocabulary, entity, &text, &gazetteer, &mut proposals);
+        // The names this text contains, found ONCE: the mentions proposer
+        // and the area proposer both read them.
+        let mentioned = mentions_in(&text, entity.id, &gazetteer);
+        propose_mentions(&vocabulary, entity, &mentioned, &gazetteer, &mut proposals);
+        propose_area(store, &vocabulary, entity, &mentioned, &gazetteer, &mut proposals);
         propose_priority(store, &vocabulary, entity, &text, &mut proposals);
         propose_promotion(&vocabulary, entity, &mut proposals);
     }
@@ -432,21 +444,16 @@ fn propose_dates(
     });
 }
 
-/// A known name in the text becomes a proposed relation — once.
-fn propose_mentions(
-    vocabulary: &Vocabulary,
-    entity: &Entity,
-    text: &str,
-    gazetteer: &Gazetteer,
-    proposals: &mut Vec<Proposal>,
-) {
+/// Every known name this text contains, as indices into the gazetteer,
+/// in gazetteer order — the entity's own name excluded.
+///
+/// Look up only the names the text could possibly contain, then walk
+/// them IN GAZETTEER ORDER. The order matters as much as the speed: the
+/// inbox is re-derived by every process and "accept 2" must mean the
+/// proposal the user just read, so a BTreeSet of indices restores
+/// exactly the order the old whole-gazetteer loop produced.
+fn mentions_in(text: &str, own: Id, gazetteer: &Gazetteer) -> Vec<usize> {
     let lower = text.to_lowercase();
-
-    // Look up only the names this text could possibly contain, then walk
-    // them IN GAZETTEER ORDER. The order matters as much as the speed:
-    // the inbox is re-derived by every process and "accept 2" must mean
-    // the proposal the user just read, so a BTreeSet of indices restores
-    // exactly the order the old whole-gazetteer loop produced.
     let mut candidates: BTreeSet<usize> = gazetteer.wordless.iter().copied().collect();
     let mut seen: HashSet<&str> = HashSet::new();
     for word in words(&lower) {
@@ -457,16 +464,26 @@ fn propose_mentions(
             candidates.extend(at.iter().copied());
         }
     }
+    candidates
+        .into_iter()
+        .filter(|&at| {
+            let named = &gazetteer.names[at];
+            named.id != own && contains_word(&lower, &named.lowered)
+        })
+        .collect()
+}
 
-    for at in candidates {
+/// A known name in the text becomes a proposed relation — once.
+fn propose_mentions(
+    vocabulary: &Vocabulary,
+    entity: &Entity,
+    mentioned: &[usize],
+    gazetteer: &Gazetteer,
+    proposals: &mut Vec<Proposal>,
+) {
+    for &at in mentioned {
         let named = &gazetteer.names[at];
-        if named.id == entity.id {
-            continue;
-        }
         if entity.has(vocabulary.related, &Value::Reference(named.id)) {
-            continue;
-        }
-        if !contains_word(&lower, &named.lowered) {
             continue;
         }
         proposals.push(Proposal {
@@ -482,6 +499,81 @@ fn propose_mentions(
             reason: format!("mentions \"{}\" → relate?", named.name),
         });
     }
+}
+
+/// WHERE IT GOES, read off what it mentions (2026-09-09, owner's word).
+///
+/// A thought about Sam belongs where Sam is filed: if the names this
+/// text contains are all filed under ONE area, propose it. Two areas is
+/// a coin flip, and the clerk does not flip coins — it stays quiet and
+/// leaves the mentions to speak for themselves. A mention filed nowhere
+/// says nothing. Only for an entity with no area yet: suggests, never
+/// competes. One cell, so the decline key and the save-retraction
+/// rule both apply unchanged.
+///
+/// This is the third of the three the thesis promises — "this looks due
+/// Friday, this mentions Anna" had shipped; where it goes had not — and
+/// the one the pile test hangs on: without it, every capture waited for
+/// a sorting session.
+fn propose_area(
+    store: &Store,
+    vocabulary: &Vocabulary,
+    entity: &Entity,
+    mentioned: &[usize],
+    gazetteer: &Gazetteer,
+    proposals: &mut Vec<Proposal>,
+) {
+    let Some(area) = vocabulary.area else {
+        return;
+    };
+    if entity.all(area).next().is_some() {
+        return;
+    }
+    // The first filed mention names the area; every later one must agree.
+    //
+    // THE CELL IS COPIED AS FOUND. The furnished `area` is a Select, but
+    // a box from before 2026-08-29 keeps it as TEXT and the shell leaves
+    // it so (Furnish.swift: "a legacy TEXT `area` … values keep flowing
+    // as text"). The first cut read a Select only, and on the owner's
+    // own box proposed the mention and never the area. Whatever kind the
+    // box keeps, the proposal writes the same kind back.
+    let mut found: Option<(&Value, &Named)> = None;
+    for &at in mentioned {
+        let named = &gazetteer.names[at];
+        let Some(value) = store.get(named.id).and_then(|e| e.get(area)) else {
+            continue;
+        };
+        match value {
+            Value::Select(_) => {}
+            Value::Text(text) if !text.trim().is_empty() => {}
+            _ => continue,
+        }
+        match found {
+            None => found = Some((value, named)),
+            Some((first, _)) if first == value => {}
+            Some(_) => return,
+        }
+    }
+    let Some((value, named)) = found else {
+        return;
+    };
+    let name = match value {
+        Value::Select(option) => match store.get(*option).and_then(|o| o.get(props::NAME)) {
+            Some(Value::Text(name)) => name.clone(),
+            _ => return,
+        },
+        Value::Text(text) => text.clone(),
+        _ => return,
+    };
+    proposals.push(Proposal {
+        commands: vec![Command::AddCell {
+            entity: entity.id,
+            cell: Cell { property: area, value: value.clone() },
+        }],
+        label: format!("area {name}"),
+        author: Author::Proposer("area".into()),
+        reason: format!("mentions \"{}\" → {name}?", named.name),
+    });
 }
 
 /// A CLOSED priority-word lexicon (P16): the first trigger wins, and only
