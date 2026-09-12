@@ -1004,6 +1004,131 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 67. The menu is a card at its door (rev 84, owner 2026-09-12)
+
+Owner, pointing at a screen recording of ChatGPT's compose menu: *"Can
+you figure out how they made it like that? More what i had in mind."*
+
+**What they did**, measured off the clip frame by frame: the card is
+about 267 × 395pt on a 390 × 844 screen — two thirds of the width,
+floating clear of both side edges, its bottom just above the `+` that
+opened it. It scales up from roughly half size with its content scaling
+too, anchored at that button's corner, while the page behind it blurs
+and dims.
+
+**§65 got the anchor right and the shape wrong.** Growing a full-width
+sheet out of its button helped and did not answer him: a card that spans
+the screen and squares itself against the bottom edge reads as furniture
+arriving, whatever it does on the way in. What he recognised is a small
+card that belongs to the control it came from.
+
+- 300pt wide against the reference's 267 — Liv's rows are chunkier, a
+  24pt glyph and `title`(22) text where the reference draws about 17.
+- Centred under its door in x, clamped so it never leaves the screen
+  (the ••• key is near the right edge); pinned in y to the edge the menu
+  comes from.
+- **The placement never reads the card's height.** The `ZStack`
+  alignment pins the edge and a leading padding sets x, so the card can
+  be placed before it is measured — which is what stops a first-open
+  jump. Height is needed only for the growth anchor, where an error of a
+  few points on a first open shifts where the growth appears to start
+  and nothing else.
+- Rounded on every corner, with a shadow. There is no edge to be square
+  against, and a floating card needs one to read as floating.
+- **The grabber is gone**; the drag it was added for on 2026-08-30
+  stays, without its mark.
+
+**The workspace card is NOT changed**, and the distinction is the point:
+a menu is a short list of verbs, so it is a card at its door; the
+switcher is a screen of content, so it stays a sheet with its grabber.
+The reference app draws the same line.
+
+## 66. One filter chip (rev 83, owner 2026-09-12)
+
+Owner: *"make everything buttons (All, Notes…) match style of equivalents
+in Tasks."* Three recipes for one job — which slice of the list you are
+looking at:
+
+- **Tasks** — a filled capsule when chosen, a bare word when not.
+- **Everything** — the same, PLUS a hairline border around every unchosen
+  chip, semibold rather than medium when chosen, 14pt of side padding
+  against 12, and a raw 30 where `LivChip.tall` is the same number. The
+  border is the whole visual gap.
+- **Inbox** — no capsule, a 2pt rule under the chosen lens.
+
+`TasksFilterChip` becomes `LivFilterChip` in `Kit.swift` and both rows
+draw it (standing rule 4). Everything also picks with `LivMotion.pick`,
+which Tasks and the Inbox used and it did not.
+
+**The outline was a ruling, and the reversal is older than the ask.**
+These pills were "ClickUp's shape (owner, 2026-08-18): compact, outlined
+when off, filled when on", replacing a segmented control that was a box
+inside a box. Twelve days later the 2026-08-30 pass took four devices off
+the Tasks chips and wrote that the app now had "one way of saying 'this
+one'" — while leaving this row outlined. The sentence was written above
+the one row that had been fixed. Same shape as §59's Inbox heading and
+§64's Inbox row title: a rule asserted in prose beside the site that
+obeys it.
+
+**Inbox is deliberately not swept in.** Its underline is the mark the day
+strip uses and it carries a count beside each lens that a capsule has
+nowhere to put. Named here so the third recipe is on the record.
+
+## 65. A card comes out of the door that opened it (rev 82, owner 2026-09-12)
+
+Owner: *"the chrome looks independent from the buttons that invoke them …
+some animations make it visually look like something 'comes out' or
+'expands' from the buttons, which is what should happen instead of a card
+sliding on top."*
+
+This RETIRES the question he asked the day before, which §59 answered
+with a table. The app's rule — a card comes from the edge its button is
+on (2026-08-31) — was right and approximate: it picks one of two EDGES
+for a button that is at a POINT. Grow the card from the point and the
+edge stops being a setting anyone can get wrong, and the two violations
+§59 found cease to exist rather than needing fixing.
+
+- `LivDoors` records the last door's frame; the host anchors a scale
+  there. With an origin the card grows from 0.86 and fades in; without
+  one it slides off its edge, which is what every card did before. 0.86
+  rather than 0 because a card starting at nothing reads as a pop.
+- **A modifier, not a `ButtonStyle`.** A style reads
+  `configuration.isPressed` and adds no recogniser — but a button has one
+  style and this app's doors already spend theirs (`LivMenuRow` wears
+  `livRowPress`), so a door would have chosen between its touch feedback
+  and its origin.
+- **Tap and hold, not touch.** The one-liner is a zero-distance
+  `DragGesture` on the root — automatic everywhere, and the version that
+  can quietly break scrolling with no simulator to find out. A tap and a
+  long press cannot: a scroll is a pan. Both are needed because the
+  bar's `+` and Search's chips raise menus from a hold.
+- **Eight doors**, including every `LivMenuRow`, so a menu raised from a
+  menu row grows out of that row.
+- **One door still slides**: the editor's Insert menu comes from the
+  keyboard's UIKit accessory bar, which is not a SwiftUI button. **The
+  other 21 covers are out of reach** — system sheets, which on iOS 17
+  only ever rise from the bottom.
+
+## 64. The four visible weight-and-ink decisions (rev 81, owner 2026-09-12)
+
+*"1 yes 2 yes 3 yes 4 yes."* The four §63 handed back, each visible and
+none a swap.
+
+1. **One size for a row's name.** Six sites go 18→20 to match Everything,
+   Links, Trash and Tasks. This also repairs the 2026-09-05 second-voice
+   ruling, which targets a fact at ~0.80 of its title: it held at 16/20
+   and missed at 16/18 in three of its five callers.
+2. **One face for a tappable word.** Six move to body/semibold/accent,
+   which six other sites already used. `SectionLabel`'s trailing verb and
+   the Inbox heading copying it stay quiet, per 2026-08-18.
+3. **One weight for a title on a card.** `LivMenuTitle` semibold → bold.
+   The rank against a screen title is carried by ten points of size.
+4. **The value is the half that stands out** — and it already was, so the
+   fix was underneath the decision: every property NAME was drawn at
+   strong(20) in text3, the tier exempted from the read floor because it
+   holds placeholders. `DetailRowLabel` → text2. `ValueChip` untouched:
+   24 sites across the app, not this panel's to change.
+
 ## 63. Weight and ink (revs 76–79, owner 2026-09-12)
 
 Owner: *"do the weight and ink pass."* The third axis of §57's complaint,
