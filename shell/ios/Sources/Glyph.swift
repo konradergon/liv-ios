@@ -190,22 +190,27 @@ enum LivGlyph: Equatable {
     /// 'designed'" and that colour is reserved for file identity, never
     /// metadata fields. These are that, drawn with this app's own pen so
     /// the two shells read as one product.
-    case due, status, area, project, tags, people
+    ///
+    /// TWO OF THE SIX FIELD MARKS SURVIVE, and they survive as AREA
+    /// marks rather than as field marks: `.area` is what
+    /// `LivArea.glyph(named:)` falls back to for a name this app did not
+    /// ship, and `.people` is the mark the Family & Friends area wears.
+    ///
+    /// `due`, `status`, `project` and `tags` went on 2026-09-12 with the
+    /// Settings Fields card, which was the last thing that could show
+    /// one. Their only route to a screen had been `LivGlyph.field(_:)`,
+    /// the name-to-mark lookup that card called, and the inspector is
+    /// closed to them by a dated ruling: `DetailRowLabel` says "NO DOT,
+    /// AND NO GLYPH" (owner, 2026-08-29), recording that field icons
+    /// were tried on 2026-08-12 and rejected the same day because "a
+    /// clock for 'due' and a tag for 'tags' are pictures of the word
+    /// beside them". So there was nowhere for them to go back to.
+    ///
+    /// The drawings were careful and two of them record a failed first
+    /// attempt. `git log --diff-filter=D -S'case .tags'` finds them if a
+    /// desktop shell ever wants the vocabulary back.
+    case area, people
 
-    /// A field's glyph by name, or nil for one this app has not drawn.
-    /// No type-inferred fallback: a made-up icon for an unfamiliar field
-    /// is the 2026-08-12 mistake again.
-    static func field(_ name: String) -> LivGlyph? {
-        switch name.lowercased() {
-        case "due": return .due
-        case "status": return .status
-        case "area": return .area
-        case "project": return .project
-        case "tags": return .tags
-        case "people": return .people
-        default: return nil
-        }
-    }
     /// A NUMBER IN A BOX — the bar's tab key (owner, 2026-08-23: "just
     /// have tabs as they appeared before when you clicked the numbered
     /// box"). Obsidian's fifth key is this shape with today's date in
@@ -265,17 +270,7 @@ struct GlyphShape: Shape {
             // visible, and the owner saw it (2026-08-28). 18x17 centred
             // on (12, 12); the digit needs no offset to sit in it.
             pen.box(3, 3.5, 18, 17, 3.5)
-        // ---- fields ----
-        case .due:
-            // A clock. `.calendar` is a DATE; a due is a deadline, and
-            // the two sit in the same panel.
-            pen.circle(12, 12, 8)
-            pen.shape([(12, 6.8, 0), (12, 12, 0), (15.8, 14.2, 0)], closed: false)
-        case .status:
-            // A ring with its own centre — the state of a thing, not a
-            // tick, which `.task` already owns.
-            pen.circle(12, 12, 8)
-            pen.circle(12, 12, 2.6)
+        // ---- areas of life, and the two marks that name them ----
         case .area:
             // Four quarters: the areas of a life, which is what this
             // field divides. Deliberately not a folder — that is
@@ -284,7 +279,6 @@ struct GlyphShape: Shape {
             pen.box(13, 4, 7, 7, 1.8)
             pen.box(4, 13, 7, 7, 1.8)
             pen.box(13, 13, 7, 7, 1.8)
-        // ---- areas of life ----
         case .work:
             // A case with a handle: the day's work carried in.
             pen.box(3, 7.5, 18, 12.5, 2.5)
@@ -308,25 +302,6 @@ struct GlyphShape: Shape {
             pen.shape([(12, 6.5, 0), (12, 19.5, 0)], closed: false)
             pen.shape([(12, 6.5, 0), (9.5, 5, 0), (3.5, 5.5, 1.5), (3.5, 18.5, 1.5), (9.5, 18, 0), (12, 19.5, 0)], closed: false)
             pen.shape([(12, 6.5, 0), (14.5, 5, 0), (20.5, 5.5, 1.5), (20.5, 18.5, 1.5), (14.5, 18, 0), (12, 19.5, 0)], closed: false)
-        case .project:
-            // A folder: work with a lid on it.
-            pen.shape(
-                [
-                    (3.5, 19.5, 2), (3.5, 6, 2), (9, 6, 0), (11, 8.5, 0),
-                    (20.5, 8.5, 2), (20.5, 19.5, 2),
-                ], closed: true)
-        case .tags:
-            // A luggage label: five sides, the point on the left, and a
-            // hole for the string. The first attempt was a quadrilateral
-            // with generous radii and came out a rounded blob with a
-            // speck in it — the point IS the glyph, so it gets the
-            // smallest corner and the rest stay modest.
-            pen.shape(
-                [
-                    (4.2, 12, 1.0), (9.8, 5.4, 2), (19.3, 5.4, 2),
-                    (19.3, 18.6, 2), (9.8, 18.6, 2),
-                ], closed: true)
-            pen.circle(14.6, 12, 1.3)
         case .people:
             // Two, because the field is plural: `.person`'s own drawing
             // shifted left, and a second head with one shoulder behind
@@ -823,9 +798,10 @@ func livPaletteSelfCheck() -> [String] {
 /// hundred drawings. This renders the set so a change can be looked at
 /// before it is wired into anything.
 struct GlyphSheet: View {
-    private static let fields: [(String, LivGlyph)] = [
-        ("due", .due), ("status", .status), ("area", .area),
-        ("project", .project), ("tags", .tags), ("people", .people),
+    /// The two marks that name an area. Four field marks stood here
+    /// until 2026-09-12 — see `LivGlyph`'s own note on where they went.
+    private static let named: [(String, LivGlyph)] = [
+        ("area", .area), ("people", .people),
     ]
     private static let areas: [(String, LivGlyph)] = LivArea.allCases.map { ($0.name, $0.glyph) }
     private static let existing: [(String, LivGlyph)] = [
@@ -839,7 +815,7 @@ struct GlyphSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 block("Areas of life", Self.areas)
-                block("Fields — new", Self.fields)
+                block("Area marks", Self.named)
                 block("Existing, for comparison", Self.existing)
             }
             .padding(.horizontal, 20)

@@ -7,10 +7,13 @@
 
 import SwiftUI
 
-/// Facts and notes — plus the ONE schema door (§10): Fields, where a new
-/// property definition is minted. Settings still never writes cells on
-/// entities; the inspector's old "+ property" moved here because schema
-/// growth is possible, not daily use.
+/// Facts and notes. Settings never writes cells on entities, with one
+/// deliberate exception: the assist consent switch, which lives in the
+/// box so the phone and a desktop agree about consent.
+///
+/// It held §10's ONE schema door — Fields, where a property definition
+/// was minted — until 2026-09-12. See the note above `appearanceRow` for
+/// why it went and what replaced nothing.
 ///
 /// The Handoff section this comment used to describe — the status card,
 /// the Pending/Shipped/Delivered ledger, "Ship now", the satellite-path
@@ -20,8 +23,6 @@ import SwiftUI
 struct SettingsSheet: View {
     @EnvironmentObject var box: BoxModel
     @ObservedObject private var notify = Notify.shared
-    @State private var addingField = false
-    @State private var fieldDraft = ""
     /// Dark, light, or follow the system — device state, never a cell.
     @AppStorage(LivAppearance.key) private var appearance = LivAppearance.dark.rawValue
 
@@ -55,7 +56,6 @@ struct SettingsSheet: View {
                     LivCard(label: "Suggestions") { assistRow.padding(12) }
                 }
                 LivCard(label: "Reminders") { notifyRows.padding(12) }
-                LivCard(label: "Fields") { fieldsRow.padding(12) }
                 // ONLY WHEN SOMETHING IS WRONG WITH THE LOG.
                 if !alerts.isEmpty {
                     LivCard(label: "The log") { logRows.padding(12) }
@@ -80,17 +80,25 @@ struct SettingsSheet: View {
         }
     }
 
-    // The Fields door (§10): the schema the box holds, and the ONE place a
-    // new field is born. Relocated from the inspector's "+ property" row —
-    // adding a kind of field is possible, never in the flow of daily use.
-
-    /// The box's field vocabulary, usage-desc, off the live snapshot.
-    private var fieldNames: [String] {
-        (box.snap?.properties ?? [])
-            .sorted { ($0.usage ?? 0) > ($1.usage ?? 0) }
-            .compactMap { $0.name }
-            .filter { !$0.isEmpty }
-    }
+    // FIELDS IS GONE (owner, 2026-09-12: "delete fields too"), and with
+    // it §10's claim that this sheet holds the app's ONE schema door.
+    //
+    // The question he asked first was "what is the point of Fields?" and
+    // the measured answer was: on a phone, none. A field minted here
+    // could never receive a value. `fieldRow` is the only editable row in
+    // the inspector, it has exactly one call site, and that site iterates
+    // `InspectorField.core` — the four hardcoded names area, project,
+    // tags, people. The "Other" section renders cells that ALREADY hold
+    // values and is a plain `HStack` with no gesture on it. So minting
+    // was reachable, and filling was not.
+    //
+    // §10 IS THEREFORE REVERSED, on his word. Schema growth is a CLI and
+    // desktop affair now: `liv_add_property_at` is untouched in the ABI,
+    // and `Box.addProperty` stays because the workspace switcher and
+    // `Furnish` both still call it to mint the furniture a new box needs.
+    // What went is the door a person could open, the chip row that showed
+    // the vocabulary, and `LivGlyph.field` — the name-to-mark lookup this
+    // card was the last caller of.
 
     private var appearanceRow: some View {
         // OURS, NOT THE SYSTEM'S — see `LivSegment`. The stock control's
@@ -102,98 +110,6 @@ struct SettingsSheet: View {
                 get: { LivAppearance(rawValue: appearance) ?? .dark },
                 set: { appearance = $0.rawValue })
         )
-    }
-
-    @ViewBuilder private var fieldsRow: some View {
-        if !fieldNames.isEmpty {
-            // Chips, not a run-on line of names separated by dots. The
-            // vocabulary is data; the app already has a way to show data.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    // THE SCHEMA VIEW, so the glyphs live here — this is
-                    // a list you scan for a name, not a value you read.
-                    ForEach(fieldNames, id: \.self) {
-                        ValueChip($0, glyph: LivGlyph.field($0))
-                    }
-                }
-                .padding(.vertical, 1)
-            }
-        }
-        if addingField {
-            HStack(spacing: 8) {
-                TextField("Name the new field", text: $fieldDraft)
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(LivTheme.text)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onSubmit(createField)
-                Button("Create", action: createField)
-                    .font(.system(size: LivType.label, weight: .medium))
-                    .foregroundStyle(fieldDraftReady ? LivTheme.accent : LivTheme.muted)
-                    .buttonStyle(.plain)
-                    .disabled(!fieldDraftReady)
-                Button {
-                    addingField = false
-                    fieldDraft = ""
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 30)
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
-            )
-        } else {
-            Button {
-                addingField = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                    Text("Add field")
-                        .font(.system(size: LivType.body, weight: .medium))
-                    Spacer()
-                }
-                .foregroundStyle(LivTheme.accent)
-                .frame(height: 30)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add field")
-        }
-    }
-
-    private var fieldDraftReady: Bool {
-        let name = fieldDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return false }
-        // Minting a duplicate is refused by the core anyway; disable the
-        // button rather than offer a refusal.
-        return !fieldNames.contains {
-            $0.compare(name, options: .caseInsensitive) == .orderedSame
-        }
-    }
-
-    /// Births a TEXT property — the same implicit kind the inspector's old
-    /// flow assumed. Other kinds stay a desktop/CLI affair for now.
-    private func createField() {
-        let name = fieldDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard fieldDraftReady else { return }
-        box.addProperty(name) { id in
-            guard id != 0 else {
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
-                return
-            }
-            fieldDraft = ""
-            addingField = false
-        }
     }
 
     // The assist switch (rev 6): the consent that gates every clerk

@@ -28,7 +28,7 @@
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
 #   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
-#   ./drive.sh settings         the Settings cards render, and the vault is gone
+#   ./drive.sh settings         the Settings cards render, and two deleted ones stay gone
 #   ./drive.sh surface           name the surface actually on screen
 #   ./drive.sh tap <label>       tap by accessibility label, then re-read the surface
 #   ./drive.sh goto <view>       open the panel, pick <view>, assert it rendered
@@ -2092,7 +2092,7 @@ query_text() {
     for c in n.get("children") or []: walk(c)' ''
 }
 
-# SETTINGS: the cards that render, and the one that no longer does.
+# SETTINGS: the cards that render, and the two that no longer do.
 #
 # This was `vault`, and it asserted the Vault card said EITHER its
 # controls or the reason there were none. It only ever passed through the
@@ -2100,10 +2100,11 @@ query_text() {
 # `vault_root_of` wants the log at `<root>/.liv/box/<log>` and the app
 # puts it at `<container>/liv/liv.log`. So the check guarded an apology.
 #
-# The card went on 2026-09-12 (owner: "Vault section is just noice that
-# nobody needs to see"). This is the same check turned around: the three
-# always-on cards are on screen, and none of the vault's words are. It
-# fails if the card comes back, which is the only way this can regress.
+# Both that card and Fields went on 2026-09-12, on the owner's word
+# ("Vault section is just noice that nobody needs to see"; "delete fields
+# too"). This is the same check turned around: the two always-on cards
+# are on screen, and none of the deleted ones' words are. It fails if
+# either comes back, which is the only way this can regress.
 #
 # The log-notice card is deliberately NOT asserted here. It appears only
 # when the log has actually been overwritten, which needs a tampered
@@ -2118,16 +2119,18 @@ cmd_settings() {
   print -r -- "$said" | python3 -c '
 import sys
 t = sys.stdin.read()
-want = ["Appearance", "Reminders", "Fields"]
+want = ["Appearance", "Reminders"]
 missing = [w for w in want if w not in t]
-gone = ["Folder", "Sync now", "Rebuild", "not inside a vault folder"]
+gone = ["Folder", "Sync now", "Rebuild", "not inside a vault folder",
+        "Fields", "Add field", "Name the new field"]
 back = [g for g in gone if g in t]
 if missing: print("MISSING " + ", ".join(missing))
-if back: print("VAULT IS BACK: " + ", ".join(back))
+if back: print("DELETED CARD IS BACK: " + ", ".join(back))
 raise SystemExit(1 if (missing or back) else 0)' || {
-    die "the Settings sheet is not what it should be. It must show Appearance,
-      Reminders and Fields, and must show none of the vault's words — the card
-      was deleted because it could never render anything but an apology."
+    die "the Settings sheet is not what it should be. It must show Appearance
+      and Reminders, and must show none of the words of the two deleted cards:
+      Vault, which could only ever apologise, and Fields, whose minted fields
+      could never receive a value from the phone."
     return 1
   }
   # PUT THE SCREEN BACK. A check that opens a sheet and walks away hands
@@ -2136,7 +2139,7 @@ raise SystemExit(1 if (missing or back) else 0)' || {
   # that always works — there is no Done button on this sheet, and a swipe
   # on a detent sheet is not reliably reproducible.
   sim terminate "$UDID" "$APP" >/dev/null 2>&1
-  say "ok    settings: three cards on screen, and no vault"
+  say "ok    settings: the live cards on screen, and no Vault or Fields"
 }
 
 settings_text() {
