@@ -1004,6 +1004,120 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 63. Weight and ink (revs 76–79, owner 2026-09-12)
+
+Owner: *"do the weight and ink pass."* The third axis of §57's complaint,
+after motion (rev 67) and the type pass that mostly refused itself (§59).
+
+**The measurement.** `Theme.swift` declares eight sizes and ZERO weights —
+its three occurrences of the word are all prose in comments — so each of
+the shell's 216 font calls picks its own weight and its own ink. The
+result is **64 distinct (size, weight, ink) triples over 149 `Text`
+sites**, 2.3 sites per combination. Six jobs a reader would recognise
+measure 7 / 7 / 4 / 5 / 2 / 1 triples: a row's primary title, a row's
+second line, a section heading, a button's label, a sheet's title, a
+screen's title. The same word lands on two of them — "Add" is
+body/semibold/accent in the camera and label/medium/accent in Tasks.
+
+**The verification failed and the work was done by hand.** The three-lens
+pass over these eight proposals errored on all 24 agents: a harness fault
+blocked their tools, so they read nothing, and the run returned an empty
+survivor list that meant "nothing was checked" rather than "nothing
+survived". The planning agent refused to write a plan over it rather than
+transcribe the proposals back as findings, which was the right call. Every
+claim below was then checked directly, including the arithmetic.
+
+**What landed, all of it at zero pixels:**
+
+- **Two recipes nothing wears** (rev 76). `CountTile` and `LivVerbFace`
+  have no callers. Not inert: `LivVerbFace` held the app's only DECLARED
+  button-label triples and lost both its callers on 2026-08-10, which is
+  precisely why the live button job now has no canonical triple to point
+  at. `CountTile` was the last user of the uppercase-and-kerned heading
+  recipe the 2026-08-18 surface pass removed from `SectionLabel`.
+- **One value, one name** (rev 77). `muted` ≡ `text2` and `panel` ≡
+  `surface`, byte-identical, with 30 call sites split across the
+  duplicates on no rule a reader could infer. `Theme.swift` kept `muted`
+  "so the call sites need not all move at once"; measured over git
+  history the migration moved five sites in three weeks and then sat
+  still for five days across thirteen commits. Not staged — stopped. The
+  palette self-check also loses an assertion it was making twice.
+  `pressed` STAYS: it shares `Palette.fill` with `panel2` but names a JOB,
+  a row under the finger, which is the kind of name rule 3 asks for.
+- **A screen's name and a sheet's name become types** (rev 78). Four of
+  the six jobs already live in types (`SectionLabel`, `LivRowFact`,
+  `LivMenuTitle`, `LivListRow`'s title). The two that did not were the two
+  that were hand-rolled: five byte-identical copies of a screen title and
+  three of a sheet title. Now `LivScreenTitle` and `LivSheetTitle`. The
+  five screens agreed on the type and disagreed on the frame, so that type
+  carries only the type; the three sheets agreed on all four lines, so
+  that one carries the room too, as `SectionLabel` does.
+- **Two comments that cite numbers the code does not have** (rev 79).
+  `LivRowFact` justified its ink with "4.5:1 against the title's full
+  ink" — but 4.53:1 is text3 against the CANVAS; against the title it is
+  3.52:1, and text2 would be 2.26:1. The ruling survives; the number was
+  borrowed from the wrong comparison. And `livPaletteSelfCheck` exempts
+  text3 from the 7:1 read floor because it is "a placeholder, a timestamp,
+  the ✕ on a chip" — while 16 of its sites are sentences, paths, or
+  `DetailRowLabel`, which is every property name in the panel at
+  strong(20).
+
+**What was NOT done, and why each is a decision rather than a swap:**
+
+- **A row's primary title**: seven triples over 21 sites, and the split is
+  a real one — `strong`(20) in Everything, Links, Trash and Tasks;
+  `body`(18) in Inbox, Search and Today. Unifying upward also repairs the
+  2026-09-05 second-voice ruling, which set `LivRowFact` to `label`(16) so
+  a fact reads ~0.80 of its title: that holds at 16/20 and misses at 16/18
+  in three of its five callers. It is still a visible change to the app's
+  most repeated string.
+- **A bare tappable word**: three triples over thirteen sites.
+- **No weight ramp in `Theme.swift`.** The tempting fix is a weight scale
+  beside the type scale, and it is wrong: a weight is never chosen alone,
+  it is chosen WITH a size and an ink, for a job, and it belongs inside
+  that job's type — where it already sits for every job that has one. A
+  scale nobody picks from is the same prose in a new shape.
+- **A title on a card is two weights.** `LivMenuTitle` is semibold where
+  the three sheet titles are bold. Bold is also the screen title's weight,
+  so reusing it blurs the rank between the screen and the sheet on top of
+  it; semibold at 22, to an owner who has called this app's text too small
+  three times, may read as going backwards. Recorded on `LivSheetTitle`.
+- **The ink move.** Promoting the 16 read-carrying text3 sites to text2 is
+  not a blanket swap: in the properties panel the label and the value are
+  the SAME triple, so moving both leaves them equally undifferentiated one
+  step brighter. Which half comes forward is the decision.
+
+## 62. Fields could mint what nothing could fill (rev 75, owner 2026-09-12)
+
+Owner: *"delete fields too."* §61 left this open as the question half of
+his Settings sentence; this answers it and reverses §10 on his word.
+
+**What the card could do:** mint a property definition, and show the box's
+vocabulary as a chip row. **What nothing could then do:** put a value in
+it. `fieldRow` is the only editable row in the inspector; it has exactly
+one call site; that site iterates `InspectorField.core`, the four
+hardcoded names `area`, `project`, `tags`, `people`. The "Other" section
+renders cells that already hold values and is a plain `HStack` with no
+gesture. Minting was reachable from the phone; filling never was.
+
+**§10 is reversed.** Schema growth is a CLI and desktop affair, which it
+already was in practice. `liv_add_property_at` is untouched in the ABI and
+`Box.addProperty` stays — `WorkspaceSwitch` and `Furnish` both call it to
+mint the furniture a new box needs.
+
+**Four glyphs go with it**, and a dated ruling is what makes them
+unrecoverable rather than merely unused. `due`, `status`, `project` and
+`tags` reached a screen only through `LivGlyph.field(_:)`, the lookup this
+card was the last caller of, and the inspector is closed to them:
+`DetailRowLabel` says "NO DOT, AND NO GLYPH" (owner, 2026-08-29),
+recording that field icons were tried on 2026-08-12 and rejected the same
+day because "a clock for 'due' and a tag for 'tags' are pictures of the
+word beside them". `.area` and `.people` survive as AREA marks —
+`LivArea.glyph(named:)` falls back to the first and Family & Friends wears
+the second. `git log --diff-filter=D -S'case .tags'` finds the drawings.
+
+`drive.sh settings` guards both this deletion and §61's.
+
 ## 61. The vault card could only ever apologise (rev 73, owner 2026-09-11)
 
 Owner: *"Settings. What is the point of 'Fields'? And Vault section is
