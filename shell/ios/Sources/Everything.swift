@@ -100,27 +100,37 @@ struct EverythingView: View {
         return EverythingLens.allCases.filter { $0 != .unfiled || !stampsArea }
     }
 
-    /// The slice pills (ClickUp's shape, owner 2026-08-18): compact,
-    /// outlined when off, filled when on, and no well around them. The
-    /// segmented control this replaces was a box inside a box.
+    /// THE SAME CHIP TASKS DRAWS (owner, 2026-09-12: *"make everything
+    /// buttons (All, Notes…) match style of equivalents in Tasks"*).
+    ///
+    /// It was this row's own recipe, and it differed three ways: a
+    /// hairline border around every UNCHOSEN chip, semibold rather than
+    /// medium on the chosen one, and 14pt of side padding against 12.
+    /// The border is the whole visual gap — it made four outlined pills
+    /// where Tasks has four words and one filled capsule. The height was
+    /// a raw 30 rather than `LivChip.tall`, which is the same number and
+    /// the same standing-rule-3 failure the row above it already fixed.
+    ///
+    /// It also picks with the app's own spring now, as Tasks and the
+    /// Inbox both did and this row did not.
+    ///
+    /// THE OUTLINE WAS A RULING AND IT IS REVERSED ON HIS WORD. These
+    /// were "ClickUp's shape (owner, 2026-08-18): compact, outlined when
+    /// off, filled when on, and no well around them", replacing a
+    /// segmented control that was a box inside a box. That was a real
+    /// improvement and the outline came with it. Twelve days later the
+    /// 2026-08-30 pass took the border off the Tasks chips and wrote
+    /// that the app now had one way of saying "this one" — while leaving
+    /// this row outlined. So the reversal is not new here; it is this
+    /// row finally getting the change the sentence already claimed.
     private var picker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(lenses) { l in
-                Button {
-                    desk.park(.everything, at: l.rawValue)
-                } label: {
-                    Text(l.title)
-                        .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
-                        .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text2)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(Capsule().fill(lens == l ? LivTheme.panel2 : .clear))
-                        .overlay(
-                            Capsule().strokeBorder(
-                                lens == l ? Color.clear : LivTheme.border, lineWidth: 0.5))
-                        .contentShape(Capsule())
+                LivFilterChip(l.title, selected: lens == l) {
+                    withAnimation(LivMotion.pick) {
+                        desk.park(.everything, at: l.rawValue)
+                    }
                 }
-                .buttonStyle(.plain)
             }
             Spacer(minLength: 0)
         }

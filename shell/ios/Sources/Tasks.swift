@@ -127,19 +127,19 @@ struct TasksView: View {
     private var chipRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                TasksFilterChip("All", selected: filter == .all) {
+                LivFilterChip("All", selected: filter == .all) {
                     withAnimation(LivMotion.pick) { park(filter: .all) }
                 }
                 ForEach(options) { option in
                     let name = option.name ?? ""
-                    TasksFilterChip(name, selected: filter == .status(name)) {
+                    LivFilterChip(name, selected: filter == .status(name)) {
                         withAnimation(LivMotion.pick) {
                             park(filter: filter == .status(name) ? .all : .status(name))
                         }
                     }
                 }
                 ForEach(projects, id: \.self) { project in
-                    TasksFilterChip(
+                    LivFilterChip(
                         project,
                         selected: filter == .project(project)
                     ) {
@@ -705,54 +705,6 @@ struct TasksView: View {
     private func refChips(_ row: EntityRow) -> [ValueChip] {
         // One helper, one order (`livAnchor`); an area leads with its mark.
         livAnchorChip(of: row).map { [$0] } ?? []
-    }
-}
-
-// MARK: - filter chip (selected state ValueChip doesn't carry)
-
-/// The ValueChip recipe + a selected state: accentSoft fill, accent ink.
-/// Neutral body always; the value's color stays in the dot.
-/// One filter chip. `dot` is OPTIONAL and usually absent.
-///
-/// A status wears one because the box holds a colour for it — a status
-/// option carries its own `hue`, chosen by a person. A project has no
-/// colour anywhere in the box, so its chip used to hash the project's
-/// NAME to one of five, which looked like a code and was not one
-/// (2026-08-29).
-private struct TasksFilterChip: View {
-    let text: String
-    let selected: Bool
-    let action: () -> Void
-
-    init(_ text: String, selected: Bool, action: @escaping () -> Void) {
-        self.text = text
-        self.selected = selected
-        self.action = action
-    }
-
-    // FOUR DEVICES BECAME ONE (polish pass, 2026-08-30). A chosen chip
-    // carried an accent fill, an accent border, accent ink and a heavier
-    // weight; an unchosen one carried a fill AND a border. Beside them
-    // sat a coloured dot repeating the status the chip spells out in
-    // letters. What is left: the chosen chip is filled and its words are
-    // full ink, the rest are bare. That is the same mark the lens row
-    // and the day strip use — the app has one way of saying "this one".
-    var body: some View {
-        Button(action: action) {
-            Text(text)
-                // `body`, not `label` (2026-09-05). This row decides
-                // which slice of the list you are looking at, and it sat
-                // at the same size as the group heading below it — a
-                // control reading as quietly as a caption.
-                .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
-                .lineLimit(1)
-                .foregroundStyle(selected ? LivTheme.text : LivTheme.text2)
-                .padding(.horizontal, 12)
-                .frame(height: LivChip.tall)
-                .background(Capsule().fill(selected ? LivTheme.panel2 : .clear))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 }
 

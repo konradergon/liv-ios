@@ -87,6 +87,70 @@ struct SectionLabel: View {
     }
 }
 
+// MARK: - the filter chip
+
+/// WHICH SLICE OF THE LIST YOU ARE LOOKING AT — one chip, now shared.
+///
+/// Owner, 2026-09-12: *"make everything buttons (All, Notes…) match
+/// style of equivalents in Tasks."*
+///
+/// This was `TasksFilterChip`, private to `Tasks.swift`, and its own
+/// comment has claimed since 2026-08-30 that it is "the same mark the
+/// lens row and the day strip use — the app has one way of saying 'this
+/// one'". Measured, the app had three ways, and this row was the one
+/// that had been polished:
+///
+/// - **Tasks** — a filled capsule when chosen, and a bare word when not.
+/// - **Everything** — the same, PLUS a hairline border around every
+///   unchosen chip, semibold rather than medium when chosen, and 14pt of
+///   side padding rather than 12. The border is the whole visual gap: it
+///   made four outlined pills where Tasks has four words.
+/// - **Inbox** — no capsule at all; a 2pt rule under the chosen lens.
+///
+/// The 2026-08-30 pass took four devices down to one in Tasks (an accent
+/// fill, an accent border, accent ink and a heavier weight, with a
+/// coloured dot repeating the status the chip already spells) and wrote
+/// the sentence about consistency above the one row it had fixed. The
+/// same shape as the Inbox heading that claimed to match `SectionLabel`
+/// while sitting at its own numbers: a rule asserted in prose next to
+/// the site that obeys it.
+///
+/// INBOX IS DELIBERATELY NOT SWEPT IN. Its underline is a different
+/// device with its own dated reasoning — it is the mark the day strip
+/// uses, and it carries a count beside each lens that a capsule has
+/// nowhere to put. Making it a capsule is a visible change the owner did
+/// not ask for; it is named here so the third recipe is on the record
+/// rather than rediscovered.
+struct LivFilterChip: View {
+    let text: String
+    let selected: Bool
+    let action: () -> Void
+
+    init(_ text: String, selected: Bool, action: @escaping () -> Void) {
+        self.text = text
+        self.selected = selected
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(text)
+                // `body`, not `label` (2026-09-05). This row decides
+                // which slice of the list you are looking at, and it sat
+                // at the same size as the group heading below it — a
+                // control reading as quietly as a caption.
+                .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
+                .lineLimit(1)
+                .foregroundStyle(selected ? LivTheme.text : LivTheme.text2)
+                .padding(.horizontal, 12)
+                .frame(height: LivChip.tall)
+                .background(Capsule().fill(selected ? LivTheme.panel2 : .clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - the two titles
 
 /// A SCREEN'S OWN NAME — hero(32), bold, full ink.
