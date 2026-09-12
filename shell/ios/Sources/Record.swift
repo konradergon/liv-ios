@@ -74,7 +74,7 @@ struct RecordCard: View {
     var body: some View {
         // The same focus request a new note claims: "New task" must land
         // you typing the name, not looking at an empty field.
-        RecordBody(id: id, autoFocus: desk.consumeFocus(id), inCard: true)
+        RecordBody(id: id, autoFocus: desk.consumeFocus(id))
             // A card is a NEW view per record. Following a [[link]] from
             // one record to another only reassigns desk.recordCard, so
             // without this SwiftUI reuses the view and the embedded
@@ -174,9 +174,6 @@ struct RecordBody: View {
     let id: UInt64
     /// A record created a moment ago: open with the caret in the name.
     var autoFocus: Bool = false
-    /// Inside a card there are no floating doors overhead, so the name
-    /// does not need to duck under them.
-    var inCard: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -229,7 +226,7 @@ struct RecordBody: View {
                 // date edited there are the same code.
                 EntityInspector(id: id, scrolls: false)
                 notesSection
-                if inCard { trashRow }
+                trashRow
             }
             .padding(.bottom, 40)
         }
@@ -242,6 +239,14 @@ struct RecordBody: View {
     /// destructive row, at the bottom where destructive things belong,
     /// and only in the card (the properties PANEL keeps its ••• two
     /// inches away and still only describes — owner, 2026-08-02).
+    ///
+    /// "Only in the card" is now true BY CONSTRUCTION rather than by a
+    /// flag: a record is a card and never a tab (§13, owner 2026-08-08),
+    /// so `RecordBody` has exactly one construction site and it is
+    /// `RecordCard`. The `inCard` parameter that used to guard this row
+    /// was never false, and went on 2026-09-12. Should a record ever get
+    /// a second home, that ruling is what has to be reversed first —
+    /// and whoever reverses it re-reads this row.
     ///
     /// Soft and reversible like every trash in this app.
     private var trashRow: some View {
@@ -284,7 +289,10 @@ struct RecordBody: View {
                 if !now { commitName() }
             }
             .padding(.horizontal, 16)
-            .padding(.top, inCard ? 18 : 56)
+            // 18, not the 56 a screen's name needs: this body is only
+            // ever a card, and inside a card there are no floating doors
+            // overhead for the name to duck under.
+            .padding(.top, 18)
             .padding(.bottom, 14)
     }
 
