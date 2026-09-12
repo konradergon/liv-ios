@@ -212,7 +212,6 @@ struct InboxView: View {
                         // GTD's slogan, and this screen's own word for
                         // its job is on the lens above it.
                         EmptyHint("Nothing to route")
-                        .padding(.top, 32)
                     } else {
                         ForEach(scraps) { row in
                             routeCard(row)
@@ -221,7 +220,6 @@ struct InboxView: View {
                 } else {
                     if groups.isEmpty && !assistOff {
                         EmptyHint("Nothing to tidy")
-                            .padding(.top, 32)
                     }
                     suggestedSection(groups)
                 }
@@ -563,13 +561,26 @@ struct InboxView: View {
                     Text("Accept all")
                         .font(.system(size: LivType.label, weight: .medium))
                         .foregroundStyle(LivTheme.accent)
-                        .frame(height: 24)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
             }
         }
-        .padding(.top, 14).padding(.bottom, 2)
+        // THE ROOM A HEADING OWNS, from the type that owns it. 14 and 2
+        // were this heading's own numbers, from before `sectionTop` and
+        // `sectionBottom` existed — so it was the one heading in the app
+        // standing on 35.1 while every `SectionLabel` stood on 41.1.
+        // Its own comment above already confesses the shape of this:
+        // hand-rolled, and it never got the message.
+        //
+        // The verb's `.frame(height: 24)` went in the same change. It
+        // was what made this row 40 with an Accept-all and 35.1
+        // without — two heights for one heading — and `SectionLabel`'s
+        // trailing verb, on all seventeen of its call sites, has never
+        // had one. The `contentShape` is what carries the hit area,
+        // there as here. If the verb wants a bigger target it wants one
+        // in `SectionLabel`, for all eighteen.
+        .padding(.top, LivRow.sectionTop).padding(.bottom, LivRow.sectionBottom)
     }
 
     /// What this suggestion is ABOUT. The proposal carries the entity id;

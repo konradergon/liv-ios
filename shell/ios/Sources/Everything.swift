@@ -55,7 +55,6 @@ struct EverythingView: View {
                     .padding(.top, 10)
                     .padding(.bottom, 6)
                 picker
-                    .padding(.top, 0)
                     .padding(.bottom, 8)
                 if slice.isEmpty {
                     EmptyHint(empty)

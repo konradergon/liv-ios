@@ -625,7 +625,7 @@ struct CameraFlow: View {
     /// the difference is only what you wanted out of it.
     @ViewBuilder private var shutterRow: some View {
         VStack(spacing: 6) {
-            if !scanSaid.isEmpty { EmptyHint(scanSaid).padding(.vertical, 0) }
+            if !scanSaid.isEmpty { EmptyHint(scanSaid) }
             if hasCamera {
                 if permission == .granted {
                     ZStack {
@@ -653,7 +653,6 @@ struct CameraFlow: View {
                 }
             } else {
                 EmptyHint("Simulator")
-                    .padding(.vertical, 0)
                 ZStack {
                     PhotosPicker(selection: $pickerItem, matching: .images) {
                         ZStack {
