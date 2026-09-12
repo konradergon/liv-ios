@@ -727,14 +727,31 @@ func livPaletteSelfCheck() -> [String] {
     // the ground it sits on. That floor was not applied while the marks
     // were Apple's vivid set, which is 1.5–2.3:1 on white; ours are
     // chosen, so they can be held to it.
-    // READ tiers clear AAA. `text3` is the dimmest tier — a placeholder,
-    // a timestamp, the ✕ on a chip — and it is held to AA instead:
+    // READ tiers clear AAA. `text3` is the dimmest tier and it is held
+    // to AA instead:
     // pushing it to 7:1 would land it on top of `text2` and the app
     // would have two secondary greys and no tertiary one. The
     // references agree: Anytype draws its placeholders at about 3.4:1,
     // and this is stricter than that.
     let inkFloor = 7.0
     let dimFloor = 4.5
+    // THE EXEMPTION IS SOUND; ITS STATED SCOPE IS NOT. This comment used
+    // to say text3 is "a placeholder, a timestamp, the ✕ on a chip", and
+    // that is the argument for holding it to AA rather than AAA. Measured
+    // 2026-09-12, 16 of its Text sites are none of those: whole sentences
+    // ("Showing N of M — narrow the search"; "The saved version is shown.
+    // Your edit is kept."), file paths, and — the loudest one —
+    // `DetailRowLabel`, which draws EVERY property name in the panel at
+    // strong(20) in this tier, at the same triple as the value beside it,
+    // so that pair has no hierarchy in either direction.
+    //
+    // Nothing is changed here, because the fix is a visible one and it is
+    // not a blanket swap: moving both halves of a label/value pair to
+    // text2 leaves them equally undifferentiated, one step brighter. The
+    // decision about which half comes forward is the owner's, and the
+    // exemption stays exactly as it is until he makes it. What is fixed
+    // is the sentence claiming the tier is only used for things it is not.
+
     let inks: [(String, Color, Double)] = [
         ("text", LivTheme.text, inkFloor), ("text2", LivTheme.text2, inkFloor),
         ("text3", LivTheme.text3, dimFloor),

@@ -128,8 +128,18 @@ struct LivRowFact: View {
         // text3, moving BOTH axes when only one had to.
         //
         // Back to `label` (2026-09-05), text3 kept. The ink is what
-        // separates the two voices — 4.5:1 against the title's full
-        // ink — and at 14 the date was 0.70 of the title beside it,
+        // separates the two voices — and the number this comment used to
+        // give for that was the wrong one. 4.5:1 is text3 against the
+        // CANVAS, which is the figure `Palette` declares; against the
+        // title's full ink, which is what "separates the two voices"
+        // means, text3 measures 3.52:1 (text2 would be 2.26:1). The
+        // ruling is unaffected — 3.52 is still a real separation and
+        // still more than text2 gives — but a comment carrying a
+        // borrowed number is how a later pass talks itself into the
+        // wrong swap. Measured 2026-09-12 with `livPaletteSelfCheck`'s
+        // own luminance formula.
+        //
+        // At 14 the date was 0.70 of the title beside it,
         // where the reference the owner points at (Todoist: a 13pt date
         // under a 17pt title) is 0.76. It was starved on both axes at
         // once. Only an emphasised fact comes forward in ink.
