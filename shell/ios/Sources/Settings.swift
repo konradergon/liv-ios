@@ -10,11 +10,13 @@ import SwiftUI
 /// Facts and notes — plus the ONE schema door (§10): Fields, where a new
 /// property definition is minted. Settings still never writes cells on
 /// entities; the inspector's old "+ property" moved here because schema
-/// growth is possible, not daily use. The Handoff section
-/// (design/ios.md §2.2) is the funnel's honesty surface: the status card,
-/// the per-item Pending/Shipped/Delivered ledger, "Ship now", and the
-/// satellite-path row (dev-grade paste field — file pickers arrive with
-/// the real Xcode project). Setting the path is device config, not a cell.
+/// growth is possible, not daily use.
+///
+/// The Handoff section this comment used to describe — the status card,
+/// the Pending/Shipped/Delivered ledger, "Ship now", the satellite-path
+/// row — went with the Advanced drawer on 2026-08-14 and is recorded at
+/// the foot of `body`. The paragraph describing it outlived it by four
+/// weeks.
 struct SettingsSheet: View {
     @EnvironmentObject var box: BoxModel
     @ObservedObject private var notify = Notify.shared
@@ -27,6 +29,8 @@ struct SettingsSheet: View {
     /// rebuild — never polled: a projection that is quiet has nothing to say.
     @State private var vault: BoxModel.LivVaultStatus?
     @State private var findings: [BoxModel.LivVaultFinding] = []
+    /// THE LOG'S OWN NOTICES, and NOT the vault's — see `logCard`.
+    ///
     /// READ AND CLEAR on the Rust side, so these are held here once drained
     /// and shown until the sheet closes. Dropping them would be losing the
     /// only notice a length regression ever gets.
@@ -58,6 +62,11 @@ struct SettingsSheet: View {
                 }
                 LivCard(label: "Reminders") { notifyRows.padding(12) }
                 LivCard(label: "Fields") { fieldsRow.padding(12) }
+                // ONLY WHEN SOMETHING IS WRONG WITH THE LOG — and above
+                // the vault, because it is not about the vault.
+                if !alerts.isEmpty {
+                    LivCard(label: "The log") { logRows.padding(12) }
+                }
                 LivCard(label: "Vault") { vaultRows.padding(12) }
                 // No Advanced drawer. It held the phone→desk handoff
                 // (status, ledger, Ship now, the satellite path) and the
@@ -277,6 +286,39 @@ struct SettingsSheet: View {
     }
 
 
+    // MARK: the log's own notices
+
+    /// WHAT THE LOG SAYS ABOUT ITSELF, and it had no way to say it.
+    ///
+    /// `liv_vault_alerts_at` drains three notices the FFI raises on EVERY
+    /// box open, in `hit()`, before any projection is considered: the log
+    /// SHRANK against what the cache last proved, the log was REPLACED in
+    /// place (same length, new inode), or a conflicted copy of it exists
+    /// beside it. Each one means something outside this app wrote over the
+    /// append-only source, and each one is the only notice that ever
+    /// arrives — the open refuses the fast path and replays honestly, so
+    /// nothing is adopted silently, but a person is told nothing.
+    ///
+    /// They were drained inside `guard st?.isVault == true`, and on a
+    /// phone that guard is ALWAYS FALSE: `vault_root_of` wants the log at
+    /// `<root>/.liv/box/<log>` and `BoxPath.resolve` puts it at
+    /// `<container>/liv/liv.log`, whose parent is named `liv` and not
+    /// `box`. So the app has never been able to show one of these, and the
+    /// static they queue in was never drained either. That is the bug this
+    /// card fixes, and it is a bug about the log rather than about the
+    /// folder projection — which is why the two are separate now, and why
+    /// this one survives the vault card being questioned.
+    @ViewBuilder private var logRows: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(alerts, id: \.self) { line in
+                Text(line)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     // MARK: the vault
 
     /// THE FOLDER IS A PROJECTION, NOT A SECOND TRUTH (O14,
@@ -303,18 +345,12 @@ struct SettingsSheet: View {
                     .foregroundStyle(LivTheme.text3)
                     .padding(.top, 8)
             }
+            // The log's own notices used to be drawn here, which is what
+            // hid them: they are raised on every open and have nothing to
+            // do with the projection, and this whole branch is unreachable
+            // on a phone. They have their own card now (`logRows`).
+            //
             // Only speak when something is WRONG. A quiet vault says nothing.
-            if !alerts.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(alerts, id: \.self) { line in
-                        Text(line)
-                            .font(.system(size: LivType.label))
-                            .foregroundStyle(LivTheme.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.top, 10)
-            }
             if !findings.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(findings) { f in
@@ -378,10 +414,12 @@ struct SettingsSheet: View {
     }
 
     private func loadVault() {
+        // THE LOG'S NOTICES ARE NOT THE VAULT'S, so they are not asked
+        // for behind the vault's guard. See `logRows`.
+        box.vaultAlerts { alerts = $0 }
         box.vaultStatus { st in
             vault = st
             guard st?.isVault == true else { return }
-            box.vaultAlerts { alerts = $0 }
             box.vaultFindings { findings = $0 }
         }
     }
