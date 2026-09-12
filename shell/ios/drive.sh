@@ -28,6 +28,7 @@
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
 #   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
+#   ./drive.sh event            a tap on the hour grid makes a block you can see
 #   ./drive.sh settings         the Settings cards render, and two deleted ones stay gone
 #   ./drive.sh surface           name the surface actually on screen
 #   ./drive.sh tap <label>       tap by accessibility label, then re-read the surface
@@ -2092,6 +2093,87 @@ query_text() {
     for c in n.get("children") or []: walk(c)' ''
 }
 
+# THE TIMELINE MAKES AN EVENT YOU CAN SEE (owner, 2026-09-13:
+# "clicking in day timeline … events don't appear in calendar").
+#
+# The core is not the fault and that is already proved: `cargo test`
+# carries `an_event_made_at_an_hour_lands_in_dated`, which runs the
+# shell's exact arithmetic through `liv_create_event_at` and then reads
+# the windowed snapshot back, asserting the due cell and the id's place
+# in `dated`. Every link from the tap to the snapshot was read by hand
+# too. So whatever is wrong is on screen, and only a device can say it.
+#
+# This is that check. It taps bare grid, then counts BLOCKS — not a
+# returned id, not a card appearing — because "it was made" and "you can
+# see it" are the two different claims the report separates.
+#
+# COORDINATES, and only the second pair in this file. The hour grid is a
+# REGION: an empty 09:30 has no label to aim at, and that is what makes
+# it the create door. The x is derived from the header's own centre
+# rather than guessed, and y sits low in the grid where an ordinary day
+# is emptiest — a tap that lands on an existing block OPENS it, which is
+# the grid's own rule, and the check says so rather than failing blind.
+cmd_event() {
+  cmd_boot calendar >/dev/null 2>&1 || { die "could not boot into the Calendar."; return 1 }
+  perl -e 'select(undef,undef,undef,1.2)'
+
+  local before after mid_x
+  before=$(block_count)
+
+  mid_x=$(button_cx "Library") || { die "could not centre on the library door."; return 1 }
+  mid_x=$(( mid_x + 120 ))   # past the hour-label lane, into the blocks
+  axe tap --udid "$UDID" -x "$mid_x" -y 620 >/dev/null 2>&1 || {
+    die "could not tap the hour grid at x=${mid_x}, y=620."; return 1 }
+  perl -e 'select(undef,undef,undef,2.0)'
+
+  # THE CARD RISES FIRST. The write opens the record's properties with
+  # the caret in the name, so a screen that did not change means the tap
+  # never reached `tapGrid` — a different fault from one that writes and
+  # does not draw, and worth telling apart before counting anything.
+  local named
+  named=$(scan 'def walk(n):
+    if n.get("AXType") in ("TextField", "TextView"): print(n.get("AXLabel") or n.get("AXValue") or "")
+    for c in n.get("children") or []: walk(c)' '')
+  if [[ -z "$named" ]]; then
+    die "tapping the hour grid opened nothing. The write path raises the
+      record card with the name field focused, so no field on screen means
+      the tap did not reach tapGrid at all — look at the gesture, not at
+      the snapshot. (If the tap landed on an existing block it would have
+      opened that instead, which also shows a field; an empty screen rules
+      both out.)"
+    return 1
+  fi
+
+  # NOW THE PART THE REPORT IS ABOUT. Terminate rather than dismiss: the
+  # card is a detent sheet with no Done button, and a fresh boot is the
+  # only reading of the timeline that owes nothing to what is over it.
+  sim terminate "$UDID" "$APP" >/dev/null 2>&1
+  cmd_boot calendar >/dev/null 2>&1 || { die "could not boot back into the Calendar."; return 1 }
+  perl -e 'select(undef,undef,undef,1.2)'
+  after=$(block_count)
+
+  (( after > before )) || {
+    die "the timeline drew ${before} blocks before the tap and ${after} after.
+      The event was made — the card rose — and the calendar cannot see it.
+      Look in this order, because the first three are already ruled out in
+      Rust: itemsByDay's workspace lens (admits() is false for every row
+      while lensIds is stale), the allDay split in dayPanel (a block with
+      dueDateOnly true is not drawn on this screen at all, by design), and
+      selectedDay against the day the write used."
+    return 1
+  }
+  say "ok    event: the grid made a block, ${before} -> ${after}"
+}
+
+# Blocks on the day timeline, counted by their spoken label — a block
+# says "<name>, <HH:MM – HH:MM>", which no other row in the app does.
+block_count() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    if re.search(r"\d\d:\d\d\s*.\s*\d\d:\d\d", l): print(l)
+    for c in n.get("children") or []: walk(c)' '' | wc -l | tr -d " "
+}
+
 # SETTINGS: the cards that render, and the two that no longer do.
 #
 # This was `vault`, and it asserted the Vault card said EITHER its
@@ -2390,6 +2472,7 @@ case "${1:-}" in
   under)   cmd_under   || exit 1 ;;
   lens)    cmd_lens    || exit 1 ;;
   facets)  cmd_facets  || exit 1 ;;
+  event)   cmd_event    || exit 1 ;;
   settings) cmd_settings || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
   quiet)   cmd_quiet   || exit 1 ;;
