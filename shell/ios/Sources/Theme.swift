@@ -333,6 +333,35 @@ enum LivScreen {
 /// two in `Kit` disagreed with all of them. A chip is a shape this app
 /// draws forty times; it gets a token like everything else that matters
 /// (standing rule 3).
+/// THE MENU CARD, since 2026-09-12: a floating panel at its door, not a
+/// sheet hung off the screen's edge.
+///
+/// Owner, pointing at a screen recording of ChatGPT's compose menu:
+/// *"More what i had in mind."* Measured off that clip, its card is
+/// about 267 × 395pt on a 390 × 844 screen — roughly two thirds of the
+/// width, floating clear of both side edges, with its bottom sitting
+/// just above the control that opened it.
+///
+/// Liv's menu was the opposite shape: full width, square against the
+/// bottom edge, a grabber on top. Growing that out of its button (rev
+/// 82) helped and did not answer him, because a full-width sheet reads
+/// as furniture arriving whatever it does on the way in.
+enum LivMenuCard {
+    /// 300, against the reference's 267. Liv's menu rows are chunkier —
+    /// a 24pt glyph and `title`(22) text where the reference draws about
+    /// 17 — so the same proportion would crowd them.
+    static let width: CGFloat = 300
+    /// The air between the card and the screen edge it sits nearest,
+    /// outside the safe area rather than inside it. The old card had
+    /// none: it WAS the edge.
+    static let margin: CGFloat = 12
+    /// A floating card needs a shadow to read as floating. The old one
+    /// did not — an edge-attached sheet is grounded by the edge.
+    static let shadowRadius: CGFloat = 24
+    static let shadowY: CGFloat = 8
+    static let shadowInk: Double = 0.28
+}
+
 enum LivChip {
     /// The ordinary chip: a SECOND VOICE in a row, `caption` (14). 17
     /// was the old height, sized around 11pt text, and the capsule grew

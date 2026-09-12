@@ -522,7 +522,7 @@ struct LivMenuHost: ViewModifier {
         content.overlay {
             if active, let drawn {
                 let up = drawn.from == .bottom
-                ZStack(alignment: drawn.from == .top ? .top : .bottom) {
+                ZStack(alignment: drawn.from == .top ? .topLeading : .bottomLeading) {
                     // The scrim: everything behind it is out of reach
                     // until this closes, and tapping it closes.
                     Rectangle()
@@ -531,6 +531,18 @@ struct LivMenuHost: ViewModifier {
                         .contentShape(Rectangle())
                         .onTapGesture { close() }
                     panel(drawn)
+                        // A FLOATING CARD AT ITS DOOR, not a sheet on an
+                        // edge. The `ZStack` alignment pins the edge and
+                        // the leading padding sets x, so the card's
+                        // MEASURED HEIGHT never enters the placement —
+                        // which is what lets it be placed before it has
+                        // been measured, and what stops a first-open
+                        // jump.
+                        .frame(width: LivMenuCard.width)
+                        // MEASURED BEFORE THE PADDING, so `height` is the
+                        // card's own height rather than the card plus its
+                        // margin and the safe area. The growth anchor is
+                        // computed from it.
                         .background(
                             GeometryReader { geo in
                                 Color.clear
@@ -538,17 +550,23 @@ struct LivMenuHost: ViewModifier {
                                     .onChange(of: geo.size.height) { _, h in height = h }
                             }
                         )
-                        // THE GRABBER NOW TELLS THE TRUTH.
+                        .padding(.leading, cardX())
+                        .padding(
+                            drawn.from == .top ? .top : .bottom,
+                            LivMenuCard.margin
+                                + (drawn.from == .top
+                                    ? LivSafeArea.top : LivSafeArea.bottom))
+                        // DRAG IT BACK TOWARD ITS DOOR TO DISMISS.
                         //
-                        // Every card in this app draws the little
-                        // capsule that means "drag me away", and none of
-                        // them could be dragged — they closed by tapping
-                        // the scrim, and the grabber was decoration
-                        // promising an affordance that did not exist
-                        // (polish audit, 2026-08-30). A card is easier
-                        // to dismiss this way than by reaching for the
-                        // scrim, and it is what the phone has taught
-                        // everyone to try first.
+                        // This arrived on 2026-08-30 to make the grabber
+                        // tell the truth: every card in the app drew the
+                        // capsule that means "drag me away" and none of
+                        // them could be dragged. The grabber has now gone
+                        // the other way — a floating card has no edge to
+                        // wear one against — so the gesture stays without
+                        // its mark. It costs nothing and still does the
+                        // obvious thing; the scrim is how anyone finds
+                        // their way out without knowing about it.
                         //
                         // The threshold is distance OR speed: a short
                         // flick closes, a long slow drag closes, and a
@@ -605,12 +623,27 @@ struct LivMenuHost: ViewModifier {
         .onAppear(perform: sync)
     }
 
-    /// Where the card will be, in screen coordinates: full width, hung
-    /// from whichever edge it comes from, as tall as the last one was.
+    /// WHERE THE CARD'S LEFT EDGE GOES: centred under its door, then
+    /// clamped so it never leaves the screen. A door at the far right —
+    /// the ••• key — would otherwise hang the card half off.
+    private func cardX() -> CGFloat {
+        let w = LivMenuCard.width
+        let m = LivMenuCard.margin
+        let centre = LivDoors.lastPressed?.midX ?? LivScreen.width / 2
+        return min(max(m, centre - w / 2), LivScreen.width - w - m)
+    }
+
+    /// Where the card will be, in screen coordinates — for the GROWTH
+    /// ANCHOR only, which is the one place its height is needed. Being a
+    /// few points out on a menu's first open shifts where the growth
+    /// appears to start and nothing else; `height` is exact from the
+    /// second open of that menu onward.
     private func cardBox(_ edge: VerticalEdge) -> CGRect {
-        CGRect(
-            x: 0, y: edge == .top ? 0 : LivScreen.height - height,
-            width: LivScreen.width, height: height)
+        let m = LivMenuCard.margin
+        let y = edge == .top
+            ? LivSafeArea.top + m
+            : LivScreen.height - LivSafeArea.bottom - m - height
+        return CGRect(x: cardX(), y: y, width: LivMenuCard.width, height: height)
     }
 
     /// Mount first, THEN slide: a view inserted and offset in the same
@@ -653,10 +686,8 @@ struct LivMenuHost: ViewModifier {
     /// comes from. The safe area is padding, not something to bleed past:
     /// a top sheet whose first row sits under the clock reads as broken.
     private func panel(_ menu: LivMenu) -> some View {
-        let up = menu.from == .bottom
-        return VStack(spacing: 0) {
-            if !up { Spacer(minLength: 0).frame(height: 4) }
-            if up { LivGrabber() }
+        VStack(spacing: 0) {
+            Spacer(minLength: 0).frame(height: 6)
             if let title = menu.title {
                 LivMenuTitle(text: title)
             }
@@ -666,23 +697,19 @@ struct LivMenuHost: ViewModifier {
             ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
                 row(item, divided: i > 0)
             }
-            if up { Spacer(minLength: 0).frame(height: 4) }
-            if !up { LivGrabber() }
+            Spacer(minLength: 0).frame(height: 6)
         }
         .frame(maxWidth: .infinity)
-        // The safe area on the attached edge, kept as SPACE inside the
-        // card rather than ignored.
-        .padding(up ? .bottom : .top, up ? LivSafeArea.bottom : LivSafeArea.top)
         .background(
-            UnevenRoundedRectangle(
-                topLeadingRadius: up ? LivTheme.radiusLg : 0,
-                bottomLeadingRadius: up ? 0 : LivTheme.radiusLg,
-                bottomTrailingRadius: up ? 0 : LivTheme.radiusLg,
-                topTrailingRadius: up ? LivTheme.radiusLg : 0,
-                style: .continuous
-            )
-            .fill(LivTheme.surface)
+            // ROUNDED ON EVERY CORNER now, because there is no edge for
+            // it to be square against. `UnevenRoundedRectangle` and its
+            // four conditional radii went with the sheet shape.
+            RoundedRectangle(cornerRadius: LivTheme.radiusLg, style: .continuous)
+                .fill(LivTheme.surface)
         )
+        .shadow(
+            color: .black.opacity(LivMenuCard.shadowInk),
+            radius: LivMenuCard.shadowRadius, y: LivMenuCard.shadowY)
     }
 
 
