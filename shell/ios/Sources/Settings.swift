@@ -56,6 +56,11 @@ struct SettingsSheet: View {
                 if !alerts.isEmpty {
                     LivCard(label: "The log") { logRows.padding(12) }
                 }
+                // A DIAGNOSTIC WITH A DELETION DATE, not a feature. It
+                // answers the one question no test in the repo can —
+                // does the new engine chain run on a device — and it goes
+                // when the surfaces move (rust-owns-the-mechanisms.md §5).
+                LivCard(label: "Engine") { EngineCheckCard().padding(12) }
                 // No Advanced drawer. It held the phone→desk handoff
                 // (status, ledger, Ship now, the satellite path) and the
                 // store's own facts, and it went with every other

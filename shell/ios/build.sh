@@ -48,6 +48,21 @@ share_extension() {
 # app.liv.ios, which only Xcode can create; that's a one-time manual step
 # (design/ios.md — testing on a device), done once via a throwaway Xcode
 # project. Once done, both live on disk and this finds them itself.
+#
+# THE STATICLIB NOW CONTAINS SQLITE (2026-09-13). `liv-ffi` links
+# `liv-engine`, which links `rusqlite` with `bundled` — so sqlite3.c is
+# compiled INTO libliv_ffi.a rather than looked for on the system, and the
+# archive went from ~7 MB to ~32 MB. Nothing was added to this script,
+# because nothing should need to be: checked on the Linux build, the only
+# C symbols the archive leaves undefined are pthread_*, fcntl, fsync,
+# mmap, munmap, nanosleep, localtime_r, log and dl* — every one of which
+# is in libSystem and already linked.
+#
+# If the link DOES fail, that is the first place to look, and the fix is a
+# flag here rather than anything in the Rust. Phase 1 of
+# design/core-plan.md proved `bundled` cross-compiles for
+# aarch64-apple-ios and runs in the simulator (19.1 MB before stripping),
+# but this script had never linked it until now.
 if [ "$1" = "device" ]; then
     cargo build --release -p liv-ffi --target aarch64-apple-ios --manifest-path ../../Cargo.toml
 

@@ -1165,4 +1165,230 @@ enum Civil {
         guard let da = date(ofDay: a), let db = date(ofDay: b) else { return 0 }
         return gregorian.dateComponents([.day], from: da, to: db).day ?? 0
     }
+
+    /// A packed civil day as DAYS SINCE THE EPOCH, which is what the
+    /// engine counts in.
+    ///
+    /// **Two different numbers that both look like a date.** `Civil` packs
+    /// `YYYYMMDD`; the engine counts days from 1970-01-01. Handing one
+    /// where the other is expected is not a rounding error, it is a date
+    /// four hundred thousand years out — so the conversion is named and
+    /// lives here, next to the packing it undoes.
+    ///
+    /// Both ends are anchored at noon, the same trick `date(ofDay:)` uses,
+    /// so a daylight-saving boundary between them cannot lose a day.
+    static func epochDay(_ day: Int64) -> Int32 {
+        var epoch = DateComponents()
+        epoch.year = 1970
+        epoch.month = 1
+        epoch.day = 1
+        epoch.hour = 12
+        guard let from = gregorian.date(from: epoch), let to = date(ofDay: day) else {
+            return 0
+        }
+        return Int32(gregorian.dateComponents([.day], from: from, to: to).day ?? 0)
+    }
+
+    /// Milliseconds since the epoch for right now — the engine's clock
+    /// reading, where `nowStamp()` is the packed civil one.
+    static func nowMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
+}
+
+// MARK: - the new seam (design/rust-owns-the-mechanisms.md §3)
+//
+// One verb per screen, over the engine, beside the snapshot rather than
+// through it. **Nothing here is on a live screen yet**, and the reason is
+// worth stating plainly: an engine id is 16 bytes and `EntityRow.id` is a
+// `UInt64`, which appears 236 times across 22 Swift files. Moving a
+// surface means moving that type, and that is a refactor to do with a
+// compiler rather than by hand.
+//
+// So this is the plumbing plus one place to LOOK at it — `EngineCheck`
+// in Settings — which answers the one question no test here can: does the
+// whole chain work on a device? Rust, SQLite linked into the staticlib,
+// the new ABI, a Swift decode, pixels. If it does, the id refactor is
+// mechanical. If SQLite does not link, we find out for the price of one
+// build instead of after twenty-two files have moved.
+//
+// Standing rule 1 holds: every `liv_*` call is still in this file.
+
+/// One row as the new seam sends it. **Ids are hex**, 32 characters, and
+/// they stay `String` here on purpose — turning them into a native type is
+/// the refactor above, and doing half of it would be worse than none.
+/// **EVERY FIELD IS OPTIONAL** — the H1 rule, which exists because a
+/// synthesized `Decodable` uses `decode` (not `decodeIfPresent`) for a
+/// non-optional property, so a default value does NOT save it: one
+/// missing key throws and the whole answer is dropped. That has been a
+/// real, recurring bug on the snapshot path, and a new seam is not a
+/// reason to learn it again.
+///
+/// `id` is the one exception, because `Identifiable` requires it and a
+/// row without one is not a row.
+struct LivViewRow: Decodable, Identifiable {
+    var id: String
+    var title: String?
+    var untitled: Bool?
+    var kind: String?
+    var dueMs: Int64?
+    var allDay: Bool?
+    var status: String?
+    var done: Bool?
+    var area: String?
+    var createdMs: Int64?
+    var touchedMs: Int64?
+    var hasFile: Bool?
+
+    /// What to draw. An untitled thing says so rather than the surface
+    /// inventing words, so the shell picks them — and it picks them HERE,
+    /// once, rather than at each call site.
+    var display: String {
+        (untitled ?? false) ? "Untitled" : (title ?? "")
+    }
+}
+
+/// Today, already split. The shell does not decide which pile a row is in.
+struct LivTodayView: Decodable {
+    var late: [LivViewRow]?
+    var passed: [LivViewRow]?
+    var ahead: [LivViewRow]?
+    var allDay: [LivViewRow]?
+    var done: [LivViewRow]?
+    var next: String?
+    var captured: Int?
+
+    /// Everything the day itself holds, in the order the screen draws it.
+    var onTheDay: [LivViewRow] {
+        (passed ?? []) + (ahead ?? []) + (allDay ?? [])
+    }
+}
+
+/// What a conversion carried, and what it could not.
+struct LivConvertReport: Decodable {
+    var entities: Int?
+    var cells: Int?
+    var resolved: Int?
+    var mintedVocabulary: Int?
+    var flattened: Int?
+    var filesDropped: Int?
+    var undeclared: Int?
+    var clean: Bool?
+    var unknownKinds: [String]?
+}
+
+extension BoxModel {
+    /// Where the engine's box sits: beside the log, same directory.
+    ///
+    /// A separate FILE, not a separate place. The core box stays exactly
+    /// where it is and stays the truth until stage 5; this one is built
+    /// from it and can be deleted at any time without losing anything.
+    var enginePath: String {
+        (path as NSString).deletingLastPathComponent + "/liv.db"
+    }
+
+    var engineBoxExists: Bool {
+        FileManager.default.fileExists(atPath: enginePath)
+    }
+
+    /// Build the engine box from the core box. Refuses if it is already
+    /// there — `rebuildEngineBox` is the way to start over.
+    func convertToEngine(_ done: @escaping (Result<LivConvertReport, String>) -> Void) {
+        let from = path
+        let to = enginePath
+        boxQueue.async {
+            var out: UnsafeMutablePointer<CChar>?
+            let code = liv_view_convert(from, to, &out)
+            let answer = Self.decodeView(LivConvertReport.self, code: code, out: out)
+            DispatchQueue.main.async { done(answer) }
+        }
+    }
+
+    /// Throw the conversion away and build it again. The core box is
+    /// never touched, so this is always safe.
+    func rebuildEngineBox(_ done: @escaping (Result<LivConvertReport, String>) -> Void) {
+        let to = enginePath
+        boxQueue.async {
+            liv_view_close_all()
+            // -wal and -shm are SQLite's, and a stale one beside a deleted
+            // database is how a "fresh" box comes back with old rows in it.
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: to + suffix)
+            }
+            DispatchQueue.main.async { self.convertToEngine(done) }
+        }
+    }
+
+    /// Today, from the engine.
+    ///
+    /// `day` and `today` are DAYS SINCE THE EPOCH, not the packed civil
+    /// the old ABI uses — the engine counts days and `Civil` packs
+    /// YYYYMMDD, and pretending they are the same number is the kind of
+    /// thing that puts a task on the wrong side of midnight.
+    func engineToday(
+        day: Int32, today: Int32, nowMs: Int64,
+        _ done: @escaping (Result<LivTodayView, String>) -> Void
+    ) {
+        let to = enginePath
+        boxQueue.async {
+            var out: UnsafeMutablePointer<CChar>?
+            let code = liv_view_today(to, day, today, nowMs, nil, &out)
+            let answer = Self.decodeView(LivTodayView.self, code: code, out: out)
+            DispatchQueue.main.async { done(answer) }
+        }
+    }
+
+    /// Everything, from the engine. `slice` is 0 all, 1 notes, 2 upcoming,
+    /// 3 unfiled.
+    func engineEverything(
+        slice: Int32, today: Int32,
+        _ done: @escaping (Result<[LivViewRow], String>) -> Void
+    ) {
+        let to = enginePath
+        boxQueue.async {
+            var out: UnsafeMutablePointer<CChar>?
+            let code = liv_view_everything(to, slice, today, nil, &out)
+            let answer = Self.decodeView([LivViewRow].self, code: code, out: out)
+            DispatchQueue.main.async { done(answer) }
+        }
+    }
+
+    /// The error channel, in words.
+    ///
+    /// **This is the whole reason for the new codes.** The old ABI returns
+    /// `0` for both "no id" and "it broke", so a shell cannot tell an
+    /// empty box from an unreadable one and every failure reads the same.
+    /// Here each one says what it is.
+    static func viewFault(_ code: Int32) -> String {
+        switch code {
+        case 0: return ""
+        case -1: return "bad path"
+        case -2: return "no engine box yet — convert first"
+        case -3: return "bad argument"
+        case -4: return "the box refused the read"
+        case -5: return "the answer would not encode"
+        default: return "unknown error \(code)"
+        }
+    }
+
+    /// Decode one answer from the new seam, freeing the string either way.
+    private static func decodeView<T: Decodable>(
+        _ type: T.Type, code: Int32, out: UnsafeMutablePointer<CChar>?
+    ) -> Result<T, String> {
+        guard code == 0 else {
+            // A failing call writes nothing through `out` — the Rust side
+            // asserts it — so there is nothing to free here.
+            return .failure(viewFault(code))
+        }
+        guard let out else { return .failure("no answer") }
+        let json = String(cString: out)
+        liv_string_free(out)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return .success(try decoder.decode(type, from: Data(json.utf8)))
+        } catch {
+            return .failure("decode: \(error)")
+        }
+    }
 }

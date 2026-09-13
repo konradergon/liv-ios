@@ -191,6 +191,24 @@ replacement passes.
    logic deleted from each view file as its verb lands. The screens must
    look identical — that is the owner's one constraint, and `drive.sh` is
    how it is checked.
+
+   **It is gated on the id type, and that was not foreseen.** An engine id
+   is 16 bytes; `EntityRow.id` is a `UInt64`, and `UInt64` appears **236
+   times across 22 Swift files**. A repointed surface hands the navigation
+   chain — `desk.open`, `box.entity`, the editor, the tab plane — ids it
+   cannot use, so "one surface at a time" is not available: the type moves
+   first, or nothing does.
+
+   That is a mechanical refactor and a large one, and it wants a compiler.
+   So stage 4 landed in two pieces:
+
+   * **4a, done:** the converter (§below), the plumbing in `Box.swift`
+     (the wire types, the verbs, `Civil.epochDay`), and **one card in
+     Settings** that converts the box and reads Today out of the engine.
+     It changes no existing screen and proves the one thing no test here
+     can — that the chain runs on a device, SQLite linked and all.
+   * **4b, next:** the id type, then the surfaces. On a machine with
+     Xcode, or behind a green build.
 5. **Delete `core/`, the old FFI verbs, and the snapshot builder.** No
    feature flag, no parallel period beyond stage 4 (standing rule 7).
 6. **Sync.** The engine was built for it: ops, dots, version vectors and

@@ -406,3 +406,69 @@ pub unsafe extern "C" fn liv_view_day(
         Err(e) => e,
     }
 }
+
+// ---- the one-way door --------------------------------------------------
+
+/// Build an engine box from a `core/` box.
+///
+/// **Refuses if the target exists**, because "run it again" is the first
+/// thing anyone tries and a converter that allows it can double a box. To
+/// rebuild, delete the file first — which is also how a shell says "throw
+/// the conversion away and take the core box as truth again".
+///
+/// The answer is the report as JSON:
+/// `{"entities","cells","resolved","minted_vocabulary","flattened",
+///   "files_dropped","undeclared","unknown_kinds":[…],"clean"}`
+///
+/// # Safety
+/// `from` and `to` must be valid C strings; `out` a valid `char *` slot.
+#[no_mangle]
+pub unsafe extern "C" fn liv_view_convert(
+    from: *const c_char,
+    to: *const c_char,
+    out: *mut *mut c_char,
+) -> i32 {
+    if from.is_null() || to.is_null() {
+        return LIV_ERR_PATH;
+    }
+    let Ok(from) = unsafe { CStr::from_ptr(from) }.to_str() else { return LIV_ERR_PATH };
+    let Ok(to) = unsafe { CStr::from_ptr(to) }.to_str() else { return LIV_ERR_PATH };
+    let to_path = PathBuf::from(to);
+
+    // A held connection to the target would keep the file open while it is
+    // being replaced or deleted; drop everything first.
+    unsafe { liv_view_close_all() };
+
+    match liv_convert::convert(std::path::Path::new(from), &to_path) {
+        Ok(r) => {
+            let report = WireReport {
+                entities: r.entities,
+                cells: r.cells,
+                resolved: r.resolved,
+                minted_vocabulary: r.minted_vocabulary,
+                flattened: r.flattened,
+                files_dropped: r.files_dropped,
+                undeclared: r.undeclared,
+                clean: r.clean(),
+                unknown_kinds: r.unknown_kinds,
+            };
+            deliver(out, &report)
+        }
+        // The box is there and would not convert, which is neither a bad
+        // path nor a bad argument: the source refused to be read.
+        Err(_) => LIV_ERR_READ,
+    }
+}
+
+#[derive(Serialize)]
+struct WireReport {
+    entities: usize,
+    cells: usize,
+    resolved: usize,
+    minted_vocabulary: usize,
+    flattened: usize,
+    files_dropped: usize,
+    undeclared: usize,
+    clean: bool,
+    unknown_kinds: Vec<String>,
+}

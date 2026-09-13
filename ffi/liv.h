@@ -450,4 +450,22 @@ int32_t liv_view_day(const char *path, int32_t day, const char *lens,
    Not thread-safe against a liv_view_* call in flight. */
 void liv_view_close_all(void);
 
+/* THE ONE-WAY DOOR: build an engine box from a core box.
+
+   Refuses if `to` already exists — "run it again" is the first thing
+   anyone tries and a converter that allows it can double a box. To
+   rebuild, delete the file first, which is also how a shell says "throw
+   the conversion away and take the core box as truth again".
+
+   It RESOLVES the core box's schema rather than copying it: a fresh box
+   is 70 entities and almost all of it is 51 property definitions, a type
+   per kind and an option per area and status, all of which the engine has
+   compiled in. Copying them would put a second "due" and a second "Work"
+   beside the frozen ones in every picker.
+
+   The report:
+   {"entities","cells","resolved","minted_vocabulary","flattened",
+    "files_dropped","undeclared","unknown_kinds":[…],"clean"} */
+int32_t liv_view_convert(const char *from, const char *to, char **out);
+
 #endif
