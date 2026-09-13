@@ -17,8 +17,9 @@
 //      or a stamp; nothing distinguished them. (One of those ten was
 //      renamed wrongly — `setContent`'s `base` is a content fingerprint
 //      — and slice 4 is where the compiler would have said so.)
-//   3. The written forms, below: an id leaves memory in six places a
-//      compiler cannot see.
+//   3. The written forms, below: an id leaves memory in nine places a
+//      compiler cannot see — five of them found here, four more by the
+//      flip in slice 4.
 //   4. The alias flips and `LivID` carries a `core` half so the old ABI
 //      still takes it.
 //   5. The data source swaps to the engine verbs, and the `core` half —
@@ -47,11 +48,11 @@ typealias LivEntityID = LivID
 
 /// **An id written DOWN.**
 ///
-/// The type is not internal, and finding that out was the whole of slice
-/// 3 and the first thing slice 4 found. An id leaves the app's memory in
-/// SIX places, and a compiler cannot see any of them, because each is a
-/// string interpolation or a plain integer that stays valid whatever the
-/// format becomes:
+/// The type is not internal. Slice 3 found five places an id leaves the
+/// app's memory; slice 4's flip found four more, and the count is not the
+/// lesson — the SHAPE is. Every one is a string interpolation or a plain
+/// integer that stays valid whatever the format becomes, so a compiler
+/// sees none of them:
 ///
 /// * the editor's `[[123]]` token, **inside a note's own text**;
 /// * a `related` cell's `#123`, **inside the box**;
@@ -59,21 +60,29 @@ typealias LivEntityID = LivID
 ///   plane and desk position;
 /// * the outbox ledger's JSON dictionary keys;
 /// * a shared note's filename;
-/// * and a SIXTH that slice 3 missed and slice 4 found — the active
-///   workspace, stored as a `UserDefaults` integer VALUE (see `stored`
-///   below). A missed one looks like "you are on All", not like a fault.
+/// * a saved plane's tab token, which is an id or an opaque position;
+/// * a scheduled reminder's notification identifier AND its `userInfo`;
+/// * and two `UserDefaults` integer VALUES rather than keys — the active
+///   workspace and the desk's live document. Those two are the quietest
+///   of the lot: `UserDefaults.integer(forKey:)` answers 0 for a missing
+///   key, a key holding a string and a key holding an unreadable number
+///   alike, so a format change there reads as "you are on All", not as a
+///   fault.
 ///
-/// A silent format change in any of those is not a bug that shows up in a
-/// build. It is every `[[…]]` in every note ceasing to resolve, and every
-/// saved plane orphaned, discovered later.
+/// A silent format change in any of them is not a bug that shows up in a
+/// build. It is every `[[…]]` in every note ceasing to resolve, every
+/// saved plane orphaned, and every reminder opening nothing — discovered
+/// later.
 ///
-/// So the format is ONE function rather than nine interpolations, and a
-/// change to it happens in one place — or deliberately does not, which is
-/// the answer for everything already on disk, and was.
+/// **Four of these had a `LivIDText` read and a raw write**, because
+/// slice 3 moved the halves it could see and the two halves live in
+/// different functions. Nothing but the flip would have said so, and for
+/// one of them — the reminder — not even that. So the format is one
+/// function AND the type refuses to stringify itself (see `LivID`).
 enum LivIDText {
-    /// The written form. **Decimal, unchanged** — it is what all six of
-    /// those places already hold, and changing it would unlink every note
-    /// and orphan every saved plane at once.
+    /// The written form. **Decimal, unchanged** — it is what every one of
+    /// those places already holds, and changing it would unlink every
+    /// note and orphan every saved plane at once.
     static func written(_ id: LivEntityID) -> String {
         String(id.core)
     }
@@ -84,17 +93,13 @@ enum LivIDText {
         UInt64(text).map(LivEntityID.init(core:))
     }
 
-    // ---- a SIXTH place, found by slice 4 --------------------------------
+    // ---- an id stored as a NUMBER ---------------------------------------
     //
-    // The active workspace is not a `UserDefaults` KEY like the desk's
-    // planes — it is a `UserDefaults` INTEGER VALUE, written in one file
-    // and read in two. Nothing in the list above covered it, and nothing
-    // would have said so: `UserDefaults.integer(forKey:)` returns 0 for a
-    // key that is missing, a key holding a string, and a key holding a
-    // number too big for an `Int` alike, so a format change here reads as
-    // "you are on All" rather than as a fault.
+    // Two of the places above are not keys but `UserDefaults` integer
+    // VALUES: the active workspace, and the desk's live document. Same
+    // format, named here so they are not three call sites either.
 
-    /// The active workspace, or `.absent` when there isn't one. Decimal,
+    /// The id under `key`, or `.absent` when there isn't one. Decimal,
     /// like every other written form, for the same reason.
     static func stored(
         forKey key: String, in defaults: UserDefaults = .standard
@@ -110,9 +115,27 @@ enum LivIDText {
     }
 }
 
-struct LivID: Hashable, Comparable, Codable, CustomStringConvertible,
-    ExpressibleByIntegerLiteral
-{
+// **NOT `CustomStringConvertible`, and that is the point of this file.**
+//
+// It was, until slice 4 found what the conformance costs. `Notify`
+// scheduled every reminder under `identifier: "liv-\(slot.entity)"` and
+// read the id back with `LivIDText.read`. With a `description` that
+// conformance compiles — as HEX — and every tap then parses to nil. No
+// error, no warning, no test: reminders simply stop opening anything.
+//
+// The only reason it was found is that the `userInfo` line two above it
+// said `String(entity)`, which has no such overload and did not build.
+// Luck, in a file whose whole subject is that luck is not a mechanism.
+// Three more write halves had gone the same way — the plane's tab token,
+// the outbox ledger's keys, and this — each one paired with a READ that
+// slice 3 had correctly moved onto `LivIDText`.
+//
+// So the type refuses to stringify itself. `\(id)` is now a compile
+// error everywhere, and the only ways to write an id down are
+// `LivIDText.written` (the decimal form on disk) and `.hex` (the ABI's).
+// Standing rule 3: a rule that matters lives in a type, not in prose —
+// and the prose above this line had been there since slice 3.
+struct LivID: Hashable, Comparable, Codable, ExpressibleByIntegerLiteral {
     // **`ExpressibleByIntegerLiteral` IS TRANSITIONAL, and it has the same
     // deletion date as `core`.** It exists so that slice 4 — which cannot
     // compile in halves, since the fixes and the flip must land together —
@@ -173,8 +196,6 @@ struct LivID: Hashable, Comparable, Codable, CustomStringConvertible,
         }
         return out
     }
-
-    var description: String { hex }
 
     // ---- the core box's ids, while the core box is the source ---------
     //
@@ -314,7 +335,9 @@ func livIdSelfCheck() -> [String] {
     for n: LivEntityID in [0, 1, 4155, 4_294_967_296, LivEntityID.max] {
         let text = LivIDText.written(n)
         if LivIDText.read(text) != n {
-            fail.append("written form: \(n) came back \(String(describing: LivIDText.read(text)))")
+            fail.append(
+                "written form: \(text) came back "
+                    + (LivIDText.read(text).map(LivIDText.written) ?? "nothing"))
         }
     }
     for notAnId in ["", "abc", "12x", "-1", " 7"] {

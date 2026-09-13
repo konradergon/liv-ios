@@ -981,7 +981,8 @@ struct CalendarView: View {
             let day = Civil.day(of: due)
             out[day, default: []].append(
                 CalendarDayItem(
-                    key: "e\(id)", row: row, stamp: due, occurrence: false))
+                    key: "e\(LivIDText.written(id))", row: row, stamp: due,
+                    occurrence: false))
             datedIds[day, default: []].insert(id)
         }
         for occ in box.snap?.occurrences ?? [] {
@@ -993,7 +994,7 @@ struct CalendarView: View {
             guard datedIds[day]?.contains(series) != true else { continue }
             out[day, default: []].append(
                 CalendarDayItem(
-                    key: "o\(series)-\(civil)", row: row, stamp: civil,
+                    key: "o\(LivIDText.written(series))-\(civil)", row: row, stamp: civil,
                     occurrence: true))
         }
         for (day, items) in out {

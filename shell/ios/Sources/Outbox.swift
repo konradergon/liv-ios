@@ -485,7 +485,10 @@ final class Outbox: ObservableObject {
 
     private func saveLedger() {
         var out: [String: LedgerRecord] = [:]
-        for (entityId, record) in ledger { out[String(entityId)] = record }
+        // `LivIDText.written`, not `String(…)`: `loadLedger` reads these
+        // keys back with `LivIDText.read`, and slice 3 moved only that
+        // half. Two ends of one format in one file, disagreeing.
+        for (entityId, record) in ledger { out[LivIDText.written(entityId)] = record }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(LedgerFile(v: 1, entries: out)) else { return }

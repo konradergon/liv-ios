@@ -941,7 +941,8 @@ final class NoteEditorModel: ObservableObject {
                             retries: retries - 1, done: done)
                     }
                 } else {
-                    Self.log.notice("content save refused for \(self.id, privacy: .public)")
+                    Self.log.notice(
+                        "content save refused for \(LivIDText.written(self.id), privacy: .public)")
                     self.saveFailed = true
                     done(.busy)
                 }

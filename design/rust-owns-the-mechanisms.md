@@ -261,7 +261,7 @@ replacement passes.
         construction — and the distinction is worth having whatever
         happens next.
      3. **Name the written form.** THE ID IS NOT INTERNAL, and nothing in
-        the tree said so. It leaves memory in six places a compiler
+        the tree said so. It leaves memory in NINE places a compiler
         cannot see, each a string interpolation that stays valid whatever
         the format becomes: the editor's `[[123]]` token **inside a
         note's own text**; a `related` cell's `#123` **inside the box**;
@@ -287,7 +287,24 @@ replacement passes.
         holding an unreadable number alike, so a format change there
         would have read as "you are on All", not as a fault.
 
-        One thing changed shape on the evidence: the sentinel for "no
+        And the flip found FOUR MORE WRITTEN FORMS, all the same shape:
+        slice 3 had moved a `LivIDText.read` and left its writing half
+        raw, in a different function. The plane's tab token, the outbox
+        ledger's keys, the desk's live-document integer — and a
+        scheduled reminder's notification identifier, which is the one
+        that matters. That last one COMPILED, as hex, against a tap
+        handler that parses it with `LivIDText.read`: every reminder
+        would have opened nothing, with no error, no warning and no
+        test. It was found only because the `userInfo` line two rows
+        above it happened not to build.
+
+        So `LivID` is **not** `CustomStringConvertible`. `\`\\(id)\`` is a
+        compile error now, and the only ways to write an id down are
+        `LivIDText.written` and `.hex`. Standing rule 3 — the prose
+        saying this had been at the top of `LivID.swift` since slice 3,
+        and prose is what let four sites through.
+
+        One more thing changed shape on evidence: the sentinel for "no
         id" is `.absent`, not `.none`, because `Optional` already has a
         `.none` and `entity ?? .none` would have resolved to that one.
      5. Swap the data source.

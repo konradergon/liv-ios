@@ -39,7 +39,7 @@ struct Snapshot: Decodable {
 /// Every field Optional — the standing law.
 struct NoteTaskRow: Decodable, Identifiable {
     /// Stable per line, so SwiftUI keeps rows in place across refreshes.
-    var id: String { "\(entity ?? 0).\(line ?? 0)" }
+    var id: String { "\(LivIDText.written(entity ?? .absent)).\(line ?? 0)" }
     /// The note that holds the line.
     var entity: LivEntityID? = nil
     /// What to call that note — computed in Rust, where the content is

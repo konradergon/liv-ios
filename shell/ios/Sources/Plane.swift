@@ -72,9 +72,18 @@ enum DeskTabContent: Equatable {
     /// What goes on disk for this tab. An entity is its id; a position is
     /// its own token. Read back by `readPlane`, which calls anything that
     /// is not a number a position.
+    ///
+    /// **A SEVENTH written form** (`LivID.swift`), and the one that came
+    /// closest to going wrong: `readPlane` was moved onto `LivIDText.read`
+    /// in slice 3 and this half was not, so the two ends of the same
+    /// format sat in one file disagreeing. It did not compile rather than
+    /// silently writing hex and reading decimal — which is luck, not
+    /// design: `String(_:)` happens to have no unlabelled overload for a
+    /// plain `CustomStringConvertible`, and `String(describing:)` would
+    /// have taken it and orphaned every saved tab.
     var token: String {
         switch self {
-        case .entity(let id): return String(id)
+        case .entity(let id): return LivIDText.written(id)
         case .position(let p): return p
         }
     }
@@ -407,10 +416,10 @@ struct DeskPlanes {
     private static func foldInLiveDocument(_ plane: DeskPlane, workspace: LivEntityID) -> DeskPlane {
         var plane = plane
         let docKey = WorkspaceModel.docKey(workspace)
-        guard let saved = UserDefaults.standard.object(forKey: docKey) as? NSNumber,
-            saved.uint64Value != 0
-        else { return plane }
-        let live = saved.uint64Value
+        // The same shape as the active workspace: an id stored as a
+        // `UserDefaults` NUMBER, not a key. `LivIDText.stored` names it.
+        let live = LivIDText.stored(forKey: docKey)
+        guard !live.isAbsent else { return plane }
         if let already = plane.tabs.first(where: { $0.content == .entity(live) }) {
             plane.activeTabId = already.id
         } else {

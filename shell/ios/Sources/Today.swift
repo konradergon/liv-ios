@@ -664,7 +664,7 @@ struct TodayView: View {
     private func agenda(for day: Int64) -> [TodayAgendaItem] {
         var items = dueRows(on: day).map { row in
             TodayAgendaItem(
-                key: "e\(row.id)", row: row, stamp: row.due ?? 0,
+                key: "e\(LivIDText.written(row.id))", row: row, stamp: row.due ?? 0,
                 occurrence: false)
         }
         let dayIds = Set(items.map(\.row.id))
@@ -678,7 +678,7 @@ struct TodayView: View {
             else { continue }
             items.append(
                 TodayAgendaItem(
-                    key: "o\(series)-\(civil)", row: row, stamp: civil,
+                    key: "o\(LivIDText.written(series))-\(civil)", row: row, stamp: civil,
                     occurrence: true))
         }
         return items.sorted {

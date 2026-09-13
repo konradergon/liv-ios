@@ -416,7 +416,7 @@ struct InboxView: View {
                 desk.menu = kindMenu(row)
             })
         return LivMenu(
-            id: "route-\(row.id)",
+            id: "route-\(LivIDText.written(row.id))",
             from: .bottom,
             subject: displayTitle(row),
             subjectDetail: "Unfiled capture — where does it go?",
@@ -427,7 +427,7 @@ struct InboxView: View {
     /// "Note" is not here: choosing an area already makes one.
     private func kindMenu(_ row: EntityRow) -> LivMenu {
         LivMenu(
-            id: "route-kind-\(row.id)",
+            id: "route-kind-\(LivIDText.written(row.id))",
             from: .bottom,
             subject: displayTitle(row),
             subjectDetail: "What is it, then?",

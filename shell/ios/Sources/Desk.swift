@@ -583,7 +583,7 @@ struct DeskHost: View {
             LivMenuItem(label: "Move to Trash", symbol: "trash", destructive: true) {
                 let name = row.map(livRowTitle) ?? "This note"
                 desk.menu = LivMenu(
-                    id: "trash-\(id)",
+                    id: "trash-\(LivIDText.written(id))",
                     from: .bottom,
                     subject: name,
                     subjectDetail: "Moved to Trash, and undoable",

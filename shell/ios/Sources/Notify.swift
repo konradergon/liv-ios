@@ -165,11 +165,18 @@ final class Notify: NSObject, ObservableObject {
             content.title = slot.title
             content.body = slot.body
             content.sound = .default
-            content.userInfo = ["entity": String(slot.entity)]
+            // BOTH halves through `LivIDText`. The `userInfo` one did not
+            // compile after slice 4's flip; the identifier's interpolation
+            // did, silently, as hex — and the tap handler reads it back
+            // with `LivIDText.read`, which would have returned nil for
+            // every one of them. This is the exact failure `LivID.swift`
+            // warns about, and the only reason it was found is that its
+            // twin two lines up happened not to build.
+            content.userInfo = ["entity": LivIDText.written(slot.entity)]
             // No badge: the app's one badge is the proposal-inbox count, by law.
             center.add(
                 UNNotificationRequest(
-                    identifier: "liv-\(slot.entity)", content: content,
+                    identifier: "liv-\(LivIDText.written(slot.entity))", content: content,
                     trigger: UNTimeIntervalNotificationTrigger(
                         timeInterval: interval, repeats: false)))
             added += 1
