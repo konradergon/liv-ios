@@ -176,4 +176,46 @@ impl Engine {
     pub fn stamp(&mut self, now_ms: u64) -> Hlc {
         self.ids.stamp(now_ms)
     }
+
+    // ---- asking the box a question ------------------------------------
+
+    /// Everything whose `prop` holds this value — every task, everything
+    /// filed under Work, every note that mentions Anna.
+    pub fn with_value(
+        &self,
+        prop: EntityId,
+        value: &crate::op::Value,
+    ) -> Result<Vec<EntityId>, LogError> {
+        Ok(view::with_value(&self.conn, prop, value)?)
+    }
+
+    /// Everything of one kind.
+    pub fn of_kind(&self, kind: EntityId) -> Result<Vec<EntityId>, LogError> {
+        self.with_value(crate::model::prop::KIND, &crate::op::Value::Ref(kind))
+    }
+
+    /// Everything whose `prop` is a time in `[from_ms, to_ms]`, soonest
+    /// first, with that time.
+    pub fn in_window(
+        &self,
+        prop: EntityId,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<(EntityId, i64)>, LogError> {
+        Ok(view::in_window(&self.conn, prop, from_ms, to_ms)?)
+    }
+
+    /// Everything one entity holds, in one query rather than one per
+    /// property.
+    pub fn cells_of(
+        &self,
+        entity: EntityId,
+    ) -> Result<Vec<(EntityId, Dot, crate::op::Value)>, LogError> {
+        Ok(view::cells_of(&self.conn, entity)?)
+    }
+
+    /// Every entity, oldest first.
+    pub fn all_entities(&self) -> Result<Vec<EntityId>, LogError> {
+        Ok(view::all_entities(&self.conn)?)
+    }
 }

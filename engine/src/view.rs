@@ -38,13 +38,29 @@ CREATE TABLE IF NOT EXISTS cells (
     device BLOB    NOT NULL,
     seq    INTEGER NOT NULL,
     value  BLOB    NOT NULL,
+    -- WHEN this value is, in milliseconds, when it is a time at all.
+    --
+    -- The encoded `value` cannot answer a range: it is a tag byte then
+    -- little-endian bytes, and memcmp over that is not date order. So the
+    -- fold MAINTAINS this beside it (standing rule 2: maintain on write,
+    -- never rebuild on read) and 'what is due this week' is an index seek.
+    --
+    -- NULL for everything that has no order worth asking about. Numbers
+    -- have one and do not get a column, because no surface asks for a
+    -- number range yet; when one does it is the same move again.
+    at_ms  INTEGER,
     PRIMARY KEY (entity, prop, device, seq)
 ) WITHOUT ROWID;
 
 -- Everything with a given value: the lookup that makes 'everything with
--- Anna' a reference join rather than a text search (core.md §2).
+-- Anna' a reference join rather than a text search (core.md §2). It is
+-- also how 'every task' is answered — kind is a cell like any other.
 CREATE INDEX IF NOT EXISTS cells_by_value ON cells(prop, value);
 CREATE INDEX IF NOT EXISTS cells_by_entity ON cells(entity);
+-- Partial: only dated cells are in it, so a box of undated notes pays
+-- nothing for the calendar's index.
+CREATE INDEX IF NOT EXISTS cells_by_time ON cells(prop, at_ms)
+    WHERE at_ms IS NOT NULL;
 ";
 
 /// Every table this module owns, newest dependency last. `rebuild` drops
@@ -95,6 +111,24 @@ fn ensure_entity(tx: &Transaction, id: EntityId) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
+/// When a value is, in milliseconds — the sort key behind `at_ms`.
+///
+/// **A floating day and a real instant are put on one line here, and that
+/// is an approximation.** `DateSpec::Day` is deliberately zone-free (op.rs:
+/// a day that shifts when the device changes zone is the most common quiet
+/// corruption in a personal app), so calling it midnight-UTC to compare it
+/// with an instant is a reading, not a fact. It is the right reading for
+/// what this column is for — ordering a list and cutting a range — and a
+/// caller that needs the day itself reads the value, which still holds it
+/// exactly.
+pub fn at_ms(value: &op::Value) -> Option<i64> {
+    match value {
+        op::Value::Date(op::DateSpec::Day(d)) => Some(*d as i64 * 86_400_000),
+        op::Value::Date(op::DateSpec::Instant { ms, .. }) => Some(*ms),
+        _ => None,
+    }
+}
+
 fn put(
     tx: &Transaction,
     entity: EntityId,
@@ -103,14 +137,15 @@ fn put(
     value: &op::Value,
 ) -> Result<(), rusqlite::Error> {
     tx.execute(
-        "INSERT OR REPLACE INTO cells(entity, prop, device, seq, value)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT OR REPLACE INTO cells(entity, prop, device, seq, value, at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![
             &entity.0[..],
             &prop.0[..],
             &dot.device.0[..],
             dot.seq as i64,
             op::encode_value(value),
+            at_ms(value),
         ],
     )?;
     Ok(())
@@ -228,4 +263,124 @@ pub fn cell(
 pub fn entity_count(conn: &Connection) -> Result<u64, rusqlite::Error> {
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
     Ok(n as u64)
+}
+
+// ---- the reads a surface makes ----------------------------------------
+//
+// **Every one of these is an index seek, and that is the whole point.**
+// The core answers questions by handing a shell the entire box and letting
+// it search — 3.5 MB and 39 ms at 6,400 notes, on every refresh, whatever
+// is on screen. A question asked here costs what its ANSWER costs.
+
+fn ids(rows: impl Iterator<Item = Result<Vec<u8>, rusqlite::Error>>) -> Result<Vec<EntityId>, rusqlite::Error> {
+    let mut out = Vec::new();
+    for row in rows {
+        let bytes = row?;
+        if bytes.len() == 16 {
+            let mut id = [0u8; 16];
+            id.copy_from_slice(&bytes);
+            out.push(EntityId(id));
+        }
+    }
+    Ok(out)
+}
+
+/// Everything whose `prop` cell holds exactly this value — every task,
+/// everything in Work, every note mentioning Anna.
+///
+/// **One live value is not assumed.** A contended register has two rows
+/// and this returns the entity once per matching row, so callers that
+/// care de-duplicate; `DISTINCT` here would hide contention rather than
+/// report it.
+pub fn with_value(
+    conn: &Connection,
+    prop: EntityId,
+    value: &op::Value,
+) -> Result<Vec<EntityId>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT entity FROM cells WHERE prop = ?1 AND value = ?2 ORDER BY entity",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![&prop.0[..], op::encode_value(value)],
+        |r| r.get::<_, Vec<u8>>(0),
+    )?;
+    ids(rows)
+}
+
+/// Everything whose `prop` is a time inside `[from_ms, to_ms]`, soonest
+/// first. The calendar's window, Today's agenda and "due this week" are
+/// all this one query.
+pub fn in_window(
+    conn: &Connection,
+    prop: EntityId,
+    from_ms: i64,
+    to_ms: i64,
+) -> Result<Vec<(EntityId, i64)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT entity, at_ms FROM cells
+         WHERE prop = ?1 AND at_ms IS NOT NULL AND at_ms >= ?2 AND at_ms <= ?3
+         ORDER BY at_ms, entity",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![&prop.0[..], from_ms, to_ms], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (bytes, at) = row?;
+        if bytes.len() == 16 {
+            let mut id = [0u8; 16];
+            id.copy_from_slice(&bytes);
+            out.push((EntityId(id), at));
+        }
+    }
+    Ok(out)
+}
+
+/// Everything this entity holds, in one query.
+///
+/// **The N+1 this exists to stop** is the shape that made the core's file
+/// projection quadratic: a loop over entities, each asking for one cell.
+/// A surface builds a row from many properties, so it asks once.
+pub fn cells_of(
+    conn: &Connection,
+    entity: EntityId,
+) -> Result<Vec<(EntityId, Dot, op::Value)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT prop, device, seq, value FROM cells WHERE entity = ?1 ORDER BY prop, device, seq",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![&entity.0[..]], |r| {
+        Ok((
+            r.get::<_, Vec<u8>>(0)?,
+            r.get::<_, Vec<u8>>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, Vec<u8>>(3)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (p, d, s, v) = row?;
+        if p.len() != 16 || d.len() != 8 {
+            continue;
+        }
+        let mut prop = [0u8; 16];
+        prop.copy_from_slice(&p);
+        let mut device = [0u8; 8];
+        device.copy_from_slice(&d);
+        if let Some(value) = op::decode_value(&v) {
+            out.push((
+                EntityId(prop),
+                Dot { device: crate::id::DeviceId(device), seq: s as u64 },
+                value,
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// Every entity, oldest first — which is id order, because v7 ids carry
+/// their own timestamp (`id.rs`).
+pub fn all_entities(conn: &Connection) -> Result<Vec<EntityId>, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT id FROM entities ORDER BY id")?;
+    let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
+    ids(rows)
 }
