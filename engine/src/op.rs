@@ -250,6 +250,17 @@ pub fn decode_value(bytes: &[u8]) -> Option<Value> {
     }
 }
 
+/// One value's bytes on their own.
+///
+/// The body's fingerprint is FNV over exactly this (`content.rs`), which
+/// is why it is deterministic without a second rule: the encoding already
+/// has to give one logical value one byte sequence for the replay gate.
+pub fn value_bytes(v: &Value) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32);
+    put_value(&mut out, v);
+    out
+}
+
 fn put_value(out: &mut Vec<u8>, v: &Value) {
     match v {
         Value::Text(s) => {

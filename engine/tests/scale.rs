@@ -367,3 +367,94 @@ fn undoing_deep_costs_the_depth_not_the_box() {
     );
     assert!(ratio < 4.0, "ten deep is ten deep in either box: {ratio:.1}x");
 }
+
+// ---- content ----------------------------------------------------------
+
+/// **Saving a body must not notice the box**, and the compare-and-swap is
+/// the part that could make it: reading the current value to fingerprint
+/// it is a read on the write path, which is exactly the shape standing
+/// rule 2 exists to catch. `core/` re-serialised the whole value on every
+/// save AND walked the store to validate each link.
+#[test]
+fn one_save_stays_flat_as_the_box_grows() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+    let one_small = small.all_entities().unwrap()[0];
+    let one_large = large.all_entities().unwrap()[0];
+
+    // A different body each round: the no-op rule would otherwise make
+    // every save after the first commit nothing, and this would time the
+    // early return instead of a write.
+    let n = std::cell::Cell::new(0u64);
+    let ratio = best_ratio(
+        12,
+        || {
+            n.set(n.get() + 1);
+            let base = small.content(one_small).unwrap().1;
+            let spans = vec![Span::text(format!("draft {}", n.get()))];
+            time(|| {
+                small.set_content(one_small, spans.clone(), base, 1_787_400_000_000).unwrap();
+            })
+        },
+        || {
+            let base = large.content(one_large).unwrap().1;
+            let spans = vec![Span::text(format!("draft {}", n.get()))];
+            time(|| {
+                large.set_content(one_large, spans.clone(), base, 1_787_400_000_000).unwrap();
+            })
+        },
+    );
+    assert!(ratio < 4.0, "one save must not notice the box: {ratio:.1}x");
+}
+
+/// And a body full of links costs its links, not the box.
+///
+/// Every `[[…]]` is checked against the box before the save lands — a
+/// reference to nothing is not content — so this is the loop that would
+/// quietly become "per link, scan everything".
+#[test]
+fn checking_a_bodys_links_costs_the_links_not_the_box() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+    let linky = |e: &Engine| -> Vec<Span> {
+        e.all_entities().unwrap().into_iter().take(20).map(Span::Ref).collect()
+    };
+    let small_spans = linky(&small);
+    let large_spans = linky(&large);
+    let one_small = small.all_entities().unwrap()[0];
+    let one_large = large.all_entities().unwrap()[0];
+
+    // **A DIFFERENT body every round**, and the first version of this
+    // test did not do that. The no-op rule returns before the link check
+    // — `set_content` reads the current value, compares, and leaves — so
+    // saving the same twenty links twelve times measured the early
+    // return eleven times out of twelve. `best_ratio` takes the best
+    // round, so it measured nothing at all, and stayed green with the
+    // check replaced by a full scan of the box.
+    let n = std::cell::Cell::new(0u64);
+    let t = 1_787_400_000_000u64;
+    let with = |links: &[Span], n: u64| {
+        let mut v = vec![Span::text(format!("draft {n}"))];
+        v.extend_from_slice(links);
+        v
+    };
+    let ratio = best_ratio(
+        12,
+        || {
+            n.set(n.get() + 1);
+            let base = small.content(one_small).unwrap().1;
+            let spans = with(&small_spans, n.get());
+            time(|| {
+                small.set_content(one_small, spans.clone(), base, t).unwrap();
+            })
+        },
+        || {
+            let base = large.content(one_large).unwrap().1;
+            let spans = with(&large_spans, n.get());
+            time(|| {
+                large.set_content(one_large, spans.clone(), base, t).unwrap();
+            })
+        },
+    );
+    assert!(ratio < 4.0, "twenty links is twenty links in either box: {ratio:.1}x");
+}

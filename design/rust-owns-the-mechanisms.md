@@ -318,12 +318,12 @@ replacement passes.
           (`create`/`set`/`add`/`remove`/`trash`/`restore`/`declare`) and
           no FFI verb reaches any of them. Gaps, measured 2026-09-13:
           **undo** (`Group.reverses` had been in the op format since
-          Phase 2 with nothing writing it — **done**, `engine/src/undo.rs`);
-          **content** (the engine holds it as one text cell; `core/`
-          holds spans, a compare-and-swap fingerprint and a history);
-          files, `rename_value`, the clerk's accept/reject, and
-          query/lex/search — all of which live in `services/`, written
-          against `core::Store`.
+          Phase 2 with nothing writing it — **done**,
+          `engine/src/undo.rs`); **content** (**done** —
+          `Value::Rich` in the format, `engine/src/content.rs` for the
+          save; history is what remains of it); files, `rename_value`,
+          the clerk's accept/reject, and query/lex/search — all of which
+          live in `services/`, written against `core::Store`.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.
@@ -336,6 +336,22 @@ replacement passes.
         and bounded by the undo depth rather than the box. Three cost
         tests hold that shape (`engine/tests/scale.rs`); made eager on
         purpose, all three fail at 7.5x.
+
+        **Content is a value kind, not JSON in a text cell.**
+        `Value::Rich(Vec<Span>)`, hand-encoded like the rest of the
+        format: a serde document nested inside it would be the
+        derive-drift defect of `op-format.md` §1 one layer down and out
+        of sight, and the fold could not see the refs a body carries.
+        The converter stopped flattening bodies to markdown in the same
+        change — with blocks that is a downgrade, not a conversion, and
+        it turned a link into its target's name in brackets.
+
+        The save is `core/`'s contract exactly, compare-and-swap on a
+        fingerprint with no force flag, because the shell already speaks
+        it. The fingerprint is FNV over this crate's own encoding rather
+        than over the text: two documents differing only in their marks
+        would otherwise fingerprint alike, and a save that dropped every
+        bold would pass the guard.
 
         It also has a rule `core/` never needed: **undo is what you did
         on this device.** One history made the question moot; a box

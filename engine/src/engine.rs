@@ -185,6 +185,11 @@ impl Engine {
         self.hold.len()
     }
 
+    /// Does the box hold this thing? A trashed one still does.
+    pub fn exists(&self, id: EntityId) -> Result<bool, LogError> {
+        Ok(view::exists(&self.conn, id)?)
+    }
+
     pub fn entity_count(&self) -> Result<u64, LogError> {
         Ok(view::entity_count(&self.conn)?)
     }

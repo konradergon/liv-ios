@@ -289,6 +289,21 @@ pub fn cell(
     Ok(out)
 }
 
+/// Does the box hold this thing at all?
+///
+/// Not "is it live" — a trashed entity exists. This is the question
+/// `set_content` asks of a `[[link]]`'s target: a link to something in
+/// the trash is a link to something that still exists, and emptying a
+/// note's neighbour must not be a reason this note's save fails.
+pub fn exists(conn: &Connection, id: EntityId) -> Result<bool, rusqlite::Error> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entities WHERE id = ?1",
+        rusqlite::params![&id.0[..]],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 pub fn entity_count(conn: &Connection) -> Result<u64, rusqlite::Error> {
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))?;
     Ok(n as u64)
