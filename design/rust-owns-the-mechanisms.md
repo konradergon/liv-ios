@@ -261,14 +261,35 @@ replacement passes.
         construction — and the distinction is worth having whatever
         happens next.
      3. **Name the written form.** THE ID IS NOT INTERNAL, and nothing in
-        the tree said so. It leaves memory in five places a compiler
+        the tree said so. It leaves memory in six places a compiler
         cannot see, each a string interpolation that stays valid whatever
         the format becomes: the editor's `[[123]]` token **inside a
         note's own text**; a `related` cell's `#123` **inside the box**;
         five `UserDefaults` keys holding every saved plane; the outbox
         ledger's JSON keys; a shared note's filename. One function now,
         not twenty interpolations.
-     4. Flip the alias to `LivID` and answer what the compiler then asks.
+     4. **Flip the alias**, so `LivEntityID` IS sixteen bytes in all 22
+        files, and answer what the compiler then asks. `LivID` grows a
+        transitional `core` half — `init(core:)`, `.core`, an integer
+        literal, and a decoder that takes a JSON number as well as hex —
+        so every `liv_*_at` verb and the snapshot still take it; all of
+        it has slice 5 as its deletion date (standing rule 7). The
+        `UInt64` → `LivID` conversion happens in ONE place, `actId`.
+
+        This is where the rename pays: slice 2 had renamed two things
+        wrongly, both onto the word rather than the meaning, and both
+        would have been silent before the flip. `setContent`'s `base` is
+        a content fingerprint for a compare-and-swap, and History's
+        `restoring`/`refused` hold the LOG'S SEQ. Slice 4 also found a
+        SIXTH written form that slice 3 missed — the active workspace is
+        a `UserDefaults` integer VALUE, not a key — and `UserDefaults`
+        returns 0 for a missing key, a key holding a string and a key
+        holding an unreadable number alike, so a format change there
+        would have read as "you are on All", not as a fault.
+
+        One thing changed shape on the evidence: the sentinel for "no
+        id" is `.absent`, not `.none`, because `Optional` already has a
+        `.none` and `entity ?? .none` would have resolved to that one.
      5. Swap the data source.
 5. **Delete `core/`, the old FFI verbs, and the snapshot builder.** No
    feature flag, no parallel period beyond stage 4 (standing rule 7).

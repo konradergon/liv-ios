@@ -6,14 +6,24 @@
 // plane, the outbox. That type is the whole of what stands between the
 // app and the engine (`design/rust-owns-the-mechanisms.md` §5, stage 4b).
 //
-// **This is slice one of three, and it touches nothing that draws.** Only
-// the new seam's own rows use it, so the type's shape — its Codable form,
-// its hashing, its ordering — gets a real build before 236 sites move to
-// it. The other two slices:
+// **Slice 4 flipped it.** `LivEntityID` IS this type now, everywhere —
+// the navigation chain, the editor, the plane, the outbox. The four
+// slices behind that, and the one still ahead:
 //
-//   2. `EntityRow.id` and the snapshot path become `LivID`. The
-//      mechanical one; the compiler finds every site.
-//   3. The data source swaps from the snapshot to the engine verbs.
+//   1. The type itself, used only by the new seam's own rows, so its
+//      Codable form, hashing and ordering got a real build first.
+//   2. Every `UInt64` that MEANT an id was renamed to `LivEntityID`.
+//      224 sites said `UInt64` and about ten meant a fingerprint, a seq
+//      or a stamp; nothing distinguished them. (One of those ten was
+//      renamed wrongly — `setContent`'s `base` is a content fingerprint
+//      — and slice 4 is where the compiler would have said so.)
+//   3. The written forms, below: an id leaves memory in six places a
+//      compiler cannot see.
+//   4. The alias flips and `LivID` carries a `core` half so the old ABI
+//      still takes it.
+//   5. The data source swaps to the engine verbs, and the `core` half —
+//      `init(core:)`, `.core`, `ExpressibleByIntegerLiteral`, the
+//      number wire form — goes with it.
 //
 // **Two words, not sixteen bytes in a tuple.** Swift has no fixed-size
 // array, and a 16-tuple is neither `Hashable` nor pleasant. Two `UInt64`s
@@ -24,58 +34,99 @@
 
 import Foundation
 
-/// **What the shell calls a thing.**
+/// **What the shell calls a thing.** Sixteen bytes, as of slice 4.
 ///
-/// Today it is `UInt64`, because that is what `core/` ids are and what the
-/// snapshot sends. Slice 3 points it at `LivID`, and the compiler then
-/// names every site that does something a number can do and an id cannot
-/// — a literal `0`, `.max`, arithmetic, a `String` parse.
-///
-/// **The rename was the point of slice 2**, not the alias. 224 sites said
-/// `UInt64` and about ten of them meant something else entirely: a content
-/// fingerprint, the log's seq, a recency key, a wall-clock stamp. Nothing
-/// distinguished them, so any sweep over the type would have caught all of
-/// them, and a fingerprint quietly turned into an id is the kind of bug
-/// that shows up as the wrong note opening a month later. Now the name
-/// says which is which, and that is worth having whatever happens next.
-typealias LivEntityID = UInt64
+/// The alias stays rather than being spelled away, because it is the one
+/// line that says what the shell's id IS — and because the rename it came
+/// from was the point, not the indirection. 224 sites said `UInt64` and
+/// about ten meant something else entirely: a content fingerprint, the
+/// log's seq, a recency key, a wall-clock stamp. A fingerprint quietly
+/// turned into an id is the kind of bug that shows up as the wrong note
+/// opening a month later.
+typealias LivEntityID = LivID
 
 /// **An id written DOWN.**
 ///
 /// The type is not internal, and finding that out was the whole of slice
-/// 3. An id leaves the app's memory in five places, and a compiler cannot
-/// see any of them, because each is a string interpolation that stays
-/// valid whatever the format becomes:
+/// 3 and the first thing slice 4 found. An id leaves the app's memory in
+/// SIX places, and a compiler cannot see any of them, because each is a
+/// string interpolation or a plain integer that stays valid whatever the
+/// format becomes:
 ///
 /// * the editor's `[[123]]` token, **inside a note's own text**;
 /// * a `related` cell's `#123`, **inside the box**;
 /// * five `UserDefaults` keys (`desk.v3.123`), which hold every saved
 ///   plane and desk position;
 /// * the outbox ledger's JSON dictionary keys;
-/// * a shared note's filename.
+/// * a shared note's filename;
+/// * and a SIXTH that slice 3 missed and slice 4 found — the active
+///   workspace, stored as a `UserDefaults` integer VALUE (see `stored`
+///   below). A missed one looks like "you are on All", not like a fault.
 ///
 /// A silent format change in any of those is not a bug that shows up in a
 /// build. It is every `[[…]]` in every note ceasing to resolve, and every
 /// saved plane orphaned, discovered later.
 ///
-/// So the format is ONE function now rather than nine interpolations,
-/// and slice 4 changes it in one place — or deliberately does not, which
-/// is the likelier answer for anything already on disk.
+/// So the format is ONE function rather than nine interpolations, and a
+/// change to it happens in one place — or deliberately does not, which is
+/// the answer for everything already on disk, and was.
 enum LivIDText {
-    /// The written form. Decimal, which is what every one of those five
-    /// places already holds.
+    /// The written form. **Decimal, unchanged** — it is what all six of
+    /// those places already hold, and changing it would unlink every note
+    /// and orphan every saved plane at once.
     static func written(_ id: LivEntityID) -> String {
-        String(id)
+        String(id.core)
     }
 
     /// And read back. `nil` for anything that is not one — a token that
     /// does not parse is text, not a broken link.
     static func read(_ text: some StringProtocol) -> LivEntityID? {
-        LivEntityID(text)
+        UInt64(text).map(LivEntityID.init(core:))
+    }
+
+    // ---- a SIXTH place, found by slice 4 --------------------------------
+    //
+    // The active workspace is not a `UserDefaults` KEY like the desk's
+    // planes — it is a `UserDefaults` INTEGER VALUE, written in one file
+    // and read in two. Nothing in the list above covered it, and nothing
+    // would have said so: `UserDefaults.integer(forKey:)` returns 0 for a
+    // key that is missing, a key holding a string, and a key holding a
+    // number too big for an `Int` alike, so a format change here reads as
+    // "you are on All" rather than as a fault.
+
+    /// The active workspace, or `.absent` when there isn't one. Decimal,
+    /// like every other written form, for the same reason.
+    static func stored(
+        forKey key: String, in defaults: UserDefaults = .standard
+    ) -> LivEntityID {
+        let n = defaults.integer(forKey: key)
+        return n > 0 ? LivEntityID(core: UInt64(n)) : .absent
+    }
+
+    static func store(
+        _ id: LivEntityID, forKey key: String, in defaults: UserDefaults = .standard
+    ) {
+        defaults.set(Int(id.core), forKey: key)
     }
 }
 
-struct LivID: Hashable, Comparable, Codable, CustomStringConvertible {
+struct LivID: Hashable, Comparable, Codable, CustomStringConvertible,
+    ExpressibleByIntegerLiteral
+{
+    // **`ExpressibleByIntegerLiteral` IS TRANSITIONAL, and it has the same
+    // deletion date as `core`.** It exists so that slice 4 — which cannot
+    // compile in halves, since the fixes and the flip must land together —
+    // does not also have to rewrite every `= 0`, `?? 0`, `!= 0` and
+    // `== 4155` in twenty-two files on a machine with no compiler. While
+    // the shell reads `core/` ids, an integer literal genuinely IS one.
+    //
+    // It is a footgun kept on purpose and briefly: it lets a number stand
+    // where an id belongs, which is exactly what this whole refactor is
+    // ending. Slice 5 removes it and the compiler then names the handful
+    // of sites that were leaning on it.
+    init(integerLiteral value: UInt64) {
+        self.init(core: value)
+    }
     /// Bytes 0–7, big-endian. The v7 timestamp lives in the top 48 bits,
     /// which is why this one leads.
     let hi: UInt64
@@ -125,6 +176,49 @@ struct LivID: Hashable, Comparable, Codable, CustomStringConvertible {
 
     var description: String { hex }
 
+    // ---- the core box's ids, while the core box is the source ---------
+    //
+    // **A TRANSITIONAL HALF OF THIS TYPE, and it has a deletion date**
+    // (standing rule 7): it goes when slice 5 swaps the data source to the
+    // engine and the shell stops seeing a `core/` id at all.
+    //
+    // Until then the snapshot sends a `UInt64` and every `liv_*_at` verb
+    // takes one, so a `LivID` has to be able to BE one. It holds it in
+    // `lo` with `hi` zero — which cannot collide with an engine id, whose
+    // `hi` carries a v7 millisecond and is never zero for anything minted
+    // after 1970.
+
+    /// A `core/` id, as an id.
+    init(core: UInt64) {
+        self.init(hi: 0, lo: core)
+    }
+
+    /// And back, for the ABI. Meaningless for an engine id, which is why
+    /// slice 5 deletes it rather than leaving it to be misread.
+    var core: UInt64 { lo }
+
+    /// The absent id. `0` in the old ABI, where it means BOTH "no id" and
+    /// "the verb failed" — a conflation the new seam's error channel
+    /// exists to end.
+    ///
+    /// **Not called `none`**, though that is the word: `Optional` already
+    /// has a `.none`, so `entity ?? .none` would resolve to the optional's
+    /// and quietly hand back a `LivEntityID?`. A name that only one of the
+    /// two types has can only mean that one.
+    static let absent = LivID(hi: 0, lo: 0)
+
+    var isAbsent: Bool { self == LivID.absent }
+
+    /// The scratch workspace's sentinel, which was `UInt64.max`.
+    ///
+    /// **A `core` id, not sixteen ones**, and the self-check is what said
+    /// so: the sentinel is interpolated into three `UserDefaults` keys
+    /// (`DeskPlanes.forget`), so it has to survive `LivIDText` like any
+    /// other id — and the written form can only carry the low word. `hi:
+    /// 0` also keeps it out of the engine's range, where a v7 id's high
+    /// word is a millisecond.
+    static let max = LivID(core: .max)
+
     /// Byte order, which for a v7 id is creation order.
     static func < (a: LivID, b: LivID) -> Bool {
         a.hi == b.hi ? a.lo < b.lo : a.hi < b.hi
@@ -137,13 +231,22 @@ struct LivID: Hashable, Comparable, Codable, CustomStringConvertible {
     // is what `ffi/src/surfaces.rs` sends and what a person reading a
     // payload would expect.
 
+    /// **Two wire forms, for as long as there are two sources.** The new
+    /// seam sends 32 hex characters; the snapshot sends a JSON number,
+    /// because a `core/` id is a `UInt64`. Accepting both is what lets one
+    /// type serve both paths through slices 4 and 5 — and the number half
+    /// goes with `core`, when the snapshot does.
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
+        if let number = try? container.decode(UInt64.self) {
+            self.init(core: number)
+            return
+        }
         let raw = try container.decode(String.self)
         guard let parsed = LivID(hex: raw) else {
             throw DecodingError.dataCorruptedError(
                 in: container,
-                debugDescription: "not a 32-character hex id: \(raw)")
+                debugDescription: "neither a number nor a 32-character hex id: \(raw)")
         }
         self = parsed
     }
@@ -223,6 +326,31 @@ func livIdSelfCheck() -> [String] {
     if LivIDText.written(4155) != "4155" {
         fail.append("the written form is not decimal — every [[…]] token just moved")
     }
+    // The scratch workspace's sentinel goes into three UserDefaults keys.
+    // It round-trips only because it is a `core` id; sixteen ones would
+    // not, and nothing else in the app would have said so.
+    if LivIDText.read(LivIDText.written(LivEntityID.max)) != LivEntityID.max {
+        fail.append("the scratch sentinel does not survive its own written form")
+    }
+
+    // The stored form, in a scratch suite of its own so the real key is
+    // never touched. `.absent` is the claim that matters here: it is
+    // what "you are on All" means, and it must not come from a key that
+    // holds something unreadable.
+    let defaults = UserDefaults(suiteName: "liv.livid.selfcheck") ?? .standard
+    defaults.removeObject(forKey: "k")
+    if LivIDText.stored(forKey: "k", in: defaults) != .absent {
+        fail.append("an absent key is not the absent id")
+    }
+    LivIDText.store(4155, forKey: "k", in: defaults)
+    if LivIDText.stored(forKey: "k", in: defaults) != 4155 {
+        fail.append("the stored form did not come back")
+    }
+    LivIDText.store(.absent, forKey: "k", in: defaults)
+    if LivIDText.stored(forKey: "k", in: defaults) != .absent {
+        fail.append("the absent id did not store as absent")
+    }
+    defaults.removeObject(forKey: "k")
 
     // The wire form is ONE STRING, not an object.
     if let id = LivID(hex: "0199a1b2c3d47000800a0b0c0d0e0f10") {

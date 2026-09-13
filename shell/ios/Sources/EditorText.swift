@@ -531,7 +531,7 @@ enum MarkStyler {
                 }
                 if let id = refId(line, whole) {
                     storage.addAttribute(
-                        .livRef, value: NSNumber(value: id), range: abs(whole))
+                        .livRef, value: NSNumber(value: id.core), range: abs(whole))
                 }
                 if let name, name.length > 0 {
                     storage.addAttributes(
@@ -1555,7 +1555,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // A tap on a link follows it (Obsidian's shipped iOS grammar —
             // long-press still places the caret through the native loupe).
             if let id = hit(.livRef, at: point)?.value {
-                parent.onOpenRef(LivEntityID(truncating: id))
+                parent.onOpenRef(LivEntityID(core: id.uint64Value))
                 return
             }
             guard let result = EditOps.toggleTask(view.text, at: characterIndex(of: point))

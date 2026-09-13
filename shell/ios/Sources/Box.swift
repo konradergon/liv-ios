@@ -55,7 +55,7 @@ struct NoteTaskRow: Decodable, Identifiable {
 /// fingerprint rides back on accept/reject — a consent is to a PROPOSAL,
 /// never a position, so a stale click is refused, not misapplied.
 struct ProposalRow: Decodable, Identifiable {
-    var id: String { "\(entity ?? 0).\(fingerprint ?? 0)" }
+    var id: String { "\(LivIDText.written(entity ?? .absent)).\(fingerprint ?? 0)" }
     var entity: LivEntityID? = nil
     var ordinal: UInt32? = nil
     var fingerprint: UInt64? = nil
@@ -523,13 +523,20 @@ final class BoxModel: ObservableObject {
     }
 
     /// An id-returning verb; 0 = failure. `done` always receives the id.
-    private func actId(_ verb: String, _ done: ((LivEntityID) -> Void)?, _ work: @escaping () -> LivEntityID) {
+    ///
+    /// **The ONE place a `core/` id becomes a `LivID`.** Every creating
+    /// verb in the old ABI returns a raw `UInt64`, so the conversion
+    /// belongs here rather than at nine call sites — and when slice 5
+    /// swaps the source, this is the one line that changes.
+    private func actId(
+        _ verb: String, _ done: ((LivEntityID) -> Void)?, _ work: @escaping () -> UInt64
+    ) {
         boxQueue.async {
-            let id = work()
-            if id == 0 { self.verbFailed(verb) }
+            let id = LivEntityID(core: work())
+            if id.isAbsent { self.verbFailed(verb) }
             DispatchQueue.main.async {
                 done?(id)
-                if id != 0 { self.refresh() }
+                if !id.isAbsent { self.refresh() }
             }
         }
     }
@@ -554,7 +561,7 @@ final class BoxModel: ObservableObject {
     }
 
     func set(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
-        act("set", done) { liv_set_at(self.path, id, property, value) == 1 }
+        act("set", done) { liv_set_at(self.path, id.core, property, value) == 1 }
     }
 
     /// One span write (the mirror contract). end <= 0 = no end (plain date);
@@ -564,17 +571,17 @@ final class BoxModel: ObservableObject {
         done: ((Bool) -> Void)? = nil
     ) {
         act("setSpan", done) {
-            liv_set_span_at(self.path, id, property, start, end <= 0 ? 0 : end, dateOnly ? 1 : 0) == 1
+            liv_set_span_at(self.path, id.core, property, start, end <= 0 ? 0 : end, dateOnly ? 1 : 0) == 1
         }
     }
 
     func setType(_ id: LivEntityID, _ type: String, done: ((Bool) -> Void)? = nil) {
-        act("setType", done) { liv_set_type_at(self.path, id, type) == 1 }
+        act("setType", done) { liv_set_type_at(self.path, id.core, type) == 1 }
     }
 
     /// One cell of a multi-valued property — membership, never replace-all.
     func addCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
-        act("addCell", done) { liv_add_cell_at(self.path, id, property, value) == 1 }
+        act("addCell", done) { liv_add_cell_at(self.path, id.core, property, value) == 1 }
     }
 
     /// The librarian: by reference, never moves the file.
@@ -588,12 +595,12 @@ final class BoxModel: ObservableObject {
     /// mirror of addCell. `unset` clears the whole property instead.
     func removeCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
         act("removeCell", done) {
-            liv_remove_cell_at(self.path, id, property, value) == 1
+            liv_remove_cell_at(self.path, id.core, property, value) == 1
         }
     }
 
     func unset(_ id: LivEntityID, _ property: String) {
-        act("unset") { liv_unset_at(self.path, id, property) == 1 }
+        act("unset") { liv_unset_at(self.path, id.core, property) == 1 }
     }
 
     /// Put a trashed thing back — the inverse of `trash`, and the door
@@ -601,12 +608,12 @@ final class BoxModel: ObservableObject {
     /// the only recovery, and only while the trash was still the last
     /// transaction; after any other write the thing was unreachable.
     func restore(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
-        act("restore", done) { liv_restore_at(self.path, id) == 1 }
+        act("restore", done) { liv_restore_at(self.path, id.core) == 1 }
     }
 
     /// Soft, reversible, never cascades.
     func trash(_ id: LivEntityID) {
-        act("trash") { liv_trash_at(self.path, id) == 1 }
+        act("trash") { liv_trash_at(self.path, id.core) == 1 }
     }
 
     // MARK: workspaces + saved filters (M4)
@@ -618,14 +625,14 @@ final class BoxModel: ObservableObject {
         name: String, parent: LivEntityID = 0, done: ((LivEntityID) -> Void)? = nil
     ) {
         actId("createWorkspace", done) {
-            liv_create_workspace_at(self.path, name, parent)
+            liv_create_workspace_at(self.path, name, parent.core)
         }
     }
 
     /// Trash ONE workspace. Deletion never cascades: children keep their
     /// dangling `parent` and the shell re-roots them.
     func trashWorkspace(_ id: LivEntityID) {
-        act("trashWorkspace") { liv_trash_workspace_at(self.path, id) == 1 }
+        act("trashWorkspace") { liv_trash_workspace_at(self.path, id.core) == 1 }
     }
 
     /// Save a filter: a view entity carrying the query string. Same
@@ -652,7 +659,7 @@ final class BoxModel: ObservableObject {
     /// 0 = refusal (unknown/trashed property, wrong kind, empty name).
     func addOption(_ property: LivEntityID, _ name: String, done: ((LivEntityID) -> Void)? = nil) {
         actId("addOption", done) {
-            liv_add_option_at(self.path, property, name)
+            liv_add_option_at(self.path, property.core, name)
         }
     }
 
@@ -697,14 +704,14 @@ final class BoxModel: ObservableObject {
     /// area, 2026-09-09) and must not write into a refusal.
     func accept(_ p: ProposalRow, done: ((Bool) -> Void)? = nil) {
         act("accept", done) {
-            liv_accept_at(self.path, p.entity ?? 0, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
+            liv_accept_at(self.path, (p.entity ?? .absent).core, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
         }
     }
 
     /// Decline ONE proposal — persisted; the clerk never re-asks.
     func reject(_ p: ProposalRow) {
         act("reject") {
-            liv_reject_at(self.path, p.entity ?? 0, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
+            liv_reject_at(self.path, (p.entity ?? .absent).core, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
         }
     }
 
@@ -804,7 +811,7 @@ final class BoxModel: ObservableObject {
     func content(_ id: LivEntityID, done: @escaping (ContentDoc?) -> Void) {
         let path = self.path
         boxQueue.async {
-            guard let raw = liv_content_at(path, id) else {
+            guard let raw = liv_content_at(path, id.core) else {
                 self.verbFailed("content")
                 DispatchQueue.main.async { done(nil) }
                 return
@@ -835,7 +842,7 @@ final class BoxModel: ObservableObject {
     func history(_ id: LivEntityID, done: @escaping ([ContentVersion]) -> Void) {
         let path = self.path
         boxQueue.async {
-            guard let raw = liv_content_history_at(path, id) else {
+            guard let raw = liv_content_history_at(path, id.core) else {
                 self.verbFailed("history")
                 DispatchQueue.main.async { done([]) }
                 return
@@ -860,7 +867,7 @@ final class BoxModel: ObservableObject {
     func links(_ id: LivEntityID, done: @escaping (LinkSet) -> Void) {
         let path = self.path
         boxQueue.async {
-            guard let raw = liv_links_at(path, id) else {
+            guard let raw = liv_links_at(path, id.core) else {
                 self.verbFailed("links")
                 DispatchQueue.main.async { done(.empty) }
                 return
@@ -885,13 +892,13 @@ final class BoxModel: ObservableObject {
     /// `done` receives (status, freshFingerprint): 1 saved (fresh valid),
     /// -1 STALE (the base moved — re-read, never overwrite), 0 busy/invalid.
     func setContent(
-        _ id: LivEntityID, spansJson: String, base: LivEntityID,
+        _ id: LivEntityID, spansJson: String, base: UInt64,
         done: @escaping (Int32, UInt64) -> Void
     ) {
         let path = self.path
         boxQueue.async {
             var fresh: UInt64 = 0
-            let status = liv_set_content_at(path, id, spansJson, base, &fresh)
+            let status = liv_set_content_at(path, id.core, spansJson, base, &fresh)
             if status == 0 { self.verbFailed("setContent") }
             DispatchQueue.main.async {
                 done(status, fresh)
@@ -911,7 +918,7 @@ final class BoxModel: ObservableObject {
     /// refresh rather than guess.
     func resyncFile(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
         boxQueue.async {
-            let status = liv_resync_file_at(self.path, id)
+            let status = liv_resync_file_at(self.path, id.core)
             DispatchQueue.main.async {
                 done?(status == 1)
                 if status == 1 { self.refresh() }

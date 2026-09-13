@@ -685,7 +685,7 @@ final class DeskModel: ObservableObject {
     /// were in is still loaded, one tap away as the first row of Docs.
     init() {
         planes = DeskPlanes(
-            workspace: LivEntityID(UserDefaults.standard.integer(forKey: WorkspaceModel.activeKey)))
+            workspace: LivIDText.stored(forKey: WorkspaceModel.activeKey))
         state = .today
     }
 

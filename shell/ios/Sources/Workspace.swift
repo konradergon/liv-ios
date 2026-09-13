@@ -150,7 +150,7 @@ final class WorkspaceModel: ObservableObject {
     static let activeKey = "workspace.active"
 
     init() {
-        activeId = LivEntityID(UserDefaults.standard.integer(forKey: Self.activeKey))
+        activeId = LivIDText.stored(forKey: Self.activeKey)
     }
 
     /// Fold a fresh snapshot in. An active workspace that left the box falls
@@ -299,7 +299,7 @@ final class WorkspaceModel: ObservableObject {
     func setActive(_ id: LivEntityID) {
         activeId = id
         activeFilterId = nil
-        UserDefaults.standard.set(Int(id), forKey: Self.activeKey)
+        LivIDText.store(id, forKey: Self.activeKey)
     }
 
     /// The lens, straight off the wire — the box is the only source.

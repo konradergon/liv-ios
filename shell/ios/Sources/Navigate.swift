@@ -408,7 +408,7 @@ func livPlacesSelfCheck() -> [String] {
     check("re-opening the open document adds no step", desk.returns.count == before)
 
     // The stack is a stack, not a diary.
-    for id in 100..<160 { desk.open(LivEntityID(id)) }
+    for id in 100..<160 { desk.open(LivEntityID(core: UInt64(id))) }
     check("the way back is capped", desk.returns.count <= 20, "\(desk.returns.count)")
 
     // THE FORWARD LEG (2026-08-23, with the bar's `›` key).
@@ -432,7 +432,7 @@ func livPlacesSelfCheck() -> [String] {
     fresh.go(.calendar)
     check("a new move clears the way forward", fresh.forward == nil, "\(String(describing: fresh.forward))")
     // The forward stack is capped like the back one.
-    for id in 200..<260 { fresh.open(LivEntityID(id)) }
+    for id in 200..<260 { fresh.open(LivEntityID(core: UInt64(id))) }
     for _ in 0..<60 { fresh.goBack() }
     check("the way forward is capped", fresh.returns.forwardCount <= 20, "\(fresh.returns.forwardCount)")
     DeskModel.forgetScratchForSelfCheck()

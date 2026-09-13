@@ -37,10 +37,13 @@ struct HistoryCard: View {
     @State private var versions: [ContentVersion] = []
     @State private var loaded = false
     /// The seq being written back, so a double tap is one restore.
-    @State private var restoring: LivEntityID?
+    /// **The LOG'S seq, not an entity id** — slice 2's sweep renamed it
+    /// to `LivEntityID` on the strength of the word, and slice 4's flip
+    /// is what said so.
+    @State private var restoring: UInt64?
     /// A restore the box refused — a moved base twice over, or a busy
     /// box. Said once, in the row, rather than as a dialog.
-    @State private var refused: LivEntityID?
+    @State private var refused: UInt64?
 
     var body: some View {
         ScrollView {
