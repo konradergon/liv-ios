@@ -57,9 +57,6 @@ struct Fx {
     task_type: Id,
     note_type: Id,
     done_opt: Id,
-    // The owner's own repro (todo.org, 2026-09-07): a note FILED under an
-    // area, found by typing the area's name.
-    area: Id,
     testjunk_opt: Id,
     first_note: Id,
 }
@@ -174,7 +171,7 @@ fn fixture() -> Fx {
     Fx {
         store, r_exact, r_prefix, r_word, r_cell, r_body, anna, meeting,
         oldreport, laundry, grocery, finish, early, late, status, due,
-        archived, task_type, note_type, done_opt, area, testjunk_opt,
+        archived, task_type, note_type, done_opt, testjunk_opt,
         first_note,
     }
 }
