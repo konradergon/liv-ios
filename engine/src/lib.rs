@@ -24,6 +24,7 @@ pub mod id;
 pub mod log;
 pub mod model;
 pub mod op;
+pub mod query;
 pub mod rename;
 pub mod rich;
 pub mod undo;
@@ -38,6 +39,7 @@ pub use files::{hash_file, FileError, Resync};
 pub use model::{
     area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,
 };
+pub use query::{lex, Constraint, Op as QueryOp, Query, Sort, Term, TermOp};
 pub use rename::RenameError;
 pub use write::{action, PropShape, WriteError};
 pub use id::{DeviceId, Dot, EntityId, Hlc, IdGen};

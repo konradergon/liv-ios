@@ -575,3 +575,59 @@ fn names(n: u64) -> String {
         format!("Acme {n}")
     }
 }
+
+// ---- running a query --------------------------------------------------
+
+/// **`core/`'s `run` says it in a comment**: *"A linear scan — the simplest
+/// thing; an index earns its place when a measurement demands it."* The
+/// measurement demanded it. That scan is what made a snapshot cost the box
+/// rather than the screen, and this is the test that keeps it paid for.
+#[test]
+fn a_query_with_an_equals_costs_its_answer_not_the_box() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+    // Ten matches in each box, so both answers are the same size.
+    for (e, t) in [(&mut small, 2_000u64), (&mut large, 3_000u64)] {
+        for (i, id) in e.all_entities().unwrap().into_iter().take(10).enumerate() {
+            e.set(id, prop::AREA, Value::Ref(area::WORK), t + i as u64).unwrap();
+        }
+    }
+    let work = Query {
+        constraints: vec![Constraint {
+            property: prop::AREA,
+            op: QueryOp::Equals(Value::Ref(area::WORK)),
+        }],
+        ..Default::default()
+    };
+
+    let ratio = best_ratio(
+        12,
+        || time(|| assert_eq!(small.run(&work).unwrap().len(), 10)),
+        || time(|| assert_eq!(large.run(&work).unwrap().len(), 10)),
+    );
+    assert!(ratio < 4.0, "ten matches is ten matches in either box: {ratio:.1}x");
+}
+
+/// And a query with NO equality is honestly linear — the one case that
+/// still reads everything, stated rather than hidden.
+#[test]
+fn a_query_with_nothing_to_seek_on_is_linear_and_says_so() {
+    let small = box_of(500);
+    let large = box_of(5_000);
+    let anything = Query {
+        constraints: vec![Constraint { property: prop::AREA, op: QueryOp::Missing }],
+        ..Default::default()
+    };
+
+    let ratio = best_ratio(
+        6,
+        || time(|| { small.run(&anything).unwrap(); }),
+        || time(|| { large.run(&anything).unwrap(); }),
+    );
+    // Ten times the box, about ten times the work. Asserted as a CEILING
+    // so that a future change making it quadratic is caught, and as a
+    // FLOOR so that an index quietly added here is noticed and this
+    // comment stops being true.
+    assert!(ratio > 4.0, "this one really is linear; if it is not, say so: {ratio:.1}x");
+    assert!(ratio < 25.0, "linear, not quadratic: {ratio:.1}x");
+}

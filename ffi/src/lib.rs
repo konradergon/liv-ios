@@ -517,6 +517,43 @@ pub unsafe extern "C" fn liv_search_at(
 ///
 /// # Safety
 /// `raw_query` must be a valid NUL-terminated UTF-8 string.
+/// One lexed term, on the wire.
+///
+/// **The wire shape lives here, not in the engine.** `liv_engine::Term` is
+/// a plain Rust type with no serde: that crate's whole argument is that a
+/// derive macro must not decide what anything looks like from outside, and
+/// it holds for a JSON payload as much as for the on-disk format. Every
+/// other wire struct in this layer is written out the same way
+/// (`surfaces.rs`).
+#[derive(Serialize)]
+struct WireTerm {
+    op: &'static str,
+    key: String,
+    value: String,
+    raw: String,
+}
+
+impl From<&search::Term> for WireTerm {
+    fn from(t: &search::Term) -> WireTerm {
+        WireTerm {
+            // The same lowercase spellings serde derived before the type
+            // moved, so the shell's decoder is untouched.
+            op: match t.op {
+                search::TermOp::Equals => "equals",
+                search::TermOp::NotEquals => "notequals",
+                search::TermOp::AtMost => "atmost",
+                search::TermOp::Has => "has",
+                search::TermOp::No => "no",
+                search::TermOp::Is => "is",
+                search::TermOp::Text => "text",
+            },
+            key: t.key.clone(),
+            value: t.value.clone(),
+            raw: t.raw.clone(),
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn liv_lex(raw_query: *const c_char) -> *mut c_char {
     if raw_query.is_null() {
@@ -525,7 +562,8 @@ pub unsafe extern "C" fn liv_lex(raw_query: *const c_char) -> *mut c_char {
     let Ok(raw) = CStr::from_ptr(raw_query).to_str() else {
         return std::ptr::null_mut();
     };
-    match serde_json::to_string(&search::lex(raw)).ok().and_then(|s| CString::new(s).ok()) {
+    let terms: Vec<WireTerm> = search::lex(raw).iter().map(WireTerm::from).collect();
+    match serde_json::to_string(&terms).ok().and_then(|s| CString::new(s).ok()) {
         Some(s) => s.into_raw(),
         None => std::ptr::null_mut(),
     }
@@ -597,9 +635,10 @@ pub unsafe extern "C" fn liv_query_ids_at(
         #[derive(Serialize)]
         struct LensResult {
             ids: Vec<u64>,
-            terms: Vec<search::Term>,
+            terms: Vec<WireTerm>,
         }
-        let result = LensResult { ids, terms: search::lex(raw) };
+        let result =
+            LensResult { ids, terms: search::lex(raw).iter().map(WireTerm::from).collect() };
         let out = match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),

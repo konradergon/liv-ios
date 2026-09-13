@@ -328,6 +328,7 @@ name = "liv-services"
 version = "0.1.0"
 dependencies = [
  "liv-core",
+ "liv-engine",
  "liv-views",
  "pulldown-cmark",
  "serde",

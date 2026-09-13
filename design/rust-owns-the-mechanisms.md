@@ -322,10 +322,12 @@ replacement passes.
           `engine/src/undo.rs`); **content, with its history and its
           backlinks** (done); **`rename_value`** (done); **files** (done
           — and the converter stopped dropping them); **the clerk's
-          queue** (done). What is left is the clerk's SWEEP — six
-          proposers reading the words, ~800 lines in `services/` against
-          `core::Store` — and **query/lex/search**, which is the
-          grammar.
+          queue** (done); **the query grammar and running one**
+          (done — the lexer moved into the engine and `services/`
+          imports it back, so there is one parser rather than two).
+          What is left is the clerk's SWEEP (six proposers reading the
+          words, ~800 lines in `services/` against `core::Store`) and
+          **search's scoring and facets**, which sit over `run`.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.

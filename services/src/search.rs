@@ -74,91 +74,13 @@ pub struct Facet {
     pub values: Vec<FacetValue>,
 }
 
-/// What one token of the DSL is, before the store is consulted.
-///
-/// THE ONE TOKENISER. `parse_mode` consumes this rather than walking
-/// tokens itself, and the shell reads it back over the FFI instead of
-/// carrying a second lexer — which is what standing rule 4 asks for and
-/// what the phone violated with sixteen visible disagreements.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TermOp {
-    Equals,
-    NotEquals,
-    AtMost,
-    Has,
-    No,
-    Is,
-    /// A bare word, or anything unreadable. A REQUIRED word, never dropped
-    /// (owner, 2026-08-27: "typo shows nothing").
-    Text,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Term {
-    pub op: TermOp,
-    /// The property name as typed, with any leading `-` removed.
-    pub key: String,
-    pub value: String,
-    /// The token respelled canonically, so joining a term list reproduces
-    /// a query the parser reads back the same way.
-    pub raw: String,
-}
-
-/// Split a raw query into terms. No store, no resolution, no opinion about
-/// whether a property exists.
-pub fn lex(raw: &str) -> Vec<Term> {
-    tokenize(raw).iter().map(|t| classify(t)).collect()
-}
-
-fn classify(token: &str) -> Term {
-    let text = |t: &str| Term {
-        op: TermOp::Text,
-        key: String::new(),
-        value: t.to_string(),
-        raw: t.to_string(),
-    };
-    if let Some((key, val)) = split_qualifier(token, ':') {
-        let (op, key) = match key {
-            "is" => (TermOp::Is, key),
-            "has" => (TermOp::Has, key),
-            "no" => (TermOp::No, key),
-            _ => match key.strip_prefix('-') {
-                Some(bare) => (TermOp::NotEquals, bare),
-                None => (TermOp::Equals, key),
-            },
-        };
-        return Term { raw: spell(&op, key, val), op, key: key.to_string(), value: val.to_string() };
-    }
-    if let Some((key, val)) = split_qualifier(token, '<') {
-        return Term {
-            raw: format!("{key}<{val}"),
-            op: TermOp::AtMost,
-            key: key.to_string(),
-            value: val.to_string(),
-        };
-    }
-    text(token)
-}
-
-/// `key:value`, and where the quotes go when something carries a space.
-///
-/// The VALUE is quoted — `people:"Anna Karlsson"` — which is the spelling
-/// `tokenize`'s own documentation gives and the one already in the shell.
-/// A key with a space is the odd case, and there the WHOLE term is quoted
-/// instead, minus included: `"valid until:friday"`. Either way the
-/// tokenizer strips the quotes and keeps the spaces, so both arrive as one
-/// token and split correctly.
-fn spell(op: &TermOp, key: &str, value: &str) -> String {
-    let minus = if *op == TermOp::NotEquals { "-" } else { "" };
-    if key.contains(' ') {
-        return format!("\"{minus}{key}:{value}\"");
-    }
-    if value.contains(' ') {
-        return format!("{minus}{key}:\"{value}\"");
-    }
-    format!("{minus}{key}:{value}")
-}
+// **THE TOKENISER MOVED TO `liv-engine`** (`engine/src/query.rs`), and
+// this imports it back rather than keeping a copy. It is pure — no store,
+// no resolution — so it belongs in the crate with no dependencies above
+// it, where the engine's own surfaces can reach it too. Standing rule 4:
+// two parsers for one user-facing syntax is a defect, and for a while
+// there would have been two.
+pub use liv_engine::{lex, Term, TermOp};
 
 /// Which job the query is doing.
 ///
@@ -602,45 +524,7 @@ fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
     }
 }
 
-/// Split a raw query on whitespace — except that a double-quoted run keeps
-/// its spaces:
-/// `people:"Anna Karlsson"` is ONE token, `people:Anna Karlsson`, quotes
-/// stripped. The chip-click contract depends on it (the P11.5 review's
-/// live-reproduced high: without quoting, multi-word values split into a
-/// half-qualifier plus junk free-text terms). An unclosed quote runs
-/// tolerantly to the end of the input.
-fn tokenize(raw: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    for c in raw.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            c if c.is_whitespace() && !quoted => {
-                if !current.is_empty() {
-                    out.push(std::mem::take(&mut current));
-                }
-            }
-            c => current.push(c),
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
 
-/// Split a token at the first `sep` into a non-empty (key, value). Returns
-/// None when either side is empty, so a bare "http://x" or "key:" degrades
-/// to free text rather than a half-qualifier.
-fn split_qualifier(token: &str, sep: char) -> Option<(&str, &str)> {
-    let (key, val) = token.split_once(sep)?;
-    if key.is_empty() || val.is_empty() {
-        None
-    } else {
-        Some((key, val))
-    }
-}
 
 /// `is:<flag>` as an ordinary equality on the flag's own bool property.
 /// Every flag in a Lens comes through here, and so does any flag in a
