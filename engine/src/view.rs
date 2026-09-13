@@ -122,10 +122,35 @@ CREATE TABLE IF NOT EXISTS edits (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS edits_by_time ON edits(entity, at_ms);
+
+-- WHERE THIS DEVICE KEEPS A FILE. **Not derived, and not shared.**
+--
+-- Every other table here is a consequence of the log and is dropped and
+-- re-folded by `replay`. This one is the opposite: nothing in the log
+-- could rebuild it, because a path is device-local by nature. `core.md`
+-- core.md 14 records carrying a path IN the log as a model bug: a file synced
+-- from a laptop then arrives on a phone with a path that resolves to
+-- nothing and looks perfectly valid.
+--
+-- So it is deliberately outside `TABLES` (replay must not drop it) and
+-- outside `digest` (two devices holding the same file in different
+-- folders have not drifted).
+--
+-- Keyed by the HASH, not the entity: two entities holding the same bytes
+-- are the same file, and this answers WHAT, not WHICH.
+CREATE TABLE IF NOT EXISTS places (
+    hash BLOB NOT NULL PRIMARY KEY,
+    path TEXT NOT NULL
+) WITHOUT ROWID;
 ";
 
-/// Every table this module owns, newest dependency last. `rebuild` drops
-/// them in this order and the schema recreates them.
+/// Every DERIVED table, newest dependency last. `rebuild` drops them in
+/// this order and the schema recreates them.
+///
+/// **`places` is deliberately absent.** It is not derived from the log —
+/// no fold could put a device-local path back — so dropping it would
+/// simply lose it. That is the difference between a consequence and a
+/// fact, and this list is where it is enforced.
 const TABLES: &[&str] = &["edits", "links", "cells", "entities"];
 
 /// Fold one group into the view, inside the caller's transaction.
@@ -489,6 +514,29 @@ pub fn exists(conn: &Connection, id: EntityId) -> Result<bool, rusqlite::Error> 
         |r| r.get(0),
     )?;
     Ok(n > 0)
+}
+
+/// Where this device keeps the file with those bytes.
+pub fn path_of(conn: &Connection, hash: &[u8; 32]) -> Result<Option<String>, rusqlite::Error> {
+    Ok(conn
+        .query_row(
+            "SELECT path FROM places WHERE hash = ?1",
+            rusqlite::params![&hash[..]],
+            |r| r.get::<_, String>(0),
+        )
+        .ok())
+}
+
+pub fn remember_path(
+    conn: &Connection,
+    hash: &[u8; 32],
+    path: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT OR REPLACE INTO places(hash, path) VALUES (?1, ?2)",
+        rusqlite::params![&hash[..], path],
+    )?;
+    Ok(())
 }
 
 pub fn entity_count(conn: &Connection) -> Result<u64, rusqlite::Error> {

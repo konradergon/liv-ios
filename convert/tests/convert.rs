@@ -582,3 +582,64 @@ fn a_converted_id_is_not_furniture_and_still_sorts_by_creation() {
 
     let _ = DeviceId([0; 8]);
 }
+
+/// **A file crosses now, and its two halves go to different places.**
+///
+/// It used to be dropped and counted. `core`'s `FileRef` carries a
+/// content hash AND a device-local path in one value in the log, which
+/// `core.md` §14 records as a model bug; the engine splits them, so the
+/// conversion finally has somewhere to put each — the hash into the cell,
+/// the path into `places`, which does not sync and is not in the digest.
+#[test]
+fn a_file_crosses_as_its_hash_with_its_path_kept_locally() {
+    let dir = temp("file");
+    let path = dir.join("liv.log");
+    let doc = dir.join("invoice.pdf");
+    std::fs::write(&doc, "some bytes").unwrap();
+    let doc = doc.to_string_lossy().into_owned();
+
+    let hash = {
+        let mut s = Session::open(&path).unwrap();
+        liv_services::seed_if_fresh(&mut s).unwrap();
+        let id = liv_services::files::add_file(
+            &mut s,
+            &doc,
+            DateTime { civil: 2026_09_13_1000, date_only: false, end: None },
+        )
+        .unwrap();
+        let file_prop = s
+            .store()
+            .entities()
+            .find(|e| {
+                matches!(e.get(props::NAME), Some(Value::Text(n)) if n == "file")
+            })
+            .map(|e| e.id)
+            .expect("the file property is seeded");
+        match s.store().get(id).and_then(|e| e.get(file_prop)) {
+            Some(Value::File(f)) => f.hash,
+            other => panic!("expected a file cell, got {other:?}"),
+        }
+    };
+
+    let to = dir.join("liv.db");
+    let report = convert(&path, &to).unwrap();
+    assert_eq!(report.files_dropped, 0, "nothing was dropped");
+    assert!(report.clean(), "and the conversion is clean");
+
+    let e = Engine::open_local(&to).unwrap();
+    // Found by its file CELL, not by a kind: `core`'s `add_file` sets no
+    // type at all, so a file entity there is a thing that has a file. The
+    // conversion carries what is in the box rather than improving on it.
+    let file = e
+        .all_entities()
+        .unwrap()
+        .into_iter()
+        .find(|id| e.one(*id, prop::FILE).unwrap().is_some())
+        .expect("the file came across");
+
+    assert_eq!(e.one(file, prop::FILE).unwrap(), Some(EV::Blob(hash)), "the hash, exactly");
+    assert_eq!(e.path_of(file).unwrap().as_deref(), Some(doc.as_str()), "and where it sits");
+    assert_eq!(e.one(file, prop::FORMAT).unwrap(), Some(EV::Text("pdf".into())));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

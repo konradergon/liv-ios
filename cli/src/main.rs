@@ -231,7 +231,7 @@ fn convert_box(session: &Session, rest: &[&str]) -> Result<(), String> {
         );
     }
     if report.files_dropped > 0 {
-        println!("{} file references dropped (no blob store yet)", report.files_dropped);
+        println!("{} file references could not be placed", report.files_dropped);
     }
     for name in &report.unknown_kinds {
         println!("no kind for type {name:?} — those entities came across without one");

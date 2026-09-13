@@ -25,10 +25,6 @@
 //!   crosses span for span now that the engine has blocks, but a `[[…]]`
 //!   pointing at an entity the conversion could not carry loses the span
 //!   rather than pointing at nothing.
-//! * **A file reference becomes nothing.** `core`'s `FileRef` carries a
-//!   device-local path; the engine's `Blob` carries a content hash, and
-//!   there is no blob store yet (Phase 11). Inventing a hash would be
-//!   worse than counting the loss.
 //! * **A type the engine has no kind for is refused**, and the entity
 //!   keeps every other cell. Kinds are ours and do not grow from a box
 //!   (`what-liv-is-for.md`), so a box that has invented one is telling us
@@ -52,7 +48,10 @@ pub use liv_engine::{civil_from_days, days_from_civil, split_civil};
 pub struct Report {
     pub entities: usize,
     pub cells: usize,
-    /// File references with nowhere to point.
+    /// File references with nowhere to point. **Zero now** — a file
+    /// crosses as its hash, with its device-local path going to `places`
+    /// — and the field stays because `clean()` is a promise the shell
+    /// reads, and a future conversion may still fail to place one.
     pub files_dropped: usize,
     /// Cells whose property the engine does not know and the box did not
     /// declare — carried anyway, with no opinion, exactly as the engine
@@ -104,6 +103,10 @@ pub fn pour(
     engine: &mut Engine,
 ) -> Result<Report, Box<dyn std::error::Error>> {
     let mut report = Report::default();
+    // Every file's device-local path, collected while the cells convert
+    // and written after the ops land — `remember_path` reads the entity's
+    // hash back, so the cell has to exist first.
+    let mut places: Vec<([u8; 32], String)> = Vec::new();
     let names = name_index(store);
     let props = property_map(store, &names);
     let kinds = kind_map(store, &names);
@@ -202,7 +205,7 @@ pub fn pour(
                 continue;
             };
 
-            let Some(value) = value(&cell.value, &ids, &mut report) else { continue };
+            let Some(value) = value(&cell.value, &ids, &mut places) else { continue };
             put(target, value);
             report.cells += 1;
         }
@@ -240,6 +243,15 @@ pub fn pour(
             created_ms(e),
         )?;
         report.entities += 1;
+    }
+
+    // **The paths, after the ops.** A path is device-local and lives
+    // outside the log (`view.rs`, `places`), so this is not a write to
+    // the box's history — it is this device saying where it keeps the
+    // bytes. On another device the same file will have a different row,
+    // or none, and that is the point.
+    for (hash, path) in places {
+        engine.remember_hash_path(&hash, &path)?;
     }
 
     Ok(report)
@@ -407,7 +419,7 @@ pub fn kind_named(name: &str) -> Option<EntityId> {
 fn value(
     v: &CoreValue,
     ids: &HashMap<liv_core::Id, EntityId>,
-    report: &mut Report,
+    places: &mut Vec<([u8; 32], String)>,
 ) -> Option<EngineValue> {
     Some(match v {
         CoreValue::Text(s) => EngineValue::Text(s.clone()),
@@ -421,9 +433,15 @@ fn value(
         CoreValue::Bool(b) => EngineValue::Bool(*b),
         CoreValue::DateTime(dt) => EngineValue::Date(date(dt)),
         CoreValue::Select(id) | CoreValue::Reference(id) => EngineValue::Ref(*ids.get(id)?),
-        CoreValue::File(_) => {
-            report.files_dropped += 1;
-            return None;
+        // **A file crosses now, both halves to their own place.** It used
+        // to be dropped, because the engine's `Blob` carries a hash and
+        // `core`'s `FileRef` carries a hash AND a device-local path, and
+        // there was nowhere to put the path. There is: `places`, which is
+        // device-local and outside the log — which is the separation
+        // `core.md` §14 asks for, arrived at from the other direction.
+        CoreValue::File(f) => {
+            places.push((f.hash, f.path.clone()));
+            EngineValue::Blob(f.hash)
         }
     })
 }

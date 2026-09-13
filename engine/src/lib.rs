@@ -18,6 +18,7 @@
 pub mod civil;
 pub mod content;
 pub mod engine;
+pub mod files;
 pub mod id;
 pub mod log;
 pub mod model;
@@ -31,6 +32,7 @@ pub mod write;
 pub use civil::{civil_from_days, days_from_civil, split_civil};
 pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
+pub use files::{hash_file, FileError, Resync};
 pub use model::{
     area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,
 };
