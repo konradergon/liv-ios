@@ -19,6 +19,10 @@ use std::ffi::{c_char, CStr, CString};
 // The snapshot types + builder (T6, 2026-08-09 — lib.rs had reached
 // 5,785 lines; rule 9 called for the seam).
 mod snapshot;
+// The new seam (rust-owns-the-mechanisms.md §3): one verb per screen over
+// the engine, beside the snapshot rather than through it. Additive — the
+// old verbs are untouched and both work until the shell has moved.
+pub mod surfaces;
 use snapshot::{build_snapshot, build_snapshot_windowed, fingerprint};
 
 

@@ -105,12 +105,34 @@ surface's rows — already filtered by the workspace lens, already sorted,
 already carrying the strings the row will draw:
 
 ```
-liv_view_today(box, day)        -> the agenda, late block, captured count
-liv_view_tasks(box, filter)     -> the list that filter names
-liv_view_everything(box, lens)  -> the slice
-liv_view_day(box, day)          -> the timeline's blocks, laid out
-liv_search(box, query)          -> ranked hits
+liv_view_today(box, day, today, now_ms, lens, out)   the five piles, late, captured
+liv_view_tasks(box, filter, id, today, lens, out)    the bands, with each one's late count
+liv_view_everything(box, slice, today, lens, out)    the slice, already ordered
+liv_view_day(box, day, lens, out)                    the timeline, overlap resolved
+liv_search(box, query, lens, out)                    ranked hits — not built yet
 ```
+
+**Built 2026-09-13**, all but search. Measured over the same 2,000-task
+box: **one day is 2,268 bytes against the whole box's 448,891 — a factor
+of 198**, and the ratio grows with the box rather than with the screen.
+
+Three things are deliberately unlike the ABI above them:
+
+1. **A real error channel.** Every verb returns `LIV_OK` or a negative
+   code and delivers its answer through an out-pointer. The old ABI's `0`
+   means both "no id" and "it broke", which is why a shell cannot tell an
+   empty box from an unreadable one. Here an empty box is `LIV_OK` and an
+   empty array.
+2. **Sixteen-byte ids**, as 32 lowercase hex characters.
+3. **No `with_box`.** That pattern exists because opening a core box
+   replays its whole log, and it needs a five-field cache to avoid doing
+   so. The engine is a database: opening is 0.3 ms and flat, SQLite locks
+   itself in WAL mode, and the connection is simply held.
+
+A box also learned to remember its own `DeviceId` (`Engine::open_local`).
+A dot is `(device, seq)` with seq counted per device, so re-minting on
+every open would restart that counter against history the box already
+holds — every new op colliding with an old dot.
 
 Payloads become proportional to the screen rather than to the box. The
 projections run in Rust, where `cargo test` can reach them.

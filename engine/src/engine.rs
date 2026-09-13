@@ -29,6 +29,19 @@ impl Engine {
         Engine::wrap(log::open_in_memory()?, device)
     }
 
+    /// Open a box as THIS device, whichever that turns out to be.
+    ///
+    /// The box carries its own device id: minted on the first open and
+    /// read back on every one after. A caller that passes its own is
+    /// saying "I am this writer" and had better mean it — a re-minted id
+    /// restarts a per-device seq counter against history the box already
+    /// holds. Shells use this one.
+    pub fn open_local(path: &std::path::Path) -> Result<Engine, LogError> {
+        let conn = log::open(path)?;
+        let device = log::device(&conn)?;
+        Engine::wrap(conn, device)
+    }
+
     fn wrap(conn: Connection, device: DeviceId) -> Result<Engine, LogError> {
         conn.execute_batch(view::SCHEMA)?;
         Ok(Engine { conn, hold: Hold::default(), ids: IdGen::new(device) })

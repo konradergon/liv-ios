@@ -302,7 +302,9 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "liv-core",
+ "liv-engine",
  "liv-services",
+ "liv-surface",
  "liv-views",
  "serde",
  "serde_json",

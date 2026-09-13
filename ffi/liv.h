@@ -352,4 +352,102 @@ int32_t liv_restore_at(const char *path, uint64_t id);
    busy/no entity/no property definition. */
 int32_t liv_unset_at(const char *path, uint64_t id, const char *property);
 
+
+/* ====================================================================
+   THE NEW SEAM: one verb per screen, over the engine.
+
+   Everything above this line reads `core/` and hands the shell the WHOLE
+   BOX as one `liv_snapshot` document — 3.5 MB and 39 ms at 6,400 notes,
+   rebuilt on every refresh, linear in the box and independent of what is
+   on screen. The shell then searches it to work out what Today is.
+
+   Below, a screen asks for itself and gets itself. Measured over the same
+   2,000-task box: one day is 2,268 bytes against the box's 448,891 — a
+   factor of 198, and the ratio grows with the box rather than the screen.
+   The deciding happens in `liv-surface`, where `cargo test` reaches it.
+
+   THE TWO SEAMS ARE INDEPENDENT AND BOTH WORK. Nothing above changes
+   until the shell has moved off it, one surface at a time
+   (design/rust-owns-the-mechanisms.md §5, stages 3 and 4).
+
+   Three things are deliberately different from the ABI above:
+
+   1. A REAL ERROR CHANNEL. Every verb returns LIV_OK or a negative code,
+      and the answer comes back through an out-pointer. Above, `0` means
+      both "no id" and "it broke", which is why a shell cannot tell an
+      empty box from an unreadable one. Here an empty box is LIV_OK and an
+      empty array.
+   2. SIXTEEN-BYTE IDS, as 32 lowercase hex characters. An engine id is a
+      UUID and a JSON number is not one.
+   3. NO `with_box`. That pattern exists because opening a core box
+      replays its whole log; the engine is a database, so opening is
+      0.3 ms and flat, SQLite does its own locking in WAL mode, and the
+      connection is simply held.
+
+   Every out-string is freed with liv_string_free. A failing call writes
+   nothing through `out`.
+   ==================================================================== */
+
+#define LIV_OK          0
+#define LIV_ERR_PATH   -1   /* path was null or not UTF-8 */
+#define LIV_ERR_OPEN   -2   /* no such box, no permission, or too new */
+#define LIV_ERR_ARG    -3   /* a parameter did not parse */
+#define LIV_ERR_READ   -4   /* the box opened and refused the read */
+#define LIV_ERR_ENCODE -5   /* the answer would not encode (a bug here) */
+
+/* `lens` is a JSON array of hex ids the workspace admits, or NULL for no
+   workspace. NULL IS NOT "[]": a workspace whose query matches nothing
+   admits nothing, and that is a real state — passing NULL to mean it
+   would turn a filtered-to-empty screen into an unfiltered one. */
+
+/* Today, for the day `day` (days since the epoch), knowing the real
+   `today` and the clock. They differ whenever the date strip has moved,
+   and several rules turn on whether they are the same.
+
+   {"late":[row…], "passed":[…], "ahead":[…], "all_day":[…], "done":[…],
+    "next":"<hex id>"?, "captured":N}
+
+   A row is
+   {"id","title","untitled","kind"?,"due_ms"?,"all_day","status"?,"done",
+    "area"?,"created_ms","touched_ms","has_file"} — already titled, already
+   sorted, and `done` already resolved against which statuses complete. */
+int32_t liv_view_today(const char *path, int32_t day, int32_t today,
+                       int64_t now_ms, const char *lens, char **out);
+
+/* Tasks, grouped by status. filter: 0 all, 1 status, 2 project;
+   filter_id is the hex id it names and is ignored when filter is 0.
+
+   [{"status":"<hex>"?, "name", "completes", "late":N, "rows":[row…]}…]
+
+   `late` is the GROUP's count, not a flag per row: on a real box every
+   task is overdue, and a colour on every row distinguishes nothing.
+   An empty group is not returned. */
+int32_t liv_view_tasks(const char *path, int32_t filter,
+                       const char *filter_id, int32_t today,
+                       const char *lens, char **out);
+
+/* Everything, in one slice: 0 all, 1 notes, 2 upcoming, 3 unfiled.
+   Returns [row…], already ordered — newest first, except notes, which is
+   most-recently-touched first, and upcoming, which reads forward. */
+int32_t liv_view_everything(const char *path, int32_t slice, int32_t today,
+                            const char *lens, char **out);
+
+/* The calendar's day: the all-day strip, and the timeline's blocks with
+   their overlap already resolved.
+
+   {"all_day":[row…],
+    "blocks":[{"row":row,"start_min","minutes","column","columns"}…]}
+
+   `start_min` is minutes from midnight — the shell multiplies by its own
+   points-per-hour. `minutes` is never zero, so a thing with no duration
+   stays tappable. `column`/`columns` are a CLUSTER's, not a pair's: two
+   blocks that miss each other can both hit a third, and all three share
+   the width. */
+int32_t liv_view_day(const char *path, int32_t day, const char *lens,
+                     char **out);
+
+/* Drop every held connection. Call before moving or replacing a box file.
+   Not thread-safe against a liv_view_* call in flight. */
+void liv_view_close_all(void);
+
 #endif

@@ -13,6 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 liv-core = { path = "../core" }
+liv-engine = { path = "../engine" }
+liv-surface = { path = "../surface" }
 liv-services = { path = "../services" }
 liv-views = { path = "../views" }
 chrono = "0.4"
