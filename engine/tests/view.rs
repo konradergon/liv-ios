@@ -376,3 +376,32 @@ fn the_view_survives_a_restart_and_still_matches_its_log() {
     assert_eq!(e.digest().unwrap(), before, "and the log still implies it");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **Last touched, maintained by the fold.** `core/` recomputed this by
+/// walking the whole history on every call — 99 ms per search at 500,000
+/// entities, identical every time — until T3 indexed it. Here it is a
+/// column the fold raises, so the lesson is paid once.
+#[test]
+fn an_entity_remembers_when_it_was_last_touched() {
+    let mut e = engine();
+    let a = e.create(kind::NOTE, Some("First"), 1_000).unwrap();
+    let b = e.create(kind::NOTE, Some("Second"), 2_000).unwrap();
+
+    // Newest first, and it is the WRITE that counts, not the creation.
+    assert_eq!(e.by_touch().unwrap(), vec![b, a]);
+    e.set(a, prop::BODY, Value::Text("edited".into()), 3_000).unwrap();
+    assert_eq!(e.by_touch().unwrap(), vec![a, b], "editing the older one moves it up");
+    assert_eq!(e.touched(a).unwrap(), 3_000);
+
+    // NEVER LOWERED. A late op from a device whose clock is behind must
+    // not make an entity look older than an edit that already landed.
+    e.set(a, prop::NAME, Value::Text("First again".into()), 1_500).unwrap();
+    assert_eq!(e.touched(a).unwrap(), 3_000, "a slow clock does not drag it back");
+
+    // And it replays: the column is a consequence of the log like
+    // everything else in the view.
+    let before = e.digest().unwrap();
+    e.replay().unwrap();
+    assert_eq!(e.digest().unwrap(), before);
+    assert_eq!(e.touched(a).unwrap(), 3_000);
+}

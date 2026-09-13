@@ -59,7 +59,7 @@ fn the_day_runs_in_time_order_with_tasks_and_events_interleaved() {
     timed_task(&mut e, "Invoice", DAY, 11, 0);
 
     // Shown on a day that is not today, so nothing is "passed".
-    let t = today(&e, DAY, DAY + 1, at(DAY + 1, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY + 1, at(DAY + 1, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.ahead), vec!["Standup", "Invoice", "Dentist"]);
     assert!(t.passed.is_empty(), "only today has a passed/ahead split");
     assert_eq!(t.next, None, "and only today lights the next row");
@@ -75,13 +75,13 @@ fn today_knows_the_time_and_other_days_do_not() {
     timed_task(&mut e, "Evening", DAY, 18, 0);
 
     let now = at(DAY, 13, 0);
-    let t = today(&e, DAY, DAY, now).unwrap();
+    let t = today(&e, DAY, DAY, now, &Lens::Everything).unwrap();
     assert_eq!(titles(&t.passed), vec!["Morning", "Noon"]);
     assert_eq!(titles(&t.ahead), vec!["Evening"]);
     assert_eq!(t.next, t.ahead.first().map(|r| r.id), "the next thing up is lit");
 
     // The same box, shown on a day that is not today.
-    let elsewhere = today(&e, DAY, DAY + 3, at(DAY + 3, 13, 0)).unwrap();
+    let elsewhere = today(&e, DAY, DAY + 3, at(DAY + 3, 13, 0), &Lens::Everything).unwrap();
     assert!(elsewhere.passed.is_empty());
     assert_eq!(titles(&elsewhere.ahead), vec!["Morning", "Noon", "Evening"]);
 }
@@ -94,7 +94,7 @@ fn an_all_day_thing_belongs_to_the_day_and_not_to_an_hour() {
     all_day_task(&mut e, "Renew the passport", DAY);
     timed_task(&mut e, "Dentist", DAY, 14, 0);
 
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.all_day), vec!["Renew the passport"]);
     assert_eq!(titles(&t.ahead), vec!["Dentist"]);
     assert!(t.all_day[0].all_day);
@@ -116,13 +116,13 @@ fn late_is_incomplete_tasks_whose_day_has_passed_and_nothing_else() {
     let past_note = e.create(kind::NOTE, Some("A dated note"), 1_000).unwrap();
     e.set(past_note, prop::DUE, Value::Date(DateSpec::Day(DAY - 2)), 1_001).unwrap();
 
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     // Most recent first: yesterday's is more actionable than last year's.
     assert_eq!(titles(&t.late), vec!["Overdue task", "Older overdue task"]);
 
     // Finishing it takes it out of Late, and nothing else changes.
     e.set(overdue, prop::STATUS, Value::Ref(status::DONE), 2_000).unwrap();
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.late), vec!["Older overdue task"]);
 }
 
@@ -158,7 +158,7 @@ fn a_minted_status_that_completes_finishes_a_thing_just_like_done() {
     assert!(!completes(&e, status::TODO).unwrap());
     assert!(completes(&e, status::DONE).unwrap());
 
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.late), vec!["Think about it"], "a completing status is done");
 }
 
@@ -169,7 +169,7 @@ fn a_finished_thing_on_the_day_goes_to_done_rather_than_the_timeline() {
     timed_task(&mut e, "Still to do", DAY, 10, 0);
     e.set(a, prop::STATUS, Value::Ref(status::DONE), 2_000).unwrap();
 
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.done), vec!["Already done"]);
     assert_eq!(titles(&t.ahead), vec!["Still to do"]);
     assert!(t.passed.is_empty(), "done never lands in passed, whatever the clock says");
@@ -187,13 +187,13 @@ fn trashed_and_archived_things_are_on_no_surface() {
     e.trash(late_gone, 2_001).unwrap();
     e.set(filed, prop::ARCHIVED, Value::Bool(true), 2_002).unwrap();
 
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.ahead), vec!["Here"]);
     assert!(t.late.is_empty(), "and the late block filters the same way");
 
     // Restoring brings it back — trash is soft.
     e.restore(gone, 2_003).unwrap();
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.ahead), vec!["Trashed", "Here"]);
 }
 
@@ -206,7 +206,7 @@ fn a_scrap_is_titled_by_its_first_line_with_the_markers_off() {
     e.set(scrap, prop::BODY, Value::Text("# Trip planning\n\nferries".into()), 1_001).unwrap();
     e.set(scrap, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_002).unwrap();
 
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.all_day), vec!["Trip planning"], "never '# Trip planning'");
     assert!(!t.all_day[0].untitled);
 
@@ -214,7 +214,7 @@ fn a_scrap_is_titled_by_its_first_line_with_the_markers_off() {
     // words the shell would then have to style around.
     let bare = e.create(kind::NOTE, None, 1_003).unwrap();
     e.set(bare, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_004).unwrap();
-    let t = today(&e, DAY, DAY, at(DAY, 8, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
     let empty = t.all_day.iter().find(|r| r.id == bare).unwrap();
     assert!(empty.untitled && empty.title.is_empty());
 }
@@ -235,7 +235,7 @@ fn captured_counts_what_was_made_today_from_the_id_itself() {
     e.create(kind::NOTE, Some("one"), today_ms).unwrap();
     e.create(kind::NOTE, Some("two"), today_ms + 1_000).unwrap();
 
-    let t = today(&e, DAY, DAY, at(DAY, 23, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 23, 0), &Lens::Everything).unwrap();
     assert_eq!(t.captured, 2);
 }
 
@@ -248,10 +248,10 @@ fn midnight_and_the_last_minute_of_the_day_land_on_the_right_days() {
     timed_task(&mut e, "Last minute", DAY, 23, 59);
     timed_task(&mut e, "Tomorrow, just", DAY + 1, 0, 0);
 
-    let t = today(&e, DAY, DAY, at(DAY, 0, 0)).unwrap();
+    let t = today(&e, DAY, DAY, at(DAY, 0, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.ahead), vec!["One minute past midnight", "Last minute"]);
 
-    let t = today(&e, DAY + 1, DAY, at(DAY, 0, 0)).unwrap();
+    let t = today(&e, DAY + 1, DAY, at(DAY, 0, 0), &Lens::Everything).unwrap();
     assert_eq!(titles(&t.ahead), vec!["Tomorrow, just"]);
 }
 

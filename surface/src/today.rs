@@ -6,7 +6,7 @@
 
 use liv_engine::{prop, Engine, EntityId, LogError};
 
-use crate::{day_end, day_of, day_start, is_task, row, Row};
+use crate::{agenda, day_of, day_start, is_task, row, visible, Lens, Row};
 
 /// What the Today screen is.
 ///
@@ -36,30 +36,18 @@ pub struct Today {
 /// `day` is the day being shown and `today` is the real one — they differ
 /// whenever the date strip has been moved, and several rules below turn on
 /// whether they are the same. `now_ms` is the clock.
-pub fn today(e: &Engine, day: i32, today_day: i32, now_ms: i64) -> Result<Today, LogError> {
+pub fn today(
+    e: &Engine,
+    day: i32,
+    today_day: i32,
+    now_ms: i64,
+    lens: &Lens,
+) -> Result<Today, LogError> {
     let mut out = Today::default();
-
-    // ---- the day itself ------------------------------------------------
-    //
-    // ONE INDEX SEEK for the whole day, where the shell filtered every
-    // dated row in the box. `in_window` is inclusive at both ends and
-    // `day_end` is the last millisecond, so a thing due at 23:59 is on
-    // the day and a thing at midnight tomorrow is not.
-    let mut agenda: Vec<Row> = Vec::new();
-    for (id, _) in e.in_window(prop::DUE, day_start(day), day_end(day))? {
-        let r = row(e, id)?;
-        if r.trashed || r.archived {
-            continue;
-        }
-        agenda.push(r);
-    }
-    // Time order, then id — the day as it actually runs, events and tasks
-    // interleaved rather than in separate blocks.
-    agenda.sort_by(|a, b| (a.due_ms, a.id).cmp(&(b.due_ms, b.id)));
 
     // ---- the four piles ------------------------------------------------
     let on_today = day == today_day;
-    for r in agenda {
+    for r in agenda(e, day, lens)? {
         if r.all_day {
             out.all_day.push(r);
         } else if r.done {
@@ -84,7 +72,7 @@ pub fn today(e: &Engine, day: i32, today_day: i32, now_ms: i64) -> Result<Today,
     // nobody stated.
     for (id, _) in e.in_window(prop::DUE, i64::MIN / 2, day_start(today_day) - 1)? {
         let r = row(e, id)?;
-        if r.trashed || r.archived || r.done || !is_task(&r) {
+        if !visible(&r, lens) || r.done || !is_task(&r) {
             continue;
         }
         out.late.push(r);
@@ -97,11 +85,18 @@ pub fn today(e: &Engine, day: i32, today_day: i32, now_ms: i64) -> Result<Today,
     // Counted from the ID, not from a `created` cell. A v7 id carries its
     // own millisecond (`id.rs`), so "made today" needs no stored value and
     // cannot disagree with one.
-    out.captured = e
-        .all_entities()?
-        .into_iter()
-        .filter(|id| day_of(id.millis() as i64) == today_day)
-        .count();
+    // The lens applies here too — a filtered surface counts what it can
+    // show, or the number disagrees with the list under it.
+    let mut captured = 0;
+    for id in e.all_entities()? {
+        if day_of(id.millis() as i64) != today_day {
+            continue;
+        }
+        if visible(&row(e, id)?, lens) {
+            captured += 1;
+        }
+    }
+    out.captured = captured;
 
     Ok(out)
 }

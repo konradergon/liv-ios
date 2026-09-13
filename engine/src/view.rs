@@ -29,8 +29,22 @@ pub const SCHEMA: &str = "
 -- back MAINTAINED BY THE FOLD, which is a different thing from this one.
 CREATE TABLE IF NOT EXISTS entities (
     id         BLOB    NOT NULL PRIMARY KEY,
-    created_ms INTEGER NOT NULL
+    created_ms INTEGER NOT NULL,
+    -- WHEN THIS WAS LAST TOUCHED: what you were just working on.
+    --
+    -- The group's HLC, which `id.rs` keeps deliberately weak: display
+    -- order and tiebreaks only, never destroying a value. Ordering a list
+    -- is exactly that job.
+    --
+    -- Maintained by the fold and never lowered, so an op arriving late
+    -- from a device with a slow clock cannot make a note look older than
+    -- an edit that already landed. `core/` recomputed this by walking the
+    -- whole history on every call — 99 ms per search at 500,000 entities,
+    -- identical every time — until T3 indexed it. Same lesson, paid once.
+    touched_ms INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS entities_by_touch ON entities(touched_ms);
 
 CREATE TABLE IF NOT EXISTS cells (
     entity BLOB    NOT NULL,
@@ -77,10 +91,7 @@ pub fn apply(tx: &Transaction, g: &Group) -> Result<(), rusqlite::Error> {
         let dot = g.dot(i);
         match o {
             Op::CreateEntity { entity } => {
-                tx.execute(
-                    "INSERT OR IGNORE INTO entities(id, created_ms) VALUES (?1, ?2)",
-                    rusqlite::params![&entity.0[..], entity.millis() as i64],
-                )?;
+                ensure_entity(tx, *entity)?;
             }
             Op::SetCell { entity, prop, value, replaces } => {
                 ensure_entity(tx, *entity)?;
@@ -92,10 +103,25 @@ pub fn apply(tx: &Transaction, g: &Group) -> Result<(), rusqlite::Error> {
                 put(tx, *entity, *prop, dot, value)?;
             }
             Op::RemoveFromSet { entity, prop, replaces, .. } => {
+                ensure_entity(tx, *entity)?;
                 retire(tx, *entity, *prop, replaces)?;
             }
         }
+        touch(tx, o.entity(), g.hlc.wall_ms as i64)?;
     }
+    Ok(())
+}
+
+/// Raise the last-touched stamp, never lower it.
+///
+/// `MAX` rather than assignment: replay feeds groups in log order but sync
+/// does not, and a late op from a device whose clock is behind must not
+/// make an entity look older than an edit that already landed.
+fn touch(tx: &Transaction, id: EntityId, wall_ms: i64) -> Result<(), rusqlite::Error> {
+    tx.execute(
+        "UPDATE entities SET touched_ms = MAX(touched_ms, ?2) WHERE id = ?1",
+        rusqlite::params![&id.0[..], wall_ms],
+    )?;
     Ok(())
 }
 
@@ -105,7 +131,7 @@ pub fn apply(tx: &Transaction, g: &Group) -> Result<(), rusqlite::Error> {
 /// invented.
 fn ensure_entity(tx: &Transaction, id: EntityId) -> Result<(), rusqlite::Error> {
     tx.execute(
-        "INSERT OR IGNORE INTO entities(id, created_ms) VALUES (?1, ?2)",
+        "INSERT OR IGNORE INTO entities(id, created_ms, touched_ms) VALUES (?1, ?2, 0)",
         rusqlite::params![&id.0[..], id.millis() as i64],
     )?;
     Ok(())
@@ -198,13 +224,16 @@ pub fn digest(conn: &Connection) -> Result<u64, rusqlite::Error> {
         }
     };
 
-    let mut stmt = conn.prepare("SELECT id, created_ms FROM entities ORDER BY id")?;
-    let rows =
-        stmt.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))?;
+    let mut stmt =
+        conn.prepare("SELECT id, created_ms, touched_ms FROM entities ORDER BY id")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })?;
     for row in rows {
-        let (id, created) = row?;
+        let (id, created, touched) = row?;
         eat(&id, &mut h);
         eat(&created.to_le_bytes(), &mut h);
+        eat(&touched.to_le_bytes(), &mut h);
     }
 
     let mut stmt = conn.prepare(
@@ -383,4 +412,26 @@ pub fn all_entities(conn: &Connection) -> Result<Vec<EntityId>, rusqlite::Error>
     let mut stmt = conn.prepare("SELECT id FROM entities ORDER BY id")?;
     let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
     ids(rows)
+}
+
+/// Every entity, most recently touched first — the order that makes a
+/// list of notes useful: the one you were editing ten minutes ago is the
+/// first row. It deliberately does not track OPENING: reading a note
+/// without changing it does not bump it, because no op writes a visit and
+/// a device-side one would disagree with every other surface.
+pub fn by_touch(conn: &Connection) -> Result<Vec<EntityId>, rusqlite::Error> {
+    let mut stmt =
+        conn.prepare("SELECT id FROM entities ORDER BY touched_ms DESC, id DESC")?;
+    let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
+    ids(rows)
+}
+
+/// When this entity was last touched.
+pub fn touched(conn: &Connection, id: EntityId) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT touched_ms FROM entities WHERE id = ?1",
+        rusqlite::params![&id.0[..]],
+        |r| r.get(0),
+    )
+    .or(Ok(0))
 }

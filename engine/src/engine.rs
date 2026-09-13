@@ -218,4 +218,14 @@ impl Engine {
     pub fn all_entities(&self) -> Result<Vec<EntityId>, LogError> {
         Ok(view::all_entities(&self.conn)?)
     }
+
+    /// Every entity, most recently touched first.
+    pub fn by_touch(&self) -> Result<Vec<EntityId>, LogError> {
+        Ok(view::by_touch(&self.conn)?)
+    }
+
+    /// When one entity was last touched.
+    pub fn touched(&self, id: EntityId) -> Result<i64, LogError> {
+        Ok(view::touched(&self.conn, id)?)
+    }
 }
