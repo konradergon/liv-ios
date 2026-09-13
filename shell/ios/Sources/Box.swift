@@ -1227,15 +1227,15 @@ enum Civil {
 /// `id` is the one exception, because `Identifiable` requires it and a
 /// row without one is not a row.
 struct LivViewRow: Decodable, Identifiable {
-    var id: String
+    var id: LivID
     var title: String?
     var untitled: Bool?
-    var kind: String?
+    var kind: LivID?
     var dueMs: Int64?
     var allDay: Bool?
-    var status: String?
+    var status: LivID?
     var done: Bool?
-    var area: String?
+    var area: LivID?
     var createdMs: Int64?
     var touchedMs: Int64?
     var hasFile: Bool?
@@ -1255,7 +1255,7 @@ struct LivTodayView: Decodable {
     var ahead: [LivViewRow]?
     var allDay: [LivViewRow]?
     var done: [LivViewRow]?
-    var next: String?
+    var next: LivID?
     var captured: Int?
 
     /// Everything the day itself holds, in the order the screen draws it.

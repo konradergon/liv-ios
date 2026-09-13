@@ -84,6 +84,15 @@ struct LivApp: App {
             print("GLYPH-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
             failures.forEach { print("GLYPH-SELFCHECK \($0)") }
         }
+        // The id's hex form and its ordering (LivID.swift), same door:
+        // `-livid.selfcheck 1`. Slice one of the id refactor
+        // (rust-owns-the-mechanisms.md §5, stage 4b) — the type gets a
+        // real build before 236 sites move to it.
+        if UserDefaults.standard.bool(forKey: "livid.selfcheck") {
+            let failures = livIdSelfCheck()
+            print("LIVID-SELFCHECK \(failures.isEmpty ? "PASS" : "FAIL \(failures.count)")")
+            failures.forEach { print("LIVID-SELFCHECK \($0)") }
+        }
         // The palette's contrast floor (Glyph.swift), same door:
         // `-palette.selfcheck 1`.
         if UserDefaults.standard.bool(forKey: "palette.selfcheck") {
