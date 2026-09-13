@@ -344,6 +344,50 @@ replacement passes.
           orphan every reference to it. What it needs is a
           `prop::REDIRECT` and every read resolving through it — engine
           work, and a subsystem rather than a patch.
+
+          **And then the doors, which is what 5a is named for.** All of
+          the above was engine work with **zero callers**: the engine
+          could set, add, remove, trash, restore, undo, save a body,
+          rename a value, take a file and run the clerk's queue, all
+          tested, and no FFI verb reached any of it — so a shell on the
+          engine could look and never touch. Thirteen verbs close that
+          (`ffi/src/writes.rs`): `liv_read_body`, `liv_write_body`,
+          `liv_body_history`, `liv_links`, `liv_undo_state`, `liv_undo`,
+          `liv_redo`, `liv_rename_value`, `liv_add_file`,
+          `liv_resync_file`, `liv_sweep`, `liv_accept`, `liv_decline`.
+
+          Three error codes are new, because a write fails in ways a read
+          cannot and a shell has a different thing to do about each:
+          `LIV_ERR_STALE` (re-read and decide), `LIV_ERR_REFUSED` (the
+          model says no) and `LIV_ERR_NOTHING` (there was nothing to
+          undo — an answer, not a failure, which the old ABI's one zero
+          could not say).
+
+          **A body crosses in the shell's own span JSON**, deliberately
+          (`ffi/src/spans.rs`). It is what `Editor.swift`'s `SpanJSON`
+          already writes, so the editor needs no Swift change when the
+          data source swaps; a second span encoding would be two grammars
+          for one user-facing shape (standing rule 4). The one difference
+          is that a `Ref` is hex rather than a JSON number, and slice 4
+          built the shell's id decoder to take both. A span this build
+          does not understand is REFUSED rather than dropped — the old
+          codec kept an unknown block as `.other` and flattened it on
+          save, which is a decision about someone's writing that a wire
+          decoder should not be making.
+
+          Two guards went around the contract itself. `liv.h` is the one
+          place in the repo where a rule cannot live in a type — C has to
+          be told the signatures by hand — so `ffi/tests/header.rs`
+          checks both directions: a verb exported and not declared is a
+          verb no shell can call, and nothing anywhere complains. And
+          **accepting one suggestion costs one sweep**, by design,
+          because a proposal is named by its fingerprint and `accept`
+          re-runs the sweep to find it. Measured 2026-09-13 in a debug
+          build: 14 ms in a 50-note box, 120 ms in a 500-note one —
+          linear, and pinned there. But twenty taps through the inbox of
+          a 500-note box is two and a half seconds of sweeping, and
+          batching the accepts or caching a sweep per box generation is a
+          product question, recorded here rather than answered.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.

@@ -395,6 +395,13 @@ int32_t liv_unset_at(const char *path, uint64_t id, const char *property);
 #define LIV_ERR_READ   -4   /* the box opened and refused the read */
 #define LIV_ERR_ENCODE -5   /* the answer would not encode (a bug here) */
 
+/* The three below belong to the WRITE verbs, which can fail in ways a
+   read cannot. They are codes and not LIV_ERR_READ because a shell has a
+   different thing to do about each. */
+#define LIV_ERR_STALE   -6  /* the stored body moved; re-read and decide */
+#define LIV_ERR_REFUSED -7  /* the box will not take this write */
+#define LIV_ERR_NOTHING -8  /* there was nothing there to do */
+
 /* `lens` is a JSON array of hex ids the workspace admits, or NULL for no
    workspace. NULL IS NOT "[]": a workspace whose query matches nothing
    admits nothing, and that is a real state — passing NULL to mean it
@@ -449,6 +456,122 @@ int32_t liv_view_day(const char *path, int32_t day, const char *lens,
 /* Drop every held connection. Call before moving or replacing a box file.
    Not thread-safe against a liv_view_* call in flight. */
 void liv_view_close_all(void);
+
+/* ====================================================================
+   THE ENGINE'S WRITE VERBS
+
+   Everything above this line reads. Until these existed the engine had
+   set, add, remove, trash, restore, undo, set_content, rename_value,
+   add_file and the clerk's queue, all tested, and no shell could reach
+   any of them — so a shell on the engine could look and never touch.
+
+   A BODY CROSSES IN THE SHELL'S OWN SPAN JSON, deliberately. It is what
+   Editor.swift's SpanJSON already encodes and decodes — {"Text":"words"},
+   {"Break":"Body"}, {"Break":{"Heading":3}} — because a second span
+   encoding would be two grammars for one user-facing shape. The one
+   difference is that a Ref is 32 hex characters rather than a JSON
+   number, and the shell's id decoder was built to accept both.
+
+   A span this build does not understand is REFUSED (LIV_ERR_ARG), never
+   dropped: flattening a block a newer build wrote is a decision about
+   someone's writing that a wire decoder should not be making. The save
+   fails and the editor still holds the text.
+   ==================================================================== */
+
+/* One body and the fingerprint to save it against.
+   {"spans":[…], "print":N}
+
+   ZERO IS NEVER A REAL FINGERPRINT — it is what "no body yet" reads as,
+   so a first save needs no special case. */
+int32_t liv_read_body(const char *path, const char *id, char **out);
+
+/* Replace a body, compare-and-swap on `base`. {"print":N}
+
+   LIV_ERR_STALE means the stored body moved since `base` was read:
+   RE-READ, NEVER OVERWRITE. There is no force flag, by design. Empty
+   spans clear the body. LIV_ERR_REFUSED is the model saying no — a Ref
+   to nothing, most often. */
+int32_t liv_write_body(const char *path, const char *id, const char *spans,
+                       uint64_t base, uint64_t now_ms, char **out);
+
+/* Every past version of one body, NEWEST FIRST.
+   [{"device","seq","at_ms","author","spans"}…]
+
+   Restoring one is an ordinary liv_write_body of its spans over a freshly
+   read base. The log is never rewritten, so a restore is itself a
+   version. `author` is "user" or the proposer's name. */
+int32_t liv_body_history(const char *path, const char *id, char **out);
+
+/* Both directions of one thing's links: {"out":[hex…], "in":[hex…]}
+
+   A [[ ]] typed in a body is the same edge as a link picked in
+   properties — the fold indexes both — so this is the only reader either
+   list needs. */
+int32_t liv_links(const char *path, const char *id, char **out);
+
+/* What undo and redo would take, without taking it:
+   {"undo":bool, "redo":bool} — what a toolbar needs to know whether its
+   buttons are live. */
+int32_t liv_undo_state(const char *path, char **out);
+
+/* Take back this device's last action, and put it back. LIV_ERR_NOTHING
+   when there is none, which is an ANSWER and not a failure: a shell
+   asking on a fresh box is not a shell doing anything wrong, and the ABI
+   above this line has one zero for both. */
+int32_t liv_undo(const char *path, uint64_t now_ms);
+int32_t liv_redo(const char *path, uint64_t now_ms);
+
+/* Rename one value of a property, everywhere it is carried.
+   {"carriers":N}
+
+   `carriers` is how many things change ON SCREEN, which for a select is
+   not the number of writes: one write to the option's name re-renders
+   every carrier. Zero is a success, not a refusal.
+
+   LIV_ERR_REFUSED for an empty or unchanged name, a value nothing is
+   called, a property that does not rename, or an AMBIGUOUS rename —
+   which refuses rather than guessing, because two kinds sharing an
+   option name is the designed state of `status`. */
+int32_t liv_rename_value(const char *path, const char *property,
+                         const char *old_name, const char *new_name,
+                         uint64_t now_ms, char **out);
+
+/* Take a file into the box BY REFERENCE. {"id":"<hex>"}
+
+   Never copies or moves it — the file is read to hash it and left where
+   the user put it. An unreadable path is LIV_ERR_REFUSED, never a
+   phantom entity with a hash of nothing. */
+int32_t liv_add_file(const char *path, const char *file, uint64_t now_ms,
+                     char **out);
+
+/* Re-hash what a file points at on this device.
+   {"state":"unchanged"|"changed"|"broken", "path":…|null}
+
+   A changed hash IS the integration — it is how Liv learns Word saved
+   the file. A vanished path is "broken" and LEAVES THE STORED HASH
+   ALONE: a file on an unplugged drive is not a file whose contents
+   changed. `path` is null for a file that arrived by sync and has no
+   copy here, which is the honest answer to "where were you looking". */
+int32_t liv_resync_file(const char *path, const char *id, uint64_t now_ms,
+                        char **out);
+
+/* What the clerk would suggest, as the inbox reads it.
+   [{"print":N, "proposer", "reason", "entity":"<hex>"?}…]
+
+   A PROPOSAL IS NAMED BY ITS FINGERPRINT, NOT ITS POSITION. The sweep is
+   a pure function of the box and is recomputed in every process, so an
+   index would mean something different by the time the user tapped it. */
+int32_t liv_sweep(const char *path, char **out);
+
+/* Say yes, by fingerprint. The sweep is re-run to find it, which is the
+   point: a proposal the box no longer makes is one the user already
+   acted on, and LIV_ERR_NOTHING says so rather than writing something
+   stale. */
+int32_t liv_accept(const char *path, uint64_t print, uint64_t now_ms);
+
+/* Say no. DECLINING IS NOT FORGETTING — the refusal persists and the
+   clerk does not ask again. */
+int32_t liv_decline(const char *path, uint64_t print);
 
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 

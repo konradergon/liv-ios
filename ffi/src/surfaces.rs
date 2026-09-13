@@ -75,7 +75,7 @@ fn boxes() -> &'static Mutex<HashMap<PathBuf, Engine>> {
 /// several of these per screen, and SQLite's own locking makes holding one
 /// safe — WAL is why the share extension can read while the app writes,
 /// which is the reason SQLite was chosen (`core-decisions.md` §5).
-fn with_engine<T>(
+pub(crate) fn with_engine<T>(
     path: *const c_char,
     work: impl FnOnce(&mut Engine) -> Result<T, i32>,
 ) -> Result<T, i32> {
@@ -94,7 +94,7 @@ fn with_engine<T>(
 }
 
 /// Hand a JSON answer back through the out-pointer.
-fn deliver<T: Serialize>(out: *mut *mut c_char, value: &T) -> i32 {
+pub(crate) fn deliver<T: Serialize>(out: *mut *mut c_char, value: &T) -> i32 {
     if out.is_null() {
         return LIV_ERR_ARG;
     }
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn liv_view_close_all() {
 
 // ---- arguments ---------------------------------------------------------
 
-fn parse_id(hex: &str) -> Option<EntityId> {
+pub(crate) fn parse_id(hex: &str) -> Option<EntityId> {
     if hex.len() != 32 {
         return None;
     }

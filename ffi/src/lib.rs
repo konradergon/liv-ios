@@ -22,7 +22,12 @@ mod snapshot;
 // The new seam (rust-owns-the-mechanisms.md §3): one verb per screen over
 // the engine, beside the snapshot rather than through it. Additive — the
 // old verbs are untouched and both work until the shell has moved.
+/// A body on the wire, in the shape the shell already writes.
+mod spans;
 pub mod surfaces;
+
+/// The engine's write verbs — what slice 5a is named for.
+pub mod writes;
 use snapshot::{build_snapshot, build_snapshot_windowed, fingerprint};
 
 
