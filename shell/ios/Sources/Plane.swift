@@ -388,7 +388,7 @@ struct DeskPlanes {
         var plane = DeskPlane()
         for token in stored["ids"] as? [String] ?? [] {
             let content: DeskTabContent =
-                LivEntityID(token).map { .entity($0) } ?? .position(token)
+                LivIDText.read(token).map { .entity($0) } ?? .position(token)
             plane.tabs.append(
                 DeskTab(
                     id: UUID(), content: content,

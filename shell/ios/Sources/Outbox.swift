@@ -457,7 +457,7 @@ final class Outbox: ObservableObject {
                     id: entityId,
                     itemUuid: UUID(uuidString: record.uuid) ?? UUID(),
                     kind: record.kind, state: record.state,
-                    title: titleResolver(entityId) ?? "#\(entityId)",
+                    title: titleResolver(entityId) ?? "#\(LivIDText.written(entityId))",
                     capturedCivil: record.captured)
             }
             .sorted { ($0.capturedCivil, $0.id) > ($1.capturedCivil, $1.id) }
@@ -500,7 +500,7 @@ final class Outbox: ObservableObject {
         else { return [:] }
         var out: [LivEntityID: LedgerRecord] = [:]
         for (key, record) in file.entries {
-            if let entityId = LivEntityID(key) { out[entityId] = record }
+            if let entityId = LivIDText.read(key) { out[entityId] = record }
         }
         return out
     }

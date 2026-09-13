@@ -105,7 +105,7 @@ struct WorkspaceRow: Decodable, Identifiable {
     var query: String?
 
     var id: LivEntityID { wsId ?? 0 }
-    var display: String { (name ?? "").isEmpty ? "#\(id)" : (name ?? "") }
+    var display: String { (name ?? "").isEmpty ? "#\(LivIDText.written(id))" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
         case wsId = "id", name, emoji, favorite, archived, builtin, parent, order,
@@ -121,7 +121,7 @@ struct SavedViewRow: Decodable, Identifiable {
     var query: String?
 
     var id: LivEntityID { viewId ?? 0 }
-    var display: String { (name ?? "").isEmpty ? "#\(id)" : (name ?? "") }
+    var display: String { (name ?? "").isEmpty ? "#\(LivIDText.written(id))" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
         case viewId = "id", name, query
@@ -317,31 +317,31 @@ final class WorkspaceModel: ObservableObject {
     /// tabs. READ-ONLY — nothing writes it. `DeskPlanes.load` (Plane.swift)
     /// reads it once, to become the Notes plane of v2.
     static func tabsKey(_ workspace: LivEntityID) -> String {
-        "desk.tabs.v1.\(workspace)"
+        "desk.tabs.v1.\(LivIDText.written(workspace))"
     }
 
     /// One plane per VIEW per workspace — the 2026-08-22 shape.
     /// READ-ONLY since 2026-08-28:  folds these into the
     /// one desk and leaves them where they are.
     static func planeKey(_ workspace: LivEntityID, _ view: String) -> String {
-        "desk.tabs.v2.\(workspace).\(view)"
+        "desk.tabs.v2.\(LivIDText.written(workspace)).\(view)"
     }
 
     /// THE DESK: the documents open in one workspace. One key, because
     /// there is one desk (2026-08-28).
     static func deskKey(_ workspace: LivEntityID) -> String {
-        "desk.v3.\(workspace)"
+        "desk.v3.\(LivIDText.written(workspace))"
     }
 
     /// Where each tool was left, view name to position token. One small
     /// map beside the desk, because a place is singular.
     static func spotsKey(_ workspace: LivEntityID) -> String {
-        "desk.spots.v3.\(workspace)"
+        "desk.spots.v3.\(LivIDText.written(workspace))"
     }
 
     /// The one open document, per workspace.
     static func docKey(_ workspace: LivEntityID) -> String {
-        "desk.doc.v1.\(workspace)"
+        "desk.doc.v1.\(LivIDText.written(workspace))"
     }
 }
 

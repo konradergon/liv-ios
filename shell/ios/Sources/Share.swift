@@ -45,7 +45,7 @@ enum NoteExport {
             .components(separatedBy: bad).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let squeezed = cleaned.split(separator: " ").joined(separator: " ")
-        let stem = squeezed.isEmpty ? "liv-note-\(id)" : String(squeezed.prefix(60))
+        let stem = squeezed.isEmpty ? "liv-note-\(LivIDText.written(id))" : String(squeezed.prefix(60))
         return stem + ".md"
     }
 }

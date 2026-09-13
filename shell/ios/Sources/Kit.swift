@@ -840,7 +840,7 @@ func livAnchorChip(of row: EntityRow) -> ValueChip? {
 /// strength, on the one screen built to show them quietly.
 func livRowIsUntitled(_ row: EntityRow) -> Bool {
     let raw = (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    return raw.isEmpty || raw == "#\(row.id)"
+    return raw.isEmpty || raw == "#\(LivIDText.written(row.id))"
 }
 
 // The icon language — what a row looks like, and the carved chip it

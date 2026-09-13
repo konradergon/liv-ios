@@ -213,8 +213,24 @@ replacement passes.
      the new ABI, a Swift decode, pixels — and `build.sh` needed no link
      flag for SQLite, as predicted from the Linux archive's undefined
      symbols. The refactor below is now a refactor, not a gamble.
-   * **4b, next:** the id type, then the surfaces. On a machine with
-     Xcode, or behind a green build.
+   * **4b, in slices** (owner: *"do it in slices"*), each one building
+     before the next:
+     1. `LivID` exists, used on the engine path only.
+     2. **Name the ids.** 225 sites said `UInt64`; about fourteen of them
+        meant a content fingerprint, the log's seq, a recency key or a
+        wall clock. A pure rename onto an alias, so it compiles by
+        construction — and the distinction is worth having whatever
+        happens next.
+     3. **Name the written form.** THE ID IS NOT INTERNAL, and nothing in
+        the tree said so. It leaves memory in five places a compiler
+        cannot see, each a string interpolation that stays valid whatever
+        the format becomes: the editor's `[[123]]` token **inside a
+        note's own text**; a `related` cell's `#123` **inside the box**;
+        five `UserDefaults` keys holding every saved plane; the outbox
+        ledger's JSON keys; a shared note's filename. One function now,
+        not twenty interpolations.
+     4. Flip the alias to `LivID` and answer what the compiler then asks.
+     5. Swap the data source.
 5. **Delete `core/`, the old FFI verbs, and the snapshot builder.** No
    feature flag, no parallel period beyond stage 4 (standing rule 7).
 6. **Sync.** The engine was built for it: ops, dots, version vectors and

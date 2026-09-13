@@ -236,7 +236,7 @@ enum MarkStyler {
             digits.append(Character(UnicodeScalar(c)!))
             i += 1
         }
-        return LivEntityID(digits)
+        return LivIDText.read(digits)
     }
 
     private static func style(

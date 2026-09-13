@@ -194,7 +194,7 @@ enum MarkScan {
                     digitStr.append(Character(UnicodeScalar(u[j])!))
                     j += 1
                 }
-                if !digitStr.isEmpty, LivEntityID(digitStr) != nil {
+                if !digitStr.isEmpty, LivIDText.read(digitStr) != nil {
                     if j + 1 < u.count, u[j] == 0x5D, u[j + 1] == 0x5D {
                         out.append(
                             .refToken(NSRange(location: i, length: j + 2 - i), name: nil))

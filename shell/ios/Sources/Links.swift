@@ -117,13 +117,13 @@ struct LinksSection: View {
     private func removal(for link: LinkRow) -> (() -> Void)? {
         guard link.fromBody != true, let target = link.id else { return nil }
         return {
-            box.removeCell(id, "related", "#\(target)") { _ in load() }
+            box.removeCell(id, "related", "#\(LivIDText.written(target))") { _ in load() }
         }
     }
 
     private func link(to target: LivEntityID) {
         guard target != 0, target != id else { return }
-        box.addCell(id, "related", "#\(target)") { _ in load() }
+        box.addCell(id, "related", "#\(LivIDText.written(target))") { _ in load() }
     }
 
     private func open(_ link: LinkRow) {
@@ -183,7 +183,7 @@ private struct LinkRowView: View {
     private var untitled: Bool {
         if let row { return livRowIsUntitled(row) }
         let n = wireName
-        return n.isEmpty || n == "#\(link.id ?? 0)"
+        return n.isEmpty || n == "#\(LivIDText.written(link.id ?? 0))"
     }
 
     private var wireName: String {

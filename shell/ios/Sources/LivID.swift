@@ -40,6 +40,41 @@ import Foundation
 /// says which is which, and that is worth having whatever happens next.
 typealias LivEntityID = UInt64
 
+/// **An id written DOWN.**
+///
+/// The type is not internal, and finding that out was the whole of slice
+/// 3. An id leaves the app's memory in five places, and a compiler cannot
+/// see any of them, because each is a string interpolation that stays
+/// valid whatever the format becomes:
+///
+/// * the editor's `[[123]]` token, **inside a note's own text**;
+/// * a `related` cell's `#123`, **inside the box**;
+/// * five `UserDefaults` keys (`desk.v3.123`), which hold every saved
+///   plane and desk position;
+/// * the outbox ledger's JSON dictionary keys;
+/// * a shared note's filename.
+///
+/// A silent format change in any of those is not a bug that shows up in a
+/// build. It is every `[[…]]` in every note ceasing to resolve, and every
+/// saved plane orphaned, discovered later.
+///
+/// So the format is ONE function now rather than nine interpolations,
+/// and slice 4 changes it in one place — or deliberately does not, which
+/// is the likelier answer for anything already on disk.
+enum LivIDText {
+    /// The written form. Decimal, which is what every one of those five
+    /// places already holds.
+    static func written(_ id: LivEntityID) -> String {
+        String(id)
+    }
+
+    /// And read back. `nil` for anything that is not one — a token that
+    /// does not parse is text, not a broken link.
+    static func read(_ text: some StringProtocol) -> LivEntityID? {
+        LivEntityID(text)
+    }
+}
+
 struct LivID: Hashable, Comparable, Codable, CustomStringConvertible {
     /// Bytes 0–7, big-endian. The v7 timestamp lives in the top 48 bits,
     /// which is why this one leads.
@@ -167,6 +202,26 @@ func livIdSelfCheck() -> [String] {
         let b = LivID(hex: String(repeating: "0", count: 31) + "2")
     {
         if !(a < b) { fail.append("the low word must break a tie") }
+    }
+
+    // The WRITTEN form round-trips, which is the claim that matters most
+    // in this file: it is the format inside a note's `[[…]]` token, inside
+    // a `related` cell, and inside every saved plane's UserDefaults key.
+    // A change to it that nobody noticed would unlink every note.
+    for n: LivEntityID in [0, 1, 4155, 4_294_967_296, LivEntityID.max] {
+        let text = LivIDText.written(n)
+        if LivIDText.read(text) != n {
+            fail.append("written form: \(n) came back \(String(describing: LivIDText.read(text)))")
+        }
+    }
+    for notAnId in ["", "abc", "12x", "-1", " 7"] {
+        if LivIDText.read(notAnId) != nil {
+            fail.append("read a non-id as one: \(notAnId.isEmpty ? "(empty)" : notAnId)")
+        }
+    }
+    // The editor's token is the written form, not the description.
+    if LivIDText.written(4155) != "4155" {
+        fail.append("the written form is not decimal — every [[…]] token just moved")
     }
 
     // The wire form is ONE STRING, not an object.

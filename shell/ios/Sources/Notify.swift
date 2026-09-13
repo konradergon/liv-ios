@@ -240,7 +240,7 @@ extension Notify: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         if let raw = response.notification.request.content.userInfo["entity"] as? String,
-            let id = LivEntityID(raw)
+            let id = LivIDText.read(raw)
         {
             if let onOpen {
                 onOpen(id)

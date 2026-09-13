@@ -72,7 +72,7 @@ enum Route: Equatable {
         case ("capture", "photo"):
             self = .capturePhoto
         case ("entity", let id?):
-            guard let n = LivEntityID(id) else { return nil }
+            guard let n = LivIDText.read(id) else { return nil }
             self = .entity(n)
         case (let name, nil):
             if let feature = Feature(rawValue: name) {

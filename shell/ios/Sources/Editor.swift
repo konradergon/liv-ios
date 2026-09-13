@@ -210,12 +210,12 @@ enum SpanText {
     /// saves gave "]]]]] today" (measured, 2026-08-11).
     static func token(_ id: LivEntityID, name: String?) -> String {
         let raw = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return "[[\(id)]]" }
+        guard !raw.isEmpty else { return "[[\(LivIDText.written(id))]]" }
         let clean =
             raw
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "]", with: "] ")
-        return "[[\(id)|\(clean)]]"
+        return "[[\(LivIDText.written(id))|\(clean)]]"
     }
 
     /// Spans → the editing buffer. A Break opens a paragraph, so a LEADING
@@ -589,7 +589,7 @@ enum SpanText {
             digits.append(c[i])
             i += 1
         }
-        guard !digits.isEmpty, let id = LivEntityID(digits) else { return nil }
+        guard !digits.isEmpty, let id = LivIDText.read(digits) else { return nil }
         if i + 1 < c.count, c[i] == "]", c[i + 1] == "]" { return (id, i + 2) }
         guard i < c.count, c[i] == "|" else { return nil }
         i += 1
