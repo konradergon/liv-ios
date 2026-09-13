@@ -108,17 +108,73 @@ impl Engine {
             .map_err(WriteError::Log)
     }
 
-    /// Say no. The refusal persists; nothing asks again.
+    /// Say no. The refusal persists, travels, and nothing asks again.
     ///
     /// Not a ban — see `accept`, which still works on a declined
     /// proposal. It stops the CLERK offering it, and leaves the user free
     /// to change their mind.
-    pub fn decline(&self, p: &Proposal) -> Result<(), LogError> {
-        crate::view::decline(self.conn(), p.fingerprint())?;
+    ///
+    /// **A refusal is an op, so it syncs** (owner, 2026-09-13). It is an
+    /// `AddToSet` of the fingerprint onto the thing the proposal is
+    /// about, which buys three things beyond travelling: refusing twice
+    /// is idempotent because a set has no duplicates; trashing a thing
+    /// takes its refusals with it; and undo works on it, which is what
+    /// makes a mis-tap recoverable rather than permanent.
+    pub fn decline(&mut self, p: &Proposal, now_ms: u64) -> Result<(), WriteError> {
+        let Some(about) = p.ops.first().map(Op::entity) else {
+            // A proposal with no ops proposes nothing, so there is
+            // nothing to refuse and nowhere to write it.
+            return Err(WriteError::Refused(crate::model::Refused::WrongKind));
+        };
+        // **Saying no twice is saying no once.** A set here is an
+        // observed-remove set, so every `AddToSet` is its own element
+        // with its own dot — which is what makes a member added on
+        // another device survive a removal, and also what would let a
+        // repeated tap grow the box forever. The set is right; the verb
+        // is where the idempotence belongs. It also keeps undo honest:
+        // two refusals and one undo must not leave it still refused.
+        if self.is_declined(p)? {
+            return Ok(());
+        }
+        let op = Op::AddToSet {
+            entity: about,
+            prop: crate::model::prop::DECLINED,
+            value: crate::op::Value::Text(print_text(p.fingerprint())),
+        };
+        self.vet_op(&op)?;
+        self.commit(vec![op], action::SET, Author::User, now_ms)?;
         Ok(())
     }
 
+    /// Has this exact proposal been turned down?
     pub fn is_declined(&self, p: &Proposal) -> Result<bool, LogError> {
-        Ok(crate::view::is_declined(self.conn(), p.fingerprint())?)
+        let Some(about) = p.ops.first().map(Op::entity) else { return Ok(false) };
+        let want = print_text(p.fingerprint());
+        Ok(self
+            .cell(about, crate::model::prop::DECLINED)?
+            .into_iter()
+            .any(|(_, v)| matches!(v, crate::op::Value::Text(s) if s == want)))
     }
+
+    /// Every refusal in the box, as `(thing, fingerprint hex)`.
+    ///
+    /// One indexed scan, for the sweep — which asks about every proposal
+    /// it found and would otherwise be a point read per proposal.
+    pub fn refusals(&self) -> Result<std::collections::HashSet<(crate::id::EntityId, String)>, LogError> {
+        let mut out = std::collections::HashSet::new();
+        for (entity, values) in crate::view::with_prop(self.conn(), crate::model::prop::DECLINED)? {
+            for v in values {
+                if let crate::op::Value::Text(s) = v {
+                    out.insert((entity, s));
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// A fingerprint's stored spelling: 16 lowercase hex characters, which is
+/// every one of its 64 bits. See `prop::DECLINED` for why not a number.
+pub fn print_text(print: u64) -> String {
+    format!("{print:016x}")
 }

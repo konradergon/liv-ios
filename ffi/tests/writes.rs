@@ -353,7 +353,7 @@ fn declining_is_not_forgetting() {
     let print = rows[0]["print"].as_u64().unwrap();
     let about = c(rows[0]["entity"].as_str().unwrap());
 
-    assert_eq!(unsafe { liv_decline(path.as_ptr(), about.as_ptr(), print) }, LIV_OK);
+    assert_eq!(unsafe { liv_decline(path.as_ptr(), about.as_ptr(), print, T0 + 5) }, LIV_OK);
 
     let mut out = std::ptr::null_mut();
     unsafe { liv_sweep(path.as_ptr(), &mut out) };

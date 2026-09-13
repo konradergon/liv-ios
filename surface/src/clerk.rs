@@ -146,15 +146,21 @@ fn about(
 
 /// The two filters every sweep ends with: what the clerk is allowed to
 /// say, and what it has already been told not to say again.
+///
+/// The refusals come back in ONE scan rather than a read per proposal —
+/// a sweep asks about every draft it found, so a point read each is the
+/// N+1 that standing rule 2 exists to catch.
 fn keepable(e: &Engine, mut found: Vec<Proposal>) -> Result<Vec<Proposal>, LogError> {
     found.retain(permitted);
-    let mut kept = Vec::with_capacity(found.len());
-    for p in found {
-        if !e.is_declined(&p)? {
-            kept.push(p);
-        }
+    if found.is_empty() {
+        return Ok(found);
     }
-    Ok(kept)
+    let refused = e.refusals()?;
+    found.retain(|p| match p.ops.first() {
+        Some(op) => !refused.contains(&(op.entity(), liv_engine::print_text(p.fingerprint()))),
+        None => true,
+    });
+    Ok(found)
 }
 
 /// **The clerk never touches a value judgment** (catalog a13).

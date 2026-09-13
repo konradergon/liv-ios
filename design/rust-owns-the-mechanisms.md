@@ -455,11 +455,40 @@ replacement passes.
         **The clerk's queue is not the clerk.** The sweep is a pure
         function of the box, so a pending draft is recomputed rather than
         stored — what persists is the REFUSAL, because declining is not
-        forgetting. One open question is recorded rather than answered:
-        a refusal is device-local, as it is in `core/`, so declining on
-        the laptop does not stop the phone asking. Making it travel would
-        put "the user said no" in the log, which is arguably where it
-        belongs, and that is the owner's call.
+        forgetting.
+
+        **And the refusal travels** (owner, 2026-09-13): *"if you refuse
+        on the phone, then it should refuse on all synced devices also,
+        otherwise it isn't a good sync."* This was the open question of
+        the paragraph above; it is answered. A refusal was device-local
+        here, as it is in `core/` — a table beside the log — so declining
+        on the laptop left the phone still asking.
+
+        It is an op now: `AddToSet` of the fingerprint onto the thing the
+        proposal was about, on a reserved `declined` property. Four
+        things follow from that shape rather than being built. It
+        travels. Trashing a thing takes its refusals with it. Replay
+        rebuilds it, so it stops being the special case `places` still
+        is — the device-local table is deleted, not disabled. And undo
+        reaches it, which makes a mis-tap in the inbox recoverable
+        instead of permanent.
+
+        The fingerprint is stored as hex, not as a `Number`. A `Number`
+        is an f64 with 53 bits of mantissa and a fingerprint is 64 bits
+        of identity: rounding it would make two proposals refuse each
+        other. The test for this asserts the STORED FORM rather than a
+        round trip — a lossy spelling used on both sides still matches
+        itself, which is exactly how that test would have passed while
+        proving nothing, and breaking it on purpose is what showed the
+        first version did.
+
+        One thing did NOT come free. A set here is observed-remove, so
+        every `AddToSet` is its own element with its own dot — that is
+        what lets a tag added on the phone survive a removal on the
+        laptop, and `Engine::add` has always behaved this way. So
+        nothing in the set layer stops a repeated tap growing the box.
+        `decline` checks before writing. The test that found this had
+        asserted the set did it, and the set does not.
 
         It also has a rule `core/` never needed: **undo is what you did
         on this device.** One history made the question moot; a box

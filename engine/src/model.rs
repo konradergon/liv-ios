@@ -204,6 +204,27 @@ pub mod prop {
     /// On a kind: which fields it expects. The inverse of `FOR_KIND`, and
     /// the box has both — one is asked of a kind, the other of a field.
     pub const EXPECTED: EntityId = frozen(CLASS_PROP, 55);
+
+    /// **Suggestions the user turned down, on the thing they were about.**
+    ///
+    /// A set of fingerprints, each as its 16-character hex spelling. The
+    /// clerk re-derives its drafts in every process, so what persists is
+    /// not the draft but the refusal — and since 2026-09-13 (owner's
+    /// word) the refusal TRAVELS: *"if you refuse on the phone, then it
+    /// should refuse on all synced devices also, otherwise it isn't a
+    /// good sync."* It was a device-local table beside the log before
+    /// that, exactly as in `core/`.
+    ///
+    /// Hex rather than `Holds::Number`, because a fingerprint is 64 bits
+    /// of identity and a `Number` is an f64 with 53 bits of mantissa:
+    /// storing one there would round it, and two proposals would start
+    /// refusing each other. Nothing ever adds or orders these, so the
+    /// only thing the type has to preserve is exactness.
+    ///
+    /// Kept on the ENTITY the proposal is about, which is what makes
+    /// checking one cost one read — and what makes trashing a thing take
+    /// its refusals with it.
+    pub const DECLINED: EntityId = frozen(CLASS_PROP, 56);
 }
 
 /// What a property may hold. Closed, so a value that does not fit is
@@ -337,6 +358,7 @@ props! {
     prop::AUTOMATION,      "automation",      false, Holds::Bool,                  false;
     prop::RELATED,         "related",         true,  Holds::Ref,                   false;
     prop::EXPECTED,        "expected",        true,  Holds::RefTo(kind::FIELD),    false;
+    prop::DECLINED,        "declined",        true,  Holds::Text,                  false;
 }
 
 pub fn prop_def(id: EntityId) -> Option<&'static PropDef> {

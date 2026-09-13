@@ -32,7 +32,7 @@ pub mod view;
 pub mod write;
 
 pub use civil::{civil_from_days, days_from_civil, split_civil};
-pub use clerk::Proposal;
+pub use clerk::{print_text, Proposal};
 pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
 pub use files::{hash_file, FileError, Resync};

@@ -222,6 +222,25 @@ has to re-seal the frame the way a peer would.
 kinds. That keeps the vocabulary at four and gives them merge rules for free, which
 `core.md` §5 currently lists as having none.
 
+**A refusal is one too** (added 2026-09-13, owner's ruling that declining on one
+device must decline on all of them): `AddToSet` of the refused proposal's
+fingerprint onto the thing it was about, on the reserved `declined` property. It
+was a table beside the log before that, as it is in `core/`, and so it did not
+travel.
+
+The fingerprint is stored as its **16-character hex spelling, not a number**. A
+`Number` value is an f64 and a fingerprint is 64 bits of identity: putting one in
+the other rounds it, and two proposals differing only in the low bits would start
+refusing each other. Nothing ever adds or orders these, so exactness is the only
+thing the encoding owes them.
+
+Being a set rather than a register is what gives concurrent refusals on two devices
+the right answer for free — both are members, and the thing stays refused. It does
+NOT make the verb idempotent: this is an observed-remove set, so every `AddToSet` is
+its own element with its own dot (which is what lets a member added on one device
+survive a removal on another). `decline` checks before writing, so a repeated tap
+adds nothing and one undo is enough to take the refusal back.
+
 ---
 
 ## 5. Grouping, and the torn tail

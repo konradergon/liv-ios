@@ -149,7 +149,7 @@ fn a_declined_proposal_is_never_offered_again() {
     let p = filing(scrap, area::WORK);
 
     assert!(!e.is_declined(&p).unwrap(), "not yet");
-    e.decline(&p).unwrap();
+    e.decline(&p, T0 + 1).unwrap();
     assert!(e.is_declined(&p).unwrap(), "and now it is");
 
     // The sweep re-derives the same draft in every process, so it is the
@@ -164,7 +164,7 @@ fn declining_one_does_not_decline_its_neighbours() {
     let a = e.create(kind::NOTE, Some("one"), T0).unwrap();
     let b = e.create(kind::NOTE, Some("two"), T0 + 1).unwrap();
 
-    e.decline(&filing(a, area::WORK)).unwrap();
+    e.decline(&filing(a, area::WORK), T0 + 2).unwrap();
 
     assert!(!e.is_declined(&filing(b, area::WORK)).unwrap(), "a different subject");
     assert!(!e.is_declined(&filing(a, area::HOME)).unwrap(), "a different suggestion");
@@ -181,35 +181,9 @@ fn the_reason_is_part_of_what_was_declined() {
     let mut two = filing(scrap, area::WORK);
     two.reason = "you file every kickoff under Work".into();
 
-    e.decline(&one).unwrap();
+    e.decline(&one, T0 + 2).unwrap();
     assert!(e.is_declined(&one).unwrap());
     assert!(!e.is_declined(&two).unwrap());
-}
-
-#[test]
-fn a_refusal_survives_a_reopen_and_a_replay() {
-    let dir = std::env::temp_dir().join("liv_engine_clerk");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("liv.db");
-
-    let (scrap, p) = {
-        let mut e = Engine::open_local(&path).unwrap();
-        let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-        let p = filing(scrap, area::WORK);
-        e.decline(&p).unwrap();
-        (scrap, p)
-    };
-    let _ = scrap;
-
-    let mut e = Engine::open_local(&path).unwrap();
-    assert!(e.is_declined(&p).unwrap(), "a refusal outlives the process");
-    // And a replay must not take it: nothing in the log could put it
-    // back, which is the same rule `places` follows.
-    e.replay().unwrap();
-    assert!(e.is_declined(&p).unwrap(), "or the repair button");
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -220,8 +194,147 @@ fn accepting_a_proposal_that_was_declined_still_works() {
     let mut e = engine();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
     let p = filing(scrap, area::WORK);
-    e.decline(&p).unwrap();
+    e.decline(&p, T0 + 1).unwrap();
 
-    e.accept(&p, T0 + 1).unwrap();
+    e.accept(&p, T0 + 2).unwrap();
     assert_eq!(e.one(scrap, prop::AREA).unwrap(), Some(Value::Ref(area::WORK)));
+}
+
+// ---- a refusal travels -------------------------------------------------
+
+/// **Refusing on the phone refuses everywhere** (owner, 2026-09-13):
+/// *"if you refuse on the phone, then it should refuse on all synced
+/// devices also, otherwise it isn't a good sync."*
+///
+/// This reverses what `core/` did and what this crate did until now — a
+/// refusal beside the log rather than in it, so declining on the laptop
+/// left the phone still asking. It is the whole test: the refusal is an
+/// op, so it travels like every other fact.
+#[test]
+fn a_refusal_made_on_one_device_is_honoured_on_the_other() {
+    let mut laptop = Engine::open_in_memory(dev(1)).unwrap();
+    let scrap = laptop.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
+    let p = filing(scrap, area::WORK);
+
+    let mut phone = Engine::open_in_memory(dev(2)).unwrap();
+    for g in laptop.groups().unwrap() {
+        phone.receive(g).unwrap();
+    }
+    assert!(!phone.is_declined(&p).unwrap(), "nothing said no yet");
+
+    laptop.decline(&p, T0 + 1).unwrap();
+    assert!(laptop.is_declined(&p).unwrap());
+
+    for g in laptop.groups().unwrap() {
+        let _ = phone.receive(g);
+    }
+    assert!(phone.is_declined(&p).unwrap(), "the refusal has to travel");
+}
+
+/// And it is a fact like any other: replay puts it back, because it is
+/// IN the log now rather than beside it.
+///
+/// This is the exact reversal of what this crate asserted before. The old
+/// rule was `places`'s — nothing in the log could put a device-local row
+/// back, so replay had to leave it alone. A refusal is no longer that
+/// kind of thing.
+#[test]
+fn a_refusal_survives_a_replay_because_it_is_in_the_log() {
+    let dir = std::env::temp_dir().join("liv_engine_refusal_replay");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("liv.db");
+
+    let p = {
+        let mut e = Engine::open_local(&path).unwrap();
+        let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
+        let p = filing(scrap, area::WORK);
+        e.decline(&p, T0 + 1).unwrap();
+        p
+    };
+
+    let mut e = Engine::open_local(&path).unwrap();
+    assert!(e.is_declined(&p).unwrap(), "a refusal outlives the process");
+    e.replay().unwrap();
+    assert!(e.is_declined(&p).unwrap(), "and the repair button rebuilds it");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **A fingerprint is 64 bits and a number cell is not.**
+///
+/// The refusal rides as the fingerprint's hex spelling, not as
+/// `Value::Number`, which is an f64 with 53 bits of mantissa: storing a
+/// fingerprint in one would round it, and two proposals whose prints
+/// differ only in the low bits would start refusing each other.
+///
+/// This asserts the STORED FORM, not a round trip. A round trip proves
+/// nothing here — a lossy spelling used on both sides still matches
+/// itself, which is exactly how this test would have passed while being
+/// worthless.
+#[test]
+fn a_refusal_stores_every_bit_of_its_fingerprint() {
+    let mut e = engine();
+    let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
+    let p = filing(scrap, area::WORK);
+    let print = p.fingerprint();
+    assert!(print > (1u64 << 53), "the fixture must exceed an f64's mantissa: {print}");
+
+    e.decline(&p, T0 + 1).unwrap();
+
+    let stored: Vec<Value> =
+        e.cell(scrap, prop::DECLINED).unwrap().into_iter().map(|(_, v)| v).collect();
+    assert_eq!(
+        stored,
+        vec![Value::Text(format!("{print:016x}"))],
+        "the cell must hold all 64 bits, spelled out"
+    );
+    // And the spelling parses back to the exact same u64.
+    let Value::Text(hex) = &stored[0] else { panic!("not text") };
+    assert_eq!(u64::from_str_radix(hex, 16).unwrap(), print);
+}
+
+/// **Refusing twice is refusing once**, and the verb is what makes it so.
+///
+/// A set here is an observed-remove set: every `AddToSet` is its own
+/// element with its own dot, which is what lets a tag added on the phone
+/// survive a removal on the laptop. `Engine::add` behaves the same way,
+/// deliberately. So nothing in the set layer stops a repeated tap growing
+/// the box, and `decline` checks first.
+///
+/// The first version of this test asserted the SET did it, and the set
+/// does not.
+#[test]
+fn refusing_twice_is_refusing_once() {
+    let mut e = engine();
+    let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
+    let p = filing(scrap, area::WORK);
+
+    e.decline(&p, T0 + 1).unwrap();
+    e.decline(&p, T0 + 2).unwrap();
+    e.decline(&p, T0 + 3).unwrap();
+
+    assert_eq!(e.cell(scrap, prop::DECLINED).unwrap().len(), 1, "one no, however often tapped");
+    assert!(e.is_declined(&p).unwrap());
+
+    // And one undo is enough to take it back, which is the other half of
+    // why the repeat writes nothing.
+    e.undo(T0 + 4).unwrap();
+    assert!(!e.is_declined(&p).unwrap(), "one undo, not three");
+}
+
+/// And a refusal can be taken back, because it is an ordinary action in
+/// this device's history. A mis-tap in the inbox is recoverable rather
+/// than permanent — which the device-local table could not offer.
+#[test]
+fn a_refusal_can_be_undone() {
+    let mut e = engine();
+    let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
+    let p = filing(scrap, area::WORK);
+
+    e.decline(&p, T0 + 1).unwrap();
+    assert!(e.is_declined(&p).unwrap());
+
+    e.undo(T0 + 2).unwrap();
+    assert!(!e.is_declined(&p).unwrap(), "the clerk may ask again");
 }

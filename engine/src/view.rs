@@ -143,17 +143,13 @@ CREATE TABLE IF NOT EXISTS places (
     path TEXT NOT NULL
 ) WITHOUT ROWID;
 
--- SUGGESTIONS THE USER TURNED DOWN. Also not derived, for the same
--- reason as `places`: the clerk RE-DERIVES its drafts in every process
--- (the sweep is a pure function of the box), so what has to persist is
--- not the draft but the refusal. Declining is not forgetting.
---
--- Device-local, exactly as in core/ (which keeps it in a file beside the
--- log, not in it). Whether a refusal should TRAVEL is an open question
--- recorded in clerk.rs, not one to settle by accident here.
-CREATE TABLE IF NOT EXISTS declined (
-    print INTEGER NOT NULL PRIMARY KEY
-) WITHOUT ROWID;
+-- SUGGESTIONS THE USER TURNED DOWN used to be a table here, device-local
+-- beside the log exactly as in core/. They are ops now: the owner ruled
+-- on 2026-09-13 that refusing on the phone must refuse on every synced
+-- device, or it is not a good sync. So a refusal is a `declined` cell on
+-- the thing it was about, derived by the fold like every other cell and
+-- dropped by `TABLES` like every other derived thing. Nothing
+-- device-local is left of it, which is the point.
 ";
 
 /// Every DERIVED table, newest dependency last. `rebuild` drops them in
@@ -549,23 +545,6 @@ pub fn remember_path(
         rusqlite::params![&hash[..], path],
     )?;
     Ok(())
-}
-
-pub fn decline(conn: &Connection, print: u64) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT OR IGNORE INTO declined(print) VALUES (?1)",
-        rusqlite::params![print as i64],
-    )?;
-    Ok(())
-}
-
-pub fn is_declined(conn: &Connection, print: u64) -> Result<bool, rusqlite::Error> {
-    let n: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM declined WHERE print = ?1",
-        rusqlite::params![print as i64],
-        |r| r.get(0),
-    )?;
-    Ok(n > 0)
 }
 
 pub fn entity_count(conn: &Connection) -> Result<u64, rusqlite::Error> {

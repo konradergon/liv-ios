@@ -582,7 +582,8 @@ int32_t liv_sweep(const char *path, char **out);
    not ask again. */
 int32_t liv_accept(const char *path, const char *entity, uint64_t print,
                    uint64_t now_ms);
-int32_t liv_decline(const char *path, const char *entity, uint64_t print);
+int32_t liv_decline(const char *path, const char *entity, uint64_t print,
+                    uint64_t now_ms);
 
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 

@@ -478,7 +478,7 @@ fn a_declined_proposal_does_not_come_back() {
 
     let before = sweep(&e).unwrap();
     let mention = before.iter().find(|p| p.proposer == "mentions").unwrap().clone();
-    e.decline(&mention).unwrap();
+    e.decline(&mention, T0 + 99).unwrap();
 
     let after = sweep(&e).unwrap();
     assert_eq!(after.len(), before.len() - 1);
@@ -568,7 +568,7 @@ fn sweeping_one_thing_still_honours_a_refusal_and_the_consent_gate() {
 
     let mine = sweep_one(&e, id).unwrap();
     assert!(mine.len() >= 2, "a date and a mention");
-    e.decline(&mine[0]).unwrap();
+    e.decline(&mine[0], T0 + 99).unwrap();
     assert_eq!(sweep_one(&e, id).unwrap().len(), mine.len() - 1, "a refusal is remembered");
 
     let s = e.create(kind::NOTE, Some("settings"), T0 + 50).unwrap();

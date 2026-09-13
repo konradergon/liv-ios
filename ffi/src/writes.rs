@@ -440,6 +440,10 @@ pub unsafe extern "C" fn liv_accept(
 /// Say no. **Declining is not forgetting** — the refusal persists and the
 /// clerk does not ask again.
 ///
+/// It also TRAVELS (owner, 2026-09-13): a refusal is an op, so saying no
+/// on the phone says no on the laptop too. That is why this takes a clock
+/// where it used to take none — it is a write now, not a note to self.
+///
 /// # Safety
 /// As `liv_accept`.
 #[no_mangle]
@@ -447,6 +451,7 @@ pub unsafe extern "C" fn liv_decline(
     path: *const c_char,
     entity: *const c_char,
     print: u64,
+    now_ms: u64,
 ) -> i32 {
     let entity = match id_arg(entity) {
         Ok(i) => i,
@@ -454,7 +459,7 @@ pub unsafe extern "C" fn liv_decline(
     };
     match with_engine(path, |e| {
         let Some(p) = find(e, entity, print)? else { return Err(LIV_ERR_NOTHING) };
-        e.decline(&p).map_err(|_| LIV_ERR_READ)?;
+        e.decline(&p, now_ms).map_err(|_| LIV_ERR_REFUSED)?;
         Ok(())
     }) {
         Ok(()) => LIV_OK,
