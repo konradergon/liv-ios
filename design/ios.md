@@ -1004,6 +1004,69 @@ has two honest answers, and they lead to different work:
    owner closed on 2026-08-13 — "a screen that looked like an editor and
    was not one". Not built without the word.
 
+## 68. Search comes to the thumb, and a form shows the form (rev 87, owner 2026-09-13)
+
+Owner, with three simulator screenshots and a screen recording: *"These
+spaces need visual polish. Redesign them. Search should be more similar
+to the video, the rest is up to you to simplify and clean up."*
+
+**SEARCH GOES TO THE FOOT.** Measured off his clip: the field sits at the
+bottom, directly above the keyboard, as a plain pill with a round ✕
+beside it, and the results fill everything above. Liv's was at the top
+with the word "Cancel" — the shape every search screen had in 2010, and a
+reach on a 2,532px phone.
+
+That is this app's own argument, already made twice. The tab switcher
+moved because it "used to start 700pt away at the top of the screen", and
+the bar has always been at the foot. Search was the last surface reaching
+upward.
+
+- The field, the lens chip, the constraint line and the facet row are all
+  in the footer. The chips are what you TAP to narrow, so they belong in
+  the same reach as the field; a facet row halfway up the screen while
+  your thumb is on the keyboard is the same reach problem one layer down.
+- A round ✕ replaces the word, for the reason §58 took the words off the
+  bar: a glyph everyone reads, at a size a thumb can hit.
+- The pill was 34pt against a 44pt touch floor — under Apple's minimum
+  and visibly shorter than every other control at the foot. It is
+  `LivRow.touch` now, and it loses its hairline on the argument §66 used
+  for the filter chips: a fill either reads as a well or it does not.
+- The empty line is centred rather than pinned 40pt under a header that
+  no longer exists. **No glyph, though the reference draws one**: §56 took
+  the glyph out of `EmptyHint` on his word about verbose empty states, and
+  took it out of the TYPE so it could not come back one surface at a time.
+  Adding one here would reverse that on a screenshot rather than on his
+  word.
+
+**A FIELD THAT FILLED WITH THE COLOUR BEHIND IT.** Both forms drew their
+name field in `LivTheme.surface`, and the card they sit in is
+`LivTheme.surface` — so the only thing separating them was a 0.5pt
+hairline. That is why "Name" reads as a placeholder floating loose in the
+card in both screenshots. It is `panel2` now, the app's own answer for a
+well, in the same capsule the search field wears.
+
+**A FORM SHOWS THE FORM AND NOTHING ELSE**, which is his own rule from
+2026-08-13 — a list of workspaces above a filter you are naming is the
+wrong screen. It had been applied to the filter form and not to the
+workspace one, so naming a workspace left the entire workspace list
+sitting above the field, which is the first screenshot exactly. **The
+same shape of miss as §66's chip border, and the third this week**: a
+rule stated once and applied to one of its sites. Editing also gets an
+honest title instead of borrowing "Workspace" from the list it replaces.
+
+**THE PRIMARY WAS SMALLER THAN THE WAY OUT.** `ConfirmPill` drew
+`label`(16) in a 34pt capsule while Cancel sat at `body`(18) beside it,
+and Cancel was in `text3` — the tier the palette check exempts from the
+read floor because it holds placeholders and timestamps (§63). The pill
+takes the verb face §64 settled on, at `LivRow.touch` so it matches the
+field above it; Cancel moves to `text2` and medium, quieter than the pill
+and no longer dimmer than a timestamp. Both `ConfirmPill` call sites are
+these two forms, so nothing else moves.
+
+**NOT VERIFIED on a simulator.** `drive.sh facets` taps "Search", waits
+for a field and reads chips by accessibility label, none of which depends
+on where they sit, so it should be unaffected.
+
 ## 67. The menu is a card at its door (rev 84, owner 2026-09-12)
 
 Owner, pointing at a screen recording of ChatGPT's compose menu: *"Can
