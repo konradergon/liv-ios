@@ -480,13 +480,56 @@ replacement passes.
           get it back. The test asserted erasure first; erasure is what
           would make an undone capture unrecoverable.
 
-          **What is still missing before 5b**, from the same audit: the
-          shell calls 41 core-era verbs and search, the query grammar,
-          distinct values, status options, vault alerts, workspaces and
-          saved views have no engine equivalent yet. `surface/src/search.rs`
-          and `engine/src/query.rs` both EXIST and neither has an FFI
-          door — the same shape of gap this batch just closed, one layer
-          along.
+        * **5a-iii, finding things — and the ABI is now complete.**
+          Search, the query grammar, values in use, file alerts,
+          workspaces and saved filters. `surface/src/search.rs` and
+          `engine/src/query.rs` had both been built and tested with no
+          door on either — the same shape of gap as the write verbs, one
+          layer along.
+
+          **Two jobs, one grammar.** The same text means two things
+          depending on where it is typed: a search box WIDENS
+          (`is:archived` = "look in the archive too") and a lens
+          RESTRICTS (= "only archived things"). One parser told which
+          job it is doing, two verbs because the answers are shaped
+          differently — ranked hits with facets, against a flat set of
+          ids. It is the easiest thing in that file to get backwards,
+          because both readings return plausible rows, so the test
+          asserts both directions of the same query.
+
+          `liv_terms` is what keeps standing rule 5 true: the user never
+          types the grammar, so a stored filter has to become chips a
+          person edits by tapping. It takes no box and no lock, which is
+          what makes it safe on every keystroke. Named `terms` rather
+          than `lex` because the core-era ABI already exports a
+          `liv_lex`; every engine verb is purely additive, and a symbol
+          collision is the one way to break the old shell while
+          replacing it.
+
+          Then the ABI was checked against the old one **verb by verb**
+          rather than by feel, which found three more with no
+          equivalent: declaring a user's own field, accepting a group of
+          suggestions as one action, and asking why a box will not open.
+          All three exist now, and every core-era verb the shell calls
+          has an engine answer. **The Rust side of 5b is done.**
+
+          Four tests in this batch proved nothing until they were broken
+          on purpose. Two were mine mis-aimed: "accept all" ticked every
+          suggestion an entity had, so taking everything the sweep found
+          looked identical to taking what was passed; and the probe test
+          only asserted "not ok", which cannot tell `version` — the one
+          answer a person can act on — from the rest. Both assert the
+          distinction now, the second against a deliberately forged
+          newer box.
+
+          **What remains for 5b is Swift, and it cannot be verified in
+          this container.** `Box.swift` stops decoding a snapshot and
+          calls the per-screen verbs; `LivID`'s `core` half goes; the
+          core box is converted once and becomes history. Desk and plane
+          state persist ids in `UserDefaults`, so dead ids have to be
+          detected and cleared on the way through. None of it can be
+          compiled here, so it ships hand-checked and labelled NOT
+          VERIFIED until the simulator has seen it.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.

@@ -319,6 +319,7 @@ dependencies = [
  "liv-services",
  "liv-surface",
  "liv-views",
+ "rusqlite",
  "serde",
  "serde_json",
 ]

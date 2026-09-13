@@ -31,6 +31,9 @@ pub mod writes;
 
 /// The verbs every tap uses: make a thing, change a cell, throw it away.
 pub mod basics;
+
+/// Finding things: search, the query grammar, workspaces and filters.
+pub mod finding;
 use snapshot::{build_snapshot, build_snapshot_windowed, fingerprint};
 
 

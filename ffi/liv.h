@@ -6,6 +6,7 @@
 #ifndef LIV_H
 #define LIV_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Capture one scrap into the box at path (created and seeded if fresh).
@@ -695,6 +696,156 @@ int32_t liv_kinds(const char *path, char **out);
    names are frozen (op-format.md's ordinals-on-disk-forever), so this is
    a lookup of something stable, not of a label a user can change. */
 int32_t liv_property_named(const char *path, const char *name, char **out);
+
+/* ====================================================================
+   FINDING THINGS
+
+   TWO JOBS, ONE GRAMMAR. The same text means two different things
+   depending on where it is typed, and the parser is told which:
+
+     - a SEARCH BOX WIDENS. `is:archived` means "look in the archive
+       too", because someone hunting for a thing wants it found.
+     - a LENS RESTRICTS. The same `is:archived` in a workspace filter
+       means "only archived things", because a filter is a boundary.
+
+   liv_search is the first, liv_lens the second. Separate verbs rather
+   than a flag, because the answers are shaped differently: a search is
+   ranked hits with facets, a lens is a flat set of ids.
+
+   A USER NEVER TYPES THIS. The text grammar is the storage format and
+   an advanced escape hatch, not the interface. liv_terms is how a
+   stored filter becomes chips a person edits by tapping.
+   ==================================================================== */
+
+/* Ranked hits and the facet rows beside them.
+   {"hits":[{"id":"<hex>","score":N,"field":…}…],
+    "facets":[{"property":"<hex>","label",
+               "values":[{"label","count","active","excluded"}…]}…]}
+
+   `field` says WHERE the best match was — name | cell | filed | content,
+   or "structured" for a pure-qualifier hit — so a row can hint why it is
+   in the list rather than leaving the user to guess.
+
+   `limit` BOUNDS THE HITS AND NEVER THE FACETS. A facet count is over
+   everything the query matches: a row saying "Work 12" when the list
+   shows 10 is telling the truth about the box, and a count that changed
+   with how far the user had scrolled would be useless for pivoting,
+   which is the one thing a facet row is for. 0 means no ceiling.
+
+   A facet count also excludes its OWN property's constraints, or a facet
+   you have already picked shows its own count and nothing else. */
+int32_t liv_search(const char *path, const char *query, uint32_t limit,
+                   char **out);
+
+/* The ids a LENS admits: {"ids":["<hex>"…], "terms":[…]}
+
+   The same grammar read the other way round. The lexed terms come back
+   with the ids so a shell can draw the filter as chips in the same
+   breath it applies it, without parsing the text itself. */
+int32_t liv_lens(const char *path, const char *query, char **out);
+
+/* Split a query into its terms. NO BOX, no lock, no opinion about
+   whether a property exists — safe to call on every keystroke.
+   [{"op","key","value","raw"}…]
+
+   `raw` is the term respelled canonically, so joining a term list back
+   together reproduces a query that lexes the same way. That is what lets
+   a shell edit a filter as chips and write the result back as text.
+
+   Named liv_terms, not liv_lex: the old ABI already exports a liv_lex
+   over core/'s grammar, and every engine verb is purely additive. */
+int32_t liv_terms(const char *query, char **out);
+
+/* Every value this property is actually CARRYING, commonest first:
+   [{"label","ref":"<hex>"?,"count":N}…]
+
+   A different question from liv_options, which asks what a cell MAY
+   hold. A free-text field has no options and still wants to offer what
+   the user has typed before. Trashed things are left out: offering what
+   the trash holds is offering someone their own deletions back. */
+int32_t liv_values_in_use(const char *path, const char *property, char **out);
+
+/* Every file reference this device cannot open:
+   [{"id":"<hex>","name","path":…|null,"why":"absent"|"gone"}…]
+
+   A HASH TRAVELS AND A PATH DOES NOT, which is why these are two
+   answers and not one. A file added on the laptop reaches the phone as
+   a real, valid reference with no local copy — "absent", and the answer
+   is "find it for me". A path this device knows that no longer holds a
+   file is "gone", and that one is broken.
+
+   Neither touches the stored hash: a file on an unplugged drive is not
+   a file whose contents changed. */
+int32_t liv_file_alerts(const char *path, char **out);
+
+/* The workspace tree, and the saved filters:
+   [{"id":"<hex>","name","query", …}…]
+
+   A WORKSPACE IS AN ORDINARY ENTITY, so there is no verb here that
+   makes one — liv_make with the workspace kind and liv_set of its cells
+   already do, which is the whole point of the primitives existing.
+   These only read.
+
+   liv_workspaces adds emoji, favorite, archived, builtin, parent and
+   order. An ARCHIVED workspace is included WITH ITS FLAG: the switcher
+   shows them behind a disclosure, and filtering them out here would
+   take that choice away from the shell. A trashed one is gone, which is
+   a different thing. */
+int32_t liv_workspaces(const char *path, char **out);
+int32_t liv_views(const char *path, char **out);
+
+/* The clerk's consent switch: {"on":bool, "property":"<hex>"}
+
+   ABSENT OR TRUE IS ON; only an explicit false silences it — an older
+   box that never set it is not a box that said no. Turning it off is an
+   ordinary liv_set of the property named here, which is why there is no
+   writer for it. */
+int32_t liv_assist(const char *path, char **out);
+
+/* ---- the last three, found by mapping the old ABI verb by verb ---- */
+
+/* Declare a field the app did not ship with — the product's "new kind of
+   field behind a door in Settings". {"id":"<hex>"}
+
+   `holds` is text | number | bool | datetime | reference | richtext |
+   file; `many` makes it a set rather than a register. LIV_ERR_REFUSED
+   for a shape the model does not have.
+
+   It is an ordinary entity, MINTED ONCE on one device, which is what
+   stops it drifting the way a seeded copy does: there is no second copy
+   to disagree with. */
+int32_t liv_declare_field(const char *path, const char *name,
+                          const char *holds, bool many, uint64_t now_ms,
+                          char **out);
+
+/* Accept several suggestions as ONE action. {"taken":N}
+
+   ALL OR NOTHING, AND ONE UNDO. Half a consent is worse than none: the
+   user agreed to a set, and a set that half-landed is not what they
+   agreed to.
+
+   `entities` and `prints` are parallel arrays of `count` items, each
+   proposal named the way liv_accept names one.
+
+   A fingerprint the box no longer proposes is SKIPPED rather than
+   failing the batch: "accept all" is a sweep of what is on screen, and
+   one row the user already dealt with on another device is not a reason
+   to refuse the other nine. Only what was actually passed is taken —
+   never everything the entity happens to be offering. LIV_ERR_NOTHING
+   when none of them landed. */
+int32_t liv_accept_all(const char *path, const char *const *entities,
+                       const uint64_t *prints, uint32_t count,
+                       uint64_t now_ms, char **out);
+
+/* Why the box will not open: {"code","message"}, code "ok" when it does.
+   Codes: ok | version | corrupt | io.
+
+   A SHELL THAT CANNOT OPEN THE BOX HAS NOTHING ELSE TO ASK. Every other
+   verb answers LIV_ERR_OPEN, which says that it failed and not what to
+   do about it, and the answers need different screens. "version" means
+   the box was written by a newer build and the user should update —
+   the one a wrong answer strands someone on. */
+int32_t liv_probe_box(const char *path, char **out);
 
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 

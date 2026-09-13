@@ -24,3 +24,7 @@ serde_json = "1"
 
 [dev-dependencies]
 liv-services = { path = "../services" }
+# Test-only: forging a box from a newer build, so the probe's "version"
+# answer is tested rather than assumed. It is the one answer a person can
+# act on, and lumping it in with the rest strands them.
+rusqlite = { version = "0.32", features = ["bundled"] }

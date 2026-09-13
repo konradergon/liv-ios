@@ -418,3 +418,159 @@ pub unsafe extern "C" fn liv_property_named(
 unsafe fn text_of<'a>(p: *const c_char) -> Result<&'a str, i32> {
     text(p, LIV_ERR_ARG)
 }
+
+// ---- the last three, found by mapping the old ABI verb by verb --------
+
+/// Declare a field the app did not ship with — the product's "new kind of
+/// field behind a door in Settings". `{"id":hex}`.
+///
+/// `holds` is one of `text`, `number`, `bool`, `datetime`, `reference`,
+/// `richtext`, `file`; `many` makes it a set rather than a register.
+/// `LIV_ERR_REFUSED` for a shape the model does not have.
+///
+/// **It is an ordinary entity, minted ONCE on one device**, which is what
+/// stops it drifting the way a seeded copy does: there is no second copy
+/// to disagree with. That is the whole of the argument in §2 of
+/// `rust-owns-the-mechanisms.md` — what Liv ships with is compiled in,
+/// what the box adds is an entity.
+///
+/// # Safety
+/// `path`, `name` and `holds` must be valid C strings; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_declare_field(
+    path: *const c_char,
+    name: *const c_char,
+    holds: *const c_char,
+    many: bool,
+    now_ms: u64,
+    out: *mut *mut c_char,
+) -> i32 {
+    let (name, holds) = match (text_of(name), text_of(holds)) {
+        (Ok(a), Ok(b)) => (a, b),
+        _ => return LIV_ERR_ARG,
+    };
+    match with_engine(path, |e| match e.declare_field(name, holds, many, now_ms) {
+        Ok(id) => Ok(json!({ "id": id.hex() })),
+        Err(err) => Err(wrote(err)),
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+/// Accept several suggestions as ONE action. `{"taken":N}`.
+///
+/// **All or nothing, and one undo.** Half a consent is worse than none:
+/// the user agreed to a set, and a set that half-landed is not what they
+/// agreed to. One group, so one undo takes the lot back.
+///
+/// `entities` and `prints` are parallel arrays of `count` items — each
+/// proposal named the way `liv_accept` names one, because a fingerprint
+/// alone would mean re-deriving the whole box to find it.
+///
+/// A fingerprint the box no longer proposes is SKIPPED rather than
+/// failing the batch: the inbox's "accept all" is a sweep of what is on
+/// screen, and one row the user already dealt with on another device is
+/// not a reason to refuse the other nine. `taken` says how many landed.
+/// `LIV_ERR_NOTHING` when none of them did.
+///
+/// # Safety
+/// `path` a valid C string; `entities` must point at `count` valid C
+/// strings and `prints` at `count` `uint64_t`s; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_accept_all(
+    path: *const c_char,
+    entities: *const *const c_char,
+    prints: *const u64,
+    count: u32,
+    now_ms: u64,
+    out: *mut *mut c_char,
+) -> i32 {
+    if count == 0 {
+        return crate::writes::LIV_ERR_NOTHING;
+    }
+    if entities.is_null() || prints.is_null() {
+        return LIV_ERR_ARG;
+    }
+    let n = count as usize;
+    let mut wanted = Vec::with_capacity(n);
+    for i in 0..n {
+        let entity = match id_arg(*entities.add(i)) {
+            Ok(id) => id,
+            Err(e) => return e,
+        };
+        wanted.push((entity, *prints.add(i)));
+    }
+
+    match with_engine(path, |e| {
+        let mut found = Vec::new();
+        // Grouped by entity, so each thing is swept once however many of
+        // its suggestions were ticked.
+        let mut by_entity: Vec<(liv_engine::EntityId, Vec<u64>)> = Vec::new();
+        for (entity, print) in &wanted {
+            match by_entity.iter_mut().find(|(id, _)| id == entity) {
+                Some((_, ps)) => ps.push(*print),
+                None => by_entity.push((*entity, vec![*print])),
+            }
+        }
+        for (entity, prints) in by_entity {
+            let here = liv_surface::clerk::sweep_one(e, entity).map_err(|_| LIV_ERR_READ)?;
+            for p in here {
+                if prints.contains(&p.fingerprint()) {
+                    found.push(p);
+                }
+            }
+        }
+        if found.is_empty() {
+            return Err(crate::writes::LIV_ERR_NOTHING);
+        }
+        let taken = found.len();
+        e.accept_all(&found, now_ms).map_err(wrote)?;
+        Ok(json!({ "taken": taken }))
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+/// Why the box will not open: `{"code":…,"message":…}`, or `{"code":"ok"}`
+/// when it opens fine.
+///
+/// **A shell that cannot open the box has nothing else to ask.** Every
+/// other verb here answers `LIV_ERR_OPEN`, which says that it failed and
+/// not what to do about it — and the four answers need four different
+/// screens. `version` means the box was written by a newer build and the
+/// user should update, which is the one a wrong answer strands someone on.
+///
+/// Codes: `ok` | `version` | `corrupt` | `io`.
+///
+/// # Safety
+/// `path` must be a valid C string; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_probe_box(path: *const c_char, out: *mut *mut c_char) -> i32 {
+    let raw = match text_of(path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let answer = match liv_engine::Engine::open_local(std::path::Path::new(raw)) {
+        Ok(_) => json!({ "code": "ok", "message": serde_json::Value::Null }),
+        Err(liv_engine::LogError::UnsupportedBox { found, supported }) => json!({
+            "code": "version",
+            "message": format!("this box was written by a newer version of Liv (format {found}; this build reads {supported})"),
+        }),
+        Err(liv_engine::LogError::Decode(d)) => json!({
+            "code": "corrupt",
+            "message": format!("the box could not be read: {d:?}"),
+        }),
+        Err(liv_engine::LogError::Sqlite(e)) => json!({
+            // A locked file, a missing folder, no permission — all the
+            // same to a person: something about WHERE it is, not what is
+            // in it.
+            "code": "io",
+            "message": e,
+        }),
+    };
+    // The connection above was opened outside the pool, and dropping it
+    // here is what keeps a probe from holding a box a retry needs.
+    deliver(out, &answer)
+}

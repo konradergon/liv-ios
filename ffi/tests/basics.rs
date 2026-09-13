@@ -10,7 +10,7 @@ use std::ffi::{CStr, CString};
 use liv_engine::{kind, prop, Engine};
 use liv_ffi::basics::*;
 use liv_ffi::surfaces::{liv_view_close_all, LIV_ERR_ARG, LIV_OK};
-use liv_ffi::writes::{LIV_ERR_REFUSED, LIV_ERR_STALE};
+use liv_ffi::writes::{LIV_ERR_NOTHING, LIV_ERR_REFUSED, LIV_ERR_STALE};
 use serde_json::Value as J;
 
 const T0: u64 = 1_789_257_600_000;
@@ -439,6 +439,256 @@ fn a_bad_id_is_an_argument_error_and_never_a_panic() {
     // the editor's.
     assert_ne!(LIV_ERR_REFUSED, LIV_ERR_ARG);
     assert_ne!(LIV_ERR_REFUSED, LIV_ERR_STALE);
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// ---- the last three ----------------------------------------------------
+
+/// A field the app did not ship with is an ordinary entity, minted ONCE
+/// on one device — which is what stops it drifting the way a seeded copy
+/// does: there is no second copy to disagree with.
+#[test]
+fn a_field_the_app_did_not_ship_with_can_be_declared_and_used() {
+    let (d, path) = box_at("declare");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_declare_field(
+                path.as_ptr(),
+                c("client").as_ptr(),
+                c("text").as_ptr(),
+                false,
+                T0,
+                &mut out,
+            )
+        },
+        LIV_OK
+    );
+    let field = c(took(out)["id"].as_str().unwrap());
+
+    // And it behaves like any other property from here on.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_make(path.as_ptr(), c(&kind::TASK.hex()).as_ptr(), c("Roof").as_ptr(), T0 + 1, &mut out)
+    };
+    let id = c(took(out)["id"].as_str().unwrap());
+    assert_eq!(
+        unsafe {
+            liv_set(path.as_ptr(), id.as_ptr(), field.as_ptr(), c("Acme").as_ptr(), T0 + 2)
+        },
+        LIV_OK
+    );
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_cells(path.as_ptr(), id.as_ptr(), &mut out) };
+    let cells = took(out);
+    let row = cells.as_array().unwrap().iter().find(|r| r["name"] == "client").unwrap();
+    assert_eq!(row["value"], "Acme");
+    assert_eq!(row["holds"], "text");
+
+    // A shape the model does not have is refused, not invented.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_declare_field(
+                path.as_ptr(),
+                c("mood").as_ptr(),
+                c("interpretive-dance").as_ptr(),
+                false,
+                T0 + 3,
+                &mut out,
+            )
+        },
+        LIV_ERR_REFUSED
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **All or nothing, and ONE undo.** Half a consent is worse than none:
+/// the user agreed to a set, and a set that half-landed is not what they
+/// agreed to.
+#[test]
+fn accepting_a_group_is_one_action_and_one_undo() {
+    let d = dir("accept_all");
+    let path = d.join("liv.db");
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        e.create(kind::PERSON, Some("Anna"), T0).unwrap();
+        let scrap = e.create(kind::NOTE, None, T0 + 1).unwrap();
+        e.set_content(scrap, vec![liv_engine::Span::text("call anna tomorrow")], 0, T0 + 2)
+            .unwrap();
+    }
+    unsafe { liv_view_close_all() };
+    let path = c(path.to_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_ffi::writes::liv_sweep(path.as_ptr(), &mut out) };
+    let rows = took(out);
+    let all = rows.as_array().unwrap();
+    assert!(all.len() >= 2, "a date and a mention: {rows}");
+
+    let entities: Vec<CString> =
+        all.iter().map(|r| c(r["entity"].as_str().unwrap())).collect();
+    let ptrs: Vec<*const std::ffi::c_char> = entities.iter().map(|e| e.as_ptr()).collect();
+    let prints: Vec<u64> = all.iter().map(|r| r["print"].as_u64().unwrap()).collect();
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_accept_all(
+                path.as_ptr(),
+                ptrs.as_ptr(),
+                prints.as_ptr(),
+                prints.len() as u32,
+                T0 + 3,
+                &mut out,
+            )
+        },
+        LIV_OK
+    );
+    assert_eq!(took(out)["taken"].as_u64().unwrap() as usize, all.len());
+
+    // Nothing left to suggest…
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_ffi::writes::liv_sweep(path.as_ptr(), &mut out) };
+    assert!(took(out).as_array().unwrap().is_empty());
+
+    // …and ONE undo brings all of it back.
+    assert_eq!(unsafe { liv_ffi::writes::liv_undo(path.as_ptr(), T0 + 4) }, LIV_OK);
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_ffi::writes::liv_sweep(path.as_ptr(), &mut out) };
+    assert_eq!(
+        took(out).as_array().unwrap().len(),
+        all.len(),
+        "one undo, not one per suggestion"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A stale row does not fail the batch: "accept all" is a sweep of what
+/// is on screen, and one row the user already dealt with elsewhere is not
+/// a reason to refuse the other nine.
+#[test]
+fn a_stale_member_is_skipped_rather_than_failing_the_group() {
+    let d = dir("accept_all_stale");
+    let path = d.join("liv.db");
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        e.create(kind::PERSON, Some("Anna"), T0).unwrap();
+        let scrap = e.create(kind::NOTE, None, T0 + 1).unwrap();
+        e.set_content(scrap, vec![liv_engine::Span::text("call anna tomorrow")], 0, T0 + 2)
+            .unwrap();
+    }
+    unsafe { liv_view_close_all() };
+    let path = c(path.to_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_ffi::writes::liv_sweep(path.as_ptr(), &mut out) };
+    let rows = took(out);
+    let all = rows.as_array().unwrap();
+    let entities: Vec<CString> = all.iter().map(|r| c(r["entity"].as_str().unwrap())).collect();
+    let mut ptrs: Vec<*const std::ffi::c_char> = entities.iter().map(|e| e.as_ptr()).collect();
+    let mut prints: Vec<u64> = all.iter().map(|r| r["print"].as_u64().unwrap()).collect();
+
+    // **Only what was TICKED.** All of these suggestions are about the
+    // same thing, so a batch that swept the entity and took everything it
+    // found would look identical unless some are deliberately left out.
+    assert!(all.len() >= 2);
+    ptrs.truncate(1);
+    prints.truncate(1);
+    let ticked = prints[0];
+    let untouched: Vec<u64> =
+        all.iter().map(|r| r["print"].as_u64().unwrap()).filter(|p| *p != ticked).collect();
+    assert!(!untouched.is_empty(), "the fixture must leave something unticked");
+
+    // Plus one fingerprint the box does not propose at all.
+    ptrs.push(entities[0].as_ptr());
+    prints.push(0xdead_beef_dead_beef);
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_accept_all(
+                path.as_ptr(),
+                ptrs.as_ptr(),
+                prints.as_ptr(),
+                prints.len() as u32,
+                T0 + 3,
+                &mut out,
+            )
+        },
+        LIV_OK
+    );
+    assert_eq!(took(out)["taken"].as_u64().unwrap(), 1, "the ticked one, and only it");
+
+    // And the ones nobody ticked are still on offer.
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_ffi::writes::liv_sweep(path.as_ptr(), &mut out) };
+    let after = took(out);
+    let still: Vec<u64> =
+        after.as_array().unwrap().iter().map(|r| r["print"].as_u64().unwrap()).collect();
+    for p in &untouched {
+        assert!(still.contains(p), "an unticked suggestion was taken anyway: {after}");
+    }
+
+    // But a batch where NONE of them is real has nothing to do.
+    let ghost: u64 = 0xdead_beef_dead_beef;
+    let one = [entities[0].as_ptr()];
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_accept_all(path.as_ptr(), one.as_ptr(), [ghost].as_ptr(), 1, T0 + 4, &mut out) },
+        LIV_ERR_NOTHING
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **A shell that cannot open the box has nothing else to ask.** Every
+/// other verb answers LIV_ERR_OPEN, which says it failed and not what to
+/// do about it — and the answers need different screens.
+#[test]
+fn a_box_that_will_not_open_says_why() {
+    let (d, path) = box_at("probe");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_probe_box(path.as_ptr(), &mut out) }, LIV_OK);
+    assert_eq!(took(out)["code"], "ok");
+
+    // Something that is not a box at all: an IO answer, about where it
+    // is rather than what is in it.
+    let junk = d.join("notabox.db");
+    std::fs::write(&junk, "this is not a database").unwrap();
+    let j = c(junk.to_str().unwrap());
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_probe_box(j.as_ptr(), &mut out) }, LIV_OK);
+    let answer = took(out);
+    assert_eq!(answer["code"], "io", "{answer}");
+
+    // **A box from a newer build is the answer that must not be lumped in
+    // with the rest**, because it is the one where the user can do
+    // something (update) and a wrong answer strands them.
+    let newer = d.join("newer.db");
+    {
+        Engine::open_local(&newer).unwrap();
+    }
+    unsafe { liv_view_close_all() };
+    let conn = rusqlite::Connection::open(&newer).unwrap();
+    conn.execute("UPDATE meta SET value = '9999' WHERE key = 'box_format'", []).unwrap();
+    drop(conn);
+
+    let n = c(newer.to_str().unwrap());
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_probe_box(n.as_ptr(), &mut out) }, LIV_OK);
+    let answer = took(out);
+    assert_eq!(answer["code"], "version", "{answer}");
+    assert!(
+        answer["message"].as_str().unwrap().contains("newer version"),
+        "and it says so in words: {answer}"
+    );
 
     let _ = std::fs::remove_dir_all(&d);
 }
