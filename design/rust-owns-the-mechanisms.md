@@ -326,8 +326,8 @@ replacement passes.
           (done — the lexer moved into the engine and `services/`
           imports it back, so there is one parser rather than two); **the
           clerk's sweep** (done — five of its six proposers; the sixth
-          is blocked, below). What is left is **search's scoring and
-          facets**, which sit over `run`.
+          is blocked, below); **search's resolving, scoring and facets**
+          (done). **5a is complete** apart from that one proposer.
 
           The sweep lives in `surface/`, not the engine: dates in
           English and a closed lexicon of priority words are product,

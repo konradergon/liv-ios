@@ -32,6 +32,14 @@ use liv_engine::{
 /// are here, because English is product and the box has no opinion.
 pub mod clerk;
 
+/// Search: resolving a typed query against the box, ranking what it
+/// admits, and the facets beside it. The GRAMMAR is the engine's.
+pub mod search;
+
+/// Where a word starts and stops — one boundary matcher, which the clerk
+/// and search both call (standing rule 4).
+pub mod words;
+
 
 pub mod day;
 pub mod everything;

@@ -38,6 +38,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::words::{contains_word, words};
+
 use liv_engine::{
     civil_from_days, days_from_civil, kind, prop, rich, status, Engine, EntityId, LogError, Op,
     Proposal, Value,
@@ -403,35 +405,6 @@ fn mentions_in(text: &str, own: EntityId, gaz: &Gazetteer) -> Vec<usize> {
         .into_iter()
         .filter(|&at| gaz.names[at].id != own && contains_word(&lower, &gaz.names[at].lowered))
         .collect()
-}
-
-/// The alphanumeric runs of a string.
-fn words(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty())
-}
-
-/// Whole-word containment: "anna" in "call anna friday", not in
-/// "susanna". Callers lowercase both sides first.
-pub fn contains_word(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return false;
-    }
-    let mut start = 0;
-    while let Some(at) = haystack[start..].find(needle) {
-        let at = start + at;
-        let before = haystack[..at].chars().next_back();
-        let after = haystack[at + needle.len()..].chars().next();
-        let open = before.is_none_or(|c| !c.is_alphanumeric());
-        let close = after.is_none_or(|c| !c.is_alphanumeric());
-        if open && close {
-            return true;
-        }
-        start = at + needle.len().max(1);
-        if start >= haystack.len() {
-            break;
-        }
-    }
-    false
 }
 
 // ---- dates in words ----------------------------------------------------

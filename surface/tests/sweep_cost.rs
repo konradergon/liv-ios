@@ -117,3 +117,59 @@ fn a_silenced_clerk_does_not_read_the_box() {
     // on one property, so it must not notice the box at all.
     assert!(ratio < 4.0, "a silenced clerk still read the box: {ratio:.1}x");
 }
+
+// ---- search ------------------------------------------------------------
+
+/// A box of tasks, ten of them filed under Work.
+fn searchable_box(n: u64) -> Engine {
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+    for i in 0..n {
+        let id = e.create(kind::TASK, Some(&format!("task {i} about invoices")), T0 + i).unwrap();
+        if i < 10 {
+            e.set(id, prop::AREA, Value::Ref(area::WORK), T0 + i).unwrap();
+        }
+    }
+    e
+}
+
+/// **A qualifier search costs its answer, not the box.**
+///
+/// The whole point of `run` seeking: `area:work` is an index lookup, so
+/// ten matches cost ten whether the box holds five hundred or five
+/// thousand. Scoring then touches only the survivors.
+#[test]
+fn a_qualifier_search_costs_its_answer() {
+    let small = searchable_box(500);
+    let large = searchable_box(5_000);
+    let q = |e: &Engine| liv_surface::search::parse(e, "area:work").unwrap();
+    let (qs, ql) = (q(&small), q(&large));
+
+    let ratio = best_ratio(
+        8,
+        || time(|| assert_eq!(liv_surface::search::search(&small, &qs, usize::MAX).unwrap().len(), 10)),
+        || time(|| assert_eq!(liv_surface::search::search(&large, &ql, usize::MAX).unwrap().len(), 10)),
+    );
+    assert!(ratio < 4.0, "ten hits is ten hits in either box: {ratio:.1}x");
+}
+
+/// And a free-text search is honestly linear — it has to read every
+/// candidate's words, and there is no index over those yet.
+///
+/// Stated rather than hidden, as a ceiling AND a floor: if this ever
+/// becomes flat, a text index was added and this comment stopped being
+/// true.
+#[test]
+fn a_free_text_search_is_linear_and_says_so() {
+    let small = searchable_box(500);
+    let large = searchable_box(5_000);
+    let q = |e: &Engine| liv_surface::search::parse(e, "invoices").unwrap();
+    let (qs, ql) = (q(&small), q(&large));
+
+    let ratio = best_ratio(
+        6,
+        || time(|| { liv_surface::search::search(&small, &qs, usize::MAX).unwrap(); }),
+        || time(|| { liv_surface::search::search(&large, &ql, usize::MAX).unwrap(); }),
+    );
+    assert!(ratio > 4.0, "this one really is linear; if it is not, say so: {ratio:.1}x");
+    assert!(ratio < 25.0, "linear, not quadratic: {ratio:.1}x");
+}
