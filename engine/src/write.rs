@@ -25,6 +25,9 @@ pub mod action {
     pub const TRASH: u16 = 5;
     pub const RESTORE: u16 = 6;
     pub const RENAME: u16 = 7;
+    /// Minting a piece of vocabulary the app did not ship with: a seventh
+    /// field, a seventh area, a status option.
+    pub const DECLARE: u16 = 8;
 }
 
 #[derive(Debug)]
@@ -58,7 +61,121 @@ impl From<LogError> for WriteError {
     }
 }
 
+/// What a property holds and how many — resolved for a compiled-in
+/// property or a declared one, with nothing above having to know which it
+/// was.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PropShape {
+    pub holds: model::Holds,
+    pub many: bool,
+}
+
 impl Engine {
+    /// What kind of thing this is — **whichever half it came from**.
+    ///
+    /// Compiled-in furniture answers from its class nibble without
+    /// touching the box; anything else answers from its `kind` cell. This
+    /// is the join that lets `Holds::RefTo` accept the six areas and a
+    /// seventh the user minted, by one rule.
+    pub fn kind_of_any(&self, id: EntityId) -> Result<Option<EntityId>, LogError> {
+        if let Some(k) = model::furniture_kind(id) {
+            return Ok(Some(k));
+        }
+        self.kind_of(id)
+    }
+
+    /// What a property holds. Compiled-in first, then the box.
+    ///
+    /// **A declared field describes itself in cells**: `prop::HOLDS`
+    /// carries one of `Holds::named`'s words — the same `value-kind`
+    /// vocabulary a `core/` box already writes — and `prop::MANY` says
+    /// whether it is a set. A property that is neither compiled in nor
+    /// declared gets `None`, and the engine keeps its old promise about
+    /// those: store it, have no opinion.
+    pub fn prop_shape(&self, prop: EntityId) -> Result<Option<PropShape>, LogError> {
+        if let Some(def) = model::prop_def(prop) {
+            return Ok(Some(PropShape { holds: def.holds, many: def.many }));
+        }
+        // A frozen id that is not in PROPS is a retired ordinal or a
+        // forgery; either way there is nothing to declare it.
+        if model::is_furniture(prop) {
+            return Ok(None);
+        }
+        let Some(Value::Text(word)) = self.one(prop, model::prop::HOLDS)? else {
+            return Ok(None);
+        };
+        let Some(holds) = model::Holds::named(&word) else { return Ok(None) };
+        let many = matches!(self.one(prop, model::prop::MANY)?, Some(Value::Bool(true)));
+        Ok(Some(PropShape { holds, many }))
+    }
+
+    /// Declare a field the app did not ship with — the product's "new kind
+    /// of field behind a door in Settings".
+    ///
+    /// It is an ordinary entity of `kind::FIELD` carrying its name and its
+    /// shape, minted ONCE on one device. That is why it cannot drift the
+    /// way a seeded copy does: there is no second copy.
+    pub fn declare_field(
+        &mut self,
+        name: &str,
+        holds: &str,
+        many: bool,
+        now_ms: u64,
+    ) -> Result<EntityId, WriteError> {
+        if model::Holds::named(holds).is_none() {
+            return Err(WriteError::Refused(Refused::UnknownProperty));
+        }
+        let id = self.mint(now_ms);
+        let ops = vec![
+            Op::CreateEntity { entity: id },
+            Op::SetCell { entity: id, prop: prop::KIND, value: Value::Ref(model::kind::FIELD), replaces: vec![] },
+            Op::SetCell { entity: id, prop: prop::NAME, value: Value::Text(name.to_owned()), replaces: vec![] },
+            Op::SetCell { entity: id, prop: model::prop::HOLDS, value: Value::Text(holds.to_owned()), replaces: vec![] },
+            Op::SetCell { entity: id, prop: model::prop::MANY, value: Value::Bool(many), replaces: vec![] },
+            Op::SetCell { entity: id, prop: model::prop::WORKING, value: Value::Bool(true), replaces: vec![] },
+        ];
+        self.commit(ops, action::DECLARE, Author::User, now_ms)?;
+        Ok(id)
+    }
+
+    /// Mint a piece of vocabulary the app did not ship with: a seventh
+    /// area, a status option, a select's choice.
+    ///
+    /// **Areas grow** (`what-liv-is-for.md`, amended 2026-08-29). The six
+    /// stay what the app arrives with; this is the create row the
+    /// amendment asked for.
+    pub fn declare(
+        &mut self,
+        kind: EntityId,
+        name: &str,
+        now_ms: u64,
+    ) -> Result<EntityId, WriteError> {
+        let id = self.mint(now_ms);
+        let ops = vec![
+            Op::CreateEntity { entity: id },
+            Op::SetCell { entity: id, prop: prop::KIND, value: Value::Ref(kind), replaces: vec![] },
+            Op::SetCell { entity: id, prop: prop::NAME, value: Value::Text(name.to_owned()), replaces: vec![] },
+            Op::SetCell { entity: id, prop: model::prop::WORKING, value: Value::Bool(true), replaces: vec![] },
+        ];
+        self.commit(ops, action::DECLARE, Author::User, now_ms)?;
+        Ok(id)
+    }
+
+    /// The one gate every write goes through.
+    fn vet(&self, prop: EntityId, value: &Value, many: bool) -> Result<(), WriteError> {
+        let Some(shape) = self.prop_shape(prop)? else { return Ok(()) };
+        if shape.many != many {
+            return Err(WriteError::WrongCardinality { prop, many: shape.many });
+        }
+        // Resolve the target's kind before checking, so the closure does
+        // not have to borrow across the check.
+        let target_kind = match value {
+            Value::Ref(t) => self.kind_of_any(*t)?,
+            _ => None,
+        };
+        model::check(shape.holds, value, |_| target_kind).map_err(WriteError::Refused)
+    }
+
     /// A new thing of a kind, named or not.
     ///
     /// One action, so one undo step: creating a note and giving it its
@@ -104,10 +221,7 @@ impl Engine {
         value: Value,
         now_ms: u64,
     ) -> Result<Dot, WriteError> {
-        model::check(prop, &value).map_err(WriteError::Refused)?;
-        if model::is_many(prop) {
-            return Err(WriteError::WrongCardinality { prop, many: true });
-        }
+        self.vet(prop, &value, false)?;
         let replaces: Vec<Dot> = self.cell(entity, prop)?.into_iter().map(|(d, _)| d).collect();
         let ops = vec![Op::SetCell { entity, prop, value, replaces }];
         Ok(self.commit(ops, action::SET, Author::User, now_ms)?)
@@ -121,10 +235,7 @@ impl Engine {
         value: Value,
         now_ms: u64,
     ) -> Result<Dot, WriteError> {
-        model::check(prop, &value).map_err(WriteError::Refused)?;
-        if !model::is_many(prop) {
-            return Err(WriteError::WrongCardinality { prop, many: false });
-        }
+        self.vet(prop, &value, true)?;
         let ops = vec![Op::AddToSet { entity, prop, value }];
         Ok(self.commit(ops, action::ADD, Author::User, now_ms)?)
     }
@@ -142,9 +253,7 @@ impl Engine {
         value: &Value,
         now_ms: u64,
     ) -> Result<Dot, WriteError> {
-        if !model::is_many(prop) {
-            return Err(WriteError::WrongCardinality { prop, many: false });
-        }
+        self.vet(prop, value, true)?;
         let replaces: Vec<Dot> = self
             .cell(entity, prop)?
             .into_iter()
