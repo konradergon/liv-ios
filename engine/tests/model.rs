@@ -247,3 +247,57 @@ fn the_model_survives_the_replay_gate() {
     assert_eq!(e.digest().unwrap(), before);
     assert_eq!(e.kind_of(task).unwrap(), Some(kind::TASK));
 }
+
+/// **The model is closed; the store underneath it is not.** This is the
+/// fact Phase 6 turns on, so it is a test rather than a paragraph.
+///
+/// The shell's snapshot needs entities the furniture has no word for —
+/// workspaces, saved views, layers, widgets, habits, pinned shelves. The
+/// write API refuses every one of them, because `kind` is
+/// `Holds::Furniture(CLASS_KIND)` and there are exactly six of those with
+/// nowhere to write a seventh. But `commit` takes ops directly and does
+/// not consult the model, so the log and the view carry an entity of an
+/// unnamed shape perfectly well, and it survives the replay gate.
+///
+/// So Phase 6 is a vocabulary question, not a storage rewrite: either the
+/// model learns to name what the box already holds, or the app that runs
+/// on the engine is a smaller app than the one shipping now.
+#[test]
+fn the_model_refuses_a_seventh_kind_but_the_store_would_have_held_it() {
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+    let workspace_kind = e.mint(2_000);
+    let subject = e.mint(2_001);
+
+    // The front door is shut, and says why.
+    let refused = e.set(subject, prop::KIND, Value::Ref(workspace_kind), 2_002);
+    assert!(
+        matches!(refused, Err(WriteError::Refused(model::Refused::WrongClass))),
+        "a minted id is not furniture, so it cannot be a kind: {refused:?}"
+    );
+
+    // The store behind it is a general property→value log, so the same
+    // shape lands when the caller writes the ops itself.
+    let named = e.mint(2_003);
+    e.commit(
+        vec![
+            Op::CreateEntity { entity: subject },
+            Op::SetCell {
+                entity: subject,
+                prop: named,
+                value: Value::Text("Deep work".into()),
+                replaces: vec![],
+            },
+        ],
+        action::CREATE,
+        Author::User,
+        2_004,
+    )
+    .unwrap();
+
+    assert_eq!(e.cell(subject, named).unwrap().len(), 1, "stored");
+    assert_eq!(e.kind_of(subject).unwrap(), None, "and still has no kind");
+
+    let before = e.digest().unwrap();
+    e.replay().unwrap();
+    assert_eq!(e.digest().unwrap(), before, "an unnamed entity replays like any other");
+}

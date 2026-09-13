@@ -23,6 +23,8 @@ shell over the same Rust FFI.
 
 ```
 core/       Rust — the append-only log, entities = property→value cells, commands
+engine/     Rust — THE REPLACEMENT for core/, being built beside it. Ops over
+            SQLite, built for sync. Nothing links it yet; the app runs on core/.
 services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
 views/      Rust — value display + rendering helpers (cross-platform)
 ffi/        Rust — the ONE C ABI (59 `liv_*` fns); staticlib + cdylib + rlib
@@ -70,12 +72,20 @@ desktop shell in this tree, and reviving either one needs the owner's word
 first. Git history holds them — `git log --diff-filter=D --name-only` finds the
 removal commit.
 
+**The engine is live work again (owner, 2026-09-13):** *"the 'engine' should
+have been completed and the goal is to wire it completely with the app."* It was
+built to Phase 5 on 2026-08-22 and then sat for three weeks. Phases 1–5 done, 55
+tests, zero warnings, **zero dependents** — nothing links it, so none of it has
+run on a phone. The plan, its measured state and the one fork that blocks Phase 6
+are in `design/core-plan.md`; the design is `design/core.md`.
+
 ## The boundary — READ THIS BEFORE EDITING
 
 | Zone | Rule |
 |---|---|
 | `shell/ios/**` | The app. Edit freely. |
 | `core/**`, `services/**`, `views/**` | **Settled.** Change only with the owner's word, failing-test-first. Logic two shells would both need belongs HERE, not in a shell. |
+| `engine/**` | **Open, and the active work** (owner, 2026-09-13). Still failing-test-first, and still no iOS, no Swift assumptions, no phone-shaped verbs — the desktop must be able to link it. It is NOT settled: it ships nothing yet, so a wrong shape here is cheap to fix and will not be later. Follow `design/core-plan.md`. |
 | `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), mirror `with_box` + `Committed`, ship with a test, and be flagged to the owner. |
 | `design/**`, `*.md` specs | **READ** for the behavioural spec. Amend deliberately; don't rewrite history. |
 | `cli/**` | The verification tool. Keep every verb the shell has a way to reach. |

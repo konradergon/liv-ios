@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::id::{DeviceId, Dot};
+use crate::id::DeviceId;
 use crate::op::{self, DecodeError, Group};
 
 /// The box format this build writes and will open.

@@ -53,6 +53,41 @@ fn a_write_lands_in_the_view() {
     assert_eq!(cell[0].1, Value::Text("Roof project".into()));
 }
 
+/// **Trash is a cell, and the view must show it as one.**
+///
+/// `op.rs` keeps the vocabulary at four by making trash, restore and
+/// redirect `SetCell` on reserved properties. The `entities` table used to
+/// carry a `trashed` column from before that decision, and no op ever
+/// wrote it — every row held 0 forever while `is_trashed` read the cell
+/// and answered correctly. A column that always says "no" is worse than no
+/// column, so it went; this is the test that says what has to keep working
+/// without it, and what the digest has to keep noticing.
+#[test]
+fn trashing_is_visible_in_the_view_and_moves_the_digest() {
+    let mut e = engine();
+    let id = e.create(kind::NOTE, Some("Roof project"), 1_787_391_635_000).unwrap();
+    let before = e.digest().unwrap();
+    assert!(!e.is_trashed(id).unwrap(), "born live");
+
+    e.trash(id, 1_787_391_636_000).unwrap();
+    assert!(e.is_trashed(id).unwrap(), "the cell says trashed");
+    let trashed = e.digest().unwrap();
+    assert_ne!(trashed, before, "the view noticed");
+
+    e.restore(id, 1_787_391_637_000).unwrap();
+    assert!(!e.is_trashed(id).unwrap(), "and it comes back — there is no Delete");
+    assert_ne!(e.digest().unwrap(), trashed, "the view noticed that too");
+
+    // The entity itself never went anywhere: trash is soft, so the row
+    // stays and only the cell changes.
+    assert_eq!(e.entity_count().unwrap(), 1);
+
+    // And the whole of it survives the gate.
+    let live = e.digest().unwrap();
+    e.replay().unwrap();
+    assert_eq!(e.digest().unwrap(), live, "trash and restore replay to the same view");
+}
+
 #[test]
 fn replay_rebuilds_the_view_exactly() {
     // THE GATE. Everything after Phase 4 rests on this.

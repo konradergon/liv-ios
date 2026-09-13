@@ -20,10 +20,16 @@ use crate::id::{Dot, EntityId};
 use crate::op::{self, Group, Op};
 
 pub const SCHEMA: &str = "
+-- No `trashed` column. Trash is a `SetCell` on `prop::TRASHED` like any
+-- other value (op.rs keeps the vocabulary at four that way), so a column
+-- here would be a second answer to the same question — and it was: no op
+-- ever wrote it, every row held 0 forever, and it fed a constant into the
+-- digest while `is_trashed` read the cell and answered correctly. When
+-- Phase 6 wants trash indexed for the snapshot's arrays, the column comes
+-- back MAINTAINED BY THE FOLD, which is a different thing from this one.
 CREATE TABLE IF NOT EXISTS entities (
     id         BLOB    NOT NULL PRIMARY KEY,
-    created_ms INTEGER NOT NULL,
-    trashed    INTEGER NOT NULL DEFAULT 0
+    created_ms INTEGER NOT NULL
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS cells (
@@ -56,7 +62,7 @@ pub fn apply(tx: &Transaction, g: &Group) -> Result<(), rusqlite::Error> {
         match o {
             Op::CreateEntity { entity } => {
                 tx.execute(
-                    "INSERT OR IGNORE INTO entities(id, created_ms, trashed) VALUES (?1, ?2, 0)",
+                    "INSERT OR IGNORE INTO entities(id, created_ms) VALUES (?1, ?2)",
                     rusqlite::params![&entity.0[..], entity.millis() as i64],
                 )?;
             }
@@ -83,7 +89,7 @@ pub fn apply(tx: &Transaction, g: &Group) -> Result<(), rusqlite::Error> {
 /// invented.
 fn ensure_entity(tx: &Transaction, id: EntityId) -> Result<(), rusqlite::Error> {
     tx.execute(
-        "INSERT OR IGNORE INTO entities(id, created_ms, trashed) VALUES (?1, ?2, 0)",
+        "INSERT OR IGNORE INTO entities(id, created_ms) VALUES (?1, ?2)",
         rusqlite::params![&id.0[..], id.millis() as i64],
     )?;
     Ok(())
@@ -150,23 +156,20 @@ pub fn drop_all(tx: &Transaction) -> Result<(), rusqlite::Error> {
 /// the crate still has no hashing dependency.
 pub fn digest(conn: &Connection) -> Result<u64, rusqlite::Error> {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |bytes: &[u8], h: &mut u64| {
+    let eat = |bytes: &[u8], h: &mut u64| {
         for b in bytes {
             *h ^= *b as u64;
             *h = h.wrapping_mul(0x0000_0100_0000_01b3);
         }
     };
 
-    let mut stmt =
-        conn.prepare("SELECT id, created_ms, trashed FROM entities ORDER BY id")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
-    })?;
+    let mut stmt = conn.prepare("SELECT id, created_ms FROM entities ORDER BY id")?;
+    let rows =
+        stmt.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))?;
     for row in rows {
-        let (id, created, trashed) = row?;
+        let (id, created) = row?;
         eat(&id, &mut h);
         eat(&created.to_le_bytes(), &mut h);
-        eat(&trashed.to_le_bytes(), &mut h);
     }
 
     let mut stmt = conn.prepare(
