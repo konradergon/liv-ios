@@ -6,7 +6,9 @@
 
 use liv_convert::*;
 use liv_core::{props, Author, Cell, Command, DateTime, Session, Value};
-use liv_engine::{kind, prop, DateSpec, DeviceId, Engine, Value as EV};
+use liv_engine::{
+    kind, prop, Block, DateSpec, DeviceId, Engine, Marks, Span, TextSpan, Value as EV,
+};
 
 fn temp(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("liv_convert_{name}"));
@@ -364,7 +366,7 @@ fn a_type_the_engine_has_no_kind_for_is_named_rather_than_swallowed() {
 }
 
 #[test]
-fn a_body_flattens_to_markdown_the_editor_can_read_back() {
+fn a_body_crosses_span_for_span() {
     let dir = temp("body");
     let path = dir.join("liv.log");
     {
@@ -397,8 +399,7 @@ fn a_body_flattens_to_markdown_the_editor_can_read_back() {
     }
 
     let to = dir.join("liv.db");
-    let report = convert(&path, &to).unwrap();
-    assert_eq!(report.flattened, 1);
+    convert(&path, &to).unwrap();
 
     let e = Engine::open_local(&to).unwrap();
     let body = e
@@ -406,17 +407,160 @@ fn a_body_flattens_to_markdown_the_editor_can_read_back() {
         .unwrap()
         .into_iter()
         .find_map(|id| match e.one(id, prop::BODY).unwrap() {
-            Some(EV::Text(t)) if t.contains("Trip") => Some(t),
+            Some(EV::Rich(spans)) if !spans.is_empty() => Some(spans),
             _ => None,
         })
         .expect("the body came across");
 
-    // MARKDOWN, not bare text: the editor already round-trips it, so a
-    // checklist comes back a checklist when blocks land — and
-    // `note_tasks` can still see an open box in the meantime.
-    assert!(body.contains("# Trip planning"), "{body}");
-    assert!(body.contains("- [ ] book the ferry"), "{body}");
-    assert!(body.contains("- [x] passport"), "{body}");
+    // **SPAN FOR SPAN.** This used to flatten to markdown, because the
+    // engine had no blocks and a checklist that came back as a checklist
+    // was the best available. It has blocks now, so the round trip
+    // through markdown — which loses a callout's kind, a code fence's
+    // language, and every mark — is not a conversion, it is a downgrade.
+    assert_eq!(
+        body,
+        vec![
+            Span::Break(Block::Heading(1)),
+            Span::text("Trip planning"),
+            Span::Break(Block::Task { depth: 0, done: false }),
+            Span::text("book the ferry"),
+            Span::Break(Block::Task { depth: 0, done: true }),
+            Span::text("passport"),
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The parts markdown could not have carried.
+#[test]
+fn marks_a_code_language_and_a_callout_kind_all_survive() {
+    let dir = temp("body-rich");
+    let path = dir.join("liv.log");
+    {
+        let mut s = Session::open(&path).unwrap();
+        liv_services::seed_if_fresh(&mut s).unwrap();
+        let note = liv_services::content::create_note(
+            &mut s,
+            DateTime { civil: 2026_09_13_1000, date_only: false, end: None },
+        )
+        .unwrap();
+        let rt = liv_core::RichText {
+            spans: vec![
+                liv_core::Span::Text(liv_core::TextSpan {
+                    text: "loud".into(),
+                    marks: liv_core::Marks(liv_core::Marks::BOLD | liv_core::Marks::STRIKE),
+                }),
+                liv_core::Span::Break(liv_core::Block::Code { lang: Some("rust".into()) }),
+                liv_core::Span::text("fn main() {}"),
+                liv_core::Span::Break(liv_core::Block::Callout { kind: "warning".into() }),
+                liv_core::Span::text("mind the step"),
+            ],
+        };
+        s.commit(
+            vec![Command::AddCell {
+                entity: note,
+                cell: Cell { property: props::CONTENT, value: Value::RichText(rt) },
+            }],
+            "body",
+            Author::User,
+        )
+        .unwrap();
+    }
+
+    let to = dir.join("liv.db");
+    convert(&path, &to).unwrap();
+    let e = Engine::open_local(&to).unwrap();
+    let body = e
+        .all_entities()
+        .unwrap()
+        .into_iter()
+        .find_map(|id| match e.one(id, prop::BODY).unwrap() {
+            Some(EV::Rich(spans)) if !spans.is_empty() => Some(spans),
+            _ => None,
+        })
+        .expect("the body came across");
+
+    assert_eq!(
+        body,
+        vec![
+            Span::Text(TextSpan {
+                text: "loud".into(),
+                marks: Marks(Marks::BOLD | Marks::STRIKE),
+            }),
+            Span::Break(Block::Code { lang: Some("rust".into()) }),
+            Span::text("fn main() {}"),
+            Span::Break(Block::Callout { kind: "warning".into() }),
+            Span::text("mind the step"),
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **A `[[link]]` stays a link, not its target's name in brackets.**
+///
+/// Flattening turned `Span::Ref(id)` into the literal text `[[Name]]`,
+/// which reads right and is not the same thing: rename the target and the
+/// body still says the old name, and nothing in the box knows the note
+/// points anywhere.
+#[test]
+fn a_body_reference_arrives_as_a_reference() {
+    let dir = temp("body-ref");
+    let path = dir.join("liv.log");
+    {
+        let mut s = Session::open(&path).unwrap();
+        liv_services::seed_if_fresh(&mut s).unwrap();
+        let target = liv_services::content::create_note(
+            &mut s,
+            DateTime { civil: 2026_09_13_0900, date_only: false, end: None },
+        )
+        .unwrap();
+        s.commit(
+            vec![Command::AddCell {
+                entity: target,
+                cell: Cell { property: props::NAME, value: Value::Text("Ferry times".into()) },
+            }],
+            "name",
+            Author::User,
+        )
+        .unwrap();
+        let note = liv_services::content::create_note(
+            &mut s,
+            DateTime { civil: 2026_09_13_1000, date_only: false, end: None },
+        )
+        .unwrap();
+        s.commit(
+            vec![Command::AddCell {
+                entity: note,
+                cell: Cell {
+                    property: props::CONTENT,
+                    value: Value::RichText(liv_core::RichText {
+                        spans: vec![liv_core::Span::text("see "), liv_core::Span::Ref(target)],
+                    }),
+                },
+            }],
+            "body",
+            Author::User,
+        )
+        .unwrap();
+    }
+
+    let to = dir.join("liv.db");
+    convert(&path, &to).unwrap();
+    let e = Engine::open_local(&to).unwrap();
+    let body = e
+        .all_entities()
+        .unwrap()
+        .into_iter()
+        .find_map(|id| match e.one(id, prop::BODY).unwrap() {
+            Some(EV::Rich(spans)) if spans.len() == 2 => Some(spans),
+            _ => None,
+        })
+        .expect("the body came across");
+
+    let Span::Ref(target) = body[1] else { panic!("the link is a Ref: {body:?}") };
+    assert_eq!(e.name(target).unwrap().as_deref(), Some("Ferry times"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

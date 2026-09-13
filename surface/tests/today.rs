@@ -203,7 +203,18 @@ fn a_scrap_is_titled_by_its_first_line_with_the_markers_off() {
     // function (standing rule 4) rather than three that can disagree.
     let mut e = engine();
     let scrap = e.create(kind::NOTE, None, 1_000).unwrap();
-    e.set(scrap, prop::BODY, Value::Text("# Trip planning\n\nferries".into()), 1_001).unwrap();
+    e.set(
+        scrap,
+        prop::BODY,
+        Value::Rich(vec![
+            Span::Break(Block::Heading(1)),
+            Span::text("Trip planning"),
+            Span::Break(Block::Body),
+            Span::text("ferries"),
+        ]),
+        1_001,
+    )
+    .unwrap();
     e.set(scrap, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_002).unwrap();
 
     let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();

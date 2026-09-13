@@ -170,7 +170,7 @@ fn everything_is_newest_first_and_notes_is_most_recently_touched() {
 
     // ORDERED BY WHAT YOU TOUCHED LAST. Editing the older one moves it to
     // the top, which is why this beats the tab switcher.
-    e.set(first, prop::BODY, Value::Text("edited".into()), 4_000).unwrap();
+    e.set(first, prop::BODY, Value::Rich(vec![Span::text("edited")]), 4_000).unwrap();
     let notes = everything(&e, Slice::Notes, &Lens::Everything, DAY).unwrap();
     assert_eq!(titles(&notes), vec!["First", "Second"]);
     let _ = second;
@@ -439,6 +439,17 @@ fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
     assert!(!row(&e, named).unwrap().untitled);
 
     let scrap = e.create(kind::NOTE, None, when).unwrap();
-    e.set(scrap, prop::BODY, Value::Text("# Trip planning\nferries".into()), when).unwrap();
+    e.set(
+        scrap,
+        prop::BODY,
+        Value::Rich(vec![
+            Span::Break(Block::Heading(1)),
+            Span::text("Trip planning"),
+            Span::Break(Block::Body),
+            Span::text("ferries"),
+        ]),
+        when,
+    )
+    .unwrap();
     assert_eq!(row(&e, scrap).unwrap().title, "Trip planning");
 }

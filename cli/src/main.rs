@@ -224,9 +224,6 @@ fn convert_box(session: &Session, rest: &[&str]) -> Result<(), String> {
     if report.minted_vocabulary > 0 {
         println!("{} options minted as vocabulary entities", report.minted_vocabulary);
     }
-    if report.flattened > 0 {
-        println!("{} bodies flattened to markdown (the engine has no blocks yet)", report.flattened);
-    }
     if report.undeclared > 0 {
         println!(
             "{} cells on properties the engine does not know — carried as-is",

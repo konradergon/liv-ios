@@ -21,9 +21,10 @@
 //!
 //! ## What it cannot carry, and says so
 //!
-//! * **Rich text becomes plain text.** The engine has no blocks yet
-//!   (`core-plan.md` Phase 8), so a body's structure flattens to its text.
-//!   Nothing is lost that a re-parse cannot rebuild, but it is a change.
+//! * **A body's link to something that was dropped.** Rich text itself
+//!   crosses span for span now that the engine has blocks, but a `[[…]]`
+//!   pointing at an entity the conversion could not carry loses the span
+//!   rather than pointing at nothing.
 //! * **A file reference becomes nothing.** `core`'s `FileRef` carries a
 //!   device-local path; the engine's `Blob` carries a content hash, and
 //!   there is no blob store yet (Phase 11). Inventing a hash would be
@@ -51,8 +52,6 @@ pub use liv_engine::{civil_from_days, days_from_civil, split_civil};
 pub struct Report {
     pub entities: usize,
     pub cells: usize,
-    /// Bodies whose structure was flattened to text.
-    pub flattened: usize,
     /// File references with nowhere to point.
     pub files_dropped: usize,
     /// Cells whose property the engine does not know and the box did not
@@ -203,7 +202,7 @@ pub fn pour(
                 continue;
             };
 
-            let Some(value) = value(&cell.value, &ids, &names, &mut report) else { continue };
+            let Some(value) = value(&cell.value, &ids, &mut report) else { continue };
             put(target, value);
             report.cells += 1;
         }
@@ -408,15 +407,11 @@ pub fn kind_named(name: &str) -> Option<EntityId> {
 fn value(
     v: &CoreValue,
     ids: &HashMap<liv_core::Id, EntityId>,
-    names: &HashMap<liv_core::Id, String>,
     report: &mut Report,
 ) -> Option<EngineValue> {
     Some(match v {
         CoreValue::Text(s) => EngineValue::Text(s.clone()),
-        CoreValue::RichText(rt) => {
-            report.flattened += 1;
-            EngineValue::Text(flatten(rt, names))
-        }
+        CoreValue::RichText(rt) => EngineValue::Rich(spans(rt, ids)),
         CoreValue::Number(n) if n.is_finite() => EngineValue::Number(*n),
         // A non-finite number has no defined ordering and would make two
         // stores disagree about the same value (op.rs refuses it at the
@@ -456,51 +451,58 @@ fn date(dt: &liv_core::DateTime) -> DateSpec {
     }
 }
 
-/// Rich text, as its words.
+/// One core span list, as the engine's.
 ///
-/// The engine has no blocks yet (`core-plan.md` Phase 8), so structure
-/// flattens. It flattens to MARKDOWN rather than to bare text, because the
-/// editor already round-trips markdown — so a body that was a checklist
-/// comes back a checklist when blocks land, and `note_tasks` can still see
-/// an open box in the meantime.
-///
-/// `RichText` is a flat span list where `Break(block)` types the paragraph
-/// that FOLLOWS it, so this is one left-to-right walk and never a tree.
-fn flatten(rt: &liv_core::RichText, names: &HashMap<liv_core::Id, String>) -> String {
-    let mut out = String::new();
-    for span in &rt.spans {
-        match span {
-            liv_core::Span::Text(t) => out.push_str(&t.text),
-            liv_core::Span::Break(block) => {
-                out.push('\n');
-                out.push_str(&marker(block));
-            }
-            // The editor's own token, and it carries a NAME rather than a
-            // raw id (`core-decisions.md`). A link to something that is
-            // gone keeps its brackets, so the text still reads.
-            liv_core::Span::Ref(id) => {
-                out.push_str("[[");
-                out.push_str(names.get(id).map(String::as_str).unwrap_or("?"));
-                out.push_str("]]");
-            }
-        }
-    }
-    out
+/// **This used to flatten to markdown**, because the engine had no blocks
+/// (`core-plan.md` Phase 8) and a body that came back a checklist was the
+/// best available. `Value::Rich` is a value kind now, with the same closed
+/// grammar, so the markdown round trip stopped being a conversion and
+/// became a downgrade: it loses every mark, a code fence's language and a
+/// callout's kind — and it turned a LINK into its target's name in
+/// brackets, which reads right and points nowhere. Rename the target
+/// afterwards and the body still said the old name.
+fn spans(
+    rt: &liv_core::RichText,
+    ids: &HashMap<liv_core::Id, EntityId>,
+) -> Vec<liv_engine::Span> {
+    rt.spans
+        .iter()
+        .filter_map(|s| {
+            Some(match s {
+                liv_core::Span::Text(t) => liv_engine::Span::Text(liv_engine::TextSpan {
+                    text: t.text.clone(),
+                    // The same four bits in the same order, in both
+                    // crates — `rich.rs` re-declares the set rather than
+                    // re-inventing it.
+                    marks: liv_engine::Marks(t.marks.0),
+                }),
+                liv_core::Span::Break(b) => liv_engine::Span::Break(block(b)),
+                // A link to something the conversion dropped is not a
+                // link. The span goes rather than pointing at nothing —
+                // the engine refuses a dangling ref on save anyway.
+                liv_core::Span::Ref(id) => liv_engine::Span::Ref(*ids.get(id)?),
+            })
+        })
+        .collect()
 }
 
-/// What a paragraph of this kind starts with in markdown.
-fn marker(block: &liv_core::Block) -> String {
-    match block {
-        liv_core::Block::Body | liv_core::Block::Rule => String::new(),
-        liv_core::Block::Heading(level) => format!("{} ", "#".repeat((*level).clamp(1, 6) as usize)),
-        liv_core::Block::Quote => "> ".to_owned(),
-        liv_core::Block::Bullet { depth } => format!("{}- ", "  ".repeat(*depth as usize)),
-        liv_core::Block::Ordered { depth } => format!("{}1. ", "  ".repeat(*depth as usize)),
+fn block(b: &liv_core::Block) -> liv_engine::Block {
+    match b {
+        liv_core::Block::Body => liv_engine::Block::Body,
+        // Clamped, not refused: `core/`'s level is a `u8` and the
+        // engine's decoder rejects anything outside 1–6, so a box that
+        // somehow holds a seventh must not become a box that will not
+        // open. Six is the deepest heading there is.
+        liv_core::Block::Heading(n) => liv_engine::Block::Heading((*n).clamp(1, 6)),
+        liv_core::Block::Quote => liv_engine::Block::Quote,
+        liv_core::Block::Bullet { depth } => liv_engine::Block::Bullet { depth: *depth },
+        liv_core::Block::Ordered { depth } => liv_engine::Block::Ordered { depth: *depth },
         liv_core::Block::Task { depth, done } => {
-            format!("{}- [{}] ", "  ".repeat(*depth as usize), if *done { 'x' } else { ' ' })
+            liv_engine::Block::Task { depth: *depth, done: *done }
         }
-        liv_core::Block::Code { .. } => "    ".to_owned(),
-        liv_core::Block::Callout { .. } => "> ".to_owned(),
+        liv_core::Block::Code { lang } => liv_engine::Block::Code { lang: lang.clone() },
+        liv_core::Block::Callout { kind } => liv_engine::Block::Callout { kind: kind.clone() },
+        liv_core::Block::Rule => liv_engine::Block::Rule,
     }
 }
 

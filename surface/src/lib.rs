@@ -206,7 +206,10 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
         _ => None,
     };
     let body_line = match one(prop::BODY) {
-        Some(Value::Text(s)) => first_line(s),
+        // The body is a span list, so its first line is the plain text
+        // up to the first `Break` — a `Ref` contributes nothing, because
+        // a link's words live on its target, not in this note.
+        Some(Value::Rich(spans)) => first_line(&liv_engine::rich::plain(spans)),
         _ => None,
     };
     // **NEVER EMPTY, AND NEVER AN ID** (owner, 2026-09-13: *"LivID

@@ -224,6 +224,13 @@ pub enum Holds {
     /// live in the same cell.
     RefTo(EntityId),
     Blob,
+    /// A note's body — the span list of `rich.rs`.
+    ///
+    /// **Its own kind, not `Text`.** The box already tells them apart
+    /// (`value-kind` says `richtext`), the values are different shapes,
+    /// and a body is the one cell the fold reads INTO rather than
+    /// storing whole: the refs inside it become link rows.
+    Rich,
 }
 
 impl Holds {
@@ -232,7 +239,8 @@ impl Holds {
     /// `core/` box writes today, so a converter needs no table.
     pub fn named(word: &str) -> Option<Holds> {
         Some(match word {
-            "text" | "richtext" => Holds::Text,
+            "text" => Holds::Text,
+            "richtext" => Holds::Rich,
             "number" => Holds::Number,
             "bool" => Holds::Bool,
             "datetime" => Holds::Date,
@@ -267,7 +275,7 @@ props! {
     // id                  name               many   holds                        shown
     prop::KIND,            "kind",            false, Holds::RefTo(kind::KIND),     false;
     prop::NAME,            "name",            false, Holds::Text,                  false;
-    prop::BODY,            "content",         false, Holds::Text,                  false;
+    prop::BODY,            "content",         false, Holds::Rich,                  false;
     prop::TRASHED,         "trashed",         false, Holds::Bool,                  false;
 
     prop::DUE,             "due",             false, Holds::Date,                  true;
@@ -525,6 +533,7 @@ pub fn check(
         (Holds::Bool, Value::Bool(_)) => true,
         (Holds::Date, Value::Date(_)) => true,
         (Holds::Blob, Value::Blob(_)) => true,
+        (Holds::Rich, Value::Rich(_)) => true,
         (Holds::Ref, Value::Ref(_)) => true,
         (Holds::RefTo(want), Value::Ref(target)) => {
             // ONE RULE FOR BOTH HALVES. The compiled-in Work answers from

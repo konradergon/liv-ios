@@ -389,7 +389,7 @@ fn an_entity_remembers_when_it_was_last_touched() {
 
     // Newest first, and it is the WRITE that counts, not the creation.
     assert_eq!(e.by_touch().unwrap(), vec![b, a]);
-    e.set(a, prop::BODY, Value::Text("edited".into()), 3_000).unwrap();
+    e.set(a, prop::BODY, Value::Rich(vec![Span::text("edited")]), 3_000).unwrap();
     assert_eq!(e.by_touch().unwrap(), vec![a, b], "editing the older one moves it up");
     assert_eq!(e.touched(a).unwrap(), 3_000);
 

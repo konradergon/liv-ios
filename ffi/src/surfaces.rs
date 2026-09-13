@@ -417,7 +417,7 @@ pub unsafe extern "C" fn liv_view_day(
 /// the conversion away and take the core box as truth again".
 ///
 /// The answer is the report as JSON:
-/// `{"entities","cells","resolved","minted_vocabulary","flattened",
+/// `{"entities","cells","resolved","minted_vocabulary",
 ///   "files_dropped","undeclared","unknown_kinds":[…],"clean"}`
 ///
 /// # Safety
@@ -446,7 +446,6 @@ pub unsafe extern "C" fn liv_view_convert(
                 cells: r.cells,
                 resolved: r.resolved,
                 minted_vocabulary: r.minted_vocabulary,
-                flattened: r.flattened,
                 files_dropped: r.files_dropped,
                 undeclared: r.undeclared,
                 clean: r.clean(),
@@ -466,7 +465,6 @@ struct WireReport {
     cells: usize,
     resolved: usize,
     minted_vocabulary: usize,
-    flattened: usize,
     files_dropped: usize,
     undeclared: usize,
     clean: bool,

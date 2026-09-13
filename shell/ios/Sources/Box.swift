@@ -1287,7 +1287,6 @@ struct LivConvertReport: Decodable {
     var cells: Int?
     var resolved: Int?
     var mintedVocabulary: Int?
-    var flattened: Int?
     var filesDropped: Int?
     var undeclared: Int?
     var clean: Bool?
