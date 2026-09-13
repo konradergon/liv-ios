@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::id::DeviceId;
+use crate::id::{DeviceId, Dot};
 use crate::op::{self, DecodeError, Group};
 
 /// The box format this build writes and will open.
@@ -291,6 +291,54 @@ pub fn range(
             out.push(op::decode(&row?)?.0);
         }
         Ok(out)
+    }
+
+    /// This device's groups, NEWEST FIRST, until `f` says stop.
+    ///
+    /// Lazy on purpose: undo's reading of the tail (`undo.rs`) stops at
+    /// the first group still in effect, which in a box nobody has undone
+    /// in is the very first row. Loading the history to look at its last
+    /// entry is what the engine exists not to do.
+pub fn walk_back<F>(
+        conn: &rusqlite::Connection,
+        device: DeviceId,
+        mut f: F,
+    ) -> Result<(), LogError>
+    where
+        F: FnMut(&Group) -> bool,
+    {
+        let mut stmt = conn.prepare(
+            "SELECT bytes FROM ops WHERE device = ?1 ORDER BY first_seq DESC",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![&device.0[..]])?;
+        while let Some(row) = rows.next()? {
+            let bytes: Vec<u8> = row.get(0)?;
+            let g = op::decode(&bytes)?.0;
+            if !f(&g) {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// The group one dot names, if this box holds it.
+    ///
+    /// A dot names an OP, and a group's seqs are consecutive from
+    /// `first_seq` — so the group is the newest one on that device whose
+    /// first seq is not past it, and only if its ops reach that far.
+pub fn group_at(conn: &rusqlite::Connection, dot: Dot) -> Result<Option<Group>, LogError> {
+        let found: Option<(i64, Vec<u8>)> = conn
+            .query_row(
+                "SELECT op_count, bytes FROM ops
+                 WHERE device = ?1 AND first_seq <= ?2
+                 ORDER BY first_seq DESC LIMIT 1",
+                rusqlite::params![&dot.device.0[..], dot.seq as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        let Some((count, bytes)) = found else { return Ok(None) };
+        let g = op::decode(&bytes)?.0;
+        Ok(if dot.seq < g.first_seq + count as u64 { Some(g) } else { None })
     }
 
     /// The whole log in causal order — what replay reads.

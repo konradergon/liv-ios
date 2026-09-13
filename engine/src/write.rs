@@ -28,6 +28,9 @@ pub mod action {
     /// Minting a piece of vocabulary the app did not ship with: a seventh
     /// field, a seventh area, a status option.
     pub const DECLARE: u16 = 8;
+    /// Taking one back. A redo carries this too — a redo IS an undo, of
+    /// an undo, and the log says which by what its `reverses` points at.
+    pub const UNDO: u16 = 9;
 }
 
 #[derive(Debug)]
@@ -39,6 +42,11 @@ pub enum WriteError {
     /// asked for the wrong shape of write, which is a bug rather than a
     /// user error.
     WrongCardinality { prop: EntityId, many: bool },
+    /// This device has done nothing that is still in effect.
+    NothingToUndo,
+    /// Nothing has been undone that has not since been redone or written
+    /// over.
+    NothingToRedo,
 }
 
 impl std::fmt::Display for WriteError {
@@ -49,6 +57,8 @@ impl std::fmt::Display for WriteError {
             WriteError::WrongCardinality { many, .. } => {
                 write!(f, "that property is a {}", if *many { "set" } else { "register" })
             }
+            WriteError::NothingToUndo => write!(f, "nothing to undo"),
+            WriteError::NothingToRedo => write!(f, "nothing to redo"),
         }
     }
 }

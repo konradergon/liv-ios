@@ -21,6 +21,7 @@ pub mod id;
 pub mod log;
 pub mod model;
 pub mod op;
+pub mod undo;
 pub mod view;
 pub mod write;
 

@@ -71,10 +71,27 @@ impl Engine {
         author: Author,
         now_ms: u64,
     ) -> Result<Dot, LogError> {
+        self.commit_reversing(ops, action, author, now_ms, None)
+    }
+
+    /// The same write, pointing at the group it takes back.
+    ///
+    /// `reverses` is what makes undo a reading of the log rather than a
+    /// stack held beside it — see `undo.rs`. Nothing else sets it, and
+    /// nothing else should: a group that claims to reverse something it
+    /// does not would make the tail walk lie.
+    pub(crate) fn commit_reversing(
+        &mut self,
+        ops: Vec<Op>,
+        action: u16,
+        author: Author,
+        now_ms: u64,
+        reverses: Option<Dot>,
+    ) -> Result<Dot, LogError> {
         let device = self.ids.device();
         let first_seq = log::next_seq(&self.conn, device)?;
         let hlc = self.ids.stamp(now_ms);
-        let g = Group { device, first_seq, hlc, author, action, reverses: None, ops };
+        let g = Group { device, first_seq, hlc, author, action, reverses, ops };
 
         let tx = self.conn.transaction()?;
         log::append(&tx, &g)?;

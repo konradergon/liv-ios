@@ -303,3 +303,67 @@ fn a_write_still_stays_flat_now_that_the_fold_maintains_at_ms() {
     );
     assert!(ratio < 4.0, "one dated write must not notice the box: {ratio:.1}x");
 }
+
+// ---- undo ------------------------------------------------------------
+//
+// `undo.rs` claims its cost is the depth the user has undone to, never the
+// size of the box — which is the whole reason there is no undo stack held
+// beside the log. That is a claim about SHAPE, so it is asserted here
+// rather than believed.
+
+/// **The question "can I undo?" must not read the history.**
+///
+/// This is the one that would rot quietly: `undoable()` is what decides
+/// whether a button is live, so a shell asks it on every refresh. `core/`
+/// answers it from a `Vec` in memory it built by scanning the whole log at
+/// open. Here it walks backward and stops at the first group still in
+/// effect — which, in a box nobody has undone in, is the first row read.
+#[test]
+fn asking_what_undo_would_take_does_not_read_the_box() {
+    let small = box_of(500);
+    let large = box_of(5_000);
+
+    let ratio = best_ratio(
+        12,
+        || time(|| assert!(small.undoable().unwrap().is_some())),
+        || time(|| assert!(large.undoable().unwrap().is_some())),
+    );
+    assert!(ratio < 4.0, "the undo question must not notice the box: {ratio:.1}x");
+}
+
+/// And taking it costs one group's inverse, not the log's.
+#[test]
+fn one_undo_stays_flat_as_the_box_grows() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+
+    let ratio = best_ratio(
+        12,
+        || time(|| { small.undo(1_787_400_000_000).unwrap(); }),
+        || time(|| { large.undo(1_787_400_000_000).unwrap(); }),
+    );
+    assert!(ratio < 4.0, "one undo must not notice the box: {ratio:.1}x");
+}
+
+/// **Undoing ten deep costs the ten, and still not the box.**
+///
+/// The backward walk is bounded by the run of reversals at the tail, so a
+/// box with ten undos already standing pays for those ten wherever it is.
+/// If the walk ever started loading history to find its place, this is
+/// where it would show.
+#[test]
+fn undoing_deep_costs_the_depth_not_the_box() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+    for i in 0..10 {
+        small.undo(1_787_400_000_000 + i).unwrap();
+        large.undo(1_787_400_000_000 + i).unwrap();
+    }
+
+    let ratio = best_ratio(
+        12,
+        || time(|| assert!(small.undoable().unwrap().is_some())),
+        || time(|| assert!(large.undoable().unwrap().is_some())),
+    );
+    assert!(ratio < 4.0, "ten deep is ten deep in either box: {ratio:.1}x");
+}

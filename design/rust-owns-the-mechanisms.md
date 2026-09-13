@@ -307,7 +307,40 @@ replacement passes.
         One more thing changed shape on evidence: the sentinel for "no
         id" is `.absent`, not `.none`, because `Optional` already has a
         `.none` and `entity ?? .none` would have resolved to that one.
-     5. Swap the data source.
+     5. Swap the data source. **This is two, not one**, and the reason
+        is that reads and writes have to hit the same box: if Today reads
+        from the engine while ticking a task writes to `core/`, the
+        engine box is stale the moment anything happens. So "one surface
+        at a time" is not available for the swap either — every write
+        path moves first, or none does.
+
+        * **5a, the write ABI.** The engine has the primitives
+          (`create`/`set`/`add`/`remove`/`trash`/`restore`/`declare`) and
+          no FFI verb reaches any of them. Gaps, measured 2026-09-13:
+          **undo** (`Group.reverses` had been in the op format since
+          Phase 2 with nothing writing it — **done**, `engine/src/undo.rs`);
+          **content** (the engine holds it as one text cell; `core/`
+          holds spans, a compare-and-swap fingerprint and a history);
+          files, `rename_value`, the clerk's accept/reject, and
+          query/lex/search — all of which live in `services/`, written
+          against `core::Store`.
+        * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
+          core box is converted once and becomes history, and `LivID`'s
+          `core` half goes with it.
+
+        Undo landed without a stack. `core/` keeps two `Vec<u64>` in
+        memory and rebuilds them by scanning the whole log at open, which
+        is the one property the engine was chosen for. Here the answer is
+        a backward walk over this device's groups that stops at the first
+        one still in effect — one row read in a box nobody has undone in,
+        and bounded by the undo depth rather than the box. Three cost
+        tests hold that shape (`engine/tests/scale.rs`); made eager on
+        purpose, all three fail at 7.5x.
+
+        It also has a rule `core/` never needed: **undo is what you did
+        on this device.** One history made the question moot; a box
+        holding both ends of a sync would otherwise let either end take
+        back the other's last write.
 5. **Delete `core/`, the old FFI verbs, and the snapshot builder.** No
    feature flag, no parallel period beyond stage 4 (standing rule 7).
 6. **Sync.** The engine was built for it: ops, dots, version vectors and
