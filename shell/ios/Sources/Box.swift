@@ -1417,3 +1417,707 @@ extension BoxModel {
         }
     }
 }
+
+// MARK: - the engine lane, complete
+//
+// **This is 5b's Swift half.** Everything above the `enginePath` extension
+// is the core lane: one `liv_snapshot` holding the whole box, decoded into
+// `Snapshot`, which every screen reads. The engine answers questions
+// instead — one verb per surface, already filtered, already sorted — and
+// the ABI for all of it landed in 5a (`design/rust-owns-the-mechanisms.md`
+// §5). These are the Swift doors to it.
+//
+// Three rules hold across every one of them, and they are not style:
+//
+//  1. **Every wire field is Optional.** One missing key must never drop
+//     the whole answer. It is a real, recurring bug, not politeness — see
+//     the note on `Snapshot`.
+//  2. **The value, then the fault**, exactly one non-nil. `Result` needs
+//     `Failure: Error` and this shell has no error type; minting one for
+//     this would be a type nothing else in the app uses.
+//  3. **Ids are 32 hex characters and are never shown to anyone**
+//     (owner, 2026-09-13). `LivID` decodes them; `LivIDText.written` is
+//     the only way to write one down.
+
+/// One band of the Tasks view: a status, and the rows under it.
+///
+/// **`late` is the GROUP's count, not a flag per row.** On a real box
+/// every task is overdue, and a colour on every row distinguishes
+/// nothing. An empty group is not returned at all.
+struct LivTaskGroup: Decodable, Identifiable {
+    var status: LivID?
+    var name: String?
+    var completes: Bool?
+    var late: Int?
+    var rows: [LivViewRow]?
+    var id: String { LivIDText.written(status ?? .absent) + (name ?? "") }
+}
+
+/// One block on the day's timeline, with its overlap already resolved.
+///
+/// **`column`/`columns` are a CLUSTER's, not a pair's**: two blocks that
+/// miss each other can both hit a third, and all three share the width.
+/// The engine works that out, because getting it wrong is a layout bug
+/// that only shows up on a busy day.
+struct LivBlock: Decodable, Identifiable {
+    var row: LivViewRow?
+    var startMin: Int?
+    /// Never zero, so a thing with no duration stays tappable.
+    var minutes: Int?
+    var column: Int?
+    var columns: Int?
+    var id: String { LivIDText.written(row?.id ?? .absent) }
+}
+
+/// One day: the all-day band, and the timeline under it.
+struct LivDayView: Decodable {
+    var allDay: [LivViewRow]?
+    var blocks: [LivBlock]?
+}
+
+/// One row of the inspector, as `liv_cells` reports it.
+struct LivCell: Decodable, Identifiable {
+    var property: LivID?
+    var name: String?
+    /// text | number | bool | datetime | reference | richtext | file —
+    /// so a row picks its editor without knowing the property.
+    var holds: String?
+    var many: Bool?
+    /// Always a display string, so a row draws without knowing the kind.
+    var value: String?
+    /// Where to go when the row is tapped, when there is anywhere.
+    var ref: LivID?
+    /// **Two devices left this register holding two values.** Nothing
+    /// silently wins, so the row has to be able to show the choice.
+    var contended: Bool?
+
+    var id: String { LivIDText.written(property ?? .absent) }
+}
+
+/// One thing a picker may offer: compiled-in furniture and the user's own
+/// in one list, because that is what the cell accepts.
+struct LivNamed: Decodable, Identifiable {
+    var id: LivID
+    var name: String?
+    var display: String { (name ?? "").isEmpty ? "Untitled" : (name ?? "") }
+}
+
+/// One value a property is actually carrying, with how many carry it.
+struct LivInUse: Decodable, Identifiable {
+    var label: String?
+    var ref: LivID?
+    var count: Int?
+    var id: String { label ?? "" }
+}
+
+/// One suggestion the clerk would make.
+///
+/// **Named by the thing it is about AND its fingerprint**, never its
+/// position: the sweep is recomputed in every process, so an index would
+/// mean something different by the time the user tapped it.
+struct LivSuggestion: Decodable, Identifiable {
+    var entity: LivID?
+    var print: UInt64?
+    var proposer: String?
+    var reason: String?
+    var id: String { "\(LivIDText.written(entity ?? .absent)).\(print ?? 0)" }
+}
+
+/// One workspace, or one saved filter.
+struct LivSpace: Decodable, Identifiable {
+    var id: LivID
+    var name: String?
+    var query: String?
+    var emoji: String?
+    var favorite: Bool?
+    var archived: Bool?
+    var builtin: String?
+    var parent: LivID?
+    var order: Double?
+    /// Never an id (owner, 2026-09-13). A nameless workspace is for the
+    /// shell to title.
+    var display: String { (name ?? "").isEmpty ? "Workspace" : (name ?? "") }
+}
+
+/// A body and the fingerprint to save it against.
+struct LivBody: Decodable {
+    var spans: [SpanJSON]?
+    /// **Zero is never a real fingerprint** — it is what "no body yet"
+    /// reads as, so a first save needs no special case.
+    var print: UInt64?
+}
+
+/// One past version of a body, from `liv_body_history`.
+struct LivBodyVersion: Decodable, Identifiable {
+    var device: String?
+    var seq: UInt64?
+    var atMs: Int64?
+    /// "user", or the proposer's name.
+    var author: String?
+    var spans: [SpanJSON]?
+    var id: String { "\(device ?? "")\(seq ?? 0)" }
+}
+
+/// Both directions of one thing's links, as bare ids. A `[[ ]]` typed in
+/// a body is the same edge as a link picked in properties.
+struct LivLinks: Decodable {
+    var out: [LivID]?
+    var inbound: [LivID]?
+    enum CodingKeys: String, CodingKey {
+        case out
+        case inbound = "in"
+    }
+    static let empty = LivLinks(out: [], inbound: [])
+}
+
+/// What undo and redo would take, without taking it.
+struct LivUndoState: Decodable {
+    var undo: Bool?
+    var redo: Bool?
+}
+
+/// A search: ranked hits, and the facet rows beside them.
+struct LivFound: Decodable {
+    var hits: [LivHit]?
+    var facets: [LivEngineFacet]?
+}
+
+struct LivHit: Decodable, Identifiable {
+    var id: LivID
+    var score: Double?
+    /// name | cell | filed | content | structured — where the best match
+    /// was, so a row can hint why it is here.
+    var field: String?
+}
+
+struct LivEngineFacet: Decodable, Identifiable {
+    var property: LivID?
+    var label: String?
+    var values: [LivEngineFacetValue]?
+    var id: String { label ?? LivIDText.written(property ?? .absent) }
+}
+
+struct LivEngineFacetValue: Decodable, Identifiable {
+    var label: String?
+    var count: Int?
+    /// include → exclude → off is a three-state cycle, so a chip needs
+    /// both flags rather than one.
+    var active: Bool?
+    var excluded: Bool?
+    var id: String { label ?? "" }
+}
+
+/// The ids a lens admits, and the terms it is made of.
+struct LivLens: Decodable {
+    var ids: [LivID]?
+    var terms: [LivTerm]?
+}
+
+/// One token of the filter grammar — what a chip is drawn from.
+///
+/// **Standing rule 5: a user never types a query language.** The text is
+/// the storage format; this is how it becomes something to tap.
+struct LivTerm: Decodable, Identifiable {
+    /// equals | not-equals | at-most | has | no | is | text
+    var op: String?
+    var key: String?
+    var value: String?
+    /// The term respelled canonically, so joining a list back together
+    /// reproduces a query that reads the same way.
+    var raw: String?
+    var id: String { raw ?? "" }
+}
+
+/// One file this device cannot open.
+struct LivFileAlert: Decodable, Identifiable {
+    var id: LivID
+    var name: String?
+    /// Where this device last looked — null for a file that arrived by
+    /// sync and has no copy here.
+    var path: String?
+    /// **`absent` is not `gone`.** A hash travels and a path does not, so
+    /// a file added on the laptop reaches the phone as a valid reference
+    /// with no local copy: that is "find it for me", not "this is broken".
+    var why: String?
+}
+
+/// Why the box will not open. `code` is ok | version | corrupt | io.
+struct LivBoxHealth: Decodable {
+    var code: String?
+    var message: String?
+}
+
+/// What `liv_resync_file` found.
+struct LivResync: Decodable {
+    /// unchanged | changed | broken
+    var state: String?
+    var path: String?
+}
+
+// MARK: - the engine lane: verbs
+
+/// The out-pointer every engine verb delivers its answer through: a
+/// `char **`, exactly as C sees it.
+///
+/// Named so the helpers below can take it as an ordinary parameter. The
+/// first shape here was `inout UnsafeMutablePointer<CChar>?`, which reads
+/// better at a call site and is a closure type this container cannot
+/// compile to check — and an escaping closure over an `inout` is the sort
+/// of thing that is either fine or a hard error with nothing in between.
+/// This one maps to the C signature with no translation at all.
+typealias LivOut = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+
+
+extension BoxModel {
+    /// A write, and the refresh that follows it.
+    ///
+    /// **One user action gets one snapshot** (standing rule 8): every
+    /// write lands, then asks for exactly one re-read, and `refresh`
+    /// coalesces the rest. `LIV_OK` is 0; anything negative is a fault
+    /// with its own meaning, which is the whole reason the new codes
+    /// exist.
+    private func engineWrite(
+        _ work: @escaping (String) -> Int32,
+        _ done: ((String?) -> Void)? = nil
+    ) {
+        let to = enginePath
+        boxQueue.async {
+            let code = work(to)
+            DispatchQueue.main.async {
+                done?(code == 0 ? nil : Self.writeFault(code))
+                self.refresh()
+            }
+        }
+    }
+
+    /// A write that hands back a JSON answer — a new thing's id, a fresh
+    /// fingerprint, how many carriers a rename touched.
+    private func engineWriteValue<T: Decodable>(
+        _ type: T.Type,
+        _ work: @escaping (String, LivOut) -> Int32,
+        _ done: @escaping (T?, String?) -> Void
+    ) {
+        let to = enginePath
+        boxQueue.async {
+            var out: UnsafeMutablePointer<CChar>?
+            let code = withUnsafeMutablePointer(to: &out) { work(to, $0) }
+            let (value, fault) = Self.decodeView(type, code: code, out: out)
+            DispatchQueue.main.async {
+                done(value, fault)
+                self.refresh()
+            }
+        }
+    }
+
+    /// A read: no refresh, because nothing changed.
+    private func engineRead<T: Decodable>(
+        _ type: T.Type,
+        _ work: @escaping (String, LivOut) -> Int32,
+        _ done: @escaping (T?, String?) -> Void
+    ) {
+        let to = enginePath
+        boxQueue.async {
+            var out: UnsafeMutablePointer<CChar>?
+            let code = withUnsafeMutablePointer(to: &out) { work(to, $0) }
+            let (value, fault) = Self.decodeView(type, code: code, out: out)
+            DispatchQueue.main.async { done(value, fault) }
+        }
+    }
+
+    /// The three codes a WRITE can return that a read cannot, in words.
+    ///
+    /// Each one is a different thing for the shell to do, which is why
+    /// they are separate codes and not one failure: re-read and decide;
+    /// tell the user the box said no; say nothing, because nothing was
+    /// wrong.
+    static func writeFault(_ code: Int32) -> String {
+        switch code {
+        case -6: return "someone else changed this — reopen it"
+        case -7: return "the box would not take that"
+        case -8: return "there was nothing to do"
+        default: return viewFault(code)
+        }
+    }
+
+    /// Milliseconds, which is what every engine verb takes.
+    static var nowMs: UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
+
+    // MARK: making things
+
+    /// Capture a scrap. **Untyped on purpose** — a capture is a thought,
+    /// not a decision about what kind of thing it is, and the clerk's
+    /// promotion proposer can only offer to make it a task because
+    /// nothing here decided first.
+    func engineCapture(_ text: String, _ done: ((LivID?, String?) -> Void)? = nil) {
+        engineWriteValue(LivMade.self, { to, out in
+            liv_capture(to, text, Self.nowMs, out)
+        }) { made, fault in done?(made?.id, fault) }
+    }
+
+    /// Make one thing of a kind. `name` nil is something born untitled,
+    /// which is the common case and not an error.
+    func engineMake(
+        kind: LivID, name: String? = nil,
+        _ done: ((LivID?, String?) -> Void)? = nil
+    ) {
+        let k = LivIDText.written(kind)
+        engineWriteValue(LivMade.self, { to, out in
+            if let name {
+                return liv_make(to, k, name, Self.nowMs, out)
+            }
+            return liv_make(to, k, nil, Self.nowMs, out)
+        }) { made, fault in done?(made?.id, fault) }
+    }
+
+    /// Declare a field the app did not ship with. `holds` is text |
+    /// number | bool | datetime | reference | richtext | file.
+    func engineDeclareField(
+        _ name: String, holds: String = "text", many: Bool = false,
+        _ done: ((LivID?, String?) -> Void)? = nil
+    ) {
+        engineWriteValue(LivMade.self, { to, out in
+            liv_declare_field(to, name, holds, many, Self.nowMs, out)
+        }) { made, fault in done?(made?.id, fault) }
+    }
+
+    // MARK: changing cells
+
+    /// **A value crosses as TEXT and the property says what it means.**
+    /// The shell sends "yes", "3", "2026-09-13", "Work"; which of those
+    /// is a bool, a number, a date or an option is the box's business,
+    /// not the shell's. A value that does not read is refused with
+    /// nothing written.
+    func engineSet(
+        _ id: LivID, _ property: LivID, _ value: String,
+        _ done: ((String?) -> Void)? = nil
+    ) {
+        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        engineWrite({ to in liv_set(to, i, p, value, Self.nowMs) }, done)
+    }
+
+    func engineAdd(
+        _ id: LivID, _ property: LivID, _ value: String,
+        _ done: ((String?) -> Void)? = nil
+    ) {
+        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        engineWrite({ to in liv_add(to, i, p, value, Self.nowMs) }, done)
+    }
+
+    /// **Add-wins**: a member added on another device survives this.
+    func engineRemove(
+        _ id: LivID, _ property: LivID, _ value: String,
+        _ done: ((String?) -> Void)? = nil
+    ) {
+        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        engineWrite({ to in liv_remove(to, i, p, value, Self.nowMs) }, done)
+    }
+
+    /// Empty a cell. **Not the same as setting it to nothing** — an unset
+    /// cell has no value, which is what a picker's "None" means.
+    func engineUnset(_ id: LivID, _ property: LivID, _ done: ((String?) -> Void)? = nil) {
+        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        engineWrite({ to in liv_unset(to, i, p, Self.nowMs) }, done)
+    }
+
+    /// **Trashing is a cell, not a deletion**, which is what makes
+    /// restore a write rather than a resurrection.
+    func engineTrash(_ id: LivID, _ done: ((String?) -> Void)? = nil) {
+        let i = LivIDText.written(id)
+        engineWrite({ to in liv_trash(to, i, Self.nowMs) }, done)
+    }
+
+    func engineRestore(_ id: LivID, _ done: ((String?) -> Void)? = nil) {
+        let i = LivIDText.written(id)
+        engineWrite({ to in liv_restore(to, i, Self.nowMs) }, done)
+    }
+
+    // MARK: the editor
+
+    func engineBody(_ id: LivID, _ done: @escaping (LivBody?, String?) -> Void) {
+        let i = LivIDText.written(id)
+        engineRead(LivBody.self, { to, out in liv_read_body(to, i, out) }, done)
+    }
+
+    /// Save a body against the fingerprint it was read at.
+    ///
+    /// **Re-read, never overwrite.** There is no force flag by design: a
+    /// stale save comes back as its own fault so the caller re-reads and
+    /// decides. Empty spans clear the body.
+    func engineSaveBody(
+        _ id: LivID, spansJson: String, base: UInt64,
+        _ done: @escaping (UInt64?, String?) -> Void
+    ) {
+        let i = LivIDText.written(id)
+        engineWriteValue(LivBody.self, { to, out in
+            liv_write_body(to, i, spansJson, base, Self.nowMs, out)
+        }) { body, fault in done(body?.print, fault) }
+    }
+
+    func engineBodyHistory(_ id: LivID, _ done: @escaping ([LivBodyVersion], String?) -> Void) {
+        let i = LivIDText.written(id)
+        engineRead([LivBodyVersion].self, { to, out in liv_body_history(to, i, out) }) {
+            done($0 ?? [], $1)
+        }
+    }
+
+    func engineLinks(_ id: LivID, _ done: @escaping (LivLinks) -> Void) {
+        let i = LivIDText.written(id)
+        engineRead(LivLinks.self, { to, out in liv_links(to, i, out) }) { v, _ in
+            done(v ?? .empty)
+        }
+    }
+
+    // MARK: undo
+
+    func engineUndoState(_ done: @escaping (LivUndoState) -> Void) {
+        engineRead(LivUndoState.self, { to, out in liv_undo_state(to, out) }) { v, _ in
+            done(v ?? LivUndoState(undo: false, redo: false))
+        }
+    }
+
+    /// Take back this device's last action. **Undo is what YOU did here**
+    /// — a box holding both ends of a sync must not let either end take
+    /// back the other's last write.
+    func engineUndo(_ done: ((String?) -> Void)? = nil) {
+        engineWrite({ to in liv_undo(to, Self.nowMs) }, done)
+    }
+
+    func engineRedo(_ done: ((String?) -> Void)? = nil) {
+        engineWrite({ to in liv_redo(to, Self.nowMs) }, done)
+    }
+
+    // MARK: vocabulary
+
+    /// **The words come from the box, never from the shell.** A shell
+    /// carrying its own copy of the furniture drifts from the box that
+    /// stores it, and the drift is invisible until someone renames
+    /// something (`one-core.md` §4).
+    func engineOptions(_ property: LivID, _ done: @escaping ([LivNamed]) -> Void) {
+        let p = LivIDText.written(property)
+        engineRead([LivNamed].self, { to, out in liv_options(to, p, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    /// What a create menu offers: the six the product names, plus
+    /// anything the user declared. Not every kind that exists.
+    func engineKinds(_ done: @escaping ([LivNamed]) -> Void) {
+        engineRead([LivNamed].self, { to, out in liv_kinds(to, out) }) { v, _ in done(v ?? []) }
+    }
+
+    /// A compiled-in property's id by its frozen name — "due", "status",
+    /// "area". A shell needs some way in, and hard-coding 32 hex
+    /// characters in Swift is worse than asking.
+    func engineProperty(_ name: String, _ done: @escaping (LivID?) -> Void) {
+        engineRead(LivMade.self, { to, out in liv_property_named(to, name, out) }) { v, _ in
+            done(v?.id)
+        }
+    }
+
+    /// What this property is actually CARRYING — a different question
+    /// from `engineOptions`, which asks what it may hold.
+    func engineValuesInUse(_ property: LivID, _ done: @escaping ([LivInUse]) -> Void) {
+        let p = LivIDText.written(property)
+        engineRead([LivInUse].self, { to, out in liv_values_in_use(to, p, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    func engineCells(_ id: LivID, _ done: @escaping ([LivCell]) -> Void) {
+        let i = LivIDText.written(id)
+        engineRead([LivCell].self, { to, out in liv_cells(to, i, out) }) { v, _ in done(v ?? []) }
+    }
+
+    /// Rename one value of a property, everywhere it is carried.
+    /// `carriers` is how many things change ON SCREEN, which for a select
+    /// is not the number of writes: one write re-renders every carrier.
+    func engineRenameValue(
+        _ property: LivID, from old: String, to new: String,
+        _ done: @escaping (Int?, String?) -> Void
+    ) {
+        let p = LivIDText.written(property)
+        engineWriteValue(LivCarriers.self, { box, out in
+            liv_rename_value(box, p, old, new, Self.nowMs, out)
+        }) { v, fault in done(v?.carriers, fault) }
+    }
+
+    // MARK: files
+
+    /// Take a file into the box BY REFERENCE. Never copies or moves it.
+    func engineAddFile(_ file: String, _ done: @escaping (LivID?, String?) -> Void) {
+        engineWriteValue(LivMade.self, { to, out in
+            liv_add_file(to, file, Self.nowMs, out)
+        }) { v, fault in done(v?.id, fault) }
+    }
+
+    /// Re-hash what a file points at here. A changed hash IS the
+    /// integration — it is how Liv learns Word saved the file.
+    func engineResync(_ id: LivID, _ done: @escaping (LivResync?, String?) -> Void) {
+        let i = LivIDText.written(id)
+        engineWriteValue(LivResync.self, { to, out in
+            liv_resync_file(to, i, Self.nowMs, out)
+        }, done)
+    }
+
+    /// Every file reference this device cannot open.
+    func engineFileAlerts(_ done: @escaping ([LivFileAlert]) -> Void) {
+        engineRead([LivFileAlert].self, { to, out in liv_file_alerts(to, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    // MARK: the clerk
+
+    func engineSuggestions(_ done: @escaping ([LivSuggestion]) -> Void) {
+        engineRead([LivSuggestion].self, { to, out in liv_sweep(to, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    /// Say yes to one. Passing the entity back is what makes the check
+    /// cost one thing rather than the whole box.
+    func engineAccept(_ s: LivSuggestion, _ done: ((String?) -> Void)? = nil) {
+        guard let entity = s.entity, let print = s.print else {
+            done?("that suggestion is gone")
+            return
+        }
+        let e = LivIDText.written(entity)
+        engineWrite({ to in liv_accept(to, e, print, Self.nowMs) }, done)
+    }
+
+    /// **Declining is not forgetting** — the refusal persists, and since
+    /// 2026-09-13 it TRAVELS: saying no on the phone says no on the
+    /// laptop too.
+    func engineDecline(_ s: LivSuggestion, _ done: ((String?) -> Void)? = nil) {
+        guard let entity = s.entity, let print = s.print else {
+            done?("that suggestion is gone")
+            return
+        }
+        let e = LivIDText.written(entity)
+        engineWrite({ to in liv_decline(to, e, print, Self.nowMs) }, done)
+    }
+
+    /// Accept several as ONE action. **All or nothing, and one undo**:
+    /// half a consent is worse than none. A suggestion the box no longer
+    /// makes is skipped rather than failing the batch.
+    func engineAcceptAll(_ many: [LivSuggestion], _ done: @escaping (Int?, String?) -> Void) {
+        let pairs = many.compactMap { s -> (String, UInt64)? in
+            guard let e = s.entity, let p = s.print else { return nil }
+            return (LivIDText.written(e), p)
+        }
+        guard !pairs.isEmpty else {
+            done(nil, "there was nothing to do")
+            return
+        }
+        let prints = pairs.map { $0.1 }
+        engineWriteValue(LivTaken.self, { to, out in
+            // **The C strings must outlive the call.** Bridging a Swift
+            // String to a `const char *` gives a pointer valid only for
+            // the one call it is an argument to, so an array of them
+            // built the easy way is an array of dangling pointers by the
+            // time the callee reads the second one. These are copied,
+            // held for the whole call, and freed after.
+            let held: [UnsafeMutablePointer<CChar>?] = pairs.map { strdup($0.0) }
+            defer { held.forEach { free($0) } }
+            let ptrs: [UnsafePointer<CChar>?] = held.map { $0.map(UnsafePointer.init) }
+            return ptrs.withUnsafeBufferPointer { p in
+                prints.withUnsafeBufferPointer { f in
+                    liv_accept_all(to, p.baseAddress, f.baseAddress, UInt32(pairs.count),
+                                   Self.nowMs, out)
+                }
+            }
+        }) { v, fault in done(v?.taken, fault) }
+    }
+
+    /// The clerk's consent switch. **Absent or true is ON**; only an
+    /// explicit no silences it, so an older box that never set it is not
+    /// a box that said no.
+    func engineAssist(_ done: @escaping (Bool, LivID?) -> Void) {
+        engineRead(LivAssist.self, { to, out in liv_assist(to, out) }) { v, _ in
+            done(v?.on ?? true, v?.property)
+        }
+    }
+
+    // MARK: finding
+
+    /// Ranked hits and the facets beside them. `limit` 0 is no ceiling.
+    ///
+    /// **A search box WIDENS**: `is:archived` here means "look in the
+    /// archive too", because someone hunting for a thing wants it found.
+    func engineSearch(_ query: String, limit: UInt32 = 200,
+                      _ done: @escaping (LivFound?, String?) -> Void) {
+        engineRead(LivFound.self, { to, out in liv_search(to, query, limit, out) }, done)
+    }
+
+    /// **A lens RESTRICTS**: the same `is:archived` means "only archived
+    /// things", because a filter is a boundary and a search is a hunt.
+    func engineLens(_ query: String, _ done: @escaping (LivLens?, String?) -> Void) {
+        engineRead(LivLens.self, { to, out in liv_lens(to, query, out) }, done)
+    }
+
+    /// Split a filter into the chips a person taps. No box, no lock — so
+    /// it is safe on every keystroke.
+    func engineTerms(_ query: String) -> [LivTerm] {
+        var out: UnsafeMutablePointer<CChar>?
+        let code = liv_terms(query, &out)
+        let (value, _) = Self.decodeView([LivTerm].self, code: code, out: out)
+        return value ?? []
+    }
+
+    // MARK: the box itself
+
+    /// The day view, from the engine. `day` is DAYS SINCE THE EPOCH, not
+    /// a packed civil.
+    func engineDay(day: Int32, _ done: @escaping (LivDayView?, String?) -> Void) {
+        engineRead(LivDayView.self, { to, out in liv_view_day(to, day, nil, out) }, done)
+    }
+
+    /// Tasks by band. `filter` is 0 all, 1 status, 2 project.
+    func engineTasks(filter: Int32 = 0, filterId: LivID? = nil, today: Int32,
+                     _ done: @escaping ([LivTaskGroup]?, String?) -> Void) {
+        let f = filterId.map(LivIDText.written)
+        engineRead([LivTaskGroup].self, { to, out in
+            liv_view_tasks(to, filter, f, today, nil, out)
+        }, done)
+    }
+
+    func engineWorkspaces(_ done: @escaping ([LivSpace]) -> Void) {
+        engineRead([LivSpace].self, { to, out in liv_workspaces(to, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    func engineViews(_ done: @escaping ([LivSpace]) -> Void) {
+        engineRead([LivSpace].self, { to, out in liv_views(to, out) }) { v, _ in done(v ?? []) }
+    }
+
+    /// Why the box will not open. **A shell that cannot open the box has
+    /// nothing else to ask**, and the four answers need different
+    /// screens: `version` means update, and a wrong answer strands
+    /// someone on it.
+    func engineHealth(_ done: @escaping (LivBoxHealth?) -> Void) {
+        engineRead(LivBoxHealth.self, { to, out in liv_probe_box(to, out) }) { v, _ in done(v) }
+    }
+}
+
+/// `{"id":hex}` — what every making verb answers.
+struct LivMade: Decodable {
+    var id: LivID?
+}
+
+/// `{"carriers":N}` — how many things a rename changed on screen.
+struct LivCarriers: Decodable {
+    var carriers: Int?
+}
+
+/// `{"taken":N}` — how many of a batch actually landed.
+struct LivTaken: Decodable {
+    var taken: Int?
+}
+
+/// `{"on":bool,"property":hex}` — the clerk's consent switch and the cell
+/// that holds it.
+struct LivAssist: Decodable {
+    var on: Bool?
+    var property: LivID?
+}
