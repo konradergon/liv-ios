@@ -556,22 +556,33 @@ int32_t liv_resync_file(const char *path, const char *id, uint64_t now_ms,
                         char **out);
 
 /* What the clerk would suggest, as the inbox reads it.
-   [{"print":N, "proposer", "reason", "entity":"<hex>"?}…]
+   [{"entity":"<hex>", "print":N, "proposer", "reason"}…]
 
-   A PROPOSAL IS NAMED BY ITS FINGERPRINT, NOT ITS POSITION. The sweep is
-   a pure function of the box and is recomputed in every process, so an
-   index would mean something different by the time the user tapped it. */
+   A PROPOSAL IS NAMED BY THE THING IT IS ABOUT AND ITS FINGERPRINT, NEVER
+   ITS POSITION. The sweep is a pure function of the box and is recomputed
+   in every process, so an index would mean something different by the
+   time the user tapped it.
+
+   A proposal with no ops proposes nothing and is left out, so `entity` is
+   always there: a row the shell is shown must be a row it can act on. */
 int32_t liv_sweep(const char *path, char **out);
 
-/* Say yes, by fingerprint. The sweep is re-run to find it, which is the
-   point: a proposal the box no longer makes is one the user already
-   acted on, and LIV_ERR_NOTHING says so rather than writing something
-   stale. */
-int32_t liv_accept(const char *path, uint64_t print, uint64_t now_ms);
+/* Say yes / say no, passing back the two things the row named. The
+   proposal is RE-DERIVED from the box rather than taken on trust: one the
+   box no longer makes is one the user already acted on, and
+   LIV_ERR_NOTHING says so rather than writing something stale.
 
-/* Say no. DECLINING IS NOT FORGETTING — the refusal persists and the
-   clerk does not ask again. */
-int32_t liv_decline(const char *path, uint64_t print);
+   `entity` is what makes that affordable. Re-deriving the WHOLE box to
+   find one proposal cost 120 ms in a 500-note box — every tap in the
+   inbox re-reading everything — against 3 ms for the one thing, and the
+   guarantee is identical: sweeping one thing is sweeping everything,
+   narrowed, and a test compares the two entity by entity.
+
+   DECLINING IS NOT FORGETTING — a refusal persists and the clerk does
+   not ask again. */
+int32_t liv_accept(const char *path, const char *entity, uint64_t print,
+                   uint64_t now_ms);
+int32_t liv_decline(const char *path, const char *entity, uint64_t print);
 
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 

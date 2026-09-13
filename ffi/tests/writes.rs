@@ -312,9 +312,10 @@ fn a_suggestion_is_accepted_by_fingerprint() {
 
     let dated = rows.iter().find(|r| r["proposer"] == "dates").unwrap();
     let print = dated["print"].as_u64().unwrap();
+    let about = c(dated["entity"].as_str().unwrap());
     assert!(dated["reason"].as_str().unwrap().contains("tomorrow"));
 
-    assert_eq!(unsafe { liv_accept(path.as_ptr(), print, T0 + 3) }, LIV_OK);
+    assert_eq!(unsafe { liv_accept(path.as_ptr(), about.as_ptr(), print, T0 + 3) }, LIV_OK);
 
     // Taken, so no longer suggested.
     let mut out = std::ptr::null_mut();
@@ -323,7 +324,10 @@ fn a_suggestion_is_accepted_by_fingerprint() {
     assert!(after.as_array().unwrap().iter().all(|r| r["proposer"] != "dates"));
 
     // And accepting it again has nothing to accept.
-    assert_eq!(unsafe { liv_accept(path.as_ptr(), print, T0 + 4) }, LIV_ERR_NOTHING);
+    assert_eq!(
+        unsafe { liv_accept(path.as_ptr(), about.as_ptr(), print, T0 + 4) },
+        LIV_ERR_NOTHING
+    );
 
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -347,8 +351,9 @@ fn declining_is_not_forgetting() {
     let rows = took(out);
     let before = rows.as_array().unwrap().len();
     let print = rows[0]["print"].as_u64().unwrap();
+    let about = c(rows[0]["entity"].as_str().unwrap());
 
-    assert_eq!(unsafe { liv_decline(path.as_ptr(), print) }, LIV_OK);
+    assert_eq!(unsafe { liv_decline(path.as_ptr(), about.as_ptr(), print) }, LIV_OK);
 
     let mut out = std::ptr::null_mut();
     unsafe { liv_sweep(path.as_ptr(), &mut out) };
@@ -474,7 +479,7 @@ fn a_bad_id_is_an_argument_error_and_never_a_panic() {
 
 /// A box of `n` quiet notes, plus one scrap the clerk has something to say
 /// about. Returns the box path.
-fn box_of(name: &str, n: u64) -> (std::path::PathBuf, CString) {
+fn box_of(name: &str, n: u64, scraps: usize) -> (std::path::PathBuf, CString) {
     let d = dir(name);
     let path = d.join("liv.db");
     {
@@ -490,81 +495,105 @@ fn box_of(name: &str, n: u64) -> (std::path::PathBuf, CString) {
             )
             .unwrap();
         }
-        let scrap = e.create(kind::NOTE, None, T0 + n + 1).unwrap();
-        e.set_content(scrap, vec![liv_engine::Span::text("call anna tomorrow")], 0, T0 + n + 2)
+        // **One scrap per round, built once.** Accepting is a write, so a
+        // round consumes the proposal it measures. Rebuilding the pair of
+        // boxes each round is what a first version did, and twelve boxes
+        // of setup loaded the machine enough to make a cost test in
+        // another crate flake — a test that destabilises its neighbours
+        // is measuring the runner, not the code.
+        for s in 0..scraps {
+            let scrap = e.create(kind::NOTE, None, T0 + n + 1 + s as u64).unwrap();
+            e.set_content(
+                scrap,
+                vec![liv_engine::Span::text(&format!("call anna tomorrow about job {s}"))],
+                0,
+                T0 + n + 1 + s as u64,
+            )
             .unwrap();
+        }
     }
     unsafe { liv_view_close_all() };
     let c = c(path.to_str().unwrap());
     (d, c)
 }
 
-fn one_date_print(path: &CString) -> u64 {
+fn one_date_row(path: &CString) -> (CString, u64) {
     let mut out = std::ptr::null_mut();
     assert_eq!(unsafe { liv_sweep(path.as_ptr(), &mut out) }, LIV_OK);
     let rows = took(out);
-    rows.as_array()
+    let row = rows
+        .as_array()
         .unwrap()
         .iter()
         .find(|r| r["proposer"] == "dates")
-        .expect("the clerk should still see the date")["print"]
-        .as_u64()
-        .unwrap()
+        .expect("the clerk should still have a date to offer")
+        .clone();
+    (c(row["entity"].as_str().unwrap()), row["print"].as_u64().unwrap())
 }
 
-/// **Accepting one suggestion costs one sweep, and a sweep costs the box.**
+/// **Accepting a suggestion costs the thing it is about, not the box.**
 ///
-/// This is the design, not an accident: a proposal is named by its
-/// fingerprint, so `accept` re-runs the sweep to find it, and a proposal
-/// the box no longer makes is one the user already acted on. The price is
-/// that every tap in the inbox re-reads the box.
+/// It did not, and that is why this test exists. A proposal is named by
+/// its fingerprint, so `accept` re-derives it from the box to check the
+/// box still makes it — and the first version re-derived EVERYTHING to
+/// find one entity's proposal. Measured: 120 ms in a 500-note box, so
+/// twenty taps through the inbox was two and a half seconds of sweeping.
 ///
-/// What that price IS, measured here on 2026-09-13 in a debug build: a
-/// 50-note box accepts in 14 ms, a 500-note box in 120 ms. Ten times the
-/// box, ten times the work — linear, which is the shape a sweep has to
-/// have, and nothing worse. **But twenty taps through the inbox of a
-/// 500-note box is two and a half seconds of sweeping**, and that is a
-/// product question (batch the accepts, or cache a sweep per box
-/// generation) rather than a defect in these verbs. This test exists to
-/// keep the shape linear until that question is answered.
+/// `liv_sweep` already told the shell which thing each row was about, so
+/// the fix was to pass it back: `sweep_one` narrows the same computation
+/// to that one entity, and `surface/tests/clerk.rs` compares the two
+/// entity by entity so the guarantee is unchanged. 120 ms became 3.4 ms.
 ///
-/// A ratio, never a millisecond budget — a ratio survives a slow machine.
+/// Two assertions, because they fail for different reasons. The first is
+/// the shape — a ratio, never a millisecond budget, so it survives a slow
+/// machine. The second is the one that catches a revert: whatever the
+/// machine, accepting must not cost what a whole sweep costs.
 #[test]
-fn accepting_costs_one_sweep_and_does_not_go_quadratic() {
+fn accepting_costs_the_thing_it_is_about_and_not_the_box() {
     use std::time::Instant;
-    let (ds, small) = box_of("cost_small", 50);
-    let (dl, large) = box_of("cost_large", 500);
 
-    // The sweep-and-find is all `accept` does before its one write, and it
-    // is the part that touches the box, so it is the part to pin.
-    let sweep_once = |p: &CString| {
+    const ROUNDS: usize = 4;
+    let (ds, small) = box_of("cost_small", 50, ROUNDS + 1);
+    let (dl, large) = box_of("cost_large", 500, ROUNDS + 1);
+
+    let accept_once = |p: &CString, at: u64| {
+        let (about, print) = one_date_row(p);
+        let t = Instant::now();
+        assert_eq!(unsafe { liv_accept(p.as_ptr(), about.as_ptr(), print, at) }, LIV_OK);
+        t.elapsed().as_secs_f64()
+    };
+
+    // The MINIMUM ratio over several rounds, which is what the other cost
+    // tests take: a load spike can only make a round look worse, so the
+    // best round is the honest one.
+    let mut best = f64::INFINITY;
+    for round in 0..ROUNDS as u64 {
+        let s = accept_once(&small, T0 + 9_000 + round);
+        let l = accept_once(&large, T0 + 9_000 + round);
+        best = best.min(l / s.max(1e-9));
+    }
+    // Measured 1.8x for a ten-times box — the residue is the gazetteer,
+    // which is now one indexed scan rather than two point queries per
+    // entity. 4.0 is the same ceiling `engine/tests/scale.rs` uses for
+    // "reading one entity must not notice the box".
+    assert!(best < 4.0, "accepting noticed the box: {best:.1}x");
+
+    // And the direct guard: a whole sweep is what this used to cost.
+    let whole = {
         let t = Instant::now();
         let mut out = std::ptr::null_mut();
-        assert_eq!(unsafe { liv_sweep(p.as_ptr(), &mut out) }, LIV_OK);
+        assert_eq!(unsafe { liv_sweep(large.as_ptr(), &mut out) }, LIV_OK);
         took(out);
         t.elapsed().as_secs_f64()
     };
-    let best = (0..6)
-        .map(|_| sweep_once(&large) / sweep_once(&small).max(1e-9))
-        .fold(f64::INFINITY, f64::min);
-
-    // Measured 9.5x for a ten-times box. The ceiling matches
-    // surface/tests/sweep_cost.rs, which measured the same shape from the
-    // other side and found 9.3x with the word index and 18.5x without —
-    // so 14 sits between them, and a threshold nobody measured is a
-    // threshold that passes.
-    assert!(best < 14.0, "accept's sweep went superlinear in the box: {best:.1}x");
-
-    // And the accept itself lands, in both sizes.
-    for p in [&small, &large] {
-        let print = one_date_print(p);
-        assert_eq!(unsafe { liv_accept(p.as_ptr(), print, T0 + 9_000) }, LIV_OK);
-        assert_eq!(
-            unsafe { liv_accept(p.as_ptr(), print, T0 + 9_001) },
-            LIV_ERR_NOTHING,
-            "and a proposal the box no longer makes is not written twice"
-        );
-    }
+    let one = accept_once(&large, T0 + 9_500);
+    // Measured 29x cheaper. Five is a floor with room for a loaded
+    // machine, and still nowhere near the 1.0 a revert would produce.
+    assert!(
+        whole / one > 5.0,
+        "accepting cost about what a whole sweep costs — did it go back to sweeping everything? {:.1}x",
+        whole / one
+    );
 
     let _ = std::fs::remove_dir_all(&ds);
     let _ = std::fs::remove_dir_all(&dl);

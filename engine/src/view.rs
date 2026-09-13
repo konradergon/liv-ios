@@ -615,6 +615,46 @@ pub fn with_value(
     ids(rows)
 }
 
+/// Every entity's live values of ONE property, in one query.
+///
+/// **The bulk form of `cell`, and the N+1 the clerk was paying.** The
+/// gazetteer wants every name in the box; asking entity by entity is two
+/// point queries each, which measured 36 ms at a thousand entities. The
+/// `cells_by_value` index is on `(prop, value)`, so a scan on `prop`
+/// alone rides its prefix and this is one seek.
+///
+/// Values come back GROUPED and every live row is kept, because a caller
+/// that must tell one answer from a contended one cannot be handed a
+/// winner somebody else picked (`cell`'s rule, in bulk).
+pub fn with_prop(
+    conn: &Connection,
+    prop: EntityId,
+) -> Result<Vec<(EntityId, Vec<op::Value>)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT entity, value FROM cells WHERE prop = ?1 ORDER BY entity, device, seq",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![&prop.0[..]], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+    })?;
+    let mut out: Vec<(EntityId, Vec<op::Value>)> = Vec::new();
+    for row in rows {
+        let (e, v) = row?;
+        if e.len() != 16 {
+            continue;
+        }
+        let mut id = [0u8; 16];
+        id.copy_from_slice(&e);
+        let id = EntityId(id);
+        let Some(value) = op::decode_value(&v) else { continue };
+        match out.last_mut() {
+            // The scan is ordered by entity, so a run is contiguous.
+            Some((last, values)) if *last == id => values.push(value),
+            _ => out.push((id, vec![value])),
+        }
+    }
+    Ok(out)
+}
+
 /// Everything whose `prop` is a time inside `[from_ms, to_ms]`, soonest
 /// first. The calendar's window, Today's agenda and "due this week" are
 /// all this one query.

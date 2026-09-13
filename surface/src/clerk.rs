@@ -82,43 +82,74 @@ pub fn sweep(e: &Engine) -> Result<Vec<Proposal>, LogError> {
     let mut ids = e.all_entities()?;
     ids.sort();
     for id in ids {
-        if e.is_trashed(id)? || working(e, id)? {
-            continue;
-        }
-        let Some(spans) = body(e, id)? else { continue };
-        let text = rich::plain(&spans);
-        if text.trim().is_empty() {
-            continue;
-        }
+        about(e, id, &gaz, &mut out)?;
+    }
+    keepable(e, out)
+}
 
-        // **"Tomorrow" means the day after the THOUGHT**, not the day
-        // after the sweep. Relative words resolve against the thing's own
-        // creation day, which also makes the proposal identical across
-        // sweeps — what the inbox shows is what accepting it commits. A
-        // proposal that drifts with the clock is a lie waiting for
-        // midnight.
-        //
-        // The engine needs no `created` cell for this: a v7 id carries
-        // its own millisecond, so everything has an anchor and the
-        // "no creation date, no relative guesses" branch `core/` needs
-        // has nothing to guard.
-        let anchor = day_of_id(id);
+/// What the clerk would suggest about ONE thing.
+///
+/// **Identical to the entry `sweep` would produce for it**, which is the
+/// whole point: accepting a suggestion re-derives it from the box to check
+/// the box still makes it, and re-deriving the WHOLE box to find one
+/// entity's proposal cost 120 ms in a 500-note box — every tap in the
+/// inbox re-reading everything. The guarantee is unchanged (the proposal
+/// is recomputed, matched by fingerprint, and gone if the box no longer
+/// makes it); only the reading is narrowed to the thing it is about.
+pub fn sweep_one(e: &Engine, id: EntityId) -> Result<Vec<Proposal>, LogError> {
+    if !assist_enabled(e)? {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    about(e, id, &gazetteer(e)?, &mut out)?;
+    keepable(e, out)
+}
 
-        dates(e, id, &text, anchor, &mut out)?;
-        // The names this text contains, found ONCE — both the mentions
-        // proposer and the area proposer read them.
-        let mentioned = mentions_in(&text, id, &gaz);
-        mentions(e, id, &mentioned, &gaz, &mut out)?;
-        area(e, id, &mentioned, &gaz, &mut out)?;
-        priority(e, id, &text, &mut out)?;
-        promotion(e, id, &spans, &mut out)?;
+/// One entity's proposals, in the order the inbox reads them.
+fn about(
+    e: &Engine,
+    id: EntityId,
+    gaz: &Gazetteer,
+    out: &mut Vec<Proposal>,
+) -> Result<(), LogError> {
+    if e.is_trashed(id)? || working(e, id)? {
+        return Ok(());
+    }
+    let Some(spans) = body(e, id)? else { return Ok(()) };
+    let text = rich::plain(&spans);
+    if text.trim().is_empty() {
+        return Ok(());
     }
 
-    out.retain(permitted);
+    // **"Tomorrow" means the day after the THOUGHT**, not the day after
+    // the sweep. Relative words resolve against the thing's own creation
+    // day, which also makes the proposal identical across sweeps — what
+    // the inbox shows is what accepting it commits. A proposal that
+    // drifts with the clock is a lie waiting for midnight.
+    //
+    // The engine needs no `created` cell for this: a v7 id carries its
+    // own millisecond, so everything has an anchor and the "no creation
+    // date, no relative guesses" branch `core/` needs has nothing to
+    // guard.
+    let anchor = day_of_id(id);
 
-    // And nothing asks twice.
-    let mut kept = Vec::with_capacity(out.len());
-    for p in out {
+    dates(e, id, &text, anchor, out)?;
+    // The names this text contains, found ONCE — both the mentions
+    // proposer and the area proposer read them.
+    let mentioned = mentions_in(&text, id, gaz);
+    mentions(e, id, &mentioned, gaz, out)?;
+    area(e, id, &mentioned, gaz, out)?;
+    priority(e, id, &text, out)?;
+    promotion(e, id, &spans, out)?;
+    Ok(())
+}
+
+/// The two filters every sweep ends with: what the clerk is allowed to
+/// say, and what it has already been told not to say again.
+fn keepable(e: &Engine, mut found: Vec<Proposal>) -> Result<Vec<Proposal>, LogError> {
+    found.retain(permitted);
+    let mut kept = Vec::with_capacity(found.len());
+    for p in found {
         if !e.is_declined(&p)? {
             kept.push(p);
         }
@@ -354,18 +385,26 @@ struct Gazetteer {
     wordless: Vec<usize>,
 }
 
+/// **Two queries, not two per entity.** This used to walk `all_entities`
+/// asking `is_trashed` and `name` of each, which is an N+1 of exactly the
+/// shape standing rule 2 exists to catch — and it measured 36 ms at a
+/// thousand entities, most of the cost of accepting one suggestion.
+///
+/// `one_each` keeps `one`'s rule about contention, so a contended name is
+/// still not a name the clerk will match on. The order is the same: the
+/// scan comes back in entity order, which for a v7 id is creation order.
 fn gazetteer(e: &Engine) -> Result<Gazetteer, LogError> {
-    let mut ids = e.all_entities()?;
-    ids.sort();
+    let trashed: HashSet<EntityId> =
+        e.with_value(prop::TRASHED, &Value::Bool(true))?.into_iter().collect();
     let mut names = Vec::new();
-    for id in ids {
-        if e.is_trashed(id)? {
+    for (id, value) in e.one_each(prop::NAME)? {
+        if trashed.contains(&id) {
             continue;
         }
         // Three characters. Below that a "name" matches half the box —
         // and the shortest thing anyone actually calls something is three.
-        match e.name(id)? {
-            Some(name) if name.chars().count() >= 3 => {
+        match value {
+            Value::Text(name) if name.chars().count() >= 3 => {
                 names.push(Named { id, lowered: name.to_lowercase(), name })
             }
             _ => {}

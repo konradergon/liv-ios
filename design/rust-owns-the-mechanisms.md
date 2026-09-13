@@ -375,19 +375,44 @@ replacement passes.
           save, which is a decision about someone's writing that a wire
           decoder should not be making.
 
-          Two guards went around the contract itself. `liv.h` is the one
-          place in the repo where a rule cannot live in a type — C has to
-          be told the signatures by hand — so `ffi/tests/header.rs`
-          checks both directions: a verb exported and not declared is a
-          verb no shell can call, and nothing anywhere complains. And
-          **accepting one suggestion costs one sweep**, by design,
-          because a proposal is named by its fingerprint and `accept`
-          re-runs the sweep to find it. Measured 2026-09-13 in a debug
-          build: 14 ms in a 50-note box, 120 ms in a 500-note one —
-          linear, and pinned there. But twenty taps through the inbox of
-          a 500-note box is two and a half seconds of sweeping, and
-          batching the accepts or caching a sweep per box generation is a
-          product question, recorded here rather than answered.
+          `liv.h` is the one place in the repo where a rule cannot live
+          in a type — C has to be told the signatures by hand — so
+          `ffi/tests/header.rs` checks both directions: a verb exported
+          and not declared is a verb no shell can call, and nothing
+          anywhere complains about it.
+
+          **Accepting a suggestion cost the whole box, and does not
+          now.** A proposal is named by its fingerprint, so `accept`
+          re-derives it from the box to check the box still makes it —
+          and the first version re-derived EVERYTHING to find one
+          entity's proposal. Measured 2026-09-13, debug build: 120 ms in
+          a 500-note box, so twenty taps through the inbox was two and a
+          half seconds of sweeping.
+
+          The fix was already in the data. `liv_sweep` told the shell
+          which thing each row was about; passing it back to `accept`
+          makes the check read one thing instead of all of them.
+          `clerk::sweep_one` is the same computation narrowed, and
+          `surface/tests/clerk.rs` compares the two entity by entity so
+          the guarantee is unchanged rather than traded away. **120 ms
+          became 3.4 ms**, and accepting is now nearly flat in the box
+          (1.8x for a ten-times box) instead of linear in it.
+
+          Underneath it was an N+1 of exactly the shape standing rule 2
+          exists to catch: the clerk's gazetteer walked every entity
+          asking `is_trashed` and `name` — two point queries each, 36 ms
+          at a thousand entities. `Engine::one_each` reads a whole
+          property in one indexed scan (the `cells_by_value` index is on
+          `(prop, value)`, so a scan on `prop` alone rides its prefix)
+          and keeps `one`'s rule that a contended cell is not an answer.
+          A test asserts the two agree entity by entity, because a bulk
+          read that resolved contention differently would let the clerk
+          see a name the rest of the app does not.
+
+          Two cost tests hold it: the shape (a ratio, never a
+          millisecond budget) and a direct guard that accepting must not
+          cost what a whole sweep costs — which is what catches a revert.
+          Both were broken on purpose and watched to fail.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.

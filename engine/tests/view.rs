@@ -405,3 +405,63 @@ fn an_entity_remembers_when_it_was_last_touched() {
     assert_eq!(e.digest().unwrap(), before);
     assert_eq!(e.touched(a).unwrap(), 3_000);
 }
+
+/// **`one_each` is `one`, in bulk, and must agree with it everywhere.**
+///
+/// It exists because the clerk's gazetteer was asking entity by entity —
+/// two point queries each, 36 ms at a thousand entities. A bulk read that
+/// resolved contention differently would make the clerk see a name the
+/// rest of the app does not, so the agreement is the whole contract and
+/// not an optimisation detail.
+#[test]
+fn one_each_answers_exactly_what_one_answers_entity_by_entity() {
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+
+    // Some named, some not.
+    let a = e.create(kind::NOTE, Some("Roof"), 1_000).unwrap();
+    let b = e.create(kind::NOTE, Some("Ferry"), 1_001).unwrap();
+    let bare = e.create(kind::NOTE, None, 1_002).unwrap();
+
+    // And one contended name, which `one` refuses to answer.
+    let split = e.create(kind::NOTE, None, 1_003).unwrap();
+    // Two devices name it without seeing each other, so neither cites the
+    // other's dot in `replaces` and both values stay live.
+    for (n, (d, text)) in [(dev(2), "Anna"), (dev(3), "Anne")].into_iter().enumerate() {
+        e.receive(Group {
+            device: d,
+            first_seq: 0,
+            hlc: Hlc { wall_ms: 2_000 + n as u64, ctr: 0 },
+            author: Author::User,
+            action: 1,
+            reverses: None,
+            ops: vec![Op::SetCell {
+                entity: split,
+                prop: prop::NAME,
+                value: Value::Text(text.into()),
+                replaces: vec![],
+            }],
+        })
+        .unwrap();
+    }
+    assert!(e.contended(split, prop::NAME).unwrap(), "the setup must actually contend");
+
+    let bulk: std::collections::HashMap<EntityId, Value> =
+        e.one_each(prop::NAME).unwrap().into_iter().collect();
+
+    for id in e.all_entities().unwrap() {
+        assert_eq!(
+            bulk.get(&id).cloned(),
+            e.one(id, prop::NAME).unwrap(),
+            "one_each and one disagree about {}",
+            id.hex()
+        );
+    }
+
+    // Named things are there, the bare one is not, and the contended one
+    // is LEFT OUT rather than resolved — the same "not one answer" that
+    // `one` gives.
+    assert_eq!(bulk.get(&a), Some(&Value::Text("Roof".into())));
+    assert_eq!(bulk.get(&b), Some(&Value::Text("Ferry".into())));
+    assert_eq!(bulk.get(&bare), None);
+    assert_eq!(bulk.get(&split), None, "a contended name is not an answer");
+}

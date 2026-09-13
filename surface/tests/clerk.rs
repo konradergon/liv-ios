@@ -6,7 +6,7 @@
 //! are either written down or lost.
 
 use liv_engine::*;
-use liv_surface::clerk::{assist_enabled, permitted, sweep};
+use liv_surface::clerk::{assist_enabled, permitted, sweep, sweep_one};
 
 fn dev(n: u8) -> DeviceId {
     DeviceId([n; 8])
@@ -509,4 +509,69 @@ fn a_body_of_nothing_is_not_swept() {
     let id = e.create(kind::NOTE, Some("Empty"), T0).unwrap();
     e.set_content(id, vec![Span::Break(Block::Body)], 0, T0 + 1).unwrap();
     assert!(sweep(&e).unwrap().is_empty());
+}
+
+// ---- one entity at a time ----------------------------------------------
+
+/// **`sweep_one` must be `sweep`, narrowed — never a second opinion.**
+///
+/// This is the whole contract. Accepting a suggestion re-derives it from
+/// the box to check the box still makes it, and it now re-derives one
+/// entity rather than all of them. If the two ever disagreed, a proposal
+/// the inbox showed could be unacceptable, or one it never showed could be
+/// accepted — so this compares them entity by entity over a box holding
+/// every proposer's trigger at once, rather than testing one case.
+#[test]
+fn sweeping_one_thing_says_exactly_what_sweeping_everything_said_about_it() {
+    let mut e = engine();
+    e.create(kind::PERSON, Some("Anna Karin"), T0).unwrap();
+    let sam = e.create(kind::PERSON, Some("Sam Reed"), T0 + 1).unwrap();
+    let area = e.create(kind::AREA, Some("Boatyard"), T0 + 2).unwrap();
+    e.set(sam, prop::AREA, Value::Ref(area), T0 + 3).unwrap();
+
+    // One trigger per proposer, plus things that trigger nothing.
+    scrap(&mut e, "call anna karin tomorrow, urgent");
+    scrap(&mut e, "sam reed has the keys");
+    scrap(&mut e, "nothing in here at all");
+    scrap(&mut e, "ask sam reed on friday, low priority");
+    let promoted = e.create(kind::NOTE, None, T0 + 20).unwrap();
+    e.set_content(
+        promoted,
+        vec![Span::Break(rich::Block::Task { depth: 0, done: false }), Span::text("book the ferry")],
+        0,
+        T0 + 21,
+    )
+    .unwrap();
+
+    let all = sweep(&e).unwrap();
+    assert!(all.len() >= 6, "the box must actually be interesting: {}", all.len());
+
+    for id in e.all_entities().unwrap() {
+        let from_whole: Vec<u64> = all
+            .iter()
+            .filter(|p| p.ops.first().map(liv_engine::Op::entity) == Some(id))
+            .map(|p| p.fingerprint())
+            .collect();
+        let from_one: Vec<u64> = sweep_one(&e, id).unwrap().iter().map(|p| p.fingerprint()).collect();
+        assert_eq!(from_one, from_whole, "the two sweeps disagree about {}", id.hex());
+    }
+}
+
+/// And the filters still apply when only one thing is swept: a refusal
+/// silences it there too, or declining in the inbox would not stop the
+/// accept path from re-offering it.
+#[test]
+fn sweeping_one_thing_still_honours_a_refusal_and_the_consent_gate() {
+    let mut e = engine();
+    e.create(kind::PERSON, Some("Anna"), T0).unwrap();
+    let id = scrap(&mut e, "call anna tomorrow");
+
+    let mine = sweep_one(&e, id).unwrap();
+    assert!(mine.len() >= 2, "a date and a mention");
+    e.decline(&mine[0]).unwrap();
+    assert_eq!(sweep_one(&e, id).unwrap().len(), mine.len() - 1, "a refusal is remembered");
+
+    let s = e.create(kind::NOTE, Some("settings"), T0 + 50).unwrap();
+    e.set(s, prop::AUTOMATION, Value::Bool(false), T0 + 51).unwrap();
+    assert!(sweep_one(&e, id).unwrap().is_empty(), "off means silent here too");
 }

@@ -224,6 +224,24 @@ impl Engine {
         Ok(view::with_value(&self.conn, prop, value)?)
     }
 
+    /// Every entity's live value of one property, in ONE query — the bulk
+    /// form of `one`, and it keeps `one`'s rule: a contended cell is not
+    /// an answer, so it is left out rather than resolved.
+    ///
+    /// This exists because the clerk's gazetteer wants every name in the
+    /// box and was asking entity by entity.
+    pub fn one_each(
+        &self,
+        prop: EntityId,
+    ) -> Result<Vec<(EntityId, crate::op::Value)>, LogError> {
+        Ok(view::with_prop(&self.conn, prop)?
+            .into_iter()
+            .filter_map(|(id, mut values)| {
+                (values.len() == 1).then(|| (id, values.pop().unwrap()))
+            })
+            .collect())
+    }
+
     /// Everything of one kind.
     pub fn of_kind(&self, kind: EntityId) -> Result<Vec<EntityId>, LogError> {
         self.with_value(crate::model::prop::KIND, &crate::op::Value::Ref(kind))
