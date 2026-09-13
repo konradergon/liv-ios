@@ -30,6 +30,7 @@ use liv_engine::{
 /// The sweep — what the clerk would suggest, read off the box. The
 /// queue that accepts or declines one is in the engine; the heuristics
 /// are here, because English is product and the box has no opinion.
+pub mod salvage;
 pub mod clerk;
 
 /// Search: resolving a typed query against the box, ranking what it

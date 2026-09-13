@@ -198,6 +198,11 @@ impl From<&Row> for WireRow {
     }
 }
 
+/// The same rows, as JSON, for a verb outside this module.
+pub(crate) fn rows_json(rows: &[Row]) -> serde_json::Value {
+    serde_json::to_value(wire(rows)).unwrap_or(serde_json::Value::Null)
+}
+
 fn wire(rows: &[Row]) -> Vec<WireRow> {
     rows.iter().map(WireRow::from).collect()
 }

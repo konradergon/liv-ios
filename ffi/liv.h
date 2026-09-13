@@ -847,6 +847,30 @@ int32_t liv_accept_all(const char *path, const char *const *entities,
    the one a wrong answer strands someone on. */
 int32_t liv_probe_box(const char *path, char **out);
 
+/* ---- the two surfaces the swap would otherwise take away ---- */
+
+/* What is in the trash, newest first — the same row shape every other
+   surface returns, so the Trash screen draws with the code every list
+   already has.
+
+   THE ONE SURFACE THAT WANTS THE ROWS THE OTHERS THROW AWAY, and it
+   ignores the lens on purpose: the trash is the trash, and a workspace
+   filter hiding some of it would leave someone unable to find the thing
+   they are trying to get back. Archived is NOT trashed and is not here. */
+int32_t liv_view_trash(const char *path, char **out);
+
+/* Open `- [ ]` lines written inside notes:
+   [{"note":"<hex>","source","line":N,"text","depth":N}…]
+
+   A PROJECTION: nothing here is stored. No entity is created and no cell
+   is written — a line in a note is a thought, not a task someone has to
+   file. `line` is the block's index from the top of the body, which is
+   the toggle's address, so a shell can tick it without a second scan.
+
+   Notes only: something already typed as a task or an event is listed as
+   itself, and its body lines would be the same work counted twice. */
+int32_t liv_note_tasks(const char *path, char **out);
+
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 
    Refuses if `to` already exists — "run it again" is the first thing

@@ -2121,3 +2121,34 @@ struct LivAssist: Decodable {
     var on: Bool?
     var property: LivID?
 }
+
+// MARK: - the engine lane: the two the swap would otherwise take away
+
+/// One open `- [ ]` line inside a note. A projection: nothing behind it
+/// is stored, and ticking it is an edit to the note's body.
+struct LivNoteTask: Decodable, Identifiable {
+    var note: LivID?
+    /// What that note is called — computed in Rust, where the body is.
+    var source: String?
+    /// The block's index from the top of the body: the toggle's address.
+    var line: Int?
+    var text: String?
+    var depth: Int?
+    var id: String { "\(LivIDText.written(note ?? .absent)).\(line ?? 0)" }
+}
+
+extension BoxModel {
+    /// What is in the trash, newest first.
+    func engineTrash(_ done: @escaping ([LivViewRow]) -> Void) {
+        engineRead([LivViewRow].self, { to, out in liv_view_trash(to, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    /// Open checkbox lines inside notes — the Tasks view's "In notes".
+    func engineNoteTasks(_ done: @escaping ([LivNoteTask]) -> Void) {
+        engineRead([LivNoteTask].self, { to, out in liv_note_tasks(to, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+}

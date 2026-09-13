@@ -389,3 +389,65 @@ pub unsafe extern "C" fn liv_assist(path: *const c_char, out: *mut *mut c_char) 
         Err(e) => e,
     }
 }
+
+// ---- the two surfaces the swap would otherwise take away ---------------
+
+/// What is in the trash, newest first — the same row shape every other
+/// surface returns, plus nothing.
+///
+/// **The one surface that wants the rows the others throw away.** It
+/// ignores the lens on purpose: the trash is the trash, and a workspace
+/// filter hiding some of it would leave someone unable to find the thing
+/// they are trying to get back. Archived is NOT trashed and is not here.
+///
+/// # Safety
+/// `path` a valid C string; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_view_trash(path: *const c_char, out: *mut *mut c_char) -> i32 {
+    match with_engine(path, |e| {
+        let rows = liv_surface::salvage::trash(e).map_err(|_| LIV_ERR_READ)?;
+        Ok(crate::surfaces::rows_json(&rows))
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+/// Open `- [ ]` lines written inside notes:
+/// `[{"note":hex,"source":…,"line":N,"text":…,"depth":N}]`.
+///
+/// **A projection: nothing here is stored.** No entity is created and no
+/// cell is written — a line in a note is a thought, not a task someone
+/// has to file. `line` is the block's index from the top of the body,
+/// which is the toggle's address, so a shell can tick it without a second
+/// scan.
+///
+/// Notes only: something already typed as a task or an event is listed as
+/// itself, and its body lines would be the same work counted twice.
+///
+/// # Safety
+/// As `liv_view_trash`.
+#[no_mangle]
+pub unsafe extern "C" fn liv_note_tasks(path: *const c_char, out: *mut *mut c_char) -> i32 {
+    match with_engine(path, |e| {
+        let found = liv_surface::salvage::note_tasks(e, &liv_surface::Lens::Everything)
+            .map_err(|_| LIV_ERR_READ)?;
+        Ok(serde_json::Value::Array(
+            found
+                .into_iter()
+                .map(|t| {
+                    json!({
+                        "note": t.note.hex(),
+                        "source": t.source,
+                        "line": t.line,
+                        "text": t.text,
+                        "depth": t.depth,
+                    })
+                })
+                .collect(),
+        ))
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}

@@ -529,3 +529,82 @@ fn a_bad_id_is_an_argument_error_and_never_a_panic() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ---- the two the swap would otherwise take away ------------------------
+
+#[test]
+fn the_trash_has_its_own_verb_because_every_other_surface_hides_it() {
+    let (d, path) = stocked("trash");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_view_trash(path.as_ptr(), &mut out) }, LIV_OK);
+    assert!(took(out).as_array().unwrap().is_empty(), "nothing thrown out yet");
+
+    // Throw one out through the ordinary verb.
+    let all = search(&path, "roof", 0);
+    let victim = c(all["hits"][0]["id"].as_str().unwrap());
+    assert_eq!(
+        unsafe { liv_ffi::basics::liv_trash(path.as_ptr(), victim.as_ptr(), T0 + 20) },
+        LIV_OK
+    );
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_view_trash(path.as_ptr(), &mut out) };
+    let rows = took(out);
+    assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+    assert_eq!(rows[0]["id"].as_str().unwrap(), victim.to_str().unwrap());
+    // The same row shape every other surface returns, so the Trash screen
+    // draws with the code every list already has.
+    assert!(rows[0]["title"].as_str().is_some_and(|t| !t.is_empty()));
+
+    // And it is gone from the surfaces that hide it.
+    let after = search(&path, "roof", 0);
+    assert!(!hits(&after).contains(&victim.to_str().unwrap().to_owned()));
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **A projection: nothing is stored.** A line in a note is a thought,
+/// not a task someone has to file.
+#[test]
+fn open_lines_inside_notes_are_listed_without_becoming_things() {
+    let d = dir("notetasks");
+    let path = d.join("liv.db");
+    let note;
+    let before;
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        note = e.create(kind::NOTE, Some("Saturday"), T0).unwrap();
+        e.set_content(
+            note,
+            vec![
+                Span::Break(liv_engine::rich::Block::Task { depth: 0, done: false }),
+                Span::text("book the ferry"),
+                Span::Break(liv_engine::rich::Block::Task { depth: 0, done: true }),
+                Span::text("already done"),
+            ],
+            0,
+            T0 + 1,
+        )
+        .unwrap();
+        before = e.all_entities().unwrap().len();
+    }
+    unsafe { liv_view_close_all() };
+    let p = c(path.to_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_note_tasks(p.as_ptr(), &mut out) }, LIV_OK);
+    let rows = took(out);
+    assert_eq!(rows.as_array().unwrap().len(), 1, "the open one only: {rows}");
+    assert_eq!(rows[0]["text"], "book the ferry");
+    assert_eq!(rows[0]["note"].as_str().unwrap(), note.hex());
+    assert_eq!(rows[0]["source"], "Saturday", "titled where the body is");
+    assert!(rows[0]["line"].as_u64().is_some(), "and carries the toggle's address");
+
+    // Nothing was created by asking.
+    let e = Engine::open_local(&path).unwrap();
+    assert_eq!(e.all_entities().unwrap().len(), before);
+    drop(e);
+
+    let _ = std::fs::remove_dir_all(&d);
+}
