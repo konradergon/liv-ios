@@ -16,6 +16,7 @@
 //! way it links its own core today.
 
 pub mod civil;
+pub mod clerk;
 pub mod content;
 pub mod engine;
 pub mod files;
@@ -30,6 +31,7 @@ pub mod view;
 pub mod write;
 
 pub use civil::{civil_from_days, days_from_civil, split_civil};
+pub use clerk::Proposal;
 pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
 pub use files::{hash_file, FileError, Resync};

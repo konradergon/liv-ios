@@ -250,6 +250,15 @@ pub fn decode_value(bytes: &[u8]) -> Option<Value> {
     }
 }
 
+/// One op's bytes on their own — what a proposal's fingerprint is over
+/// (`clerk.rs`). The same determinism argument as `value_bytes`: the
+/// encoding already gives one logical op exactly one byte sequence.
+pub fn op_bytes(o: &Op) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64);
+    put_op(&mut out, o);
+    out
+}
+
 /// One value's bytes on their own.
 ///
 /// The body's fingerprint is FNV over exactly this (`content.rs`), which
@@ -525,26 +534,30 @@ fn put_body(out: &mut Vec<u8>, g: &Group) {
         }
     }
     for op in &g.ops {
-        out.push(op.tag());
-        match op {
-            Op::CreateEntity { entity } => out.extend_from_slice(&entity.0),
-            Op::SetCell { entity, prop, value, replaces } => {
-                out.extend_from_slice(&entity.0);
-                out.extend_from_slice(&prop.0);
-                put_value(out, value);
-                put_dots(out, replaces);
-            }
-            Op::AddToSet { entity, prop, value } => {
-                out.extend_from_slice(&entity.0);
-                out.extend_from_slice(&prop.0);
-                put_value(out, value);
-            }
-            Op::RemoveFromSet { entity, prop, value, replaces } => {
-                out.extend_from_slice(&entity.0);
-                out.extend_from_slice(&prop.0);
-                put_value(out, value);
-                put_dots(out, replaces);
-            }
+        put_op(out, op);
+    }
+}
+
+fn put_op(out: &mut Vec<u8>, op: &Op) {
+    out.push(op.tag());
+    match op {
+        Op::CreateEntity { entity } => out.extend_from_slice(&entity.0),
+        Op::SetCell { entity, prop, value, replaces } => {
+            out.extend_from_slice(&entity.0);
+            out.extend_from_slice(&prop.0);
+            put_value(out, value);
+            put_dots(out, replaces);
+        }
+        Op::AddToSet { entity, prop, value } => {
+            out.extend_from_slice(&entity.0);
+            out.extend_from_slice(&prop.0);
+            put_value(out, value);
+        }
+        Op::RemoveFromSet { entity, prop, value, replaces } => {
+            out.extend_from_slice(&entity.0);
+            out.extend_from_slice(&prop.0);
+            put_value(out, value);
+            put_dots(out, replaces);
         }
     }
 }

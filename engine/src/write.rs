@@ -171,6 +171,18 @@ impl Engine {
         Ok(id)
     }
 
+    /// The same gate, for one op whose shape a caller did not choose —
+    /// which is what a PROPOSAL is. Consent is not a bypass.
+    pub(crate) fn vet_op(&self, op: &Op) -> Result<(), WriteError> {
+        match op {
+            Op::CreateEntity { .. } => Ok(()),
+            Op::SetCell { prop, value, .. } => self.vet(*prop, value, false),
+            Op::AddToSet { prop, value, .. } | Op::RemoveFromSet { prop, value, .. } => {
+                self.vet(*prop, value, true)
+            }
+        }
+    }
+
     /// The one gate every write goes through.
     fn vet(&self, prop: EntityId, value: &Value, many: bool) -> Result<(), WriteError> {
         let Some(shape) = self.prop_shape(prop)? else { return Ok(()) };

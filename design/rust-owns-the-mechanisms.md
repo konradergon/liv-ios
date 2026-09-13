@@ -319,11 +319,13 @@ replacement passes.
           no FFI verb reaches any of them. Gaps, measured 2026-09-13:
           **undo** (`Group.reverses` had been in the op format since
           Phase 2 with nothing writing it — **done**,
-          `engine/src/undo.rs`); **content** (**done** —
-          `Value::Rich` in the format, `engine/src/content.rs` for the
-          save; history is what remains of it); files, `rename_value`,
-          the clerk's accept/reject, and query/lex/search — all of which
-          live in `services/`, written against `core::Store`.
+          `engine/src/undo.rs`); **content, with its history and its
+          backlinks** (done); **`rename_value`** (done); **files** (done
+          — and the converter stopped dropping them); **the clerk's
+          queue** (done). What is left is the clerk's SWEEP — six
+          proposers reading the words, ~800 lines in `services/` against
+          `core::Store` — and **query/lex/search**, which is the
+          grammar.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.
@@ -352,6 +354,25 @@ replacement passes.
         than over the text: two documents differing only in their marks
         would otherwise fingerprint alike, and a save that dropped every
         bold would pass the guard.
+
+        **A path is where, a hash is what.** `core/`'s `FileRef` carries
+        both in one value in the log, which `core.md` §14 already calls a
+        model bug: a path does not survive a device boundary, so a file
+        synced from a laptop arrives on a phone pointing at nothing and
+        looking valid. They are two things here — the hash travels, the
+        path is a device-local row that is not in the log, not dropped by
+        replay, and not in the digest. The converter stopped dropping
+        files in the same change, because there is finally somewhere to
+        put each half.
+
+        **The clerk's queue is not the clerk.** The sweep is a pure
+        function of the box, so a pending draft is recomputed rather than
+        stored — what persists is the REFUSAL, because declining is not
+        forgetting. One open question is recorded rather than answered:
+        a refusal is device-local, as it is in `core/`, so declining on
+        the laptop does not stop the phone asking. Making it travel would
+        put "the user said no" in the log, which is arguably where it
+        belongs, and that is the owner's call.
 
         It also has a rule `core/` never needed: **undo is what you did
         on this device.** One history made the question moot; a box
