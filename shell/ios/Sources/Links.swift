@@ -117,6 +117,9 @@ struct LinksSection: View {
     private func removal(for link: LinkRow) -> (() -> Void)? {
         guard link.fromBody != true, let target = link.id else { return nil }
         return {
+            // `#<id>` is the ABI's own grammar for "a reference to this"
+            // (services parses it with `trim_start_matches('#')`), not a
+            // string anyone reads. It is a write, not a label.
             box.removeCell(id, "related", "#\(LivIDText.written(target))") { _ in load() }
         }
     }
@@ -182,8 +185,12 @@ private struct LinkRowView: View {
 
     private var untitled: Bool {
         if let row { return livRowIsUntitled(row) }
-        let n = wireName
-        return n.isEmpty || n == "#\(LivIDText.written(link.id ?? 0))"
+        // The `"#<id>"` comparison that used to live here is gone with the
+        // placeholder it looked for: the core sends a made name now, never
+        // an id (2026-09-13). A wire link the snapshot has no row for is
+        // one we cannot ask about, so an empty name is all there is to go
+        // on.
+        return wireName.isEmpty
     }
 
     private var wireName: String {

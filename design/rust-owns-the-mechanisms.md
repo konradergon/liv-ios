@@ -143,6 +143,45 @@ diff.
 
 ---
 
+## 3a. An id is never a name
+
+> **Owner, 2026-09-13:** *"LivID shouldn't be read by the user. something
+> ive forgotten to say clearly. Unnamed task/event/note should get a
+> sensible name."*
+
+Two sentences, one rule, and it was broken in **fifteen places**.
+
+`views::summary`, `content::source_name`, `tasks::name_of` and eleven
+siblings all ended the same way: `format!("#{}", id)`. That string is a
+NAME — it became the snapshot's `title`, a reference chip, a search
+result, the `title:` front-matter of an exported file, the workspace
+switcher, the outbox ledger. The shell mapped it away on exactly one
+surface (lists) and showed it on the rest.
+
+**A made name, not a number.** The kind's word and when: `Task · 13 Sep
+14:32`. This amends the 2026-09-06 ruling that a nameless row says what it
+IS — "Task", "Note" — which was right and not enough: fourteen rows
+reading "Task" distinguish each other no better than fourteen reading
+"Untitled", and the harness had already tripped over exactly that, unable
+to aim at one of three notes sharing a label.
+
+**The words are Rust's**, including the month abbreviations. A shell
+carrying its own copy of the app's vocabulary is the mistake
+`one-core.md` §4 records, and a made name is vocabulary. This is the one
+place `§4`'s "locale formatting stays in Swift" does not reach: a date the
+user reads AS a date is the shell's, a name is not.
+
+**And the core says whether a name was made.** `untitled` rides the
+snapshot now. The shell had inferred it from the string twice and been
+wrong twice — once comparing against `"untitled"` in lower case, which
+never matched, and once against `"#<id>"`, which the core has now stopped
+sending. A fact about a thing is not recoverable from how it reads.
+
+One case survives, and it self-heals: a bare `[[4155]]` already written
+into a note's text still renders its digits, because the editor only hides
+the id when the token carries a name. Every token is rewritten with a name
+on the next save of that note, now that the resolver can always find one.
+
 ## 4. What stays in Swift
 
 Everything you can see, and nothing you cannot.

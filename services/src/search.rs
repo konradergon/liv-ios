@@ -506,7 +506,7 @@ fn candidate_values(store: &Store, base: &Query, property: Id) -> Vec<Value> {
 fn property_name(store: &Store, property: Id) -> String {
     match store.get(property).and_then(|e| e.get(props::NAME)) {
         Some(Value::Text(name)) => name.clone(),
-        _ => format!("#{property}"),
+        _ => "Field".to_string(),
     }
 }
 

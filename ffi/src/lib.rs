@@ -376,11 +376,11 @@ fn last_day_of_month(year: i32, month: u32) -> u32 {
     }
 }
 
+/// **An id is never a name** (owner, 2026-09-13). One helper answers it
+/// for the whole tree; this used to be a fourth copy of the question with
+/// its own wrong answer.
 fn reference_name(store: &Store, id: Id) -> String {
-    match store.get(id).and_then(|e| e.get(props::NAME)) {
-        Some(Value::Text(name)) => name.clone(),
-        _ => format!("#{id}"),
-    }
+    liv_services::tasks::name_of(store, id)
 }
 
 /// Everything the window renders, as one JSON document.

@@ -15,6 +15,7 @@
 //! a separate layer — so the desktop can link this crate directly, the
 //! way it links its own core today.
 
+pub mod civil;
 pub mod engine;
 pub mod id;
 pub mod log;
@@ -23,6 +24,7 @@ pub mod op;
 pub mod view;
 pub mod write;
 
+pub use civil::{civil_from_days, days_from_civil, split_civil};
 pub use engine::Engine;
 pub use model::{
     area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,

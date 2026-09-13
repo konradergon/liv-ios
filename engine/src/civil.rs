@@ -1,8 +1,11 @@
-//! The one piece of date arithmetic the conversion needs.
+//! Days from the epoch, and the calendar dates they are.
 //!
-//! `core/` packs a civil stamp as `YYYYMMDD * 10_000 + HHMM` — zone-free,
-//! totally ordered, and readable in a hex dump. The engine counts days
-//! from the epoch. Neither is wrong and the two do not meet without this.
+//! **It lives here because the engine defines what a `DateSpec::Day` IS.**
+//! Reading one back as a date is reading its own format, and three crates
+//! now need to: the converter (a `core/` box packs a civil stamp as
+//! `YYYYMMDD * 10_000 + HHMM`), the surfaces (a made name says
+//! `13 Sep 14:32`), and anything after them. Two copies of a date
+//! algorithm is standing rule 4's exact shape of defect.
 //!
 //! **Hinnant's algorithm, not a library.** It is exact for every
 //! proleptic-Gregorian date, it is fifteen lines, and it has no zone in

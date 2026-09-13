@@ -210,13 +210,20 @@ fn a_scrap_is_titled_by_its_first_line_with_the_markers_off() {
     assert_eq!(titles(&t.all_day), vec!["Trip planning"], "never '# Trip planning'");
     assert!(!t.all_day[0].untitled);
 
-    // A thing with neither says so, rather than the surface inventing
-    // words the shell would then have to style around.
+    // A THING WITH NEITHER GETS A MADE NAME — the kind's word and when
+    // (owner, 2026-09-13: "Unnamed task/event/note should get a sensible
+    // name"). Never empty, and never an id.
+    //
+    // `untitled` stays TRUE, which is the whole reason it is a separate
+    // field: a made name is still not a given one, and a surface draws it
+    // more quietly.
     let bare = e.create(kind::NOTE, None, 1_003).unwrap();
     e.set(bare, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_004).unwrap();
     let t = today(&e, DAY, DAY, at(DAY, 8, 0), &Lens::Everything).unwrap();
-    let empty = t.all_day.iter().find(|r| r.id == bare).unwrap();
-    assert!(empty.untitled && empty.title.is_empty());
+    let made = t.all_day.iter().find(|r| r.id == bare).unwrap();
+    assert!(made.untitled, "a made name is still not a given one");
+    assert!(made.title.starts_with("Note · "), "got {:?}", made.title);
+    assert!(!made.title.contains(&made.id.hex()), "an id is never a name");
 }
 
 #[test]

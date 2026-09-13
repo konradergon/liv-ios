@@ -801,13 +801,22 @@ enum LivDue {
 /// The "#id" the core sends for an entity with no words at all is a
 /// placeholder, not a name — no list shows it.
 func livRowTitle(_ row: EntityRow) -> String {
-    // A NAMELESS ROW SAYS WHAT IT IS. "Untitled" is Obsidian's word, and
-    // Apple Notes' and Notion's — the vault's word for a failure to name.
-    // The kind is furniture Liv has already given the thing, so a row
-    // with no name reads "Task" or "Note", in the muted ink the untitled
-    // flag already gives it (2026-09-06, direction A).
-    livRowIsUntitled(row) ? LivKind.of(row).word : (row.title ?? "")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+    // A NAMELESS ROW SAYS WHAT IT IS, AND WHEN — "Task · 13 Sep 14:32".
+    //
+    // "Untitled" is Obsidian's word, and Apple Notes' and Notion's: the
+    // vault's word for a failure to name. The 2026-09-06 ruling replaced
+    // it with the kind's word, which was right and not enough — fourteen
+    // rows reading "Task" distinguish each other no better than fourteen
+    // reading "Untitled", and the harness had already tripped over
+    // exactly that, unable to aim at one of three notes sharing a label.
+    // Amended 2026-09-13 on his word: "Unnamed task/event/note should get
+    // a sensible name."
+    //
+    // **THE SHELL NO LONGER PICKS THE WORDS.** The core sends a name that
+    // is never empty and never an id, so this returns it — and the muted
+    // ink comes from `livRowIsUntitled`, which is now a flag the core
+    // sets rather than a string the shell recognises.
+    (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 /// THE ROW'S ONE ANCHOR — the thing it is attached to — in one order:
@@ -834,13 +843,17 @@ func livAnchorChip(of row: EntityRow) -> ValueChip? {
         glyph: anchor.property == "area" ? LivArea.glyph(named: anchor.value) : nil)
 }
 
-/// Whether that name is a placeholder, asked directly. A list that greys
-/// the nameless rows used to compare the RESULT against "untitled" in
-/// lower case, which never matched — so nameless rows drew at full
-/// strength, on the one screen built to show them quietly.
+/// Whether that name was MADE rather than given — asked of the core,
+/// which is the only thing that knows.
+///
+/// It has been wrong twice, both times because the shell was inferring it
+/// from the string: once comparing the RESULT against "untitled" in lower
+/// case, which never matched, so nameless rows drew at full strength on
+/// the one screen built to show them quietly; and once against `"#<id>"`,
+/// a placeholder the core stopped sending on 2026-09-13. A fact about a
+/// thing is not recoverable from how it reads.
 func livRowIsUntitled(_ row: EntityRow) -> Bool {
-    let raw = (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    return raw.isEmpty || raw == "#\(LivIDText.written(row.id))"
+    row.untitled ?? (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 }
 
 // The icon language — what a row looks like, and the carved chip it

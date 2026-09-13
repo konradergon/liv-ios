@@ -172,11 +172,19 @@ fn task_of(line: u32, block: &Block, text: &str) -> Option<NoteTask> {
     })
 }
 
-/// A reference reads as its target's name — the token is plumbing.
-pub(crate) fn name_of(store: &Store, target: Id) -> String {
-    match store.get(target).and_then(|e| e.get(props::NAME)) {
-        Some(Value::Text(name)) if !name.is_empty() => name.clone(),
-        _ => format!("#{target}"),
+/// A reference reads as its target's name — the token is plumbing, and
+/// **an id is never a name** (owner, 2026-09-13: *"LivID shouldn't be
+/// read by the user"*).
+///
+/// The fallback was `#4142`. `liv_views::made_name` gives the kind's word
+/// and when, which is a thing a person can act on.
+pub fn name_of(store: &Store, target: Id) -> String {
+    match store.get(target) {
+        Some(e) => match e.get(props::NAME) {
+            Some(Value::Text(name)) if !name.trim().is_empty() => name.trim().to_string(),
+            _ => liv_views::made_name(store, e),
+        },
+        None => "(missing)".to_string(),
     }
 }
 

@@ -23,7 +23,9 @@
 //! and checkable only by looking at a simulator. They arrive here with the
 //! comment intact and a test under it.
 
-use liv_engine::{kind, model, prop, status, DateSpec, Engine, EntityId, LogError, Value};
+use liv_engine::{
+    civil_from_days, kind, model, prop, status, DateSpec, Engine, EntityId, LogError, Value,
+};
 
 
 pub mod day;
@@ -207,9 +209,15 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
         Some(Value::Text(s)) => first_line(s),
         _ => None,
     };
+    // **NEVER EMPTY, AND NEVER AN ID** (owner, 2026-09-13: *"LivID
+    // shouldn't be read by the user"* and *"Unnamed task/event/note
+    // should get a sensible name"*). A screen that has to invent a word
+    // for a nameless thing will invent a different one on each surface —
+    // the shell had four ("Untitled", "untitled", the kind's word, and a
+    // hash-number) before this was one function.
     let (title, untitled) = match name.or(body_line) {
         Some(t) => (t, false),
-        None => (String::new(), true),
+        None => (made_name(e, id)?, true),
     };
 
     let due = one(prop::DUE).and_then(|v| match v {
@@ -250,6 +258,52 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
         has_file: cells.iter().any(|(p, _, _)| *p == prop::FILE),
         working: matches!(one(prop::WORKING), Some(Value::Bool(true))),
     })
+}
+
+/// What to call a thing nobody has named: the kind's word, and when.
+///
+/// **This amends the 2026-09-06 ruling** that a nameless row says what it
+/// IS — "Task", "Note" — rather than "Untitled", the word Obsidian, Apple
+/// Notes and Notion all use for a failure to name. That was right and it
+/// was not enough: fourteen rows reading "Task" distinguish each other no
+/// better than fourteen reading "Untitled", and the harness had already
+/// tripped over exactly that, unable to aim at one of three notes sharing
+/// a label.
+///
+/// The word comes from the model, which is the only place the app's
+/// vocabulary lives — a shell carrying its own copy is the mistake
+/// `one-core.md` §4 records. `untitled` stays true, so a surface can
+/// still draw a made name more quietly than a given one.
+fn made_name(e: &Engine, id: EntityId) -> Result<String, LogError> {
+    let kind = match e.kind_of(id)? {
+        Some(k) => model::label(k).unwrap_or("Capture").to_string(),
+        // An untyped capture. "Note" would be a claim about its kind that
+        // nothing in the box makes.
+        None => "Capture".to_string(),
+    };
+    let made = id.millis() as i64;
+    if made <= 0 {
+        return Ok(kind);
+    }
+    Ok(format!("{kind} · {}", stamp_words(made)))
+}
+
+/// `13 Sep 14:32` from a millisecond.
+///
+/// **English, like every other word the model owns.** A locale-formatted
+/// date belongs in the shell (`rust-owns-the-mechanisms.md` §4) — but a
+/// NAME is vocabulary, and vocabulary is Rust's, or a second shell grows
+/// its own copy of it.
+fn stamp_words(ms: i64) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let day = day_of(ms);
+    let (_, m, d) = civil_from_days(day);
+    let in_day = ms - day_start(day);
+    let minutes = (in_day / 60_000).clamp(0, 24 * 60 - 1);
+    let month = MONTHS.get((m as usize).saturating_sub(1)).copied().unwrap_or("");
+    format!("{d} {month} {:02}:{:02}", minutes / 60, minutes % 60)
 }
 
 /// A scrap carries no name cell — its display name is its first content

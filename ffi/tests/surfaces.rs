@@ -608,10 +608,12 @@ fn a_captured_scrap_keeps_its_first_line_as_its_title() {
     assert_eq!(blocks[0]["row"]["title"], "call the roofer about the slates");
     assert_eq!(blocks[0]["row"]["untitled"], false);
 
-    // AND A THING WITH NOTHING SAYS SO, rather than the surface inventing
-    // words for it — which is what the shell drew, correctly.
-    assert_eq!(blocks[1]["row"]["untitled"], true);
-    assert_eq!(blocks[1]["row"]["title"], "");
+    // AND A THING WITH NOTHING GETS A SENSIBLE NAME (owner, 2026-09-13),
+    // not an empty string and never an id. The kind's word and when —
+    // which is what distinguishes fourteen nameless rows from each other,
+    // where "Untitled" fourteen times does not.
+    assert_eq!(blocks[1]["row"]["untitled"], true, "still flagged, so it can draw quietly");
+    assert_eq!(blocks[1]["row"]["title"], "Task · 13 Sep 10:30");
 
     unsafe { liv_view_close_all() };
     let _ = std::fs::remove_dir_all(&dir);

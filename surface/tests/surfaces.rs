@@ -382,3 +382,63 @@ fn a_dated_backstage_thing_stays_off_the_day_and_out_of_late() {
         .unwrap();
     assert_eq!(titles(&t.late), vec!["A real task"], "and it is not late either");
 }
+
+// ---- an id is never a name ---------------------------------------------
+
+/// **Owner, 2026-09-13: *"LivID shouldn't be read by the user."*** And:
+/// *"Unnamed task/event/note should get a sensible name."*
+///
+/// The two are one rule. The old fallback was `#4142`, which is both — an
+/// id on screen AND a name that tells a person nothing. It reached four
+/// surfaces, and the shell mapped it away on only one.
+#[test]
+fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
+    let mut e = engine();
+    // 1_789_000_000_000 ms is 2026-09-06 09:46 UTC.
+    let when = 1_789_033_560_000u64;
+    let task = e.create(kind::TASK, None, when).unwrap();
+    let note = e.create(kind::NOTE, None, when + 60_000).unwrap();
+    let event = e.create(kind::EVENT, None, when + 120_000).unwrap();
+    // A capture with no kind at all.
+    let loose = e.mint(when + 180_000);
+    e.commit(vec![Op::CreateEntity { entity: loose }], action::CREATE, Author::User, when + 180_000)
+        .unwrap();
+
+    for id in [task, note, event, loose] {
+        let r = row(&e, id).unwrap();
+        assert!(r.untitled, "still flagged so a surface can draw it quietly");
+        assert!(!r.title.is_empty(), "never empty");
+        // THE POINT. Not the id, not any part of it.
+        assert!(!r.title.contains(&id.hex()), "an id is never a name: {:?}", r.title);
+        assert!(!r.title.contains('#'), "nor a hash-number: {:?}", r.title);
+        assert_ne!(r.title, "Untitled", "nor the vault's word for a failure to name");
+    }
+
+    // IT SAYS WHAT THE THING IS, from the model's own word — not a copy
+    // of that word kept in a shell (`one-core.md` §4).
+    assert!(row(&e, task).unwrap().title.starts_with("Task · "));
+    assert!(row(&e, note).unwrap().title.starts_with("Note · "));
+    assert!(row(&e, event).unwrap().title.starts_with("Event · "));
+    // An untyped capture is not claimed to be a note.
+    assert!(row(&e, loose).unwrap().title.starts_with("Capture · "));
+
+    // AND IT SAYS WHEN, which is what distinguishes fourteen nameless
+    // rows from each other where "Task" fourteen times does not. The
+    // harness had already tripped over exactly that, unable to aim at one
+    // of three notes sharing a label.
+    let a = row(&e, task).unwrap().title;
+    let b = row(&e, note).unwrap().title;
+    assert_ne!(a, b);
+    assert!(a.contains("Sep"), "the month reads as a word: {a:?}");
+    assert!(a.contains(':'), "and the time is there to break a tie: {a:?}");
+
+    // A NAME STILL WINS, and so does a body's first line — a made name is
+    // the last resort, not the first.
+    let named = e.create(kind::TASK, Some("Order slates"), when).unwrap();
+    assert_eq!(row(&e, named).unwrap().title, "Order slates");
+    assert!(!row(&e, named).unwrap().untitled);
+
+    let scrap = e.create(kind::NOTE, None, when).unwrap();
+    e.set(scrap, prop::BODY, Value::Text("# Trip planning\nferries".into()), when).unwrap();
+    assert_eq!(row(&e, scrap).unwrap().title, "Trip planning");
+}

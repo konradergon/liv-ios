@@ -457,7 +457,7 @@ final class Outbox: ObservableObject {
                     id: entityId,
                     itemUuid: UUID(uuidString: record.uuid) ?? UUID(),
                     kind: record.kind, state: record.state,
-                    title: titleResolver(entityId) ?? "#\(LivIDText.written(entityId))",
+                    title: titleResolver(entityId) ?? "Untitled",
                     capturedCivil: record.captured)
             }
             .sorted { ($0.capturedCivil, $0.id) > ($1.capturedCivil, $1.id) }

@@ -105,7 +105,11 @@ struct WorkspaceRow: Decodable, Identifiable {
     var query: String?
 
     var id: LivEntityID { wsId ?? 0 }
-    var display: String { (name ?? "").isEmpty ? "#\(LivIDText.written(id))" : (name ?? "") }
+    /// **Never an id** (owner, 2026-09-13: *"LivID shouldn't be read by
+    /// the user"*). The switcher drew `#4142` for a workspace whose name
+    /// cell was empty — one of three places the shell showed one, and the
+    /// only one on a surface a person opens on purpose.
+    var display: String { (name ?? "").isEmpty ? "Workspace" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
         case wsId = "id", name, emoji, favorite, archived, builtin, parent, order,
@@ -121,7 +125,8 @@ struct SavedViewRow: Decodable, Identifiable {
     var query: String?
 
     var id: LivEntityID { viewId ?? 0 }
-    var display: String { (name ?? "").isEmpty ? "#\(LivIDText.written(id))" : (name ?? "") }
+    /// Never an id, as above.
+    var display: String { (name ?? "").isEmpty ? "Filter" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
         case viewId = "id", name, query

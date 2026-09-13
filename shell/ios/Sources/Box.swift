@@ -88,6 +88,8 @@ struct AssistRow: Decodable {
 struct EntityRow: Decodable, Identifiable {
     var id: LivEntityID
     var title: String? = nil
+    /// The title was MADE, not given — see `livRowIsUntitled`.
+    var untitled: Bool? = nil
     var kinds: [String]? = nil
     var due: Int64? = nil
     var dueEnd: Int64? = nil
@@ -1240,11 +1242,19 @@ struct LivViewRow: Decodable, Identifiable {
     var touchedMs: Int64?
     var hasFile: Bool?
 
-    /// What to draw. An untitled thing says so rather than the surface
-    /// inventing words, so the shell picks them — and it picks them HERE,
-    /// once, rather than at each call site.
+    /// What to draw.
+    ///
+    /// **The title is never empty and never an id** (owner, 2026-09-13):
+    /// a thing nobody has named arrives already called something sensible
+    /// — its kind's word and when, made in `liv-surface`. So the shell
+    /// has nothing to invent, which is the point; it had four words for
+    /// nothing before this ("Untitled", "untitled", the kind's word, and
+    /// a hash-number) precisely because each surface invented its own.
+    ///
+    /// `untitled` survives as a STYLING flag, not a text one: a made name
+    /// is still not a given one, and a list draws it more quietly.
     var display: String {
-        (untitled ?? false) ? "Untitled" : (title ?? "")
+        title ?? ""
     }
 }
 

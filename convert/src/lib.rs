@@ -40,8 +40,11 @@ use liv_engine::{
     kind, model, prop, Author, DateSpec, Engine, EntityId, Op, Value as EngineValue,
 };
 
-mod civil;
-pub use civil::{civil_from_days, days_from_civil, split_civil};
+// The date arithmetic moved to `liv-engine` on 2026-09-13: the engine
+// defines what a `DateSpec::Day` is, so reading one back is reading its
+// own format — and the surfaces need it too, for a made name. Re-exported
+// here because this crate's callers already ask it for them.
+pub use liv_engine::{civil_from_days, days_from_civil, split_civil};
 
 /// What the conversion carried, and what it could not.
 #[derive(Debug, Clone, Default, PartialEq)]

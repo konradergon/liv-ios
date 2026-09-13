@@ -709,7 +709,7 @@ fn propose_dedupe(store: &Store, proposals: &mut Vec<Proposal>) {
         let kept = store
             .get(survivor)
             .map(|e| crate::content::display_name(store, e))
-            .unwrap_or_else(|| format!("#{survivor}"));
+            .unwrap_or_else(|| crate::tasks::name_of(store, survivor));
         proposals.push(Proposal {
             commands,
             label: format!(
