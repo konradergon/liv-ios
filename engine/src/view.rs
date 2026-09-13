@@ -75,11 +75,58 @@ CREATE INDEX IF NOT EXISTS cells_by_entity ON cells(entity);
 -- nothing for the calendar's index.
 CREATE INDEX IF NOT EXISTS cells_by_time ON cells(prop, at_ms)
     WHERE at_ms IS NOT NULL;
+
+-- WHAT POINTS AT WHAT, taken out of the bodies as they land.
+--
+-- A `[[link]]` lives INSIDE a note's content value, so without this table
+-- the only way to answer 'what points here' is to decode every body in the
+-- box and look — which is what `core/` does, and is the same
+-- rebuild-on-read defect as the two above.
+--
+-- Keyed by the writing DOT so `retire` can drop a body's links with the
+-- body itself: one delete, and a link cannot outlive the sentence that
+-- made it. `ord` is the position in the span list, so the Links panel
+-- reads in the order the words do rather than in id order, which is
+-- creation order and means nothing to a reader.
+CREATE TABLE IF NOT EXISTS links (
+    src    BLOB    NOT NULL,
+    prop   BLOB    NOT NULL,
+    device BLOB    NOT NULL,
+    seq    INTEGER NOT NULL,
+    ord    INTEGER NOT NULL,
+    dst    BLOB    NOT NULL,
+    PRIMARY KEY (src, prop, device, seq, ord)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS links_by_dst ON links(dst);
+
+-- EVERY SAVE OF A BODY, as a coordinate and nothing more.
+--
+-- The log IS the history (feature-map T1 #10), so this holds the DOT of
+-- each save and the spans are read back out of the log. A second copy of
+-- the value here could disagree with the log, and the log would still be
+-- right — so there is no second copy.
+--
+-- Rows are never deleted: a retired cell is not an un-happened edit.
+-- Undo and redo groups are not recorded at all, because undoing an edit
+-- appends the OLD value again, and listing that would put a phantom
+-- version in the card identical to one already there. `core/` skips
+-- reversal transactions for the same reason.
+CREATE TABLE IF NOT EXISTS edits (
+    entity BLOB    NOT NULL,
+    prop   BLOB    NOT NULL,
+    device BLOB    NOT NULL,
+    seq    INTEGER NOT NULL,
+    at_ms  INTEGER NOT NULL,
+    PRIMARY KEY (entity, prop, device, seq)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS edits_by_time ON edits(entity, at_ms);
 ";
 
 /// Every table this module owns, newest dependency last. `rebuild` drops
 /// them in this order and the schema recreates them.
-const TABLES: &[&str] = &["cells", "entities"];
+const TABLES: &[&str] = &["edits", "links", "cells", "entities"];
 
 /// Fold one group into the view, inside the caller's transaction.
 ///
@@ -97,10 +144,21 @@ pub fn apply(tx: &Transaction, g: &Group) -> Result<(), rusqlite::Error> {
                 ensure_entity(tx, *entity)?;
                 retire(tx, *entity, *prop, replaces)?;
                 put(tx, *entity, *prop, dot, value)?;
+                // A body's links and its place in the history, both taken
+                // from the value as it lands. An undo is not an edit, so
+                // it writes no version — see the `edits` table.
+                note_links(tx, *entity, *prop, dot, value)?;
+                if g.reverses.is_none() {
+                    note_edit(tx, *entity, *prop, dot, value, g.hlc.wall_ms as i64)?;
+                }
             }
             Op::AddToSet { entity, prop, value } => {
                 ensure_entity(tx, *entity)?;
                 put(tx, *entity, *prop, dot, value)?;
+                note_links(tx, *entity, *prop, dot, value)?;
+                if g.reverses.is_none() {
+                    note_edit(tx, *entity, *prop, dot, value, g.hlc.wall_ms as i64)?;
+                }
             }
             Op::RemoveFromSet { entity, prop, replaces, .. } => {
                 ensure_entity(tx, *entity)?;
@@ -194,8 +252,137 @@ fn retire(
             "DELETE FROM cells WHERE entity = ?1 AND prop = ?2 AND device = ?3 AND seq = ?4",
             rusqlite::params![&entity.0[..], &prop.0[..], &d.device.0[..], d.seq as i64],
         )?;
+        // A link cannot outlive the sentence that made it. Keyed by the
+        // same dot, so this is the same delete.
+        tx.execute(
+            "DELETE FROM links WHERE src = ?1 AND prop = ?2 AND device = ?3 AND seq = ?4",
+            rusqlite::params![&entity.0[..], &prop.0[..], &d.device.0[..], d.seq as i64],
+        )?;
     }
     Ok(())
+}
+
+/// The references inside one value, as rows. Nothing for a value that is
+/// not a document — most cells are not.
+fn note_links(
+    tx: &Transaction,
+    entity: EntityId,
+    prop: EntityId,
+    dot: Dot,
+    value: &op::Value,
+) -> Result<(), rusqlite::Error> {
+    let op::Value::Rich(spans) = value else { return Ok(()) };
+    for (ord, dst) in crate::rich::refs(spans).into_iter().enumerate() {
+        tx.execute(
+            "INSERT OR REPLACE INTO links(src, prop, device, seq, ord, dst)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                &entity.0[..],
+                &prop.0[..],
+                &dot.device.0[..],
+                dot.seq as i64,
+                ord as i64,
+                &dst.0[..],
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// One version of a body. Only a document is versioned — every other cell
+/// is a value, and its past is the log's business, not a card's.
+fn note_edit(
+    tx: &Transaction,
+    entity: EntityId,
+    prop: EntityId,
+    dot: Dot,
+    value: &op::Value,
+    at_ms: i64,
+) -> Result<(), rusqlite::Error> {
+    if !matches!(value, op::Value::Rich(_)) {
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO edits(entity, prop, device, seq, at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            &entity.0[..],
+            &prop.0[..],
+            &dot.device.0[..],
+            dot.seq as i64,
+            at_ms,
+        ],
+    )?;
+    Ok(())
+}
+
+/// What this thing points at, in reading order, each target once.
+pub fn links_from(
+    conn: &Connection,
+    src: EntityId,
+) -> Result<Vec<EntityId>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT dst FROM links WHERE src = ?1 ORDER BY prop, device, seq, ord",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![&src.0[..]], |r| r.get::<_, Vec<u8>>(0))?;
+    Ok(dedup_ids(rows)?)
+}
+
+/// And what points at it. The same index read the other way, which is the
+/// whole reason the table exists.
+pub fn links_to(conn: &Connection, dst: EntityId) -> Result<Vec<EntityId>, rusqlite::Error> {
+    let mut stmt =
+        conn.prepare("SELECT src FROM links WHERE dst = ?1 ORDER BY src, prop, device, seq, ord")?;
+    let rows = stmt.query_map(rusqlite::params![&dst.0[..]], |r| r.get::<_, Vec<u8>>(0))?;
+    Ok(dedup_ids(rows)?)
+}
+
+/// **Things, not mentions.** Two `[[Ferry]]` tokens in one paragraph are
+/// one relationship, and the panel lists relationships.
+fn dedup_ids<I>(rows: I) -> Result<Vec<EntityId>, rusqlite::Error>
+where
+    I: Iterator<Item = Result<Vec<u8>, rusqlite::Error>>,
+{
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for row in rows {
+        let bytes = row?;
+        if bytes.len() != 16 {
+            continue;
+        }
+        let mut id = [0u8; 16];
+        id.copy_from_slice(&bytes);
+        if seen.insert(id) {
+            out.push(EntityId(id));
+        }
+    }
+    Ok(out)
+}
+
+/// The dots of every save of one entity's body, newest first.
+pub fn edits_of(
+    conn: &Connection,
+    entity: EntityId,
+    prop: EntityId,
+) -> Result<Vec<(Dot, i64)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT device, seq, at_ms FROM edits
+         WHERE entity = ?1 AND prop = ?2 ORDER BY at_ms DESC, device DESC, seq DESC",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![&entity.0[..], &prop.0[..]], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (device, seq, at_ms) = row?;
+        if device.len() != 8 {
+            continue;
+        }
+        let mut d = [0u8; 8];
+        d.copy_from_slice(&device);
+        out.push((Dot { device: crate::id::DeviceId(d), seq: seq as u64 }, at_ms));
+    }
+    Ok(out)
 }
 
 /// Throw the view away. The log is untouched.

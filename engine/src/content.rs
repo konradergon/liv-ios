@@ -82,7 +82,56 @@ pub fn fingerprint(value: Option<&Value>) -> u64 {
     }
 }
 
+/// One past version of a body.
+///
+/// **The spans are read out of the log**, not stored beside it: the log IS
+/// the history, and a second copy could disagree with it while the log
+/// stayed right.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContentVersion {
+    /// Which write this was — what `history` names and what a restore
+    /// would be a restore OF.
+    pub dot: crate::id::Dot,
+    /// The group's wall clock, in milliseconds.
+    pub at_ms: i64,
+    pub author: Author,
+    pub spans: Vec<Span>,
+}
+
 impl Engine {
+    /// Every version of one entity's body, NEWEST FIRST.
+    ///
+    /// Newest first because that is the order the card lists them, and
+    /// reversing a list in Swift is logic in the shell.
+    ///
+    /// **Restoring one is not a verb.** It is `set_content` of an old
+    /// version's spans over a freshly read base, appended as a new
+    /// version — the log is never rewritten.
+    pub fn content_history(&self, entity: EntityId) -> Result<Vec<ContentVersion>, LogError> {
+        let mut out = Vec::new();
+        for (dot, at_ms) in crate::view::edits_of(self.conn(), entity, prop::BODY)? {
+            let Some(g) = crate::log::group_at(self.conn(), dot)? else { continue };
+            let Some(i) = dot.seq.checked_sub(g.first_seq) else { continue };
+            let spans = match g.ops.get(i as usize) {
+                Some(Op::SetCell { value: Value::Rich(spans), .. })
+                | Some(Op::AddToSet { value: Value::Rich(spans), .. }) => spans.clone(),
+                _ => continue,
+            };
+            out.push(ContentVersion { dot, at_ms, author: g.author.clone(), spans });
+        }
+        Ok(out)
+    }
+
+    /// What this thing's body points at, in reading order.
+    pub fn links_from(&self, src: EntityId) -> Result<Vec<EntityId>, LogError> {
+        Ok(crate::view::links_from(self.conn(), src)?)
+    }
+
+    /// And what points at it — the same index read the other way.
+    pub fn links_to(&self, dst: EntityId) -> Result<Vec<EntityId>, LogError> {
+        Ok(crate::view::links_to(self.conn(), dst)?)
+    }
+
     /// One entity's body and its fingerprint.
     ///
     /// A contended body — two devices having saved concurrently without

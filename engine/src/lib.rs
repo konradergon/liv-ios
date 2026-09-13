@@ -28,7 +28,7 @@ pub mod view;
 pub mod write;
 
 pub use civil::{civil_from_days, days_from_civil, split_civil};
-pub use content::{fingerprint, ContentError};
+pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
 pub use model::{
     area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,

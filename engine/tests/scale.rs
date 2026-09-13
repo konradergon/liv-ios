@@ -458,3 +458,66 @@ fn checking_a_bodys_links_costs_the_links_not_the_box() {
     );
     assert!(ratio < 4.0, "twenty links is twenty links in either box: {ratio:.1}x");
 }
+
+// ---- history and links ------------------------------------------------
+//
+// Both of these are questions `core/` answers by scanning — history walks
+// every transaction in the box, backlinks decode every content cell. They
+// are the fifth and sixth instance of the defect in this file's header,
+// and the fold maintains a table for each so they are seeks.
+
+fn box_of_notes_with_bodies(n: u64) -> (Engine, EntityId, EntityId) {
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+    let hub = e.create(kind::NOTE, Some("Hub"), 1_787_391_635_000).unwrap();
+    let mut first = None;
+    for i in 0..n {
+        let t = 1_787_391_635_000 + i;
+        let id = e.create(kind::NOTE, Some(&format!("note {i}")), t).unwrap();
+        // Every note points at the hub, so `links_to(hub)` has an answer
+        // proportional to the box while `links_to(a leaf)` has none —
+        // which is the pair that tells a seek from a scan.
+        e.set_content(id, vec![Span::text("see "), Span::Ref(hub)], 0, t).unwrap();
+        first.get_or_insert(id);
+    }
+    let one = first.unwrap();
+    (e, hub, one)
+}
+
+/// **What points HERE, when the answer is nothing.**
+///
+/// The honest shape: a note nobody links to costs the same in a box of 500
+/// and a box of 5,000. A scan would cost the box, and a correctness test
+/// cannot tell the two apart — both answer "nothing".
+#[test]
+fn asking_what_links_here_is_flat_when_nothing_does() {
+    let (small, _, leaf_small) = box_of_notes_with_bodies(500);
+    let (large, _, leaf_large) = box_of_notes_with_bodies(5_000);
+
+    let ratio = best_ratio(
+        12,
+        || time(|| assert!(small.links_to(leaf_small).unwrap().is_empty())),
+        || time(|| assert!(large.links_to(leaf_large).unwrap().is_empty())),
+    );
+    assert!(ratio < 4.0, "an empty backlink answer must not cost the box: {ratio:.1}x");
+}
+
+/// And one note's history costs its own edits, not the box's.
+#[test]
+fn one_notes_history_costs_its_edits_not_the_box() {
+    let (mut small, _, one_small) = box_of_notes_with_bodies(500);
+    let (mut large, _, one_large) = box_of_notes_with_bodies(5_000);
+    // Ten versions each, so both answers are the same size.
+    for i in 0..10u64 {
+        let b = small.content(one_small).unwrap().1;
+        small.set_content(one_small, vec![Span::text(format!("v{i}"))], b, 1_787_400_000_000 + i).unwrap();
+        let b = large.content(one_large).unwrap().1;
+        large.set_content(one_large, vec![Span::text(format!("v{i}"))], b, 1_787_400_000_000 + i).unwrap();
+    }
+
+    let ratio = best_ratio(
+        12,
+        || time(|| assert_eq!(small.content_history(one_small).unwrap().len(), 11)),
+        || time(|| assert_eq!(large.content_history(one_large).unwrap().len(), 11)),
+    );
+    assert!(ratio < 4.0, "eleven versions is eleven versions in either box: {ratio:.1}x");
+}
