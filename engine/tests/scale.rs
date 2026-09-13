@@ -521,3 +521,57 @@ fn one_notes_history_costs_its_edits_not_the_box() {
     );
     assert!(ratio < 4.0, "eleven versions is eleven versions in either box: {ratio:.1}x");
 }
+
+// ---- rename -----------------------------------------------------------
+
+/// **Renaming a value costs its carriers, not the box.**
+///
+/// `core/`'s text branch walks every user entity to find them. Here the
+/// carriers come off `cells_by_value`, which is the index that exists so
+/// that "everything with Anna" is a join rather than a search.
+#[test]
+fn renaming_a_text_value_costs_its_carriers_not_the_box() {
+    let mut small = box_of(500);
+    let mut large = box_of(5_000);
+
+    // A DECLARED field, because `rename_value` asks what the property
+    // holds and refuses rather than guessing for one the box has never
+    // heard of. Three carriers each, whatever else is in the box.
+    let carriers = |e: &mut Engine, t: u64| -> EntityId {
+        let field = e.declare_field("client", "text", false, t).unwrap();
+        for (i, id) in e.all_entities().unwrap().into_iter().take(3).enumerate() {
+            e.set(id, field, Value::Text("Acme".into()), t + i as u64).unwrap();
+        }
+        field
+    };
+    let small_field = carriers(&mut small, 2_000);
+    let large_field = carriers(&mut large, 3_000);
+
+    let n = std::cell::Cell::new(0u64);
+    let ratio = best_ratio(
+        12,
+        || {
+            n.set(n.get() + 1);
+            let (from, to) = (names(n.get() - 1), names(n.get()));
+            time(|| {
+                small.rename_value(small_field, &from, &to, 1_787_400_000_000).unwrap();
+            })
+        },
+        || {
+            let (from, to) = (names(n.get() - 1), names(n.get()));
+            time(|| {
+                large.rename_value(large_field, &from, &to, 1_787_400_000_000).unwrap();
+            })
+        },
+    );
+    assert!(ratio < 4.0, "three carriers is three carriers in either box: {ratio:.1}x");
+}
+
+/// The rename chain's nth name. Round 0 is what the carriers start as.
+fn names(n: u64) -> String {
+    if n == 0 {
+        "Acme".to_owned()
+    } else {
+        format!("Acme {n}")
+    }
+}

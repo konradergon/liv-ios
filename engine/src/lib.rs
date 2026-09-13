@@ -22,6 +22,7 @@ pub mod id;
 pub mod log;
 pub mod model;
 pub mod op;
+pub mod rename;
 pub mod rich;
 pub mod undo;
 pub mod view;
@@ -33,6 +34,7 @@ pub use engine::Engine;
 pub use model::{
     area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,
 };
+pub use rename::RenameError;
 pub use write::{action, PropShape, WriteError};
 pub use id::{DeviceId, Dot, EntityId, Hlc, IdGen};
 pub use log::{decode_stream, encode_stream, Hold, LogError, VersionVector, BOX_FORMAT};
