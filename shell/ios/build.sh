@@ -64,6 +64,9 @@ share_extension() {
 # aarch64-apple-ios and runs in the simulator (19.1 MB before stripping),
 # but this script had never linked it until now.
 if [ "$1" = "device" ]; then
+    # Same floor for the C compile as for swiftc — see the note at the
+    # simulator build below.
+    export IPHONEOS_DEPLOYMENT_TARGET=17.0
     cargo build --release -p liv-ffi --target aarch64-apple-ios --manifest-path ../../Cargo.toml
 
     SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
@@ -148,6 +151,20 @@ if [ "$1" = "device" ]; then
     exit 0
 fi
 
+# THE DEPLOYMENT TARGET, SET FOR THE C COMPILE TOO (2026-09-13).
+#
+# `swiftc` is told ios17.0 below, but `cc` is not: rusqlite's `bundled`
+# feature compiles sqlite3.c through the `cc` crate, which defaults to the
+# SDK's own target. The first simulator build of the engine linked with
+#
+#   ld: warning: object file (…sqlite3.o) was built for newer
+#       'iOS-simulator' version (26.5) than being linked (17.0)
+#
+# It linked and it ran — a mismatch this way round is a warning, not an
+# error — but a warning nobody fixes is a warning nobody reads, and the
+# next one will be about something that matters. `cc` honours this
+# variable, so one line puts the two compilers on the same floor.
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
 cargo build --release -p liv-ffi --target aarch64-apple-ios-sim --manifest-path ../../Cargo.toml
 
 SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"

@@ -535,3 +535,84 @@ fn a_converted_box_reads_through_the_new_seam() {
     unsafe { liv_view_close_all() };
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A capture has no name, and its title is its first line.**
+///
+/// Prompted by the first device run, which showed `First row: Untitled`.
+/// That is the right answer for a thing with neither a name nor a body,
+/// and the wrong one for a scrap — so the question is which, and the way
+/// to settle it is a test rather than a squint at a screenshot.
+///
+/// The chain has three places it could be lost: `capture` writes
+/// `props::CONTENT` as RichText; the converter flattens that to markdown
+/// in `prop::BODY`; and `surface::row` falls back to the body's first
+/// line when there is no name.
+#[test]
+fn a_captured_scrap_keeps_its_first_line_as_its_title() {
+    let dir = std::env::temp_dir().join("liv_ffi_capture_title");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("liv.log");
+    let db = dir.join("liv.db");
+
+    let the_day = liv_convert::days_from_civil(2026, 9, 13);
+    {
+        use liv_core::{Author, Cell, Command, DateTime, Session, Value as CV};
+        let mut s = Session::open(&log).unwrap();
+        liv_services::seed_if_fresh(&mut s).unwrap();
+        let due = liv_services::property_id(s.store(), "due").unwrap();
+
+        // A scrap, the way the app catches one: content, no name.
+        let scrap = liv_services::capture(
+            &mut s,
+            "call the roofer about the slates",
+            DateTime { civil: 2026_09_13_1000, date_only: false, end: None },
+        )
+        .unwrap();
+        // A thing with neither, so both answers appear on one screen.
+        let bare = liv_services::content::create_task(
+            &mut s,
+            DateTime { civil: 2026_09_13_1030, date_only: false, end: None },
+        )
+        .unwrap();
+        for (e, hhmm) in [(scrap, 0900i64), (bare, 1000)] {
+            s.commit(
+                vec![Command::AddCell {
+                    entity: e,
+                    cell: Cell {
+                        property: due,
+                        value: CV::DateTime(DateTime {
+                            civil: 2026_09_13_0000 + hhmm,
+                            date_only: false,
+                            end: None,
+                        }),
+                    },
+                }],
+                "due",
+                Author::User,
+            )
+            .unwrap();
+        }
+    }
+
+    liv_convert::convert(&log, &db).unwrap();
+    unsafe { liv_view_close_all() };
+    let c = CString::new(db.to_str().unwrap()).unwrap();
+
+    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), the_day, std::ptr::null(), out) })
+        .unwrap();
+    let blocks = v["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2, "both are on the day");
+
+    // THE SCRAP CARRIES ITS WORDS ACROSS.
+    assert_eq!(blocks[0]["row"]["title"], "call the roofer about the slates");
+    assert_eq!(blocks[0]["row"]["untitled"], false);
+
+    // AND A THING WITH NOTHING SAYS SO, rather than the surface inventing
+    // words for it — which is what the shell drew, correctly.
+    assert_eq!(blocks[1]["row"]["untitled"], true);
+    assert_eq!(blocks[1]["row"]["title"], "");
+
+    unsafe { liv_view_close_all() };
+    let _ = std::fs::remove_dir_all(&dir);
+}
