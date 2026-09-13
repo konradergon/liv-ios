@@ -155,6 +155,59 @@ constant ids baked into the binary; a user-created field is an entity like any o
 There is no small-integer property space and no special case — which also removes the
 `id < FIRST_USER_ID` trick that three sites use today to mean *is this plumbing*.
 
+### Value kinds
+
+| Tag | Kind | Payload |
+|---|---|---|
+| `0x01` | `Text` | varint length + UTF-8 bytes |
+| `0x02` | `Number` | 8, f64 LE bits; NaN and infinities refused both ways |
+| `0x03` | `Bool` | 1 |
+| `0x04` | `Date::Day` | 4, i32 LE — days since the epoch, floating, no zone |
+| `0x05` | `Date::Instant` | 8 i64 LE ms + 2 u16 LE zone |
+| `0x06` | `Ref` | 16, an entity id |
+| `0x07` | `Blob` | 32, a content hash — never a path |
+| `0x08` | `Rich` | varint span count + that many spans |
+
+**`Rich` is a value kind, not span JSON inside a `Text` cell.** A serde document
+nested inside this format would be the derive-drift defect of §1 one layer down and
+out of sight; and the fold could not see the references a body carries, so *what
+links here* would be a scan of every note in the box rather than a seek.
+
+#### Span — repeated `count` times
+
+| Tag | Span | Payload |
+|---|---|---|
+| `0x01` | `Text` | 1 marks byte + varint length + UTF-8 bytes |
+| `0x02` | `Break` | a block |
+| `0x03` | `Ref` | 16, an entity id |
+
+The marks byte is a bitflag set — bold, italic, code, strike in bits 0–3. **Bits 4–7
+are reserved and must be zero.** Order is meaningless in a set and duplicates are
+impossible, so one mark set has exactly one encoding, which is what the digest needs.
+
+#### Block
+
+| Tag | Block | Payload |
+|---|---|---|
+| `0x01` | `Body` | — |
+| `0x02` | `Heading` | 1, **1–6; anything else is refused** |
+| `0x03` | `Quote` | — |
+| `0x04` | `Bullet` | 1 depth |
+| `0x05` | `Ordered` | 1 depth |
+| `0x06` | `Task` | 1 depth + 1 done, **0 or 1 only** |
+| `0x07` | `Code` | 1 presence + (varint + UTF-8 when present) |
+| `0x08` | `Callout` | varint + UTF-8 kind |
+| `0x09` | `Rule` | — |
+
+`Code`'s language uses a presence byte rather than an empty string, because `None`
+and `Some("")` are different documents and each needs one encoding.
+
+**The nested refusals above only ever fire on a FORGED group.** The frame's checksum
+catches accidental corruption first, every time — which the tests for them found out
+by passing while the checks were removed. They exist for a group that arrives from a
+sync peer with a valid checksum over bad bytes, and a test that means to reach them
+has to re-seal the frame the way a peer would.
+
 ### Op kinds
 
 | Code | Kind | Carries |
