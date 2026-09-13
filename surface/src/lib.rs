@@ -27,6 +27,11 @@ use liv_engine::{
     civil_from_days, kind, model, prop, status, DateSpec, Engine, EntityId, LogError, Value,
 };
 
+/// The sweep — what the clerk would suggest, read off the box. The
+/// queue that accepts or declines one is in the engine; the heuristics
+/// are here, because English is product and the box has no opinion.
+pub mod clerk;
+
 
 pub mod day;
 pub mod everything;

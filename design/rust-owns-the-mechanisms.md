@@ -324,10 +324,26 @@ replacement passes.
           — and the converter stopped dropping them); **the clerk's
           queue** (done); **the query grammar and running one**
           (done — the lexer moved into the engine and `services/`
-          imports it back, so there is one parser rather than two).
-          What is left is the clerk's SWEEP (six proposers reading the
-          words, ~800 lines in `services/` against `core::Store`) and
-          **search's scoring and facets**, which sit over `run`.
+          imports it back, so there is one parser rather than two); **the
+          clerk's sweep** (done — five of its six proposers; the sixth
+          is blocked, below). What is left is **search's scoring and
+          facets**, which sit over `run`.
+
+          The sweep lives in `surface/`, not the engine: dates in
+          English and a closed lexicon of priority words are product,
+          not storage, and the box should not have opinions about
+          English. The engine keeps the queue — accept, decline, the
+          refusal set — and that split is the whole of it.
+
+          **`propose_dedupe` is blocked, and not on effort.** Its merge
+          is copy the loser's cells, trash it, and REDIRECT it, so that
+          everything already pointing at the loser resolves to the
+          survivor. `op-format.md` promises redirect as *"`SetCell` on a
+          reserved property"* and the model never declared one. Building
+          the merge without it would trash a duplicate and silently
+          orphan every reference to it. What it needs is a
+          `prop::REDIRECT` and every read resolving through it — engine
+          work, and a subsystem rather than a patch.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.
