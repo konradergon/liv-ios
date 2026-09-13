@@ -39,14 +39,14 @@ pub const LIV_ERR_REFUSED: i32 = -7;
 pub const LIV_ERR_NOTHING: i32 = -8;
 
 /// A C string, or a code.
-fn text<'a>(p: *const c_char, code: i32) -> Result<&'a str, i32> {
+pub(crate) fn text<'a>(p: *const c_char, code: i32) -> Result<&'a str, i32> {
     if p.is_null() {
         return Err(code);
     }
     unsafe { CStr::from_ptr(p) }.to_str().map_err(|_| code)
 }
 
-fn id_arg(p: *const c_char) -> Result<liv_engine::EntityId, i32> {
+pub(crate) fn id_arg(p: *const c_char) -> Result<liv_engine::EntityId, i32> {
     parse_id(text(p, LIV_ERR_ARG)?).ok_or(LIV_ERR_ARG)
 }
 

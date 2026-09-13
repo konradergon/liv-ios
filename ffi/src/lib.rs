@@ -28,6 +28,9 @@ pub mod surfaces;
 
 /// The engine's write verbs — what slice 5a is named for.
 pub mod writes;
+
+/// The verbs every tap uses: make a thing, change a cell, throw it away.
+pub mod basics;
 use snapshot::{build_snapshot, build_snapshot_windowed, fingerprint};
 
 

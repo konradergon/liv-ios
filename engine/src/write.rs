@@ -230,6 +230,66 @@ impl Engine {
         Ok(id)
     }
 
+    /// Capture a scrap: one UNTYPED thing whose body is this text, in one
+    /// action.
+    ///
+    /// **Untyped is the point, not an omission.** A capture is a thought,
+    /// and deciding what kind of thing it is comes later — the clerk's
+    /// promotion proposer is what offers to make it a task, and it can
+    /// only offer that because nothing here decided first (it returns
+    /// early the moment a `kind` cell exists).
+    ///
+    /// Until this existed there was no way to make one: `create` always
+    /// writes a `kind`, so the promotion test had to hand-write a
+    /// `RemoveFromSet` to take it back off again. A test forced to build
+    /// something the app cannot build is a missing door.
+    ///
+    /// One group, so one undo takes the whole capture back rather than
+    /// leaving an empty note behind.
+    pub fn capture(&mut self, text: &str, now_ms: u64) -> Result<EntityId, WriteError> {
+        let id = self.mint(now_ms);
+        let mut ops = vec![Op::CreateEntity { entity: id }];
+        if !text.is_empty() {
+            ops.push(Op::SetCell {
+                entity: id,
+                prop: prop::BODY,
+                value: Value::Rich(vec![crate::rich::Span::text(text.to_owned())]),
+                replaces: vec![],
+            });
+        }
+        self.commit(ops, action::CREATE, Author::User, now_ms)?;
+        Ok(id)
+    }
+
+    /// Empty a cell.
+    ///
+    /// **Not the same as setting it to nothing** — an unset cell has no
+    /// value at all, which is what a picker's "None" means and what a due
+    /// date cleared off a task means. The four ops give exactly one shape
+    /// for it: retire the live dots and put nothing back.
+    ///
+    /// Unsetting what is already unset writes nothing rather than logging
+    /// an empty action, so a picker set to "None" twice does not leave two
+    /// things in the undo history.
+    pub fn unset(
+        &mut self,
+        entity: EntityId,
+        prop: EntityId,
+        now_ms: u64,
+    ) -> Result<Option<Dot>, WriteError> {
+        let replaces: Vec<Dot> = self.cell(entity, prop)?.into_iter().map(|(d, _)| d).collect();
+        if replaces.is_empty() {
+            return Ok(None);
+        }
+        let ops = vec![Op::RemoveFromSet {
+            entity,
+            prop,
+            value: Value::Text(String::new()),
+            replaces,
+        }];
+        Ok(Some(self.commit(ops, action::SET, Author::User, now_ms)?))
+    }
+
     /// Set a single-valued property.
     ///
     /// **Names every value it can see.** A device that had not seen a

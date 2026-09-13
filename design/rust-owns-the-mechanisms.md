@@ -413,6 +413,80 @@ replacement passes.
           millisecond budget) and a direct guard that accepting must not
           cost what a whole sweep costs — which is what catches a revert.
           Both were broken on purpose and watched to fail.
+        * **5a-ii, the verbs every tap uses — found by auditing 5b
+          rather than planned.** Before writing any Swift, the question
+          was whether the engine can answer everything the snapshot
+          answers. It cannot, and the gap was much bigger than the one
+          the write verbs closed.
+
+          `writes.rs` was the EDITOR's doors: bodies, history,
+          backlinks, undo, renames, files, the clerk. Real, and not what
+          the six screens are made of. Nothing reached create, capture,
+          set, unset, add, remove, trash or restore — so a shell on the
+          engine could not make a note, tick a checkbox, file something
+          under Work, or throw anything away. Swapping onto it would
+          have been an amputation, not a swap.
+
+          Twelve more verbs close that (`ffi/src/basics.rs`), and three
+          things came out of building them that were not in the plan:
+
+          **A value crosses as TEXT and the property says what it
+          means.** The shell sends "yes", "3", "2026-09-13", "Work";
+          which of those is a bool, a number, a date or an option is a
+          fact about the property. The engine had no text→value parser
+          at all — `services/src/content.rs` has one, against
+          `core::Store`, and it dies with `core/` — so it moved
+          (`engine/src/value.rs`), which standing rule 4 requires: the
+          strings a user types today have to mean the same things
+          afterwards. Its hard-won parts came with it, each because its
+          absence was a bug: a number must be FINITE (NaN's
+          non-reflexive equality once made a cell impossible to remove,
+          because the value would not compare equal to itself, so
+          nothing could name it), an option is matched by name and never
+          minted, a file cannot be typed into. One thing did not come
+          across: `core/` takes a date SPAN in one cell and `DateSpec`
+          has no span variant, so it is refused with a message rather
+          than half-kept. That is an op-format change when it is wanted.
+
+          **`capture` had no door, and the clerk noticed before we
+          did.** A capture is UNTYPED — deciding what kind of thing a
+          thought is comes later, and the promotion proposer returns
+          early the moment a `kind` cell exists. But `create` always
+          writes one, so there was no way to make a thing the clerk
+          could offer to promote: the test for that proposer hand-wrote
+          a `RemoveFromSet` to take the kind back off. A test forced to
+          build something the app cannot build is a missing door, and it
+          had been sitting in that file saying so.
+
+          **A picker asks the box for its words.** `one-core.md` §4
+          records the six area names living as a Swift constant as a
+          mistake; `liv_options` is what makes it unnecessary, and
+          returns compiled-in furniture and a user's own in one list,
+          because that is what the cell accepts.
+
+          Two bugs surfaced from breaking the new guards on purpose.
+          `unset` needs the four ops' only "unset" shape — a
+          `RemoveFromSet` naming the live dots — and carries a
+          placeholder value that means nothing; undo restored the
+          PLACEHOLDER, putting `Text("")` into a date cell. The inverse
+          reads what the removal retired out of the log now, which is
+          also the honest answer for a set. And `liv_cells` deliberately
+          omits the body, which made the test for "one undo takes a
+          whole capture back" pass whether or not the undo worked.
+
+          Undoing a capture TRASHES it rather than erasing it — that is
+          the existing rule for anything a group created, so the thing
+          stays readable in the Trash, which is where a person goes to
+          get it back. The test asserted erasure first; erasure is what
+          would make an undone capture unrecoverable.
+
+          **What is still missing before 5b**, from the same audit: the
+          shell calls 41 core-era verbs and search, the query grammar,
+          distinct values, status options, vault alerts, workspaces and
+          saved views have no engine equivalent yet. `surface/src/search.rs`
+          and `engine/src/query.rs` both EXIST and neither has an FFI
+          door — the same shape of gap this batch just closed, one layer
+          along.
         * **5b, the swap.** `Box.swift` stops decoding a snapshot, the
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.

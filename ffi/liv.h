@@ -585,6 +585,117 @@ int32_t liv_accept(const char *path, const char *entity, uint64_t print,
 int32_t liv_decline(const char *path, const char *entity, uint64_t print,
                     uint64_t now_ms);
 
+/* ====================================================================
+   THE VERBS EVERY TAP USES
+
+   The block above is the EDITOR's doors — bodies, undo, files, renames,
+   the clerk. These are the app's: capture a scrap, make a thing, tick a
+   checkbox, file it under Work, throw it away. Without them a shell on
+   the engine can read and never touch.
+
+   A VALUE CROSSES AS TEXT, and the property says what it means. The
+   shell sends "yes", "3", "2026-09-13", "Work"; whether that is a bool,
+   a number, a date or an option is a fact about the property, which the
+   box already knows. The alternative — the shell declaring the type of
+   everything it sends — puts the model in two places and makes every new
+   field a Swift change. LIV_ERR_REFUSED comes back, with nothing
+   written, when the text does not read.
+
+   A PROPERTY IS NAMED BY ITS ID, not its name. The old ABI's liv_set_at
+   takes a name and looks it up, which quietly makes renaming a field
+   break every caller that spelled it. Use liv_property_named once to
+   turn a frozen name into an id, then pass the id.
+   ==================================================================== */
+
+/* Make one thing of a kind, optionally named. {"id":"<hex>"}
+   `name` may be NULL for something born untitled, which is the common
+   case and not an error. */
+int32_t liv_make(const char *path, const char *kind, const char *name,
+                 uint64_t now_ms, char **out);
+
+/* Capture a scrap: one UNTYPED thing whose body is this text, in one
+   action. {"id":"<hex>"}
+
+   Untyped is the point. A capture is a thought, not a decision about
+   what kind of thing it is — the clerk's promotion proposer is what
+   offers to make it a task later, and it can only offer that because
+   nothing here decided first. One action, so one undo takes the whole
+   capture back rather than leaving an empty note behind. */
+int32_t liv_capture(const char *path, const char *text, uint64_t now_ms,
+                    char **out);
+
+/* Set a register; add a member to a set; take one out.
+
+   liv_remove is ADD-WINS: a member added concurrently on another device
+   survives it, which is why a tag added on the phone is not lost by a
+   removal on the laptop. */
+int32_t liv_set(const char *path, const char *entity, const char *property,
+                const char *value, uint64_t now_ms);
+int32_t liv_add(const char *path, const char *entity, const char *property,
+                const char *value, uint64_t now_ms);
+int32_t liv_remove(const char *path, const char *entity, const char *property,
+                   const char *value, uint64_t now_ms);
+
+/* Empty a cell. NOT the same as setting it to nothing — an unset cell
+   has no value at all, which is what a picker's "None" means and what a
+   due date cleared off a task means.
+
+   Emptying an empty cell writes nothing, so a picker set to None twice
+   is one undo rather than two. */
+int32_t liv_unset(const char *path, const char *entity, const char *property,
+                  uint64_t now_ms);
+
+/* Into the trash, and back out. TRASHING IS A CELL, not a deletion:
+   nothing leaves the log, which is what makes restore a write rather
+   than a resurrection — and what lets an undone create stay readable in
+   the Trash, where a person goes to get it back. */
+int32_t liv_trash(const char *path, const char *entity, uint64_t now_ms);
+int32_t liv_restore(const char *path, const char *entity, uint64_t now_ms);
+
+/* Everything a reference property may point at, named and in the order a
+   picker should show them: [{"id":"<hex>","name":…}…]
+
+   THE WORDS COME FROM THE BOX, NEVER FROM THE SHELL. The current tree
+   keeps the six area names as a Swift constant, which one-core.md §4
+   records as a mistake: a shell carrying its own copy of the furniture
+   drifts from the box that stores it, and the drift is invisible until
+   someone renames something.
+
+   Compiled-in furniture and a user's own come back in ONE list, because
+   that is what the cell accepts — a picker that separated them would be
+   inventing a distinction the model does not have. Empty for a property
+   that holds no references, which is an answer and not a failure. */
+int32_t liv_options(const char *path, const char *property, char **out);
+
+/* One thing's cells, as the inspector reads them:
+   [{"property":"<hex>","name","holds","many","value","ref":"<hex>"?,
+     "contended":bool}…]
+
+   `value` is ALWAYS a display string, so a shell renders a row without
+   knowing the kind; `ref` carries the target when there is one, for a row
+   that is tappable.
+
+   `contended` is not decoration. Two devices can leave a register holding
+   two values, and the model's rule is that nothing silently wins, so the
+   shell has to be able to show the choice rather than pick one. */
+int32_t liv_cells(const char *path, const char *entity, char **out);
+
+/* The kinds a create menu offers: [{"id":"<hex>","name":…}…]
+   The six the product names, in product order, plus anything the user
+   declared. Not every kind that exists — the rest is furniture the app
+   draws with, and a person never picks one from a list. */
+int32_t liv_kinds(const char *path, char **out);
+
+/* The id of a compiled-in property by its stable name — "due", "status",
+   "area". {"id":"<hex>"} LIV_ERR_ARG when nothing is called that.
+
+   A shell needs SOME way in. Every other verb here names a property by
+   id, which is right, but the first id has to come from somewhere and
+   hard-coding 32 hex characters in Swift is worse than asking. These
+   names are frozen (op-format.md's ordinals-on-disk-forever), so this is
+   a lookup of something stable, not of a label a user can change. */
+int32_t liv_property_named(const char *path, const char *name, char **out);
+
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 
    Refuses if `to` already exists — "run it again" is the first thing

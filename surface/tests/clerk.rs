@@ -352,21 +352,13 @@ fn the_lexicon_is_closed() {
 
 #[test]
 fn a_capture_that_opens_with_a_checkbox_is_a_task_waiting_for_its_kind() {
+    // A capture has no kind, which is the whole condition this proposer
+    // turns on. Until `Engine::capture` existed there was no way to make
+    // one, and this test hand-wrote a `RemoveFromSet` to take the kind
+    // back off — a test building something the app could not build,
+    // which is a missing door rather than a clever fixture.
     let mut e = engine();
-    let id = e.create(kind::NOTE, None, T0).unwrap();
-    // A capture has no kind. `create` gives one, so take it back.
-    e.commit(
-        vec![Op::RemoveFromSet {
-            entity: id,
-            prop: prop::KIND,
-            value: Value::Ref(kind::NOTE),
-            replaces: e.cell(id, prop::KIND).unwrap().into_iter().map(|(d, _)| d).collect(),
-        }],
-        action::SET,
-        Author::User,
-        T0 + 1,
-    )
-    .unwrap();
+    let id = e.capture("", T0).unwrap();
     e.set_content(
         id,
         vec![Span::Break(Block::Task { depth: 0, done: false }), Span::text("book the ferry")],

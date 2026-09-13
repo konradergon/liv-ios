@@ -224,14 +224,43 @@ impl Engine {
                 replaces: self.dots_carrying(*entity, *prop, value)?,
             }],
 
-            // ONE add, however many dots the removal retired. A set holds
-            // a value or it does not; the row count was an artifact of two
-            // devices having added the same thing.
-            Op::RemoveFromSet { entity, prop, value, .. } => vec![Op::AddToSet {
-                entity: *entity,
-                prop: *prop,
-                value: value.clone(),
-            }],
+            // **What came back is what the removal RETIRED**, read out of
+            // the log — not the op's own `value`.
+            //
+            // For a set removal the two are the same thing, and were the
+            // only case when this said `value`. But `RemoveFromSet` is
+            // also the only shape the four ops give for UNSET, and an
+            // unset names the dots of whatever was there while carrying a
+            // placeholder value that means nothing. Restoring that
+            // placeholder put `Text("")` into a date cell — a blank where
+            // a date had been, which is not what was there and not
+            // nothing either.
+            //
+            // Distinct values, so ONE add however many dots the removal
+            // retired: a set holds a value or it does not, and the row
+            // count was an artifact of two devices adding the same thing.
+            // Several DIFFERENT values means a contended register, and
+            // all of them come back — collapsing it here would decide a
+            // conflict the user was never shown.
+            Op::RemoveFromSet { entity, prop, value, replaces } => {
+                let mut old: Vec<Value> = Vec::new();
+                for d in replaces {
+                    if let Ok(Some(v)) = self.value_at(*d) {
+                        if !old.contains(&v) {
+                            old.push(v);
+                        }
+                    }
+                }
+                // Nothing readable — a truncated log, or a removal that
+                // named no dots. The op's own value is the best guess
+                // left, and it is what a set removal meant anyway.
+                if old.is_empty() {
+                    old.push(value.clone());
+                }
+                old.into_iter()
+                    .map(|v| Op::AddToSet { entity: *entity, prop: *prop, value: v })
+                    .collect()
+            }
         })
     }
 

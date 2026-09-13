@@ -520,6 +520,24 @@ pub const AREAS: &[EntityId] =
 
 pub const STATUSES: &[EntityId] = &[status::TODO, status::DOING, status::DONE];
 
+/// The compiled-in things of one kind — the inverse of `furniture_kind`.
+///
+/// **What makes "file it under Work" typeable.** A `RefTo(kind::AREA)`
+/// cell accepts the frozen Work and a user's minted "Woodworking" by one
+/// rule; `of_kind` finds the minted ones in the box and this finds the
+/// frozen ones, which are in no table to be found.
+pub fn furniture_of(kind: EntityId) -> &'static [EntityId] {
+    if kind == self::kind::AREA {
+        AREAS
+    } else if kind == self::kind::STATUS {
+        STATUSES
+    } else if kind == self::kind::KIND {
+        ALL_KINDS
+    } else {
+        &[]
+    }
+}
+
 // ---- what may go in a cell --------------------------------------------
 
 #[derive(Debug, PartialEq, Eq)]

@@ -21,6 +21,7 @@ pub mod content;
 pub mod engine;
 pub mod files;
 pub mod id;
+pub mod inspect;
 pub mod log;
 pub mod model;
 pub mod op;
@@ -28,6 +29,7 @@ pub mod query;
 pub mod rename;
 pub mod rich;
 pub mod undo;
+pub mod value;
 pub mod view;
 pub mod write;
 
