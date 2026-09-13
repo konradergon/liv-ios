@@ -11,14 +11,14 @@ import os
 /// EVERY field Optional — one missing key must never drop the snapshot
 /// (a real, recurring bug; Optionality is resilience, not politeness).
 struct Snapshot: Decodable {
-    var today, unstructured, everything, dated: [UInt64]?
+    var today, unstructured, everything, dated: [LivEntityID]?
     var occurrences: [Occurrence]?
     var entities: [EntityRow]?
     /// The ids of everything in the trash, newest first (2026-08-20). An id
     /// list like `everything`; the rows are in `entities` carrying
     /// `trashed: true`. Optional, like every wire addition — one missing
     /// key must never drop the whole snapshot.
-    var trashed: [UInt64]?
+    var trashed: [LivEntityID]?
     var properties: [PropertyRow]?
     var kinds: [KindRow]?
     /// The workspace tree (M4). Shapes live in Workspace.swift.
@@ -41,7 +41,7 @@ struct NoteTaskRow: Decodable, Identifiable {
     /// Stable per line, so SwiftUI keeps rows in place across refreshes.
     var id: String { "\(entity ?? 0).\(line ?? 0)" }
     /// The note that holds the line.
-    var entity: UInt64? = nil
+    var entity: LivEntityID? = nil
     /// What to call that note — computed in Rust, where the content is
     /// (never EntityRow.title, which flattens the whole body).
     var source: String? = nil
@@ -56,7 +56,7 @@ struct NoteTaskRow: Decodable, Identifiable {
 /// never a position, so a stale click is refused, not misapplied.
 struct ProposalRow: Decodable, Identifiable {
     var id: String { "\(entity ?? 0).\(fingerprint ?? 0)" }
-    var entity: UInt64? = nil
+    var entity: LivEntityID? = nil
     var ordinal: UInt32? = nil
     var fingerprint: UInt64? = nil
     var reason: String? = nil
@@ -71,13 +71,13 @@ struct ProposalCommandRow: Decodable {
     var property: String? = nil
     var value: String? = nil
     var valueKind: String? = nil
-    var refTarget: UInt64? = nil
+    var refTarget: LivEntityID? = nil
 }
 
 /// The assist switch: the entity the toggle writes to, and the switch
 /// property's CURRENT name (survives a definition rename).
 struct AssistRow: Decodable {
-    var id: UInt64? = nil
+    var id: LivEntityID? = nil
     var on: Bool? = nil
     var prop: String? = nil
 }
@@ -86,7 +86,7 @@ struct AssistRow: Decodable {
 /// the workspace self-check builds rows by hand, and a 15-argument call
 /// would be a test that lies about what it is testing.
 struct EntityRow: Decodable, Identifiable {
-    var id: UInt64
+    var id: LivEntityID
     var title: String? = nil
     var kinds: [String]? = nil
     var due: Int64? = nil
@@ -109,20 +109,20 @@ struct EntityRow: Decodable, Identifiable {
 }
 
 struct CellRow: Decodable {
-    var propertyId: UInt64? = nil
+    var propertyId: LivEntityID? = nil
     var property: String? = nil
     var kind: String? = nil
     var value: String? = nil
-    var refTarget: UInt64? = nil
+    var refTarget: LivEntityID? = nil
 }
 
 struct Occurrence: Decodable {
-    var series: UInt64?
+    var series: LivEntityID?
     var civil: Int64?
 }
 
 struct PropertyRow: Decodable {
-    var id: UInt64?
+    var id: LivEntityID?
     var name: String?
     var kind: String?
     var usage: Int?
@@ -135,13 +135,13 @@ struct PropertyRow: Decodable {
 
 /// One option of a select property. Every field Optional — the standing law.
 struct PropertyOptionRow: Decodable {
-    var id: UInt64?
+    var id: LivEntityID?
     var name: String?
     var hidden: Bool?
 }
 
 struct KindRow: Decodable {
-    var id: UInt64?
+    var id: LivEntityID?
     var name: String?
 }
 
@@ -181,7 +181,7 @@ struct StatusOption: Decodable, Identifiable {
 /// `spans` are the log's own serde encoding of Span, verbatim (Editor.swift
 /// holds the total decoder).
 struct ContentDoc: Decodable {
-    var id: UInt64?
+    var id: LivEntityID?
     var name: String?
     var trashed: Bool?
     /// True when the box opened fine but no such entity exists. A nil
@@ -209,7 +209,7 @@ struct ContentVersion: Decodable {
 /// One end of a link, as the box reports it (liv_links_at). EVERY field
 /// Optional — the standing law.
 struct LinkRow: Decodable, Identifiable, Equatable {
-    var id: UInt64?
+    var id: LivEntityID?
     var name: String?
     var kinds: [String]?
     /// "related" for a link picked in properties, "content" for one typed
@@ -245,7 +245,7 @@ private struct DistinctWire: Decodable {
 }
 
 private struct SearchWire: Decodable {
-    struct Hit: Decodable { var id: UInt64? }
+    struct Hit: Decodable { var id: LivEntityID? }
     var hits: [Hit]?
     /// The counts the core already computed and the shell was throwing
     /// away. `services::search::facet` runs one probe query per candidate
@@ -317,7 +317,7 @@ final class BoxModel: ObservableObject {
     @Published private(set) var busyRetrying: Bool = false
     /// id -> row, rebuilt on each snapshot apply. Per-row lookups on every
     /// render; a linear scan would be O(n²).
-    private(set) var entities: [UInt64: EntityRow] = [:]
+    private(set) var entities: [LivEntityID: EntityRow] = [:]
 
     /// One serial lane to the box: the app must never race its own lock.
     private let boxQueue = DispatchQueue(label: "liv.box", qos: .userInitiated)
@@ -337,7 +337,7 @@ final class BoxModel: ObservableObject {
     /// The row for an id, whether or not it is in the trash. Use this for
     /// EXISTENCE — "has this box ever heard of it?" — which is what the
     /// editor's link oracle asks.
-    func entity(_ id: UInt64) -> EntityRow? {
+    func entity(_ id: LivEntityID) -> EntityRow? {
         entities[id]
     }
 
@@ -350,7 +350,7 @@ final class BoxModel: ObservableObject {
     /// stops the editor demoting a link to a trashed note — so every site
     /// that meant "alive" and wrote "exists" would silently start opening
     /// deleted things. A rule that matters lives in a type, not a comment.
-    func live(_ id: UInt64) -> EntityRow? {
+    func live(_ id: LivEntityID) -> EntityRow? {
         guard let row = entities[id], row.trashed != true else { return nil }
         return row
     }
@@ -432,7 +432,7 @@ final class BoxModel: ObservableObject {
             DispatchQueue.main.async { self.busyRetrying = false }
             return
         }
-        var index = [UInt64: EntityRow](minimumCapacity: fresh.entities?.count ?? 0)
+        var index = [LivEntityID: EntityRow](minimumCapacity: fresh.entities?.count ?? 0)
         for e in fresh.entities ?? [] { index[e.id] = e }
         DispatchQueue.main.async {
             self.entities = index  // before snap: observers read a fresh index
@@ -521,7 +521,7 @@ final class BoxModel: ObservableObject {
     }
 
     /// An id-returning verb; 0 = failure. `done` always receives the id.
-    private func actId(_ verb: String, _ done: ((UInt64) -> Void)?, _ work: @escaping () -> UInt64) {
+    private func actId(_ verb: String, _ done: ((LivEntityID) -> Void)?, _ work: @escaping () -> LivEntityID) {
         boxQueue.async {
             let id = work()
             if id == 0 { self.verbFailed(verb) }
@@ -532,33 +532,33 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    func capture(_ text: String, done: ((UInt64) -> Void)? = nil) {
+    func capture(_ text: String, done: ((LivEntityID) -> Void)? = nil) {
         actId("capture", Outbox.tracking(.idea, done)) { liv_capture_at(self.path, text) }
     }
 
     /// An empty, typed note — the editor's own creation door. Unlike
     /// `capture`, which refuses empty text (a blank thought is not a
     /// capture), this births the entity so the caret has somewhere to land.
-    func createNote(done: ((UInt64) -> Void)? = nil) {
+    func createNote(done: ((LivEntityID) -> Void)? = nil) {
         actId("createNote", Outbox.tracking(.idea, done)) { liv_create_note_at(self.path) }
     }
 
-    func createTask(done: ((UInt64) -> Void)? = nil) {
+    func createTask(done: ((LivEntityID) -> Void)? = nil) {
         actId("createTask", Outbox.tracking(.task, done)) { liv_create_task_at(self.path) }
     }
 
-    func createEvent(dueCivil: Int64, dateOnly: Bool, done: ((UInt64) -> Void)? = nil) {
+    func createEvent(dueCivil: Int64, dateOnly: Bool, done: ((LivEntityID) -> Void)? = nil) {
         actId("createEvent", Outbox.tracking(.event, done)) { liv_create_event_at(self.path, dueCivil, dateOnly ? 1 : 0) }
     }
 
-    func set(_ id: UInt64, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+    func set(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
         act("set", done) { liv_set_at(self.path, id, property, value) == 1 }
     }
 
     /// One span write (the mirror contract). end <= 0 = no end (plain date);
     /// dateOnly applies to both ends.
     func setSpan(
-        _ id: UInt64, _ property: String, start: Int64, end: Int64, dateOnly: Bool,
+        _ id: LivEntityID, _ property: String, start: Int64, end: Int64, dateOnly: Bool,
         done: ((Bool) -> Void)? = nil
     ) {
         act("setSpan", done) {
@@ -566,17 +566,17 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    func setType(_ id: UInt64, _ type: String, done: ((Bool) -> Void)? = nil) {
+    func setType(_ id: LivEntityID, _ type: String, done: ((Bool) -> Void)? = nil) {
         act("setType", done) { liv_set_type_at(self.path, id, type) == 1 }
     }
 
     /// One cell of a multi-valued property — membership, never replace-all.
-    func addCell(_ id: UInt64, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+    func addCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
         act("addCell", done) { liv_add_cell_at(self.path, id, property, value) == 1 }
     }
 
     /// The librarian: by reference, never moves the file.
-    func addFile(_ path: String, done: ((UInt64) -> Void)? = nil) {
+    func addFile(_ path: String, done: ((LivEntityID) -> Void)? = nil) {
         actId("addFile", Outbox.tracking(.photo, done)) { liv_add_file_at(self.path, path) }
     }
 
@@ -584,13 +584,13 @@ final class BoxModel: ObservableObject {
     /// how a capture-time stamp chip is taken back off.
     /// One value of a multi-valued property, removed by value — the
     /// mirror of addCell. `unset` clears the whole property instead.
-    func removeCell(_ id: UInt64, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+    func removeCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
         act("removeCell", done) {
             liv_remove_cell_at(self.path, id, property, value) == 1
         }
     }
 
-    func unset(_ id: UInt64, _ property: String) {
+    func unset(_ id: LivEntityID, _ property: String) {
         act("unset") { liv_unset_at(self.path, id, property) == 1 }
     }
 
@@ -598,12 +598,12 @@ final class BoxModel: ObservableObject {
     /// that did not exist until 2026-08-20. Before it, undo-right-after was
     /// the only recovery, and only while the trash was still the last
     /// transaction; after any other write the thing was unreachable.
-    func restore(_ id: UInt64, done: ((Bool) -> Void)? = nil) {
+    func restore(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
         act("restore", done) { liv_restore_at(self.path, id) == 1 }
     }
 
     /// Soft, reversible, never cascades.
-    func trash(_ id: UInt64) {
+    func trash(_ id: LivEntityID) {
         act("trash") { liv_trash_at(self.path, id) == 1 }
     }
 
@@ -613,7 +613,7 @@ final class BoxModel: ObservableObject {
     /// parent 0 = top level. The `query` cell is a SEPARATE `set` — the
     /// caller writes it, so one refused write never half-builds a workspace.
     func createWorkspace(
-        name: String, parent: UInt64 = 0, done: ((UInt64) -> Void)? = nil
+        name: String, parent: LivEntityID = 0, done: ((LivEntityID) -> Void)? = nil
     ) {
         actId("createWorkspace", done) {
             liv_create_workspace_at(self.path, name, parent)
@@ -622,13 +622,13 @@ final class BoxModel: ObservableObject {
 
     /// Trash ONE workspace. Deletion never cascades: children keep their
     /// dangling `parent` and the shell re-roots them.
-    func trashWorkspace(_ id: UInt64) {
+    func trashWorkspace(_ id: LivEntityID) {
         act("trashWorkspace") { liv_trash_workspace_at(self.path, id) == 1 }
     }
 
     /// Save a filter: a view entity carrying the query string. Same
     /// grammar as a workspace's, minus the stamp.
-    func createView(name: String, query: String, done: ((UInt64) -> Void)? = nil) {
+    func createView(name: String, query: String, done: ((LivEntityID) -> Void)? = nil) {
         actId("createView", done) {
             liv_create_view_at(self.path, name, query)
         }
@@ -638,7 +638,7 @@ final class BoxModel: ObservableObject {
     /// unknown property name, so a workspace whose query names a property
     /// the box has never seen must mint it before it can stamp. Minting an
     /// existing name is refused harmlessly (id 0) — never a duplicate.
-    func addProperty(_ name: String, kind: String = "text", done: ((UInt64) -> Void)? = nil) {
+    func addProperty(_ name: String, kind: String = "text", done: ((LivEntityID) -> Void)? = nil) {
         actId("addProperty", done) {
             liv_add_property_at(self.path, name, kind)
         }
@@ -648,7 +648,7 @@ final class BoxModel: ObservableObject {
     /// snapshot's properties[] carries it). Idempotent in the core: an
     /// existing name returns the existing option's id — never a duplicate.
     /// 0 = refusal (unknown/trashed property, wrong kind, empty name).
-    func addOption(_ property: UInt64, _ name: String, done: ((UInt64) -> Void)? = nil) {
+    func addOption(_ property: LivEntityID, _ name: String, done: ((LivEntityID) -> Void)? = nil) {
         actId("addOption", done) {
             liv_add_option_at(self.path, property, name)
         }
@@ -685,7 +685,7 @@ final class BoxModel: ObservableObject {
     // MARK: the clerk's proposals (rev 6 — suggest, never act)
 
     /// The pending proposals aimed at one entity, off the live snapshot.
-    func proposals(for entity: UInt64) -> [ProposalRow] {
+    func proposals(for entity: LivEntityID) -> [ProposalRow] {
         (snap?.inbox ?? []).filter { $0.entity == entity }
     }
 
@@ -724,7 +724,7 @@ final class BoxModel: ObservableObject {
     /// and reference/file cells are SKIPPED — the wire carries their
     /// display value, and re-adding by display string can silently link
     /// the wrong entity, which is worse than no link.
-    func duplicateProperties(of source: UInt64, done: ((UInt64) -> Void)? = nil) {
+    func duplicateProperties(of source: LivEntityID, done: ((LivEntityID) -> Void)? = nil) {
         guard let row = entity(source) else {
             done?(0)
             return
@@ -799,7 +799,7 @@ final class BoxModel: ObservableObject {
     /// `missing == true` means the box opened and holds no such entity.
     /// The span encoding is capitalized ("Text"/"Break"/"Ref"), so this
     /// decoder must NOT wear the snapshot's snake_case strategy.
-    func content(_ id: UInt64, done: @escaping (ContentDoc?) -> Void) {
+    func content(_ id: LivEntityID, done: @escaping (ContentDoc?) -> Void) {
         let path = self.path
         boxQueue.async {
             guard let raw = liv_content_at(path, id) else {
@@ -830,7 +830,7 @@ final class BoxModel: ObservableObject {
     /// history was built; until 2026-09-09 nothing in the shell called
     /// it, so the thesis's "read what you wrote three weeks ago, put it
     /// back" was core-only.
-    func history(_ id: UInt64, done: @escaping ([ContentVersion]) -> Void) {
+    func history(_ id: LivEntityID, done: @escaping ([ContentVersion]) -> Void) {
         let path = self.path
         boxQueue.async {
             guard let raw = liv_content_history_at(path, id) else {
@@ -855,7 +855,7 @@ final class BoxModel: ObservableObject {
     /// points at, and what points at it. A `[[ ]]` typed in a body and a
     /// link picked in properties are the same edge — the core indexes
     /// both — so this is the only reader either list needs.
-    func links(_ id: UInt64, done: @escaping (LinkSet) -> Void) {
+    func links(_ id: LivEntityID, done: @escaping (LinkSet) -> Void) {
         let path = self.path
         boxQueue.async {
             guard let raw = liv_links_at(path, id) else {
@@ -883,7 +883,7 @@ final class BoxModel: ObservableObject {
     /// `done` receives (status, freshFingerprint): 1 saved (fresh valid),
     /// -1 STALE (the base moved — re-read, never overwrite), 0 busy/invalid.
     func setContent(
-        _ id: UInt64, spansJson: String, base: UInt64,
+        _ id: LivEntityID, spansJson: String, base: LivEntityID,
         done: @escaping (Int32, UInt64) -> Void
     ) {
         let path = self.path
@@ -907,7 +907,7 @@ final class BoxModel: ObservableObject {
     /// a file is how Liv learns Word saved it. Never on a timer.
     /// `done` gets true when something changed, so the caller can
     /// refresh rather than guess.
-    func resyncFile(_ id: UInt64, done: ((Bool) -> Void)? = nil) {
+    func resyncFile(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
         boxQueue.async {
             let status = liv_resync_file_at(self.path, id)
             DispatchQueue.main.async {
@@ -951,17 +951,17 @@ final class BoxModel: ObservableObject {
     /// and not a membership set.
     func query(
         _ raw: String,
-        done: @escaping (Set<UInt64>, [LivQueryTerm]) -> Void
+        done: @escaping (Set<LivEntityID>, [LivQueryTerm]) -> Void
     ) {
         let path = self.path
         boxQueue.async {
-            var ids: Set<UInt64> = []
+            var ids: Set<LivEntityID> = []
             var terms: [LivQueryTerm] = []
             if let out = liv_query_ids_at(path, raw) {
                 let json = String(cString: out)
                 liv_string_free(out)
                 struct Wire: Decodable {
-                    var ids: [UInt64]?
+                    var ids: [LivEntityID]?
                     var terms: [LivQueryTerm]?
                 }
                 if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
@@ -1012,11 +1012,11 @@ final class BoxModel: ObservableObject {
     /// result can say so instead of quietly looking complete.
     func search(
         _ query: String,
-        done: @escaping ([UInt64], Int, [LivFacet]) -> Void
+        done: @escaping ([LivEntityID], Int, [LivFacet]) -> Void
     ) {
         let path = self.path
         boxQueue.async {
-            var ids: [UInt64] = []
+            var ids: [LivEntityID] = []
             var total = 0
             var facets: [LivFacet] = []
             if let raw = liv_search_at(path, query) {
@@ -1200,10 +1200,10 @@ enum Civil {
 //
 // One verb per screen, over the engine, beside the snapshot rather than
 // through it. **Nothing here is on a live screen yet**, and the reason is
-// worth stating plainly: an engine id is 16 bytes and `EntityRow.id` is a
-// `UInt64`, which appears 236 times across 22 Swift files. Moving a
-// surface means moving that type, and that is a refactor to do with a
-// compiler rather than by hand.
+// worth stating plainly: an engine id is 16 bytes and the shell's is a
+// number, in 225 places. Moving a surface means moving that type, and
+// that is a refactor to do with a compiler rather than by hand — so it is
+// being done in slices, and `LivID.swift` says where they are up to.
 //
 // So this is the plumbing plus one place to LOOK at it — `EngineCheck`
 // in Settings — which answers the one question no test here can: does the

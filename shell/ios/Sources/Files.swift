@@ -106,7 +106,7 @@ struct FileFacts {
 /// property views"). The bytes are read-only on purpose: Word owns the
 /// words.
 struct FileBody: View {
-    let id: UInt64
+    let id: LivEntityID
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -375,7 +375,7 @@ enum NoteBytes {
     /// fresh note's own fingerprint is read back first.
     static func land(
         _ text: String, named: String, box: BoxModel,
-        done: @escaping (UInt64) -> Void
+        done: @escaping (LivEntityID) -> Void
     ) {
         box.createNote { id in
             guard id != 0 else { return done(0) }
@@ -475,8 +475,8 @@ enum FileImport {
                 return FileStore.adopt(url).map { .file(path: $0, name: name) }
             }
             DispatchQueue.main.async {
-                var landed: [UInt64] = []
-                let finish: (UInt64) -> Void = { id in
+                var landed: [LivEntityID] = []
+                let finish: (LivEntityID) -> Void = { id in
                     guard id != 0 else { return }
                     workspaces.stamp(id, in: box)
                     landed.append(id)

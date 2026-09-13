@@ -204,7 +204,7 @@ final class DeskModel: ObservableObject {
     /// It used to be `state == .notes`, which answered the right question
     /// with the wrong fact and cost a view its own identity. `shown` is
     /// that fact, held where it belongs.
-    var openDoc: UInt64? {
+    var openDoc: LivEntityID? {
         guard shown, case .entity(let id)? = activeTab?.content else { return nil }
         return id
     }
@@ -461,21 +461,21 @@ final class DeskModel: ObservableObject {
     /// The task or event being edited in a card. Presented by whatever
     /// surface is frontmost, so tapping a task inside Tasks edits it
     /// WITHOUT leaving Tasks (owner, 2026-08-08).
-    @Published var recordCard: UInt64?
+    @Published var recordCard: LivEntityID?
     /// A card swiped away lives on as a pill above the bottom bar. One
     /// at a time, like a mail draft: go read a note, tap the pill, and
     /// you are back where you were. Every record edit saves as you make
     /// it, so the pill is pure navigation — nothing rides in it.
-    @Published var minimisedRecord: UInt64?
+    @Published var minimisedRecord: LivEntityID?
 
     /// What kind of thing an id points at. Wired at launch from the box;
     /// nil before the first snapshot, which reads as "document" and is
     /// the safe answer (a document tab renders a record's name fine, a
     /// record card cannot render a note).
-    var shapeOf: (UInt64) -> TabShape = { _ in .document }
+    var shapeOf: (LivEntityID) -> TabShape = { _ in .document }
     /// Does the box hold this at all? Defaults to yes, so nothing is
     /// pruned before a box has answered.
-    var knows: (UInt64) -> Bool = { _ in true }
+    var knows: (LivEntityID) -> Bool = { _ in true }
 
     /// Put the card away, remembering it.
     func minimiseRecord() {
@@ -502,7 +502,7 @@ final class DeskModel: ObservableObject {
     /// rewritten by each serial commit (§6 tab hygiene). The capture
     /// sheet is gone (2026-08-12), and with one entity per door there is
     /// nothing left to reuse a tab for, so the latch went with it.
-    func adoptCapture(_ id: UInt64, as shape: TabShape? = nil) {
+    func adoptCapture(_ id: LivEntityID, as shape: TabShape? = nil) {
         menu = nil
         open(id, as: shape)
     }
@@ -511,15 +511,15 @@ final class DeskModel: ObservableObject {
     /// it. Deliberately NOT @Published — it is consumed once by the editor
     /// that claims it, and a republish here would re-focus on every later
     /// visit to that tab.
-    private var pendingFocus: UInt64?
+    private var pendingFocus: LivEntityID?
 
-    func requestFocus(_ id: UInt64) {
+    func requestFocus(_ id: LivEntityID) {
         pendingFocus = id
     }
 
     /// Whether THIS entity is the one just created — true once, then
     /// never again for that request.
-    func consumeFocus(_ id: UInt64) -> Bool {
+    func consumeFocus(_ id: LivEntityID) -> Bool {
         guard pendingFocus == id else { return false }
         pendingFocus = nil
         return true
@@ -527,7 +527,7 @@ final class DeskModel: ObservableObject {
 
     /// The workspace whose planes are on the desk. 0 = "All". The planes
     /// own it — every key they write is scoped by it.
-    var workspaceId: UInt64 { planes.workspaceId }
+    var workspaceId: LivEntityID { planes.workspaceId }
 
     // ---- the plane (Plane.swift holds the arithmetic) ----------------
 
@@ -685,7 +685,7 @@ final class DeskModel: ObservableObject {
     /// were in is still loaded, one tap away as the first row of Docs.
     init() {
         planes = DeskPlanes(
-            workspace: UInt64(UserDefaults.standard.integer(forKey: WorkspaceModel.activeKey)))
+            workspace: LivEntityID(UserDefaults.standard.integer(forKey: WorkspaceModel.activeKey)))
         state = .today
     }
 
@@ -697,7 +697,7 @@ final class DeskModel: ObservableObject {
     /// Swap the workspace. The outgoing planes are saved under THEIR keys
     /// first, so a switch is never a loss; the incoming ones replace them,
     /// and the way-back stack resets — it belonged to the other place.
-    func adopt(workspace id: UInt64) {
+    func adopt(workspace id: LivEntityID) {
         guard id != workspaceId else { return }
         planes.adopt(workspace: id)
         returns.clear()
@@ -864,7 +864,7 @@ final class DeskModel: ObservableObject {
     /// reads nil and guesses "document" — which is why "New task" used
     /// to open a markdown editor instead of the task's own card
     /// (traced 2026-08-11). A creator knows what it made; it says so.
-    func open(_ entityId: UInt64, as shape: TabShape? = nil) {
+    func open(_ entityId: LivEntityID, as shape: TabShape? = nil) {
         guard (shape ?? shapeOf(entityId)) == .record else {
             openDocument(entityId)
             return
@@ -874,7 +874,7 @@ final class DeskModel: ObservableObject {
 
     /// A record rises as a card over wherever you stand, and closes
     /// nothing (Option C).
-    private func openAsCard(_ entityId: UInt64) {
+    private func openAsCard(_ entityId: LivEntityID) {
         minimisedRecord = nil
         recordCard = entityId
         menu = nil
@@ -883,7 +883,7 @@ final class DeskModel: ObservableObject {
     /// Land a document on the desk. It REPLACES what was open (owner,
     /// 2026-08-18): there is one document surface, and the note you were
     /// in is one row down the list you came from.
-    private func openDocument(_ entityId: UInt64) {
+    private func openDocument(_ entityId: LivEntityID) {
         endEditing()
         recordCard = nil
         guard entityId != openDoc else {

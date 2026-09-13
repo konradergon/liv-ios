@@ -28,8 +28,8 @@ private struct TodayAgendaItem: Identifiable {
 /// The row whose exact date and time is being picked (sheet item) — the
 /// arbitrary-time door is everywhere a date can be set (owner, phase 5).
 private struct TodayDuePick: Identifiable {
-    let entity: UInt64
-    var id: UInt64 { entity }
+    let entity: LivEntityID
+    var id: LivEntityID { entity }
 }
 
 // MARK: - the screen
@@ -765,7 +765,7 @@ struct TodayView: View {
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
-    private func toggleStatus(_ id: UInt64) {
+    private func toggleStatus(_ id: LivEntityID) {
         guard let row = box.entity(id) else { return }
         let doneNames = Set(
             taskOptions.filter { $0.completes == true }.compactMap(\.name))

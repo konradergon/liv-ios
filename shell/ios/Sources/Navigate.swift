@@ -103,7 +103,7 @@ enum Feature: String, CaseIterable, Identifiable {
 /// "‹ Kitchen rebuild"). Device state, never a cell.
 enum LivPlace: Equatable {
     case state(Feature)
-    case document(UInt64)
+    case document(LivEntityID)
 }
 
 /// The way back: a stack of places, with the cap ON THE TYPE.
@@ -180,14 +180,14 @@ struct LivReturns: Equatable {
 /// dies with the session, and a stale one after an edit on another
 /// device would be a lie about where you were.
 enum LivCaret {
-    private static var byNote: [UInt64: Int] = [:]
+    private static var byNote: [LivEntityID: Int] = [:]
 
-    static func remember(_ note: UInt64, at offset: Int) {
+    static func remember(_ note: LivEntityID, at offset: Int) {
         guard note != 0 else { return }
         byNote[note] = max(0, offset)
     }
 
-    static func recall(_ note: UInt64) -> Int? { byNote[note] }
+    static func recall(_ note: LivEntityID) -> Int? { byNote[note] }
 }
 
 
@@ -408,7 +408,7 @@ func livPlacesSelfCheck() -> [String] {
     check("re-opening the open document adds no step", desk.returns.count == before)
 
     // The stack is a stack, not a diary.
-    for id in 100..<160 { desk.open(UInt64(id)) }
+    for id in 100..<160 { desk.open(LivEntityID(id)) }
     check("the way back is capped", desk.returns.count <= 20, "\(desk.returns.count)")
 
     // THE FORWARD LEG (2026-08-23, with the bar's `›` key).
@@ -432,7 +432,7 @@ func livPlacesSelfCheck() -> [String] {
     fresh.go(.calendar)
     check("a new move clears the way forward", fresh.forward == nil, "\(String(describing: fresh.forward))")
     // The forward stack is capped like the back one.
-    for id in 200..<260 { fresh.open(UInt64(id)) }
+    for id in 200..<260 { fresh.open(LivEntityID(id)) }
     for _ in 0..<60 { fresh.goBack() }
     check("the way forward is capped", fresh.returns.forwardCount <= 20, "\(fresh.returns.forwardCount)")
     DeskModel.forgetScratchForSelfCheck()

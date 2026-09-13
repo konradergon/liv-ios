@@ -40,7 +40,7 @@ struct InspectorField: Identifiable {
     /// — see `closed`.
     let options: [String]
     /// The property's own id, so a new option can be minted against it.
-    let propertyId: UInt64
+    let propertyId: LivEntityID
 
     /// NOTHING IS CLOSED (owner, 2026-08-29: "make sure areas are not
     /// fixed anymore").
@@ -90,7 +90,7 @@ struct InspectorField: Identifiable {
 // MARK: - the inspector (full-body; no title, no nav chrome)
 
 struct EntityInspector: View {
-    let id: UInt64
+    let id: LivEntityID
     /// The panel scrolls; embedded as a record's body (Record.swift) it
     /// must NOT — a scroll view inside a scroll view eats the gesture.
     var scrolls: Bool = true
@@ -109,7 +109,7 @@ struct EntityInspector: View {
     /// The field whose sheet is open. One sheet serves every property.
     @State private var editing: InspectorField?
 
-    init(id: UInt64, scrolls: Bool = true) {
+    init(id: LivEntityID, scrolls: Bool = true) {
         self.id = id
         self.scrolls = scrolls
     }
@@ -600,7 +600,7 @@ struct EntityInspector: View {
 /// between them live in InspectorField, not here.
 struct InspectorValueSheet: View {
     let field: InspectorField
-    let id: UInt64
+    let id: LivEntityID
     /// The values this entity currently holds for the field.
     let current: [String]
     /// When set, the sheet REPORTS the chosen value instead of writing a
@@ -967,7 +967,7 @@ private struct DetailHairline: View {
 /// Internal: the Tasks row's "Pick" swipe verb opens this same sheet.
 struct DetailDueSheet: View {
     @ObservedObject var model: BoxModel
-    let id: UInt64
+    let id: LivEntityID
     let property: String
 
     @Environment(\.dismiss) private var dismiss
@@ -987,7 +987,7 @@ struct DetailDueSheet: View {
     /// time (review, 2026-08-06). Touching the clock sets this.
     @State private var timed: Bool
 
-    init(model: BoxModel, id: UInt64, property: String) {
+    init(model: BoxModel, id: LivEntityID, property: String) {
         self.model = model
         self.id = id
         self.property = property
@@ -1311,7 +1311,7 @@ struct DetailDueSheet: View {
 /// a chip tap can open it as a Desk tab.
 private struct DetailCellValue {
     let value: String
-    let refTarget: UInt64?
+    let refTarget: LivEntityID?
 }
 
 /// One row per property, values in cell order — a multi-valued property

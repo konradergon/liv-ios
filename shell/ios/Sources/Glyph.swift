@@ -872,7 +872,7 @@ func livGlyphSelfCheck() -> [String] {
     var fail: [String] = []
 
     func row(
-        _ id: UInt64, kinds: [String]? = nil, status: String? = nil,
+        _ id: LivEntityID, kinds: [String]? = nil, status: String? = nil,
         cells: [CellRow]? = nil
     ) -> EntityRow {
         EntityRow(id: id, title: "t", kinds: kinds, status: status, cells: cells)

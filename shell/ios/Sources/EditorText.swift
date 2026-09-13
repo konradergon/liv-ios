@@ -54,7 +54,7 @@ final class EditorBridge: ObservableObject {
     /// Finish the `[[` being typed with a real target.
     /// Write a link to `id` where the caret is: over the `[[query` being
     /// typed when there is one, else inserted whole.
-    func placeLink(id: UInt64, name: String) {
+    func placeLink(id: LivEntityID, name: String) {
         coordinator?.placeLink(id: id, name: name)
     }
 
@@ -225,7 +225,7 @@ enum MarkStyler {
 
     /// The digits inside a `[[…]]` token — the same grammar the codec
     /// parses, so what is tappable and what is stored can never disagree.
-    private static func refId(_ line: String, _ token: NSRange) -> UInt64? {
+    private static func refId(_ line: String, _ token: NSRange) -> LivEntityID? {
         let n = line as NSString
         guard token.length > 4 else { return nil }
         var digits = ""
@@ -236,7 +236,7 @@ enum MarkStyler {
             digits.append(Character(UnicodeScalar(c)!))
             i += 1
         }
-        return UInt64(digits)
+        return LivEntityID(digits)
     }
 
     private static func style(
@@ -931,7 +931,7 @@ struct MarkdownEditor: UIViewRepresentable {
     /// verbs SwiftUI calls back with.
     var bridge: EditorBridge
     /// A tapped `[[…]]` — the desk opens it as a tab.
-    var onOpenRef: (UInt64) -> Void
+    var onOpenRef: (LivEntityID) -> Void
     /// The toolbar's link key — NoteEditor presents SEARCH.
     var onLink: () -> Void
     /// The toolbar's `+` — NoteEditor raises the insert menu.
@@ -947,7 +947,7 @@ struct MarkdownEditor: UIViewRepresentable {
     var embedded: Bool = false
     /// Whose caret to remember (LivCaret). 0 for a record's notes, which
     /// live inside a card that is not torn down by navigation.
-    var note: UInt64 = 0
+    var note: LivEntityID = 0
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView(showsTitle: showsTitle)
@@ -1301,7 +1301,7 @@ struct MarkdownEditor: UIViewRepresentable {
         /// The published range can lapse while the sheet is up — the
         /// text view is no longer first responder — so this rescans
         /// before giving up on it.
-        func placeLink(id: UInt64, name: String) {
+        func placeLink(id: LivEntityID, name: String) {
             if parent.bridge.openLink == nil, let view,
                 let fresh = MarkScan.openLink(
                     view.text, caret: view.selectedRange.location)
@@ -1315,7 +1315,7 @@ struct MarkdownEditor: UIViewRepresentable {
             completeLink(id: id, name: name)
         }
 
-        private func completeLink(id: UInt64, name: String) {
+        private func completeLink(id: LivEntityID, name: String) {
             guard let view, let link = parent.bridge.openLink else { return }
             // The published range can only lag by a runloop hop, but a hop
             // is enough if the buffer moved: verify before replacing, and
@@ -1555,7 +1555,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // A tap on a link follows it (Obsidian's shipped iOS grammar —
             // long-press still places the caret through the native loupe).
             if let id = hit(.livRef, at: point)?.value {
-                parent.onOpenRef(UInt64(truncating: id))
+                parent.onOpenRef(LivEntityID(truncating: id))
                 return
             }
             guard let result = EditOps.toggleTask(view.text, at: characterIndex(of: point))

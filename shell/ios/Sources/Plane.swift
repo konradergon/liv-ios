@@ -57,7 +57,7 @@ struct DeskTab: Identifiable {
 /// reversed.
 enum DeskTabContent: Equatable {
     /// Notes: the tab IS a document. What a tab always was.
-    case entity(UInt64)
+    case entity(LivEntityID)
     /// Every other view: a saved POSITION, encoded by the view that owns
     /// it (Reading B, team 2026-08-22).
     ///
@@ -110,14 +110,14 @@ struct DeskPlane {
 struct DeskPlanes {
     /// The workspace these belong to. Every key is scoped by it, so a
     /// switch is a reload and never a merge.
-    private(set) var workspaceId: UInt64
+    private(set) var workspaceId: LivEntityID
     /// The documents you have open. One set, for the whole app.
     private var desk: DeskPlane
     /// Where each tool was left, in that view's own vocabulary
     /// (`Positions.swift`). One token each; absent means its own root.
     private var spots: [Feature: String]
 
-    init(workspace: UInt64) {
+    init(workspace: LivEntityID) {
         workspaceId = workspace
         (desk, spots) = Self.load(workspace)
     }
@@ -194,7 +194,7 @@ struct DeskPlanes {
     /// there is none. Returns the tab to focus — appending and focusing
     /// are the whole difference tabs make, and opening a second note no
     /// longer replaces the first.
-    mutating func open(entity: UInt64) -> UUID {
+    mutating func open(entity: LivEntityID) -> UUID {
         if let existing = desk.tabs.first(where: { $0.content == .entity(entity) }) {
             return existing.id
         }
@@ -260,7 +260,7 @@ struct DeskPlanes {
     /// Is there anything for the sweep to take? A plain read, so a
     /// caller can ask without touching the `@Published` struct that
     /// holds it — see `DeskModel.dropRecordDocument`.
-    func hasStrangers(shapeOf: (UInt64) -> TabShape, knows: (UInt64) -> Bool) -> Bool {
+    func hasStrangers(shapeOf: (LivEntityID) -> TabShape, knows: (LivEntityID) -> Bool) -> Bool {
         desk.tabs.contains { tab in
             guard case .entity(let id) = tab.content else { return false }
             return shapeOf(id) == .record || !knows(id)
@@ -268,7 +268,7 @@ struct DeskPlanes {
     }
 
     mutating func dropRecordsAndStrangers(
-        shapeOf: (UInt64) -> TabShape, knows: (UInt64) -> Bool
+        shapeOf: (LivEntityID) -> TabShape, knows: (LivEntityID) -> Bool
     ) {
         let before = desk.tabs.count
         desk.tabs.removeAll { tab in
@@ -286,7 +286,7 @@ struct DeskPlanes {
 
     /// Swap the workspace. The outgoing planes are saved under THEIR keys
     /// first, so a switch is never a loss; the incoming ones replace them.
-    mutating func adopt(workspace id: UInt64) {
+    mutating func adopt(workspace id: LivEntityID) {
         persist()  // the OUTGOING workspace — `workspaceId` still points at it
         workspaceId = id
         (desk, spots) = Self.load(id)
@@ -321,7 +321,7 @@ struct DeskPlanes {
     ///
     /// The old keys are left on disk, readable, rather than deleted —
     /// the same courtesy the 2026-08-22 migration paid v1.
-    private static func load(_ workspace: UInt64) -> (DeskPlane, [Feature: String]) {
+    private static func load(_ workspace: LivEntityID) -> (DeskPlane, [Feature: String]) {
         var spots: [Feature: String] = [:]
 
         // v3: already migrated.
@@ -388,7 +388,7 @@ struct DeskPlanes {
         var plane = DeskPlane()
         for token in stored["ids"] as? [String] ?? [] {
             let content: DeskTabContent =
-                UInt64(token).map { .entity($0) } ?? .position(token)
+                LivEntityID(token).map { .entity($0) } ?? .position(token)
             plane.tabs.append(
                 DeskTab(
                     id: UUID(), content: content,
@@ -404,7 +404,7 @@ struct DeskPlanes {
     /// the plane alone would bring back a four-day-old tab set and
     /// silently drop the note actually in use, so the live document is
     /// added and focused, and its key is then removed. One truth, once.
-    private static func foldInLiveDocument(_ plane: DeskPlane, workspace: UInt64) -> DeskPlane {
+    private static func foldInLiveDocument(_ plane: DeskPlane, workspace: LivEntityID) -> DeskPlane {
         var plane = plane
         let docKey = WorkspaceModel.docKey(workspace)
         guard let saved = UserDefaults.standard.object(forKey: docKey) as? NSNumber,
@@ -464,7 +464,7 @@ struct DeskPlanes {
     // MARK: the self-checks' own corner
 
     /// A workspace no user has. Self-check only.
-    static let scratchWorkspace: UInt64 = .max
+    static let scratchWorkspace: LivEntityID = .max
 
     /// Self-check only: leave nothing behind.
     static func forgetScratch() {

@@ -39,7 +39,7 @@ enum NoteExport {
     /// A filename a human can find again: the note's own name, stripped
     /// of everything a filesystem argues about, capped so no path limit
     /// is ever the reason an export fails. Never empty.
-    static func filename(_ name: String, id: UInt64) -> String {
+    static func filename(_ name: String, id: LivEntityID) -> String {
         let bad = CharacterSet(charactersIn: "/\\?%*|\"<>:\n\r\t")
         let cleaned = name
             .components(separatedBy: bad).joined(separator: " ")

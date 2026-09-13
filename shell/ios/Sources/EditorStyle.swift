@@ -194,7 +194,7 @@ enum MarkScan {
                     digitStr.append(Character(UnicodeScalar(u[j])!))
                     j += 1
                 }
-                if !digitStr.isEmpty, UInt64(digitStr) != nil {
+                if !digitStr.isEmpty, LivEntityID(digitStr) != nil {
                     if j + 1 < u.count, u[j] == 0x5D, u[j + 1] == 0x5D {
                         out.append(
                             .refToken(NSRange(location: i, length: j + 2 - i), name: nil))
@@ -659,7 +659,7 @@ extension EditOps {
     /// bracket into the note per save. Fixed in the codec 2026-08-11 and
     /// missed here, because there were two builders (standing rule 4).
     static func completeLink(
-        _ text: String, token: NSRange, id: UInt64, name: String
+        _ text: String, token: NSRange, id: LivEntityID, name: String
     ) -> EditResult {
         let inserted = SpanText.token(id, name: name)
         let out = ns(text).replacingCharacters(in: token, with: inserted)

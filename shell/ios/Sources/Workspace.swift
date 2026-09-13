@@ -94,17 +94,17 @@ enum LivTerms {
 /// lens — the box is its only home (the wire carries it since the M4 ffi
 /// addition; no device-side copy, no second source of truth).
 struct WorkspaceRow: Decodable, Identifiable {
-    var wsId: UInt64?
+    var wsId: LivEntityID?
     var name: String?
     var emoji: String?
     var favorite: Bool?
     var archived: Bool?
     var builtin: String?
-    var parent: UInt64?
+    var parent: LivEntityID?
     var order: Double?
     var query: String?
 
-    var id: UInt64 { wsId ?? 0 }
+    var id: LivEntityID { wsId ?? 0 }
     var display: String { (name ?? "").isEmpty ? "#\(id)" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
@@ -116,11 +116,11 @@ struct WorkspaceRow: Decodable, Identifiable {
 /// One saved filter: a view entity with a `query` cell — the same shape a
 /// workspace has, minus the stamp.
 struct SavedViewRow: Decodable, Identifiable {
-    var viewId: UInt64?
+    var viewId: LivEntityID?
     var name: String?
     var query: String?
 
-    var id: UInt64 { viewId ?? 0 }
+    var id: LivEntityID { viewId ?? 0 }
     var display: String { (name ?? "").isEmpty ? "#\(id)" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
@@ -135,17 +135,17 @@ struct SavedViewRow: Decodable, Identifiable {
 /// active choice is device state (UserDefaults), like the desk's tabs.
 final class WorkspaceModel: ObservableObject {
     /// 0 = "All" — no lens, no stamp. Persisted; drives the desk's tab set.
-    @Published private(set) var activeId: UInt64 = 0
+    @Published private(set) var activeId: LivEntityID = 0
     /// A saved filter ANDed on top of the workspace lens. Transient by
     /// design: a filter narrows a session, a workspace IS the session.
-    @Published var activeFilterId: UInt64?
+    @Published var activeFilterId: LivEntityID?
     @Published private(set) var workspaces: [WorkspaceRow] = []
     @Published private(set) var filters: [SavedViewRow] = []
 
     static let activeKey = "workspace.active"
 
     init() {
-        activeId = UInt64(UserDefaults.standard.integer(forKey: Self.activeKey))
+        activeId = LivEntityID(UserDefaults.standard.integer(forKey: Self.activeKey))
     }
 
     /// Fold a fresh snapshot in. An active workspace that left the box falls
@@ -209,7 +209,7 @@ final class WorkspaceModel: ObservableObject {
     /// `nil` means no lens is on and every row passes. A Set rather than a
     /// predicate because the answer arrives once per lens change and once
     /// per snapshot, not once per row per render.
-    @Published private(set) var lensIds: Set<UInt64>?
+    @Published private(set) var lensIds: Set<LivEntityID>?
 
     /// Does this row pass the lens?
     ///
@@ -275,7 +275,7 @@ final class WorkspaceModel: ObservableObject {
     /// return value is the intent; only `landed` is evidence.
     @discardableResult
     func stamp(
-        _ id: UInt64, in box: BoxModel,
+        _ id: LivEntityID, in box: BoxModel,
         landed: (((property: String, value: String)) -> Void)? = nil
     ) -> [(property: String, value: String)] {
         let cells = stampCells
@@ -291,7 +291,7 @@ final class WorkspaceModel: ObservableObject {
         return cells
     }
 
-    func setActive(_ id: UInt64) {
+    func setActive(_ id: LivEntityID) {
         activeId = id
         activeFilterId = nil
         UserDefaults.standard.set(Int(id), forKey: Self.activeKey)
@@ -299,7 +299,7 @@ final class WorkspaceModel: ObservableObject {
 
     /// The lens, straight off the wire — the box is the only source.
     /// nil = this workspace has no query cell (an unfiltered workspace).
-    func query(of id: UInt64) -> String? {
+    func query(of id: LivEntityID) -> String? {
         guard id != 0 else { return nil }
         let q = workspaces.first { $0.id == id }?.query
         return (q?.isEmpty ?? true) ? nil : q
@@ -307,40 +307,40 @@ final class WorkspaceModel: ObservableObject {
 
     /// The write already went to the box; the next snapshot carries it.
     /// Kept as a no-op seam so call sites read as intent, not plumbing.
-    func rememberQuery(_ id: UInt64, _ query: String) {
+    func rememberQuery(_ id: LivEntityID, _ query: String) {
         objectWillChange.send()
     }
 
-    func forgetQuery(_ id: UInt64) {}
+    func forgetQuery(_ id: LivEntityID) {}
 
     /// The pre-2026-08-22 key: ONE plane per workspace, holding the Notes
     /// tabs. READ-ONLY — nothing writes it. `DeskPlanes.load` (Plane.swift)
     /// reads it once, to become the Notes plane of v2.
-    static func tabsKey(_ workspace: UInt64) -> String {
+    static func tabsKey(_ workspace: LivEntityID) -> String {
         "desk.tabs.v1.\(workspace)"
     }
 
     /// One plane per VIEW per workspace — the 2026-08-22 shape.
     /// READ-ONLY since 2026-08-28:  folds these into the
     /// one desk and leaves them where they are.
-    static func planeKey(_ workspace: UInt64, _ view: String) -> String {
+    static func planeKey(_ workspace: LivEntityID, _ view: String) -> String {
         "desk.tabs.v2.\(workspace).\(view)"
     }
 
     /// THE DESK: the documents open in one workspace. One key, because
     /// there is one desk (2026-08-28).
-    static func deskKey(_ workspace: UInt64) -> String {
+    static func deskKey(_ workspace: LivEntityID) -> String {
         "desk.v3.\(workspace)"
     }
 
     /// Where each tool was left, view name to position token. One small
     /// map beside the desk, because a place is singular.
-    static func spotsKey(_ workspace: UInt64) -> String {
+    static func spotsKey(_ workspace: LivEntityID) -> String {
         "desk.spots.v3.\(workspace)"
     }
 
     /// The one open document, per workspace.
-    static func docKey(_ workspace: UInt64) -> String {
+    static func docKey(_ workspace: LivEntityID) -> String {
         "desk.doc.v1.\(workspace)"
     }
 }

@@ -41,7 +41,7 @@ private struct CalendarDayItem: Identifiable {
 
 /// A block held by the drag, mid-flight.
 private struct LiftedBlock: Equatable {
-    let id: UInt64
+    let id: LivEntityID
     /// Minutes-of-day where its start currently sits.
     let minutes: Int
     /// THE FINGER IS STILL DOWN. False means the block has LANDED and is
@@ -756,7 +756,7 @@ struct CalendarView: View {
         create(on: selectedDay, minutes: minutes, allDay: false)
     }
 
-    private func startMinutes(_ id: UInt64, _ frames: [HourFrame]) -> Int {
+    private func startMinutes(_ id: LivEntityID, _ frames: [HourFrame]) -> Int {
         frames.first { $0.item.row.id == id }?.start ?? 0
     }
 
@@ -973,7 +973,7 @@ struct CalendarView: View {
     /// to occurrence SERIES rows too — a filtered surface filters whole.
     private func itemsByDay() -> [Int64: [CalendarDayItem]] {
         var out: [Int64: [CalendarDayItem]] = [:]
-        var datedIds: [Int64: Set<UInt64>] = [:]
+        var datedIds: [Int64: Set<LivEntityID>] = [:]
         for id in box.snap?.dated ?? [] {
             guard let row = box.entity(id), row.trashed != true,
                 let due = row.due, workspaces.admits(row)
@@ -1011,7 +1011,7 @@ struct CalendarView: View {
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
-    private func toggleStatus(_ id: UInt64) {
+    private func toggleStatus(_ id: LivEntityID) {
         guard let row = box.entity(id) else { return }
         let doneNames = Set(
             taskOptions.filter { $0.completes == true }.compactMap(\.name))
@@ -1583,17 +1583,17 @@ func livCalendarSelfCheck() -> [String] {
 struct HourGridDrag: UIViewRepresentable {
     /// One movable block, in the scroll view's CONTENT coordinates.
     struct Target {
-        let id: UInt64
+        let id: LivEntityID
         let rect: CGRect
     }
 
     let targets: [Target]
-    let onLift: (UInt64) -> Void
+    let onLift: (LivEntityID) -> Void
     /// `where` is in WINDOW space, for anything positioned against the
     /// screen rather than against the grid's own scrolled content — the
     /// trash zone is.
-    let onMove: (UInt64, CGFloat, CGPoint) -> Void
-    let onDrop: (UInt64, CGFloat, CGPoint) -> Void
+    let onMove: (LivEntityID, CGFloat, CGPoint) -> Void
+    let onDrop: (LivEntityID, CGFloat, CGPoint) -> Void
     let onCancel: () -> Void
     /// The same press, landing on EMPTY grid: a box is placed at that
     /// minute, dragged while the finger is down, and written on release
@@ -1625,9 +1625,9 @@ struct HourGridDrag: UIViewRepresentable {
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var targets: [Target] = []
-        var onLift: (UInt64) -> Void = { _ in }
-        var onMove: (UInt64, CGFloat, CGPoint) -> Void = { _, _, _ in }
-        var onDrop: (UInt64, CGFloat, CGPoint) -> Void = { _, _, _ in }
+        var onLift: (LivEntityID) -> Void = { _ in }
+        var onMove: (LivEntityID, CGFloat, CGPoint) -> Void = { _, _, _ in }
+        var onDrop: (LivEntityID, CGFloat, CGPoint) -> Void = { _, _, _ in }
         var onCancel: () -> Void = {}
         var onPlace: (Int) -> Void = { _ in }
         var onPlaceMove: (Int) -> Void = { _ in }
@@ -1638,7 +1638,7 @@ struct HourGridDrag: UIViewRepresentable {
         weak var content: UIView?
         weak var scroll: UIScrollView?
 
-        private var lifted: UInt64?
+        private var lifted: LivEntityID?
         private var origin: CGPoint = .zero
         /// The minutes of the box being PLACED, while the finger is down
         /// on empty grid.

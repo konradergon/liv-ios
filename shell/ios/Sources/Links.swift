@@ -20,7 +20,7 @@ import SwiftUI
 /// same create row, because a second picker is a second thing to keep
 /// true (standing rule 4).
 struct LinksSection: View {
-    let id: UInt64
+    let id: LivEntityID
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -121,7 +121,7 @@ struct LinksSection: View {
         }
     }
 
-    private func link(to target: UInt64) {
+    private func link(to target: LivEntityID) {
         guard target != 0, target != id else { return }
         box.addCell(id, "related", "#\(target)") { _ in load() }
     }

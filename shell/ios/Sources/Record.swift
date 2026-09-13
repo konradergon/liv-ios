@@ -63,7 +63,7 @@ enum TabShape {
 /// (owner, 2026-08-08). Every edit inside saves as you make it, so the
 /// card holds nothing that could be lost.
 struct RecordCard: View {
-    let id: UInt64
+    let id: LivEntityID
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
     /// The embedded editor's [[ picker offers a Create row, which stamps
@@ -95,7 +95,7 @@ struct RecordCard: View {
 
 /// The pill a minimised card leaves behind. One at a time.
 struct MinimisedRecordPill: View {
-    let id: UInt64
+    let id: LivEntityID
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
 
@@ -171,7 +171,7 @@ extension View {
 }
 
 struct RecordBody: View {
-    let id: UInt64
+    let id: LivEntityID
     /// A record created a moment ago: open with the caret in the name.
     var autoFocus: Bool = false
 

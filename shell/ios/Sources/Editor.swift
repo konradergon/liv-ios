@@ -56,7 +56,7 @@ enum BlockJSON: Equatable {
 enum SpanJSON: Equatable {
     case text(String, marks: UInt8)
     case brk(BlockJSON)
-    case ref(UInt64)
+    case ref(LivEntityID)
 }
 
 extension SpanJSON: Codable {
@@ -123,7 +123,7 @@ extension SpanJSON: Codable {
             } else {
                 self = .brk(.other)
             }
-        } else if let id = try? c.decode(UInt64.self, forKey: .Ref) {
+        } else if let id = try? c.decode(LivEntityID.self, forKey: .Ref) {
             self = .ref(id)
         } else {
             // An unknown span kind: keep the document, lose nothing that was
@@ -208,7 +208,7 @@ enum SpanText {
     /// the token's. The scanner closed there, the leftover "]" fell into
     /// the note as text, and it compounded: one bracket per save, five
     /// saves gave "]]]]] today" (measured, 2026-08-11).
-    static func token(_ id: UInt64, name: String?) -> String {
+    static func token(_ id: LivEntityID, name: String?) -> String {
         let raw = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return "[[\(id)]]" }
         let clean =
@@ -228,7 +228,7 @@ enum SpanText {
     /// stores the structure. Ordered numbers are presentation: each
     /// consecutive run counts from 1, per depth, whatever was typed.
     static func spansToText(
-        _ spans: [SpanJSON], name: (UInt64) -> String? = { _ in nil }
+        _ spans: [SpanJSON], name: (LivEntityID) -> String? = { _ in nil }
     ) -> String {
         var out = ""
         var wrote = false
@@ -360,7 +360,7 @@ enum SpanText {
     }
 
     static func textToSpans(
-        _ text: String, isKnown: (UInt64) -> Bool = { _ in true }
+        _ text: String, isKnown: (LivEntityID) -> Bool = { _ in true }
     ) -> [SpanJSON] {
         var out: [SpanJSON] = []
         // A fence is the one block that is a RANGE, not a line prefix, so
@@ -440,7 +440,7 @@ enum SpanText {
     /// carries the mark bit, ref tokens become Refs (or stay literal
     /// when unknown). Plain stretches between runs are plain text.
     private static func lineSpans(
-        _ content: String, isKnown: (UInt64) -> Bool
+        _ content: String, isKnown: (LivEntityID) -> Bool
     ) -> [SpanJSON] {
         let n = content as NSString
         var out: [SpanJSON] = []
@@ -525,8 +525,8 @@ enum SpanText {
     /// every one of them to catch an escaped hash is the wrong trade.
     static func carriesFormatting(
         _ spans: [SpanJSON],
-        name: (UInt64) -> String? = { _ in nil },
-        isKnown: (UInt64) -> Bool = { _ in true }
+        name: (LivEntityID) -> String? = { _ in nil },
+        isKnown: (LivEntityID) -> Bool = { _ in true }
     ) -> Bool {
         spans.contains { span in
             switch span {
@@ -565,8 +565,8 @@ enum SpanText {
 
     private static func roundTrip(
         _ spans: [SpanJSON],
-        name: (UInt64) -> String? = { _ in nil },
-        isKnown: (UInt64) -> Bool = { _ in true }
+        name: (LivEntityID) -> String? = { _ in nil },
+        isKnown: (LivEntityID) -> Bool = { _ in true }
     ) -> [SpanJSON] {
         normalised(textToSpans(spansToText(spans, name: name), isKnown: isKnown))
     }
@@ -582,14 +582,14 @@ enum SpanText {
 
     /// "[[" digits ("|" anything-without-"]]")? "]]" — or nil, and the "[["
     /// stays literal text. Never lenient: a half-typed token is text.
-    private static func token(_ c: [Character], from start: Int) -> (UInt64, Int)? {
+    private static func token(_ c: [Character], from start: Int) -> (LivEntityID, Int)? {
         var i = start + 2
         var digits = ""
         while i < c.count, c[i].isASCII, c[i].isNumber {
             digits.append(c[i])
             i += 1
         }
-        guard !digits.isEmpty, let id = UInt64(digits) else { return nil }
+        guard !digits.isEmpty, let id = LivEntityID(digits) else { return nil }
         if i + 1 < c.count, c[i] == "]", c[i + 1] == "]" { return (id, i + 2) }
         guard i < c.count, c[i] == "|" else { return nil }
         i += 1
@@ -714,7 +714,7 @@ final class NoteEditorModel: ObservableObject {
     var dirty: Bool { loaded && !missing && edits.dirty }
 
     private weak var box: BoxModel?
-    private var id: UInt64 = 0
+    private var id: LivEntityID = 0
     private var idleTimer: Timer?
     private var checkpointTimer: Timer?
     private var saving = false
@@ -725,7 +725,7 @@ final class NoteEditorModel: ObservableObject {
 
     // MARK: lifecycle
 
-    func attach(box: BoxModel, id: UInt64) {
+    func attach(box: BoxModel, id: LivEntityID) {
         guard self.box == nil else {
             // Re-appear after a full-screen cover (a feature window, the
             // tab view, search, the camera): the cover fired onDisappear →
@@ -757,7 +757,7 @@ final class NoteEditorModel: ObservableObject {
         checkpointTimer = nil
     }
 
-    private func title(_ target: UInt64) -> String? {
+    private func title(_ target: LivEntityID) -> String? {
         guard let row = box?.entity(target), let t = row.title, !t.isEmpty else { return nil }
         return t
     }
@@ -885,7 +885,7 @@ final class NoteEditorModel: ObservableObject {
         let mark = edits.inFlight()
         // Ruling 5: a token pointing at nothing in THIS box saves as text,
         // never as a Ref the core would refuse.
-        let known: (UInt64) -> Bool = { [weak box] id in box?.entity(id) != nil }
+        let known: (LivEntityID) -> Bool = { [weak box] id in box?.entity(id) != nil }
         let spans = SpanText.textToSpans(payload, isKnown: known)
         attempt(box: box, json: SpanText.json(spans), mark: mark, base: base, retries: 3) {
             [weak self] outcome in
@@ -1031,14 +1031,14 @@ final class NoteEditorModel: ObservableObject {
 // MARK: - the view: the note IS the screen
 
 struct NoteEditor: View {
-    let id: UInt64
+    let id: LivEntityID
     /// The note's name cell, edited in the title line that scrolls with
     /// the body (Obsidian's layout — owner, 2026-08-01).
     @Binding var title: String
     var onTitleCommit: () -> Void
     /// A tapped `[[…]]` lands as a desk tab — the shell's one rule for
     /// opening anything from anywhere.
-    var onOpenRef: (UInt64) -> Void = { _ in }
+    var onOpenRef: (LivEntityID) -> Void = { _ in }
     /// A note created a moment ago: open with the caret already in it, so
     /// "Create a note" lands you writing, not looking at a blank screen.
     var autoFocus: Bool = false
@@ -1311,7 +1311,7 @@ func livSpanCodecSelfCheck() -> [String] {
     func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
         if !ok { failures.append("FAIL \(label) \(detail())") }
     }
-    let names: (UInt64) -> String? = { id in id == 4155 ? "Kitchen rebuild" : nil }
+    let names: (LivEntityID) -> String? = { id in id == 4155 ? "Kitchen rebuild" : nil }
 
     // 1. text → spans → text, over every shape the buffer can hold.
     for sample in [
@@ -1499,7 +1499,7 @@ func livSpanCodecSelfCheck() -> [String] {
     //     token's own delimiters, so any "]" in it can close the token
     //     early. The buffer must survive being written with the name and
     //     read back — repeatedly, since a leak compounds every save.
-    let bracket: (UInt64) -> String? = { _ in "Q3 [final]" }
+    let bracket: (LivEntityID) -> String? = { _ in "Q3 [final]" }
     var cycled: [SpanJSON] = [.text("see ", marks: 0), .ref(4155), .text(" today", marks: 0)]
     for _ in 0..<5 {
         cycled = SpanText.textToSpans(SpanText.spansToText(cycled, name: bracket))

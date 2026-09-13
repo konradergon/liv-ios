@@ -34,7 +34,7 @@ struct WorkspaceSwitcher: View {
     /// nil while composing a NEW workspace; the id being edited otherwise.
     /// Editing exists because the box ships a seeded "Home" workspace: with
     /// a create-only form it could never become a workspace at all.
-    @State private var editing: UInt64?
+    @State private var editing: LivEntityID?
     @State private var draftName = ""
     @State private var draftQuery = ""
     @State private var composingFilter = false
@@ -148,7 +148,7 @@ struct WorkspaceSwitcher: View {
         if pick.forFilter { filterQuery = next } else { draftQuery = next }
     }
 
-    private func choose(_ id: UInt64, close: Bool = true) {
+    private func choose(_ id: LivEntityID, close: Bool = true) {
         workspaces.setActive(id)
         if close { onClose() }
     }
@@ -341,7 +341,7 @@ struct WorkspaceSwitcher: View {
 
     /// The `query` cell IS the workspace. An emptied query clears the cell
     /// rather than leaving a stale lens behind.
-    private func write(_ query: String, to id: UInt64) {
+    private func write(_ query: String, to id: LivEntityID) {
         if query.isEmpty {
             box.unset(id, "query")
         } else {
@@ -353,7 +353,7 @@ struct WorkspaceSwitcher: View {
         workspaces.rememberQuery(id, query)
     }
 
-    private func finish(_ id: UInt64) {
+    private func finish(_ id: LivEntityID) {
         draftName = ""
         draftQuery = ""
         composing = false

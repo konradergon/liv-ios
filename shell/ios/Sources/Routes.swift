@@ -53,7 +53,7 @@ enum Route: Equatable {
     /// decides tab or card from the entity's shape, so the spec's
     /// "opens as a Desk tab" comes out right for a note and correctly
     /// opens a card for a task.
-    case entity(UInt64)
+    case entity(LivEntityID)
 
     /// PARSE ONLY — no side effects, so the suite can check every shape
     /// without a running desk.
@@ -72,7 +72,7 @@ enum Route: Equatable {
         case ("capture", "photo"):
             self = .capturePhoto
         case ("entity", let id?):
-            guard let n = UInt64(id) else { return nil }
+            guard let n = LivEntityID(id) else { return nil }
             self = .entity(n)
         case (let name, nil):
             if let feature = Feature(rawValue: name) {

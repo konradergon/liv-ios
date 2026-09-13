@@ -64,7 +64,7 @@ private final class FurnishPass {
     /// and the word "subjects" appearing as free text is left alone,
     /// because a person searching for that word still means the word.
     private func renameInQueries(_ snap: Snapshot, from old: String, to new: String) {
-        let rows: [(UInt64, String)] =
+        let rows: [(LivEntityID, String)] =
             (snap.workspaces ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
             + (snap.views ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
         for (id, text) in rows {
@@ -159,7 +159,7 @@ private final class FurnishPass {
         }
     }
 
-    private func addOptions(to property: UInt64, skipping held: [String]) {
+    private func addOptions(to property: LivEntityID, skipping held: [String]) {
         guard property != 0 else { return }
         for name in Furnish.areaNames {
             guard

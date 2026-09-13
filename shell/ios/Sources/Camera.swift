@@ -15,7 +15,7 @@ import UniformTypeIdentifiers
 // MARK: - session tray rows
 
 private struct CameraShot: Identifiable {
-    let id: UInt64  // the committed entity — real from the shutter sound
+    let id: LivEntityID  // the committed entity — real from the shutter sound
     let thumb: UIImage?
 }
 
@@ -272,7 +272,7 @@ struct CameraFlow: View {
     /// Fires on Done with the session's committed entity ids, in shot
     /// order. The chrome may open the last one as a desk tab; the flow
     /// itself never leaves the viewfinder mid-session.
-    var onDone: (([UInt64]) -> Void)? = nil
+    var onDone: (([LivEntityID]) -> Void)? = nil
 
     @EnvironmentObject var model: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
@@ -282,10 +282,10 @@ struct CameraFlow: View {
 
     @State private var permission: CameraPermission = .unknown
     @State private var shots: [CameraShot] = []
-    @State private var target: UInt64 = 0
+    @State private var target: LivEntityID = 0
     @State private var caption = ""
-    @State private var captions: [UInt64: String] = [:]
-    @State private var applied: [UInt64: [CameraApplied]] = [:]
+    @State private var captions: [LivEntityID: String] = [:]
+    @State private var applied: [LivEntityID: [CameraApplied]] = [:]
     @State private var applyAll = false
     @State private var adding: CameraChipKind?
     @State private var chipText = ""
@@ -836,7 +836,7 @@ struct CameraFlow: View {
         }
     }
 
-    private func retarget(_ id: UInt64) {
+    private func retarget(_ id: LivEntityID) {
         commitCaption()
         target = id
         caption = captions[id] ?? ""

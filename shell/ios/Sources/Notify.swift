@@ -29,7 +29,7 @@ final class Notify: NSObject, ObservableObject {
     /// Where a tapped notification lands: the entity opens as a desk tab.
     /// Wired by the chrome once it exists; a cold-launch tap that beats
     /// the wiring parks its id here and flushes on assignment.
-    var onOpen: ((UInt64) -> Void)? {
+    var onOpen: ((LivEntityID) -> Void)? {
         didSet {
             if let id = pendingOpen, let onOpen {
                 pendingOpen = nil
@@ -37,7 +37,7 @@ final class Notify: NSObject, ObservableObject {
             }
         }
     }
-    private var pendingOpen: UInt64?
+    private var pendingOpen: LivEntityID?
 
     /// What the pending queue holds — Settings' honesty line.
     @Published private(set) var scheduledCount = 0
@@ -81,7 +81,7 @@ final class Notify: NSObject, ObservableObject {
     }
 
     private struct Slot {
-        let entity: UInt64
+        let entity: LivEntityID
         let title: String
         let body: String
         let fire: Date
@@ -240,7 +240,7 @@ extension Notify: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         if let raw = response.notification.request.content.userInfo["entity"] as? String,
-            let id = UInt64(raw)
+            let id = LivEntityID(raw)
         {
             if let onOpen {
                 onOpen(id)

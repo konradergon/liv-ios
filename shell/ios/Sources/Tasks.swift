@@ -51,8 +51,8 @@ struct TasksView: View {
     }
 
     private struct TasksDuePick: Identifiable {
-        let entity: UInt64
-        var id: UInt64 { entity }
+        let entity: LivEntityID
+        var id: LivEntityID { entity }
     }
 
     private struct TasksGroup: Identifiable {
@@ -347,7 +347,7 @@ struct TasksView: View {
         }
         let filtered = tasks.filter(matchesFilter)
 
-        var used = Set<UInt64>()
+        var used = Set<LivEntityID>()
         var groups: [TasksGroup] = []
         for option in options {
             guard let name = option.name, !name.isEmpty else { continue }

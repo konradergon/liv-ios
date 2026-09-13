@@ -30,17 +30,17 @@
 import SwiftUI
 
 struct HistoryCard: View {
-    let id: UInt64
+    let id: LivEntityID
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
 
     @State private var versions: [ContentVersion] = []
     @State private var loaded = false
     /// The seq being written back, so a double tap is one restore.
-    @State private var restoring: UInt64?
+    @State private var restoring: LivEntityID?
     /// A restore the box refused — a moved base twice over, or a busy
     /// box. Said once, in the row, rather than as a dialog.
-    @State private var refused: UInt64?
+    @State private var refused: LivEntityID?
 
     var body: some View {
         ScrollView {

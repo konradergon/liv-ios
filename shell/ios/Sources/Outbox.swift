@@ -34,7 +34,7 @@ enum OutboxState: String, Codable {
 /// resolved at publish time via the app-injected closure. The field set is
 /// the agreed observable contract (the OutboxContract stub, now retired).
 struct OutboxEntry: Identifiable {
-    let id: UInt64  // entity id
+    let id: LivEntityID  // entity id
     let itemUuid: UUID
     let kind: OutboxKind
     let state: OutboxState
@@ -132,11 +132,11 @@ final class Outbox: ObservableObject {
 
     /// Injected by the app (RootView): entityId -> current title. Called
     /// only at publish time, on main.
-    var titleResolver: (UInt64) -> String? = { _ in nil } {
+    var titleResolver: (LivEntityID) -> String? = { _ in nil } {
         didSet { publish() }
     }
 
-    private var ledger: [UInt64: LedgerRecord]
+    private var ledger: [LivEntityID: LedgerRecord]
 
     private static let log = Logger(subsystem: "app.liv.ios", category: "outbox")
     private static let lastShipKey = "satellite.lastShip"
@@ -190,7 +190,7 @@ final class Outbox: ObservableObject {
 
     /// Called from the BoxModel create paths (via `tracking`). Idempotent;
     /// 0 is never an id.
-    func track(entityId: UInt64, kind: OutboxKind) {
+    func track(entityId: LivEntityID, kind: OutboxKind) {
         guard entityId != 0, ledger[entityId] == nil else { return }
         ledger[entityId] = LedgerRecord(
             uuid: UUID().uuidString, state: .pending, kind: kind,
@@ -201,7 +201,7 @@ final class Outbox: ObservableObject {
 
     /// The one-line Box.swift hook: wrap a create path's `done` so every
     /// committed entity enters the ledger before the caller sees the id.
-    static func tracking(_ kind: OutboxKind, _ done: ((UInt64) -> Void)?) -> (UInt64) -> Void {
+    static func tracking(_ kind: OutboxKind, _ done: ((LivEntityID) -> Void)?) -> (LivEntityID) -> Void {
         { id in
             if id != 0 { Outbox.shared.track(entityId: id, kind: kind) }
             done?(id)
@@ -218,14 +218,14 @@ final class Outbox: ObservableObject {
     func closeBatch(snapshot: Snapshot?) {
         guard let snapshot, let root = satelliteRoot, !Self.denied(root) else { return }
 
-        var rows = [UInt64: EntityRow](minimumCapacity: snapshot.entities?.count ?? 0)
+        var rows = [LivEntityID: EntityRow](minimumCapacity: snapshot.entities?.count ?? 0)
         for row in snapshot.entities ?? [] { rows[row.id] = row }
 
         var items: [WireItem] = []
-        var toShip: [UInt64] = []
+        var toShip: [LivEntityID] = []
         var mediaCopies: [(from: URL, sha: String, ext: String)] = []
-        var mediaByEntity: [UInt64: (sha: String, ext: String)] = [:]
-        var toDrop: [UInt64] = []
+        var mediaByEntity: [LivEntityID: (sha: String, ext: String)] = [:]
+        var toDrop: [LivEntityID] = []
         for (entityId, record) in ledger where record.state == .pending {
             guard let row = rows[entityId] else {
                 // Not in the snapshot: a fresh capture may simply outrun
@@ -494,13 +494,13 @@ final class Outbox: ObservableObject {
         }
     }
 
-    private static func loadLedger() -> [UInt64: LedgerRecord] {
+    private static func loadLedger() -> [LivEntityID: LedgerRecord] {
         guard let data = try? Data(contentsOf: ledgerURL),
             let file = try? JSONDecoder().decode(LedgerFile.self, from: data)
         else { return [:] }
-        var out: [UInt64: LedgerRecord] = [:]
+        var out: [LivEntityID: LedgerRecord] = [:]
         for (key, record) in file.entries {
-            if let entityId = UInt64(key) { out[entityId] = record }
+            if let entityId = LivEntityID(key) { out[entityId] = record }
         }
         return out
     }

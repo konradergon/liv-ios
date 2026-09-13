@@ -13,11 +13,11 @@
 // in 2026-08; `build.sh` has never linked it.
 //
 // **Why a card and not a repointed screen.** An engine id is 16 bytes and
-// `EntityRow.id` is a `UInt64` that appears 236 times across 22 Swift
-// files. Moving one surface means moving that type through all of them,
-// which is a refactor to do with a compiler, not by hand on a machine
-// with no Swift toolchain. So the plumbing lands, this card proves it
-// runs, and the refactor follows on evidence rather than on hope.
+// the shell's was a `UInt64` in 225 places. Moving one surface means
+// moving that type through all of them, which is a refactor to do with a
+// compiler rather than by hand on a machine with no Swift toolchain. So
+// the plumbing landed, this card proved it runs, and the refactor follows
+// on evidence — slice by slice, in `LivID.swift`.
 //
 // **It reads and never writes.** The core box is still the truth; the
 // engine box is built from it and can be deleted at any time. Rebuild

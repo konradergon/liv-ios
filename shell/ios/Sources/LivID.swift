@@ -24,6 +24,22 @@
 
 import Foundation
 
+/// **What the shell calls a thing.**
+///
+/// Today it is `UInt64`, because that is what `core/` ids are and what the
+/// snapshot sends. Slice 3 points it at `LivID`, and the compiler then
+/// names every site that does something a number can do and an id cannot
+/// — a literal `0`, `.max`, arithmetic, a `String` parse.
+///
+/// **The rename was the point of slice 2**, not the alias. 224 sites said
+/// `UInt64` and about ten of them meant something else entirely: a content
+/// fingerprint, the log's seq, a recency key, a wall-clock stamp. Nothing
+/// distinguished them, so any sweep over the type would have caught all of
+/// them, and a fingerprint quietly turned into an id is the kind of bug
+/// that shows up as the wrong note opening a month later. Now the name
+/// says which is which, and that is worth having whatever happens next.
+typealias LivEntityID = UInt64
+
 struct LivID: Hashable, Comparable, Codable, CustomStringConvertible {
     /// Bytes 0–7, big-endian. The v7 timestamp lives in the top 48 bits,
     /// which is why this one leads.

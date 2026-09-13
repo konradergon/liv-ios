@@ -17,8 +17,8 @@ import UIKit
 /// The routed capture whose date is being picked (the Event verb's
 /// second half — the arbitrary date-and-time door).
 private struct InboxDuePick: Identifiable {
-    let entity: UInt64
-    var id: UInt64 { entity }
+    let entity: LivEntityID
+    var id: LivEntityID { entity }
 }
 
 struct InboxView: View {

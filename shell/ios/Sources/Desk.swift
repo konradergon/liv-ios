@@ -512,7 +512,7 @@ struct DeskHost: View {
         .accessibilityLabel("Properties")
     }
 
-    private func noteMenu(_ id: UInt64) -> some View {
+    private func noteMenu(_ id: LivEntityID) -> some View {
         Button {
             endEditing()
             desk.menu = noteVerbs(id)
@@ -527,7 +527,7 @@ struct DeskHost: View {
     /// key: things that ACT on the document, rarely. Every tab is a
     /// document now (Option C), so the kind branch that used to hide
     /// share/export is gone.
-    private func noteVerbs(_ id: UInt64) -> LivMenu {
+    private func noteVerbs(_ id: LivEntityID) -> LivMenu {
         let row = box.entity(id)
         let isFile = TabShape.of(row) == .file
         var items: [LivMenuItem] = [
@@ -716,7 +716,7 @@ struct DeskHost: View {
         let stamp = Civil.stamp(
             day: desk.contextDay ?? Civil.todayDay(),
             hhmm: Int64(LivDue.defaultHHMM))
-        let landed: (UInt64) -> Void = { id in
+        let landed: (LivEntityID) -> Void = { id in
             creating = false
             guard id != 0 else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -751,7 +751,7 @@ struct DeskHost: View {
     /// markdown, handed over as text or as a real .md file so "Save to
     /// Files" produces markdown rather than a .txt of the same words.
     /// Neither writes to the box — sharing a note is a READ.
-    private func shareNote(_ id: UInt64, asFile: Bool) {
+    private func shareNote(_ id: LivEntityID, asFile: Bool) {
         let name = LivName.stored(box.entity(id))
         box.content(id) { doc in
             guard let doc, doc.missing != true else {
@@ -791,7 +791,7 @@ struct DeskHost: View {
     /// A fresh note wearing THIS note's property cells — the filing
     /// context without the body (owner, 2026-08-03). The source is never
     /// touched; the copy opens as a tab with the caret in it.
-    private func duplicate(_ id: UInt64) {
+    private func duplicate(_ id: LivEntityID) {
         guard !copying else { return }
         copying = true
         box.duplicateProperties(of: id) { copy in
@@ -814,7 +814,7 @@ struct DeskHost: View {
     /// trash; a teardown flush after the trash would slip between it and
     /// the Undo, and the chip would undo the wrong thing (found live,
     /// 2026-08-02).
-    private func trashNote(_ id: UInt64) {
+    private func trashNote(_ id: LivEntityID) {
         endEditing()
         box.trash(id)
         desk.layDown()
@@ -952,7 +952,7 @@ struct FloatCircleLabel: View {
 /// floating metadata chevron (DeskHost), and the title, when the entity
 /// has one, is the only thing above the text.
 struct EntityTabBody: View {
-    let id: UInt64
+    let id: LivEntityID
 
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel

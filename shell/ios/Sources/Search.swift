@@ -19,7 +19,7 @@ struct SearchView: View {
     /// link opens search, and the whole `[[id|Name]]` is written for
     /// you. One search screen, two endings; there is no second, smaller
     /// search anywhere in the app.
-    var onPick: ((UInt64, String) -> Void)? = nil
+    var onPick: ((LivEntityID, String) -> Void)? = nil
     /// What was already typed at the door — the `[[kit` in the note.
     var seed: String = ""
 
@@ -53,7 +53,7 @@ struct SearchView: View {
     /// host lives under it at the root — so this surface hosts its own.
     @State private var menu: LivMenu?
     /// Raw ranked ids from the core, before the workspace lens.
-    @State private var rawHits: [UInt64] = []
+    @State private var rawHits: [LivEntityID] = []
     /// How many matched in total. The core sends the first 200; without
     /// this a query matching 1,800 things looked like it matched 200.
     @State private var totalHits = 0
@@ -91,7 +91,7 @@ struct SearchView: View {
     /// `liv_search_at` ranked for the typed query, `lensIds` is what
     /// `liv_query_ids_at` admits for the workspace, and this is their
     /// intersection.
-    private var hits: [UInt64] {
+    private var hits: [LivEntityID] {
         guard let lens = workspaces.lensIds else { return rawHits }
         return rawHits.filter { lens.contains($0) }
     }
@@ -110,9 +110,9 @@ struct SearchView: View {
     /// colour and its glyph can never disagree. This used to read
     /// `kinds.first` on its own, which put a task filed under "note" in
     /// the wrong group.
-    private var groups: [(kind: LivKind, ids: [UInt64])] {
+    private var groups: [(kind: LivKind, ids: [LivEntityID])] {
         var order: [LivKind] = []
-        var byKind: [LivKind: [UInt64]] = [:]
+        var byKind: [LivKind: [LivEntityID]] = [:]
         for id in hits {
             guard let row = box.entity(id) else { continue }
             let kind = LivKind.of(row)
@@ -267,7 +267,7 @@ struct SearchView: View {
 
     /// The one exit that carries a result. Picking REPORTS it; searching
     /// lands at the desk. Both then drop the veil.
-    private func open(_ id: UInt64) {
+    private func open(_ id: LivEntityID) {
         if let onPick {
             onPick(id, box.entity(id).map(livRowTitle) ?? "")
             close()
