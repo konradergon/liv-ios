@@ -1293,20 +1293,27 @@ extension BoxModel {
 
     /// Build the engine box from the core box. Refuses if it is already
     /// there — `rebuildEngineBox` is the way to start over.
-    func convertToEngine(_ done: @escaping (Result<LivConvertReport, String>) -> Void) {
+    ///
+    /// **The value, then the fault**, which is how `query` and `search`
+    /// already answer. `Result` was the first shape here and it does not
+    /// compile: `Result` requires `Failure: Error` and `String` is not
+    /// one. Rather than mint an error type the shell has never needed —
+    /// there is no `: Error` conformance anywhere in it — this matches
+    /// the house style. Exactly one of the two is non-nil.
+    func convertToEngine(_ done: @escaping (LivConvertReport?, String?) -> Void) {
         let from = path
         let to = enginePath
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = liv_view_convert(from, to, &out)
-            let answer = Self.decodeView(LivConvertReport.self, code: code, out: out)
-            DispatchQueue.main.async { done(answer) }
+            let (value, fault) = Self.decodeView(LivConvertReport.self, code: code, out: out)
+            DispatchQueue.main.async { done(value, fault) }
         }
     }
 
     /// Throw the conversion away and build it again. The core box is
     /// never touched, so this is always safe.
-    func rebuildEngineBox(_ done: @escaping (Result<LivConvertReport, String>) -> Void) {
+    func rebuildEngineBox(_ done: @escaping (LivConvertReport?, String?) -> Void) {
         let to = enginePath
         boxQueue.async {
             liv_view_close_all()
@@ -1327,14 +1334,14 @@ extension BoxModel {
     /// thing that puts a task on the wrong side of midnight.
     func engineToday(
         day: Int32, today: Int32, nowMs: Int64,
-        _ done: @escaping (Result<LivTodayView, String>) -> Void
+        _ done: @escaping (LivTodayView?, String?) -> Void
     ) {
         let to = enginePath
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = liv_view_today(to, day, today, nowMs, nil, &out)
-            let answer = Self.decodeView(LivTodayView.self, code: code, out: out)
-            DispatchQueue.main.async { done(answer) }
+            let (value, fault) = Self.decodeView(LivTodayView.self, code: code, out: out)
+            DispatchQueue.main.async { done(value, fault) }
         }
     }
 
@@ -1342,14 +1349,14 @@ extension BoxModel {
     /// 3 unfiled.
     func engineEverything(
         slice: Int32, today: Int32,
-        _ done: @escaping (Result<[LivViewRow], String>) -> Void
+        _ done: @escaping ([LivViewRow]?, String?) -> Void
     ) {
         let to = enginePath
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = liv_view_everything(to, slice, today, nil, &out)
-            let answer = Self.decodeView([LivViewRow].self, code: code, out: out)
-            DispatchQueue.main.async { done(answer) }
+            let (value, fault) = Self.decodeView([LivViewRow].self, code: code, out: out)
+            DispatchQueue.main.async { done(value, fault) }
         }
     }
 
@@ -1372,23 +1379,25 @@ extension BoxModel {
     }
 
     /// Decode one answer from the new seam, freeing the string either way.
+    /// Exactly one of the two is non-nil.
     private static func decodeView<T: Decodable>(
         _ type: T.Type, code: Int32, out: UnsafeMutablePointer<CChar>?
-    ) -> Result<T, String> {
+    ) -> (T?, String?) {
         guard code == 0 else {
             // A failing call writes nothing through `out` — the Rust side
-            // asserts it — so there is nothing to free here.
-            return .failure(viewFault(code))
+            // asserts it on every failure path — so there is nothing to
+            // free here.
+            return (nil, viewFault(code))
         }
-        guard let out else { return .failure("no answer") }
+        guard let out else { return (nil, "no answer") }
         let json = String(cString: out)
         liv_string_free(out)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
-            return .success(try decoder.decode(type, from: Data(json.utf8)))
+            return (try decoder.decode(type, from: Data(json.utf8)), nil)
         } catch {
-            return .failure("decode: \(error)")
+            return (nil, "decode: \(error)")
         }
     }
 }

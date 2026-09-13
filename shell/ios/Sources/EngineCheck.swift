@@ -23,6 +23,19 @@
 // engine box is built from it and can be deleted at any time. Rebuild
 // throws it away and makes it again.
 //
+// WHAT THE HAND-CHECKS MISSED, recorded because the next blind change
+// will be tempted by the same gap. Braces, symbol existence, call arity
+// against `liv.h` and field names against the wire structs were all
+// checked and all passed. What none of them looks at is TYPE CONFORMANCE
+// — the first version of this used `Result<T, String>`, and `Result`
+// requires `Failure: Error`, which `String` is not. Three of the four
+// errors in the build were that one mistake wearing a disguise: with the
+// method signature invalid, `box.convertToEngine` fell through to
+// `EnvironmentObject`'s dynamic-member lookup and complained about a
+// `Binding`. The shell has no `: Error` conformance anywhere, so the fix
+// was the house style it already uses for `query` and `search`: the
+// value, then the fault.
+//
 // DELETION DATE: this card goes when the surfaces move
 // (`design/rust-owns-the-mechanisms.md` §5, stage 4 proper). It is a
 // diagnostic, not a feature, and standing rule 7 says say so.
@@ -111,13 +124,12 @@ struct EngineCheckCard: View {
         if box.engineBoxExists {
             readToday()
         } else {
-            box.convertToEngine { result in
-                switch result {
-                case .success(let r):
-                    report = r
+            box.convertToEngine { made, why in
+                report = made
+                fault = why
+                if made != nil {
                     readToday()
-                case .failure(let why):
-                    fault = why
+                } else {
                     busy = false
                 }
             }
@@ -128,13 +140,12 @@ struct EngineCheckCard: View {
         busy = true
         fault = nil
         today = nil
-        box.rebuildEngineBox { result in
-            switch result {
-            case .success(let r):
-                report = r
+        box.rebuildEngineBox { made, why in
+            report = made
+            fault = why
+            if made != nil {
                 readToday()
-            case .failure(let why):
-                fault = why
+            } else {
                 busy = false
             }
         }
@@ -144,11 +155,11 @@ struct EngineCheckCard: View {
         // DAYS SINCE THE EPOCH, not the packed civil the old ABI uses.
         // `Civil.epochDay` exists so that conversion is named once.
         let day = Civil.epochDay(Civil.todayDay())
-        box.engineToday(day: day, today: day, nowMs: Civil.nowMs()) { result in
-            switch result {
-            case .success(let t): today = t
-            case .failure(let why): fault = why
-            }
+        box.engineToday(day: day, today: day, nowMs: Civil.nowMs()) { read, why in
+            today = read
+            // Only overwrite a fault with a fault: a conversion that
+            // reported something is not made clean by a read that did not.
+            if why != nil { fault = why }
             busy = false
         }
     }
