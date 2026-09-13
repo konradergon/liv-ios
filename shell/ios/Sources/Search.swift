@@ -136,49 +136,46 @@ struct SearchView: View {
         }
     }
 
+    /// THE FIELD IS AT THE THUMB (owner, 2026-09-13, with a screen
+    /// recording: *"Search should be more similar to the video"*).
+    ///
+    /// It was at the top with the word "Cancel" beside it — the shape
+    /// every search screen had in 2010, and a reach on a 2,532px phone.
+    /// The reference puts the field at the BOTTOM, directly above the
+    /// keyboard, as a plain pill with a round ✕ beside it, and lets the
+    /// results fill everything above.
+    ///
+    /// That is also this app's own argument, made twice already: the tab
+    /// switcher was moved because it "used to start 700pt away at the top
+    /// of the screen", and the bar has always been at the foot. Search
+    /// was the last surface reaching upward.
+    ///
+    /// WHAT MOVES WITH IT. The lens chip, the constraint line and the
+    /// facet row sit with the field now rather than under the old header.
+    /// They are what you TAP to narrow, so they belong in the same reach
+    /// as the field — and a facet row halfway up the screen while your
+    /// thumb is on the keyboard was the same reach problem one layer
+    /// down.
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                pill
-                Button {
-                    close()
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close search")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-            if workspaces.lensOn {
-                HStack {
-                    LensChip(label: workspaces.lensLabel)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-            }
-            // WHAT YOU CHOSE, always on screen — the way back when a
-            // constraint has narrowed the list to nothing and the core
-            // sends no facets to un-tap.
-            constraintLine
-            if !facets.isEmpty {
-                facetRow
-            }
             if trimmed.isEmpty {
-                ScrollView {
-                    // NOT "Search": the field above already says that.
-                    // What this line is for is the SCOPE.
-                    EmptyHint("Everything you have")
-                    .padding(.top, 40)
-                }
+                // CENTRED, the way the reference centres its own — not
+                // pinned 40pt under a header that is no longer there.
+                //
+                // NO GLYPH, deliberately, though the reference draws one.
+                // `EmptyHint` lost its glyph and its sentence in rev 66 on
+                // the owner's word about verbose empty states, and the
+                // TYPE lost them so they could not come back one surface
+                // at a time (standing rule 3). Adding one here would
+                // reverse that on a screenshot rather than on his word.
+                Spacer(minLength: 0)
+                EmptyHint("Everything you have")
+                Spacer(minLength: 0)
             } else if hits.isEmpty {
                 // Zero results: the Create row IS the empty state, at the
-                // top of the scroll area so the keyboard never hides it.
+                // head of the results area — which is now the TOP of the
+                // screen rather than just under a header, since the field
+                // moved to the foot.
                 ScrollView {
                     createButton
                         .padding(.horizontal, 16)
@@ -252,6 +249,7 @@ struct SearchView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
             }
+            footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(LivTheme.canvas.ignoresSafeArea())
@@ -319,6 +317,51 @@ struct SearchView: View {
         }
     }
 
+    /// THE FOOT: what narrows the search, and the field itself, in the
+    /// order you reach them. The chips sit ABOVE the field so the field
+    /// stays welded to the top of the keyboard and nothing moves under
+    /// your thumb as facets arrive and leave.
+    @ViewBuilder private var footer: some View {
+        VStack(spacing: 0) {
+            if workspaces.lensOn {
+                HStack {
+                    LensChip(label: workspaces.lensLabel)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+            // WHAT YOU CHOSE, always on screen — the way back when a
+            // constraint has narrowed the list to nothing and the core
+            // sends no facets to un-tap.
+            constraintLine
+            if !facets.isEmpty {
+                facetRow
+            }
+            HStack(spacing: 10) {
+                pill
+                // A ROUND ✕, not the word "Cancel" (the reference's, and
+                // the reason is the same one that took the words off the
+                // bar in rev 68): a glyph everyone already reads, at a
+                // size a thumb can hit, instead of a word spelling out
+                // what the shape already says.
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: LivType.body, weight: .semibold))
+                        .foregroundStyle(LivTheme.text)
+                        .frame(width: LivRow.touch, height: LivRow.touch)
+                        .background(Circle().fill(LivTheme.panel2))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close search")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+        }
+    }
+
     private var pill: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
@@ -343,10 +386,15 @@ struct SearchView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
+        .padding(.horizontal, 14)
+        // AS TALL AS THE ✕ BESIDE IT. It was 34 against a 44pt touch
+        // floor — under Apple's minimum, and visibly shorter than every
+        // other control the app puts at the foot.
+        .frame(height: LivRow.touch)
+        // NO BORDER. Rev 83 took the hairline off the filter chips on the
+        // owner's word; a field is the same shape making the same
+        // promise, and a fill either reads as a well or it does not.
         .background(Capsule().fill(LivTheme.panel2))
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 
     /// NARROW BY WHAT IS THERE, not by what you can spell.

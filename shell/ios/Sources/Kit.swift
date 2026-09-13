@@ -588,10 +588,17 @@ struct ConfirmPill: View {
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: LivType.label, weight: .semibold))
+                // THE APP'S VERB FACE, and as tall as what it sits
+                // beside (2026-09-13). It was `label`(16) in a 34pt
+                // capsule: under the 44pt touch floor, and SMALLER than
+                // the Cancel word next to it — a primary quieter than the
+                // way out. `body`/semibold is the face rev 81 settled on
+                // for a tappable word, and 44 matches the name field
+                // above it in both forms that draw this.
+                .font(.system(size: LivType.body, weight: .semibold))
                 .foregroundStyle(LivTheme.onAccent)
-                .padding(.horizontal, 16)
-                .frame(height: LivChip.tall + 4)
+                .padding(.horizontal, 20)
+                .frame(height: LivRow.touch)
                 .background(Capsule().fill(LivTheme.accent))
                 .contentShape(Capsule())
         }

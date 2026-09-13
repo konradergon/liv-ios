@@ -45,12 +45,27 @@ struct WorkspaceSwitcher: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-                // Making a FILTER shows the filter form and nothing else.
-                // This sheet is the workspace switcher, and the form only
-                // borrows it (standing rule 4: one form, one place) — but
-                // a list of workspaces above a filter you are naming is
-                // the wrong screen (owner, 2026-08-13).
-                if !composingFilter {
+                // A FORM SHOWS THE FORM AND NOTHING ELSE.
+                //
+                // The rule is the owner's, from 2026-08-13: a list of
+                // workspaces above a filter you are naming is the wrong
+                // screen. It was applied to the FILTER form and not to
+                // the workspace one, so naming a workspace left the whole
+                // list of workspaces sitting above the field — the same
+                // shape of miss as the chip row that kept its border
+                // after the rule said otherwise (rev 83).
+                //
+                // The title says which form it is, so the card is never
+                // unlabelled, and editing gets an honest one instead of
+                // borrowing the word "Workspace" from the list it
+                // replaces.
+                if composingFilter {
+                    LivMenuTitle(text: "New filter")
+                    newFilterForm
+                } else if composing {
+                    LivMenuTitle(text: editing == nil ? "New workspace" : "Edit workspace")
+                    newWorkspaceForm
+                } else {
                     // The SAME title and rows the `+` menu wears (owner,
                     // 2026-08-17: bigger text, simpler). This card used
                     // to draw its own smaller, denser list.
@@ -86,22 +101,15 @@ struct WorkspaceSwitcher: View {
                             }
                         }
                     }
-                    if composing {
-                        newWorkspaceForm
-                    } else {
-                        addRow("New workspace…") {
-                            editing = nil
-                            draftName = ""
-                            draftQuery = ""
-                            composing = true
-                        }
+                    // Filters LIVE in the library panel now; only their
+                    // form is still here, opened by the panel's
+                    // "New filter…".
+                    addRow("New workspace…") {
+                        editing = nil
+                        draftName = ""
+                        draftQuery = ""
+                        composing = true
                     }
-                }
-                // Filters LIVE in the library panel now; only their form
-                // is still here, opened by the panel's "New filter…".
-                if composingFilter {
-                    LivMenuTitle(text: "New filter")
-                    newFilterForm
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -179,8 +187,14 @@ struct WorkspaceSwitcher: View {
                     composing = false
                     editing = nil
                 }
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text3)
+                // text2, not text3. A control is not a placeholder, and
+                // text3 is the tier the palette check exempts from the
+                // read floor on the grounds that it holds placeholders
+                // and timestamps (rev 79). It stays QUIETER than the
+                // filled pill beside it, which is the pair a form wants:
+                // one primary, one way out.
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
                 .buttonStyle(.plain)
                 ConfirmPill(editing == nil ? "Create" : "Save", action: saveWorkspace)
                 .disabled(trimmed(draftName).isEmpty)
@@ -254,8 +268,14 @@ struct WorkspaceSwitcher: View {
                 Button("Cancel") {
                     composingFilter = false
                 }
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text3)
+                // text2, not text3. A control is not a placeholder, and
+                // text3 is the tier the palette check exempts from the
+                // read floor on the grounds that it holds placeholders
+                // and timestamps (rev 79). It stays QUIETER than the
+                // filled pill beside it, which is the pair a form wants:
+                // one primary, one way out.
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
                 .buttonStyle(.plain)
                 ConfirmPill("Save", action: createFilter)
                 .disabled(trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty)
@@ -269,19 +289,29 @@ struct WorkspaceSwitcher: View {
 
     /// One dress, one font. The mono variant existed for the raw query
     /// field, which is gone (owner, 2026-08-14).
+    ///
+    /// IT FILLED WITH THE COLOUR BEHIND IT (fixed 2026-09-13, owner:
+    /// *"These spaces need visual polish"*). The card is
+    /// `LivTheme.surface` and this field was `LivTheme.surface`, so the
+    /// only thing separating them was a 0.5pt hairline — which is why
+    /// "Name" read as a placeholder floating loose in the card rather
+    /// than as a field waiting for a word. `panel2` is the app's own
+    /// answer for a well: "a quiet fill for a lit row, a chip, a well".
+    ///
+    /// The border goes with the same argument rev 83 used on the filter
+    /// chips: a fill either reads as a well or it does not, and a
+    /// hairline propping up a fill that does not is two devices for one
+    /// job. The capsule matches the search field, which is the app's
+    /// other place you type a word into a shape.
     private func field(_ prompt: String, text: Binding<String>) -> some View {
         TextField(prompt, text: text)
             .font(.system(size: LivType.body))
             .foregroundStyle(LivTheme.text)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.surface))
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
-            )
+            .padding(.horizontal, 14)
+            .frame(height: LivRow.touch)
+            .background(Capsule().fill(LivTheme.panel2))
     }
 
     private func trimmed(_ s: String) -> String {
