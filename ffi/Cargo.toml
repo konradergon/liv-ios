@@ -20,3 +20,7 @@ liv-views = { path = "../views" }
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+liv-convert = { path = "../convert" }
+liv-services = { path = "../services" }

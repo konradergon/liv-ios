@@ -121,6 +121,11 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             history(&session);
             Ok(())
         }
+        // THE ONE-WAY DOOR (rust-owns-the-mechanisms.md §5, stage 4).
+        // `liv_convert::convert` opens its own Session and would deadlock
+        // against this one — the core is single-writer — so the CLI pours
+        // through the store it already holds.
+        Some((&"convert", rest)) => convert_box(&session, rest),
         // P20j.5 — the vault door from the CLI: the same services seams
         // the shell drives, honoring the projector lock.
         Some((&"vault", sub)) => vault(&mut session, &log_path, sub),
@@ -196,6 +201,48 @@ fn name(session: &mut Session, rest: &[&str]) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     println!("#{id} is now \"{text}\"");
+    Ok(())
+}
+
+/// Write this box out as an engine box, and say what did not fit.
+fn convert_box(session: &Session, rest: &[&str]) -> Result<(), String> {
+    let Some(out) = rest.first() else {
+        return Err("usage: liv --log <box> convert <out.db>".into());
+    };
+    let out = std::path::Path::new(out);
+    if out.exists() {
+        return Err(format!("{} already exists — delete it or pick another name", out.display()));
+    }
+    let mut engine = liv_engine::Engine::open_local(out).map_err(|e| e.to_string())?;
+    let report = liv_convert::pour(session.store(), &mut engine).map_err(|e| e.to_string())?;
+
+    println!("{} entities, {} cells", report.entities, report.cells);
+    println!(
+        "{} resolved onto compiled-in furniture (not copied)",
+        report.resolved
+    );
+    if report.minted_vocabulary > 0 {
+        println!("{} options minted as vocabulary entities", report.minted_vocabulary);
+    }
+    if report.flattened > 0 {
+        println!("{} bodies flattened to markdown (the engine has no blocks yet)", report.flattened);
+    }
+    if report.undeclared > 0 {
+        println!(
+            "{} cells on properties the engine does not know — carried as-is",
+            report.undeclared
+        );
+    }
+    if report.files_dropped > 0 {
+        println!("{} file references dropped (no blob store yet)", report.files_dropped);
+    }
+    for name in &report.unknown_kinds {
+        println!("no kind for type {name:?} — those entities came across without one");
+    }
+    if report.clean() {
+        println!("clean");
+    }
+    println!("wrote {}", out.display());
     Ok(())
 }
 

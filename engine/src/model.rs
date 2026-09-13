@@ -201,6 +201,9 @@ pub mod prop {
     pub const HABIT: EntityId = frozen(CLASS_PROP, 52);
     pub const AUTOMATION: EntityId = frozen(CLASS_PROP, 53);
     pub const RELATED: EntityId = frozen(CLASS_PROP, 54);
+    /// On a kind: which fields it expects. The inverse of `FOR_KIND`, and
+    /// the box has both — one is asked of a kind, the other of a field.
+    pub const EXPECTED: EntityId = frozen(CLASS_PROP, 55);
 }
 
 /// What a property may hold. Closed, so a value that does not fit is
@@ -325,6 +328,7 @@ props! {
     prop::HABIT,           "habit",           false, Holds::RefTo(kind::HABIT),    false;
     prop::AUTOMATION,      "automation",      false, Holds::Bool,                  false;
     prop::RELATED,         "related",         true,  Holds::Ref,                   false;
+    prop::EXPECTED,        "expected",        true,  Holds::RefTo(kind::FIELD),    false;
 }
 
 pub fn prop_def(id: EntityId) -> Option<&'static PropDef> {
@@ -384,6 +388,11 @@ pub mod kind {
     pub const LAYER: EntityId = frozen(CLASS_KIND, 18);
     pub const WIDGET: EntityId = frozen(CLASS_KIND, 19);
     pub const PIN: EntityId = frozen(CLASS_KIND, 20);
+    /// A note the app opens for a given day. A note with a date would
+    /// almost do, and the product may yet decide that is all it is — but
+    /// folding it into NOTE during a conversion would be deciding it by
+    /// accident, in the one place that cannot be undone.
+    pub const DAILY_NOTE: EntityId = frozen(CLASS_KIND, 21);
 }
 
 pub mod area {
@@ -436,6 +445,7 @@ pub fn label(id: EntityId) -> Option<&'static str> {
             18 => "Layer",
             19 => "Widget",
             20 => "Pin",
+            21 => "Daily note",
             _ => return None,
         }),
         CLASS_AREA => Some(match id.0[7] {
@@ -470,6 +480,7 @@ pub const ALL_KINDS: &[EntityId] = &[
     kind::PROJECT, kind::FILE, kind::LIST, kind::HABIT, kind::CHECKIN,
     kind::KIND, kind::FIELD, kind::AREA, kind::STATUS, kind::OPTION,
     kind::WORKSPACE, kind::VIEW, kind::LAYER, kind::WIDGET, kind::PIN,
+    kind::DAILY_NOTE,
 ];
 
 /// Every area, in product order — the six researched rather than
