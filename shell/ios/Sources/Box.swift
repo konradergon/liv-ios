@@ -690,18 +690,44 @@ final class BoxModel: ObservableObject {
     /// blocking notice; a healthy box = the verb was refused on its merits
     /// (log only — mutations must never replay themselves). Box-queue only.
     private func verbFailed(_ verb: String) {
-        guard let (code, message) = probe() else {
+        let (code, message) = Self.health(of: enginePath)
+        guard code != "ok" else {
+            // The box is fine, so the verb was refused ON ITS MERITS — a
+            // value that would not read, a link to nothing. Log it and
+            // stop: a mutation must never replay itself.
             Self.log.notice("\(verb, privacy: .public) refused; box healthy")
             return
         }
         DispatchQueue.main.async {
-            if code == "locked" {
+            // **`io` is the retryable one.** The old ABI had a `locked`
+            // code because opening a core box took the whole file; the
+            // engine holds its connection in WAL mode, so contention is
+            // rare — but a moment of it still reads as `io`, and so does
+            // a file that has genuinely gone. Retrying is right for the
+            // first and harmless for the second, which surfaces as a
+            // fault on the next read either way. `version` and `corrupt`
+            // are never transient and must be shown.
+            if code == "io" {
                 self.beginRetry()
             } else {
                 self.boxFault = message
                 self.busyRetrying = false
             }
         }
+    }
+
+    /// Why the box will not open, synchronously. Box-queue only.
+    ///
+    /// **The one engine verb called without the async wrapper**, because
+    /// its callers are already deciding what to do about a failure and
+    /// cannot hand the answer back to a closure. `liv_probe_box` opens
+    /// the file itself and drops the connection, so it holds nothing a
+    /// retry needs.
+    static func health(of path: String) -> (code: String, message: String) {
+        var out: UnsafeMutablePointer<CChar>?
+        let rc = withUnsafeMutablePointer(to: &out) { liv_probe_box(path, $0) }
+        let (value, _) = decodeView(LivBoxHealth.self, code: rc, out: out)
+        return (value?.code ?? "io", value?.message ?? "The box did not open.")
     }
 
     /// `done` (optional) always receives the verdict — the chip-honesty
@@ -805,7 +831,7 @@ final class BoxModel: ObservableObject {
         let tracked = Outbox.tracking(.idea, done)
         engineCapture(text) { [weak self] id, fault in
             if fault != nil { self?.verbFailed("capture") }
-            tracked?(id ?? .absent)
+            tracked(id ?? .absent)
         }
     }
 
@@ -845,12 +871,12 @@ final class BoxModel: ObservableObject {
             guard let self else { return }
             guard let k = kinds.first(where: { ($0.name ?? "").lowercased() == kindWord }) else {
                 self.verbFailed("make \(kindWord)")
-                tracked?(.absent)
+                tracked(.absent)
                 return
             }
             self.engineMake(kind: k.id) { id, fault in
                 if fault != nil { self.verbFailed("make \(kindWord)") }
-                tracked?(id ?? .absent)
+                tracked(id ?? .absent)
             }
         }
     }
@@ -924,7 +950,7 @@ final class BoxModel: ObservableObject {
         let tracked = Outbox.tracking(.photo, done)
         engineAddFile(path) { [weak self] id, fault in
             if fault != nil { self?.verbFailed("addFile") }
-            tracked?(id ?? .absent)
+            tracked(id ?? .absent)
         }
     }
 
@@ -2072,7 +2098,7 @@ extension BoxModel {
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = withUnsafeMutablePointer(to: &out) { work(to, $0) }
-            let (value, fault) = Self.decodeView(type, code: code, out: out)
+            let (value, fault) = Self.decodeView(T.self, code: code, out: out)
             DispatchQueue.main.async {
                 done(value, fault)
                 self.refresh()
@@ -2090,7 +2116,7 @@ extension BoxModel {
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = withUnsafeMutablePointer(to: &out) { work(to, $0) }
-            let (value, fault) = Self.decodeView(type, code: code, out: out)
+            let (value, fault) = Self.decodeView(T.self, code: code, out: out)
             DispatchQueue.main.async { done(value, fault) }
         }
     }
@@ -2390,7 +2416,7 @@ extension BoxModel {
             // held for the whole call, and freed after.
             let held: [UnsafeMutablePointer<CChar>?] = pairs.map { strdup($0.0) }
             defer { held.forEach { free($0) } }
-            let ptrs: [UnsafePointer<CChar>?] = held.map { $0.map(UnsafePointer.init) }
+            let ptrs: [UnsafePointer<CChar>?] = held.map { p in p.map { UnsafePointer<CChar>($0) } }
             return ptrs.withUnsafeBufferPointer { p in
                 prints.withUnsafeBufferPointer { f in
                     liv_accept_all(to, p.baseAddress, f.baseAddress, UInt32(pairs.count),
