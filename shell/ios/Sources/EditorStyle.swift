@@ -783,13 +783,13 @@ func livEditorSelfCheck() -> [String] {
             box: NSRange(location: 4, length: 3)))
 
     // inline runs
-    let runs = MarkScan.inline("a **b** and `c` [[42|Home]]", from: 0)
+    let runs = MarkScan.inline("a **b** and `c` [[0000000000000000000000000000002a|Home]]", from: 0)
     check("bold found", runs.contains(.bold(NSRange(location: 4, length: 1))), "\(runs)")
     check("code found", runs.contains(.code(NSRange(location: 13, length: 1))), "\(runs)")
     check(
         "ref found",
         runs.contains(
-            .refToken(NSRange(location: 16, length: 11), name: NSRange(location: 21, length: 4))),
+            .refToken(NSRange(location: 16, length: 41), name: NSRange(location: 51, length: 4))),
         "\(runs)")
     check("unclosed bold is text", MarkScan.inline("**open", from: 0).isEmpty)
     check(
@@ -989,7 +989,7 @@ func livEditorSelfCheck() -> [String] {
     check("title drops task marker", livDisplayTitle("- [ ] Call the bank") == "Call the bank")
     check(
         "title drops inline markers",
-        livDisplayTitle("**Pack** the `van` for [[4155|Kitchen rebuild]]")
+        livDisplayTitle("**Pack** the `van` for [[0000000000000000000000000000103b|Kitchen rebuild]]")
             == "Pack the van for Kitchen rebuild")
     check("plain title unchanged", livDisplayTitle("Call the dentist") == "Call the dentist")
     check("rule line titles empty", livDisplayTitle("---") == "")
@@ -1000,7 +1000,7 @@ func livEditorSelfCheck() -> [String] {
         MarkScan.openLink("see [[kit", caret: 9)
             == OpenLink(range: NSRange(location: 4, length: 5), query: "kit"))
     check("open link with empty query", MarkScan.openLink("a [[", caret: 4)?.query == "")
-    check("closed link is not open", MarkScan.openLink("see [[42]] now", caret: 14) == nil)
+    check("closed link is not open", MarkScan.openLink("see [[0000000000000000000000000000002a]] now", caret: 44) == nil)
     check("single bracket is not a link", MarkScan.openLink("a [x", caret: 4) == nil)
     check(
         "link does not cross lines",
