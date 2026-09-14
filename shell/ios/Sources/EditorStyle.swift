@@ -184,17 +184,21 @@ enum MarkScan {
                 i = close + 1
                 continue
             }
-            // [[ref]] — digits, optional |name, ]] (the codec's grammar,
-            // including its UInt64 bound: an overflowing digit run is
-            // literal text to the codec, so it must not LOOK like a link)
+            // [[ref]] — an id, optional |name, ]] (the codec's grammar).
+            // The id's spelling is `LivIDText.isIdChar`, shared with the
+            // codec and the tap target, because this is the run the codec
+            // is then handed: if the two disagree about what an id looks
+            // like, every link renders as literal text — which is exactly
+            // what happened when the ids became hex and this still read
+            // decimal.
             if c == 0x5B, i + 1 < u.count, u[i + 1] == 0x5B {
                 var j = i + 2
                 var digitStr = ""
-                while j < u.count, u[j] >= 0x30, u[j] <= 0x39 {
+                while j < u.count, LivIDText.isIdChar(u[j]) {
                     digitStr.append(Character(UnicodeScalar(u[j])!))
                     j += 1
                 }
-                if !digitStr.isEmpty, LivIDText.read(digitStr) != nil {
+                if LivIDText.tokenId(digitStr) != nil {
                     if j + 1 < u.count, u[j] == 0x5D, u[j + 1] == 0x5D {
                         out.append(
                             .refToken(NSRange(location: i, length: j + 2 - i), name: nil))

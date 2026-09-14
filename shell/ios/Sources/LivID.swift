@@ -87,6 +87,37 @@ enum LivIDText {
         String(id.core)
     }
 
+    // ---- the `[[id]]` token's id -----------------------------------
+    //
+    // **One grammar, three scanners** (standing rule 4, and it was
+    // already three before the ids changed). They cannot share a loop —
+    // one walks UTF-16 code units, one an NSString, one `[Character]` —
+    // but they MUST agree on what an id looks like, and when that was
+    // written out three times it drifted the moment ids did: the writer
+    // emitted hex and all three readers still wanted decimal, so every
+    // link in every note became literal text.
+    //
+    // So the rule itself lives here, once.
+
+    /// How many characters an id is, written down.
+    static let idLength = 32
+
+    /// Is this one of the characters an id is made of? Lowercase hex.
+    static func isIdChar(_ scalar: UInt16) -> Bool {
+        (scalar >= 0x30 && scalar <= 0x39) || (scalar >= 0x61 && scalar <= 0x66)
+    }
+
+    static func isIdChar(_ c: Character) -> Bool {
+        guard let a = c.asciiValue else { return false }
+        return isIdChar(UInt16(a))
+    }
+
+    /// The id a token's characters spell, or nil.
+    static func tokenId(_ text: String) -> LivEntityID? {
+        guard text.count == idLength else { return nil }
+        return LivEntityID(hex: text)
+    }
+
     /// And read back. `nil` for anything that is not one — a token that
     /// does not parse is text, not a broken link.
     static func read(_ text: some StringProtocol) -> LivEntityID? {

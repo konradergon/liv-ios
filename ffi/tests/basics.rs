@@ -761,3 +761,87 @@ fn the_property_list_offers_fields_and_not_plumbing() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// **A picker gets the field AND its vocabulary.** One without the other
+/// is an empty list, and a picker with an empty list treats everything
+/// typed into it as new — so choosing "Work" from the six that exist
+/// tried to mint a seventh called Work.
+#[test]
+fn a_property_carries_the_options_a_picker_offers() {
+    let (d, path) = box_at("prop_options");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_properties(path.as_ptr(), &mut out) }, LIV_OK);
+    let rows = took(out);
+    let area = rows.as_array().unwrap().iter().find(|r| r["name"] == "area").unwrap();
+    let names: Vec<&str> =
+        area["options"].as_array().unwrap().iter().map(|o| o["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        vec!["Work", "Health", "Money", "Home", "Family & Friends", "Learning"],
+        "{area}"
+    );
+
+    // A text field has no vocabulary, and says so with an empty list
+    // rather than being absent.
+    let due = rows.as_array().unwrap().iter().find(|r| r["name"] == "due").unwrap();
+    assert!(due["options"].as_array().unwrap().is_empty());
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **The kind is whatever the property POINTS AT.** `area` is
+/// `RefTo(kind::AREA)`; minting an Option for it makes something the cell
+/// refuses — a new area that cannot be chosen.
+#[test]
+fn a_new_option_is_made_of_the_kind_the_property_points_at() {
+    let (d, path) = box_at("add_option");
+    let area = prop_id(&path, "area");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_add_option(path.as_ptr(), area.as_ptr(), c("Woodworking").as_ptr(), T0, &mut out)
+        },
+        LIV_OK
+    );
+    let made = c(took(out)["id"].as_str().unwrap());
+
+    // It is choosable, which is the whole point: the cell takes it.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_make(path.as_ptr(), c(&kind::TASK.hex()).as_ptr(), c("Shelf").as_ptr(), T0 + 1, &mut out)
+    };
+    let task = c(took(out)["id"].as_str().unwrap());
+    assert_eq!(
+        unsafe {
+            liv_set(path.as_ptr(), task.as_ptr(), area.as_ptr(), c("Woodworking").as_ptr(), T0 + 2)
+        },
+        LIV_OK,
+        "a minted area that the cell refuses is not an area"
+    );
+
+    // And it joins the picker's list.
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_options(path.as_ptr(), area.as_ptr(), &mut out) };
+    let rows = took(out);
+    assert!(rows.as_array().unwrap().iter().any(|o| o["name"] == "Woodworking"), "{rows}");
+
+    // Asking twice hands back the one that exists rather than a second
+    // thing with the same name.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_add_option(path.as_ptr(), area.as_ptr(), c("woodworking").as_ptr(), T0 + 3, &mut out)
+    };
+    assert_eq!(took(out)["id"].as_str().unwrap(), made.to_str().unwrap(), "case-insensitively");
+
+    // A field with no vocabulary has nothing to add to.
+    let due = prop_id(&path, "due");
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_add_option(path.as_ptr(), due.as_ptr(), c("soon").as_ptr(), T0 + 4, &mut out) },
+        LIV_ERR_REFUSED
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}

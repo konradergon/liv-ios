@@ -510,7 +510,10 @@ final class BoxModel: ObservableObject {
             self?.propertyRows = $0.map { p in
                 PropertyRow(
                     id: p.id, name: p.name, kind: p.holds, usage: nil,
-                    icon: nil, hideWhenEmpty: nil, options: nil)
+                    icon: nil, hideWhenEmpty: nil,
+                    options: (p.options ?? []).map {
+                        PropertyOptionRow(id: $0.id, name: $0.name, hidden: false)
+                    })
             }
             self?.assemble()
             step()
@@ -1043,24 +1046,21 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    /// Mint an option for a select or status property.
+    /// Mint a new value for a property that points at things.
     ///
-    /// **Two writes, because an option is an ordinary entity**: make the
-    /// thing, then add it to the property's options. Nothing mints one
-    /// behind the user's back — naming a new option is a decision.
+    /// **The kind is whatever the property POINTS AT**, which the box
+    /// knows and the shell does not: `area` wants an Area and `status` a
+    /// Status. This minted an Option for both, which the cell then
+    /// refused — a new area that could not be chosen.
+    ///
+    /// Asking twice hands back the one that exists.
     func addOption(_ property: LivEntityID, _ name: String, done: ((LivEntityID) -> Void)? = nil) {
-        furnish(kindWord: "option", name: name) { [weak self] id in
-            guard let self, !id.isAbsent else {
-                done?(id)
-                return
-            }
-            self.propertyId("options") { p in
-                guard let p else {
-                    done?(id)
-                    return
-                }
-                self.engineAdd(property, p, engineId(id)) { _ in done?(id) }
-            }
+        let p = engineId(property)
+        engineWriteValue(LivMade.self, { to, out in
+            liv_add_option(to, p, name, Self.nowMs, out)
+        }) { [weak self] made, fault in
+            if fault != nil { self?.verbFailed("addOption") }
+            done?(made?.id ?? .absent)
         }
     }
 
@@ -2578,6 +2578,11 @@ struct LivProperty: Decodable, Identifiable {
     /// text | number | bool | datetime | reference | richtext | file
     var holds: String?
     var many: Bool?
+    /// **The vocabulary comes with the field.** A picker handed the field
+    /// and not its options has an empty list, and a picker with an empty
+    /// list treats everything typed into it as new — so choosing "Work"
+    /// from the six that exist tried to mint a seventh called Work.
+    var options: [LivNamed]?
     var display: String { (name ?? "").isEmpty ? "Field" : (name ?? "") }
 }
 

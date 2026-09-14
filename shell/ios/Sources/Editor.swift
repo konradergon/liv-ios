@@ -593,11 +593,11 @@ enum SpanText {
     private static func token(_ c: [Character], from start: Int) -> (LivEntityID, Int)? {
         var i = start + 2
         var digits = ""
-        while i < c.count, c[i].isHexDigit, c[i].isASCII, !c[i].isUppercase {
+        while i < c.count, LivIDText.isIdChar(c[i]) {
             digits.append(c[i])
             i += 1
         }
-        guard digits.count == 32, let id = LivEntityID(hex: digits) else { return nil }
+        guard let id = LivIDText.tokenId(digits) else { return nil }
         if i + 1 < c.count, c[i] == "]", c[i + 1] == "]" { return (id, i + 2) }
         guard i < c.count, c[i] == "|" else { return nil }
         i += 1

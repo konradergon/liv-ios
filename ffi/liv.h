@@ -892,6 +892,26 @@ int32_t liv_properties(const char *path, char **out);
    are the same box. */
 int32_t liv_set_assist(const char *path, bool on, uint64_t now_ms);
 
+/* Mint a new value for a property that points at things, and offer it.
+   {"id":"<hex>"}
+
+   THE KIND IS WHATEVER THE PROPERTY POINTS AT, not always an Option.
+   `area` is RefTo(kind::AREA) and `status` is RefTo(kind::STATUS);
+   minting an Option for either makes something the cell refuses — a new
+   area that cannot be chosen.
+
+   It joins the property's declared `options` only where the property
+   keeps a list: a RefTo with none accepts anything of its kind, so a
+   minted area is choosable the moment it exists.
+
+   Minting is a DECISION, which is why it is its own verb and not
+   something liv_set does when a name does not match. Typing a typo must
+   not create a seventh area. Asking twice hands back the one that
+   already exists, case-insensitively. LIV_ERR_REFUSED for a field with
+   no vocabulary. */
+int32_t liv_add_option(const char *path, const char *property,
+                       const char *name, uint64_t now_ms, char **out);
+
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 
    Refuses if `to` already exists — "run it again" is the first thing

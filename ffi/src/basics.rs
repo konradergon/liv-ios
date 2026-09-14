@@ -596,6 +596,12 @@ pub unsafe extern "C" fn liv_properties(path: *const c_char, out: *mut *mut c_ch
                 "name": e.display_name(def.id).unwrap_or(None).unwrap_or_else(|| def.name.to_owned()),
                 "holds": holds_word(def.holds),
                 "many": def.many,
+                // **The vocabulary comes with the field.** A picker that
+                // gets the field and not its options has an empty list,
+                // and a picker with an empty list treats everything typed
+                // into it as new — so choosing "Work" from the six that
+                // exist tried to MINT a seventh called Work.
+                "options": options_json(e, def.id),
             }));
         }
         for id in e.of_kind(liv_engine::model::kind::FIELD).map_err(|_| LIV_ERR_READ)? {
@@ -608,6 +614,7 @@ pub unsafe extern "C" fn liv_properties(path: *const c_char, out: *mut *mut c_ch
                 "name": e.display_name(id).map_err(|_| LIV_ERR_READ)?,
                 "holds": shape.map(|s| holds_word(s.holds)).unwrap_or("text"),
                 "many": shape.map(|s| s.many).unwrap_or(false),
+                "options": options_json(e, id),
             }));
         }
         Ok(serde_json::Value::Array(rows))
@@ -615,6 +622,16 @@ pub unsafe extern "C" fn liv_properties(path: *const c_char, out: *mut *mut c_ch
         Ok(v) => deliver(out, &v),
         Err(e) => e,
     }
+}
+
+fn options_json(e: &liv_engine::Engine, property: liv_engine::EntityId) -> serde_json::Value {
+    serde_json::Value::Array(
+        e.options_for(property)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, name)| json!({ "id": id.hex(), "name": name }))
+            .collect(),
+    )
 }
 
 fn holds_word(h: liv_engine::model::Holds) -> &'static str {
@@ -673,6 +690,77 @@ pub unsafe extern "C" fn liv_set_assist(path: *const c_char, on: bool, now_ms: u
         Ok(())
     }) {
         Ok(()) => LIV_OK,
+        Err(e) => e,
+    }
+}
+
+
+/// Mint a new value for a property that points at things, and offer it.
+/// `{"id":hex}`.
+///
+/// **The kind is whatever the property POINTS AT**, not always
+/// `kind::OPTION`. `area` is `RefTo(kind::AREA)` and `status` is
+/// `RefTo(kind::STATUS)`; minting an Option for either produces something
+/// the cell will refuse, which is a new area that cannot be chosen.
+///
+/// It joins the property's declared `options` only when the property
+/// declares any — a `RefTo` with no options list accepts anything of the
+/// kind, and adding to a set nobody reads would be furniture with no
+/// purpose.
+///
+/// Minting is a DECISION, so this is its own verb rather than something
+/// `liv_set` does when a name does not match. Typing a typo must not
+/// create a seventh area.
+///
+/// # Safety
+/// `path`, `property` and `name` must be valid C strings; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_add_option(
+    path: *const c_char,
+    property: *const c_char,
+    name: *const c_char,
+    now_ms: u64,
+    out: *mut *mut c_char,
+) -> i32 {
+    let property = match id_arg(property) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    let name = match text_of(name) {
+        Ok(s) => s.trim(),
+        Err(e) => return e,
+    };
+    if name.is_empty() {
+        return LIV_ERR_REFUSED;
+    }
+    match with_engine(path, |e| {
+        // Already called that? Hand back the one that exists rather than
+        // a second thing with the same name.
+        if let Some((id, _)) = e
+            .options_for(property)
+            .map_err(|_| LIV_ERR_READ)?
+            .into_iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+        {
+            return Ok(json!({ "id": id.hex() }));
+        }
+        let Some(shape) = e.prop_shape(property).map_err(|_| LIV_ERR_READ)? else {
+            return Err(LIV_ERR_REFUSED);
+        };
+        let liv_engine::model::Holds::RefTo(class) = shape.holds else {
+            // A text or number field has no vocabulary to add to.
+            return Err(LIV_ERR_REFUSED);
+        };
+        let made = e.create(class, Some(name), now_ms).map_err(wrote)?;
+        // Only where the property keeps a list. `area` keeps none and
+        // takes anything of its kind, so a minted area is choosable the
+        // moment it exists.
+        if !e.cell(property, liv_engine::prop::OPTIONS).map_err(|_| LIV_ERR_READ)?.is_empty() {
+            e.add(property, liv_engine::prop::OPTIONS, Value::Ref(made), now_ms).map_err(wrote)?;
+        }
+        Ok(json!({ "id": made.hex() }))
+    }) {
+        Ok(v) => deliver(out, &v),
         Err(e) => e,
     }
 }

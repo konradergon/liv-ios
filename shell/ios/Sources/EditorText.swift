@@ -235,12 +235,11 @@ enum MarkStyler {
         var i = token.location + 2
         while i < NSMaxRange(token) {
             let c = n.character(at: i)
-            let isHex = (c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x66)
-            guard isHex else { break }
+            guard LivIDText.isIdChar(c) else { break }
             digits.append(Character(UnicodeScalar(c)!))
             i += 1
         }
-        return digits.count == 32 ? LivEntityID(hex: digits) : nil
+        return LivIDText.tokenId(digits)
     }
 
     private static func style(
