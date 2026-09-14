@@ -517,13 +517,23 @@ enum MarkStyler {
                         ], range: abs(r))
                 }
             case .refToken(let whole, let name):
-                // The link reads as a value: name (or id) in accent, the
-                // bracket/id plumbing dimmed. The livRef attribute is what
-                // makes a tap open the target (phase 2).
-                // A link reads as its NAME. The brackets and the id are
-                // the storage, and off the caret's line they are not
-                // shown at all.
-                if let name, name.length > 0, !revealed {
+                // **A link reads as its NAME, and only its name** (owner,
+                // 2026-09-14: "only render things end users would care
+                // about"). The brackets and the id are storage.
+                //
+                // This used to reveal the plumbing on the caret's line,
+                // the way a markdown editor shows you the syntax you are
+                // standing in. That was fine when an id was `4155`: four
+                // grey characters. An engine id is THIRTY-TWO, so the
+                // plumbing is longer than the content, the caret has to
+                // walk through all of it, and the line is unreadable
+                // while you edit it — which is the one place you need to
+                // read it.
+                //
+                // Nothing is lost by hiding it. The id is not something
+                // anyone can use: it is not memorable, not typed, and not
+                // checked by eye. The name is the link.
+                if let name, name.length > 0 {
                     mark(NSRange(location: whole.location, length: name.location - whole.location))
                     mark(
                         NSRange(

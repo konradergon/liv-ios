@@ -369,7 +369,22 @@ final class BoxModel: ObservableObject {
     /// EXISTENCE — "has this box ever heard of it?" — which is what the
     /// editor's link oracle asks.
     func entity(_ id: LivEntityID) -> EntityRow? {
-        entities[id]
+        guard let row = entities[id] else { return nil }
+        // **Asking for a row is what fetches its cells.** They are not on
+        // the wire — the old snapshot shipped every cell of every entity
+        // on every refresh, which is most of what made it 3.5 MB — so
+        // something has to ask, and the views read `row.cells` rather
+        // than calling for them.
+        //
+        // Nothing did, so `row.cells` was always nil: an area could be
+        // written to the box and the inspector would still show no area,
+        // because the row it drew had no cells in it.
+        //
+        // Bounded by what is on screen. A list asks for the rows it is
+        // about to draw and no others, which is the same rule as the rest
+        // of the engine seam: pay for what you show.
+        if row.cells == nil { _ = cells(of: id) }
+        return row
     }
 
     /// The row for an id, but only if it is LIVE. Use this for anything
@@ -453,11 +468,20 @@ final class BoxModel: ObservableObject {
     /// about what just happened — not because any of them needs another.
     private func loadEverything() {
         let today = Self.todayDay
-        var pending = 9
-        let step = { [weak self] in
-            pending -= 1
-            if pending == 0 { self?.refreshLanded() }
-        }
+        // **The rows are the refresh; the rest catch up.**
+        //
+        // This waited for all nine fetches before calling the refresh
+        // finished, which is a fan-in with no timeout: one that never
+        // called back left `refreshInFlight` true forever, and every
+        // later refresh was swallowed. The app would render once and then
+        // silently stop updating — a write would land in the box and
+        // never reach the screen, which is exactly the shape of "it says
+        // it created the event and nothing renders".
+        //
+        // Each answer republishes as it arrives (`assemble`), so there is
+        // nothing to wait for. The rows decide when the refresh is done
+        // because they are what every surface is made of; a slow or
+        // broken side fetch now costs its own list and nothing else.
 
         engineEverything(slice: 0, today: today) { [weak self] rows, fault in
             guard let self else { return }
@@ -470,38 +494,32 @@ final class BoxModel: ObservableObject {
                 self.busyRetrying = false
                 self.retryDelay = 0.2
             }
-            step()
+            self.refreshLanded()
         }
         engineTrashRows { [weak self] in
             self?.trashRows = $0
             self?.reindex()
-            step()
         }
         engineSuggestions { [weak self] in
             self?.suggestions = $0
             self?.assemble()
-            step()
         }
         engineWorkspaces { [weak self] in
             self?.spaces = $0
             self?.assemble()
-            step()
         }
         engineViews { [weak self] in
             self?.filters = $0
             self?.assemble()
-            step()
         }
         engineNoteTasks { [weak self] in
             self?.noteTasks = $0
             self?.assemble()
-            step()
         }
         engineAssist { [weak self] on, property in
             self?.assistOn = on
             self?.assistProperty = property
             self?.assemble()
-            step()
         }
         // The vocabulary a picker offers. It moves only when someone
         // declares a field or renames one, but it rides the same refresh
@@ -516,12 +534,10 @@ final class BoxModel: ObservableObject {
                     })
             }
             self?.assemble()
-            step()
         }
         engineKinds { [weak self] in
             self?.kindRows = $0.map { KindRow(id: $0.id, name: $0.name) }
             self?.assemble()
-            step()
         }
     }
 
@@ -640,7 +656,10 @@ final class BoxModel: ObservableObject {
         cellsInFlight.insert(id)
         engineCells(id) { [weak self] found in
             guard let self else { return }
-            self.cellsInFlight.remove(id)
+            // Still wanted? `forgetCells` takes an id out of the set
+            // when a write makes the answer stale, and this is where that
+            // decision is honoured.
+            guard self.cellsInFlight.remove(id) != nil else { return }
             self.cellCache[id] = found
             // Into the row too, so `box.entity(id)?.cells` reads them —
             // which is how the inspector already asks.
@@ -664,6 +683,12 @@ final class BoxModel: ObservableObject {
     /// after a write that changed them.
     func forgetCells(of id: LivEntityID) {
         cellCache.removeValue(forKey: id)
+        // **And disown any answer already in the air.** A write clears
+        // the cache and then lands; a read that started before it would
+        // arrive afterwards carrying the values from before the write,
+        // and put them back. Dropping it from the in-flight set is what
+        // makes the late answer unwanted rather than authoritative.
+        cellsInFlight.remove(id)
     }
 
     /// Days since the epoch — what every engine verb counts in, and NOT
