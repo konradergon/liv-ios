@@ -1457,6 +1457,38 @@ struct EntityRow: Decodable, Identifiable {
     var bookmarked: Bool? { nil }
 }
 
+extension EntityRow {
+    /// Build a row by hand, in the words the views use.
+    ///
+    /// **For fixtures**, which is the only thing that builds one: every
+    /// real row is decoded from a surface verb. The self-checks say
+    /// `kinds:` and `status:` because that is what a row has always been
+    /// called on this side, and the memberwise initialiser would make
+    /// them say `kindWord:` and `statusWord:` — renaming a test to suit
+    /// the wire, which is the tail wagging the dog.
+    ///
+    /// `kinds` is a LIST only because the old row carried one: `core/`
+    /// let a thing have several types and the engine's `kind` is one
+    /// cell, so the first word is the word.
+    init(
+        id: LivEntityID, title: String? = nil, kinds: [String]? = nil,
+        status: String? = nil, cells: [CellRow]? = nil,
+        due: Int64? = nil, allDay: Bool? = nil, archived: Bool? = nil,
+        trashed: Bool? = nil, hasFile: Bool? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.kindWord = kinds?.first
+        self.statusWord = status
+        self.cells = cells
+        self.dueMs = due
+        self.allDay = allDay
+        self.archived = archived
+        self.trashed = trashed
+        self.hasFile = hasFile
+    }
+}
+
 /// Today, already split. The shell does not decide which pile a row is in.
 struct LivTodayView: Decodable {
     var late: [EntityRow]?
