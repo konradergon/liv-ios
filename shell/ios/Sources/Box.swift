@@ -413,6 +413,24 @@ final class BoxModel: ObservableObject {
         loadEverything()
     }
 
+    /// One refresh finished. If anything asked for another while it was
+    /// in the air, run exactly one more.
+    ///
+    /// **A request during a read is remembered, never dropped.** A read
+    /// already in the air may have been taken before the write that asked
+    /// for this one, so collapsing them must not lose the LAST one. One
+    /// typed task fires four writes, each asking for a re-read; only the
+    /// last answer is ever seen.
+    private func refreshLanded() {
+        DispatchQueue.main.async {
+            self.refreshInFlight = false
+            if self.refreshAgain {
+                self.refreshAgain = false
+                self.refresh()
+            }
+        }
+    }
+
     /// Point the calendar at a window and reload.
     ///
     /// **The window no longer changes what comes back**, and saying so
@@ -1273,11 +1291,13 @@ final class BoxModel: ObservableObject {
     /// means only archived things, because a filter is a boundary.
     func query(
         _ raw: String,
-        done: @escaping ([LivEntityID], [LivQueryTerm]) -> Void
+        done: @escaping (Set<LivEntityID>, [LivQueryTerm]) -> Void
     ) {
         engineLens(raw) { lens, _ in
             done(
-                lens?.ids ?? [],
+                // A SET, because a lens is a membership test: every
+                // surface asks it `contains(row.id)` per row.
+                Set(lens?.ids ?? []),
                 (lens?.terms ?? []).map {
                     LivQueryTerm(
                         op: $0.op ?? "text", key: $0.key ?? "",
@@ -1587,6 +1607,153 @@ extension BoxModel {
         } catch {
             return (nil, "decode: \(error)")
         }
+    }
+}
+
+enum Civil {
+    private static let gregorian = Calendar(identifier: .gregorian)
+
+    /// Thread-safe since iOS 7; display format, current locale.
+    private static let labelFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = gregorian
+        f.dateFormat = "EEE d MMM"
+        return f
+    }()
+
+    static func todayDay() -> Int64 {
+        let c = gregorian.dateComponents([.year, .month, .day], from: Date())
+        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    static func nowStamp() -> Int64 {
+        let c = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
+        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0) * 10_000
+            + Int64((c.hour ?? 0) * 100 + (c.minute ?? 0))
+    }
+
+    static func stamp(day: Int64, hhmm: Int64) -> Int64 {
+        day * 10_000 + hhmm
+    }
+
+    static func addDays(_ day: Int64, _ n: Int) -> Int64 {
+        guard let date = date(ofDay: day),
+            let moved = gregorian.date(byAdding: .day, value: n, to: date)
+        else { return day }
+        let c = gregorian.dateComponents([.year, .month, .day], from: moved)
+        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    static func day(of stamp: Int64) -> Int64 {
+        stamp / 10_000
+    }
+
+    /// "14:00"; "" for 0000 (a date-only stamp carries no time).
+    static func timeString(_ stamp: Int64) -> String {
+        let hm = stamp % 10_000
+        guard hm != 0 else { return "" }
+        return String(format: "%02d:%02d", hm / 100, hm % 100)
+    }
+
+    /// "Tue 21 Jul"
+    static func dayLabel(_ day: Int64) -> String {
+        guard let date = date(ofDay: day) else { return "\(day)" }
+        return labelFormatter.string(from: date)
+    }
+
+    static func weekdayLetter(_ day: Int64) -> String {
+        guard let date = date(ofDay: day) else { return "" }
+        let i = gregorian.component(.weekday, from: date) - 1
+        let symbols = gregorian.veryShortWeekdaySymbols
+        return symbols.indices.contains(i) ? symbols[i] : ""
+    }
+
+    static func dayNumber(_ day: Int64) -> Int {
+        Int(day % 100)
+    }
+
+    private static func pack(_ y: Int, _ m: Int, _ d: Int) -> Int64 {
+        Int64(y) * 10_000 + Int64(m) * 100 + Int64(d)
+    }
+
+    /// Noon anchor: components-in, components-out within one calendar; noon
+    /// dodges the DST-skipped-midnight edge.
+    ///
+    /// This was `private`, so five other files wrote it out again — each
+    /// with its own copy of the noon trick, which is how a real
+    /// daylight-saving bug eventually arrives (owner, 2026-08-07). It is
+    /// the one gregorian calendar in the shell now.
+    static func date(ofDay day: Int64) -> Date? {
+        var parts = DateComponents()
+        parts.year = Int(day / 10_000)
+        parts.month = Int((day / 100) % 100)
+        parts.day = Int(day % 100)
+        parts.hour = 12
+        return gregorian.date(from: parts)
+    }
+
+    /// A packed civil day (+ HHMM) as a real moment, for seeding pickers.
+    static func date(day: Int64, hhmm: Int64) -> Date? {
+        var parts = DateComponents()
+        parts.year = Int(day / 10_000)
+        parts.month = Int((day / 100) % 100)
+        parts.day = Int(day % 100)
+        parts.hour = Int(hhmm / 100)
+        parts.minute = Int(hhmm % 100)
+        return gregorian.date(from: parts)
+    }
+
+    /// The civil day a picker is sitting on.
+    static func day(of date: Date) -> Int64 {
+        let c = gregorian.dateComponents([.year, .month, .day], from: date)
+        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// The clock time a picker is sitting on, packed HHMM.
+    static func hhmm(of date: Date) -> Int64 {
+        let c = gregorian.dateComponents([.hour, .minute], from: date)
+        return Int64((c.hour ?? 0) * 100 + (c.minute ?? 0))
+    }
+
+    /// 1 = Sunday … 7 = Saturday, the Gregorian numbering.
+    static func weekday(_ day: Int64) -> Int {
+        guard let date = date(ofDay: day) else { return 0 }
+        return gregorian.component(.weekday, from: date)
+    }
+
+    /// Whole days from `a` to `b`, signed.
+    static func daysBetween(_ a: Int64, _ b: Int64) -> Int {
+        guard let da = date(ofDay: a), let db = date(ofDay: b) else { return 0 }
+        return gregorian.dateComponents([.day], from: da, to: db).day ?? 0
+    }
+
+    /// A packed civil day as DAYS SINCE THE EPOCH, which is what the
+    /// engine counts in.
+    ///
+    /// **Two different numbers that both look like a date.** `Civil` packs
+    /// `YYYYMMDD`; the engine counts days from 1970-01-01. Handing one
+    /// where the other is expected is not a rounding error, it is a date
+    /// four hundred thousand years out — so the conversion is named and
+    /// lives here, next to the packing it undoes.
+    ///
+    /// Both ends are anchored at noon, the same trick `date(ofDay:)` uses,
+    /// so a daylight-saving boundary between them cannot lose a day.
+    static func epochDay(_ day: Int64) -> Int32 {
+        var epoch = DateComponents()
+        epoch.year = 1970
+        epoch.month = 1
+        epoch.day = 1
+        epoch.hour = 12
+        guard let from = gregorian.date(from: epoch), let to = date(ofDay: day) else {
+            return 0
+        }
+        return Int32(gregorian.dateComponents([.day], from: from, to: to).day ?? 0)
+    }
+
+    /// Milliseconds since the epoch for right now — the engine's clock
+    /// reading, where `nowStamp()` is the packed civil one.
+    static func nowMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
     }
 }
 
