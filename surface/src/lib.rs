@@ -178,6 +178,16 @@ pub struct Row {
     /// shell was answering it by collecting names into a `Set<String>`.
     pub done: bool,
     pub area: Option<EntityId>,
+    /// **The word for the kind, lowercase** — `note`, `task`, `event`.
+    /// The same spelling the query grammar uses, so one word means one
+    /// thing everywhere, and the shell never keeps its own map from id
+    /// to word (`one-core.md` §4).
+    pub kind_word: Option<String>,
+    /// The status as a person reads it: a DISPLAY name, because a status
+    /// is an option someone can rename and the rename is supposed to
+    /// show.
+    pub status_word: Option<String>,
+    pub area_word: Option<String>,
     pub trashed: bool,
     pub archived: bool,
     /// From the id, not a stored cell: a v7 id carries its own
@@ -268,6 +278,18 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
             Some(Value::Ref(a)) => Some(*a),
             _ => None,
         },
+        kind_word: match one(prop::KIND) {
+            Some(Value::Ref(k)) => word_for(e, *k)?,
+            _ => None,
+        },
+        status_word: match st {
+            Some(s) => e.display_name(s)?,
+            None => None,
+        },
+        area_word: match one(prop::AREA) {
+            Some(Value::Ref(a)) => e.display_name(*a)?,
+            _ => None,
+        },
         trashed: matches!(one(prop::TRASHED), Some(Value::Bool(true))),
         archived: matches!(one(prop::ARCHIVED), Some(Value::Bool(true))),
         created_ms: id.millis() as i64,
@@ -275,6 +297,16 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
         has_file: cells.iter().any(|(p, _, _)| *p == prop::FILE),
         working: matches!(one(prop::WORKING), Some(Value::Bool(true))),
     })
+}
+
+/// A kind's stable lowercase word.
+///
+/// Lowercased from the model's label rather than stored twice, so there
+/// is one place the app's words live. A kind the user declared is called
+/// whatever they called it, lowercased the same way — `type:` in the
+/// grammar reads it back.
+fn word_for(e: &Engine, kind: EntityId) -> Result<Option<String>, LogError> {
+    Ok(e.display_name(kind)?.map(|n| n.to_lowercase()))
 }
 
 /// What to call a thing nobody has named: the kind's word, and when.

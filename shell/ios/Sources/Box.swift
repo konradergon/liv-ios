@@ -10,33 +10,22 @@ import os
 
 /// EVERY field Optional — one missing key must never drop the snapshot
 /// (a real, recurring bug; Optionality is resilience, not politeness).
-struct Snapshot: Decodable {
-    var today, unstructured, everything, dated: [LivEntityID]?
-    var occurrences: [Occurrence]?
-    var entities: [EntityRow]?
-    /// The ids of everything in the trash, newest first (2026-08-20). An id
-    /// list like `everything`; the rows are in `entities` carrying
-    /// `trashed: true`. Optional, like every wire addition — one missing
-    /// key must never drop the whole snapshot.
-    var trashed: [LivEntityID]?
-    var properties: [PropertyRow]?
-    var kinds: [KindRow]?
-    /// The workspace tree (M4). Shapes live in Workspace.swift.
-    var workspaces: [WorkspaceRow]?
-    /// Saved filters — view entities with a `query` cell (M4).
-    var views: [SavedViewRow]?
-    /// The clerk's pending proposals (rev 6: the Properties panel's
-    /// Suggestions). Force-empty on the wire while assist is off.
-    var inbox: [ProposalRow]?
-    /// The assist switch — the consent that gates every clerk proposal.
-    var assist: AssistRow?
-    /// Open checkbox lines inside notes (phase 3) — the Tasks view's
-    /// "In notes" section. A projection: nothing here is stored.
-    var noteTasks: [NoteTaskRow]?
-}
-
 /// One open `- [ ]` line inside a note (phase 3, services/src/tasks.rs).
 /// Every field Optional — the standing law.
+/// One cell of one thing, in the shape the inspector already reads.
+///
+/// **Fetched per thing, not shipped for the whole box.** The old snapshot
+/// carried every cell of every entity on every refresh, which is most of
+/// what made it 3.5 MB; `BoxModel.cells(of:)` asks for one thing's when
+/// something opens it.
+struct CellRow: Decodable {
+    var propertyId: LivEntityID? = nil
+    var property: String? = nil
+    var kind: String? = nil
+    var value: String? = nil
+    var refTarget: LivEntityID? = nil
+}
+
 struct NoteTaskRow: Decodable, Identifiable {
     /// Stable per line, so SwiftUI keeps rows in place across refreshes.
     var id: String { "\(LivIDText.written(entity ?? .absent)).\(line ?? 0)" }
@@ -80,42 +69,6 @@ struct AssistRow: Decodable {
     var id: LivEntityID? = nil
     var on: Bool? = nil
     var prop: String? = nil
-}
-
-/// Optionals carry `= nil` so the memberwise initializer has defaults —
-/// the workspace self-check builds rows by hand, and a 15-argument call
-/// would be a test that lies about what it is testing.
-struct EntityRow: Decodable, Identifiable {
-    var id: LivEntityID
-    var title: String? = nil
-    /// The title was MADE, not given — see `livRowIsUntitled`.
-    var untitled: Bool? = nil
-    var kinds: [String]? = nil
-    var due: Int64? = nil
-    var dueEnd: Int64? = nil
-    var dueDateOnly: Bool? = nil
-    var positionedBy: String? = nil
-    var status: String? = nil
-    var created: Int64? = nil
-    var trashed: Bool? = nil
-    var bookmarked: Bool? = nil
-    var archived: Bool? = nil
-    var contentPrint: UInt64? = nil
-    var vaultPath: String? = nil
-    var cells: [CellRow]? = nil
-    /// The seq of the newest transaction that touched this — a
-    /// MONOTONIC recency key, not a date (2026-08-18). Docs sorts on it;
-    /// it must never be printed as a time.
-    var recency: UInt64? = nil
-
-}
-
-struct CellRow: Decodable {
-    var propertyId: LivEntityID? = nil
-    var property: String? = nil
-    var kind: String? = nil
-    var value: String? = nil
-    var refTarget: LivEntityID? = nil
 }
 
 struct Occurrence: Decodable {
@@ -300,9 +253,38 @@ struct LivFacetValue: Identifiable {
     var id: String { label }
 }
 
-private struct ProbeWire: Decodable {
-    var code: String?
-    var message: String?
+/// What the screens read, in the shape they already read it.
+///
+/// **Not a wire type any more.** This used to be one `liv_snapshot`
+/// holding the whole box — 3.5 MB at 6,400 notes, rebuilt on every
+/// refresh, linear in the box and independent of what was on screen. The
+/// engine answers questions instead (§3), and `BoxModel` assembles this
+/// from those answers.
+///
+/// Keeping the shape is deliberate and temporary. Fifteen view files read
+/// it; moving each one onto the verb for its own surface is the next
+/// step, and doing it here in one go would be fifteen files of risk for
+/// no behaviour. What is already true is the part that mattered: the data
+/// comes from per-surface verbs, and no screen is handed the box.
+struct Snapshot {
+    var today: [LivEntityID]?
+    var unstructured: [LivEntityID]?
+    var everything: [LivEntityID]?
+    var dated: [LivEntityID]?
+    /// **Always empty.** Nothing expands a recurrence yet: `prop::RECURRENCE`
+    /// is declared and unread, so a repeating event has no engine answer
+    /// and the calendar shows one-off things only. A real gap, named here
+    /// rather than hidden (`design/rust-owns-the-mechanisms.md` §5).
+    var occurrences: [Occurrence]?
+    var entities: [EntityRow]?
+    var trashed: [LivEntityID]?
+    var properties: [PropertyRow]?
+    var kinds: [KindRow]?
+    var workspaces: [WorkspaceRow]?
+    var views: [SavedViewRow]?
+    var inbox: [ProposalRow]?
+    var assist: AssistRow?
+    var noteTasks: [NoteTaskRow]?
 }
 
 // MARK: - the model: refresh-after-every-act, never hold the box
@@ -310,16 +292,63 @@ private struct ProbeWire: Decodable {
 final class BoxModel: ObservableObject {
     let path: String
 
+    /// **Everything the screens read, one list per surface.**
+    ///
+    /// This replaces `snap`, which was one `liv_snapshot` holding the
+    /// whole box — 3.5 MB at 6,400 notes, rebuilt on every refresh,
+    /// linear in the box and independent of what was on screen. The
+    /// engine answers questions instead (§3), so each of these is one
+    /// verb's answer and costs what it shows.
+    /// The screens' view of the box, assembled from the lists below.
+    /// Republished whenever any of them lands, so `box.$snap` fires as it
+    /// always did.
     @Published private(set) var snap: Snapshot?
+
+    @Published private(set) var rows: [EntityRow] = []
+    @Published private(set) var trashRows: [EntityRow] = []
+    @Published private(set) var suggestions: [LivSuggestion] = []
+    @Published private(set) var spaces: [LivSpace] = []
+    @Published private(set) var filters: [LivSpace] = []
+    @Published private(set) var noteTasks: [LivNoteTask] = []
+    /// **Absent or true is ON.** Only an explicit no silences the clerk,
+    /// so a box that never said anything is not a box that said no.
+    @Published private(set) var assistOn: Bool = true
+    /// The property the switch above writes to, as the box names it.
+    @Published private(set) var assistProperty: LivID?
     /// Human message for a box that will not open for a reason retrying
     /// cannot fix — corrupt / version / io. nil = healthy.
     @Published private(set) var boxFault: String?
     /// The box is merely locked (the CLI, an extension); a backoff retry
     /// is scheduled. Render as quiet busyness, never a fault.
     @Published private(set) var busyRetrying: Bool = false
-    /// id -> row, rebuilt on each snapshot apply. Per-row lookups on every
-    /// render; a linear scan would be O(n²).
+    /// id -> row, rebuilt on each refresh. Per-row lookups happen on
+    /// every render; a linear scan would be O(n²).
+    ///
+    /// **The trash is in here too**, carrying `trashed: true`. `entity`
+    /// asks "has this box ever heard of it", which is what the editor's
+    /// link oracle needs; `live` is the one that opens things.
     private(set) var entities: [LivEntityID: EntityRow] = [:]
+
+    /// One thing's cells, fetched when something asks and kept.
+    ///
+    /// **Not on the row, and not fetched for every row.** The old
+    /// snapshot shipped every cell of every entity on every refresh,
+    /// which is most of what made it 3.5 MB. An inspector needs one
+    /// thing's cells when it opens; asking then is the whole difference.
+    private var cellCache: [LivEntityID: [LivCell]] = [:]
+    private var cellsInFlight: Set<LivEntityID> = []
+
+    /// name -> id for the compiled-in properties the views name.
+    ///
+    /// **Asked of the box once, then kept.** These names are frozen, so
+    /// the lookup is of something stable; the ids are 32 hex characters
+    /// and spelling them in Swift would be the shell keeping its own copy
+    /// of the furniture (`one-core.md` §4).
+    private var propertyIds: [String: LivID] = [:]
+
+    /// The fields and kinds a picker offers, kept for the façade.
+    private var propertyRows: [PropertyRow] = []
+    private var kindRows: [KindRow] = []
 
     /// One serial lane to the box: the app must never race its own lock.
     private let boxQueue = DispatchQueue(label: "liv.box", qos: .userInitiated)
@@ -381,96 +410,246 @@ final class BoxModel: ObservableObject {
             return
         }
         refreshInFlight = true
-        let path = self.path
-        let window = self.window
-        boxQueue.async {
-            let raw: UnsafeMutablePointer<CChar>?
-            if let window {
-                raw = liv_snapshot_window_at(path, window.from, window.to)
-            } else {
-                raw = liv_snapshot(path)
-            }
-            guard let raw else {
-                self.snapshotFailed()
-                self.refreshLanded()
-                return
-            }
-            self.applySnapshot(raw)
-            self.refreshLanded()
-        }
+        loadEverything()
     }
 
-    /// One read finished. If anything asked for another while it was in
-    /// the air, run exactly one more.
-    private func refreshLanded() {
-        DispatchQueue.main.async {
-            self.refreshInFlight = false
-            if self.refreshAgain {
-                self.refreshAgain = false
-                self.refresh()
-            }
-        }
-    }
-
-    /// Point the snapshot at a caller-chosen occurrence window (civil
-    /// YYYYMMDDHHMM bounds) and reload. Sticks across later refreshes.
+    /// Point the calendar at a window and reload.
+    ///
+    /// **The window no longer changes what comes back**, and saying so
+    /// here is better than the call quietly doing nothing. It existed to
+    /// re-expand RECURRENCES over a chosen range; nothing expands a
+    /// recurrence yet, so every dated thing is a one-off and the whole
+    /// set arrives either way. The signature stays because the calendar
+    /// calls it and because the window will matter again the day
+    /// recurrence lands (`design/rust-owns-the-mechanisms.md` §5).
     func refreshWindow(from: Int64, to: Int64) {
         window = (from, to)
         refresh()
     }
 
-    /// Decode on the box queue, publish on main. A decode failure logs and
-    /// keeps the previous snap — never crash, never silently drop.
-    private func applySnapshot(_ raw: UnsafeMutablePointer<CChar>) {
-        let json = String(cString: raw)
-        liv_string_free(raw)
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let fresh: Snapshot
-        do {
-            fresh = try decoder.decode(Snapshot.self, from: Data(json.utf8))
-        } catch {
-            Self.log.error("snapshot decode failed, keeping previous snap: \(String(describing: error), privacy: .public)")
-            DispatchQueue.main.async { self.busyRetrying = false }
-            return
+    /// One refresh: the surfaces the screens read, from the engine.
+    ///
+    /// **Each one is its own verb**, so a screen costs what it shows
+    /// rather than what the box holds. They are asked for together
+    /// because a refresh follows a write and the whole app has to agree
+    /// about what just happened — not because any of them needs another.
+    private func loadEverything() {
+        let today = Self.todayDay
+        var pending = 9
+        let step = { [weak self] in
+            pending -= 1
+            if pending == 0 { self?.refreshLanded() }
         }
-        var index = [LivEntityID: EntityRow](minimumCapacity: fresh.entities?.count ?? 0)
-        for e in fresh.entities ?? [] { index[e.id] = e }
-        DispatchQueue.main.async {
-            self.entities = index  // before snap: observers read a fresh index
-            self.snap = fresh
-            self.boxFault = nil
-            self.busyRetrying = false
-            self.retryDelay = 0.2
+
+        engineEverything(slice: 0, today: today) { [weak self] rows, fault in
+            guard let self else { return }
+            if let fault, rows == nil {
+                self.readFailed(fault)
+            } else {
+                self.rows = rows ?? []
+                self.reindex()
+                self.boxFault = nil
+                self.busyRetrying = false
+                self.retryDelay = 0.2
+            }
+            step()
+        }
+        engineTrashRows { [weak self] in
+            self?.trashRows = $0
+            self?.reindex()
+            step()
+        }
+        engineSuggestions { [weak self] in
+            self?.suggestions = $0
+            self?.assemble()
+            step()
+        }
+        engineWorkspaces { [weak self] in
+            self?.spaces = $0
+            self?.assemble()
+            step()
+        }
+        engineViews { [weak self] in
+            self?.filters = $0
+            self?.assemble()
+            step()
+        }
+        engineNoteTasks { [weak self] in
+            self?.noteTasks = $0
+            self?.assemble()
+            step()
+        }
+        engineAssist { [weak self] on, property in
+            self?.assistOn = on
+            self?.assistProperty = property
+            self?.assemble()
+            step()
+        }
+        // The vocabulary a picker offers. It moves only when someone
+        // declares a field or renames one, but it rides the same refresh
+        // so the whole app agrees about the box at one moment.
+        engineProperties { [weak self] in
+            self?.propertyRows = $0.map { p in
+                PropertyRow(
+                    id: p.id, name: p.name, kind: p.holds, usage: nil,
+                    icon: nil, hideWhenEmpty: nil, options: nil)
+            }
+            self?.assemble()
+            step()
+        }
+        engineKinds { [weak self] in
+            self?.kindRows = $0.map { KindRow(id: $0.id, name: $0.name) }
+            self?.assemble()
+            step()
         }
     }
 
-    /// The snapshot said no. Locked (or probe silent) means retry — and
-    /// mean it; anything else is a fault the user must see, not a spinner.
-    private func snapshotFailed() {
-        var code = "locked"
-        var message = "The box did not open."
-        if let (c, m) = probe() {
-            code = c
-            message = m
+    /// Put the screens' view together from the answers that landed.
+    ///
+    /// One struct rather than fifteen view files each learning a new
+    /// shape. The lists it is made of each came from their own verb, so
+    /// nothing here re-reads the box.
+    private func assemble() {
+        let live = rows
+        snap = Snapshot(
+            // The day's dated things. `liv_view_today` answers this
+            // properly, with the piles already sorted; this keeps the old
+            // shape until Today.swift moves onto it.
+            today: live.filter { $0.dueMs != nil }.map(\.id),
+            unstructured: live.filter { $0.kindWord == nil }.map(\.id),
+            everything: live.map(\.id),
+            dated: live.filter { $0.dueMs != nil }.map(\.id),
+            occurrences: [],
+            entities: live + trashRows.map { r in
+                var row = r
+                row.trashed = true
+                return row
+            },
+            trashed: trashRows.map(\.id),
+            properties: propertyRows,
+            kinds: kindRows,
+            workspaces: spaces.map {
+                WorkspaceRow(
+                    wsId: $0.id, name: $0.name, emoji: $0.emoji,
+                    favorite: $0.favorite, archived: $0.archived,
+                    builtin: $0.builtin, parent: $0.parent,
+                    order: $0.order, query: $0.query)
+            },
+            views: filters.map { SavedViewRow(viewId: $0.id, name: $0.name, query: $0.query) },
+            inbox: suggestions.map {
+                ProposalRow(
+                    entity: $0.entity,
+                    // **The engine names a suggestion by its
+                    // fingerprint**, never a position, so there is no
+                    // ordinal any more — the sweep is recomputed in every
+                    // process and an index would mean something else by
+                    // the time the user tapped it.
+                    ordinal: 0,
+                    fingerprint: $0.print,
+                    reason: $0.reason,
+                    author: $0.proposer,
+                    commands: nil)
+            },
+            assist: AssistRow(
+                id: nil, on: assistOn,
+                prop: assistProperty.map(LivIDText.written)),
+            noteTasks: noteTasks.map {
+                NoteTaskRow(entity: $0.note, source: $0.source, line: $0.line,
+                            text: $0.text, indent: $0.depth)
+            })
+    }
+
+    /// Both lists into one index, the trash carrying its flag.
+    private func reindex() {
+        var index = [LivEntityID: EntityRow](minimumCapacity: rows.count + trashRows.count)
+        for r in rows {
+            var row = r
+            // A refresh replaces every row, and cells a screen already
+            // asked for would go with them — so an open inspector would
+            // blank every time anything else was written.
+            row.cells = cellCache[r.id].map(Self.cellRows)
+            index[r.id] = row
         }
-        DispatchQueue.main.async {
-            if code == "locked" {
+        for r in trashRows {
+            var row = r
+            row.cells = cellCache[r.id].map(Self.cellRows)
+            // The trash verb is the only surface that returns these, so
+            // the flag is what tells them apart once both are in one
+            // index. Every other verb filters them out.
+            row.trashed = true
+            index[r.id] = row
+        }
+        entities = index
+        assemble()
+        // A refresh can retire an id — the box was replaced, or the
+        // thing was emptied out of the trash. Cells kept for something
+        // that is gone would be answered from memory forever.
+        cellCache = cellCache.filter { entities[$0.key] != nil }
+    }
+
+    /// A read said no. **Locked means retry and mean it**; anything else
+    /// is a fault the user must see, not a spinner.
+    private func readFailed(_ fault: String) {
+        engineHealth { [weak self] health in
+            guard let self else { return }
+            switch health?.code {
+            case "ok", .none:
+                // It opens, so the read failed for a reason a retry can
+                // fix — most often the CLI or the share extension
+                // holding the file for a moment.
                 self.beginRetry()
-            } else {
-                self.boxFault = message
+            case "version":
+                self.boxFault = health?.message ?? fault
+                self.busyRetrying = false
+            default:
+                self.boxFault = health?.message ?? fault
                 self.busyRetrying = false
             }
         }
     }
 
-    /// Why the box would not open. nil = it opens fine. Box-queue only.
-    private func probe() -> (code: String, message: String)? {
-        guard let raw = liv_probe(path) else { return nil }
-        let json = String(cString: raw)
-        liv_string_free(raw)
-        let p = try? JSONDecoder().decode(ProbeWire.self, from: Data(json.utf8))
-        return (p?.code ?? "io", p?.message ?? "The box did not open.")
+    /// One thing's cells, and a fetch if they are not here yet.
+    ///
+    /// **Returns what it has and asks for the rest.** A view calls this
+    /// while rendering, so it cannot wait; the answer publishes and the
+    /// view draws again. Empty on the first call for a thing is normal.
+    func cells(of id: LivEntityID) -> [LivCell] {
+        if let held = cellCache[id] { return held }
+        guard !cellsInFlight.contains(id) else { return [] }
+        cellsInFlight.insert(id)
+        engineCells(id) { [weak self] found in
+            guard let self else { return }
+            self.cellsInFlight.remove(id)
+            self.cellCache[id] = found
+            // Into the row too, so `box.entity(id)?.cells` reads them —
+            // which is how the inspector already asks.
+            self.entities[id]?.cells = Self.cellRows(found)
+            // Publishing is what makes the view draw again with them.
+            self.objectWillChange.send()
+        }
+        return []
+    }
+
+    /// Engine cells in the shape the inspector reads.
+    static func cellRows(_ cells: [LivCell]) -> [CellRow] {
+        cells.map {
+            CellRow(
+                propertyId: $0.property, property: $0.name,
+                kind: $0.holds, value: $0.value, refTarget: $0.ref)
+        }
+    }
+
+    /// Forget one thing's cells, so the next ask re-reads them. Called
+    /// after a write that changed them.
+    func forgetCells(of id: LivEntityID) {
+        cellCache.removeValue(forKey: id)
+    }
+
+    /// Days since the epoch — what every engine verb counts in, and NOT
+    /// the packed civil the old ABI used. Pretending they are the same
+    /// number is how a task ends up on the wrong side of midnight.
+    static var todayDay: Int32 {
+        Int32(floor(Date().timeIntervalSince1970 / 86_400))
     }
 
     /// Main-thread only: mark busy and schedule one refresh, 0.2s doubling
@@ -541,198 +720,384 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    // MARK: writes — the same doors, the engine behind them
+    //
+    // **Every signature here is unchanged.** The callers are fifteen view
+    // files and renaming them all would be fifteen files of risk for no
+    // behaviour; what changed is what each one does. A property still
+    // arrives as a NAME because that is what the views hold, and
+    // `propertyId` turns it into the id the engine wants — once, cached,
+    // from the box rather than from a table in Swift.
+
+    /// One token of the filter grammar — what a chip is drawn from.
+    ///
+    /// **Standing rule 5: a user never types a query language.** The text
+    /// is the storage format; this is how it becomes something to tap.
+    /// One lexer, and it is in Rust (`engine::query::lex`).
+    struct LivQueryTerm: Decodable, Equatable {
+        /// equals | not-equals | at-most | has | no | is | text
+        let op: String
+        let key: String
+        let value: String
+        /// The token respelled canonically, so joining a term list
+        /// reproduces a query the box reads back the same way.
+        let raw: String
+    }
+
+    /// A compiled-in property's id, by the frozen name the views use.
+    ///
+    /// **Asked of the box, not hard-coded.** These names are the ones
+    /// `op-format.md` calls ordinals-on-disk-forever, so the lookup is of
+    /// something stable — but the ids are 32 hex characters and spelling
+    /// them in Swift would be the shell keeping its own copy of the
+    /// furniture, which is the mistake `one-core.md` §4 records.
+    func propertyId(_ name: String, _ done: @escaping (LivID?) -> Void) {
+        if let held = propertyIds[name] {
+            done(held)
+            return
+        }
+        engineProperty(name) { [weak self] id in
+            if let id { self?.propertyIds[name] = id }
+            done(id)
+        }
+    }
+
+    /// A write that names its property by word. Nothing is written when
+    /// the box has never heard of it — which is a refusal, not a crash.
+    private func byName(
+        _ verb: String, _ id: LivEntityID, _ property: String,
+        _ done: ((Bool) -> Void)?,
+        _ work: @escaping (LivID, LivID) -> Void
+    ) {
+        propertyId(property) { [weak self] p in
+            guard let p else {
+                self?.verbFailed(verb)
+                done?(false)
+                return
+            }
+            self?.forgetCells(of: id)
+            work(id, p)
+        }
+    }
+
+    /// Capture a scrap. **Untyped on purpose** — the clerk's promotion
+    /// proposer can only offer to make it a task because nothing here
+    /// decided first.
     func capture(_ text: String, done: ((LivEntityID) -> Void)? = nil) {
-        actId("capture", Outbox.tracking(.idea, done)) { liv_capture_at(self.path, text) }
+        let tracked = Outbox.tracking(.idea, done)
+        engineCapture(text) { [weak self] id, fault in
+            if fault != nil { self?.verbFailed("capture") }
+            tracked?(id ?? .absent)
+        }
     }
 
     /// An empty, typed note — the editor's own creation door. Unlike
-    /// `capture`, which refuses empty text (a blank thought is not a
-    /// capture), this births the entity so the caret has somewhere to land.
+    /// `capture`, which refuses empty text, this births the entity so the
+    /// caret has somewhere to land.
     func createNote(done: ((LivEntityID) -> Void)? = nil) {
-        actId("createNote", Outbox.tracking(.idea, done)) { liv_create_note_at(self.path) }
+        make(kindWord: "note", .idea, done)
     }
 
     func createTask(done: ((LivEntityID) -> Void)? = nil) {
-        actId("createTask", Outbox.tracking(.task, done)) { liv_create_task_at(self.path) }
+        make(kindWord: "task", .task, done)
     }
 
+    /// An event, and its date, as two writes rather than one verb.
+    ///
+    /// **The date arrives as a packed civil and leaves as a day.** The
+    /// engine counts days since the epoch; `Civil` packs YYYYMMDDHHMM,
+    /// and treating one as the other is how a thing lands on the wrong
+    /// side of midnight.
     func createEvent(dueCivil: Int64, dateOnly: Bool, done: ((LivEntityID) -> Void)? = nil) {
-        actId("createEvent", Outbox.tracking(.event, done)) { liv_create_event_at(self.path, dueCivil, dateOnly ? 1 : 0) }
+        make(kindWord: "event", .event) { [weak self] id in
+            guard let self, !id.isAbsent else {
+                done?(id)
+                return
+            }
+            self.set(id, "due", Self.dateText(dueCivil, dateOnly: dateOnly)) { _ in done?(id) }
+        }
     }
 
+    /// One of the kinds the box offers, by its word.
+    private func make(
+        kindWord: String, _ sort: OutboxKind, _ done: ((LivEntityID) -> Void)?
+    ) {
+        let tracked = Outbox.tracking(sort, done)
+        engineKinds { [weak self] kinds in
+            guard let self else { return }
+            guard let k = kinds.first(where: { ($0.name ?? "").lowercased() == kindWord }) else {
+                self.verbFailed("make \(kindWord)")
+                tracked?(.absent)
+                return
+            }
+            self.engineMake(kind: k.id) { id, fault in
+                if fault != nil { self.verbFailed("make \(kindWord)") }
+                tracked?(id ?? .absent)
+            }
+        }
+    }
+
+    /// A packed civil as the engine reads dates: `yyyy-mm-dd`, with
+    /// `hh:mm` only when there is a time.
+    static func dateText(_ civil: Int64, dateOnly: Bool) -> String {
+        let day = civil / 10_000
+        let (y, m, d) = (day / 10_000, (day / 100) % 100, day % 100)
+        let stamp = String(format: "%04d-%02d-%02d", y, m, d)
+        if dateOnly { return stamp }
+        let (hh, mm) = ((civil / 100) % 100, civil % 100)
+        return stamp + String(format: " %02d:%02d", hh, mm)
+    }
+
+    /// **A value crosses as text and the property says what it means.**
+    /// A value that does not read is refused with nothing written.
     func set(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
-        act("set", done) { liv_set_at(self.path, id.core, property, value) == 1 }
+        byName("set", id, property, done) { [weak self] i, p in
+            self?.engineSet(i, p, value) { fault in
+                if fault != nil { self?.verbFailed("set") }
+                done?(fault == nil)
+            }
+        }
     }
 
-    /// One span write (the mirror contract). end <= 0 = no end (plain date);
-    /// dateOnly applies to both ends.
+    /// One span write. **The engine has no date SPAN**, so the end is
+    /// dropped and the start is written: `DateSpec` is a day or an
+    /// instant and nothing holds two ends
+    /// (`design/rust-owns-the-mechanisms.md` §5). A two-ended event keeps
+    /// its start rather than being refused, and the gap is the gap.
     func setSpan(
         _ id: LivEntityID, _ property: String, start: Int64, end: Int64, dateOnly: Bool,
         done: ((Bool) -> Void)? = nil
     ) {
-        act("setSpan", done) {
-            liv_set_span_at(self.path, id.core, property, start, end <= 0 ? 0 : end, dateOnly ? 1 : 0) == 1
-        }
+        set(id, property, Self.dateText(start, dateOnly: dateOnly), done: done)
     }
 
     func setType(_ id: LivEntityID, _ type: String, done: ((Bool) -> Void)? = nil) {
-        act("setType", done) { liv_set_type_at(self.path, id.core, type) == 1 }
+        engineKinds { [weak self] kinds in
+            guard let self else { return }
+            guard let k = kinds.first(where: { ($0.name ?? "").lowercased() == type.lowercased() })
+            else {
+                self.verbFailed("setType")
+                done?(false)
+                return
+            }
+            self.propertyId("kind") { p in
+                guard let p else {
+                    done?(false)
+                    return
+                }
+                self.forgetCells(of: id)
+                self.engineSet(id, p, LivIDText.written(k.id)) { fault in
+                    done?(fault == nil)
+                }
+            }
+        }
     }
 
-    /// One cell of a multi-valued property — membership, never replace-all.
+    /// One cell of a multi-valued property — membership, never
+    /// replace-all.
     func addCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
-        act("addCell", done) { liv_add_cell_at(self.path, id.core, property, value) == 1 }
+        byName("addCell", id, property, done) { [weak self] i, p in
+            self?.engineAdd(i, p, value) { done?($0 == nil) }
+        }
     }
 
     /// The librarian: by reference, never moves the file.
     func addFile(_ path: String, done: ((LivEntityID) -> Void)? = nil) {
-        actId("addFile", Outbox.tracking(.photo, done)) { liv_add_file_at(self.path, path) }
-    }
-
-    /// Remove EVERY cell of one property — the inverse of `set`. This is
-    /// how a capture-time stamp chip is taken back off.
-    /// One value of a multi-valued property, removed by value — the
-    /// mirror of addCell. `unset` clears the whole property instead.
-    func removeCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
-        act("removeCell", done) {
-            liv_remove_cell_at(self.path, id.core, property, value) == 1
+        let tracked = Outbox.tracking(.photo, done)
+        engineAddFile(path) { [weak self] id, fault in
+            if fault != nil { self?.verbFailed("addFile") }
+            tracked?(id ?? .absent)
         }
     }
 
-    func unset(_ id: LivEntityID, _ property: String) {
-        act("unset") { liv_unset_at(self.path, id.core, property) == 1 }
+    /// One value of a multi-valued property, removed by value — the
+    /// mirror of `addCell`. **Add-wins**: a member added on another
+    /// device survives it.
+    func removeCell(_ id: LivEntityID, _ property: String, _ value: String, done: ((Bool) -> Void)? = nil) {
+        byName("removeCell", id, property, done) { [weak self] i, p in
+            self?.engineRemove(i, p, value) { done?($0 == nil) }
+        }
     }
 
-    /// Put a trashed thing back — the inverse of `trash`, and the door
-    /// that did not exist until 2026-08-20. Before it, undo-right-after was
-    /// the only recovery, and only while the trash was still the last
-    /// transaction; after any other write the thing was unreachable.
+    /// Empty a cell. **Not the same as setting it to nothing** — an unset
+    /// cell has no value, which is what a picker's "None" means.
+    func unset(_ id: LivEntityID, _ property: String) {
+        byName("unset", id, property, nil) { [weak self] i, p in
+            self?.engineUnset(i, p)
+        }
+    }
+
+    /// Put a trashed thing back. **Trashing is a cell, not a deletion**,
+    /// which is what makes this a write rather than a resurrection.
     func restore(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
-        act("restore", done) { liv_restore_at(self.path, id.core) == 1 }
+        engineRestore(id) { done?($0 == nil) }
     }
 
     /// Soft, reversible, never cascades.
     func trash(_ id: LivEntityID) {
-        act("trash") { liv_trash_at(self.path, id.core) == 1 }
+        engineTrash(id)
     }
 
-    // MARK: workspaces + saved filters (M4)
+    // MARK: workspaces + saved filters
 
-    /// Birth a workspace: Create + type + name (+ parent), one transaction.
-    /// parent 0 = top level. The `query` cell is a SEPARATE `set` — the
-    /// caller writes it, so one refused write never half-builds a workspace.
+    /// Birth a workspace. **An ordinary entity**, so this is `make` plus
+    /// its cells — there is no special verb, which is the whole point of
+    /// the primitives existing. The `query` cell is a separate `set`, so
+    /// one refused write never half-builds a workspace.
     func createWorkspace(
-        name: String, parent: LivEntityID = 0, done: ((LivEntityID) -> Void)? = nil
+        name: String, parent: LivEntityID = .absent, done: ((LivEntityID) -> Void)? = nil
     ) {
-        actId("createWorkspace", done) {
-            liv_create_workspace_at(self.path, name, parent.core)
+        furnish(kindWord: "workspace", name: name) { [weak self] id in
+            guard let self, !id.isAbsent, !parent.isAbsent else {
+                done?(id)
+                return
+            }
+            self.set(id, "parent", LivIDText.written(parent)) { _ in done?(id) }
         }
     }
 
     /// Trash ONE workspace. Deletion never cascades: children keep their
     /// dangling `parent` and the shell re-roots them.
     func trashWorkspace(_ id: LivEntityID) {
-        act("trashWorkspace") { liv_trash_workspace_at(self.path, id.core) == 1 }
+        engineTrash(id)
     }
 
-    /// Save a filter: a view entity carrying the query string. Same
-    /// grammar as a workspace's, minus the stamp.
+    /// Save a filter: a view entity carrying the query string.
     func createView(name: String, query: String, done: ((LivEntityID) -> Void)? = nil) {
-        actId("createView", done) {
-            liv_create_view_at(self.path, name, query)
+        furnish(kindWord: "view", name: name) { [weak self] id in
+            guard let self, !id.isAbsent else {
+                done?(id)
+                return
+            }
+            self.set(id, "query", query) { _ in done?(id) }
         }
     }
 
-    /// Birth a property definition by name + value kind. `set` REFUSES an
-    /// unknown property name, so a workspace whose query names a property
-    /// the box has never seen must mint it before it can stamp. Minting an
-    /// existing name is refused harmlessly (id 0) — never a duplicate.
-    func addProperty(_ name: String, kind: String = "text", done: ((LivEntityID) -> Void)? = nil) {
-        actId("addProperty", done) {
-            liv_add_property_at(self.path, name, kind)
-        }
-    }
-
-    /// Mint an option for a select/status property, BY PROPERTY ID (the
-    /// snapshot's properties[] carries it). Idempotent in the core: an
-    /// existing name returns the existing option's id — never a duplicate.
-    /// 0 = refusal (unknown/trashed property, wrong kind, empty name).
-    func addOption(_ property: LivEntityID, _ name: String, done: ((LivEntityID) -> Void)? = nil) {
-        actId("addOption", done) {
-            liv_add_option_at(self.path, property.core, name)
-        }
-    }
-
-    /// Rename ONE VALUE everywhere it is carried — one grouped
-    /// transaction, one undo step (P19b).
-    ///
-    /// Text cells rewrite; a select or status renames the option, or
-    /// MERGES into an existing one when the new name is already taken.
-    /// That merge is the reason this cannot be N per-entity writes from
-    /// the shell: only the core can see every carrier at once.
-    ///
-    /// `done` receives the number of carriers changed, or nil on refusal
-    /// (unknown property, wrong kind, empty or unchanged name).
-    func renameValue(
-        property: String, from old: String, to new: String,
-        done: @escaping (Int?) -> Void
+    /// A backstage thing of one kind, by word. Workspaces and saved
+    /// filters are both this.
+    private func furnish(
+        kindWord: String, name: String, _ done: @escaping (LivEntityID) -> Void
     ) {
-        let path = self.path
-        boxQueue.async {
-            let n = liv_rename_value_at(path, property, old, new)
-            DispatchQueue.main.async {
-                done(n < 0 ? nil : Int(n))
-                if n > 0 { self.refresh() }
+        engineKinds { [weak self] kinds in
+            guard let self else { return }
+            guard let k = kinds.first(where: { ($0.name ?? "").lowercased() == kindWord }) else {
+                self.verbFailed("furnish \(kindWord)")
+                done(.absent)
+                return
+            }
+            self.engineMake(kind: k.id, name: name) { id, _ in done(id ?? .absent) }
+        }
+    }
+
+    /// Declare a field the app did not ship with. **Minted once on one
+    /// device**, which is what stops it drifting the way a seeded copy
+    /// does: there is no second copy to disagree with.
+    func addProperty(_ name: String, kind: String = "text", done: ((LivEntityID) -> Void)? = nil) {
+        engineDeclareField(name, holds: kind) { [weak self] id, fault in
+            if fault != nil { self?.verbFailed("addProperty") }
+            done?(id ?? .absent)
+        }
+    }
+
+    /// Mint an option for a select or status property.
+    ///
+    /// **Two writes, because an option is an ordinary entity**: make the
+    /// thing, then add it to the property's options. Nothing mints one
+    /// behind the user's back — naming a new option is a decision.
+    func addOption(_ property: LivEntityID, _ name: String, done: ((LivEntityID) -> Void)? = nil) {
+        furnish(kindWord: "option", name: name) { [weak self] id in
+            guard let self, !id.isAbsent else {
+                done?(id)
+                return
+            }
+            self.propertyId("options") { p in
+                guard let p else {
+                    done?(id)
+                    return
+                }
+                self.engineAdd(property, p, LivIDText.written(id)) { _ in done?(id) }
             }
         }
     }
 
+    /// Rename ONE VALUE everywhere it is carried — one action, one undo.
+    ///
+    /// `done` receives the number of CARRIERS changed, which for a select
+    /// is not the number of writes: one write to the option's name
+    /// re-renders every carrier. nil on a refusal — an empty or unchanged
+    /// name, a value nothing is called, or an ambiguous rename, which
+    /// refuses rather than guessing.
+    func renameValue(
+        property: String, from old: String, to new: String,
+        done: @escaping (Int?) -> Void
+    ) {
+        propertyId(property) { [weak self] p in
+            guard let self, let p else {
+                done(nil)
+                return
+            }
+            self.engineRenameValue(p, from: old, to: new) { carriers, _ in done(carriers) }
+        }
+    }
+
+    /// Take back this device's last action. **Undo is what YOU did here.**
     func undo() {
-        act("undo") { liv_undo_at(self.path) == 1 }
+        engineUndo { [weak self] fault in
+            if fault != nil { self?.verbFailed("undo") }
+        }
     }
 
     // MARK: the clerk's proposals (rev 6 — suggest, never act)
 
-    /// The pending proposals aimed at one entity, off the live snapshot.
+    /// The suggestions aimed at one thing.
+    ///
+    /// **Named by the thing AND the fingerprint**, never a position: the
+    /// sweep is recomputed in every process, so an index would mean
+    /// something else by the time the user tapped it. `ordinal` is gone
+    /// for that reason and reads 0.
     func proposals(for entity: LivEntityID) -> [ProposalRow] {
         (snap?.inbox ?? []).filter { $0.entity == entity }
     }
 
-    /// Consent to ONE proposal. The fingerprint makes a stale consent a
-    /// refusal (returns 0), never a misapplied write. `done` is for a
-    /// caller that files on top of the consent (the Inbox's suggested
-    /// area, 2026-09-09) and must not write into a refusal.
+    /// The engine's name for a row the views hold.
+    private func suggestion(_ p: ProposalRow) -> LivSuggestion {
+        LivSuggestion(
+            entity: p.entity, print: p.fingerprint,
+            proposer: p.author, reason: p.reason)
+    }
+
+    /// Say yes to one. `done` is for a caller that files on top of the
+    /// consent and must not write into a refusal.
     func accept(_ p: ProposalRow, done: ((Bool) -> Void)? = nil) {
-        act("accept", done) {
-            liv_accept_at(self.path, (p.entity ?? .absent).core, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
+        engineAccept(suggestion(p)) { [weak self] fault in
+            if fault != nil { self?.verbFailed("accept") }
+            done?(fault == nil)
         }
     }
 
-    /// Decline ONE proposal — persisted; the clerk never re-asks.
+    /// Say no. **Declining is not forgetting** — the refusal persists,
+    /// and since 2026-09-13 it travels: saying no on the phone says no on
+    /// the laptop too.
     func reject(_ p: ProposalRow) {
-        act("reject") {
-            liv_reject_at(self.path, (p.entity ?? .absent).core, p.ordinal ?? 0, p.fingerprint ?? 0) == 1
+        engineDecline(suggestion(p)) { [weak self] fault in
+            if fault != nil { self?.verbFailed("reject") }
         }
     }
 
-    /// Consent to a whole group as ONE transaction, one undo — the
-    /// members' fingerprints through liv_accept_group_at (all-or-nothing;
-    /// a stale member refuses the lot).
+    /// Say yes to a set, as ONE action and one undo. **All or nothing**:
+    /// half a consent is worse than none. A suggestion the box no longer
+    /// makes is skipped rather than failing the batch.
     func acceptGroup(_ fingerprints: [UInt64], done: ((Bool) -> Void)? = nil) {
-        let json =
-            (try? String(data: JSONEncoder().encode(fingerprints), encoding: .utf8)) ?? "[]"
-        act("acceptGroup", done) { liv_accept_group_at(self.path, json) == 1 }
+        let wanted = Set(fingerprints)
+        let many = (snap?.inbox ?? [])
+            .filter { wanted.contains($0.fingerprint ?? 0) }
+            .map(suggestion)
+        engineAcceptAll(many) { [weak self] taken, fault in
+            if fault != nil { self?.verbFailed("acceptGroup") }
+            done?(taken != nil)
+        }
     }
 
-    /// A fresh entity wearing another's property cells — the filing
-    /// context without the body (rev 6, "Duplicate note"). Identity and
-    /// content stay behind, and so does a `template` cell: the feature
-    /// is gone (2026-08-15) but boxes written before it went carry the
-    /// marker, and a copy must not spread it. Owner rulings
-    /// (2026-08-04): the TYPE copies too (a duplicated task is a task),
-    /// and reference/file cells are SKIPPED — the wire carries their
-    /// display value, and re-adding by display string can silently link
-    /// the wrong entity, which is worse than no link.
     func duplicateProperties(of source: LivEntityID, done: ((LivEntityID) -> Void)? = nil) {
         guard let row = entity(source) else {
             done?(0)
@@ -767,487 +1132,253 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    // MARK: seam reads (their own payloads, off the snapshot)
+    // MARK: reads with their own payloads
+    //
+    // Each of these asks one question and pays for its answer. They used
+    // to go through the core's own verbs; the signatures are unchanged
+    // and the engine is behind them now.
 
-    /// The status vocabulary offered to a kind, in board order.
+    /// The status vocabulary offered to a kind, in the order the box
+    /// keeps it. **The words come from the box**, never from a table in
+    /// Swift.
     func statusOptions(kind: String, done: @escaping ([StatusOption]) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            var options: [StatusOption] = []
-            if let raw = liv_status_options_at(path, kind) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                options = (try? decoder.decode([StatusOption].self, from: Data(json.utf8))) ?? []
+        propertyId("status") { [weak self] p in
+            guard let self, let p else {
+                done([])
+                return
             }
-            DispatchQueue.main.async { done(options) }
+            self.engineOptions(p) { named in
+                done(named.enumerated().map { n, o in
+                    StatusOption(name: o.name, order: Double(n))
+                })
+            }
         }
     }
 
-    /// A property's distinct live values, count-desc order preserved.
-    /// Fetched once per editor open, never per keystroke.
+    /// What this property is actually CARRYING — a different question
+    /// from what it MAY hold, and the one a picker over a free-text field
+    /// has to ask.
     func distinctValues(property: String, done: @escaping ([String]) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            var values: [String] = []
-            if let raw = liv_distinct_values_at(path, property) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let wire = (try? decoder.decode([DistinctWire].self, from: Data(json.utf8))) ?? []
-                values = wire.compactMap { $0.value }
+        propertyId(property) { [weak self] p in
+            guard let self, let p else {
+                done([])
+                return
             }
-            DispatchQueue.main.async { done(values) }
+            self.engineValuesInUse(p) { done($0.compactMap(\.label)) }
         }
     }
 
-    /// One entity's content, fresh from the box — the editor's read.
-    /// nil = the box itself was unavailable (probe to learn why); a doc with
-    /// `missing == true` means the box opened and holds no such entity.
-    /// The span encoding is capitalized ("Text"/"Break"/"Ref"), so this
-    /// decoder must NOT wear the snapshot's snake_case strategy.
+    /// One thing's body, and the fingerprint a save must present back.
     func content(_ id: LivEntityID, done: @escaping (ContentDoc?) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            guard let raw = liv_content_at(path, id.core) else {
-                self.verbFailed("content")
-                DispatchQueue.main.async { done(nil) }
+        engineBody(id) { [weak self] body, _ in
+            guard let body else {
+                done(nil)
                 return
             }
-            let json = String(cString: raw)
-            liv_string_free(raw)
-            var doc: ContentDoc?
-            do {
-                doc = try JSONDecoder().decode(ContentDoc.self, from: Data(json.utf8))
-            } catch {
-                Self.log.error(
-                    "content decode failed: \(String(describing: error), privacy: .public)")
-            }
-            DispatchQueue.main.async { done(doc) }
+            let row = self?.entities[id]
+            done(ContentDoc(
+                id: id,
+                name: row?.title,
+                trashed: row?.trashed ?? false,
+                // The box opened and answered, so the thing is there —
+                // `liv_read_body` faults rather than inventing a body.
+                missing: false,
+                fingerprint: body.print ?? 0,
+                spans: body.spans))
         }
     }
 
-    /// EVERY PAST VERSION of one entity's content, NEWEST first
-    /// (liv_content_history_at). The log is the history: each entry is a
-    /// whole content value, and restoring one is an ordinary `setContent`
-    /// of its spans over a freshly read base — the restore is appended as
-    /// a new version, and the log is never rewritten.
-    ///
-    /// The verb has been in the ABI and tested three times since the
-    /// history was built; until 2026-09-09 nothing in the shell called
-    /// it, so the thesis's "read what you wrote three weeks ago, put it
-    /// back" was core-only.
+    /// Every past version of one body, NEWEST first. Restoring one is an
+    /// ordinary save of its spans over a freshly read base — the log is
+    /// never rewritten, so a restore is itself a version.
     func history(_ id: LivEntityID, done: @escaping ([ContentVersion]) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            guard let raw = liv_content_history_at(path, id.core) else {
-                self.verbFailed("history")
-                DispatchQueue.main.async { done([]) }
-                return
-            }
-            let json = String(cString: raw)
-            liv_string_free(raw)
-            var versions: [ContentVersion] = []
-            do {
-                versions = try JSONDecoder().decode([ContentVersion].self, from: Data(json.utf8))
-            } catch {
-                Self.log.error(
-                    "history decode failed: \(String(describing: error), privacy: .public)")
-            }
-            DispatchQueue.main.async { done(versions) }
+        engineBodyHistory(id) { versions, _ in
+            done(versions.map {
+                ContentVersion(
+                    seq: $0.seq,
+                    // The old wire counted seconds; this one counts
+                    // milliseconds, and the views divide.
+                    time: $0.atMs.map { $0 / 1000 },
+                    author: $0.author,
+                    label: nil,
+                    spans: $0.spans)
+            })
         }
     }
 
-    /// Both directions of one entity's links (liv_links_at): what it
-    /// points at, and what points at it. A `[[ ]]` typed in a body and a
-    /// link picked in properties are the same edge — the core indexes
-    /// both — so this is the only reader either list needs.
+    /// Both directions of one thing's links. A `[[ ]]` typed in a body is
+    /// the same edge as a link picked in properties.
     func links(_ id: LivEntityID, done: @escaping (LinkSet) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            guard let raw = liv_links_at(path, id.core) else {
-                self.verbFailed("links")
-                DispatchQueue.main.async { done(.empty) }
-                return
+        engineLinks(id) { [weak self] found in
+            let named = { (ids: [LivID]?) -> [LinkRow] in
+                (ids ?? []).map { target in
+                    let row = self?.entities[target]
+                    return LinkRow(
+                        id: target,
+                        name: row?.title,
+                        kinds: row?.kinds,
+                        // **The engine indexes both doors the same way**,
+                        // so which door an edge came through is no longer
+                        // on the wire. A link is a link.
+                        property: "related",
+                        fromBody: nil)
+                }
             }
-            let json = String(cString: raw)
-            liv_string_free(raw)
-            var set = LinkSet.empty
-            do {
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                set = try decoder.decode(LinkSet.self, from: Data(json.utf8))
-            } catch {
-                Self.log.error(
-                    "links decode failed: \(String(describing: error), privacy: .public)")
-            }
-            DispatchQueue.main.async { done(set) }
+            done(LinkSet(out: named(found.out), inbound: named(found.inbound)))
         }
     }
 
-    /// Replace one entity's whole content in one transaction — the editor's
-    /// save, compare-and-swap on `base`. There is no force flag by design.
-    /// `done` receives (status, freshFingerprint): 1 saved (fresh valid),
-    /// -1 STALE (the base moved — re-read, never overwrite), 0 busy/invalid.
+    /// Save a body, compare-and-swap on the fingerprint it was read at.
+    ///
+    /// **Re-read, never overwrite**: there is no force flag by design.
+    /// `done` gets 1 saved, -1 stale, 0 refused — the old shape, so the
+    /// editor's save path is unchanged.
     func setContent(
         _ id: LivEntityID, spansJson: String, base: UInt64,
         done: @escaping (Int32, UInt64) -> Void
     ) {
-        let path = self.path
-        boxQueue.async {
-            var fresh: UInt64 = 0
-            let status = liv_set_content_at(path, id.core, spansJson, base, &fresh)
-            if status == 0 { self.verbFailed("setContent") }
-            DispatchQueue.main.async {
-                done(status, fresh)
-                if status == 1 { self.refresh() }
+        engineSaveBody(id, spansJson: spansJson, base: base) { [weak self] print, fault in
+            self?.forgetCells(of: id)
+            guard let print else {
+                // -6 is the stale code, and it is the one the editor must
+                // tell apart: it means someone else moved the body, so
+                // re-read and decide rather than insisting.
+                done(fault == Self.writeFault(-6) ? -1 : 0, base)
+                return
             }
+            done(1, print)
         }
     }
 
-    /// Ranked hit ids for one raw DSL query — the shell already holds each
-    /// row; search carries only rank. Parsed in Rust, never re-parsed here.
-    // MARK: files — the bytes stay on disk; the box holds a reference
-
-    /// Re-hash the referenced path. The core rewrites the file cell when
-    /// the bytes changed — a changed hash IS the integration, so opening
-    /// a file is how Liv learns Word saved it. Never on a timer.
-    /// `done` gets true when something changed, so the caller can
-    /// refresh rather than guess.
+    /// Re-hash what a file points at on this device. A changed hash IS
+    /// the integration — it is how Liv learns Word saved the file.
     func resyncFile(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
-        boxQueue.async {
-            let status = liv_resync_file_at(self.path, id.core)
-            DispatchQueue.main.async {
-                done?(status == 1)
-                if status == 1 { self.refresh() }
-            }
+        engineResync(id) { result, _ in
+            done?(result?.state == "changed")
         }
     }
 
-    /// One term of a query, as the CORE lexed it.
-    ///
-    /// The shell used to lex this itself and the two disagreed sixteen
-    /// ways — `Area:Work` found nothing, a typo filtered nothing,
-    /// `is:archived` meant the opposite thing. There is one lexer now and
-    /// it is in Rust (`services::search::lex`).
-    struct LivQueryTerm: Decodable, Equatable {
-        /// equals | notequals | atmost | has | no | is | text
-        let op: String
-        let key: String
-        let value: String
-        /// The token respelled canonically, so joining a term list
-        /// reproduces a query the core reads back the same way.
-        let raw: String
-    }
-
-    /// Lex a query into terms. Synchronous, because it opens nothing: the
-    /// core's `lex` consults no store, so a picker editing a DRAFT query
-    /// can call it per keystroke without touching the box lock.
+    /// Split a filter into the chips a person taps. No box, no lock.
     func lex(_ raw: String) -> [LivQueryTerm] {
-        guard let out = liv_lex(raw) else { return [] }
-        let json = String(cString: out)
-        liv_string_free(out)
-        return (try? JSONDecoder().decode([LivQueryTerm].self, from: Data(json.utf8))) ?? []
+        engineTerms(raw).map {
+            LivQueryTerm(
+                op: $0.op ?? "text", key: $0.key ?? "",
+                value: $0.value ?? "", raw: $0.raw ?? "")
+        }
     }
 
-    /// Which entities a LENS admits, and the terms it is made of.
+    /// The ids a LENS admits, plus its terms.
     ///
-    /// `is:archived` RESTRICTS here — a workspace called Archive shows the
-    /// archive — where the same token WIDENS in `search` (owner,
-    /// 2026-08-27). Uncapped: search sends a 200-row page, which is a page
-    /// and not a membership set.
+    /// **A lens RESTRICTS** where a search widens: `is:archived` here
+    /// means only archived things, because a filter is a boundary.
     func query(
         _ raw: String,
-        done: @escaping (Set<LivEntityID>, [LivQueryTerm]) -> Void
+        done: @escaping ([LivEntityID], [LivQueryTerm]) -> Void
     ) {
-        let path = self.path
-        boxQueue.async {
-            var ids: Set<LivEntityID> = []
-            var terms: [LivQueryTerm] = []
-            if let out = liv_query_ids_at(path, raw) {
-                let json = String(cString: out)
-                liv_string_free(out)
-                struct Wire: Decodable {
-                    var ids: [LivEntityID]?
-                    var terms: [LivQueryTerm]?
-                }
-                if let w = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) {
-                    ids = Set(w.ids ?? [])
-                    terms = w.terms ?? []
-                }
-            }
-            DispatchQueue.main.async { done(ids, terms) }
+        engineLens(raw) { lens, _ in
+            done(
+                lens?.ids ?? [],
+                (lens?.terms ?? []).map {
+                    LivQueryTerm(
+                        op: $0.op ?? "text", key: $0.key ?? "",
+                        value: $0.value ?? "", raw: $0.raw ?? "")
+                })
         }
     }
 
-    // MARK: the vault — a projection, never a second truth
-
-    // THE VAULT'S FOUR OTHER DOORS ARE GONE (2026-09-12), with the card
-    // that was their only caller: `LivVaultStatus`, `LivVaultFinding`,
-    // `vaultStatus`, `vaultSync`, `vaultRebuild`, `vaultFindings`.
-    //
-    // Not because the projection is a bad idea — because on a phone none
-    // of them could ever do anything. `vault_root_of` wants the log at
-    // `<root>/.liv/box/<log>`; `BoxPath.resolve` puts it under an App
-    // Group container at `<container>/liv/liv.log`. Every one of those
-    // verbs opens with its own `vault_root_of` guard and returns early,
-    // so the wrappers marshalled a refusal. Standing rule 6, and the
-    // owner's word on the card they fed.
-    //
-    // The five FFI verbs and the CLI's `liv vault` keep them: a vault is
-    // a folder on a computer, and that is where a shell over this core
-    // has a reachable surface for them. Restoring the phone's reach is
-    // this comment plus a caller.
-
-    /// The vault's self-defense notices — a length regression, an in-place
-    /// replacement, a conflicted-copy sibling. READ AND CLEAR: whoever
-    /// asks gets them once, so they must be shown, not counted.
+    /// Files this device cannot open, as words for a banner.
+    ///
+    /// **`absent` is not `gone`.** A hash travels and a path does not, so
+    /// a file added on the laptop reaches the phone as a valid reference
+    /// with no copy here — that is "find it for me", not "this is
+    /// broken".
     func vaultAlerts(done: @escaping ([String]) -> Void) {
-        let path = self.path
-        boxQueue.async {
-            var out: [String] = []
-            if let raw = liv_vault_alerts_at(path) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                out = (try? JSONDecoder().decode([String].self, from: Data(json.utf8))) ?? []
-            }
-            DispatchQueue.main.async { done(out) }
+        engineFileAlerts { alerts in
+            done(alerts.map { a in
+                let name = a.name ?? "A file"
+                return a.why == "absent"
+                    ? "\(name) has not reached this device yet"
+                    : "\(name) is no longer where Liv last saw it"
+            })
         }
     }
 
-    /// `done` receives the page of ids AND the true total, so a capped
-    /// result can say so instead of quietly looking complete.
+    /// Ranked hits, how many matched, and the facets beside them.
+    ///
+    /// **A search box WIDENS**: `is:archived` means look in the archive
+    /// too, because someone hunting for a thing wants it found.
     func search(
         _ query: String,
         done: @escaping ([LivEntityID], Int, [LivFacet]) -> Void
     ) {
-        let path = self.path
-        boxQueue.async {
-            var ids: [LivEntityID] = []
-            var total = 0
-            var facets: [LivFacet] = []
-            if let raw = liv_search_at(path, query) {
-                let json = String(cString: raw)
-                liv_string_free(raw)
-                let decoder = JSONDecoder()
-                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let wire = try? decoder.decode(SearchWire.self, from: Data(json.utf8))
-                ids = (wire?.hits ?? []).compactMap { $0.id }
-                total = wire?.total ?? ids.count
-                facets = (wire?.facets ?? []).compactMap { f in
-                    guard let label = f.label, !label.isEmpty else { return nil }
-                    let values: [LivFacetValue] = (f.values ?? []).compactMap { v in
-                        guard let vl = v.label, !vl.isEmpty else { return nil }
-                        return LivFacetValue(
-                            label: vl, count: v.count ?? 0,
-                            active: v.active ?? false, excluded: v.excluded ?? false)
-                    }
-                    return values.isEmpty ? nil : LivFacet(label: label, values: values)
-                }
+        engineSearch(query) { found, _ in
+            let hits = found?.hits ?? []
+            let facets: [LivFacet] = (found?.facets ?? []).map { f in
+                LivFacet(
+                    label: f.label ?? "",
+                    values: (f.values ?? []).map {
+                        LivFacetValue(
+                            label: $0.label ?? "",
+                            count: $0.count ?? 0,
+                            active: $0.active ?? false,
+                            excluded: $0.excluded ?? false)
+                    })
             }
-            DispatchQueue.main.async { done(ids, total, facets) }
+            // The engine ranks everything the query matches and the limit
+            // only cuts the list, so the total is the hit count when the
+            // list is short of the ceiling.
+            done(hits.map(\.id), hits.count, facets)
         }
     }
 }
 
-// MARK: - civil stamps (packed local-civil i64: YYYYMMDDHHMM; day = x / 10_000)
-
-/// Calendar math on packed components only — a stamp never round-trips
-/// through a timezone for storage. The core's civil dates are Gregorian by
-/// construction; the user's display calendar (Buddhist, Hebrew…) never
-/// leaks in.
-enum Civil {
-    private static let gregorian = Calendar(identifier: .gregorian)
-
-    /// Thread-safe since iOS 7; display format, current locale.
-    private static let labelFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = gregorian
-        f.dateFormat = "EEE d MMM"
-        return f
-    }()
-
-    static func todayDay() -> Int64 {
-        let c = gregorian.dateComponents([.year, .month, .day], from: Date())
-        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
-    }
-
-    static func nowStamp() -> Int64 {
-        let c = gregorian.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
-        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0) * 10_000
-            + Int64((c.hour ?? 0) * 100 + (c.minute ?? 0))
-    }
-
-    static func stamp(day: Int64, hhmm: Int64) -> Int64 {
-        day * 10_000 + hhmm
-    }
-
-    static func addDays(_ day: Int64, _ n: Int) -> Int64 {
-        guard let date = date(ofDay: day),
-            let moved = gregorian.date(byAdding: .day, value: n, to: date)
-        else { return day }
-        let c = gregorian.dateComponents([.year, .month, .day], from: moved)
-        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
-    }
-
-    static func day(of stamp: Int64) -> Int64 {
-        stamp / 10_000
-    }
-
-    /// "14:00"; "" for 0000 (a date-only stamp carries no time).
-    static func timeString(_ stamp: Int64) -> String {
-        let hm = stamp % 10_000
-        guard hm != 0 else { return "" }
-        return String(format: "%02d:%02d", hm / 100, hm % 100)
-    }
-
-    /// "Tue 21 Jul"
-    static func dayLabel(_ day: Int64) -> String {
-        guard let date = date(ofDay: day) else { return "\(day)" }
-        return labelFormatter.string(from: date)
-    }
-
-    static func weekdayLetter(_ day: Int64) -> String {
-        guard let date = date(ofDay: day) else { return "" }
-        let i = gregorian.component(.weekday, from: date) - 1
-        let symbols = gregorian.veryShortWeekdaySymbols
-        return symbols.indices.contains(i) ? symbols[i] : ""
-    }
-
-    static func dayNumber(_ day: Int64) -> Int {
-        Int(day % 100)
-    }
-
-    private static func pack(_ y: Int, _ m: Int, _ d: Int) -> Int64 {
-        Int64(y) * 10_000 + Int64(m) * 100 + Int64(d)
-    }
-
-    /// Noon anchor: components-in, components-out within one calendar; noon
-    /// dodges the DST-skipped-midnight edge.
-    ///
-    /// This was `private`, so five other files wrote it out again — each
-    /// with its own copy of the noon trick, which is how a real
-    /// daylight-saving bug eventually arrives (owner, 2026-08-07). It is
-    /// the one gregorian calendar in the shell now.
-    static func date(ofDay day: Int64) -> Date? {
-        var parts = DateComponents()
-        parts.year = Int(day / 10_000)
-        parts.month = Int((day / 100) % 100)
-        parts.day = Int(day % 100)
-        parts.hour = 12
-        return gregorian.date(from: parts)
-    }
-
-    /// A packed civil day (+ HHMM) as a real moment, for seeding pickers.
-    static func date(day: Int64, hhmm: Int64) -> Date? {
-        var parts = DateComponents()
-        parts.year = Int(day / 10_000)
-        parts.month = Int((day / 100) % 100)
-        parts.day = Int(day % 100)
-        parts.hour = Int(hhmm / 100)
-        parts.minute = Int(hhmm % 100)
-        return gregorian.date(from: parts)
-    }
-
-    /// The civil day a picker is sitting on.
-    static func day(of date: Date) -> Int64 {
-        let c = gregorian.dateComponents([.year, .month, .day], from: date)
-        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0)
-    }
-
-    /// The clock time a picker is sitting on, packed HHMM.
-    static func hhmm(of date: Date) -> Int64 {
-        let c = gregorian.dateComponents([.hour, .minute], from: date)
-        return Int64((c.hour ?? 0) * 100 + (c.minute ?? 0))
-    }
-
-    /// 1 = Sunday … 7 = Saturday, the Gregorian numbering.
-    static func weekday(_ day: Int64) -> Int {
-        guard let date = date(ofDay: day) else { return 0 }
-        return gregorian.component(.weekday, from: date)
-    }
-
-    /// Whole days from `a` to `b`, signed.
-    static func daysBetween(_ a: Int64, _ b: Int64) -> Int {
-        guard let da = date(ofDay: a), let db = date(ofDay: b) else { return 0 }
-        return gregorian.dateComponents([.day], from: da, to: db).day ?? 0
-    }
-
-    /// A packed civil day as DAYS SINCE THE EPOCH, which is what the
-    /// engine counts in.
-    ///
-    /// **Two different numbers that both look like a date.** `Civil` packs
-    /// `YYYYMMDD`; the engine counts days from 1970-01-01. Handing one
-    /// where the other is expected is not a rounding error, it is a date
-    /// four hundred thousand years out — so the conversion is named and
-    /// lives here, next to the packing it undoes.
-    ///
-    /// Both ends are anchored at noon, the same trick `date(ofDay:)` uses,
-    /// so a daylight-saving boundary between them cannot lose a day.
-    static func epochDay(_ day: Int64) -> Int32 {
-        var epoch = DateComponents()
-        epoch.year = 1970
-        epoch.month = 1
-        epoch.day = 1
-        epoch.hour = 12
-        guard let from = gregorian.date(from: epoch), let to = date(ofDay: day) else {
-            return 0
-        }
-        return Int32(gregorian.dateComponents([.day], from: from, to: to).day ?? 0)
-    }
-
-    /// Milliseconds since the epoch for right now — the engine's clock
-    /// reading, where `nowStamp()` is the packed civil one.
-    static func nowMs() -> Int64 {
-        Int64(Date().timeIntervalSince1970 * 1000)
-    }
-}
-
-// MARK: - the new seam (design/rust-owns-the-mechanisms.md §3)
-//
-// One verb per screen, over the engine, beside the snapshot rather than
-// through it. **Nothing here is on a live screen yet**, and the reason is
-// worth stating plainly: an engine id is 16 bytes and the shell's is a
-// number, in 225 places. Moving a surface means moving that type, and
-// that is a refactor to do with a compiler rather than by hand — so it is
-// being done in slices, and `LivID.swift` says where they are up to.
-//
-// So this is the plumbing plus one place to LOOK at it — `EngineCheck`
-// in Settings — which answers the one question no test here can: does the
-// whole chain work on a device? Rust, SQLite linked into the staticlib,
-// the new ABI, a Swift decode, pixels. If it does, the id refactor is
-// mechanical. If SQLite does not link, we find out for the price of one
-// build instead of after twenty-two files have moved.
-//
-// Standing rule 1 holds: every `liv_*` call is still in this file.
-
-/// One row as the new seam sends it. **Ids are hex**, 32 characters, and
-/// they stay `String` here on purpose — turning them into a native type is
-/// the refactor above, and doing half of it would be worse than none.
-/// **EVERY FIELD IS OPTIONAL** — the H1 rule, which exists because a
-/// synthesized `Decodable` uses `decode` (not `decodeIfPresent`) for a
-/// non-optional property, so a default value does NOT save it: one
-/// missing key throws and the whole answer is dropped. That has been a
-/// real, recurring bug on the snapshot path, and a new seam is not a
-/// reason to learn it again.
+/// One row of a surface, as the engine reports it.
 ///
-/// `id` is the one exception, because `Identifiable` requires it and a
-/// row without one is not a row.
-struct LivViewRow: Decodable, Identifiable {
+/// **The old snapshot's row by another name.** The engine's wire carries
+/// the same facts in the spellings §3 asks for — one kind word rather
+/// than a list, milliseconds rather than a packed civil, and the strings
+/// the row will draw rather than ids for the shell to resolve.
+struct EntityRow: Decodable, Identifiable {
     var id: LivID
     var title: String?
     var untitled: Bool?
     var kind: LivID?
     var dueMs: Int64?
     var allDay: Bool?
-    var status: LivID?
+    var statusId: LivID?
     var done: Bool?
     var area: LivID?
     var createdMs: Int64?
     var touchedMs: Int64?
     var hasFile: Bool?
+    /// Filed away, which is NOT thrown away.
+    var archived: Bool?
+    /// In the trash. False on every surface but the trash, so a row
+    /// carries which it is and nothing has to remember which list it
+    /// came from.
+    var trashed: Bool?
+    /// **The word for the kind, lowercase** — `note`, `task`, `event`.
+    /// The same spelling the query grammar uses, so the shell never keeps
+    /// its own map from id to word (`one-core.md` §4).
+    var kindWord: String?
+    /// The status as a person reads it: a display name, because a status
+    /// is an option someone can rename and the rename is supposed to show.
+    var statusWord: String?
+    var areaWord: String?
+    /// This thing's cells, once something has asked for them.
+    ///
+    /// **Never on the wire.** The old snapshot shipped every cell of
+    /// every entity on every refresh, which is most of what made it
+    /// 3.5 MB. `BoxModel.cells(of:)` fetches one thing's when a screen
+    /// opens it; nil means nobody has asked yet.
+    var cells: [CellRow]? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, untitled, kind, dueMs, allDay, done, area
+        case createdMs, touchedMs, hasFile, archived, trashed
+        case kindWord, statusWord, areaWord
+        case statusId = "status"
+    }
 
     /// What to draw.
     ///
@@ -1255,28 +1386,69 @@ struct LivViewRow: Decodable, Identifiable {
     /// a thing nobody has named arrives already called something sensible
     /// — its kind's word and when, made in `liv-surface`. So the shell
     /// has nothing to invent, which is the point; it had four words for
-    /// nothing before this ("Untitled", "untitled", the kind's word, and
-    /// a hash-number) precisely because each surface invented its own.
+    /// nothing before this precisely because each surface invented its own.
     ///
     /// `untitled` survives as a STYLING flag, not a text one: a made name
     /// is still not a given one, and a list draws it more quietly.
-    var display: String {
-        title ?? ""
-    }
+    var display: String { title ?? "" }
+
+    /// Is this one of those? The places that used to ask
+    /// `kinds?.contains("task")` ask here, so the spelling lives once.
+    func isKind(_ word: String) -> Bool { kindWord == word }
+    var isTask: Bool { isKind("task") }
+    var isEvent: Bool { isKind("event") }
+    var isNote: Bool { kindWord == nil || isKind("note") }
+
+    // MARK: what the views already call these
+    //
+    // Renaming fifteen view files to the engine's spellings would be
+    // fifteen files of risk for no behaviour. These are the old names,
+    // computed.
+
+    /// The old row carried a LIST because `core/` let a thing have
+    /// several types. The engine's `kind` is one cell, so this is one
+    /// word or none — and `isTask` above is what new code should ask.
+    var kinds: [String]? { kindWord.map { [$0] } }
+    var status: String? { statusWord }
+    var due: Int64? { dueMs }
+    var dueDateOnly: Bool? { allDay }
+    var created: Int64? { createdMs }
+    /// The MONOTONIC recency key — the newest transaction that touched
+    /// this. Never printed as a time.
+    var recency: UInt64? { touchedMs.map { UInt64(max(0, $0)) } }
+
+    // **Four things the engine cannot answer yet**, each returning
+    // nothing rather than a wrong answer:
+    //
+    //  - `dueEnd` and `positionedBy` need a date SPAN and a recurrence.
+    //    `DateSpec` has no span variant and nothing expands a recurrence,
+    //    so a repeating or two-ended event is a gap, not a bug in these
+    //    lines (`design/rust-owns-the-mechanisms.md` §5).
+    //  - `contentPrint` is the editor's compare-and-swap fingerprint,
+    //    which `liv_read_body` hands back per body rather than shipping
+    //    for every row in the box.
+    //  - `vaultPath`: `hasFile` says whether there is one; WHERE it is on
+    //    this device is `liv_file_alerts`, because a path does not
+    //    survive a device boundary.
+    var dueEnd: Int64? { nil }
+    var positionedBy: String? { nil }
+    var contentPrint: UInt64? { nil }
+    var vaultPath: String? { nil }
+    var bookmarked: Bool? { nil }
 }
 
 /// Today, already split. The shell does not decide which pile a row is in.
 struct LivTodayView: Decodable {
-    var late: [LivViewRow]?
-    var passed: [LivViewRow]?
-    var ahead: [LivViewRow]?
-    var allDay: [LivViewRow]?
-    var done: [LivViewRow]?
+    var late: [EntityRow]?
+    var passed: [EntityRow]?
+    var ahead: [EntityRow]?
+    var allDay: [EntityRow]?
+    var done: [EntityRow]?
     var next: LivID?
     var captured: Int?
 
     /// Everything the day itself holds, in the order the screen draws it.
-    var onTheDay: [LivViewRow] {
+    var onTheDay: [EntityRow] {
         (passed ?? []) + (ahead ?? []) + (allDay ?? [])
     }
 }
@@ -1365,13 +1537,13 @@ extension BoxModel {
     /// 3 unfiled.
     func engineEverything(
         slice: Int32, today: Int32,
-        _ done: @escaping ([LivViewRow]?, String?) -> Void
+        _ done: @escaping ([EntityRow]?, String?) -> Void
     ) {
         let to = enginePath
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = liv_view_everything(to, slice, today, nil, &out)
-            let (value, fault) = Self.decodeView([LivViewRow].self, code: code, out: out)
+            let (value, fault) = Self.decodeView([EntityRow].self, code: code, out: out)
             DispatchQueue.main.async { done(value, fault) }
         }
     }
@@ -1449,7 +1621,7 @@ struct LivTaskGroup: Decodable, Identifiable {
     var name: String?
     var completes: Bool?
     var late: Int?
-    var rows: [LivViewRow]?
+    var rows: [EntityRow]?
     var id: String { LivIDText.written(status ?? .absent) + (name ?? "") }
 }
 
@@ -1460,7 +1632,7 @@ struct LivTaskGroup: Decodable, Identifiable {
 /// The engine works that out, because getting it wrong is a layout bug
 /// that only shows up on a busy day.
 struct LivBlock: Decodable, Identifiable {
-    var row: LivViewRow?
+    var row: EntityRow?
     var startMin: Int?
     /// Never zero, so a thing with no duration stays tappable.
     var minutes: Int?
@@ -1471,7 +1643,7 @@ struct LivBlock: Decodable, Identifiable {
 
 /// One day: the all-day band, and the timeline under it.
 struct LivDayView: Decodable {
-    var allDay: [LivViewRow]?
+    var allDay: [EntityRow]?
     var blocks: [LivBlock]?
 }
 
@@ -2139,8 +2311,12 @@ struct LivNoteTask: Decodable, Identifiable {
 
 extension BoxModel {
     /// What is in the trash, newest first.
-    func engineTrash(_ done: @escaping ([LivViewRow]) -> Void) {
-        engineRead([LivViewRow].self, { to, out in liv_view_trash(to, out) }) { v, _ in
+    ///
+    /// Named apart from `engineTrash(_:)`, which puts something INTO the
+    /// trash. Two verbs one letter apart is the kind of pair that reads
+    /// fine and calls the wrong one.
+    func engineTrashRows(_ done: @escaping ([EntityRow]) -> Void) {
+        engineRead([EntityRow].self, { to, out in liv_view_trash(to, out) }) { v, _ in
             done(v ?? [])
         }
     }
@@ -2150,5 +2326,33 @@ extension BoxModel {
         engineRead([LivNoteTask].self, { to, out in liv_note_tasks(to, out) }) { v, _ in
             done(v ?? [])
         }
+    }
+}
+
+// MARK: - the engine lane: the vocabulary a picker offers
+
+/// One property a person can put on something.
+struct LivProperty: Decodable, Identifiable {
+    var id: LivID
+    var name: String?
+    /// text | number | bool | datetime | reference | richtext | file
+    var holds: String?
+    var many: Bool?
+    var display: String { (name ?? "").isEmpty ? "Field" : (name ?? "") }
+}
+
+extension BoxModel {
+    /// The fields a picker offers — not every property that exists.
+    func engineProperties(_ done: @escaping ([LivProperty]) -> Void) {
+        engineRead([LivProperty].self, { to, out in liv_properties(to, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
+    /// Turn the clerk on or off. **The box owns where the switch lives**,
+    /// so this is one call rather than the shell knowing which thing to
+    /// write a no onto.
+    func setAssist(_ on: Bool, _ done: ((Bool) -> Void)? = nil) {
+        engineWrite({ to in liv_set_assist(to, on, Self.nowMs) }) { done?($0 == nil) }
     }
 }

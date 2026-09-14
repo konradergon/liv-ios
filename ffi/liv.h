@@ -871,6 +871,27 @@ int32_t liv_view_trash(const char *path, char **out);
    itself, and its body lines would be the same work counted twice. */
 int32_t liv_note_tasks(const char *path, char **out);
 
+/* The properties a person can put on something:
+   [{"id":"<hex>","name","holds","many"}…]
+
+   The six the product names, then anything the user declared. NOT every
+   property that exists — most are plumbing the app needs and never
+   offers as a field to fill in, and a picker listing `trashed` beside
+   `due` would be the model leaking through the interface. */
+int32_t liv_properties(const char *path, char **out);
+
+/* Turn the clerk on or off.
+
+   THE BOX OWNS WHERE THE SWITCH LIVES. The clerk is off when any live
+   thing carries an explicit no, so turning it off means writing one and
+   turning it back on means taking it away — a rule about the model, not
+   something a shell should have to know.
+
+   Absent or true is ON, so turning it on REMOVES the cell rather than
+   writing true: a box that never said anything and a box that said yes
+   are the same box. */
+int32_t liv_set_assist(const char *path, bool on, uint64_t now_ms);
+
 /* THE ONE-WAY DOOR: build an engine box from a core box.
 
    Refuses if `to` already exists — "run it again" is the first thing

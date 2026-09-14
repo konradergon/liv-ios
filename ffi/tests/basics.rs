@@ -692,3 +692,72 @@ fn a_box_that_will_not_open_says_why() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// **Absent or true is ON.** Turning the clerk on removes the cell rather
+/// than writing `true`: a box that has never said anything and a box that
+/// said yes are the same box, and leaving a `true` behind would be a
+/// second thing to find and take away later.
+#[test]
+fn the_assist_switch_goes_off_and_back_on_without_leaving_anything_behind() {
+    let (d, path) = box_at("assist");
+    let on = |p: &CString| -> bool {
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { liv_ffi::finding::liv_assist(p.as_ptr(), &mut out) }, LIV_OK);
+        took(out)["on"].as_bool().unwrap()
+    };
+
+    assert!(on(&path), "a box that never said anything");
+
+    assert_eq!(unsafe { liv_set_assist(path.as_ptr(), false, T0) }, LIV_OK);
+    assert!(!on(&path));
+
+    // Off twice is off once — a second no would be a second thing to
+    // find later.
+    assert_eq!(unsafe { liv_set_assist(path.as_ptr(), false, T0 + 1) }, LIV_OK);
+    assert!(!on(&path));
+
+    assert_eq!(unsafe { liv_set_assist(path.as_ptr(), true, T0 + 2) }, LIV_OK);
+    assert!(on(&path), "and back on");
+
+    // Nothing left carrying an explicit answer.
+    let e = Engine::open_local(&d.join("liv.db"));
+    // (the verbs hold the connection; this only checks the switch reads on)
+    drop(e);
+    assert_eq!(unsafe { liv_set_assist(path.as_ptr(), true, T0 + 3) }, LIV_OK);
+    assert!(on(&path));
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The properties a person can put on something — not every property
+/// that exists. A picker listing `trashed` beside `due` would be the
+/// model leaking through the interface.
+#[test]
+fn the_property_list_offers_fields_and_not_plumbing() {
+    let (d, path) = box_at("properties");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_properties(path.as_ptr(), &mut out) }, LIV_OK);
+    let rows = took(out);
+    let names: Vec<&str> =
+        rows.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"due"), "{rows}");
+    assert!(names.contains(&"status"));
+    assert!(!names.contains(&"trashed"), "plumbing is not a field: {names:?}");
+    assert!(!names.contains(&"content"));
+
+    // A field the user declared joins the same list.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_declare_field(path.as_ptr(), c("client").as_ptr(), c("text").as_ptr(), false, T0, &mut out)
+    };
+    took(out);
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_properties(path.as_ptr(), &mut out) };
+    let rows = took(out);
+    let mine = rows.as_array().unwrap().iter().find(|r| r["name"] == "client").unwrap();
+    assert_eq!(mine["holds"], "text");
+    assert_eq!(mine["many"], false);
+
+    let _ = std::fs::remove_dir_all(&d);
+}

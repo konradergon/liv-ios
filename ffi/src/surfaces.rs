@@ -177,6 +177,31 @@ struct WireRow {
     created_ms: i64,
     touched_ms: i64,
     has_file: bool,
+    /// **The word for the kind, not its id**, and lowercase: `note`,
+    /// `task`, `event`. It is the same spelling the query grammar uses
+    /// (`type:task`), so one word means one thing everywhere.
+    ///
+    /// §3 says a surface verb hands back the strings the row will draw.
+    /// Sending only the id would make every shell keep its own map from
+    /// id to word — which is the shell-side furnishing `one-core.md` §4
+    /// records as a mistake, rebuilt one layer up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind_word: Option<String>,
+    /// The status as a person reads it. A DISPLAY name, not a stable
+    /// word: a status is an option someone can rename, and the rename is
+    /// supposed to show.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_word: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    area_word: Option<String>,
+    /// Filed away, which is NOT thrown away. Every surface but the
+    /// archive hides these, and the shell needs to know which it is
+    /// looking at.
+    archived: bool,
+    /// In the trash. Always false on every surface except `liv_view_trash`
+    /// — they filter it — but the shell indexes rows from both and must
+    /// not have to remember which list a row came from.
+    trashed: bool,
 }
 
 impl From<&Row> for WireRow {
@@ -194,6 +219,11 @@ impl From<&Row> for WireRow {
             created_ms: r.created_ms,
             touched_ms: r.touched_ms,
             has_file: r.has_file,
+            archived: r.archived,
+            trashed: r.trashed,
+            kind_word: r.kind_word.clone(),
+            status_word: r.status_word.clone(),
+            area_word: r.area_word.clone(),
         }
     }
 }

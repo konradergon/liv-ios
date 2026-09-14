@@ -574,3 +574,105 @@ pub unsafe extern "C" fn liv_probe_box(path: *const c_char, out: *mut *mut c_cha
     // here is what keeps a probe from holding a box a retry needs.
     deliver(out, &answer)
 }
+
+/// Every property a person can put on something:
+/// `[{"id":hex,"name":…,"holds":…,"many":bool}]`.
+///
+/// **The six the product names, then anything the user declared.** Not
+/// every property that exists — most of them are plumbing the app needs
+/// and never offers as a field to fill in, and a picker listing `trashed`
+/// beside `due` would be the model leaking through the interface.
+///
+/// # Safety
+/// `path` a valid C string; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_properties(path: *const c_char, out: *mut *mut c_char) -> i32 {
+    match with_engine(path, |e| {
+        let mut rows = Vec::new();
+        for def in liv_engine::model::PROPS.iter().filter(|p| p.shown) {
+            rows.push(json!({
+                "id": def.id.hex(),
+                // The CURRENT name, so a renamed field shows its new one.
+                "name": e.display_name(def.id).unwrap_or(None).unwrap_or_else(|| def.name.to_owned()),
+                "holds": holds_word(def.holds),
+                "many": def.many,
+            }));
+        }
+        for id in e.of_kind(liv_engine::model::kind::FIELD).map_err(|_| LIV_ERR_READ)? {
+            if e.is_trashed(id).map_err(|_| LIV_ERR_READ)? {
+                continue;
+            }
+            let shape = e.prop_shape(id).map_err(|_| LIV_ERR_READ)?;
+            rows.push(json!({
+                "id": id.hex(),
+                "name": e.display_name(id).map_err(|_| LIV_ERR_READ)?,
+                "holds": shape.map(|s| holds_word(s.holds)).unwrap_or("text"),
+                "many": shape.map(|s| s.many).unwrap_or(false),
+            }));
+        }
+        Ok(serde_json::Value::Array(rows))
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+fn holds_word(h: liv_engine::model::Holds) -> &'static str {
+    use liv_engine::model::Holds;
+    match h {
+        Holds::Text => "text",
+        Holds::Number => "number",
+        Holds::Bool => "bool",
+        Holds::Date => "datetime",
+        Holds::Ref | Holds::RefTo(_) => "reference",
+        Holds::Blob => "file",
+        Holds::Rich => "richtext",
+    }
+}
+
+/// Turn the clerk on or off.
+///
+/// **The box owns where the switch lives.** `assist_enabled` answers by
+/// looking for any live thing carrying an explicit no, so turning it off
+/// means writing one and turning it back on means taking it away — which
+/// is a rule about the model, not something a shell should have to know.
+/// It was the last thing the old snapshot told the shell that the engine
+/// did not.
+///
+/// Absent or true is ON, so turning it on removes the cell rather than
+/// writing `true`: a box that has never said anything and a box that said
+/// yes are the same box.
+///
+/// # Safety
+/// `path` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn liv_set_assist(path: *const c_char, on: bool, now_ms: u64) -> i32 {
+    match with_engine(path, |e| {
+        let prop = liv_engine::model::prop::AUTOMATION;
+        let saying_no: Vec<liv_engine::EntityId> = e
+            .with_value(prop, &Value::Bool(false))
+            .map_err(|_| LIV_ERR_READ)?
+            .into_iter()
+            .filter(|id| !e.is_trashed(*id).unwrap_or(false))
+            .collect();
+        if on {
+            for id in saying_no {
+                e.unset(id, prop, now_ms).map_err(wrote)?;
+            }
+            return Ok(());
+        }
+        if !saying_no.is_empty() {
+            // Already off. Writing a second no would be a second thing to
+            // find and take away later.
+            return Ok(());
+        }
+        let settings = e
+            .create(liv_engine::model::kind::NOTE, Some("Settings"), now_ms)
+            .map_err(wrote)?;
+        e.set(settings, prop, Value::Bool(false), now_ms).map_err(wrote)?;
+        Ok(())
+    }) {
+        Ok(()) => LIV_OK,
+        Err(e) => e,
+    }
+}

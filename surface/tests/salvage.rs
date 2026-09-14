@@ -186,3 +186,50 @@ fn a_contended_trash_state_is_not_the_trash() {
         "a thing every other surface still shows must not also be in the trash"
     );
 }
+
+// ---- the words a row draws ---------------------------------------------
+
+/// **A row carries the words it draws, not just ids.**
+///
+/// §3 says a surface verb hands back the strings the row will draw.
+/// Sending only ids would make every shell keep its own map from id to
+/// word — which is the shell-side furnishing `one-core.md` §4 records as
+/// a mistake, rebuilt one layer up. The iOS shell compares against
+/// `"task"` and `"event"` in eight places, and would have needed exactly
+/// that map.
+#[test]
+fn a_row_carries_the_words_it_draws() {
+    let mut e = engine();
+    let t = e.create(kind::TASK, Some("Fix the roof"), T0).unwrap();
+    e.set(t, prop::STATUS, Value::Ref(status::DOING), T0 + 1).unwrap();
+    e.set(t, prop::AREA, Value::Ref(area::HOME), T0 + 2).unwrap();
+
+    let r = liv_surface::row(&e, t).unwrap();
+    // Lowercase for the kind: the same spelling `type:task` uses, so one
+    // word means one thing everywhere.
+    assert_eq!(r.kind_word.as_deref(), Some("task"));
+    // A DISPLAY name for the status, because a status is an option
+    // someone can rename and the rename is supposed to show.
+    assert_eq!(r.status_word.as_deref(), Some("Doing"));
+    assert_eq!(r.area_word.as_deref(), Some("Home"));
+
+    // A renamed status shows its new name.
+    e.set(status::DOING, prop::NAME, Value::Text("In progress".into()), T0 + 3).unwrap();
+    assert_eq!(liv_surface::row(&e, t).unwrap().status_word.as_deref(), Some("In progress"));
+
+    // And a thing with none of them says so rather than guessing.
+    let bare = e.capture("just a thought", T0 + 4).unwrap();
+    let b = liv_surface::row(&e, bare).unwrap();
+    assert_eq!(b.kind_word, None);
+    assert_eq!(b.status_word, None);
+}
+
+/// A kind the user declared is called whatever they called it, by the
+/// same rule — there is no separate path for "ours" and "theirs".
+#[test]
+fn a_user_declared_kind_gets_a_word_the_same_way() {
+    let mut e = engine();
+    let mine = e.create(kind::KIND, Some("Recipe"), T0).unwrap();
+    let thing = e.create(mine, Some("Bread"), T0 + 1).unwrap();
+    assert_eq!(liv_surface::row(&e, thing).unwrap().kind_word.as_deref(), Some("recipe"));
+}
