@@ -210,12 +210,12 @@ enum SpanText {
     /// saves gave "]]]]] today" (measured, 2026-08-11).
     static func token(_ id: LivEntityID, name: String?) -> String {
         let raw = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return "[[\(LivIDText.written(id))]]" }
+        guard !raw.isEmpty else { return "[[\(id.hex)]]" }
         let clean =
             raw
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "]", with: "] ")
-        return "[[\(LivIDText.written(id))|\(clean)]]"
+        return "[[\(id.hex)|\(clean)]]"
     }
 
     /// Spans → the editing buffer. A Break opens a paragraph, so a LEADING
@@ -580,16 +580,24 @@ enum SpanText {
         return Array(spans.dropFirst())
     }
 
-    /// "[[" digits ("|" anything-without-"]]")? "]]" — or nil, and the "[["
+    /// "[[" hex ("|" anything-without-"]]")? "]]" — or nil, and the "[["
     /// stays literal text. Never lenient: a half-typed token is text.
+    ///
+    /// **Hex, because an id is sixteen bytes.** This read decimal digits
+    /// and stopped at the first letter, which for an engine id means it
+    /// either found nothing or — worse — found the leading digits of the
+    /// hex and returned a plausible id for something else entirely. A
+    /// link has to round-trip through the text exactly: `.ref(id)` is
+    /// written here and read back here, and anything lossy in between
+    /// silently repoints it.
     private static func token(_ c: [Character], from start: Int) -> (LivEntityID, Int)? {
         var i = start + 2
         var digits = ""
-        while i < c.count, c[i].isASCII, c[i].isNumber {
+        while i < c.count, c[i].isHexDigit, c[i].isASCII, !c[i].isUppercase {
             digits.append(c[i])
             i += 1
         }
-        guard !digits.isEmpty, let id = LivIDText.read(digits) else { return nil }
+        guard digits.count == 32, let id = LivEntityID(hex: digits) else { return nil }
         if i + 1 < c.count, c[i] == "]", c[i + 1] == "]" { return (id, i + 2) }
         guard i < c.count, c[i] == "|" else { return nil }
         i += 1
@@ -1321,8 +1329,12 @@ func livSpanCodecSelfCheck() -> [String] {
         "first\nsecond\nthird",
         "a\n\nb",  // blank paragraph between
         "trailing\n",
-        "see [[4155|Kitchen rebuild]] tomorrow",
-        "[[7]] leads",
+        // **Hex, 32 characters.** An id is sixteen bytes, so the
+        // token carries all of it — `[[12|half` and `[[abc]]` are
+        // literal text now for the same reason they always were:
+        // neither is a whole id.
+        "see [[0000000000000000000000000000103b|Kitchen rebuild]] tomorrow",
+        "[[00000000000000000000000000000007]] leads",
         "not a token [[abc]] nor [[12|half",
         "brackets [ [ ] ] survive",
     ] {
@@ -1540,14 +1552,14 @@ func livSpanCodecSelfCheck() -> [String] {
     // 3. A Ref survives a name it has never heard of, and a nameless one.
     check(
         "unknown target keeps the id",
-        SpanText.spansToText([.ref(999)], name: names) == "[[999]]")
-    check("nameless token parses", SpanText.textToSpans("[[999]]") == [.ref(999)])
+        SpanText.spansToText([.ref(999)], name: names) == "[[000000000000000000000000000003e7]]")
+    check("nameless token parses", SpanText.textToSpans("[[000000000000000000000000000003e7]]") == [.ref(999)])
 
     // 4. A mangled token is literal text — never a guess.
     check(
         "mangled token is text",
-        SpanText.textToSpans("[[4155|Kitchen rebuild]")
-            == [.text("[[4155|Kitchen rebuild]", marks: 0)])
+        SpanText.textToSpans("[[0000000000000000000000000000103b|Kitchen rebuild]")
+            == [.text("[[0000000000000000000000000000103b|Kitchen rebuild]", marks: 0)])
 
     // 5. Deleting the token deletes the link, and nothing else.
     check("deleted token drops the ref", SpanText.textToSpans("see  now")
@@ -1556,15 +1568,16 @@ func livSpanCodecSelfCheck() -> [String] {
     // 6. An empty buffer is no spans at all (the seam removes content).
     check("empty buffer removes content", SpanText.textToSpans("").isEmpty)
 
-    // 7. The wire shapes the core will parse — the JSON strings are the
-    //    ones core/src/value.rs's own serde tests assert (key ORDER is
-    //    ours — sorted — since serde parses objects order-independently
-    //    and the fingerprint is FNV over the core's own re-encoding,
-    //    never over the wire bytes).
+    // 7. The wire shapes the box will parse. Text and Break are
+    //    unchanged — `ffi/src/spans.rs` writes exactly these — but a REF
+    //    IS HEX NOW, not a number. An engine id is a UUID and a JSON
+    //    number is not one; `LivID` was built in slice 4 to decode both
+    //    and to encode hex, which is why the editor needed no change when
+    //    the data source swapped.
     check(
         "json of a ref doc",
         SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)])
-            == #"[{"Text":"a"},{"Break":"Body"},{"Ref":9}]"#,
+            == #"[{"Text":"a"},{"Break":"Body"},{"Ref":"00000000000000000000000000000009"}]"#,
         SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)]))
     let vocab: [SpanJSON] = [
         .brk(.heading(2)), .text("b", marks: 1),

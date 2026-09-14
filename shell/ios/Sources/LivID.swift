@@ -99,19 +99,33 @@ enum LivIDText {
     // VALUES: the active workspace, and the desk's live document. Same
     // format, named here so they are not three call sites either.
 
-    /// The id under `key`, or `.absent` when there isn't one. Decimal,
-    /// like every other written form, for the same reason.
+    /// The id under `key`, or `.absent` when there isn't one.
+    ///
+    /// **A STRING, and hex, because an engine id is sixteen bytes.** It
+    /// was an integer, which held the low eight and silently dropped the
+    /// rest — so the workspace you had open and the document the desk was
+    /// showing came back as ids pointing at nothing. A truncated id is
+    /// not a wrong id you can spot; it is a plausible one for something
+    /// that does not exist.
+    ///
+    /// An integer left by an older build reads as `.absent` rather than
+    /// being converted: those are `core/` ids, and the box they named is
+    /// not the box any more.
     static func stored(
         forKey key: String, in defaults: UserDefaults = .standard
     ) -> LivEntityID {
-        let n = defaults.integer(forKey: key)
-        return n > 0 ? LivEntityID(core: UInt64(n)) : .absent
+        guard let text = defaults.string(forKey: key) else { return .absent }
+        return LivEntityID(hex: text) ?? .absent
     }
 
     static func store(
         _ id: LivEntityID, forKey key: String, in defaults: UserDefaults = .standard
     ) {
-        defaults.set(Int(id.core), forKey: key)
+        if id.isAbsent {
+            defaults.removeObject(forKey: key)
+        } else {
+            defaults.set(id.hex, forKey: key)
+        }
     }
 }
 

@@ -1008,19 +1008,19 @@ func livEditorSelfCheck() -> [String] {
     check(
         "link to a bracketed name is spaced",
         EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]")
-            .text == "see [[7|Q3 [final] ]]",
+            .text == "see [[00000000000000000000000000000007|Q3 [final] ]]",
         EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]").text)
     check(
         "link to a nameless thing carries no pipe",
         EditOps.completeLink("[[", token: NSRange(location: 0, length: 2), id: 9, name: "  ")
-            .text == "[[9]]")
+            .text == "[[00000000000000000000000000000009]]")
     let done = EditOps.completeLink(
         "see [[kit", token: NSRange(location: 4, length: 5), id: 4155, name: "Kitchen rebuild")
-    check("link completes", done.text == "see [[4155|Kitchen rebuild]]", done.text)
+    check("link completes", done.text == "see [[0000000000000000000000000000103b|Kitchen rebuild]]", done.text)
     check("caret lands after the token", done.selection.location == (done.text as NSString).length)
     let noName = EditOps.completeLink(
         "x [[q", token: NSRange(location: 2, length: 3), id: 7, name: "  ")
-    check("nameless token when the name is blank", noName.text == "x [[7]]", noName.text)
+    check("nameless token when the name is blank", noName.text == "x [[00000000000000000000000000000007]]", noName.text)
     let outline = livOutline("# One\nbody\n### Three\n- not a heading\n## Two")
     check("outline finds three headings", outline.count == 3, "\(outline.count)")
     check("outline keeps levels", outline.map(\.level) == [1, 3, 2], "\(outline.map(\.level))")

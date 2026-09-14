@@ -228,15 +228,19 @@ enum MarkStyler {
     private static func refId(_ line: String, _ token: NSRange) -> LivEntityID? {
         let n = line as NSString
         guard token.length > 4 else { return nil }
+        // Hex, matching `SpanText.token`: the two halves of one grammar
+        // (standing rule 4), and decimal here read an engine id as its
+        // leading digits — a plausible id for something else.
         var digits = ""
         var i = token.location + 2
         while i < NSMaxRange(token) {
             let c = n.character(at: i)
-            guard c >= 0x30, c <= 0x39 else { break }
+            let isHex = (c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x66)
+            guard isHex else { break }
             digits.append(Character(UnicodeScalar(c)!))
             i += 1
         }
-        return LivIDText.read(digits)
+        return digits.count == 32 ? LivEntityID(hex: digits) : nil
     }
 
     private static func style(
@@ -531,7 +535,10 @@ enum MarkStyler {
                 }
                 if let id = refId(line, whole) {
                     storage.addAttribute(
-                        .livRef, value: NSNumber(value: id.core), range: abs(whole))
+                        // **The id as text, not a number.** An NSNumber
+                        // holds the low eight bytes of a sixteen-byte id,
+                        // so a tap opened something that did not exist.
+                        .livRef, value: id.hex as NSString, range: abs(whole))
                 }
                 if let name, name.length > 0 {
                     storage.addAttributes(
@@ -1554,8 +1561,10 @@ struct MarkdownEditor: UIViewRepresentable {
             let point = gesture.location(in: view)
             // A tap on a link follows it (Obsidian's shipped iOS grammar —
             // long-press still places the caret through the native loupe).
-            if let id = hit(.livRef, at: point)?.value {
-                parent.onOpenRef(LivEntityID(core: id.uint64Value))
+            if let text = hit(.livRef, at: point)?.value as? String,
+                let id = LivEntityID(hex: text)
+            {
+                parent.onOpenRef(id)
                 return
             }
             guard let result = EditOps.toggleTask(view.text, at: characterIndex(of: point))

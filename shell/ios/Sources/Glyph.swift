@@ -882,10 +882,18 @@ func livGlyphSelfCheck() -> [String] {
     let cases: [(String, EntityRow, LivKind)] = [
         ("plain note", row(1, kinds: ["note"]), .note),
         ("task by kind", row(2, kinds: ["task"]), .task),
-        // The defect this type was built for: kinds.first said note.
-        ("task filed under note", row(3, kinds: ["note", "task"]), .task),
+        // **A thing has ONE kind now.** The two cases here used to give a
+        // row several — `["note","task"]` — because `core/` let a thing
+        // be both, and the defect this type was built for was
+        // `kinds.first` answering "note". The engine's `kind` is one
+        // cell, so that row cannot exist and a test asserting it would be
+        // testing a model nobody has.
+        //
+        // What survives is the rule that actually decides: a STATUS
+        // makes a thing a task whatever it calls itself, and an event
+        // outranks even that.
         ("task by status alone", row(4, kinds: ["note"], status: "To do"), .task),
-        ("event beats task", row(5, kinds: ["event", "task"]), .event),
+        ("event beats a status", row(5, kinds: ["event"], status: "To do"), .event),
         ("person", row(6, kinds: ["person"]), .person),
         ("link", row(7, kinds: ["link"]), .link),
         ("nothing at all", row(8), .capture),

@@ -28,7 +28,7 @@ struct CellRow: Decodable {
 
 struct NoteTaskRow: Decodable, Identifiable {
     /// Stable per line, so SwiftUI keeps rows in place across refreshes.
-    var id: String { "\(LivIDText.written(entity ?? .absent)).\(line ?? 0)" }
+    var id: String { "\(engineId(entity ?? .absent)).\(line ?? 0)" }
     /// The note that holds the line.
     var entity: LivEntityID? = nil
     /// What to call that note — computed in Rust, where the content is
@@ -44,7 +44,7 @@ struct NoteTaskRow: Decodable, Identifiable {
 /// fingerprint rides back on accept/reject — a consent is to a PROPOSAL,
 /// never a position, so a stale click is refused, not misapplied.
 struct ProposalRow: Decodable, Identifiable {
-    var id: String { "\(LivIDText.written(entity ?? .absent)).\(fingerprint ?? 0)" }
+    var id: String { "\(engineId(entity ?? .absent)).\(fingerprint ?? 0)" }
     var entity: LivEntityID? = nil
     var ordinal: UInt32? = nil
     var fingerprint: UInt64? = nil
@@ -570,7 +570,7 @@ final class BoxModel: ObservableObject {
             },
             assist: AssistRow(
                 id: nil, on: assistOn,
-                prop: assistProperty.map(LivIDText.written)),
+                prop: assistProperty.map(engineId)),
             noteTasks: noteTasks.map {
                 NoteTaskRow(entity: $0.note, source: $0.source, line: $0.line,
                             text: $0.text, indent: $0.depth)
@@ -930,7 +930,7 @@ final class BoxModel: ObservableObject {
                     return
                 }
                 self.forgetCells(of: id)
-                self.engineSet(id, p, LivIDText.written(k.id)) { fault in
+                self.engineSet(id, p, engineId(k.id)) { fault in
                     done?(fault == nil)
                 }
             }
@@ -996,7 +996,7 @@ final class BoxModel: ObservableObject {
                 done?(id)
                 return
             }
-            self.set(id, "parent", LivIDText.written(parent)) { _ in done?(id) }
+            self.set(id, "parent", engineId(parent)) { _ in done?(id) }
         }
     }
 
@@ -1059,7 +1059,7 @@ final class BoxModel: ObservableObject {
                     done?(id)
                     return
                 }
-                self.engineAdd(property, p, LivIDText.written(id)) { _ in done?(id) }
+                self.engineAdd(property, p, engineId(id)) { _ in done?(id) }
             }
         }
     }
@@ -1847,7 +1847,7 @@ struct LivTaskGroup: Decodable, Identifiable {
     var completes: Bool?
     var late: Int?
     var rows: [EntityRow]?
-    var id: String { LivIDText.written(status ?? .absent) + (name ?? "") }
+    var id: String { engineId(status ?? .absent) + (name ?? "") }
 }
 
 /// One block on the day's timeline, with its overlap already resolved.
@@ -1863,7 +1863,7 @@ struct LivBlock: Decodable, Identifiable {
     var minutes: Int?
     var column: Int?
     var columns: Int?
-    var id: String { LivIDText.written(row?.id ?? .absent) }
+    var id: String { engineId(row?.id ?? .absent) }
 }
 
 /// One day: the all-day band, and the timeline under it.
@@ -1888,7 +1888,7 @@ struct LivCell: Decodable, Identifiable {
     /// silently wins, so the row has to be able to show the choice.
     var contended: Bool?
 
-    var id: String { LivIDText.written(property ?? .absent) }
+    var id: String { engineId(property ?? .absent) }
 }
 
 /// One thing a picker may offer: compiled-in furniture and the user's own
@@ -1917,7 +1917,7 @@ struct LivSuggestion: Decodable, Identifiable {
     var print: UInt64?
     var proposer: String?
     var reason: String?
-    var id: String { "\(LivIDText.written(entity ?? .absent)).\(print ?? 0)" }
+    var id: String { "\(engineId(entity ?? .absent)).\(print ?? 0)" }
 }
 
 /// One workspace, or one saved filter.
@@ -1991,7 +1991,7 @@ struct LivEngineFacet: Decodable, Identifiable {
     var property: LivID?
     var label: String?
     var values: [LivEngineFacetValue]?
-    var id: String { label ?? LivIDText.written(property ?? .absent) }
+    var id: String { label ?? engineId(property ?? .absent) }
 }
 
 struct LivEngineFacetValue: Decodable, Identifiable {
@@ -2052,6 +2052,21 @@ struct LivResync: Decodable {
 }
 
 // MARK: - the engine lane: verbs
+
+/// An id as the ENGINE spells it: 32 hex characters.
+///
+/// **Not `LivIDText.written`, which is decimal and is for the SHELL's own
+/// storage** — notification identifiers, `UserDefaults` keys, the outbox
+/// ledger. Those are the shell talking to itself, and changing their
+/// format would orphan everything already written.
+///
+/// Using `written` here was a real bug and a quiet one. It is
+/// `String(id.core)` — the low 64 bits, in decimal — and the engine's
+/// `parse_id` wants 32 hex characters, so every id the shell handed to C
+/// came back LIV_ERR_ARG. Reads that take no id worked, which is exactly
+/// why all five screens rendered and nothing could be created or edited.
+func engineId(_ id: LivEntityID) -> String { id.hex }
+
 
 /// The out-pointer every engine verb delivers its answer through: a
 /// `char **`, exactly as C sees it.
@@ -2157,7 +2172,7 @@ extension BoxModel {
         kind: LivID, name: String? = nil,
         _ done: ((LivID?, String?) -> Void)? = nil
     ) {
-        let k = LivIDText.written(kind)
+        let k = engineId(kind)
         engineWriteValue(LivMade.self, { to, out in
             if let name {
                 return liv_make(to, k, name, Self.nowMs, out)
@@ -2188,7 +2203,7 @@ extension BoxModel {
         _ id: LivID, _ property: LivID, _ value: String,
         _ done: ((String?) -> Void)? = nil
     ) {
-        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        let (i, p) = (engineId(id), engineId(property))
         engineWrite({ to in liv_set(to, i, p, value, Self.nowMs) }, done)
     }
 
@@ -2196,7 +2211,7 @@ extension BoxModel {
         _ id: LivID, _ property: LivID, _ value: String,
         _ done: ((String?) -> Void)? = nil
     ) {
-        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        let (i, p) = (engineId(id), engineId(property))
         engineWrite({ to in liv_add(to, i, p, value, Self.nowMs) }, done)
     }
 
@@ -2205,33 +2220,33 @@ extension BoxModel {
         _ id: LivID, _ property: LivID, _ value: String,
         _ done: ((String?) -> Void)? = nil
     ) {
-        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        let (i, p) = (engineId(id), engineId(property))
         engineWrite({ to in liv_remove(to, i, p, value, Self.nowMs) }, done)
     }
 
     /// Empty a cell. **Not the same as setting it to nothing** — an unset
     /// cell has no value, which is what a picker's "None" means.
     func engineUnset(_ id: LivID, _ property: LivID, _ done: ((String?) -> Void)? = nil) {
-        let (i, p) = (LivIDText.written(id), LivIDText.written(property))
+        let (i, p) = (engineId(id), engineId(property))
         engineWrite({ to in liv_unset(to, i, p, Self.nowMs) }, done)
     }
 
     /// **Trashing is a cell, not a deletion**, which is what makes
     /// restore a write rather than a resurrection.
     func engineTrash(_ id: LivID, _ done: ((String?) -> Void)? = nil) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineWrite({ to in liv_trash(to, i, Self.nowMs) }, done)
     }
 
     func engineRestore(_ id: LivID, _ done: ((String?) -> Void)? = nil) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineWrite({ to in liv_restore(to, i, Self.nowMs) }, done)
     }
 
     // MARK: the editor
 
     func engineBody(_ id: LivID, _ done: @escaping (LivBody?, String?) -> Void) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineRead(LivBody.self, { to, out in liv_read_body(to, i, out) }, done)
     }
 
@@ -2244,21 +2259,21 @@ extension BoxModel {
         _ id: LivID, spansJson: String, base: UInt64,
         _ done: @escaping (UInt64?, String?) -> Void
     ) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineWriteValue(LivBody.self, { to, out in
             liv_write_body(to, i, spansJson, base, Self.nowMs, out)
         }) { body, fault in done(body?.print, fault) }
     }
 
     func engineBodyHistory(_ id: LivID, _ done: @escaping ([LivBodyVersion], String?) -> Void) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineRead([LivBodyVersion].self, { to, out in liv_body_history(to, i, out) }) {
             done($0 ?? [], $1)
         }
     }
 
     func engineLinks(_ id: LivID, _ done: @escaping (LivLinks) -> Void) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineRead(LivLinks.self, { to, out in liv_links(to, i, out) }) { v, _ in
             done(v ?? .empty)
         }
@@ -2290,7 +2305,7 @@ extension BoxModel {
     /// stores it, and the drift is invisible until someone renames
     /// something (`one-core.md` §4).
     func engineOptions(_ property: LivID, _ done: @escaping ([LivNamed]) -> Void) {
-        let p = LivIDText.written(property)
+        let p = engineId(property)
         engineRead([LivNamed].self, { to, out in liv_options(to, p, out) }) { v, _ in
             done(v ?? [])
         }
@@ -2314,14 +2329,14 @@ extension BoxModel {
     /// What this property is actually CARRYING — a different question
     /// from `engineOptions`, which asks what it may hold.
     func engineValuesInUse(_ property: LivID, _ done: @escaping ([LivInUse]) -> Void) {
-        let p = LivIDText.written(property)
+        let p = engineId(property)
         engineRead([LivInUse].self, { to, out in liv_values_in_use(to, p, out) }) { v, _ in
             done(v ?? [])
         }
     }
 
     func engineCells(_ id: LivID, _ done: @escaping ([LivCell]) -> Void) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineRead([LivCell].self, { to, out in liv_cells(to, i, out) }) { v, _ in done(v ?? []) }
     }
 
@@ -2332,7 +2347,7 @@ extension BoxModel {
         _ property: LivID, from old: String, to new: String,
         _ done: @escaping (Int?, String?) -> Void
     ) {
-        let p = LivIDText.written(property)
+        let p = engineId(property)
         engineWriteValue(LivCarriers.self, { box, out in
             liv_rename_value(box, p, old, new, Self.nowMs, out)
         }) { v, fault in done(v?.carriers, fault) }
@@ -2350,7 +2365,7 @@ extension BoxModel {
     /// Re-hash what a file points at here. A changed hash IS the
     /// integration — it is how Liv learns Word saved the file.
     func engineResync(_ id: LivID, _ done: @escaping (LivResync?, String?) -> Void) {
-        let i = LivIDText.written(id)
+        let i = engineId(id)
         engineWriteValue(LivResync.self, { to, out in
             liv_resync_file(to, i, Self.nowMs, out)
         }, done)
@@ -2378,7 +2393,7 @@ extension BoxModel {
             done?("that suggestion is gone")
             return
         }
-        let e = LivIDText.written(entity)
+        let e = engineId(entity)
         engineWrite({ to in liv_accept(to, e, print, Self.nowMs) }, done)
     }
 
@@ -2390,7 +2405,7 @@ extension BoxModel {
             done?("that suggestion is gone")
             return
         }
-        let e = LivIDText.written(entity)
+        let e = engineId(entity)
         engineWrite({ to in liv_decline(to, e, print, Self.nowMs) }, done)
     }
 
@@ -2400,7 +2415,7 @@ extension BoxModel {
     func engineAcceptAll(_ many: [LivSuggestion], _ done: @escaping (Int?, String?) -> Void) {
         let pairs = many.compactMap { s -> (String, UInt64)? in
             guard let e = s.entity, let p = s.print else { return nil }
-            return (LivIDText.written(e), p)
+            return (engineId(e), p)
         }
         guard !pairs.isEmpty else {
             done(nil, "there was nothing to do")
@@ -2531,7 +2546,7 @@ struct LivNoteTask: Decodable, Identifiable {
     var line: Int?
     var text: String?
     var depth: Int?
-    var id: String { "\(LivIDText.written(note ?? .absent)).\(line ?? 0)" }
+    var id: String { "\(engineId(note ?? .absent)).\(line ?? 0)" }
 }
 
 extension BoxModel {
