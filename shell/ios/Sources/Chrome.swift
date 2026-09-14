@@ -1093,6 +1093,19 @@ struct LivTopScrim: View {
     /// SidePanel, and it cost an hour again on 2026-08-28 — the panel
     /// simply never drew.
     var underChrome: Bool = true
+
+    /// WHAT IT FADES TO — the ground of the surface it is laid on, not
+    /// the app's.
+    ///
+    /// It was always `LivTheme.canvas`, which is the DESK's ground and
+    /// one step darker than the panel's `LivTheme.surface`. On the panel
+    /// that painted a band of the desk's colour across the top and then
+    /// dissolved it, so the panel appeared to be bleeding darkness in
+    /// from the desk beside it (owner, 2026-09-14: "See that dark fade in
+    /// panel? seems to be extending from the desk area, it shouldn't").
+    /// It was not coming from the desk; it was the desk's colour, drawn
+    /// by the panel itself.
+    var ground: Color = LivTheme.canvas
     @EnvironmentObject private var desk: DeskModel
 
     /// THE BAND SHRINKS WHEN THE BUTTONS LEAVE (owner, 2026-09-07: "the
@@ -1112,27 +1125,44 @@ struct LivTopScrim: View {
     /// Whether the band is the doors' full one, or the clock's alone.
     private var tall: Bool { underChrome && !desk.chromeAway }
 
+    /// What the inset RESERVES: the doors' band, or the clock's alone.
     private var height: CGFloat { tall ? LivRow.topInset : LivSafeArea.top }
 
+    /// SOLID DOWN TO HERE, in points. Everything above it must be fully
+    /// covered — the clock, and the glass controls where there are any.
+    ///
+    /// A FRACTION on the desk, an absolute on the panel. The 0.45 is
+    /// measured against the doors' band; applied to the status bar alone
+    /// it stopped being solid a third of the way up the clock, and a row
+    /// scrolling past showed through beside it (measured 2026-09-07: a
+    /// checkbox at 48/255 against a ground of 26).
+    private var solid: CGFloat { tall ? height * 0.45 : height }
+
+    /// AND FADES OVER THIS MUCH MORE.
+    ///
+    /// On the desk the ramp is the rest of the reserved band, so the
+    /// gradient is exactly as tall as the inset and nothing changed here.
+    /// On the panel there is no spare band to ramp inside, so it ramps
+    /// BELOW the inset: the gradient is taller than the space it
+    /// reserves, and the extra hangs over the first rows without moving
+    /// them.
+    private var ramp: CGFloat { tall ? height - solid : LivRow.topFade }
+
     var body: some View {
-        // Solid where the clock is, then a fade under the controls: a
-        // plain two-stop gradient left words legible behind the time.
-        // SOLID WHERE THE CLOCK IS, then a fade under the controls. The
-        // solid share is a FRACTION of the band, so when the band
-        // collapses to the status bar alone the same 0.45 would stop
-        // being solid a third of the way up the clock and a row
-        // scrolling past showed through beside it (measured 2026-09-07:
-        // a checkbox at 48/255 against a ground of 26). With no controls
-        // to fade under, almost all of the band is the clock.
         LinearGradient(
             stops: [
-                .init(color: LivTheme.canvas, location: 0),
-                .init(color: LivTheme.canvas, location: tall ? 0.45 : 0.82),
-                .init(color: LivTheme.canvas.opacity(0), location: 1),
+                .init(color: ground, location: 0),
+                .init(color: ground, location: solid / (solid + ramp)),
+                .init(color: ground.opacity(0), location: 1),
             ],
             startPoint: .top, endPoint: .bottom
         )
-        .frame(height: height)
+        // DRAWN HEIGHT, then RESERVED height. The outer frame is what the
+        // `.safeAreaInset` measures; pinning the taller gradient to its
+        // top lets the ramp overhang. Nothing clips it — a SwiftUI child
+        // that overflows its frame still draws.
+        .frame(height: solid + ramp)
+        .frame(height: height, alignment: .top)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }

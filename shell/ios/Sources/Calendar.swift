@@ -1532,6 +1532,44 @@ func livCalendarSelfCheck() -> [String] {
 
     check("range label", CalClock.range(570, 60) == "09:30 – 10:30", CalClock.range(570, 60))
 
+    // THE TEXT THE ENGINE PARSES. `liv_set` takes a date as
+    // `yyyy-mm-dd [hh:mm]` and REFUSES anything else — a month of 00 is
+    // "no such day" and nothing is written. So a due that did not save
+    // looked exactly like a due that saved and did not render, and cost
+    // a round trip to the owner (2026-09-14: "is assigned due 00:00
+    // always, and changing due does nothing").
+    //
+    // It was `String(format:)` with `Int64` arguments: `%d` takes four
+    // bytes where the Int64 put eight, so the year came out right and
+    // everything after it came out zero. These pin the WHOLE string,
+    // which is the only part of it the engine reads.
+    check(
+        "a timed due is a date and a clock",
+        BoxModel.dateText(202_608_042_215, dateOnly: false) == "2026-08-04 22:15",
+        BoxModel.dateText(202_608_042_215, dateOnly: false))
+    check(
+        "an all-day due is a date alone",
+        BoxModel.dateText(202_608_040_000, dateOnly: true) == "2026-08-04",
+        BoxModel.dateText(202_608_040_000, dateOnly: true))
+    check(
+        "midnight is a real time, not an absent one",
+        BoxModel.dateText(202_601_010_000, dateOnly: false) == "2026-01-01 00:00",
+        BoxModel.dateText(202_601_010_000, dateOnly: false))
+    check(
+        "single-digit months and days keep their zero",
+        BoxModel.dateText(202_601_020_903, dateOnly: false) == "2026-01-02 09:03",
+        BoxModel.dateText(202_601_020_903, dateOnly: false))
+    // The clock face on its own — same defect, three more call sites.
+    check("clock pads both halves", Civil.clock(903) == "09:03", Civil.clock(903))
+    check("clock at midnight", Civil.clock(0) == "00:00", Civil.clock(0))
+    check("clock at the end of the day", Civil.clock(2359) == "23:59", Civil.clock(2359))
+    // And the date-aware one still answers "" for a stamp with no time,
+    // which is the rule the clock face exists to step around.
+    check("a date-only stamp has no time string", Civil.timeString(202_608_040_000) == "")
+    check(
+        "a timed stamp does", Civil.timeString(202_608_040_905) == "09:05",
+        Civil.timeString(202_608_040_905))
+
     // The month grid's DATA, which is what keeps a sideways drag cheap:
     // the cells are decided before they are drawn, so the grid can be
     // Equatable and SwiftUI can skip all 126 of them while only an

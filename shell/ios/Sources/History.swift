@@ -138,9 +138,8 @@ struct HistoryCard: View {
     /// midnight is a real 00:00.
     private func when(_ v: ContentVersion) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(v.time ?? 0))
-        let hm = Civil.hhmm(of: date)
         return Civil.dayLabel(Civil.day(of: date))
-            + String(format: " %02d:%02d", hm / 100, hm % 100)
+            + " " + Civil.clock(Civil.hhmm(of: date))
     }
 
     /// The first line of that version's words, names resolved the way the

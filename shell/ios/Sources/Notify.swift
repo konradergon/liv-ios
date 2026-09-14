@@ -206,8 +206,7 @@ final class Notify: NSObject, ObservableObject {
     /// which returns nothing for a stamp ending 0000 and left a reminder
     /// for a midnight event reading just "due" (review, 2026-08-06).
     private static func body(due: Int64) -> String {
-        let hhmm = due % 10_000
-        return String(format: "due %02d:%02d", hhmm / 100, hhmm % 100)
+        "due " + Civil.clock(due % 10_000)
     }
 
     /// Packed civil YYYYMMDDHHMM → a wall-clock Date in the current zone.

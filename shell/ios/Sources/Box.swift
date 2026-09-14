@@ -912,12 +912,22 @@ final class BoxModel: ObservableObject {
     /// A packed civil as the engine reads dates: `yyyy-mm-dd`, with
     /// `hh:mm` only when there is a time.
     static func dateText(_ civil: Int64, dateOnly: Bool) -> String {
-        let day = civil / 10_000
+        // **Int, not Int64, and padded by hand.**
+        //
+        // `String(format: "%d", someInt64)` is a varargs size mismatch:
+        // `%d` reads an Int32 off the list, so every argument after the
+        // first can be read from the wrong bytes. It is the kind of thing
+        // that looks right for a year and comes out as zeros for the two
+        // values after it — which is what "every event is due 00:00" was.
+        //
+        // Nothing here needs a format string. The components are small
+        // integers and the shape is fixed.
+        let day = Int(civil / 10_000)
         let (y, m, d) = (day / 10_000, (day / 100) % 100, day % 100)
-        let stamp = String(format: "%04d-%02d-%02d", y, m, d)
+        let stamp = "\(Civil.pad(y, 4))-\(Civil.pad(m, 2))-\(Civil.pad(d, 2))"
         if dateOnly { return stamp }
-        let (hh, mm) = ((civil / 100) % 100, civil % 100)
-        return stamp + String(format: " %02d:%02d", hh, mm)
+        let (hh, mm) = (Int((civil / 100) % 100), Int(civil % 100))
+        return stamp + " \(Civil.pad(hh, 2)):\(Civil.pad(mm, 2))"
     }
 
     /// **A value crosses as text and the property says what it means.**
@@ -1735,7 +1745,31 @@ enum Civil {
     static func timeString(_ stamp: Int64) -> String {
         let hm = stamp % 10_000
         guard hm != 0 else { return "" }
-        return String(format: "%02d:%02d", hm / 100, hm % 100)
+        return clock(hm)
+    }
+
+    /// "14:00", always four digits — the clock face on its own, for the
+    /// places that mean midnight when they say 00:00 and so cannot use
+    /// `timeString` (a reminder body, a version's stamp). **The one clock
+    /// in the shell**: there were four spellings of it, and three printed
+    /// the minutes as 00 because they handed an `Int64` to `%02d`.
+    static func clock(_ hhmm: Int64) -> String {
+        let hm = Int(hhmm)
+        return "\(pad(hm / 100, 2)):\(pad(hm % 100, 2))"
+    }
+
+    /// Zero-padded, without a format string.
+    ///
+    /// `String(format: "%02d", someInt64)` is a varargs size mismatch: `%d`
+    /// takes four bytes off a list where the Int64 put eight, so every
+    /// argument after the first reads the wrong bytes and comes out zero.
+    /// That was "every event is due 00:00". Nothing here needs a format
+    /// string — the parts are small integers and the shape is fixed.
+    static func pad(_ n: Int, _ width: Int) -> String {
+        let digits = String(max(0, n))
+        return digits.count >= width
+            ? digits
+            : String(repeating: "0", count: width - digits.count) + digits
     }
 
     /// "Tue 21 Jul"

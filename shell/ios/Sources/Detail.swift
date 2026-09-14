@@ -57,6 +57,20 @@ struct InspectorField: Identifiable {
     /// feel the walls") are no longer walls.
     var closed: Bool { false }
 
+    /// **ITS VALUES ARE ENTITIES, NOT STRINGS.** A name the vocabulary
+    /// has never heard of is refused by the engine, so one typed here
+    /// has to be minted before it can be written.
+    ///
+    /// This was spelled `kind == "select"` at the one place that needed
+    /// it. `area` does not arrive as a select — the engine holds it as
+    /// `RefTo(Area)`, which crosses the ABI as "reference" — so typing a
+    /// new area minted nothing, the write was refused for a name with no
+    /// entity behind it, and the area was neither assigned nor rendered
+    /// while picking an EXISTING one worked perfectly (owner,
+    /// 2026-09-14). A rule in a type rather than in a branch (standing
+    /// rule 3).
+    var mintsValues: Bool { kind == "select" || kind == "reference" }
+
     /// The fields every note shows even when empty — the "zero fill
     /// pressure" core (design/editor-study.md §8: two filled fields is a
     /// finished object). Everything else appears only once it has a value.
@@ -764,14 +778,21 @@ struct InspectorValueSheet: View {
             dismiss()
             return
         }
-        // A SELECT NEEDS THE OPTION TO EXIST FIRST. `set` refuses a value
-        // with no matching option — that refusal is the core's, and it is
-        // right: a select's values are entities, not strings. So mint it,
-        // then write it, and let the write wait for the mint.
-        if field.kind == "select", field.propertyId != 0,
+        // THE VALUE NEEDS TO EXIST FIRST. `set` refuses a name with no
+        // entity behind it — that refusal is the core's, and it is right:
+        // these values are things, not strings. So mint it, then write
+        // it, and let the write wait for the mint.
+        //
+        // A mint that fails hands back `.absent`; writing the name anyway
+        // would just be a second refusal, and the first one has already
+        // told the user.
+        if field.mintsValues, field.propertyId != 0,
             !field.options.contains(where: { same($0, value) })
         {
-            box.addOption(field.propertyId, value) { [self] _ in write(value) }
+            box.addOption(field.propertyId, value) { [self] made in
+                guard made != .absent else { return }
+                write(value)
+            }
             typed = ""
             if !field.multi { dismiss() }
             return
@@ -1180,76 +1201,50 @@ struct DetailDueSheet: View {
         .padding(.vertical, 4)
     }
 
-    /// THE CLOCK, ON THE QUARTER HOUR.
+    /// THE CLOCK — the system's own time picker, any minute.
     ///
-    /// This was a compact `DatePicker(.hourAndMinute)`, and its real
-    /// fault was never that it looked like the system's: it let you dial
-    /// 11:47, while every time the CALENDAR places goes through
-    /// `CalClock.snap` on the rule that "times land on quarter hours —
-    /// 11:47 is never what anyone meant". Two surfaces of one app
-    /// disagreeing about what a time is (standing rule 4).
+    /// It was a pair of ±15-minute steppers, so that the quarter-hour law
+    /// the CALENDAR applies to a dragged block (`CalClock.snap`, "11:47 is
+    /// never what anyone meant") lived in the control rather than in a
+    /// validator. The owner's word, 2026-09-14: "it doesn't let you set
+    /// arbitrary time with the normal picker and forces you to use the
+    /// clumsy arrows (remove those)."
     ///
-    /// Steppers rather than a wheel or a field: a due time is almost
-    /// always a nudge from the one already there, the app has no
-    /// time-string parser and standing rule 5 says a user does not type
-    /// one, and this way the quarter-hour law is in the CONTROL rather
-    /// than in a validator that has to reject what you typed.
+    /// The two surfaces do NOT now disagree about what a time is: dragging
+    /// a block across a grid is an imprecise gesture and still snaps;
+    /// naming a time outright is exact and is taken as given. The law is
+    /// about the gesture, not about the value.
+    ///
+    /// Standing rule 5 (a user never types a query language) is untouched
+    /// — the wheel is a picker, and no time string is ever parsed.
     private var timeRow: some View {
         HStack(spacing: 8) {
             Text("At")
                 .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
             Spacer(minLength: 12)
-            Button { nudge(-CalClock.step) } label: {
-                Image(systemName: "minus")
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: LivRow.touch, height: LivRow.touch)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Fifteen minutes earlier")
-            // NOT `Civil.timeString`, which answers "" for 0000 on the
-            // rule that a date-only stamp carries no time. Here the
-            // clock always shows one, and midnight is a real 00:00.
-            Text(clockLabel)
-                .font(.system(size: LivType.strong).monospacedDigit())
-                .foregroundStyle(LivTheme.text)
-                .frame(minWidth: 68)
+            DatePicker("", selection: $time, displayedComponents: .hourAndMinute)
+                .labelsHidden()
                 .accessibilityLabel("Due time")
-            Button { nudge(CalClock.step) } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(width: LivRow.touch, height: LivRow.touch)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Fifteen minutes later")
+                // The wheel reports every intermediate value while it
+                // spins, so this writes more than once per change. Each
+                // is one `set`, and `Box.swift` coalesces the refreshes
+                // (standing rule 8).
+                .onChange(of: time) { _, _ in retime() }
         }
         .frame(minHeight: LivRow.height)
     }
 
-    /// The clock face, always four digits — see the note at its call
-    /// site for why this is not `Civil.timeString`.
-    private var clockLabel: String {
-        let hm = Civil.hhmm(of: time)
-        return String(format: "%02d:%02d", hm / 100, hm % 100)
-    }
-
-    /// Move the clock by one step, snapped, and write.
-    ///
-    /// It wraps within the day rather than running off either end: a due
-    /// at 23:45 nudged forward is 00:00 of the same day, not tomorrow —
-    /// the DAY is the other control's job, and a time control that
-    /// silently changed the date would be the "setting time after date
-    /// erases everything" complaint again.
-    private func nudge(_ minutes: Int) {
+    /// The clock moved. Keep it on the sheet's own day — the DAY is the
+    /// other control's job, and a time control that silently changed the
+    /// date was the "setting time after date erases everything"
+    /// complaint.
+    private func retime() {
         let day = Civil.day(of: date)
-        let now = CalClock.minutes(of: Civil.stamp(day: 0, hhmm: Civil.hhmm(of: time)))
-        let moved = (CalClock.snap(now) + minutes + 24 * 60) % (24 * 60)
-        if let stamped = Civil.date(day: day, hhmm: CalClock.hhmm(moved)) {
+        if let stamped = Civil.date(day: day, hhmm: Civil.hhmm(of: time)), stamped != time {
             time = stamped
+            // Re-entering through onChange; that pass does the write.
+            return
         }
         // Setting a clock time is how an all-day thing gets one.
         timed = true

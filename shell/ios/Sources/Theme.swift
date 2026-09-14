@@ -513,6 +513,21 @@ enum LivRow {
     /// anything that must clear the floating buttons has to clear the
     /// clock as well.
     static var topInset: CGFloat { LivSafeArea.top + topChrome }
+
+    /// HOW FAR THE SOFT EDGE RAMPS when there is no chrome row to fade
+    /// under — the panel (owner, 2026-09-14: items "should 'fade out'
+    /// into panel background at the top towards statusline exactly like
+    /// in desk, not be cut off").
+    ///
+    /// On the desk the ramp fits inside the band the doors already
+    /// reserve: 45% of `topInset` is solid and the remaining ~61pt is the
+    /// fade. The panel reserves the status bar alone, so a ramp inside it
+    /// would be about 10pt — which is not a fade, it is an edge, and it
+    /// is what "cut off" meant. This is drawn BELOW the reserved band
+    /// instead, so the first row stays where it is (2026-08-28: "In the
+    /// panel, there is a huge cut-off that needs to go" was the opposite
+    /// complaint, about reserving MORE room).
+    static let topFade: CGFloat = 44
 }
 
 /// The floating bottom bar's own size, so anything that must clear it —

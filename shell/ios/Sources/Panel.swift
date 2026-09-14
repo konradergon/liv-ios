@@ -77,7 +77,14 @@ struct SidePanel<Content: View>: View {
             // body keeps evaluating perfectly (2026-08-23, half a day
             // and eight innocent suspects). `LivTopScrim` reads a
             // literal, and so must anything added beside it.
-            .safeAreaInset(edge: .top) { LivTopScrim(underChrome: false) }
+            // AND IT FADES TO THE PANEL'S OWN GROUND. Left at the
+            // default it fades to `LivTheme.canvas` — the desk's, a step
+            // darker — so the top of the panel wore a band of the desk's
+            // colour and looked like the desk bleeding in from the side
+            // (owner, 2026-09-14).
+            .safeAreaInset(edge: .top) {
+                LivTopScrim(underChrome: false, ground: LivTheme.surface)
+            }
             //
             // NO BOTTOM INSET: the library's own foot floats and its
             // list runs under it. There was one here until 2026-09-07,

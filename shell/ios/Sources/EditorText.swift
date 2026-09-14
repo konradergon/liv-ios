@@ -364,6 +364,24 @@ enum MarkStyler {
                 range: abs(NSRange(location: NSMaxRange(visible) - 1, length: 1)))
         }
 
+        /// Hidden EVEN ON THE CARET'S LINE. `mark` below reveals there,
+        /// which is the markdown-editor bargain: you can see the syntax
+        /// you are standing in. A link's id is not part of that bargain
+        /// — it is thirty-two characters of machine address, longer than
+        /// the words around it, and revealing it made the line you are
+        /// editing the one line you cannot read (owner, 2026-09-14:
+        /// "links still show the id when focused, should just be like
+        /// [[name]]").
+        ///
+        /// Only the refToken case reaches this directly. Everything else
+        /// comes through `mark` and still reveals, because everything
+        /// else is syntax a person types.
+        func hide(_ r: NSRange, font: UIFont = EditorFont.body) {
+            guard r.length > 0 else { return }
+            storage.addAttributes(
+                [.font: font, .livHidden: NSNumber(value: true)], range: abs(r))
+        }
+
         func mark(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             // A marker with NO content is the only thing there is to
@@ -373,8 +391,7 @@ enum MarkStyler {
             if revealed || r.length >= lineLen {
                 dim(r, font: font)
             } else {
-                storage.addAttributes(
-                    [.font: font, .livHidden: NSNumber(value: true)], range: abs(r))
+                hide(r, font: font)
             }
         }
 
@@ -533,9 +550,15 @@ enum MarkStyler {
                 // Nothing is lost by hiding it. The id is not something
                 // anyone can use: it is not memorable, not typed, and not
                 // checked by eye. The name is the link.
+                //
+                // `hide`, not `mark`: `mark` reveals on the caret's line,
+                // which is right for a `#` and wrong for a 32-character
+                // id. Changing WHICH branch runs here was not enough —
+                // both branches went through `mark`, so the plumbing came
+                // back the moment the caret landed on the line.
                 if let name, name.length > 0 {
-                    mark(NSRange(location: whole.location, length: name.location - whole.location))
-                    mark(
+                    hide(NSRange(location: whole.location, length: name.location - whole.location))
+                    hide(
                         NSRange(
                             location: NSMaxRange(name),
                             length: NSMaxRange(whole) - NSMaxRange(name)))
@@ -1611,17 +1634,26 @@ struct MarkdownEditor: UIViewRepresentable {
         /// for any point — an index-only gate would swallow taps in empty
         /// space below a trailing task line and silently toggle it (the
         /// audit's finding). Everything else stays native text handling.
+        ///
+        /// **The value comes back as `Any`.** It was typed `NSNumber`,
+        /// which is what `.livTaskBox` carries — and then `.livRef`
+        /// became an `NSString` (an id is sixteen bytes; an NSNumber held
+        /// the low eight and opened something that did not exist). The
+        /// cast below simply failed for links, so `found` stayed nil:
+        /// no tap was a link tap, and `shouldReceive` said no as well,
+        /// which is the whole of "they are not clickable" (owner,
+        /// 2026-09-14). Nothing announced it — a failed `as?` is a nil,
+        /// and a nil here means "you did not tap a link".
         private func hit(
             _ key: NSAttributedString.Key, at point: CGPoint, slack: CGFloat = 6
-        ) -> (range: NSRange, value: NSNumber)? {
+        ) -> (range: NSRange, value: Any)? {
             guard let view = view, (view.text as NSString).length > 0 else { return nil }
             let index = characterIndex(of: point)
             let n = (view.text as NSString).length
-            var found: (NSRange, NSNumber)?
+            var found: (NSRange, Any)?
             for probe in [index, index - 1, index + 1] where probe >= 0 && probe < n {
                 var effective = NSRange(location: 0, length: 0)
                 if let value = view.textStorage.attribute(key, at: probe, effectiveRange: &effective)
-                    as? NSNumber
                 {
                     found = (effective, value)
                     break
