@@ -1033,11 +1033,11 @@ func livEditorSelfCheck() -> [String] {
     // the codec demotes ids the box does not hold (ruling 5)
     check(
         "unknown id saves as text",
-        SpanText.textToSpans("see [[999]]", isKnown: { _ in false })
-            == [.text("see [[999]]", marks: 0)])
+        SpanText.textToSpans("see [[000000000000000000000000000003e7]]", isKnown: { _ in false })
+            == [.text("see [[000000000000000000000000000003e7]]", marks: 0)])
     check(
         "known id still saves as a ref",
-        SpanText.textToSpans("see [[999]]", isKnown: { $0 == 999 })
+        SpanText.textToSpans("see [[000000000000000000000000000003e7]]", isKnown: { $0 == 999 })
             == [.text("see ", marks: 0), .ref(999)])
 
     // WHICH LINE THE CARET IS ON. The reveal decides whether a line
