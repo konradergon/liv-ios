@@ -48,15 +48,10 @@ import SwiftUI
 /// buttons"). A panel is DRAGGED back — the gesture the owner asked for
 /// on 2026-08-08, and the same one that opens it. The escape action
 /// below is what remains for anyone not using a finger.
-struct SidePanel<Content: View, Head: View>: View {
+struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
     /// How wide the panel stands, leaving the rest of the desk showing.
     let width: CGFloat
-    /// What stands at the top, pinned, on the opaque part of the fade —
-    /// the library's workspace head. Drawn by the caller because it is
-    /// the caller's business; placed here because where it goes is the
-    /// panel's.
-    let head: Head
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -112,29 +107,30 @@ struct SidePanel<Content: View, Head: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .ignoresSafeArea()
-            // THE HEAD AND THE FADE, on the panel's real top edge.
+            // THE FADE, in the panel's own ground, starting at the
+            // VERY TOP — above the clock, which is why `LivTopScrim`
+            // ignores the safe area itself (owner, 2026-09-16: "now the
+            // fade is starting below the very top and the clock").
             //
-            // The workspace stands at the head (owner, 2026-09-16: the
-            // panel that mirrors the model — "a workspace is a filter
-            // plus a desk", so the thing that scopes everything is drawn
-            // ABOVE everything it scopes, not in a foot). It sits at the
-            // same height as the library door on the desk: the same
-            // 44pt row with the same 6pt above it, so the two line up
-            // across the seam.
+            // It draws only. The rows' room is a content margin on the
+            // list below; a band that did both is what covered the first
+            // row for four rounds.
             //
-            // Under it, the fade — and the fade is opaque through the
-            // whole chrome row rather than the status bar alone, because
-            // the head is words and rows scroll up under it. `LivTopScrim`
-            // ignores the safe area itself, so it begins at the very
-            // top (owner, 2026-09-16); the head is placed by the same
-            // number, once.
+            // OPAQUE THROUGH THE WHOLE CHROME ROW, not the status bar
+            // alone: the library's workspace head lives in that row
+            // (2026-09-16) and is words, and rows scroll up under it.
+            //
+            // THE HEAD IS NOT HERE. It stood beside this fade in a
+            // ZStack for one build (a61c3f6) and the app stopped
+            // repainting the moment the panel mounted — the tap landed,
+            // the model moved, the screen never followed, which is the
+            // stall this codebase has met twice before (Chrome.swift,
+            // `LivTopRoom`). The head hangs on the list instead, as the
+            // foot it replaced did, and this overlay is exactly the one
+            // the owner approved on 389baec.
             .overlay(alignment: .topLeading) {
-                ZStack(alignment: .topLeading) {
-                    LivTopScrim(ground: LivTheme.surface, solid: LivRow.topInset)
-                    head
-                        .padding(.top, LivSafeArea.top + 6)
-                }
-                .frame(width: width)
+                LivTopScrim(ground: LivTheme.surface, solid: LivRow.topInset)
+                    .frame(width: width)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
@@ -175,18 +171,18 @@ struct LibraryPanel: View {
         // A view still opens WHERE YOU STAND: picking one here closes
         // the panel and the view arrives over what you were looking at,
         // with the bar still under it.
-        let counts = ViewCounts(box: box, lens: workspaces)
-        return SidePanel(onDismiss: onDismiss, width: LivPanel.width, head: head(counts)) {
-            list(counts)
+        SidePanel(onDismiss: onDismiss, width: LivPanel.width) {
+            list
         }
     }
 
-    /// ONE walk of the box per render, passed in from `body` so the head
-    /// and the rows read the same numbers. `counts` used to be a computed
+    /// ONE walk of the box per render, handed to the head and the rows so
+    /// they read the same numbers. `counts` used to be a computed
     /// property, so every row that read it built a fresh ViewCounts —
     /// seven walks per render (found 2026-08-27).
-    private func list(_ counts: ViewCounts) -> some View {
-        ScrollView {
+    private var list: some View {
+        let counts = ViewCounts(box: box, lens: workspaces)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 // THE VIEWS ARE BACK (team, 2026-08-22 — see
                 // design/tabs.md). They left on 2026-08-18 for the bar's
@@ -287,6 +283,20 @@ struct LibraryPanel: View {
         // `.ignoresSafeArea()` in `SidePanel`. Both were tried. This is
         // what `CalendarView` reserves its hour label with.
         .contentMargins(.top, LivTopScrim.height(solid: LivRow.topInset), for: .scrollContent)
+        // THE HEAD, pinned over the list's top the way the foot was
+        // pinned over its bottom. The workspace stands at the head
+        // (owner, 2026-09-16: the panel that mirrors the model — "a
+        // workspace is a filter plus a desk", so the thing that scopes
+        // everything is drawn ABOVE everything it scopes, not in a
+        // foot). It sits at the same height as the library door on the
+        // desk: the same 44pt row with the same 6pt above it, so the two
+        // line up across the seam. The fade under it is `SidePanel`'s,
+        // and the reason it is not drawn beside it there is written
+        // there.
+        .overlay(alignment: .top) {
+            head(counts)
+                .padding(.top, LivSafeArea.top + 6)
+        }
         // NO FOOT, NO BOTTOM FADE (2026-09-16). The workspace moved to
         // the head, the gear went with it, and nothing floats over the
         // bottom of this panel any more — so the mask that dissolved the
