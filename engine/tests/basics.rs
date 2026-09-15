@@ -97,3 +97,44 @@ fn emptying_a_cell_leaves_no_value_rather_than_a_blank_one() {
     e.undo(T0 + 3).unwrap();
     assert_eq!(e.one(id, prop::DUE).unwrap(), Some(Value::Date(DateSpec::Day(20_000))));
 }
+
+/// **A PROPERTY'S STABLE WORD IS NOT THE WORD A PERSON READS.**
+///
+/// `PROPS.name` is a token: it is what the query grammar lexes
+/// (`tags:roof`), what `liv_property_named` looks up, and what
+/// `op-format.md` freezes. Two of them have never been English —
+/// `prop::BODY` is spelled "content" and `prop::HOLDS` is "value-kind" —
+/// so the two jobs were already separate in fact, and the only reason it
+/// had not bitten is that neither of those is `shown`.
+///
+/// `tags` is shown, and it is the one the owner could not read: "what is
+/// 'Tags' in new filter and new workspace? should be Subject"
+/// (2026-09-16). A tag in this app is what a thing is ABOUT.
+///
+/// So `label` answers the reading word and `name` stays the token. A
+/// name CELL still wins over both — that is a rename someone made, and
+/// it outranks what the app shipped with.
+#[test]
+fn a_property_reads_as_one_word_and_lexes_as_another() {
+    let e = Engine::open_in_memory(DeviceId([1; 8])).unwrap();
+
+    assert_eq!(model::label(prop::TAGS), Some("Subject"), "what a person reads");
+    assert_eq!(
+        model::PROPS.iter().find(|p| p.id == prop::TAGS).unwrap().name,
+        "tags",
+        "what the grammar lexes, and what is on disk forever"
+    );
+    assert_eq!(e.display_name(prop::TAGS).unwrap().as_deref(), Some("Subject"));
+
+    // EVERY OTHER SHOWN PROPERTY still reads as its own token, so this
+    // is one deliberate difference and not a licence for a second
+    // vocabulary.
+    for p in model::PROPS.iter().filter(|p| p.shown && p.id != prop::TAGS) {
+        assert_eq!(
+            model::label(p.id),
+            Some(p.name),
+            "{} has no reading word of its own",
+            p.name
+        );
+    }
+}

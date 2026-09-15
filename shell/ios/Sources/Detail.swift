@@ -31,7 +31,19 @@ import SwiftUI
 /// field holds several values at once, and how a value is written.
 struct InspectorField: Identifiable {
     var id: String { property }
+    /// THE TOKEN — `area`, `tags`. What every write and lookup spells,
+    /// and never what is drawn.
     let property: String
+    /// WHAT A PERSON READS. Usually the same word; `tags` reads
+    /// "Subject" (owner, 2026-09-16: "what is 'Tags' in new filter and
+    /// new workspace? should be Subject"), because a tag in this app is
+    /// what a thing is ABOUT.
+    ///
+    /// **The box owns it, not this file.** A shell carrying its own copy
+    /// of the furniture's words is the mistake `one-core.md` §4 records,
+    /// so this is `liv_properties`' `name` — which also means a field
+    /// someone renames shows the new word here with nothing to change.
+    let shown: String
     /// The core's value kind: "select", "reference", "datetime", "text"…
     let kind: String
     /// Several values at once (membership, addCell) versus one (set).
@@ -84,9 +96,18 @@ struct InspectorField: Identifiable {
     }
 
     /// Describe a property from the live snapshot.
+    ///
+    /// **MATCHED ON THE TOKEN, not on the word.** It compared against
+    /// `name`, which is what a person reads — so the moment `tags` began
+    /// reading "Subject" this would have found no row for it, and the
+    /// field would have come back kind `text` with id 0: no vocabulary,
+    /// no mint, nothing written. That is precisely how the area picker
+    /// broke on 2026-09-14, so the two words ship together and the match
+    /// moved in the same change.
     static func describe(_ property: String, in snap: Snapshot?) -> InspectorField {
         let row = (snap?.properties ?? []).first {
-            ($0.name ?? "").compare(property, options: .caseInsensitive) == .orderedSame
+            ($0.word ?? $0.name ?? "").compare(property, options: .caseInsensitive)
+                == .orderedSame
         }
         let options = (row?.options ?? [])
             .filter { $0.hidden != true }
@@ -94,6 +115,10 @@ struct InspectorField: Identifiable {
             .filter { !$0.isEmpty }
         return InspectorField(
             property: property,
+            // The box's word, and the token when the box has never heard
+            // of this property — which is a fault elsewhere, and drawing
+            // the token is more use than drawing nothing.
+            shown: row?.name ?? property,
             kind: row?.kind ?? "text",
             multi: isMulti(property),
             options: options,
@@ -552,11 +577,15 @@ struct EntityInspector: View {
     /// sheet. Empty reads as "—", never as a prompt to fill it in.
     private func fieldRow(_ property: String, _ row: EntityRow) -> some View {
         let held = values(of: property, in: row)
+        // THE BOX'S WORD, not the token. `property` is what this writes
+        // with; what it DRAWS comes off the snapshot, so a renamed field
+        // shows its new name and `tags` reads "Subject".
+        let field = InspectorField.describe(property, in: box.snap)
         return Button {
-            editing = InspectorField.describe(property, in: box.snap)
+            editing = field
         } label: {
             HStack {
-                DetailRowLabel(property)
+                DetailRowLabel(field.shown)
                 Spacer(minLength: 12)
                 if held.isEmpty {
                     DetailEmptyValue()
@@ -701,7 +730,9 @@ struct InspectorValueSheet: View {
             // dropped theirs on 2026-08-18: uppercase made every
             // heading shout. Full ink plus weight is what outranks the
             // rows now, not size alone.
-            Text(field.property.capitalized)
+            // The word, not the token — `.capitalized` on the token is
+            // where "Tags" came from, and the box now says "Subject".
+            Text(field.shown.capitalized)
                 .font(.system(size: LivType.title, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
             if !field.closed {
@@ -769,7 +800,7 @@ struct InspectorValueSheet: View {
             Button("Rename") { commitRename() }
         } message: {
             if let renaming {
-                let what = field.property.lowercased()
+                let what = field.shown.lowercased()
                 Text(verbatim:
                     "Every \(what) reading \u{201C}\(renaming)\u{201D} changes. "
                         + "One step, so one undo.")

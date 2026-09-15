@@ -249,17 +249,7 @@ struct TabSwitcher: View {
                 .font(.system(size: LivType.body).monospacedDigit())
                 .foregroundStyle(LivTheme.text3)
             Spacer()
-            Button {
-                desk.switcherShown = false
-            } label: {
-                Text("Done")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(height: 44)
-                    .padding(.horizontal, 8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            ConfirmPill("Done", compact: true) { desk.switcherShown = false }
         }
         .padding(.horizontal, 12)
         // Full screen: no floating bar to clear, just the home indicator
@@ -382,18 +372,13 @@ struct InactiveTabs: View {
                 .padding(.leading, 4)
             Spacer(minLength: 0)
             // Closes EVERY view's, which is what this screen now shows.
-            Button {
+            // HOLLOW, not filled: this is the shelf's secondary verb and
+            // the screen's primary one is Done. Same rule either way —
+            // a shape, never a blue word.
+            AddChip("Close all", big: true, symbol: "xmark") {
                 desk.closeInactive()
                 close()
-            } label: {
-                Text("Close all")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(height: 32)
-                    .padding(.horizontal, 8)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .frame(height: 40)

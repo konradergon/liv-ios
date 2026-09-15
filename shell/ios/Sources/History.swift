@@ -99,18 +99,11 @@ struct HistoryCard: View {
             }
             Spacer(minLength: 8)
             if !current {
-                Button {
+                ConfirmPill(restoring == v.seq ? "Restoring…" : "Restore", compact: true) {
                     restore(v)
-                } label: {
-                    Text(restoring == v.seq ? "Restoring…" : "Restore")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
-                        .padding(.horizontal, 12)
-                        .frame(height: LivRow.touch)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
                 .disabled(restoring != nil)
+                .opacity(restoring != nil ? LivBar.disabledInk : 1)
                 .accessibilityLabel("Restore this version")
             }
         }

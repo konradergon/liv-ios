@@ -10,7 +10,6 @@ import SwiftUI
 struct SectionLabel: View {
     let text: String
     var trailing: String? = nil
-    var trailingAction: (() -> Void)? = nil
     /// A short WARNING about the group, drawn once beside its name — "12
     /// late". It is the only place this app raises its voice in a list,
     /// and it exists so that individual rows do not have to: colouring
@@ -19,13 +18,11 @@ struct SectionLabel: View {
     var note: String? = nil
 
     init(
-        _ text: String, trailing: String? = nil, note: String? = nil,
-        trailingAction: (() -> Void)? = nil
+        _ text: String, trailing: String? = nil, note: String? = nil
     ) {
         self.text = text
         self.trailing = trailing
         self.note = note
-        self.trailingAction = trailingAction
     }
 
     var body: some View {
@@ -54,26 +51,16 @@ struct SectionLabel: View {
                     .foregroundStyle(LivTheme.red)
             }
             Spacer()
+            // NO ACCENT VERB HERE (2026-09-15). A `trailingAction` drew
+            // this count as a blue button, and its ONE caller — the Done
+            // group in Tasks — already makes the whole heading tappable
+            // with `.onTapGesture`. So a fold that has one door had two,
+            // and the second was a blue word (rules 4 and 6, and the
+            // owner's: the only clickable text is a link in a note).
             if let trailing {
-                if let trailingAction {
-                    // THE SAME SIZE AS THE HEADING IT SITS BESIDE.
-                    // It was `body` (17) against the heading's `label`
-                    // (15), so the verb outweighed the words it belongs
-                    // to on all 28 of these. It keeps the accent — it is
-                    // the one live thing in the row — but it no longer
-                    // shouts over the heading.
-                    Button(action: trailingAction) {
-                        Text(trailing)
-                            .font(.system(size: LivType.label, weight: .medium))
-                            .foregroundStyle(LivTheme.accent)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Text(trailing)
-                        .font(.system(size: LivType.label))
-                        .foregroundStyle(LivTheme.text2)
-                }
+                Text(trailing)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.text2)
             }
         }
         // THE HEADING OWNS ITS OWN ROOM (2026-08-21). Leaving it to the
@@ -635,10 +622,26 @@ struct LivSwitchStyle: ToggleStyle {
 /// shapes start).
 struct ConfirmPill: View {
     let label: String
+    /// THE VERB AT THE END OF A ROW, rather than at the foot of a form.
+    ///
+    /// **Nine places wanted this and none of them had it**, so each
+    /// wrote an accent word instead: Add (twice), Done, Close all, Put
+    /// back, Restore, Accept all, Route them, Create. A bare accent word
+    /// is a hyperlink, and the only clickable text in this app is a link
+    /// inside a note (owner, 2026-09-15). They were written on nine
+    /// different days by someone who only had the one in front of them,
+    /// which is what a missing shape costs.
+    ///
+    /// `value` height (34) rather than `touch` (44): these sit INSIDE a
+    /// row that is itself 44 or 52, and a pill as tall as its row reads
+    /// as a second row. The text stays `body` — the same word at the
+    /// same size, in a capsule.
+    var compact: Bool = false
     let action: () -> Void
 
-    init(_ label: String, action: @escaping () -> Void) {
+    init(_ label: String, compact: Bool = false, action: @escaping () -> Void) {
         self.label = label
+        self.compact = compact
         self.action = action
     }
 
@@ -654,8 +657,8 @@ struct ConfirmPill: View {
                 // above it in both forms that draw this.
                 .font(.system(size: LivType.body, weight: .semibold))
                 .foregroundStyle(LivTheme.onAccent)
-                .padding(.horizontal, 20)
-                .frame(height: LivRow.touch)
+                .padding(.horizontal, compact ? 14 : 20)
+                .frame(height: compact ? LivChip.value : LivRow.touch)
                 .background(Capsule().fill(LivTheme.accent))
                 .contentShape(Capsule())
         }

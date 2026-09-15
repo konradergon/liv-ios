@@ -242,15 +242,13 @@ struct TasksView: View {
             // (owner, 2026-09-11: "adding a task from the add row does
             // nothing visible"). Nothing is worth that; the row's width
             // is not short of eight points.
-            Button(action: commitAdd) {
-                Text("Add")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .opacity(typed.isEmpty ? LivBar.disabledInk : 1)
-                    .padding(.leading, 8)
-            }
-            .buttonStyle(.plain)
-            .disabled(typed.isEmpty)
+            // A PILL, not a blue word — see ConfirmPill.compact. The
+            // disabled dress stays exactly what it was: same shape, same
+            // place, dimmer ink.
+            ConfirmPill("Add", compact: true, action: commitAdd)
+                .opacity(typed.isEmpty ? LivBar.disabledInk : 1)
+                .padding(.leading, 8)
+                .disabled(typed.isEmpty)
         }
         .frame(minHeight: LivRow.height)
         // THE WHOLE ROW TAKES THE TAP, like `taskRow` beneath it — a
@@ -413,10 +411,13 @@ struct TasksView: View {
             guard let due = row.due, due > 0 else { return false }
             return Civil.day(of: due) < Civil.todayDay()
         }.count
+        // The heading is the fold's door (`.onTapGesture` below). It
+        // used to ALSO pass `trailingAction`, which drew the count as a
+        // second, blue door to the same place — one fold, two doors, one
+        // of them clickable text.
         return SectionLabel(
             group.name, trailing: trailing,
-            note: late > 0 && !group.completes ? "\(late) late" : nil,
-            trailingAction: group.completes ? { toggleExpanded(group.name) } : nil
+            note: late > 0 && !group.completes ? "\(late) late" : nil
         )
         .contentShape(Rectangle())
         .onTapGesture {

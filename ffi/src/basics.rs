@@ -666,6 +666,14 @@ pub unsafe extern "C" fn liv_properties(path: *const c_char, out: *mut *mut c_ch
                 "id": def.id.hex(),
                 // The CURRENT name, so a renamed field shows its new one.
                 "name": e.display_name(def.id).unwrap_or(None).unwrap_or_else(|| def.name.to_owned()),
+                // **THE TOKEN, beside the word.** `name` is what a person
+                // reads and can rename; this is what the query grammar
+                // lexes and what a shell keys its own rows off. They were
+                // one string, so a property whose reading word differs
+                // from its token — `tags`, which reads "Subject" — would
+                // have broken every shell lookup that spelled it `tags`
+                // (2026-09-16, added with `reads`).
+                "word": def.name,
                 "holds": holds_word(def.holds),
                 "many": def.many,
                 // **The vocabulary comes with the field.** A picker that
@@ -684,6 +692,9 @@ pub unsafe extern "C" fn liv_properties(path: *const c_char, out: *mut *mut c_ch
             rows.push(json!({
                 "id": id.hex(),
                 "name": e.display_name(id).map_err(|_| LIV_ERR_READ)?,
+                // A DECLARED field has no separate token: what it is
+                // called is what it is called.
+                "word": e.display_name(id).map_err(|_| LIV_ERR_READ)?,
                 "holds": shape.map(|s| holds_word(s.holds)).unwrap_or("text"),
                 "many": shape.map(|s| s.many).unwrap_or(false),
                 "options": options_json(e, id),

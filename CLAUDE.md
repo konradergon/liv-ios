@@ -212,10 +212,22 @@ old codebase.
 - **The only clickable TEXT in the app is a link inside a note** (owner,
   2026-09-15: *"Only clickable text in the app should be links inside notes…
   otherwise it should look like a button and be consistent"*). Everything else
-  you can tap wears a shape: a full-width row (`LivMenuRow`, the library
-  panel's), a hollow chip (`AddChip`), or a filled pill (`ConfirmPill`). A bare
-  accent word floating on a card reads as a hyperlink and is a defect. This
-  cost three of them — `+ Link…`, `Show all 12`, `New workspace…` — each
-  written on its own day by someone who only had the one to look at.
+  you can tap wears one of three shapes, and there is no fourth:
+  a **full-width row** (`LivMenuRow`, the library panel's) for a door in a
+  list; a **hollow chip** (`AddChip`) for a quiet or secondary verb; a
+  **filled pill** (`ConfirmPill`, `compact:` at the end of a row) for the
+  primary verb. A bare accent word is a hyperlink and is a defect.
+  Swept 2026-09-16 and it cost twelve: `+ Link…`, `Show all 12`,
+  `New workspace…`, Add (twice), Done, Close all, Put back, Restore,
+  Accept all, Route them, Create — plus `SectionLabel`'s accent trailing
+  verb, deleted. Each was written on its own day by someone who only had
+  the one in front of them, which is what a missing shape costs.
+- **A property has a token and a word, and they are not the same string.**
+  `PROPS.name` is what the query grammar lexes and what is frozen on disk
+  (`tags`); `PROPS.reads` is what a person sees (`Subject`, owner
+  2026-09-16). `liv_properties` ships both — `word` and `name` — and a shell
+  keys its rows off `word` and draws `name`. Matching on the shown name is
+  how the area picker broke on 2026-09-14, and it is why `InspectorField`
+  carries `property` and `shown` separately.
 - Verify on the simulator before claiming something works; cross-check writes
   against the box with the CLI. A builder's own report is not evidence.

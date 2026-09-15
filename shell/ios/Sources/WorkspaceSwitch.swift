@@ -232,7 +232,16 @@ struct WorkspaceSwitcher: View {
                 picking = WorkspacePick(property: property, forFilter: forFilter)
             } label: {
                 HStack(spacing: 8) {
-                    Text(property == "area" ? "Area" : "Tags")
+                    // THE BOX'S WORD FOR IT, not a pair spelled here.
+                    //
+                    // This was `property == "area" ? "Area" : "Tags"` —
+                    // a two-entry word table in a view file, which is
+                    // the shell-side furnishing `one-core.md` §4 records
+                    // as a mistake. It is also how the owner ended up
+                    // asking what "Tags" was (2026-09-16): a tag in this
+                    // app is what a thing is ABOUT, the box says
+                    // "Subject", and this file said otherwise.
+                    Text(InspectorField.describe(property, in: box.snap).shown.capitalized)
                         .font(.system(size: LivType.body))
                         .foregroundStyle(LivTheme.text)
                     Spacer(minLength: 8)

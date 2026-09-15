@@ -340,23 +340,24 @@ struct TodayView: View {
 
     /// One honest line, not a tile that disagrees with its own section:
     /// today's captures, and the door to the place that routes them.
+    /// THE COUNT IS PROSE, THE VERB IS A PILL. It read "3 captured today
+    /// · Route them" with the last two words in accent — a hyperlink
+    /// inside a sentence, which is the one shape this app reserves for a
+    /// link in a note (owner, 2026-09-15).
+    ///
+    /// AND THE WHOLE LINE IS NO LONGER THE BUTTON. It was wrapped in one,
+    /// so the count was as tappable as the verb; a pill inside that would
+    /// be a button inside a button, which SwiftUI resolves by letting the
+    /// outer one win. The door is the pill, and only the pill.
     private func capturedFooter(_ count: Int) -> some View {
-        Button {
-            desk.go(.inbox)
-        } label: {
-            HStack(spacing: 6) {
-                Text("\(count) captured today")
-                    .font(.system(size: LivType.body).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
-                Text("· Route them")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                Spacer()
-            }
-            .frame(minHeight: LivRow.band)
-            .contentShape(Rectangle())
+        HStack(spacing: 8) {
+            Text("\(count) captured today")
+                .font(.system(size: LivType.body).monospacedDigit())
+                .foregroundStyle(LivTheme.text3)
+            ConfirmPill("Route them", compact: true) { desk.go(.inbox) }
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .frame(minHeight: LivRow.band)
         .padding(.top, 8)
     }
 

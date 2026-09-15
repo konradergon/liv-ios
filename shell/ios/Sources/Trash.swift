@@ -51,17 +51,10 @@ struct TrashView: View {
                                         title: livRowTitle(row),
                                         untitled: livRowIsUntitled(row),
                                         divided: i < rows.count - 1)
-                                    Button {
+                                    ConfirmPill("Put back", compact: true) {
                                         box.restore(row.id)
-                                    } label: {
-                                        Text("Put back")
-                                            .font(.system(size: LivType.body, weight: .semibold))
-                                            .foregroundStyle(LivTheme.accent)
-                                            .padding(.horizontal, 12)
-                                            .frame(height: 44)
-                                            .contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain)
+                                    .padding(.leading, 8)
                                 }
                             }
                         }

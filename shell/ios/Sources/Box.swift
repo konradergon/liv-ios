@@ -78,7 +78,18 @@ struct Occurrence: Decodable {
 
 struct PropertyRow: Decodable {
     var id: LivEntityID?
+    /// What a PERSON reads. A rename shows here, and a compiled-in
+    /// property may read as a different word from the one it lexes as —
+    /// `tags` reads "Subject" (owner, 2026-09-16).
     var name: String?
+    /// THE TOKEN: what the query grammar lexes and what
+    /// `liv_property_named` takes. Key rows off this, never off `name`,
+    /// or a rename moves the shell's own furniture.
+    ///
+    /// Optional like every wire field (H1), and it falls back to `name`
+    /// where it is absent — which is what every property did before the
+    /// two words came apart.
+    var word: String?
     var kind: String?
     var usage: Int?
     var icon: String?
@@ -527,7 +538,8 @@ final class BoxModel: ObservableObject {
         engineProperties { [weak self] in
             self?.propertyRows = $0.map { p in
                 PropertyRow(
-                    id: p.id, name: p.name, kind: p.holds, usage: nil,
+                    id: p.id, name: p.name, word: p.word ?? p.name,
+                    kind: p.holds, usage: nil,
                     icon: nil, hideWhenEmpty: nil,
                     options: (p.options ?? []).map {
                         PropertyOptionRow(id: $0.id, name: $0.name, hidden: false)
@@ -2745,7 +2757,10 @@ extension BoxModel {
 /// One property a person can put on something.
 struct LivProperty: Decodable, Identifiable {
     var id: LivID
+    /// What a person reads — a rename shows here.
     var name: String?
+    /// The token the query grammar lexes. See `PropertyRow.word`.
+    var word: String?
     /// text | number | bool | datetime | reference | richtext | file
     var holds: String?
     var many: Bool?

@@ -275,7 +275,16 @@ impl Holds {
 
 pub struct PropDef {
     pub id: EntityId,
+    /// **THE TOKEN, not the word a person reads.** It is what the query
+    /// grammar lexes (`tags:roof`), what `liv_property_named` looks up,
+    /// and what `op-format.md` freezes on disk. Two of these have never
+    /// been English — the body is "content" and `HOLDS` is "value-kind"
+    /// — so the two jobs were always separate; `reads` is where the
+    /// other one lives now.
     pub name: &'static str,
+    /// What a person reads, when that differs from the token. Empty
+    /// means they are the same word, which is the usual case.
+    pub reads: &'static str,
     /// A set rather than a register: many live values are members, not a
     /// conflict.
     pub many: bool,
@@ -285,80 +294,83 @@ pub struct PropDef {
 }
 
 macro_rules! props {
-    ($($id:expr, $name:literal, $many:literal, $holds:expr, $shown:literal;)*) => {
+    ($($id:expr, $name:literal, $reads:literal, $many:literal, $holds:expr, $shown:literal;)*) => {
         pub const PROPS: &[PropDef] = &[
-            $(PropDef { id: $id, name: $name, many: $many, holds: $holds, shown: $shown },)*
+            $(PropDef {
+                id: $id, name: $name, reads: $reads,
+                many: $many, holds: $holds, shown: $shown,
+            },)*
         ];
     };
 }
 
 props! {
-    // id                  name               many   holds                        shown
-    prop::KIND,            "kind",            false, Holds::RefTo(kind::KIND),     false;
-    prop::NAME,            "name",            false, Holds::Text,                  false;
-    prop::BODY,            "content",         false, Holds::Rich,                  false;
-    prop::TRASHED,         "trashed",         false, Holds::Bool,                  false;
+    // id                  name           reads         many   holds                        shown
+    prop::KIND,            "kind",            "",         false, Holds::RefTo(kind::KIND),     false;
+    prop::NAME,            "name",            "",         false, Holds::Text,                  false;
+    prop::BODY,            "content",         "",         false, Holds::Rich,                  false;
+    prop::TRASHED,         "trashed",         "",         false, Holds::Bool,                  false;
 
-    prop::DUE,             "due",             false, Holds::Date,                  true;
-    prop::STATUS,          "status",          false, Holds::RefTo(kind::STATUS),   true;
-    prop::AREA,            "area",            false, Holds::RefTo(kind::AREA),     true;
-    prop::PROJECT,         "project",         false, Holds::RefTo(kind::PROJECT),  true;
-    prop::PEOPLE,          "people",          true,  Holds::RefTo(kind::PERSON),   true;
-    prop::TAGS,            "tags",            true,  Holds::Ref,                   true;
+    prop::DUE,             "due",             "",         false, Holds::Date,                  true;
+    prop::STATUS,          "status",          "",         false, Holds::RefTo(kind::STATUS),   true;
+    prop::AREA,            "area",            "",         false, Holds::RefTo(kind::AREA),     true;
+    prop::PROJECT,         "project",         "",         false, Holds::RefTo(kind::PROJECT),  true;
+    prop::PEOPLE,          "people",          "",         true,  Holds::RefTo(kind::PERSON),   true;
+    prop::TAGS,            "tags",            "Subject",  true,  Holds::Ref,                   true;
 
-    prop::HOLDS,           "value-kind",      false, Holds::Text,                  false;
-    prop::MANY,            "many",            false, Holds::Bool,                  false;
-    prop::OPTIONS,         "options",         true,  Holds::RefTo(kind::OPTION),   false;
-    prop::FOR_KIND,        "for-type",        true,  Holds::RefTo(kind::KIND),     false;
+    prop::HOLDS,           "value-kind",      "",         false, Holds::Text,                  false;
+    prop::MANY,            "many",            "",         false, Holds::Bool,                  false;
+    prop::OPTIONS,         "options",         "",         true,  Holds::RefTo(kind::OPTION),   false;
+    prop::FOR_KIND,        "for-type",        "",         true,  Holds::RefTo(kind::KIND),     false;
 
-    prop::WORKING,         "working",         false, Holds::Bool,                  false;
-    prop::PRIVATE,         "private",         false, Holds::Bool,                  false;
-    prop::ARCHIVED,        "archived",        false, Holds::Bool,                  false;
-    prop::BOOKMARKED,      "bookmarked",      false, Holds::Bool,                  false;
-    prop::FAVORITE,        "favorite",        false, Holds::Bool,                  false;
-    prop::ORDER,           "order",           false, Holds::Number,                false;
-    prop::PARENT,          "parent",          false, Holds::Ref,                   false;
-    prop::QUERY,           "query",           false, Holds::Text,                  false;
-    prop::BUILTIN,         "builtin",         false, Holds::Text,                  false;
-    prop::WORKSPACE,       "workspace",       false, Holds::RefTo(kind::WORKSPACE),false;
-    prop::EXTERNAL_ID,     "external-id",     false, Holds::Text,                  false;
+    prop::WORKING,         "working",         "",         false, Holds::Bool,                  false;
+    prop::PRIVATE,         "private",         "",         false, Holds::Bool,                  false;
+    prop::ARCHIVED,        "archived",        "",         false, Holds::Bool,                  false;
+    prop::BOOKMARKED,      "bookmarked",      "",         false, Holds::Bool,                  false;
+    prop::FAVORITE,        "favorite",        "",         false, Holds::Bool,                  false;
+    prop::ORDER,           "order",           "",         false, Holds::Number,                false;
+    prop::PARENT,          "parent",          "",         false, Holds::Ref,                   false;
+    prop::QUERY,           "query",           "",         false, Holds::Text,                  false;
+    prop::BUILTIN,         "builtin",         "",         false, Holds::Text,                  false;
+    prop::WORKSPACE,       "workspace",       "",         false, Holds::RefTo(kind::WORKSPACE),false;
+    prop::EXTERNAL_ID,     "external-id",     "",         false, Holds::Text,                  false;
 
-    prop::EMOJI,           "emoji",           false, Holds::Text,                  false;
-    prop::ICON,            "icon",            false, Holds::Text,                  false;
-    prop::HUE,             "hue",             false, Holds::Number,                false;
-    prop::DIGIT_KEY,       "digit-key",       false, Holds::Text,                  false;
-    prop::HIDE_WHEN_EMPTY, "hide-when-empty", false, Holds::Bool,                  false;
-    prop::HIDE_ON_KIND,    "hide-on-kind",    true,  Holds::RefTo(kind::KIND),     false;
-    prop::CORE_ON_KIND,    "core-on-kind",    true,  Holds::RefTo(kind::KIND),     false;
-    prop::COMPLETES,       "completes",       false, Holds::Bool,                  false;
-    prop::DEFAULT_STATUS,  "default-status",  false, Holds::RefTo(kind::STATUS),   false;
+    prop::EMOJI,           "emoji",           "",         false, Holds::Text,                  false;
+    prop::ICON,            "icon",            "",         false, Holds::Text,                  false;
+    prop::HUE,             "hue",             "",         false, Holds::Number,                false;
+    prop::DIGIT_KEY,       "digit-key",       "",         false, Holds::Text,                  false;
+    prop::HIDE_WHEN_EMPTY, "hide-when-empty", "",         false, Holds::Bool,                  false;
+    prop::HIDE_ON_KIND,    "hide-on-kind",    "",         true,  Holds::RefTo(kind::KIND),     false;
+    prop::CORE_ON_KIND,    "core-on-kind",    "",         true,  Holds::RefTo(kind::KIND),     false;
+    prop::COMPLETES,       "completes",       "",         false, Holds::Bool,                  false;
+    prop::DEFAULT_STATUS,  "default-status",  "",         false, Holds::RefTo(kind::STATUS),   false;
 
-    prop::RECURRENCE,      "recurrence",      false, Holds::Text,                  false;
-    prop::EXCEPTION_OF,    "exception-of",    false, Holds::Ref,                   false;
-    prop::DATE,            "date",            false, Holds::Date,                  false;
-    prop::VALID_UNTIL,     "valid-until",     false, Holds::Date,                  false;
-    prop::OCCURRED,        "occurred",        false, Holds::Date,                  false;
-    prop::PURCHASED_ON,    "purchased-on",    false, Holds::Date,                  false;
+    prop::RECURRENCE,      "recurrence",      "",         false, Holds::Text,                  false;
+    prop::EXCEPTION_OF,    "exception-of",    "",         false, Holds::Ref,                   false;
+    prop::DATE,            "date",            "",         false, Holds::Date,                  false;
+    prop::VALID_UNTIL,     "valid-until",     "",         false, Holds::Date,                  false;
+    prop::OCCURRED,        "occurred",        "",         false, Holds::Date,                  false;
+    prop::PURCHASED_ON,    "purchased-on",    "",         false, Holds::Date,                  false;
 
-    prop::FILE,            "file",            false, Holds::Blob,                  false;
-    prop::FORMAT,          "format",          false, Holds::Text,                  false;
-    prop::URL,             "url",             false, Holds::Text,                  false;
+    prop::FILE,            "file",            "",         false, Holds::Blob,                  false;
+    prop::FORMAT,          "format",          "",         false, Holds::Text,                  false;
+    prop::URL,             "url",             "",         false, Holds::Text,                  false;
 
-    prop::LOCATION,        "location",        false, Holds::Text,                  false;
-    prop::ATTENDEES,       "attendees",       true,  Holds::RefTo(kind::PERSON),   false;
-    prop::ROLE,            "role",            false, Holds::Text,                  false;
-    prop::ORG,             "org",             false, Holds::Text,                  false;
-    prop::EMAIL,           "email",           false, Holds::Text,                  false;
-    prop::PHONE,           "phone",           false, Holds::Text,                  false;
+    prop::LOCATION,        "location",        "",         false, Holds::Text,                  false;
+    prop::ATTENDEES,       "attendees",       "",         true,  Holds::RefTo(kind::PERSON),   false;
+    prop::ROLE,            "role",            "",         false, Holds::Text,                  false;
+    prop::ORG,             "org",             "",         false, Holds::Text,                  false;
+    prop::EMAIL,           "email",           "",         false, Holds::Text,                  false;
+    prop::PHONE,           "phone",           "",         false, Holds::Text,                  false;
 
-    prop::PRIORITY,        "priority",        false, Holds::RefTo(kind::OPTION),   false;
-    prop::POINTS,          "points",          false, Holds::Number,                false;
-    prop::CADENCE,         "cadence",         false, Holds::Text,                  false;
-    prop::HABIT,           "habit",           false, Holds::RefTo(kind::HABIT),    false;
-    prop::AUTOMATION,      "automation",      false, Holds::Bool,                  false;
-    prop::RELATED,         "related",         true,  Holds::Ref,                   false;
-    prop::EXPECTED,        "expected",        true,  Holds::RefTo(kind::FIELD),    false;
-    prop::DECLINED,        "declined",        true,  Holds::Text,                  false;
+    prop::PRIORITY,        "priority",        "",         false, Holds::RefTo(kind::OPTION),   false;
+    prop::POINTS,          "points",          "",         false, Holds::Number,                false;
+    prop::CADENCE,         "cadence",         "",         false, Holds::Text,                  false;
+    prop::HABIT,           "habit",           "",         false, Holds::RefTo(kind::HABIT),    false;
+    prop::AUTOMATION,      "automation",      "",         false, Holds::Bool,                  false;
+    prop::RELATED,         "related",         "",         true,  Holds::Ref,                   false;
+    prop::EXPECTED,        "expected",        "",         true,  Holds::RefTo(kind::FIELD),    false;
+    prop::DECLINED,        "declined",        "",         true,  Holds::Text,                  false;
 }
 
 pub fn prop_def(id: EntityId) -> Option<&'static PropDef> {
@@ -452,7 +464,8 @@ pub mod status {
 /// `one-core.md` §4 records as a mistake.
 pub fn label(id: EntityId) -> Option<&'static str> {
     match class_of(id)? {
-        CLASS_PROP => prop_def(id).map(|p| p.name),
+        // `reads` when it has one, the token otherwise — see PropDef.
+        CLASS_PROP => prop_def(id).map(|p| if p.reads.is_empty() { p.name } else { p.reads }),
         CLASS_KIND => Some(match id.0[7] {
             0 => "Note",
             1 => "Task",

@@ -564,12 +564,8 @@ struct CameraFlow: View {
                         RoundedRectangle(cornerRadius: LivTheme.radiusSm)
                             .fill(LivTheme.surface)
                     )
-                    Button { applyChip(chipText) } label: {
-                        Text("Add")
-                            .font(.system(size: LivType.body, weight: .semibold))
-                            .foregroundStyle(LivTheme.accent)
-                    }
-                    .buttonStyle(.plain)
+                    // A PILL, not a blue word — see ConfirmPill.compact.
+                    ConfirmPill("Add", compact: true) { applyChip(chipText) }
                     Button {
                         adding = nil
                     } label: {

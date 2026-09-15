@@ -565,13 +565,20 @@ struct InboxView: View {
                         if !ok { refused() }
                     }
                 } label: {
-                    // A WORD, the way `SectionLabel` draws its trailing
-                    // verb — not a filled and outlined capsule. Three
-                    // devices for one link.
+                    // A CHIP, not a word. The argument this replaces was
+                    // "a word, the way SectionLabel draws its trailing
+                    // verb" — and SectionLabel's accent verb is gone in
+                    // the same change, so that pattern no longer exists
+                    // to be consistent with. Hollow rather than filled:
+                    // accepting the clerk's guesses in bulk is the
+                    // quieter of the two verbs on this row.
                     Text("Accept all")
-                        .font(.system(size: LivType.label, weight: .medium))
-                        .foregroundStyle(LivTheme.accent)
-                        .contentShape(Rectangle())
+                        .font(.system(size: LivType.caption))
+                        .foregroundStyle(LivTheme.text2)
+                        .padding(.horizontal, 10)
+                        .frame(height: LivChip.tall)
+                        .overlay(Capsule().strokeBorder(LivTheme.border2, lineWidth: 0.5))
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.borderless)
             }

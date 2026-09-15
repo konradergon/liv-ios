@@ -1018,3 +1018,42 @@ fn a_new_option_is_made_of_the_kind_the_property_points_at() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// **A PICKER GETS BOTH WORDS.** `name` is what a person reads and can
+/// rename; `word` is the token the query grammar lexes and the one a
+/// shell keys its own rows off.
+///
+/// They were one string. `tags` reads "Subject" as of 2026-09-16, so a
+/// shell matching its `["area","project","tags","people"]` against the
+/// shown name would have lost the row entirely — which is exactly how
+/// the area picker broke in September, and why this ships with the
+/// rename rather than after it.
+#[test]
+fn a_property_row_carries_the_token_beside_the_word() {
+    let (d, path) = box_at("prop_words");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_properties(path.as_ptr(), &mut out) }, LIV_OK);
+    let rows = took(out);
+    let rows = rows.as_array().unwrap();
+
+    let tags = rows.iter().find(|r| r["word"] == "tags").expect("a tags row: {rows:?}");
+    assert_eq!(tags["name"], "Subject", "what a person reads");
+    assert_eq!(tags["word"], "tags", "what the grammar lexes");
+
+    // Every other shown property reads as its own token, so a shell can
+    // still find them by either.
+    for r in rows {
+        let (w, n) = (r["word"].as_str().unwrap(), r["name"].as_str().unwrap());
+        if w != "tags" {
+            assert_eq!(w, n, "{w} grew a second word without anyone saying so");
+        }
+    }
+
+    // AND THE TOKEN IS WHAT liv_property_named TAKES — the shell asks
+    // with `word`, never with what it drew on screen.
+    let by_token = prop_id(&path, "tags");
+    assert_eq!(by_token.to_str().unwrap(), tags["id"].as_str().unwrap());
+
+    let _ = std::fs::remove_dir_all(&d);
+}

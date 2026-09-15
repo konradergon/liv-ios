@@ -668,14 +668,19 @@ private struct SearchCreateRow: View {
             // beside the word "Create" is a box drawn for its own sake:
             // the row is already a row, and the words already say what
             // the button does.
+            // PLAIN INK, NOT ACCENT. The row shape is the button — a
+            // full-width 52pt row with a `+` in front of it, which is
+            // exactly the library panel's "New filter" door. The accent
+            // was the only thing making it read as a hyperlink instead
+            // (owner, 2026-09-15), and it was the last of the nine.
             Image(systemName: "plus")
                 .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.accent)
+                .foregroundStyle(LivTheme.text2)
                 .frame(width: 24, height: 24)
             (Text("Create \"") + Text(query).fontWeight(.semibold)
                 + Text("\""))
                 .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.accent)
+                .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
