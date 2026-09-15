@@ -1,0 +1,10 @@
+[package]
+name = "liv-surface"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "liv_surface"
+
+[dependencies]
+liv-engine = { path = "../engine" }

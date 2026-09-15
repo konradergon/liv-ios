@@ -12,6 +12,7 @@
 //! at four and gives them merge rules for free.
 
 use crate::id::{DeviceId, Dot, EntityId, Hlc};
+use crate::rich::{Block, Marks, Span, TextSpan};
 
 /// The record grammar this build writes.
 pub const RECORD_VERSION: u8 = 1;
@@ -66,6 +67,14 @@ pub enum Value {
     /// cell holds the hash, never a path — a path is device-local and
     /// cannot cross a device boundary.
     Blob([u8; 32]),
+    /// A note's body: the span list that IS the document (`rich.rs`).
+    ///
+    /// **A value kind, not span JSON inside a `Text` cell.** Putting a
+    /// serde document inside this format would be the derive-drift
+    /// mistake §1 of the spec records, one layer down and invisible; and
+    /// the fold could not see the references a body carries, so "what
+    /// links here" would be a scan of every note in the box.
+    Rich(Vec<Span>),
 }
 
 /// A day is not an instant. "Due Friday" and "starts 14:00" are different
@@ -241,6 +250,26 @@ pub fn decode_value(bytes: &[u8]) -> Option<Value> {
     }
 }
 
+/// One op's bytes on their own — what a proposal's fingerprint is over
+/// (`clerk.rs`). The same determinism argument as `value_bytes`: the
+/// encoding already gives one logical op exactly one byte sequence.
+pub fn op_bytes(o: &Op) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64);
+    put_op(&mut out, o);
+    out
+}
+
+/// One value's bytes on their own.
+///
+/// The body's fingerprint is FNV over exactly this (`content.rs`), which
+/// is why it is deterministic without a second rule: the encoding already
+/// has to give one logical value one byte sequence for the replay gate.
+pub fn value_bytes(v: &Value) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32);
+    put_value(&mut out, v);
+    out
+}
+
 fn put_value(out: &mut Vec<u8>, v: &Value) {
     match v {
         Value::Text(s) => {
@@ -273,6 +302,78 @@ fn put_value(out: &mut Vec<u8>, v: &Value) {
             out.push(0x07);
             out.extend_from_slice(h);
         }
+        Value::Rich(spans) => {
+            out.push(0x08);
+            put_varint(out, spans.len() as u64);
+            for s in spans {
+                put_span(out, s);
+            }
+        }
+    }
+}
+
+fn put_text(out: &mut Vec<u8>, s: &str) {
+    put_varint(out, s.len() as u64);
+    out.extend_from_slice(s.as_bytes());
+}
+
+fn put_span(out: &mut Vec<u8>, s: &Span) {
+    match s {
+        Span::Text(t) => {
+            out.push(0x01);
+            out.push(t.marks.0);
+            put_text(out, &t.text);
+        }
+        Span::Break(b) => {
+            out.push(0x02);
+            put_block(out, b);
+        }
+        Span::Ref(id) => {
+            out.push(0x03);
+            out.extend_from_slice(&id.0);
+        }
+    }
+}
+
+fn put_block(out: &mut Vec<u8>, b: &Block) {
+    match b {
+        Block::Body => out.push(0x01),
+        Block::Heading(n) => {
+            out.push(0x02);
+            out.push(*n);
+        }
+        Block::Quote => out.push(0x03),
+        Block::Bullet { depth } => {
+            out.push(0x04);
+            out.push(*depth);
+        }
+        Block::Ordered { depth } => {
+            out.push(0x05);
+            out.push(*depth);
+        }
+        Block::Task { depth, done } => {
+            out.push(0x06);
+            out.push(*depth);
+            out.push(u8::from(*done));
+        }
+        Block::Code { lang } => {
+            out.push(0x07);
+            match lang {
+                // A presence byte, not an empty string: `None` and
+                // `Some("")` are different documents, and one encoding
+                // each is what the digest needs.
+                Some(l) => {
+                    out.push(1);
+                    put_text(out, l);
+                }
+                None => out.push(0),
+            }
+        }
+        Block::Callout { kind } => {
+            out.push(0x08);
+            put_text(out, kind);
+        }
+        Block::Rule => out.push(0x09),
     }
 }
 
@@ -310,6 +411,69 @@ fn get_value(r: &mut Reader) -> Result<Value, DecodeError> {
             h.copy_from_slice(r.take(32)?);
             Value::Blob(h)
         }
+        0x08 => {
+            let n = r.varint()?;
+            let mut spans = Vec::new();
+            for _ in 0..n {
+                spans.push(get_span(r)?);
+            }
+            Value::Rich(spans)
+        }
+        other => return Err(DecodeError::UnknownTag(other)),
+    })
+}
+
+fn get_span(r: &mut Reader) -> Result<Span, DecodeError> {
+    Ok(match r.byte()? {
+        0x01 => {
+            let marks = r.byte()?;
+            // Reserved bits must be zero, and are checked — otherwise one
+            // mark set would have several byte sequences and two
+            // identical boxes would exchange different digests.
+            if marks & Marks::RESERVED != 0 {
+                return Err(DecodeError::UnknownTag(marks));
+            }
+            Span::Text(TextSpan { text: r.text()?, marks: Marks(marks) })
+        }
+        0x02 => Span::Break(get_block(r)?),
+        0x03 => Span::Ref(r.entity()?),
+        other => return Err(DecodeError::UnknownTag(other)),
+    })
+}
+
+fn get_block(r: &mut Reader) -> Result<Block, DecodeError> {
+    Ok(match r.byte()? {
+        0x01 => Block::Body,
+        0x02 => {
+            let n = r.byte()?;
+            // There is no seventh heading level to render. A value no two
+            // readers agree about does not belong in the log.
+            if !(1..=6).contains(&n) {
+                return Err(DecodeError::UnknownTag(n));
+            }
+            Block::Heading(n)
+        }
+        0x03 => Block::Quote,
+        0x04 => Block::Bullet { depth: r.byte()? },
+        0x05 => Block::Ordered { depth: r.byte()? },
+        0x06 => {
+            let depth = r.byte()?;
+            let done = match r.byte()? {
+                0 => false,
+                1 => true,
+                other => return Err(DecodeError::UnknownTag(other)),
+            };
+            Block::Task { depth, done }
+        }
+        0x07 => Block::Code {
+            lang: match r.byte()? {
+                0 => None,
+                1 => Some(r.text()?),
+                other => return Err(DecodeError::UnknownTag(other)),
+            },
+        },
+        0x08 => Block::Callout { kind: r.text()? },
+        0x09 => Block::Rule,
         other => return Err(DecodeError::UnknownTag(other)),
     })
 }
@@ -370,26 +534,30 @@ fn put_body(out: &mut Vec<u8>, g: &Group) {
         }
     }
     for op in &g.ops {
-        out.push(op.tag());
-        match op {
-            Op::CreateEntity { entity } => out.extend_from_slice(&entity.0),
-            Op::SetCell { entity, prop, value, replaces } => {
-                out.extend_from_slice(&entity.0);
-                out.extend_from_slice(&prop.0);
-                put_value(out, value);
-                put_dots(out, replaces);
-            }
-            Op::AddToSet { entity, prop, value } => {
-                out.extend_from_slice(&entity.0);
-                out.extend_from_slice(&prop.0);
-                put_value(out, value);
-            }
-            Op::RemoveFromSet { entity, prop, value, replaces } => {
-                out.extend_from_slice(&entity.0);
-                out.extend_from_slice(&prop.0);
-                put_value(out, value);
-                put_dots(out, replaces);
-            }
+        put_op(out, op);
+    }
+}
+
+fn put_op(out: &mut Vec<u8>, op: &Op) {
+    out.push(op.tag());
+    match op {
+        Op::CreateEntity { entity } => out.extend_from_slice(&entity.0),
+        Op::SetCell { entity, prop, value, replaces } => {
+            out.extend_from_slice(&entity.0);
+            out.extend_from_slice(&prop.0);
+            put_value(out, value);
+            put_dots(out, replaces);
+        }
+        Op::AddToSet { entity, prop, value } => {
+            out.extend_from_slice(&entity.0);
+            out.extend_from_slice(&prop.0);
+            put_value(out, value);
+        }
+        Op::RemoveFromSet { entity, prop, value, replaces } => {
+            out.extend_from_slice(&entity.0);
+            out.extend_from_slice(&prop.0);
+            put_value(out, value);
+            put_dots(out, replaces);
         }
     }
 }

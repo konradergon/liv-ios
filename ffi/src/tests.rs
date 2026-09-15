@@ -77,6 +77,42 @@ fn snapshot_and_triage_roundtrip() {
 }
 
 /// A fresh box path with sidecars cleared; returns (PathBuf, CString).
+/// THE OWNER'S OWN FLOW, through the ABI the phone calls (2026-09-09).
+/// The clerk's area proposer passed nine service tests and then, on the
+/// simulator, proposed the mention and never the area. This walks the
+/// exact gestures — furnish `area`, a note named Sam filed under Work
+/// from the Properties card, a capture mentioning Sam — and reads the
+/// snapshot the shell reads.
+#[test]
+fn a_capture_mentioning_a_filed_note_is_proposed_its_area() {
+    let (path, c_path) = fresh_box("liv_ffi_area_proposal.log");
+    let c = |s: &str| CString::new(s).unwrap();
+    let area = unsafe {
+        liv_add_property_at(c_path.as_ptr(), c("area").as_ptr(), c("select").as_ptr())
+    };
+    assert_ne!(area, 0);
+    for name in ["Work", "Health"] {
+        assert_ne!(unsafe { liv_add_option_at(c_path.as_ptr(), area, c(name).as_ptr()) }, 0);
+    }
+    let sam = unsafe { liv_create_note_at(c_path.as_ptr()) };
+    assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), sam, c("name").as_ptr(), c("Sam").as_ptr()) }, 1);
+    assert_eq!(unsafe { liv_set_at(c_path.as_ptr(), sam, c("area").as_ptr(), c("Work").as_ptr()) }, 1);
+
+    let scrap = unsafe { liv_capture_at(c_path.as_ptr(), c("Ask Sam about Lunch").as_ptr()) };
+    assert_ne!(scrap, 0);
+    let snap = unsafe { read_json(liv_snapshot(c_path.as_ptr())) };
+    let authors: Vec<String> = snap["inbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["entity"] == scrap)
+        .map(|p| p["author"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(authors.contains(&"mentions".to_string()), "{authors:?}");
+    assert!(authors.contains(&"area".to_string()), "the area never reached the wire: {authors:?}");
+    cleanup(&path);
+}
+
 fn fresh_box(name: &str) -> (std::path::PathBuf, CString) {
     // A per-box directory so the extraction cache (a sibling of the box)
     // is isolated per test — parallel tests must not share one cache.
@@ -3091,6 +3127,70 @@ fn a_lens_term_round_trips_through_its_raw_spelling() {
         vec!["area:Work", "-tags:old", "has:project", "people:\"Anna Karlsson\"", "wibble"],
         "a multi-word value keeps its quotes, and the minus rides inside them"
     );
+
+    for suffix in ["", ".declined", ".pending"] {
+        let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+    }
+}
+
+/// THE CALENDAR'S OWN WRITE, END TO END — the flow `Calendar.tapGrid`
+/// runs when a finger lands on an empty hour (owner, 2026-09-13:
+/// *"clicking in day timeline … events don't appear in calendar"*).
+///
+/// The shell's path is: pack the tapped minute into a civil stamp, call
+/// `liv_create_event_at`, then re-read through `liv_snapshot_window_at`
+/// and draw whatever is in `dated`. Every step of that is asserted here,
+/// because a break anywhere in it looks identical on the device — an
+/// event that was made and cannot be seen.
+#[test]
+fn an_event_made_at_an_hour_lands_in_dated() {
+    let path = std::env::temp_dir().join("liv_ffi_calendar_tap.log");
+    for suffix in ["", ".declined", ".pending"] {
+        let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));
+    }
+    let c_path = CString::new(path.to_str().unwrap()).unwrap();
+
+    // 2026-09-13 at 09:15 — `Civil.stamp(day:hhmm:)` is day * 10_000 + hhmm,
+    // and `CalClock.hhmm` packs minutes-of-day as (m / 60) * 100 + m % 60.
+    let day = 20_260_913_i64;
+    let due = day * 10_000 + 915;
+    let id = unsafe { liv_create_event_at(c_path.as_ptr(), due, 0) };
+    assert_ne!(id, 0, "the verb refused a perfectly ordinary hour");
+
+    // THE CELL IS ON THE ENTITY. `create_event` writes its due only `if
+    // let Some(due_prop)` — a box with no `due` definition would return a
+    // live id and no date, which is exactly the shape of the report.
+    {
+        let session = Session::open(&path).unwrap();
+        let entity = session.store().get(id).expect("the event is in the store");
+        let due_prop =
+            liv_services::property_id(session.store(), "due").expect("a box has a `due`");
+        match entity.get(due_prop) {
+            Some(liv_core::Value::DateTime(d)) => {
+                assert_eq!(d.civil, due, "the stamp the tap computed is the stamp stored");
+                assert!(!d.date_only, "a tap on an hour makes a TIMED event");
+            }
+            other => panic!("the event carries no due: {other:?}"),
+        }
+    }
+
+    // AND THE CALENDAR CAN SEE IT. The day view reads `dated` out of the
+    // windowed snapshot, so the window the shell asks for has to contain
+    // the day the finger landed on.
+    let raw = unsafe {
+        liv_snapshot_window_at(c_path.as_ptr(), day * 10_000, day * 10_000 + 2359)
+    };
+    assert!(!raw.is_null());
+    let json = unsafe { std::ffi::CStr::from_ptr(raw) }.to_str().unwrap().to_owned();
+    unsafe { liv_string_free(raw) };
+    let snap: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dated: Vec<u64> = snap["dated"]
+        .as_array()
+        .expect("dated is a list")
+        .iter()
+        .filter_map(|v| v.as_u64())
+        .collect();
+    assert!(dated.contains(&id), "the event is not in `dated`: {dated:?}");
 
     for suffix in ["", ".declined", ".pending"] {
         let _ = std::fs::remove_file(format!("{}{}", path.display(), suffix));

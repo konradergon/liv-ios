@@ -273,12 +273,23 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "flate2",
+ "liv-convert",
  "liv-core",
+ "liv-engine",
  "liv-ffi",
  "liv-services",
  "liv-views",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "liv-convert"
+version = "0.1.0"
+dependencies = [
+ "liv-core",
+ "liv-engine",
+ "liv-services",
 ]
 
 [[package]]
@@ -294,6 +305,7 @@ name = "liv-engine"
 version = "0.1.0"
 dependencies = [
  "rusqlite",
+ "sha2",
 ]
 
 [[package]]
@@ -301,9 +313,13 @@ name = "liv-ffi"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "liv-convert",
  "liv-core",
+ "liv-engine",
  "liv-services",
+ "liv-surface",
  "liv-views",
+ "rusqlite",
  "serde",
  "serde_json",
 ]
@@ -313,11 +329,19 @@ name = "liv-services"
 version = "0.1.0"
 dependencies = [
  "liv-core",
+ "liv-engine",
  "liv-views",
  "pulldown-cmark",
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "liv-surface"
+version = "0.1.0"
+dependencies = [
+ "liv-engine",
 ]
 
 [[package]]

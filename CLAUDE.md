@@ -23,39 +23,61 @@ shell over the same Rust FFI.
 
 ```
 core/       Rust — the append-only log, entities = property→value cells, commands
+engine/     Rust — THE REPLACEMENT for core/, being built beside it. Ops over
+            SQLite, built for sync. Nothing links it yet; the app runs on core/.
 services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
 views/      Rust — value display + rendering helpers (cross-platform)
 ffi/        Rust — the ONE C ABI (59 `liv_*` fns); staticlib + cdylib + rlib
 cli/        Rust — a headless CLI over the same core; the VERIFICATION tool
 shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
+shell/ios/ShareExtension/   the share-sheet extension: UIKit + Foundation only, no Rust;
+                            it spools text into the App Group and the app captures it
 ```
 
 Everything above `ffi/` is **platform-agnostic Rust** (it compiles for iOS and
 for `x86_64-pc-windows-msvc` today). A shell is a thin UI that (1) calls FFI
 verbs to mutate, (2) reads the snapshot JSON to render.
 
-**Platforms, as of 2026-08-19.** `shell/ios/` is THE app — the product, built
-and shipped from this tree. The desktop is the **Tauri app** in the
-`lovable-notes-hub` working copy, which links the same crates directly (no C
-ABI needed); the iOS tree is expected to move there eventually.
+**Platforms, as of 2026-08-29 — TAURI IS DROPPED (owner's word).** `shell/ios/`
+is THE app: the product, built and shipped from this tree, and the only shell
+that exists. The goal is still **one mobile app and one desktop app that mirror
+each other**, but the desktop is no longer the Tauri app in the
+`lovable-notes-hub` working copy. There is no desktop shell right now, and
+picking what it will be is an open question — not a thing to start unasked.
 
-**It is not a separate repository.** Both working copies point at the same
-remote, `Dahlaren/lovable-notes-hub` — two branch lines with no common ancestor
-in one repo. Resolving that topology (merge, subtree, vendor or publish) is an
-open question; a `path = "../../liv/core"` across two checkouts of one remote is
-unclonable and un-CI-able. The `docs/liv-core-pivot.md` that used to be cited
-here exists only on an unpushed local branch.
+What this reverses: from 2026-08-22 the ruling was *"we can't break or change
+how the tauri app works"* and *"both shells will share one core"*, and a
+convergence plan was written around it (`design/core.md`, `design/core-plan.md`,
+and the superseded recommendation in `design/one-core.md`). That plan had one
+purpose — to keep the Tauri app working while it moved onto this core. With the
+app dropped, the purpose is gone. Read those three for the head-to-head evidence
+and the honest costs; **do not read them as the plan of record**. Nothing in
+them is scheduled.
+
+What did NOT change: the Tauri working copy is still there and is still
+**outside this repo**, so it is still "ask first" (and the owner has said
+directly: don't change it). Dropping it means this tree stops aiming at it. It
+does not mean going and deleting it.
 
 **Two crates are named `liv-core`**: this one (the append-only log) and the
-desktop's (a SQLite engine, 1,784 lines). They are not interchangeable, and only
-one should survive — see `design/one-core.md` for the comparison, the
-recommendation, the measured costs, and the six questions it needs answered.
+desktop's (a SQLite engine, 1,784 lines). This one is the core. The other now
+has no shell over it and nothing here should link, mirror or migrate to it —
+which is what `design/one-core.md` §3 recommended on 2026-08-19, before the
+ruling that has now itself been dropped.
 
 The hand-built Mac shell and the planned WinUI port are **gone** (deleted
-2026-08-19, owner's word). Tauri covers macOS, Windows and Linux, so neither
-had a reason to exist. Git history still holds them — `git log --diff-filter=D
---name-only` finds the removal commit — but nothing in the working tree points
-at them any more, and nothing should.
+2026-08-19, owner's word, because Tauri covered macOS, Windows and Linux). That
+reason has expired, and the deletion has NOT been reversed: there is still no
+desktop shell in this tree, and reviving either one needs the owner's word
+first. Git history holds them — `git log --diff-filter=D --name-only` finds the
+removal commit.
+
+**The engine is live work again (owner, 2026-09-13):** *"the 'engine' should
+have been completed and the goal is to wire it completely with the app."* It was
+built to Phase 5 on 2026-08-22 and then sat for three weeks. Phases 1–5 done, 55
+tests, zero warnings, **zero dependents** — nothing links it, so none of it has
+run on a phone. The plan, its measured state and the one fork that blocks Phase 6
+are in `design/core-plan.md`; the design is `design/core.md`.
 
 ## The boundary — READ THIS BEFORE EDITING
 
@@ -63,6 +85,7 @@ at them any more, and nothing should.
 |---|---|
 | `shell/ios/**` | The app. Edit freely. |
 | `core/**`, `services/**`, `views/**` | **Settled.** Change only with the owner's word, failing-test-first. Logic two shells would both need belongs HERE, not in a shell. |
+| `engine/**` | **Open, and the active work** (owner, 2026-09-13). Still failing-test-first, and still no iOS, no Swift assumptions, no phone-shaped verbs — the desktop must be able to link it. It is NOT settled: it ships nothing yet, so a wrong shape here is cheap to fix and will not be later. Follow `design/core-plan.md`. |
 | `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), mirror `with_box` + `Committed`, ship with a test, and be flagged to the owner. |
 | `design/**`, `*.md` specs | **READ** for the behavioural spec. Amend deliberately; don't rewrite history. |
 | `cli/**` | The verification tool. Keep every verb the shell has a way to reach. |
@@ -104,7 +127,7 @@ cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 **The iOS shell has three of its own, and `cargo test` runs none of them.**
 
 ```
-shell/ios/build.sh          # one swiftc invocation; add `run` to boot a simulator
+shell/ios/build.sh          # two swiftc invocations (app + share extension); add `run` to boot a simulator
 shell/ios/suites.sh         # the ten launch-flag self-checks (the shell's unit tests)
 shell/ios/drive.sh          # drives the running app and asserts what is ON SCREEN
 ```
@@ -147,7 +170,9 @@ old codebase.
 1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
    second file calling the C ABI is a defect. (Measured 2026-08-28: 53
    calls over 41 distinct verbs, one file. Nine other Swift files mention
-   a verb NAME in a comment; none call one.)
+   a verb NAME in a comment; none call one.) The share extension is a
+   second BINARY and calls none either: it writes a file into the App
+   Group spool and the app captures it (`Catch.swift`).
 2. **Anything on the snapshot path OR THE WRITE PATH ships with a COST
    test**, not just a correctness one — see `services/tests/scale.rs` and
    `ffi/src/tests.rs` (`one_write_stays_flat_as_the_box_grows`). The
@@ -184,5 +209,25 @@ old codebase.
 - Keep it dense — this app is deliberately compact. The density reference used
   to be the Mac shell; it is now `shell/ios/Sources/Theme.swift`, which is the
   only place a size or a colour may be defined.
+- **The only clickable TEXT in the app is a link inside a note** (owner,
+  2026-09-15: *"Only clickable text in the app should be links inside notes…
+  otherwise it should look like a button and be consistent"*). Everything else
+  you can tap wears one of three shapes, and there is no fourth:
+  a **full-width row** (`LivMenuRow`, the library panel's) for a door in a
+  list; a **hollow chip** (`AddChip`) for a quiet or secondary verb; a
+  **filled pill** (`ConfirmPill`, `compact:` at the end of a row) for the
+  primary verb. A bare accent word is a hyperlink and is a defect.
+  Swept 2026-09-16 and it cost twelve: `+ Link…`, `Show all 12`,
+  `New workspace…`, Add (twice), Done, Close all, Put back, Restore,
+  Accept all, Route them, Create — plus `SectionLabel`'s accent trailing
+  verb, deleted. Each was written on its own day by someone who only had
+  the one in front of them, which is what a missing shape costs.
+- **A property has a token and a word, and they are not the same string.**
+  `PROPS.name` is what the query grammar lexes and what is frozen on disk
+  (`tags`); `PROPS.reads` is what a person sees (`Subject`, owner
+  2026-09-16). `liv_properties` ships both — `word` and `name` — and a shell
+  keys its rows off `word` and draws `name`. Matching on the shown name is
+  how the area picker broke on 2026-09-14, and it is why `InspectorField`
+  carries `property` and `shown` separately.
 - Verify on the simulator before claiming something works; cross-check writes
   against the box with the CLI. A builder's own report is not evidence.

@@ -6,6 +6,7 @@
 #ifndef LIV_H
 #define LIV_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Capture one scrap into the box at path (created and seeded if fresh).
@@ -351,5 +352,622 @@ int32_t liv_restore_at(const char *path, uint64_t id);
    replace. Missing property on the entity is success. 1 ok, 0 on
    busy/no entity/no property definition. */
 int32_t liv_unset_at(const char *path, uint64_t id, const char *property);
+
+
+/* ====================================================================
+   THE NEW SEAM: one verb per screen, over the engine.
+
+   Everything above this line reads `core/` and hands the shell the WHOLE
+   BOX as one `liv_snapshot` document — 3.5 MB and 39 ms at 6,400 notes,
+   rebuilt on every refresh, linear in the box and independent of what is
+   on screen. The shell then searches it to work out what Today is.
+
+   Below, a screen asks for itself and gets itself. Measured over the same
+   2,000-task box: one day is 2,268 bytes against the box's 448,891 — a
+   factor of 198, and the ratio grows with the box rather than the screen.
+   The deciding happens in `liv-surface`, where `cargo test` reaches it.
+
+   THE TWO SEAMS ARE INDEPENDENT AND BOTH WORK. Nothing above changes
+   until the shell has moved off it, one surface at a time
+   (design/rust-owns-the-mechanisms.md §5, stages 3 and 4).
+
+   Three things are deliberately different from the ABI above:
+
+   1. A REAL ERROR CHANNEL. Every verb returns LIV_OK or a negative code,
+      and the answer comes back through an out-pointer. Above, `0` means
+      both "no id" and "it broke", which is why a shell cannot tell an
+      empty box from an unreadable one. Here an empty box is LIV_OK and an
+      empty array.
+   2. SIXTEEN-BYTE IDS, as 32 lowercase hex characters. An engine id is a
+      UUID and a JSON number is not one.
+   3. NO `with_box`. That pattern exists because opening a core box
+      replays its whole log; the engine is a database, so opening is
+      0.3 ms and flat, SQLite does its own locking in WAL mode, and the
+      connection is simply held.
+
+   Every out-string is freed with liv_string_free. A failing call writes
+   nothing through `out`.
+   ==================================================================== */
+
+#define LIV_OK          0
+#define LIV_ERR_PATH   -1   /* path was null or not UTF-8 */
+#define LIV_ERR_OPEN   -2   /* no such box, no permission, or too new */
+#define LIV_ERR_ARG    -3   /* a parameter did not parse */
+#define LIV_ERR_READ   -4   /* the box opened and refused the read */
+#define LIV_ERR_ENCODE -5   /* the answer would not encode (a bug here) */
+
+/* The three below belong to the WRITE verbs, which can fail in ways a
+   read cannot. They are codes and not LIV_ERR_READ because a shell has a
+   different thing to do about each. */
+#define LIV_ERR_STALE   -6  /* the stored body moved; re-read and decide */
+#define LIV_ERR_REFUSED -7  /* the box will not take this write */
+#define LIV_ERR_NOTHING -8  /* there was nothing there to do */
+
+/* `lens` is a JSON array of hex ids the workspace admits, or NULL for no
+   workspace. NULL IS NOT "[]": a workspace whose query matches nothing
+   admits nothing, and that is a real state — passing NULL to mean it
+   would turn a filtered-to-empty screen into an unfiltered one. */
+
+/* Today, for the day `day` (days since the epoch), knowing the real
+   `today` and the clock. They differ whenever the date strip has moved,
+   and several rules turn on whether they are the same.
+
+   {"late":[row…], "passed":[…], "ahead":[…], "all_day":[…], "done":[…],
+    "next":"<hex id>"?, "captured":N}
+
+   A row is
+   {"id","title","untitled","kind"?,"due_ms"?,"all_day","status"?,"done",
+    "area"?,"created_ms","touched_ms","has_file","has_body",
+    "kind_word"?,"status_word"?,"area_word"?,"archived","trashed"}
+   — already titled, already sorted, and `done` already resolved against
+   which statuses complete.
+
+   has_body ADDED 2026-09-15, purely additive: does the thing hold any
+   words (whitespace does not count). Four shell surfaces ask it and on
+   core/ it was answered by the body's compare-and-swap print being
+   non-zero — which the engine hands back per body from liv_read_body,
+   not per row, so all four quietly answered "no" and the Inbox listed
+   nothing to route while the panel counted eight captures. It is NOT a
+   fingerprint: "did MY base move" is a different question. */
+int32_t liv_view_today(const char *path, int32_t day, int32_t today,
+                       int64_t now_ms, const char *lens, char **out);
+
+/* Tasks, grouped by status. filter: 0 all, 1 status, 2 project;
+   filter_id is the hex id it names and is ignored when filter is 0.
+
+   [{"status":"<hex>"?, "name", "completes", "late":N, "rows":[row…]}…]
+
+   `late` is the GROUP's count, not a flag per row: on a real box every
+   task is overdue, and a colour on every row distinguishes nothing.
+   An empty group is not returned. */
+int32_t liv_view_tasks(const char *path, int32_t filter,
+                       const char *filter_id, int32_t today,
+                       const char *lens, char **out);
+
+/* Everything, in one slice: 0 all, 1 notes, 2 upcoming, 3 unfiled.
+   Returns [row…], already ordered — newest first, except notes, which is
+   most-recently-touched first, and upcoming, which reads forward. */
+int32_t liv_view_everything(const char *path, int32_t slice, int32_t today,
+                            const char *lens, char **out);
+
+/* The calendar's day: the all-day strip, and the timeline's blocks with
+   their overlap already resolved.
+
+   {"all_day":[row…],
+    "blocks":[{"row":row,"start_min","minutes","column","columns"}…]}
+
+   `start_min` is minutes from midnight — the shell multiplies by its own
+   points-per-hour. `minutes` is never zero, so a thing with no duration
+   stays tappable. `column`/`columns` are a CLUSTER's, not a pair's: two
+   blocks that miss each other can both hit a third, and all three share
+   the width. */
+int32_t liv_view_day(const char *path, int32_t day, const char *lens,
+                     char **out);
+
+/* Drop every held connection. Call before moving or replacing a box file.
+   Not thread-safe against a liv_view_* call in flight. */
+void liv_view_close_all(void);
+
+/* ====================================================================
+   THE ENGINE'S WRITE VERBS
+
+   Everything above this line reads. Until these existed the engine had
+   set, add, remove, trash, restore, undo, set_content, rename_value,
+   add_file and the clerk's queue, all tested, and no shell could reach
+   any of them — so a shell on the engine could look and never touch.
+
+   A BODY CROSSES IN THE SHELL'S OWN SPAN JSON, deliberately. It is what
+   Editor.swift's SpanJSON already encodes and decodes — {"Text":"words"},
+   {"Break":"Body"}, {"Break":{"Heading":3}} — because a second span
+   encoding would be two grammars for one user-facing shape. The one
+   difference is that a Ref is 32 hex characters rather than a JSON
+   number, and the shell's id decoder was built to accept both.
+
+   A span this build does not understand is REFUSED (LIV_ERR_ARG), never
+   dropped: flattening a block a newer build wrote is a decision about
+   someone's writing that a wire decoder should not be making. The save
+   fails and the editor still holds the text.
+   ==================================================================== */
+
+/* One body and the fingerprint to save it against.
+   {"spans":[…], "print":N}
+
+   ZERO IS NEVER A REAL FINGERPRINT — it is what "no body yet" reads as,
+   so a first save needs no special case. */
+int32_t liv_read_body(const char *path, const char *id, char **out);
+
+/* Replace a body, compare-and-swap on `base`. {"print":N}
+
+   LIV_ERR_STALE means the stored body moved since `base` was read:
+   RE-READ, NEVER OVERWRITE. There is no force flag, by design. Empty
+   spans clear the body. LIV_ERR_REFUSED is the model saying no — a Ref
+   to nothing, most often. */
+int32_t liv_write_body(const char *path, const char *id, const char *spans,
+                       uint64_t base, uint64_t now_ms, char **out);
+
+/* Every past version of one body, NEWEST FIRST.
+   [{"device","seq","at_ms","author","spans"}…]
+
+   Restoring one is an ordinary liv_write_body of its spans over a freshly
+   read base. The log is never rewritten, so a restore is itself a
+   version. `author` is "user" or the proposer's name. */
+int32_t liv_body_history(const char *path, const char *id, char **out);
+
+/* Both directions of one thing's links: {"out":[hex…], "in":[hex…]}
+
+   A [[ ]] typed in a body is the same edge as a link picked in
+   properties — the fold indexes both — so this is the only reader either
+   list needs. */
+int32_t liv_links(const char *path, const char *id, char **out);
+
+/* What undo and redo would take, without taking it:
+   {"undo":bool, "redo":bool} — what a toolbar needs to know whether its
+   buttons are live. */
+int32_t liv_undo_state(const char *path, char **out);
+
+/* Take back this device's last action, and put it back. LIV_ERR_NOTHING
+   when there is none, which is an ANSWER and not a failure: a shell
+   asking on a fresh box is not a shell doing anything wrong, and the ABI
+   above this line has one zero for both. */
+int32_t liv_undo(const char *path, uint64_t now_ms);
+int32_t liv_redo(const char *path, uint64_t now_ms);
+
+/* Rename one value of a property, everywhere it is carried.
+   {"carriers":N}
+
+   `carriers` is how many things change ON SCREEN, which for a select is
+   not the number of writes: one write to the option's name re-renders
+   every carrier. Zero is a success, not a refusal.
+
+   LIV_ERR_REFUSED for an empty or unchanged name, a value nothing is
+   called, a property that does not rename, or an AMBIGUOUS rename —
+   which refuses rather than guessing, because two kinds sharing an
+   option name is the designed state of `status`. */
+int32_t liv_rename_value(const char *path, const char *property,
+                         const char *old_name, const char *new_name,
+                         uint64_t now_ms, char **out);
+
+/* Take a file into the box BY REFERENCE. {"id":"<hex>"}
+
+   Never copies or moves it — the file is read to hash it and left where
+   the user put it. An unreadable path is LIV_ERR_REFUSED, never a
+   phantom entity with a hash of nothing. */
+int32_t liv_add_file(const char *path, const char *file, uint64_t now_ms,
+                     char **out);
+
+/* Re-hash what a file points at on this device.
+   {"state":"unchanged"|"changed"|"broken", "path":…|null}
+
+   A changed hash IS the integration — it is how Liv learns Word saved
+   the file. A vanished path is "broken" and LEAVES THE STORED HASH
+   ALONE: a file on an unplugged drive is not a file whose contents
+   changed. `path` is null for a file that arrived by sync and has no
+   copy here, which is the honest answer to "where were you looking". */
+int32_t liv_resync_file(const char *path, const char *id, uint64_t now_ms,
+                        char **out);
+
+/* What the clerk would suggest, as the inbox reads it.
+   [{"entity":"<hex>", "print":N, "proposer", "reason"}…]
+
+   A PROPOSAL IS NAMED BY THE THING IT IS ABOUT AND ITS FINGERPRINT, NEVER
+   ITS POSITION. The sweep is a pure function of the box and is recomputed
+   in every process, so an index would mean something different by the
+   time the user tapped it.
+
+   A proposal with no ops proposes nothing and is left out, so `entity` is
+   always there: a row the shell is shown must be a row it can act on. */
+int32_t liv_sweep(const char *path, char **out);
+
+/* Say yes / say no, passing back the two things the row named. The
+   proposal is RE-DERIVED from the box rather than taken on trust: one the
+   box no longer makes is one the user already acted on, and
+   LIV_ERR_NOTHING says so rather than writing something stale.
+
+   `entity` is what makes that affordable. Re-deriving the WHOLE box to
+   find one proposal cost 120 ms in a 500-note box — every tap in the
+   inbox re-reading everything — against 3 ms for the one thing, and the
+   guarantee is identical: sweeping one thing is sweeping everything,
+   narrowed, and a test compares the two entity by entity.
+
+   DECLINING IS NOT FORGETTING — a refusal persists and the clerk does
+   not ask again. */
+int32_t liv_accept(const char *path, const char *entity, uint64_t print,
+                   uint64_t now_ms);
+int32_t liv_decline(const char *path, const char *entity, uint64_t print,
+                    uint64_t now_ms);
+
+/* ====================================================================
+   THE VERBS EVERY TAP USES
+
+   The block above is the EDITOR's doors — bodies, undo, files, renames,
+   the clerk. These are the app's: capture a scrap, make a thing, tick a
+   checkbox, file it under Work, throw it away. Without them a shell on
+   the engine can read and never touch.
+
+   A VALUE CROSSES AS TEXT, and the property says what it means. The
+   shell sends "yes", "3", "2026-09-13", "Work"; whether that is a bool,
+   a number, a date or an option is a fact about the property, which the
+   box already knows. The alternative — the shell declaring the type of
+   everything it sends — puts the model in two places and makes every new
+   field a Swift change. LIV_ERR_REFUSED comes back, with nothing
+   written, when the text does not read.
+
+   A PROPERTY IS NAMED BY ITS ID, not its name. The old ABI's liv_set_at
+   takes a name and looks it up, which quietly makes renaming a field
+   break every caller that spelled it. Use liv_property_named once to
+   turn a frozen name into an id, then pass the id.
+   ==================================================================== */
+
+/* Make one thing of a kind, optionally named. {"id":"<hex>"}
+   `name` may be NULL for something born untitled, which is the common
+   case and not an error. */
+int32_t liv_make(const char *path, const char *kind, const char *name,
+                 uint64_t now_ms, char **out);
+
+/* Capture a scrap: one UNTYPED thing whose body is this text, in one
+   action. {"id":"<hex>"}
+
+   Untyped is the point. A capture is a thought, not a decision about
+   what kind of thing it is — the clerk's promotion proposer is what
+   offers to make it a task later, and it can only offer that because
+   nothing here decided first. One action, so one undo takes the whole
+   capture back rather than leaving an empty note behind. */
+int32_t liv_capture(const char *path, const char *text, uint64_t now_ms,
+                    char **out);
+
+/* Set a register; add a member to a set; take one out.
+
+   liv_remove is ADD-WINS: a member added concurrently on another device
+   survives it, which is why a tag added on the phone is not lost by a
+   removal on the laptop. */
+int32_t liv_set(const char *path, const char *entity, const char *property,
+                const char *value, uint64_t now_ms);
+int32_t liv_add(const char *path, const char *entity, const char *property,
+                const char *value, uint64_t now_ms);
+int32_t liv_remove(const char *path, const char *entity, const char *property,
+                   const char *value, uint64_t now_ms);
+
+/* Empty a cell. NOT the same as setting it to nothing — an unset cell
+   has no value at all, which is what a picker's "None" means and what a
+   due date cleared off a task means.
+
+   Emptying an empty cell writes nothing, so a picker set to None twice
+   is one undo rather than two. */
+int32_t liv_unset(const char *path, const char *entity, const char *property,
+                  uint64_t now_ms);
+
+/* Into the trash, and back out. TRASHING IS A CELL, not a deletion:
+   nothing leaves the log, which is what makes restore a write rather
+   than a resurrection — and what lets an undone create stay readable in
+   the Trash, where a person goes to get it back. */
+int32_t liv_trash(const char *path, const char *entity, uint64_t now_ms);
+int32_t liv_restore(const char *path, const char *entity, uint64_t now_ms);
+
+/* Everything a reference property may point at, named and in the order a
+   picker should show them:
+   [{"id":"<hex>","name":…,"completes":bool,"hue":N|null}…]
+
+   completes AND hue ADDED 2026-09-15, purely additive. A status
+   vocabulary without them is three words with nothing to choose between:
+   the iOS ring writes "whichever option completes", found none, wrote
+   nothing, and a task could not be ticked at all. The engine has held
+   prop::COMPLETES all along and a row's own "done" flag already read it
+   — only the picker was left guessing.
+
+   completes is ALWAYS present, never omitted for a false: a missing key
+   and a false decode the same in Swift and only one of them is an
+   answer. hue is null when the option has not got one. Both mean
+   something only for a status; every other vocabulary says false and
+   null, and a picker that does not care does not look.
+
+   THE WORDS COME FROM THE BOX, NEVER FROM THE SHELL. The current tree
+   keeps the six area names as a Swift constant, which one-core.md §4
+   records as a mistake: a shell carrying its own copy of the furniture
+   drifts from the box that stores it, and the drift is invisible until
+   someone renames something.
+
+   Compiled-in furniture and a user's own come back in ONE list, because
+   that is what the cell accepts — a picker that separated them would be
+   inventing a distinction the model does not have. Empty for a property
+   that holds no references, which is an answer and not a failure. */
+int32_t liv_options(const char *path, const char *property, char **out);
+
+/* One thing's cells, as the inspector reads them:
+   [{"property":"<hex>","name","holds","many","value","ref":"<hex>"?,
+     "contended":bool}…]
+
+   `value` is ALWAYS a display string, so a shell renders a row without
+   knowing the kind; `ref` carries the target when there is one, for a row
+   that is tappable.
+
+   `contended` is not decoration. Two devices can leave a register holding
+   two values, and the model's rule is that nothing silently wins, so the
+   shell has to be able to show the choice rather than pick one. */
+int32_t liv_cells(const char *path, const char *entity, char **out);
+
+/* The kinds a create menu offers: [{"id":"<hex>","name":…}…]
+   The six the product names, in product order, plus anything the user
+   declared. Not every kind that exists — the rest is furniture the app
+   draws with, and a person never picks one from a list. */
+int32_t liv_kinds(const char *path, char **out);
+
+/* The id of a compiled-in property by its stable name — "due", "status",
+   "area". {"id":"<hex>"} LIV_ERR_ARG when nothing is called that.
+
+   A shell needs SOME way in. Every other verb here names a property by
+   id, which is right, but the first id has to come from somewhere and
+   hard-coding 32 hex characters in Swift is worse than asking. These
+   names are frozen (op-format.md's ordinals-on-disk-forever), so this is
+   a lookup of something stable, not of a label a user can change. */
+int32_t liv_property_named(const char *path, const char *name, char **out);
+
+/* The id of a kind by its name, THE BACKSTAGE ONES INCLUDED — "view",
+   "workspace", "note". {"id":"<hex>"} LIV_ERR_ARG when nothing is
+   called that. Added 2026-09-15, purely additive.
+
+   liv_kinds above is the CREATE MENU's list and deliberately omits
+   Workspace and View: a person never picks one from a list. But the app
+   MAKES both — a saved filter is a View, a workspace is a Workspace —
+   and that list was the shell's only way to name a kind. So saving a
+   new filter looked for "view" among the six, did not find it, and
+   wrote nothing: no filter, and no error anyone could see.
+
+   This is the door liv_property_named is, for the reason written there.
+   It does NOT widen the picker; liv_kinds still answers the six.
+   Matched case-insensitively against the one place these words live. */
+int32_t liv_kind_named(const char *path, const char *name, char **out);
+
+/* ====================================================================
+   FINDING THINGS
+
+   TWO JOBS, ONE GRAMMAR. The same text means two different things
+   depending on where it is typed, and the parser is told which:
+
+     - a SEARCH BOX WIDENS. `is:archived` means "look in the archive
+       too", because someone hunting for a thing wants it found.
+     - a LENS RESTRICTS. The same `is:archived` in a workspace filter
+       means "only archived things", because a filter is a boundary.
+
+   liv_search is the first, liv_lens the second. Separate verbs rather
+   than a flag, because the answers are shaped differently: a search is
+   ranked hits with facets, a lens is a flat set of ids.
+
+   A USER NEVER TYPES THIS. The text grammar is the storage format and
+   an advanced escape hatch, not the interface. liv_terms is how a
+   stored filter becomes chips a person edits by tapping.
+   ==================================================================== */
+
+/* Ranked hits and the facet rows beside them.
+   {"hits":[{"id":"<hex>","score":N,"field":…}…],
+    "facets":[{"property":"<hex>","label",
+               "values":[{"label","count","active","excluded"}…]}…]}
+
+   `field` says WHERE the best match was — name | cell | filed | content,
+   or "structured" for a pure-qualifier hit — so a row can hint why it is
+   in the list rather than leaving the user to guess.
+
+   `limit` BOUNDS THE HITS AND NEVER THE FACETS. A facet count is over
+   everything the query matches: a row saying "Work 12" when the list
+   shows 10 is telling the truth about the box, and a count that changed
+   with how far the user had scrolled would be useless for pivoting,
+   which is the one thing a facet row is for. 0 means no ceiling.
+
+   A facet count also excludes its OWN property's constraints, or a facet
+   you have already picked shows its own count and nothing else. */
+int32_t liv_search(const char *path, const char *query, uint32_t limit,
+                   char **out);
+
+/* The ids a LENS admits: {"ids":["<hex>"…], "terms":[…]}
+
+   The same grammar read the other way round. The lexed terms come back
+   with the ids so a shell can draw the filter as chips in the same
+   breath it applies it, without parsing the text itself. */
+int32_t liv_lens(const char *path, const char *query, char **out);
+
+/* Split a query into its terms. NO BOX, no lock, no opinion about
+   whether a property exists — safe to call on every keystroke.
+   [{"op","key","value","raw"}…]
+
+   `raw` is the term respelled canonically, so joining a term list back
+   together reproduces a query that lexes the same way. That is what lets
+   a shell edit a filter as chips and write the result back as text.
+
+   Named liv_terms, not liv_lex: the old ABI already exports a liv_lex
+   over core/'s grammar, and every engine verb is purely additive. */
+int32_t liv_terms(const char *query, char **out);
+
+/* Every value this property is actually CARRYING, commonest first:
+   [{"label","ref":"<hex>"?,"count":N}…]
+
+   A different question from liv_options, which asks what a cell MAY
+   hold. A free-text field has no options and still wants to offer what
+   the user has typed before. Trashed things are left out: offering what
+   the trash holds is offering someone their own deletions back. */
+int32_t liv_values_in_use(const char *path, const char *property, char **out);
+
+/* Every file reference this device cannot open:
+   [{"id":"<hex>","name","path":…|null,"why":"absent"|"gone"}…]
+
+   A HASH TRAVELS AND A PATH DOES NOT, which is why these are two
+   answers and not one. A file added on the laptop reaches the phone as
+   a real, valid reference with no local copy — "absent", and the answer
+   is "find it for me". A path this device knows that no longer holds a
+   file is "gone", and that one is broken.
+
+   Neither touches the stored hash: a file on an unplugged drive is not
+   a file whose contents changed. */
+int32_t liv_file_alerts(const char *path, char **out);
+
+/* The workspace tree, and the saved filters:
+   [{"id":"<hex>","name","query", …}…]
+
+   A WORKSPACE IS AN ORDINARY ENTITY, so there is no verb here that
+   makes one — liv_make with the workspace kind and liv_set of its cells
+   already do, which is the whole point of the primitives existing.
+   These only read.
+
+   liv_workspaces adds emoji, favorite, archived, builtin, parent and
+   order. An ARCHIVED workspace is included WITH ITS FLAG: the switcher
+   shows them behind a disclosure, and filtering them out here would
+   take that choice away from the shell. A trashed one is gone, which is
+   a different thing. */
+int32_t liv_workspaces(const char *path, char **out);
+int32_t liv_views(const char *path, char **out);
+
+/* The clerk's consent switch: {"on":bool, "property":"<hex>"}
+
+   ABSENT OR TRUE IS ON; only an explicit false silences it — an older
+   box that never set it is not a box that said no. Turning it off is an
+   ordinary liv_set of the property named here, which is why there is no
+   writer for it. */
+int32_t liv_assist(const char *path, char **out);
+
+/* ---- the last three, found by mapping the old ABI verb by verb ---- */
+
+/* Declare a field the app did not ship with — the product's "new kind of
+   field behind a door in Settings". {"id":"<hex>"}
+
+   `holds` is text | number | bool | datetime | reference | richtext |
+   file; `many` makes it a set rather than a register. LIV_ERR_REFUSED
+   for a shape the model does not have.
+
+   It is an ordinary entity, MINTED ONCE on one device, which is what
+   stops it drifting the way a seeded copy does: there is no second copy
+   to disagree with. */
+int32_t liv_declare_field(const char *path, const char *name,
+                          const char *holds, bool many, uint64_t now_ms,
+                          char **out);
+
+/* Accept several suggestions as ONE action. {"taken":N}
+
+   ALL OR NOTHING, AND ONE UNDO. Half a consent is worse than none: the
+   user agreed to a set, and a set that half-landed is not what they
+   agreed to.
+
+   `entities` and `prints` are parallel arrays of `count` items, each
+   proposal named the way liv_accept names one.
+
+   A fingerprint the box no longer proposes is SKIPPED rather than
+   failing the batch: "accept all" is a sweep of what is on screen, and
+   one row the user already dealt with on another device is not a reason
+   to refuse the other nine. Only what was actually passed is taken —
+   never everything the entity happens to be offering. LIV_ERR_NOTHING
+   when none of them landed. */
+int32_t liv_accept_all(const char *path, const char *const *entities,
+                       const uint64_t *prints, uint32_t count,
+                       uint64_t now_ms, char **out);
+
+/* Why the box will not open: {"code","message"}, code "ok" when it does.
+   Codes: ok | version | corrupt | io.
+
+   A SHELL THAT CANNOT OPEN THE BOX HAS NOTHING ELSE TO ASK. Every other
+   verb answers LIV_ERR_OPEN, which says that it failed and not what to
+   do about it, and the answers need different screens. "version" means
+   the box was written by a newer build and the user should update —
+   the one a wrong answer strands someone on. */
+int32_t liv_probe_box(const char *path, char **out);
+
+/* ---- the two surfaces the swap would otherwise take away ---- */
+
+/* What is in the trash, newest first — the same row shape every other
+   surface returns, so the Trash screen draws with the code every list
+   already has.
+
+   THE ONE SURFACE THAT WANTS THE ROWS THE OTHERS THROW AWAY, and it
+   ignores the lens on purpose: the trash is the trash, and a workspace
+   filter hiding some of it would leave someone unable to find the thing
+   they are trying to get back. Archived is NOT trashed and is not here. */
+int32_t liv_view_trash(const char *path, char **out);
+
+/* Open `- [ ]` lines written inside notes:
+   [{"note":"<hex>","source","line":N,"text","depth":N}…]
+
+   A PROJECTION: nothing here is stored. No entity is created and no cell
+   is written — a line in a note is a thought, not a task someone has to
+   file. `line` is the block's index from the top of the body, which is
+   the toggle's address, so a shell can tick it without a second scan.
+
+   Notes only: something already typed as a task or an event is listed as
+   itself, and its body lines would be the same work counted twice. */
+int32_t liv_note_tasks(const char *path, char **out);
+
+/* The properties a person can put on something:
+   [{"id":"<hex>","name","holds","many"}…]
+
+   The six the product names, then anything the user declared. NOT every
+   property that exists — most are plumbing the app needs and never
+   offers as a field to fill in, and a picker listing `trashed` beside
+   `due` would be the model leaking through the interface. */
+int32_t liv_properties(const char *path, char **out);
+
+/* Turn the clerk on or off.
+
+   THE BOX OWNS WHERE THE SWITCH LIVES. The clerk is off when any live
+   thing carries an explicit no, so turning it off means writing one and
+   turning it back on means taking it away — a rule about the model, not
+   something a shell should have to know.
+
+   Absent or true is ON, so turning it on REMOVES the cell rather than
+   writing true: a box that never said anything and a box that said yes
+   are the same box. */
+int32_t liv_set_assist(const char *path, bool on, uint64_t now_ms);
+
+/* Mint a new value for a property that points at things, and offer it.
+   {"id":"<hex>"}
+
+   THE KIND IS WHATEVER THE PROPERTY POINTS AT, not always an Option.
+   `area` is RefTo(kind::AREA) and `status` is RefTo(kind::STATUS);
+   minting an Option for either makes something the cell refuses — a new
+   area that cannot be chosen.
+
+   It joins the property's declared `options` only where the property
+   keeps a list: a RefTo with none accepts anything of its kind, so a
+   minted area is choosable the moment it exists.
+
+   Minting is a DECISION, which is why it is its own verb and not
+   something liv_set does when a name does not match. Typing a typo must
+   not create a seventh area. Asking twice hands back the one that
+   already exists, case-insensitively. LIV_ERR_REFUSED for a field with
+   no vocabulary. */
+int32_t liv_add_option(const char *path, const char *property,
+                       const char *name, uint64_t now_ms, char **out);
+
+/* THE ONE-WAY DOOR: build an engine box from a core box.
+
+   Refuses if `to` already exists — "run it again" is the first thing
+   anyone tries and a converter that allows it can double a box. To
+   rebuild, delete the file first, which is also how a shell says "throw
+   the conversion away and take the core box as truth again".
+
+   It RESOLVES the core box's schema rather than copying it: a fresh box
+   is 70 entities and almost all of it is 51 property definitions, a type
+   per kind and an option per area and status, all of which the engine has
+   compiled in. Copying them would put a second "due" and a second "Work"
+   beside the frozen ones in every picker.
+
+   The report:
+   {"entities","cells","resolved","minted_vocabulary","flattened",
+    "files_dropped","undeclared","unknown_kinds":[…],"clean"} */
+int32_t liv_view_convert(const char *from, const char *to, char **out);
 
 #endif

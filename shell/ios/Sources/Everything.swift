@@ -43,13 +43,23 @@ struct EverythingView: View {
                 // the state, and the number was furniture. The slice
                 // picker is the only thing this screen needs at its
                 // head, because it changes what the list IS.
-                picker
+                // THE SCREEN'S NAME. Notes, Everything and Tasks were the
+                // three surfaces with nothing at the top saying where you
+                // are — Today, Inbox and the Calendar all lead with one,
+                // and a list that starts at its first row reads as a
+                // fragment of a screen rather than a screen.
+                LivScreenTitle("Notes")
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
+                    .padding(.bottom, 6)
+                picker
                     .padding(.bottom, 8)
                 if slice.isEmpty {
                     EmptyHint(empty)
                 } else {
-                    ForEach(slice) { row in line(row) }
+                    ForEach(Array(slice.enumerated()), id: \.element.id) { i, row in
+                        line(row, prev: i == 0 ? nil : slice[i - 1])
+                    }
                 }
             }
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -59,7 +69,7 @@ struct EverythingView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
-        .contentMargins(.bottom, 16, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()  // full screen: no bar under it
         .background(LivTheme.canvas)
         .onAppear {
@@ -75,9 +85,9 @@ struct EverythingView: View {
 
     private var empty: String {
         switch lens {
-        case .all: return "Nothing yet. Everything you capture lands here."
-        case .upcoming: return "Nothing dated in the next seven days."
-        case .unfiled: return "Nothing unfiled — every item has an area."
+        case .all: return "Nothing written"
+        case .upcoming: return "Nothing due"
+        case .unfiled: return "All filed"
         }
     }
 
@@ -89,27 +99,37 @@ struct EverythingView: View {
         return EverythingLens.allCases.filter { $0 != .unfiled || !stampsArea }
     }
 
-    /// The slice pills (ClickUp's shape, owner 2026-08-18): compact,
-    /// outlined when off, filled when on, and no well around them. The
-    /// segmented control this replaces was a box inside a box.
+    /// THE SAME CHIP TASKS DRAWS (owner, 2026-09-12: *"make everything
+    /// buttons (All, Notes…) match style of equivalents in Tasks"*).
+    ///
+    /// It was this row's own recipe, and it differed three ways: a
+    /// hairline border around every UNCHOSEN chip, semibold rather than
+    /// medium on the chosen one, and 14pt of side padding against 12.
+    /// The border is the whole visual gap — it made four outlined pills
+    /// where Tasks has four words and one filled capsule. The height was
+    /// a raw 30 rather than `LivChip.tall`, which is the same number and
+    /// the same standing-rule-3 failure the row above it already fixed.
+    ///
+    /// It also picks with the app's own spring now, as Tasks and the
+    /// Inbox both did and this row did not.
+    ///
+    /// THE OUTLINE WAS A RULING AND IT IS REVERSED ON HIS WORD. These
+    /// were "ClickUp's shape (owner, 2026-08-18): compact, outlined when
+    /// off, filled when on, and no well around them", replacing a
+    /// segmented control that was a box inside a box. That was a real
+    /// improvement and the outline came with it. Twelve days later the
+    /// 2026-08-30 pass took the border off the Tasks chips and wrote
+    /// that the app now had one way of saying "this one" — while leaving
+    /// this row outlined. So the reversal is not new here; it is this
+    /// row finally getting the change the sentence already claimed.
     private var picker: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(lenses) { l in
-                Button {
-                    desk.park(.everything, at: l.rawValue)
-                } label: {
-                    Text(l.title)
-                        .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
-                        .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text2)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(Capsule().fill(lens == l ? LivTheme.panel2 : .clear))
-                        .overlay(
-                            Capsule().strokeBorder(
-                                lens == l ? Color.clear : LivTheme.border, lineWidth: 0.5))
-                        .contentShape(Capsule())
+                LivFilterChip(l.title, selected: lens == l) {
+                    withAnimation(LivMotion.pick) {
+                        desk.park(.everything, at: l.rawValue)
+                    }
                 }
-                .buttonStyle(.plain)
             }
             Spacer(minLength: 0)
         }
@@ -148,18 +168,18 @@ struct EverythingView: View {
 
     // MARK: one row
 
-    private func line(_ row: EntityRow) -> some View {
+    private func line(_ row: EntityRow, prev: EntityRow?) -> some View {
         // A BUTTON, not a tap gesture (owner's clips, 2026-08-20). A
         // gesture opens the row and says nothing while it does it;
         // every app in the reference set lights the row under the
         // finger first. Eight rows in this app were gestures.
         Button { desk.open(row.id) } label: {
-            row_(row)
+            row_(row, prev: prev)
         }
         .livRowPress()
     }
 
-    private func row_(_ row: EntityRow) -> some View {
+    private func row_(_ row: EntityRow, prev: EntityRow?) -> some View {
         LivListRow(
             glyph: LivKind.glyph(of: row),
             // A MIXED list: the kind's colour is doing work here, so it
@@ -174,36 +194,23 @@ struct EverythingView: View {
             // chips before the surface pass and none after it; one is
             // what the spec asks for, and it answers the question a
             // mixed list actually raises: what is this attached to.
-            if let anchor = anchorChip(row) {
-                ValueChip(anchor)
+            if let chip = livAnchorChip(of: row) {
+                chip.transition(.scale(scale: 0.85).combined(with: .opacity))
             }
-            if let trailing = trailing(row) {
+            // Only when it changes — see `livNewFact`. Fourteen rows
+            // reading "Mon 31 Aug" said nothing about any of them.
+            if let trailing = livNewFact(
+                trailing(row), after: prev.flatMap { trailing($0) })
+            {
                 LivRowFact(text: trailing, emphasis: lens == .upcoming)
             }
         }
         .contentShape(Rectangle())
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                box.trash(row.id)
-            } label: {
-                Label("Trash", systemImage: "trash")
-            }
+            livTrashAction { box.trash(row.id) }
         }
     }
 
-
-    /// The row's ONE anchor, in the blueprint's own order: project →
-    /// subject → people → area. First one that exists wins; nothing
-    /// renders when none does.
-    private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "tags", "people", "area"] {
-            let hit = (row.cells ?? []).first {
-                $0.property == property && !($0.value ?? "").isEmpty
-            }
-            if let value = hit?.value, !value.isEmpty { return value }
-        }
-        return nil
-    }
 
     /// Upcoming answers "when is it due"; the other slices answer "when did
     /// I catch it". Today reads as a time either way — a column of identical

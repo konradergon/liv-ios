@@ -30,6 +30,10 @@ pub struct Hit {
 pub enum MatchField {
     Name,
     Cell,
+    /// What the thing is filed under — a Select or Reference cell.
+    /// APPENDED, not inserted: serde reads these lowercase off the wire,
+    /// so an older value still decodes.
+    Filed,
     Content,
     /// A pure-qualifier hit — no free-text term matched a field.
     Structured,
@@ -70,91 +74,13 @@ pub struct Facet {
     pub values: Vec<FacetValue>,
 }
 
-/// What one token of the DSL is, before the store is consulted.
-///
-/// THE ONE TOKENISER. `parse_mode` consumes this rather than walking
-/// tokens itself, and the shell reads it back over the FFI instead of
-/// carrying a second lexer — which is what standing rule 4 asks for and
-/// what the phone violated with sixteen visible disagreements.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TermOp {
-    Equals,
-    NotEquals,
-    AtMost,
-    Has,
-    No,
-    Is,
-    /// A bare word, or anything unreadable. A REQUIRED word, never dropped
-    /// (owner, 2026-08-27: "typo shows nothing").
-    Text,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Term {
-    pub op: TermOp,
-    /// The property name as typed, with any leading `-` removed.
-    pub key: String,
-    pub value: String,
-    /// The token respelled canonically, so joining a term list reproduces
-    /// a query the parser reads back the same way.
-    pub raw: String,
-}
-
-/// Split a raw query into terms. No store, no resolution, no opinion about
-/// whether a property exists.
-pub fn lex(raw: &str) -> Vec<Term> {
-    tokenize(raw).iter().map(|t| classify(t)).collect()
-}
-
-fn classify(token: &str) -> Term {
-    let text = |t: &str| Term {
-        op: TermOp::Text,
-        key: String::new(),
-        value: t.to_string(),
-        raw: t.to_string(),
-    };
-    if let Some((key, val)) = split_qualifier(token, ':') {
-        let (op, key) = match key {
-            "is" => (TermOp::Is, key),
-            "has" => (TermOp::Has, key),
-            "no" => (TermOp::No, key),
-            _ => match key.strip_prefix('-') {
-                Some(bare) => (TermOp::NotEquals, bare),
-                None => (TermOp::Equals, key),
-            },
-        };
-        return Term { raw: spell(&op, key, val), op, key: key.to_string(), value: val.to_string() };
-    }
-    if let Some((key, val)) = split_qualifier(token, '<') {
-        return Term {
-            raw: format!("{key}<{val}"),
-            op: TermOp::AtMost,
-            key: key.to_string(),
-            value: val.to_string(),
-        };
-    }
-    text(token)
-}
-
-/// `key:value`, and where the quotes go when something carries a space.
-///
-/// The VALUE is quoted — `people:"Anna Karlsson"` — which is the spelling
-/// `tokenize`'s own documentation gives and the one already in the shell.
-/// A key with a space is the odd case, and there the WHOLE term is quoted
-/// instead, minus included: `"valid until:friday"`. Either way the
-/// tokenizer strips the quotes and keeps the spaces, so both arrive as one
-/// token and split correctly.
-fn spell(op: &TermOp, key: &str, value: &str) -> String {
-    let minus = if *op == TermOp::NotEquals { "-" } else { "" };
-    if key.contains(' ') {
-        return format!("\"{minus}{key}:{value}\"");
-    }
-    if value.contains(' ') {
-        return format!("{minus}{key}:\"{value}\"");
-    }
-    format!("{minus}{key}:{value}")
-}
+// **THE TOKENISER MOVED TO `liv-engine`** (`engine/src/query.rs`), and
+// this imports it back rather than keeping a copy. It is pure — no store,
+// no resolution — so it belongs in the crate with no dependencies above
+// it, where the engine's own surfaces can reach it too. Standing rule 4:
+// two parsers for one user-facing syntax is a defect, and for a while
+// there would have been two.
+pub use liv_engine::{lex, Term, TermOp};
 
 /// Which job the query is doing.
 ///
@@ -502,17 +428,33 @@ fn candidate_values(store: &Store, base: &Query, property: Id) -> Vec<Value> {
 fn property_name(store: &Store, property: Id) -> String {
     match store.get(property).and_then(|e| e.get(props::NAME)) {
         Some(Value::Text(name)) => name.clone(),
-        _ => format!("#{property}"),
+        _ => "Field".to_string(),
     }
 }
 
 /// The searchable text of an entity, per field, `display`-flattened and
-/// lowercased. `cells` is every *other* Text/RichText cell — structured
-/// kinds (Number/DateTime/Bool/Select/Reference) are reached through
-/// qualifiers, never as incidental text.
+/// lowercased.
+///
+/// `cells` is every other Text/RichText cell. `filed` is what the thing
+/// is FILED UNDER — its Select and Reference cells, flattened through
+/// the same `display` that resolves an id to its name.
+///
+/// Until 2026-09-07 there was no `filed` tier and this doc read
+/// "structured kinds (Number/DateTime/Bool/Select/Reference) are reached
+/// through qualifiers, never as incidental text". The owner found what
+/// that costs (todo.org): a note filed under area "Testjunk" could not be
+/// found by typing "test" — and standing rule 5 says a user never types
+/// `area:Testjunk` to fix it, while rev 49 had just taken that grammar
+/// out of the field.
+///
+/// Number, DateTime and Bool stay OUT, and that is the half of the old
+/// rule worth keeping: it is what stops "2026" surfacing everything with
+/// a due date. A filing is a short human label somebody chose; a
+/// timestamp is not.
 struct Searchable {
     name: String,
     cells: String,
+    filed: String,
     content: String,
 }
 
@@ -531,23 +473,39 @@ fn searchable(store: &Store, entity: &Entity, extracted: &str) -> Searchable {
     }
 
     let mut cells = String::new();
+    let mut filed = String::new();
     for cell in &entity.cells {
         if cell.property == props::NAME || cell.property == props::CONTENT {
             continue;
         }
-        if matches!(cell.value, Value::Text(_) | Value::RichText(_)) {
-            if !cells.is_empty() {
-                cells.push(' ');
+        let bucket = match cell.value {
+            Value::Text(_) | Value::RichText(_) => Some(&mut cells),
+            // `display` already resolves an id to the option's or the
+            // referenced entity's name, so this is the same string the
+            // chip on the row shows.
+            Value::Select(_) | Value::Reference(_) => Some(&mut filed),
+            _ => None,
+        };
+        if let Some(bucket) = bucket {
+            if !bucket.is_empty() {
+                bucket.push(' ');
             }
-            cells.push_str(&flatten(&cell.value));
+            bucket.push_str(&flatten(&cell.value));
         }
     }
-    Searchable { name, cells, content }
+    Searchable { name, cells, filed, content }
 }
 
 /// One term's best field-match: whole-name equality > leading name prefix >
 /// a word-boundary prefix inside the name > a whole word in another cell >
-/// a whole word in the content body. Weight 0 = no match anywhere.
+/// a word-boundary PREFIX of something it is filed under > a whole word in
+/// the content body. Weight 0 = no match anywhere.
+///
+/// The filing tier takes `starts_word`, not `contains_word`, and that is
+/// the whole point of it: the owner's report was that typing "test" did
+/// not reach a note filed under "Testjunk". A filing is a short label and
+/// incremental typing is how anyone reaches one — where a body of text is
+/// long enough that a whole word is the honest unit.
 fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
     if text.name == term {
         (100.0, MatchField::Name)
@@ -557,6 +515,8 @@ fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
         (40.0, MatchField::Name)
     } else if contains_word(&text.cells, term) {
         (20.0, MatchField::Cell)
+    } else if starts_word(&text.filed, term) {
+        (15.0, MatchField::Filed)
     } else if contains_word(&text.content, term) {
         (10.0, MatchField::Content)
     } else {
@@ -564,45 +524,7 @@ fn score_term(text: &Searchable, term: &str) -> (f32, MatchField) {
     }
 }
 
-/// Split a raw query on whitespace — except that a double-quoted run keeps
-/// its spaces:
-/// `people:"Anna Karlsson"` is ONE token, `people:Anna Karlsson`, quotes
-/// stripped. The chip-click contract depends on it (the P11.5 review's
-/// live-reproduced high: without quoting, multi-word values split into a
-/// half-qualifier plus junk free-text terms). An unclosed quote runs
-/// tolerantly to the end of the input.
-fn tokenize(raw: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    for c in raw.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            c if c.is_whitespace() && !quoted => {
-                if !current.is_empty() {
-                    out.push(std::mem::take(&mut current));
-                }
-            }
-            c => current.push(c),
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
 
-/// Split a token at the first `sep` into a non-empty (key, value). Returns
-/// None when either side is empty, so a bare "http://x" or "key:" degrades
-/// to free text rather than a half-qualifier.
-fn split_qualifier(token: &str, sep: char) -> Option<(&str, &str)> {
-    let (key, val) = token.split_once(sep)?;
-    if key.is_empty() || val.is_empty() {
-        None
-    } else {
-        Some((key, val))
-    }
-}
 
 /// `is:<flag>` as an ordinary equality on the flag's own bool property.
 /// Every flag in a Lens comes through here, and so does any flag in a

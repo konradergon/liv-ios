@@ -297,12 +297,20 @@ fn display_name_is_the_first_line_not_the_whole_body() {
         "Chosen name"
     );
 
-    // Nothing at all falls back to the id, never to an empty string.
+    // NOTHING AT ALL GETS A MADE NAME — never an empty string, and
+    // never an id (owner, 2026-09-13: "LivID shouldn't be read by the
+    // user" and "Unnamed task/event/note should get a sensible name").
+    // It used to be `#4159`, which is both failures at once: ours on
+    // screen, and a name that tells a person nothing.
     let empty = content::create_note(&mut session, now).unwrap();
-    assert_eq!(
-        content::display_name(session.store(), session.store().get(empty).unwrap()),
-        format!("#{empty}")
-    );
+    let made = content::display_name(session.store(), session.store().get(empty).unwrap());
+    assert!(made.starts_with("Note · "), "the kind's word and when: {made:?}");
+    assert!(!made.contains(&empty.to_string()), "an id is never a name: {made:?}");
+    assert!(!made.contains('#'), "nor a hash-number: {made:?}");
+    // And the core SAYS it was made, so the shell need not infer it from
+    // how the string reads — which is how this went wrong twice before.
+    assert!(content::is_unnamed(session.store(), session.store().get(empty).unwrap()));
+    assert!(!content::is_unnamed(session.store(), session.store().get(named_note).unwrap()));
 
     cleanup(&path);
 }

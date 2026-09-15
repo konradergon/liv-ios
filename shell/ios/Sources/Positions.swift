@@ -21,7 +21,18 @@ import SwiftUI
 /// Everything's slice. Lives here rather than in `Everything.swift`
 /// because the slice is now the tab's content, and content is the plane's
 /// vocabulary, not the view's private state.
+/// **NOTES IS ONE OF THESE** since 2026-09-10 (owner: *"notes view serves
+/// too little purpose to be considered a place or state"*). It was a
+/// sixth view, and a view it could not justify: the same list, one kind
+/// filter, and no lenses of its own. Declared second because it is the
+/// one people reach for.
 enum EverythingLens: String, CaseIterable, Identifiable {
+    // NO `.notes` LENS (2026-09-16). The view is called Notes now, so a
+    // pill inside it saying Notes was the view's name said twice. What
+    // the pill did — documents only, ordered by what you touched last —
+    // went with it on the owner's word ("the old All/Upcoming/Unfiled
+    // become pills inside Notes"); a saved position still holding
+    // "notes" falls back to `.all` in `EverythingView.onAppear`.
     case all, upcoming, unfiled
     var id: String { rawValue }
     var title: String {
@@ -189,10 +200,6 @@ enum LivPosition {
         case .tasks: return TasksPosition().token
         case .today: return TodayPosition().token
         case .calendar: return CalendarPosition().token
-        /// Notes is the one view where a tab holds an ENTITY, not a
-        /// position — which is what a tab always was, and what "how tabs
-        /// looked for notes before" names.
-        case .notes: return ""
         }
     }
 
@@ -203,10 +210,10 @@ enum LivPosition {
         switch feature {
         case .everything:
             switch EverythingLens(rawValue: token) {
-            case .all: return "Everything in the box, newest first."
+            case .all: return "Everything in this workspace, newest first."
             case .upcoming: return "Dated in the next seven days."
             case .unfiled: return "No area yet."
-            case nil: return "A saved place in Everything."
+            case nil: return "A saved place in Notes."
             }
         case .inbox:
             switch InboxLens(rawValue: token) {
@@ -232,8 +239,6 @@ enum LivPosition {
             return pos.day == Civil.todayDay()
                 ? "\(CalGrid.title(pos.month)), on today."
                 : "\(CalGrid.title(pos.month)), on \(Civil.dayLabel(pos.day))."
-        case .notes:
-            return "A saved place in Notes."
         }
     }
 
@@ -255,8 +260,6 @@ enum LivPosition {
             return TodayPosition(token: token).title
         case .calendar:
             return CalendarPosition(token: token).title
-        case .notes:
-            return feature.title
         }
     }
 }
@@ -303,7 +306,7 @@ func livPlanesSelfCheck() -> [String] {
     check("without disturbing the others", desk.position(.everything) == "all")
 
     // ---- the desk follows you ----
-    desk.go(.notes)
+    desk.go(.everything, at: EverythingLens.all.rawValue)
     desk.open(7)
     check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == 7)
     desk.go(.calendar)

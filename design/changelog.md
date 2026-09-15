@@ -1,5 +1,1837 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-09 — rev 61: the panel lands on the view it names
+
+Owner: *"sometimes when selecting Notes from the panel it gets you to an
+open note instead of showing the list."* The panel had two branches —
+tapping the view you were in went to its root, arriving from another
+view called `go`, which keeps whatever document is on the desk. Same
+row, two outcomes, decided by state the row does not show. "Sometimes"
+was the whole complaint.
+
+`DeskModel.goToRoot` is one rule for both: land on the view, then drop a
+document if one would be drawn (`openDoc != nil`, which is already
+exactly that question — no list of features). A POSITION SURVIVES: the
+Calendar's month and Today's day are where you left a tool, still that
+view; a document is a different surface wearing the view's name. The
+note is not closed — the bar's numbered key opens the switcher and lands
+you back on it from anywhere (rev 58).
+
+The `liv://<view>` links go through the same door, and the `-desk.boot`
+flags' `notes` special case (a hand-spelled `go` + `showList`) is now
+that one call. `-places.selfcheck` asserts the landing, the surviving
+position, and the note still on the desk. `drive.sh`'s `allowed` let
+Notes answer with `document` — which is why `goto notes` could not tell
+this bug from a working navigation; every view answers with its own
+marker now.
+
+**NOT VERIFIED on the simulator** (Linux). `suites.sh places` and
+`drive.sh tour` are the checks.
+
+## 2026-09-09 — rev 60: Liv in the share row
+
+Owner: "then implement share feature." A share extension —
+`shell/ios/ShareExtension/`, one Swift file and two plists — built by a
+second swiftc in `build.sh` (`share_extension()`): no Xcode project,
+which three places in this tree had said was required and was not.
+Entitlements ride the linker (`__TEXT,__entitlements`) and an ad-hoc
+signature; `Liv.entitlements` names the App Group both bundles share.
+
+The extension reads the words and the URL, writes one text file into
+`<group>/liv/spool/`, says "Saved to Liv", and goes. The app drains the
+spool at launch and every foreground (`RootView.drainSpool`) through the
+same `liv_capture_at` the `liv://` door uses — stamped, not opened.
+`Catch.swift` is the one file both binaries compile: `Catch.text` is the
+one rule for what a catch is, and `Route.payload` now calls it too.
+Why a spool and not the box: standing rule 1, an extension's memory
+ceiling, and a second writer on the log — ios.md §50.
+
+Device builds want a profile for `app.liv.ios.share` carrying the App
+Group; `build.sh device` builds the extension when it finds one and says
+so when it does not. `drive.sh spool` guards the app's half.
+
+**NOT VERIFIED on the simulator** (Linux). The first build will say.
+
+## 2026-09-09 — rev 59: the clerk says where
+
+Owner: "yes do the clerk change." `propose_area` (`services/src/clerk.rs`,
+settled zone, owner's word): a capture that mentions something filed
+under ONE area is proposed that area — `mentions "Sam" → Work?`. Two
+areas is a coin flip and the clerk stays quiet; a mention filed nowhere
+says nothing; a thing with an area already is left alone. One cell, so
+decline and save-retraction work unchanged; "area" is re-derivable. The
+mentions are found once (`mentions_in`) and read by both proposers.
+
+Nine tests first; the sweep's cost fixture gained a filed name every
+body mentions (it had none, so the mentions proposer never ran in the
+test that guards it). `cargo test` green.
+
+*Amended the same day, from the simulator:* the owner's box keeps
+`area` as TEXT (it predates the select furniture, and Furnish leaves a
+legacy text area alone), and the proposer read a Select only — so Sam's
+mention was proposed and Sam's area was not. It now copies the cell as
+found, Select or Text, and writes the same kind back; a tenth test
+holds the text case.
+
+Shell: in Route, a scrap with a guess wears it as a chip — `Work?` —
+and one tap accepts the proposal and sets the kind: filed, same two
+writes and undo count as the card. Tidy does not repeat the question.
+`Box.accept` gained a `done`. ios.md §49.
+
+**NOT VERIFIED on the simulator** (Linux).
+
+## 2026-09-09 — rev 58: a switcher pick lands on the note
+
+Owner, from the simulator: "when selecting a note from tabs when not
+inside Notes, nothing happens." Not intentional. The switcher's card
+called `focus`, which makes a tab active and changes no view; a
+document renders only in Notes and `openDoc` is nil elsewhere by design
+(`Chrome.swift`, the `state` guard). Left over from the desk going
+app-wide on 2026-08-28: while each view had its own plane the switcher
+never showed a note from Today, so `focus` was enough. The `revive`
+comment even claimed "a document opens where you are".
+
+`DeskModel.show(tab)`: a document goes through `openDocument`, the door
+every other open uses — lands in Notes, pushes the way back, closes the
+covers. A position tab (folded away on read since 08-28) keeps `focus`.
+Both switcher call sites use it. `-planes.selfcheck` asserts the pick
+from Today lands in Docs with back = Today; `drive.sh desk` now ends by
+opening the switcher from Today, tapping the first card by frame, and
+asserting the document surface — the assertion that would have caught
+this, since every model check passed.
+
+Also: `drive.sh` and `suites.sh` cd to their own directory like
+`build.sh`, so the same invocation works from the repo root.
+
+**NOT VERIFIED on the simulator** (Linux). `suites.sh planes` and
+`drive.sh desk` are the checks.
+
+## 2026-09-09 — rev 57: route asks where, and the way back
+
+The second and third items from the direction review, on the owner's
+word. Both are shell-only; the settled zone is untouched.
+
+**ROUTE ASKS WHERE, NOT WHAT.** The Inbox's route card offered Task,
+Event, Note, Link — the "what type is this?" the constitution refuses by
+name — and filed nothing: a scrap routed to Note left the Inbox with no
+area and landed in Unfiled, which nothing opens for you. The six areas
+lead now (plus any the person added), one tap sets area and kind
+together, and the non-note kinds are one door behind under "Not a
+note…". Two writes, one undo, the count `routeTask` already uses. The
+clerk proposing an area is `clerk.rs` and waits for the owner.
+
+**THE HISTORY CARD.** `liv_content_history_at` — in the ABI, tested
+three times, called from the shell nowhere. `HistoryCard`: one
+`Box.history` read, hosted as a system sheet beside the properties card;
+newest first, when/who/first line, Restore on every row but the current.
+Restore is `setContent` of the old spans over a fresh base, appended as
+a new version, so it undoes by restoring the one above; no confirmation
+in front of a reversible verb. Restoring the open note needs nothing:
+the editor already reloads a clean buffer and routes a dirty one through
+its own banner. CLI gains `versions ID`. `drive.sh history` reaches the
+card.
+
+**NOT VERIFIED on the simulator.** Linux. `cargo test` is green and the
+CLI verb is compiled and real. The Swift is hand-checked only. Before
+trusting it: `build.sh`, `drive.sh history`, then open a note, edit it
+twice, open History and Restore the first — and `liv versions ID` before
+and after to see the version appended.
+
+
+## 2026-09-09 — rev 56: the door carries a payload
+
+The first thing the direction review ranked (2026-09-08): `liv://capture`
+took no query string, so another app could open Liv to a blank but not
+hand it a sentence. That is a deep link, not a catch. The thesis
+(`what-liv-is-for.md:130-133`) says finishing this comes before any
+feature, and that without it the app "cannot be anyone's first reflex,
+however good the capture screen is." Fifty-four commits had shipped ahead
+of it.
+
+**`liv://capture?text=…&url=…`.** Either, both, words first, one line
+break between, trimmed; a blank payload is a bare capture. The text is
+SAVED first — through `liv_capture_at`, the verb the search field's
+find-or-create already uses, so no new verb and nothing in the settled
+zone — then stamped, focused and adopted as an Inbox capture. Those are
+the same three lines `createNote` runs for the note `+` makes, and they
+live once, in `DeskHost.catchText`, wired beside `newNote` and parked by
+`Routes` on a cold launch the same way. One rule for what a new thing is,
+not one per door.
+
+**A payload on any other route is ignored** — `liv://inbox?text=x` is
+still just Inbox — on the rule that already drops an unknown host: a
+link from another app does not get to smuggle text onto a surface that
+did not ask for it.
+
+**The suite the parser always promised.** `Route.init?` has said "PARSE
+ONLY — no side effects, so the suite can check every shape" since the
+door was built on 2026-09-06, and no suite existed. `-routes.selfcheck 1`
+now: fifteen shapes, including the two `drive.sh` cannot cheaply reach (a
+wrong scheme, a payload on the wrong host). `drive.sh routes` gained a
+fourth step that opens `liv://capture?text=caught%20from%20outside` and
+asserts the words are on screen.
+
+**What this buys today, with no Xcode project:** a Shortcut set to *Show
+in Share Sheet* calling `liv://capture?text=[Shortcut Input]` puts Liv in
+every app's share menu. That is the ceiling of a URL scheme and it is
+enough for the month to start. The real Share Extension is still the
+open fork.
+
+**NOT VERIFIED.** Linux, no Swift toolchain, no simulator. `cargo test`
+is green (408) and untouched. Before trusting it: `build.sh`, then
+`suites.sh routes` — break one of the fifteen on purpose first — then
+`drive.sh routes`, whose fourth step is the one that matters.
+
+
+## 2026-09-08 — rev 55: a check for the card that had none
+
+The bar-over-the-workspace-card bug (rev 54) survived a week, and the
+harness could not have caught it if it had run every hour. Three reasons,
+two of them now fixed:
+
+**The card had no marker.** Every other cover carries a `LivOverlay` —
+library, tabs, properties, settings, trash — and the workspace card
+carried none, so no check could assert it was even on screen. It has
+`LivOverlay.workspace` now.
+
+**Its door had no name.** The button at the foot of the library panel
+took its accessibility label from its own contents — the active
+workspace's name plus the count line under it — so it changed with the
+box and no driver could tap it. It is `"Switch workspace"` now, and
+deliberately not `"Workspace"`: the card draws that word as its title,
+and `axe tap` refuses a label matching two elements. That collision has
+bitten this harness three times.
+
+**And the third is not fixed, because it cannot be from here.** The bug
+was WHICH OF THE TWO IS ON TOP, and z-order is paint — the accessibility
+tree has none of it. The trap is worse than a simple blind spot: the bar
+is `accessibilityHidden` whenever a panel is out, in the BROKEN build and
+the FIXED one, for different reasons. So "is the bar in the tree" reads
+green either way, and a check written on it would have been the harness
+lying again — the exact failure this script was written after. Seeing the
+paint needs a pixel off a screenshot, and `simctl io … screenshot` is the
+one call that has wedged this harness; that door is not worth opening for
+one assertion.
+
+So `drive.sh workspace` guards what it honestly can: the card opens from
+the panel's foot, it is marked, its title is below the half-way line —
+it RISES, it does not fall, which is the rule that already broke once
+when the button moved and the direction stayed behind — and it carries
+its own "New workspace" row. The layering stays an eyes-on check, and the
+check says so in its own output rather than implying it is covered.
+
+One assertion was written wrong and caught by reading it: `grep -c`
+prints a number at zero too, so `[[ -n … ]]` on a count can never fail.
+It is `grep -q` now. Nothing here was run — Linux, no simulator — so
+before this green is trusted, break one of its assertions on purpose and
+watch it fail, per the rule at the top of the script.
+
+
+## 2026-09-08 — rev 54: the bar belongs to the view
+
+Owner: *"the bar should be 'part of' the right view… when opening
+workspaces from the panel, the bar is above that card."*
+
+Both halves of that were one fact. The bar was a SIBLING of the whole
+app body in `RootView`'s ZStack, painted after it:
+
+    ZStack(alignment: .bottom) {
+        bodyView → DeskHost()      z 0
+        MinimisedRecordPill        zIndex(2)
+        BottomBar                  zIndex(1)
+    }
+
+So it floated over everything there is, and anything that had to appear
+ABOVE it could not simply be drawn by the surface that owned it — it had
+to be lifted out and re-hosted up there beside the bar. Three were: the
+one menu, the record card, and the properties sheet (which is a system
+sheet and got it free). The workspace card was not. It is hung on
+DeskHost, `livSheet` draws with `.overlay`, so it stayed at z 0 and the
+bar sat on top of it — scrim included.
+
+That was not a new bug. It is the same one the menu had, and App.swift
+still carried the note: *"the bar is drawn after the desk, so a menu
+hosted inside DeskHost came up underneath it and lost its last row."*
+The menu was moved; the workspace card never was.
+
+**The bar is the surface's own foot now** — an overlay inside the desk
+card, under the same mask, the same wash and the same `deskShift`. What
+that deletes is three special cases rather than one bug:
+
+- The bar no longer carries `.offset(x: desk.deskShift)` by hand to fake
+  travelling with a desk it was not part of. It travels because it is
+  part of it.
+- The library panel covers it by being a later sibling in DeskHost's own
+  ZStack, not by the bar being told to retire.
+- The wash that takes the desk's touches takes the bar's too. With a
+  panel out you could previously still work the bar in the sliver,
+  behind a panel that says it has your attention — the exact thing the
+  wash was added for on 2026-08-24, which the bar was outside of.
+
+And the workspace card is above the bar without anybody arranging it,
+because it is drawn over the surface and the bar is in the surface.
+
+`RootView`'s body is one child now. `KeyboardWatch` went with the bar
+and the pill to DeskHost, which is the only thing that read it.
+
+**What did NOT change:** the bar's absolute position, its five keys and
+their labels, the retire-on-scroll offset, and the keyboard rule. So
+`drive.sh bar` (which reads keys by label at y > 700), the capture check
+that asserts the bar is GONE under a keyboard, and the Notes-root check
+that asserts the numbered box is live should all still pass — but they
+are the first things to run, because position is exactly what this
+change moves and nothing here was compiled.
+
+**NOT VERIFIED.** Linux, no Swift toolchain, no simulator. `cargo test`
+is green (408) and says nothing about any of it. This is a layout
+change, so `drive.sh` is the whole verification: `bar` first, then
+`panel`, `tour`, `chrome` and `grid`. The two things to look at with
+your own eyes are the workspace card over the bar (the reported bug) and
+the bar in the sliver while the library is open.
+
+
+## 2026-09-07 — rev 53: the five that were deferred
+
+Rev 52 fixed thirteen audit items and named five it did not. This is
+those five, on the owner's word ("fix everything you mention here").
+
+**A THING IS FINDABLE BY WHAT IT IS FILED UNDER.** The owner's own
+repro (`todo.org`): a note assigned to area "Testjunk" could not be
+found by typing "test" — only the area itself came back.
+`searchable()` built its haystack from Text and RichText cells only, on
+a rule stated in `services/src/search.rs` and `design/p6-search-model.md`
+both: *structured kinds are reached through qualifiers, never as
+incidental text*. So a Select cell never entered the haystack at all,
+and the only route left was `area:Testjunk` — which standing rule 5 says
+a user never types, and which rev 49 had just removed from the field.
+
+Select and Reference now form a fourth `filed` tier, flattened through
+the same `display` that resolves an id to a name, scored 15 between a
+cell (20) and the body (10). It takes `starts_word`, not
+`contains_word`, and that IS the fix: with whole-word matching the
+owner's own "test…" still returns nothing. Number, DateTime and Bool
+stay out — that half of the old rule is what keeps "2026" from
+surfacing every due date, and it is now asserted rather than assumed.
+
+This is a settled zone, so: failing test first (`a_thing_is_found_by_what_it_is_filed_under`,
+which reproduces the owner's exact case), then the fix, then the
+now-wrong assertion AMENDED rather than worked around — a bare "done"
+used to find nothing and now finds the task filed under it. A cost test
+came with it (standing rule 2): measured 3.72x for a 4x box, which is
+the linear shape search is supposed to have. Both docs amended in the
+same change.
+
+**ONE MARK FOR "WHICH DAY AM I ON".** Rev 47 replaced a tiny dot and a
+horizontal bar with a disc after the owner named them — *"today's date
+is marked by a tiny dot that is completely hidden by a horizontal bar
+when selected. You have a tendency to make UI elements tiny and subtle.
+Try to go for the opposite."* — and it landed on Today's week strip
+only. The calendar's month grid still drew the exact pair: a 4pt accent
+dot above the number, a 22x2 ink rule below it. `LivDayMark` (Kit) is
+now the one mark, at two diameters in `LivDay`, because a month cell
+cannot carry the strip's 36 — the cell grew 40 → 46 and the disc is 28.
+Not the strip's 62: `gridHeight` is also the picker sheet's detent, and
+at 62 the jump card would stand 382pt and become the screen.
+
+**THE LAST TWO STOCK CONTROLS.** The due sheet's `DatePicker(.graphical)`
+painted its own selected day and its own red "today" — a second month
+grid with a second grammar, invisible only because the two never shared
+a screen. The calendar's grid moved to `Month.swift` (with
+`weekdayRow`, or the due sheet would have hand-rolled a second copy of
+the weekday letters) and both screens draw it. `CalCell.dots` went from
+`[Color]` to `Int` on the way: the colours were removed on 2026-08-31
+and the array they fed was left behind, allocating 126 discarded Colors
+per pager evaluation.
+
+The compact clock's real fault was never that it looked like the
+system's — it let you dial 11:47 while `CalClock` says *times land on
+quarter hours, 11:47 is never what anyone meant*. It is a quarter-hour
+stepper now, so the law is in the control rather than in a validator
+that rejects what you typed. It also removes a double write: `pick()`
+moved `date` and wrote, and the picker's `.onChange(of: date)` then
+wrote the identical span again — two transactions for one tap, hidden
+by the refresh coalescer.
+
+**PROPERTIES, ONE TAP.** *"Selecting properties from a menu is too slow
+and/or inconvenient since it's central in the app"* (owner). It has its
+own key on the top row now — MOVED, not added: the menu item went in
+the same change, because two doors to one room is exactly why the old
+(i) door was deleted on 2026-08-14. `drive.sh check_properties_card`
+moved with it in the same commit, or `drive.sh panel` would have gone
+red on the next run.
+
+*"You can't rename it in properties"* — the other half. A record card
+had an editable name and a note did not, so one card said two different
+things about what a name is. The inspector's title is a field now. That
+made FOUR hand-written copies of the same seed/commit/reseed grammar
+(the desk title, the record card, the file tab, and a fifth about to be
+written here), and they had drifted: only the desk's carried the
+trashed-entity guard that fixed the stray transaction breaking Undo,
+and only it compared a reseed against the OLD stored name. `LivName`
+(Kit) is the one grammar now, both guards included, and all four call
+sites read it.
+
+**THE DAY PICKER'S FRAME RATE.** Not the projection — the panel
+recognizer. It lives on the WINDOW, so while the picker sheet is up a
+sideways drag on the Monday or Sunday column (the grid is padded 16pt;
+`PanelDrag`'s edge escape claims the outer 24 and returns before the
+`pagerZone` veto is consulted) latches a panel BEHIND the sheet. Every
+touch move then republishes `panelDrag`, re-running the calendar's whole
+body — day buckets, 126 picker cells, the hour grid — per frame, while
+the desk goes `.disabled` underneath. That is verbatim the mechanism the
+code already names as the 2026-08-15 lag, which is why the owner's
+report says "laggy **like before**".
+
+`deskInFront` had four flags, each added one at a time after this same
+bug reached the owner. A fifth would have been the same mistake, so it
+is a COUNTER: `livCard(while:)` raises it, any surface can, and nothing
+has to get its name added to a list. It goes on the PRESENTING view —
+a sheet's content is its own environment root, which is why every sheet
+in this app hands its `environmentObject` in by hand.
+
+**NOT VERIFIED, again.** `cargo test` is green (408 passed, 0 failed,
++4 for the search work) and the search fix is genuinely tested — it is
+the only one of the five that could be. Everything Swift here is
+unbuilt and unseen: Linux, no toolchain, no simulator. The month-grid
+extraction and the properties-door move are the two most likely to need
+a second pass on a machine that can compile. Before trusting any of it:
+`build.sh`, `suites.sh` (the calendar self-check now asserts
+`$0.dots == 0`), then `drive.sh tour`, `panel` — which exercises the
+moved properties door — `rows`, `bar` and `grid`.
+
+
+## 2026-09-07 — rev 52: what the audit left, and the comments that outlived their code
+
+The polish audit's own deferred list, re-derived against HEAD rather than
+trusted. Most of it was already closed: the calendar chrome retires (rev
+51), the segmented picker and both accent switches are `LivSegment` and
+`LivSwitch`, and the "stale spec jargon in `comms.rs`" was never real —
+all 36 distinct spec tags in the Rust tree resolve to a live doc, so
+nothing there was touched.
+
+What was actually open, and is now done.
+
+**DEAD CODE THAT LOOKED LIVE.** Three shapes, all with a comment
+insisting they worked.
+
+`LivGlass.tinted` carried a doc line reading "`tinted` is the ON state —
+the library door while the menu is open". That has been false since
+2026-08-28, when the door started saying it is open by widening
+PanelMark's column instead of turning accent (*a tint says "selected",
+and a door standing open is not a selection*). No call site ever passed
+`true`, so both arms of both branches were unreachable. Gone, with
+`FloatCircle` (no callers at all), `FloatCircleLabel.on` and
+`livTopButton`'s never-read `on:`.
+
+`.swipeActions` hung off a Notes row inside a `LazyVStack`, where the
+modifier is not honoured at all — five lines that looked like a feature
+and never ran once. Removed, and the hole it leaves is now stated in
+the file: Notes is the only content list with no swipe-to-trash, and
+giving it one means a List conversion that `drive.sh rows notes` has to
+sign off on.
+
+`Record.placeholder` branched on `livRowTitle(row) != "Untitled"` and
+called `livRowTitle(row)` in both arms — and the word has not been
+returned since 2026-09-06, when a nameless thing started reading as its
+kind. Three more comments still described the old behaviour (Tabs'
+accessibility label, two in `drive.sh` explaining its label-collision
+workaround); all corrected. So did two in Calendar, one of them an
+orphan block sitting on the wrong `@State`, the other claiming "nothing
+untitled ever reaches the box" — which is the reverse of the ruling
+seven lines further down, where tapping an hour writes the event
+immediately.
+
+**COLOUR AND SIZE NOBODY CHOSE.** The Trash was the last screen wearing
+system navigation furniture — a `NavigationStack`, a nav bar with the
+platform's own material, title font and hairline, and a `Done` button
+that, with no tint in the subtree, came out iOS blue. It draws its own
+header now, like every other sheet, and is dismissed by its grabber
+(`.presentationDragIndicator(.visible)`, which is not on by default —
+without it the screen would have had no way out). It also gains
+`LivOverlay.trash`: the nav bar was the only structure a driver could
+have keyed on, so the harness can see this surface for the first time.
+
+Three of the four trash swipe trays passed no `.tint` and so painted in
+the system's ~100%-saturation destructive red; the fourth used
+`LivTheme.red`. One recipe now, `livTrashAction`, returning only the
+BUTTON — each site keeps its own `allowsFullSwipe`, because Inbox's
+`false` is a deliberate guard against throwing away an unrouted capture
+and a wrapper around the whole tray would have flattened it.
+
+There was no `.tint` on the root, so every caret, selection handle and
+highlight in the app was the device's blue — the most-touched pixel in
+a writing app, in the one colour that changes underneath us when the
+phone's owner picks a different system tint. Set at the outermost point,
+plus `tintColor` on the editor's two UIKit text views, which do not
+reliably inherit it.
+
+The camera mixed its own near-black in a feature file and filled six
+controls with bare `.white`. Both are tokens now (`cameraChrome`,
+`cameraInk`), scheme-invariant on purpose: a live viewfinder has no
+scheme. `cameraInk` is defined AS `onAccent` rather than as a second
+white. The black behind the preview stays black — it is physical, not a
+surface.
+
+The editor ran a second, private type scale dated 2026-07-31, predating
+`LivType` entirely: six literals for the app's main reading surface.
+Moved to `LivType.Editor` **unchanged**, so the drift is visible where
+the rest of the scale is — the body is 16 while every row that opens a
+note is 18, and code is 12, which this file calls "a badge, never a word
+you have to read". Closing that gap is not a token swap: `listGutter` is
+calibrated to the widest marker at the current size and the drawn
+checkbox and bullet centre on the body's line height. Its own rev, on
+the owner's word.
+
+Also tokenised: `LivBar.listRoom` (`room + 24`, written out five times,
+three of them with a prose copy of the reason beside it),
+`LivTheme.radiusCard` (a hand-typed 12 in nine places, beside three
+named radii), and `LivIcon`'s dead `size` default, which was a second
+copy of `LivRow.glyph` that all seventeen call sites overrode.
+
+**TWO EDITOR VERBS THAT COULD NOT UNDO THEMSELVES.**
+
+Bold, italic and strike over a selection crossing a line only ever
+ADDED markers — a second tap gave `****a****`. The multi-line branch now
+strips when every non-empty line is already wrapped. It needs its own
+predicate: the single-line test reads the document either side of the
+selection, not a line's own ends. Two edges it has to get right — a
+length guard, or a line that IS the marker satisfies both hasPrefix and
+hasSuffix on the same character; and skipping empty lines, or a
+selection containing a blank one can never unwrap.
+
+The toolbar's numbered-list key always restarted at 1: it wrote the
+line's index inside the block being rewritten, while the Return key
+continued the count properly. One grammar, two answers. It seeds from
+the line IMMEDIATELY above — not the last match in a backwards walk,
+which would seed from the run's smallest number — comparing indent as
+the original whitespace, since a tab and two spaces are the same depth,
+and counting with a running total rather than the loop index, which
+counts headings and blanks too.
+
+Five assertions added to the in-app self-check for the two of them.
+
+**Left alone, and why.** The two `DatePicker`s in the due sheet: the
+month grid that would replace the graphical one is private to
+Calendar.swift, and the pager it would reuse is the thing the owner
+calls laggy — so this is a seam to cut deliberately, not a token swap,
+and the clock's real defect is that it lets you dial 11:47 while
+`CalClock` says times land on quarter hours. Search-by-property and the
+note-properties door are in `todo.org`, owner-reported: the first is a
+settled-zone change wanting a failing test and a cost test, the second
+is mockup-first. The day picker's frame rate needs a profiler on a
+device. The calendar's day mark is a visible design change the owner
+should see first.
+
+**NOT VERIFIED.** This ran on Linux with no Swift toolchain and no
+simulator, so none of it was compiled and none of it was seen. `cargo
+test` is green, which says nothing about any of the above. Before this
+is trusted: `shell/ios/build.sh`, then `suites.sh` (the editor
+self-check carries the five new assertions — break one on purpose and
+watch it fail first), then `drive.sh tour`, `panel`, `rows` and `bar`.
+The three things no static reading can settle are the Trash sheet's
+layout without its nav bar, the tinted full-swipe tray at Tasks, and
+whether the root tint reaches the two date pickers inside nested sheets
+— if it does, `Detail.swift:121` and `:1001` are now redundant.
+
+
+## 2026-09-07 — rev 51: the chrome retires on every surface
+
+Owner: *"fix the calendar chrome not retiring."*
+
+Three faults, found by tracing the scroll offset on screen rather than
+reasoning about it. Only the third was Calendar's alone.
+
+**1. The threshold could never be crossed by a smooth scroll.**
+`DeskModel.scrolled` measured its 44pt threshold from an anchor it
+re-clamped to within 44pt of the live offset on *every sample* — so
+`y > anchor + threshold` was false by construction, and the chrome only
+ever retired when one geometry callback happened to jump the whole
+threshold at once. Measured: a Calendar swipe produced 49 callbacks
+ending at y=795 with the chrome untouched. The threshold now measures
+from the last direction CHANGE, so an ordinary swipe works and the
+harness no longer needs a momentum flick to drive it.
+
+**2. The rubber-band counted as scrolling.** Past the last hour of a day
+the grid stretches to ~824 and springs back to 764 — 60pt of "upward
+scroll" nobody performed, over the 44pt threshold, so the doors hid on
+the way down and returned on the settle. The reported offset is clamped
+to the content's own range now: an overscroll is not travel.
+
+**3. The band fix made the decision read its own output.** Collapsing the
+top inset when the chrome hides (rev 50) means the chrome's state changes
+the very offset the chrome's state is decided from — and because the
+collapse ANIMATES, it does so through every value in between. Traced:
+`909/A 932/A 854/A 802/h 879/h 931/A` — the doors flickering in and out
+on every frame. Two changes: the measure adds the band back while it is
+away, so the number is continuous across the transition; and samples are
+ignored until the motion settles, because no constant correction can
+cancel a value that is mid-animation. Nobody reverses a scroll within a
+fifth of a second of starting it.
+
+**`drive.sh chrome` now runs all six surfaces by default** — today,
+calendar, inbox, tasks, everything, notes — and each asserts both
+directions: the doors travel their whole band (120pt on this device) and
+come back on the way up. A check that only ran on Today would have stayed
+green through all of this, which is exactly how Calendar's was missed for
+three weeks.
+
+**And the harness learned to name a system alert.** The simulator wedged
+mid-sweep (`simctl install` stopped returning; only an erase cleared it),
+and the erase reset the app's privacy answers — so the next launch came up
+under "Liv Would Like to Send You Notifications". `cmd_boot` reported "no
+surface marker appeared in 10s … Check Surface.swift is in the build",
+which accused a perfectly healthy app, because the one-surface rule reads
+markers the app draws and a springboard sheet carries none. `boot` now
+looks for a Sheet with no `liv.` marker anywhere under it and prints what
+it says, plus the two commands that clear it.
+
+Its first draft asked the tree for `AXType`, and the synthetic test I wrote
+to prove it used the same wrong key — so the test passed and the check
+still missed a real alert sitting on the screen. `axe` spells it `type`
+(and `role` as `AXSheet`); only `AXUniqueId`, which `surfaces()` reads,
+carries the AX prefix. Calibrated live afterwards, both ways: with the
+alert up, boot names it; with it dismissed, boot is green. **A negative
+control built from an invented fixture is not a negative control** — it
+tests the fixture.
+
+## 2026-09-07 — rev 50: the band goes with the buttons, and a day is marked boldly
+
+Owner, with a photograph of the Calendar: *"The area is where the panel
+button is and reserved for that, but is wasted space and looks odd when
+the buttons are dynamically hidden."* Then, on Today: *"today's date is
+marked by a tiny dot that is completely hidden by a horizontal bar when
+selected. You have a tendency to make UI elements tiny and subtle. Try to
+go for the opposite."*
+
+**The band now leaves with the buttons.** `livHidesChrome` has slid the
+doors off screen since 2026-08-20, but `LivTopScrim` — the safe-area
+inset that RESERVES their band — reserved it unconditionally. So the
+buttons went and their 52pt of room stayed, leaving an empty strip
+between the clock and the day's title. The scrim reads `chromeAway` now
+and collapses to the status bar alone. Measured on Calendar's pinned
+title with the band forced closed: 137 → 85, exactly `LivRow.topChrome`.
+Its gradient's solid share is a FRACTION of the band, so that had to
+follow too — at 0.45 of a 62pt band the clock's own row fell in the fade.
+
+**A day is marked by a disc.** The bug was literal: today wore a 4pt dot
+at the foot of its tile and the selected day wore a 2pt rule across the
+foot of the same tile, so selecting today drew the rule over the dot and
+the day you were on stopped being marked at all. One mark now, three
+readings, no collision possible — selected is an ink disc with the number
+knocked out, today-and-selected is an ACCENT disc, today-not-selected is
+the number in accent. The tile grew 46 → 62 (it was already overflowing:
+letter + number + dot came to about 48).
+
+**What that reverses, and the measurement that allows it.** On 2026-08-30
+the selected day was a solid accent block 44pt tall which, beside today's
+accent stroke, made Today the loudest screen in the app at 1.05%
+saturated pixels. The answer then was to shrink both marks to almost
+nothing, and this is where that went too far. A 36pt disc is about a
+sixth of that block's area: Today now measures **0.26%**, under Todoist's
+0.58% and below Notion Calendar's 0.31%. Bold is not the same as loud —
+the budget is AREA, and a small area may be fully saturated.
+
+**Harness.** `drive.sh chrome [view]` is new and asserts the doors retire
+on a flick, by their travel — 120pt on this device, which is exactly the
+band they own and give back. It is the scroll-retire check the "what's
+left" audit named as missing on every view. Two things it cannot do, both
+written into it: a synthesized `axe swipe` or `drag` will not trip the
+chrome at all (`DeskModel.scrolled` only fires when one geometry sample
+jumps more than 44pt, and an even drag's anchor keeps up), so the check
+sends a momentum flick; and "the content rose" is not readable from the
+tree while the list is also scrolling — its first draft compared the
+topmost label and reported 138 → 498, which was the scroll, not the band.
+
+**Calendar's chrome retires now** — see the next entry, which is where
+that went. It was three faults stacked, one of them introduced by the
+band fix above.
+
+## 2026-09-07 — rev 49: the search field holds your words
+
+Owner: *"when sorting by properties, it isn't obvious how and it's clunky
+things like 'type:foo' appearing in search bar. '-type:foo' to exclude is
+not good on a phone and isn't obvious."*
+
+All three complaints were one cause: **the facet chips wrote grammar into
+the search field.** `cycle` string-edited the single `query` state, so one
+tap on "note" turned the field from `a` into `a type:note` and a second
+tap into `a -type:note` — the storage format on screen, which standing
+rule 5 forbids in as many words ("a user never types a query language…
+the text grammar is the storage format and an advanced escape hatch").
+
+- **The field holds only what you typed.** `query` split into `words` (the
+  TextField) and `terms` (what pickers chose). The grammar string is
+  composed at the seam, by the one speller `LivTerms.term`, and never
+  shown. The core stays the only parser and chip state still comes from
+  the core's own `active`/`excluded` flags, so a hand-typed `-type:note`
+  lights the same chips.
+- **What you chose is a chip under the field**, with an ✕. It sits beside
+  the workspace pill and stays on screen even when a constraint has
+  narrowed the list to nothing — which is the way back, since the core
+  sends no facets to un-tap at that point.
+- **Exclude is a named verb, not a hidden third tap.** Tapping the
+  constraint chip opens the app's own bottom menu: **Only note · Hide note
+  · Any type**, with a tick on the current state. Holding a band chip is
+  the same menu for someone who already knows. One tap now means one
+  thing.
+- **The properties are on screen.** The band was one horizontal scroller
+  holding every property side by side, so only TYPE was visible and AREA
+  was cut in half — the screen never said what you could narrow by. It is
+  one row per property now, the name at the margin in the app's own
+  heading recipe. The 12pt uppercase kerned label — the style the polish
+  pass removed everywhere else, under the 14pt floor — is gone.
+- **Red goes back to being the warning word.** An excluded value was a red
+  strikethrough; it reads "not note" in ink and weight now. A struck word
+  means *done* in a list app, and hiding notes from a search is not a
+  warning.
+- **A bug fixed on the way past:** find-or-create captured the whole query,
+  so with a chip lit, "Create" made a scrap whose content was `a type:note`.
+  It takes `words` now.
+- `LivMenuItem` gained `selected` — `LivMenuRow` had drawn a checkmark
+  since it was written and no menu had a state to mark until this one.
+
+**Harness.** `drive.sh facets` now asserts the inverse of what it did: the
+field must read exactly what was typed after a tap, at least two property
+names must be fully on screen, "Hide <value>" must exist as a row, and
+removing the constraint must clear both marks. Its old assertion —
+*the query text must contain a colon* — had pinned the leak open. Watched
+failing with the leak restored ("tapping 'type note, 218' changed the
+search field to 'note type:note'") before it was trusted.
+
+**Also fixed, found by the sweep:** `first_card` returned an ambiguous
+label when no card label was unique, and `axe tap` rightly refuses one —
+reported as "no element on screen after 3s", which reads exactly like a
+broken app. Two nameless notes made in the same minute share a card label,
+so the collision is ordinary. It returns nothing now and the grid check
+taps the first card's frame centre, the exception `open_first_note`
+already documents.
+
+## 2026-09-06 — rev 48: the furniture shows
+
+Owner: *"the ui is pretty stale and looks like a bad obsidian clone. how
+can it be made personal?"*, then, choosing among three directions: *"do A.
+animations and glossy ui stuff is welcome."*
+
+**Why it read as a clone.** Fifteen numbers in the shell were measured off
+recordings of other apps — the bar Obsidian's, the panel ChatGPT's, the
+row grid Todoist's, the calendar Notion's, the ground colour their
+average — and the six areas of life, which `what-liv-is-for.md` calls
+the product, appeared on no screen. Three directions were drawn against
+the Today screen as it was (the canvas "Liv's Own Look"); A was chosen.
+
+- **The six areas are drawn**, in the same pen as the note leaf and the
+  tray: a case with a handle (Work), a pulse (Health), a note with its
+  coin (Money), a roof over a room (Home), the existing two-figure
+  `.people` (Family & Friends), an open book (Learning). `LivArea` holds
+  name and mark together; `Furnish.areaNames` reads from it, so a name
+  and its drawing cannot drift apart. No colour: direction A adds not one
+  saturated pixel, and Today measured 0.00% before and after.
+- **A nameless row says what it is.** `livRowTitle` returns the kind's
+  word — "Task", "Note" — in the muted ink the untitled flag already gave
+  it, instead of "Untitled", which is Obsidian's, Apple Notes' and
+  Notion's word for a failure to name. `Record.swift`'s own "New event"
+  folded into the one rule.
+- **Today counts the day by area under its date**: "Work 1 · Health 1 ·
+  Home 1 · 67 unfiled". No other app ships with areas, so no other app
+  can print this line. Shipped areas first, then any minted ones by name,
+  the unfiled count last in the third ink. The digits roll with
+  `numericText` when the day changes — the app's first use of it.
+  Flagged honestly: the owner cut "N left" from this exact spot on
+  2026-08-18; this says where, not how many, and it is the easiest line
+  here to cut.
+- **One anchor helper.** Three surfaces carried their own copy of the
+  "project → people → tags → area" loop, and Everything's had the order
+  wrong. `livAnchor(of:)` is the one; an area chip leads with its mark.
+- **Chips are glass.** `ValueChip` wears the bar's `livGlass` instead of
+  a flat fill: the app has one material for things you can act on. The
+  area picker's option rows carry the area's mark in the column the
+  coloured dot vacated on 2026-08-29.
+- **Empty states name the furniture**: Today's says which areas a timed
+  thing lands in, read live off the box; Inbox's "Inbox zero" (GTD's
+  slogan) is "Nothing to route". The panel foot says how much is sorted:
+  "391 items · 387 unfiled" — Obsidian's foot says how big the vault is.
+- `drive.sh areas` asserts the line from the screen; the glyph
+  self-check draws the five new marks.
+
+**Refused, and why** (from the same review): a serif for what you wrote
+(Bear / Medium); a bundled font (both plists, build.sh, a licence, and
+the fastest route to a Craft clone); colouring the open ring by area
+(reverses the 2026-08-30 ruling; means priority in Todoist); six area
+tiles on Today (Things 3); textures, grain, illustration (decoration, by
+the owner's own brief). Direction B ("Rooms" — colour moves from kind to
+area) and C ("Ink on paper" — a warm ground, no row hairlines) stay drawn
+on the canvas and stack on top of A if wanted.
+
+## 2026-09-06 — the buffer leaves the SwiftUI graph
+
+Owner: *"how is the markdown editor implemented? How can we do it faster
+and more extensible / modular?"*, then — on the first answer — *"my notes
+are just test junk and you shouldn't make an argument like 'your largest
+note is n lines'."*
+
+**The correction changed the answer.** The first analysis rejected this
+work partly because the largest note in the test box was under 3,000
+characters. That is a fact about a test box, not about the design. Re-run
+against notes written for the purpose — 4,000 lines (310 KB) and 8,000
+lines (600 KB), sampled with `sample` on the process — typing cost about
+**2 ms a keystroke at 310 KB and 6 ms at 600 KB**, and the growth was
+three whole-document reads per keystroke.
+
+- **`NoteEditorModel.text` is no longer `@Published`.** Every keystroke
+  used to push the whole document into the SwiftUI graph, where
+  `updateUIView` compared the entire string against the text view's own
+  copy to decide the view had nothing to do. The text view owns the text
+  while you type; a published `imposed` counter tells it when the MODEL
+  changed the words instead — a load, a conflict swap, a re-applied
+  draft.
+- **Dirty is counted, not compared** (`LivEdits`). The old
+  `text != storedText` was O(note) but got one thing right for free: text
+  typed while a save was in flight stayed dirty. Each save now marks
+  itself with the buffer it left with and cleans only to that mark.
+- **`livFirstLine`** reads to the first newline; `livDisplayTitle` was
+  splitting the whole note into an array to keep line one, on every
+  keystroke of any unnamed note, and once per row in Notes and Share.
+- **A cost self-check** (`suites.sh editor-cost`, the eleventh suite)
+  asserts the shape the way `services/tests/scale.rs` does: doubling a
+  note must not double the per-keystroke work. It was watched failing at
+  **ratio 2.02 (1.16 ms → 2.35 ms)** with the old first-line read, and
+  passing after. It also pins the save-in-flight case, which is the one
+  the comparison used to get for free.
+
+Measured after, same gesture and note: `updateUIView`, `dirty` and
+`livDisplayTitle` are **gone from the profile entirely**. What is left on
+the typing path is the one-paragraph restyle, which is correct, and the
+theme's dynamic `UIColor` closures being resolved inside it.
+
+**Also fixed:** `liv://entity/<id>` drew "This was deleted." for an entity
+written since the last snapshot — by the CLI, an import, anything that is
+not this app. It refreshes the box before believing the id is gone. Found
+twice while measuring, and the second time it silently invalidated a
+measurement: the "after" sample looked 100× faster because nothing had
+been typed into anything.
+
+The rest of the plan, in order and with what is gated, is in
+`design/editor-study.md` §13. The next item there is not performance: a
+`- [ ] x` line inside a ``` fence is drawn with a tappable checkbox that
+`EditOps.toggleTask` will flip, editing code the box stores as code.
+
+## 2026-09-06 — a file's name was behind the chrome, and its page was blank
+
+Owner, from a device screenshot: *"See the hidden filename? And why does it
+open unsupported file types without rendering them like most editors?"*
+
+- **The name was drawn under the top chrome.** `FileBody` cleared the
+  band with a raw `.padding(.top, 56)` — the whole band back when
+  surfaces stopped at the safe area. They have run under the status bar
+  since 2026-08-17, and every other surface clears `LivRow.topInset`
+  (safe area + 52, about 111 on a notched phone). At 56 the file's name
+  sat behind the library door and the •••, and a file with no name yet
+  showed its placeholder there too — so the screen read as a file with
+  no name at all. It is `LivRow.topInset` now.
+- **The page below the name says what Liv holds.** The refusal to
+  preview stands (owner, 2026-08-13: *"preview should not be a
+  functionality since it is absolutely useless"*) — but it had been
+  built as "no preview and no explanation", and a name over a blank page
+  reads as a failure to load, not a decision. `heldCard` names the
+  format, the size and the path, and points at the one verb that opens
+  the bytes (••• → Open in…). `FileFacts.formatWord` and `sizeWord` are
+  the two words it needed. The broken-reference card is unchanged.
+- Verified on the simulator: the name clears the chrome; a file whose
+  bytes exist shows "Image · 48 KB · path"; one whose bytes are gone
+  shows the broken card as before.
+
+**Not done, awaiting the owner's word:** rendering plain-text formats
+(`.cpp`, `.txt`, `.tex`) read-only inside the tab. That would reverse
+the 2026-08-13 ruling, and `.cpp` is not even in `FileFacts`'s text
+class today — it is `.other`. Two honest options are recorded in ios.md
+§44.
+
+## 2026-09-06 — the calendar block stops jumping on release
+
+Owner: *"Calendar event jumps when placed in grid."*
+
+**The jump was sideways, not down.** A day's blocks share the lane in
+columns when their times overlap (`CalLayout.slots`), and the columns
+were shared out from the SNAPSHOT's times. So a block being dragged kept
+the lane its OLD time had earned: drag an event out of a clash and it
+stayed half-width the whole way, then jumped to full width the instant
+you let go and the new snapshot arrived — and the block it used to clash
+with jumped with it. Measured on the simulator at 3x, finger still down,
+the dragged block sat at x 236–399 and its neighbour at 70–233; on
+release both went to 70–399. A 165pt jump, on two blocks at once.
+
+The fix is one line of intent: share the lanes out by where the blocks
+**are**, not where the box last said they were. `liveStart` returns the
+lifted block's dragged minutes and the snapshot's minutes for everything
+else, and `slots` is computed from that. The width is then right while
+you drag and nothing changes when you let go.
+
+**A second, quieter jump went with it.** The drop cleared `lifted`
+immediately and then wrote to the box asynchronously, so between the
+finger lifting and the snapshot arriving the block re-drew at the time it
+still had — its OLD one — before hopping to the new one. `LiftedBlock`
+now carries `airborne`: false means landed, holding its place until
+`settle()` sees the box agree. Only an airborne block wears the lift's
+clothes, so a landed one looks settled while it waits. A refused write
+clears the hold, and the block springs back honestly.
+
+The same gap emptied the grid when you PLACED a new event: the draft box
+was cleared before `create` returned. It now clears in the completion.
+
+**Verified by measurement, both ways.** The fix was removed again and the
+same gesture re-run: mid-drag x 236–399 → settled x 70–399, the jump
+reproduced; with the fix, mid-drag and settled are byte-identical at
+70–233 and 236–399. Screenshots at 3x through a held drag; the "· moving"
+label in the frame proves the finger was still down when the lanes split.
+
+**Worth recording about the hunt.** Three earlier attempts measured the
+VERTICAL position and found nothing, because the vertical snap-back is
+real but shorter than a screenshot interval — the box write on a
+simulator is a few milliseconds. The bug the owner could see was the
+horizontal one, and it was only visible once a frame was cropped and
+looked at rather than reduced to a number.
+
+## 2026-09-06 — the `liv://` door, and the CLI reaches the shell's verbs
+
+Owner: *"go next with the unimplemented things."* Worked the un-gated half
+of the 5 September "What's left" audit; the owner-gated items are listed at
+the end, untouched.
+
+**The `liv://` scheme, built.** Designed on 2026-08-10, sized then at "two
+plist entries and one handler", and still true of nothing: neither plist
+carried `CFBundleURLTypes` and no file in the shell had ever seen a URL
+coming in. `design/what-liv-is-for.md` ranks catching things from other
+apps above any new feature.
+
+- `Routes.swift` parses a URL into one of four routes — `liv://capture`,
+  `liv://capture/photo`, `liv://inbox`, `liv://entity/<id>` — and the
+  other five views come free, since they are the same `Feature` enum.
+- **An unknown host does nothing.** A link from another app does not get
+  to guess where you land, so an unparseable one is dropped rather than
+  falling back to a default surface.
+- **Cold launch parks.** `desk.newNote` is nil until DeskHost appears, so
+  a cold `liv://capture` would be swallowed. `Routes` holds the route and
+  flushes it when the wiring assigns itself — the same shape `Notify`
+  already uses for a cold notification tap (standing rule 4).
+- Not blocked on an Xcode project: that blocker belongs to the share
+  extension and the widgets, which do need separate targets.
+- `drive.sh routes` asserts all of it. Two things came out of breaking it
+  on purpose: the deliberate break landed on an unreachable line first,
+  and the capture assertion was timing-flaky because the keyboard
+  animates in after the document paints — it retries now.
+
+**The CLI reaches what the shell reaches**, which CLAUDE.md has required
+all along and the crate header admitted it did not. Eleven commands:
+`snapshot [--window FROM TO]`, `undo [N]`, `redo [N]`, `trash`, `restore`,
+`new note|task|event`, `content`, `content-set`, `search`, `lens`,
+`export`.
+
+- **`snapshot` prints the wire the app decodes.** Seven sections had no
+  reader outside the app — trashed, inbox, assist, workspaces, views,
+  noteTasks, occurrences — so a bug in any of them was only ever visible
+  on a phone screen. It runs before `Session::open`, because it reads
+  through the C seam and that seam takes the same file lock.
+- **`new` is a birth, not a capture.** `add` makes an untyped scrap and
+  `route` types it afterwards; `create_task` writes the type's default
+  status in the SAME transaction and `create_event` writes a due cell at
+  birth. A CLI task built the old way differed from an app task in its
+  cells — exactly the drift this tool exists to catch.
+- **`content` prints line structure and the fingerprint.** `list
+  --columns content` flattens every break to a space, and the Tasks
+  view's "In notes" section is projected off those lines.
+- **`content-set` is the editor's save**, compare-and-swap included, where
+  `set ID content` wrote one span with no breaks and checked no base.
+- **`search` and `lens` are the app's real grammar.** `list --where` is a
+  different one, built by hand and never touching `services/search`. The
+  two modes are opposite for one token — search widens on `is:archived`,
+  a lens restricts — and saved views store their query as one of these
+  strings, so nothing outside the app could answer "does this lens admit
+  these ids".
+- **`redo` exists here and not in the app.** There is no `liv_redo_at`, so
+  the app's undo is one-way; `Session::redo` is public and the CLI links
+  the crate rather than the C ABI. The asymmetry is now demonstrable
+  rather than only described.
+- **`export` gives `liv_export_at`'s planner its first caller** in either
+  client. On the CLI, not the phone: a phone has nowhere to put a folder.
+
+**Also:** Navigate.swift stopped calling Calendar "a v1 placeholder … until
+M3" — it has been ~1,850 lines of day timeline, month pager and
+drag-to-move for weeks.
+
+**Left alone, and why.** PDF/Word extraction (new crates), the merge-proposal
+triage fix and the assist-toggle property id (both FFI, both owner-gated),
+habits / time tracking / lists / layers / widgets (deferred by name in the
+design docs), `liv_extracted_text_at` (the clearest delete of the eighteen
+uncalled verbs, but removing a symbol from `ffi/liv.h` is the opposite of
+the purely-additive rule), sync, compaction, the desktop shell.
+
+## 2026-09-05 — rev 44: one row height, and a check that can see it
+
+Owner: *"tasks rows still to low. make row height more consistent."*
+
+- **Every content row is `LivRow.height` (56).** The six views ran 42 /
+  44 / 48 / 56 — Notes, Everything and Inbox called the token; Tasks,
+  Today and Search each carried a raw literal, three different ones, and
+  Today alone used two. Measured after: 56.0pt hairline-to-hairline on
+  all six.
+- **`LivRow.band` (44) is new** for the chrome inside a list — a collapse
+  heading, a notice — which was four literals at 38 and 40. 44 because
+  three of the four are the whole hit area of a Button.
+- **`LivRow.touch` (44) is new** for a control inside a row whose ink is
+  smaller than a finger. The StatusRing was still 31 while the checkbox
+  three lines away in the same list had just been raised — the row grew
+  and its own control did not.
+- **Tasks' rows were still uneven after the unification.** A leftover
+  `.padding(.vertical, 4)` sat OUTSIDE the frame, so it padded the
+  content first and the 56 floor never bound: a row carrying a chip drew
+  58. Found by the new check, not by eye.
+- **`drive.sh rows`** asserts a list draws every row at one height, and
+  that the height is 56. Twenty green checks had measured no row at all.
+  It was watched failing at "56pt x11, 58pt x1" before the fix.
+- Search's due label was a fifth hand-rolled copy of `LivRowFact` and
+  now calls it. `LivRow.tall`'s and `LivRow.glyph`'s doc comments said
+  more than was true and now say what is.
+
+**What did not work, recorded so it is not tried again.** Marking each
+row with `.accessibilityIdentifier` so the harness could find it: SwiftUI
+hangs the identifier on a row's LEAVES — the ring at 24, the glyph at 19,
+the title at 15 — never on the row, so the check named everything except
+the thing being measured. Reverted the same hour. The check finds rows by
+geometry instead, which is why the sweep runs it on Notes and Tasks: on
+Today a title block measures 50.3, the day strip 58 and the collapse
+heading 60, and the broken row was 58, sitting between two pieces of
+chrome in the same range.
+
+## 2026-09-05 — rev 43: the fields say what they hold
+
+Owner: *"yeah. bump to 14. tasks fields are especially small."*
+
+Audited every surface for starved type (7 auditors, 7 adversarial
+verifiers, screenshots measured at 3x against the source). 26 proposals,
+9 kept. The nine:
+
+- **The properties card's value column had two sizes, and the smaller
+  one was the filled field.** An empty field's em-dash reads `strong`
+  (20); a filled one — a status, a tag, an area — was a `caption` (14)
+  chip. `ValueChip`'s `big` variant, which had no callers, now IS the
+  value voice: 20pt text in a new `LivChip.value` (34) capsule with a
+  20pt glyph. The card's status and filing rows pass it. This is the
+  owner's complaint, exactly.
+- **Filing rows show two values, not three.** Three 20pt capsules do not
+  fit the ~299pt after a 20pt label, and `DetailRowLabel` holds
+  `layoutPriority(1)`, so the chips are what gets squeezed. Two whole
+  names and a "+N" beats three truncated ones.
+- **The read-only status branch** joins the column at 20 (was 18).
+- **One empty value.** `Text("—")` was written out three times; it is
+  `DetailEmptyValue` now. Zero pixels moved.
+- **The field-editing sheet has a title again**: `title` (22) semibold
+  sentence case in full ink, not 16pt bold UPPERCASE in the dimmest ink,
+  which ranked the header below its own 22pt rows.
+- **The row's second voice went back to `label` (16)**, text3 kept.
+  `LivRowFact` had been moved from label/text2 to caption/text3 to stop
+  a list of near-identical pairs — the right fix on the wrong axis, and
+  it moved both. At 14 the date was 0.70 of the title beside it where
+  Todoist's is 0.76: starved twice over. The ink is what separates the
+  two voices. Tasks, Today's late row, the Inbox stamp and Search's due
+  label all hand-rolled a copy of that recipe and now call it
+  (standing rule 4) — four screens, not three.
+- **Task rows went 40 → 44** — the whole row is the tap target and 40
+  was under Apple's minimum. (Superseded hours later by rev 44, which
+  took every content row to 56; neither shipped separately.)
+- **Tasks' filter chips are `body` (18)**, the screen's main control; it
+  sat at the size of the heading below it.
+- **Calendar**: "Today" is `body` like every other chrome verb-word; a
+  block shows its time span from 60 minutes, not 45 — the second line
+  was being squeezed, not mis-sized.
+- **The last raw font literal is gone** (`size: 11` in Panel.swift), and
+  three raw geometry numbers with it: `LivRow.glyph` (19) for the kind
+  mark, `LivChip.height` for the Tasks source capsule and the lens chip.
+- **The bar's key words are `caption` (14)**, up from `micro`; the
+  capsule is 66. Todoist's own is ~11 — the reference is a floor to
+  clear, not a ceiling.
+
+Refuted and NOT changed, each for a stated reason: SectionLabel 16 → 18
+(it would tie every heading with its rows); Today's weekday letters and
+Late header; the Inbox lens counts and "All workspaces" line (the thin
+thing there is the grey, not the point size); the calendar's hour ruler
+and now-badge; the ordinary `ValueChip` and `LivChip.height` (a chip
+trailing a row is a second voice and 14 is right for it); the "+N" count;
+the card's "Other" section (needs its unbounded chip run capped first).
+
+## 2026-09-05 — rev 42: the bar says what its keys do
+
+Owner: *"with no tabs, 'new tab' in grid appears on the left. should be
+right since thumb is on the right in most hands"*, and *"the bottom bar
+should hint user about what '+' creates and that '[n]' is for open
+notes. the style presented in my screenshots and screen recordings in
+Throwaway is what i want you to go for."*
+
+- **Every bar key has a word under it**, Todoist's form (glyph over a
+  word; measured off `todoist-inbox.mov`: glyph ~20, word ~11). Back,
+  Forward, Search, then the KIND `+` makes here — Note, Task or Event —
+  and "Open" under the numbered box. `LivBar.height` 56 → 62 to hold the
+  word at the old margins; `glyphSlot` 24 and `wordGap` 2 are new tokens,
+  and `endPad` 6 replaces a padding that was derived from the height by
+  coincidence.
+- **What `+` makes is declared once**: `Feature.makes: LivKind` on the
+  view. `createHere` switches on it and the bar prints it — the switch
+  that used to live in `createHere` alone was about to be needed twice.
+- **"Open", not "Desk"**, on screen: the box's word, the grid's footer
+  ("3 open") and its empty state ("Nothing open"). "Desk" was borrowed
+  from the desktop app on 2026-08-23 because that app shipped "New in
+  Desk"; the desktop is dropped and the owner's word for what the box
+  counts is "open notes". `DeskModel` and the design docs keep the name;
+  it is the screen that changed.
+- **The New-note card is always bottom-right.** With nothing open it was
+  the only cell in a left-to-right grid, so it stood under the wrong
+  thumb. An even count now leaves the last row's left cell empty rather
+  than move the card.
+- Harness: `drive.sh` matches the box by shape ("N documents open")
+  rather than the "Desk." prefix; the `grid` check opens a note first
+  when nothing is open, because its "first card" was the New-note card
+  and that label is shared with the footer's `+`. The `+` key is still
+  spoken as "New", which is what `create` taps.
+
+## 2026-09-05 — the bottom fade: built, then removed
+
+Owner: *"remove the bottom fade. just ugh."*
+
+Built on 2026-09-02 in the look pass, fixed on 2026-09-03, gone on
+2026-09-05. Recorded because the two faults it hit on the way in outlast
+it.
+
+**What it was.** `LivBottomScrim` — the ground fading in under the
+floating bottom bar, the same device `LivTopScrim` uses at the other end.
+The reason it was built: the bar does not float, it ghosts. Sampled where
+nothing is behind it, the capsule's interior is `#1A1A1A`, bit-identical
+to the page, and its whole definition is a one-device-pixel rim. With a
+list behind it, rows read straight through the glass.
+
+**Fault one: a fixed-height view does not move into the unsafe area.**
+The scrim faded the list down to the bar and then stopped — measured on
+the Notes list, ground (26) all the way to the capsule and a row at 164
+BELOW it (owner: *"the fade is stopping below bar"*). It was a
+fixed-height child of a bottom-aligned ZStack, and that ZStack's bottom
+is the SAFE AREA's bottom, so it ended about 34pt above the screen.
+`.ignoresSafeArea` was already on it and does not fix that: it lets a
+view DRAW into the unsafe region, it does not MOVE a fixed-height one
+there.
+
+**Fault two, worse: it ate the bar's taps.** Pulling the bottom edge past
+the inset fixed the fade and stopped the numbered box on Notes from
+opening the switcher at all. `.allowsHitTesting(false)` did not save it.
+Found by bisection — removing the scrim brought the box back — after
+first chasing it into `Tabs.swift` and the bar itself, both innocent. The
+real fault was where it lived: as a sibling of `BottomBar` in RootView's
+ZStack it was competing with chrome for the same touches. **A scrim that
+fades a surface's content belongs TO that surface**, which is exactly
+where `LivTopScrim` already sits. Moved to an overlay on the desk, beside
+its twin, it inherits the desk's own travel for free. Measured after:
+884pt reads 26, the ground.
+
+**Why it went.** The owner looked at it and said no. The type and its
+comment go with it (standing rule 6). `LivTopScrim` stays: words
+genuinely run under the clock at that end, and the bar has no such
+problem to solve.
+
+## 2026-09-03 — a door back to the list, and the desk starts at the thumb
+
+Owner: *"you can't access note list without closing all note tabs"*, and
+*"tabs should begin at bottom where thumb is"* (both 2026-08-31).
+
+**Two ways into Notes, and one of them did not exist.** Notes' root is
+the list; a document is a tab on the desk, and the desk went app-wide on
+2026-08-28 — so once any note was open, Notes always drew the document,
+and the list could not be reached without closing every tab. `showList()`
+had one caller, the rehearsal flag.
+
+Tapping the view you are already in now goes to its root. That is the
+phone's own idiom, and it keeps the other half working: arriving at Notes
+from another view still restores the document you left, and the bar's
+numbered box is still the way back to it from the list.
+
+**The desk starts at the thumb.** The switcher filled from the top of the
+screen down and is opened by the numbered box on the BOTTOM bar, so the
+motion was: reach to the bottom, then reach back to the top for the thing
+you just asked for. On a tall phone the first card sat about 700pt from
+where the finger already was. Two halves to the fix: a SHORT desk sinks —
+the content takes the container's height, aligned bottom — and a LONG one
+starts at the bottom and scrolls up, which is also where "New note"
+lives. The footer stays at the foot, under the grid: it is the way out,
+and it must not move when the cards do.
+
+(The footer went missing for one build while that was being wired, which
+would have left the switcher with no way out. Caught before it ran.)
+
+## 2026-09-02 — the look pass: a second voice in every row
+
+Owner: *"screw all the rules i set weeks ago. do whatever you think is
+best to make this app look pretty."*
+
+Screenshots of all eight surfaces went to six independent design
+readings; every proposal was put to a skeptic, 39 of 47 survived, and
+this is what was worth doing.
+
+**Say the date once.** Everything drew fourteen consecutive rows reading
+"Mon 31 Aug", right-aligned and monospaced, in the same ink as the titles
+beside them — and since most titles are the placeholder "Untitled", the
+screen was two ragged columns of near-identical grey. A date that is true
+of every row on screen tells you nothing about any of them, so
+`livNewFact` draws a fact only when it CHANGES, on all four list
+surfaces. It compares the rendered STRING, never the day: both `tasksDue`
+and `whenLabel` return a time for today's rows, so comparing days would
+delete the second of two things due at 09:00 and 20:00. That is data
+loss, not a repeat.
+
+Not day-group headers, which two of the readings proposed: a header is
+honest only where the printed key is the SORT key, and Notes sorts on
+`recency` while printing `created`.
+
+**The row gets its second voice back.** `LivRowFact` was `label` (16) in
+text2 — one step under an 18pt title in the SAME ink — and the glyph was
+text2 too, so three things on a row spoke at one strength. A fact is
+caption (14) in text3 now, and the glyph is text3.
+
+**And the shared row joins the grid it was given.** `LivListRow` drew its
+own 22/12/2 numbers inside containers padding 18, so its words landed at
+54 by coincidence while its hairline — which asks for `LivRow.hairline`,
+measured from the SCREEN — was applied inside that inset frame and landed
+at 72. Measured on `notes.png`: every line in the app missed the words it
+divides by eighteen points. That miss was introduced on 2026-08-30, by
+the pass that derived the hairline in the first place.
+
+**The task mark stopped lying.** `.task` and `.tasks` shared one drawing
+— a box with a TICK — and `StatusRing` draws a ticked box to mean DONE.
+So every open task in a mixed list wore the done mark: Everything showed
+four ticked tasks that Tasks drew as empty rings, same app, same moment.
+A PLACE keeps the tick ("Tasks" is a place, and a ticked box is what the
+word looks like); a THING gets a rule.
+
+**No stock controls left.** Settings' segmented thumb was `#6D6D72`, a
+grey with a blue cast that appears in no palette here, and its two system
+switches were most of that screen's 0.74% saturated pixels, against
+0.05–0.19% everywhere else. `LivSegment` and `LivSwitch` replace them in
+the app's own language — a quiet fill and full ink for "this is the one
+you are on", the accent at a quarter strength in a switch's track rather
+than filling it — and stand 44 and 40pt tall, because a control is a
+touch target before it is a shape.
+
+**The bar got a floor**, which lasted three days — see the 2026-09-05
+entry.
+
+Also: Notes, Everything and Tasks had no name at the top, and a list that
+starts at its first row reads as a fragment of a screen rather than a
+screen; the Reminders card showed a switch ON directly above the words
+"Turned off for Liv in iOS Settings", so the switch shows the PERMISSION
+now, which is the thing that decides whether anything happens; the
+calendar's 08:00 was sliced by the viewport, because `scrollTo(anchor:
+.top)` parks the RULE, not the label; and the panel's shadow never drew
+at all — sampled across `library.png` at y=500, the panel holds `#232323`
+to x=319.67 and the desk's `#1A1A1A` starts at x=320.0, so the app's
+largest depth event was a hard one-pixel step at 1.07:1. It has a 0.5pt
+hairline now (1.50:1, no saturation), and the dead shadow tokens are
+gone.
+
+**Harness.** `panel_count` matched any element carrying the right label,
+so the new "Everything" title — a StaticText — answered instead of the
+panel's row, and `lens` reported a working filter as broken. Third label
+collision in two days; it asks for the element TYPE now.
+
+## 2026-09-01 — a card comes from the edge its button is on
+
+Owner: *"some menus are popping up top down when the button is not at the
+top"* (2026-08-31).
+
+The workspace and filter cards fell from the top of the screen while the
+buttons that opened them sat at the foot of the library panel — the
+workspace button drawing a `chevron.down` the whole time.
+
+**The rule was never wrong; the furniture moved.** The owner asked for a
+top card on 2026-08-15 BECAUSE the workspace button was at the top then
+(*"since the button is on top it would be more convenient have it
+appearing at top also"*), and the button moved to the panel's foot a week
+later with settings (team, 2026-08-22). The direction stayed behind,
+hard-coded in the host's name.
+
+So the edge is a parameter: `livTopSheet` is `livSheet(from:)`.
+**Hard-coding a direction records an answer; taking it as a parameter
+records the rule**, and the rule survives the furniture moving again. The
+card squares itself against whichever edge it hangs from, puts its
+grabber on that edge, and keeps that edge's safe area as space INSIDE it.
+The note's ••• menu still comes from the top, because its button is
+still up there: checked, not assumed.
+
+**Harness.** `axe tap --label` REFUSES a label matching more than one
+element, which is correct of it and left `open_first_note` with nothing
+to aim at: every note in this box is "Untitled, <date>" and the create
+check adds one per run, so three now share today's. It taps the centre of
+the frame the tree just reported instead. That is not the coordinate ban
+being broken — that ban is on GUESSED coordinates — it is the same
+exception the library sliver already takes, and every attempt is still
+checked by whether a document actually opened.
+
+## 2026-08-31 — the calendar takes Notion's layout, and the month grid stops fighting
+
+Owner: *"the calendar and especially day picker lags a lot… swiping right
+opens the panel instead"*, and *"maybe replacing the current layout with
+the notion layout would be better. also getting rid of the day picker or
+doing it another way."*
+
+**The gesture fight, first, because it was a real bug.** `startAllowed`
+already vetoes a panel drag over a horizontally scrollable UIScrollView —
+the right idea, and it missed the one place in the app that needed it:
+the month pager is a SwiftUI HStack with an `.offset`, not a scroll view,
+so nothing saw it. Every sideways swipe on the grid was claimed by the
+window recognizer, which is why it opened the library, and why it felt
+slow — both gestures ran on every touch move, and latching a panel
+disables DeskHost's whole tree mid-drag. The calendar publishes its
+pager's frame and the recognizer refuses to start inside it. Verified:
+swiping right on the grid turns August to July with the panel shut. **A
+frame rather than a view type, because the thing to exclude is a REGION
+the calendar knows about and `PanelDrag.swift` cannot name.**
+
+**The layout, second, and it dissolves that problem rather than patching
+it.** Notion Calendar — read frame by frame from the recording — has no
+month grid on its main screen at all: the title carries a chevron and
+everything under it is the timeline. Ours took about 40% of the phone to
+do the job you do least often. The grid is behind the title now, as a
+card that closes the moment you pick a day, and the timeline went from
+six visible hours to thirteen. **The grid is how you JUMP; the timeline
+is what you READ**, and reading happens far more often.
+
+The title says the DAY, because nothing else on the screen would
+otherwise name it, and the chevron says the title is a way in. ‹ › step a
+DAY rather than a month: on a one-day timeline "tomorrow" is the motion
+you want, and without it tomorrow would mean opening the picker.
+
+Also: the hour labels were clipped at the top of the scroll view. Half a
+line is about 9pt at the new type scale and `labelRise` was still 6, so
+"08:00" came out with its top sliced off; it is 9 now.
+
+**Harness.** `simctl io screenshot` wedged the same way `axe` did the day
+before, with the app at 0% CPU — the simulator's own services, cleared by
+a restart. Written down because it is the second instrument in two days
+to hang rather than answer.
+
+## 2026-08-31 — the rest of the polish audit, and a harness that cannot hang
+
+The remainder of the second surface pass, on the same brief: one mark per
+meaning, one recipe per shape, and no control wearing a colour nobody
+chose.
+
+**The calendar.** The hour labels wrapped onto two lines the moment the
+type scale went up — "18:00" no longer fitted the 38pt it was given
+(`gutter - 8`) — so `CalClock.gutter` is 56 (was 46) and everything that
+measures from it follows. **A column sized for text has to be sized WITH
+the text.** The month grid drew up to sixty saturated dots in six kind
+colours under its day numbers; at 4pt across a month nobody reads a hue,
+so the dots say how BUSY in ink, and the kind language stays on the rows,
+where a glyph is big enough to tell apart. A timeline block was a tinted
+fill AND a stroke made by an opacity on the kind's colour — two devices
+saying one thing, one of them a hue divided by hand where `tint()`
+exists. It is Notion Calendar's shape now: a washed body with a 3pt bar
+down its leading edge.
+
+**Deleted outright.** `IconChip`, which filled a rounded square with the
+kind's colour and stencilled the glyph out of it, one per row in three
+lists — the references draw the glyph itself, which is `LivIcon`, which
+this app already had. `PropertiesMark`, three overlapping rings with no
+caller anywhere. And the 40x44 `text.quote` column in Links: a glyph you
+could not press, standing in the space every other row gives its ✕.
+
+**One recipe where there were two:** `LivGrabber` and `ConfirmPill` were
+each drawn twice, byte for byte, in different types (standing rule 4).
+And the grabber now tells the truth — every card in the app drew the
+capsule that means "drag me away" and none of them could be dragged. They
+can.
+
+**One tint per family of verbs.** Tasks' swipe tray wore four saturated
+colours for four ways of saying "move this to another day". Search's
+facet chip is the last chip to stop filling itself with the accent.
+Detail's status row, whose own comment said "display-only", stops wearing
+the capsule this app uses for values you can act on.
+
+**The harness cannot hang.** `axe` talks to the simulator's accessibility
+server, and that server stalls: a describe-ui that takes 1.7s blocked for
+over ten minutes while the app sat at 0% CPU with a healthy tree. Nothing
+here had a time limit, so one stalled call took the whole run with it and
+reported nothing — no pass, no fail, no clue, **which is the same fault
+as a check that lies, in different clothes**. Every `axe` call is bounded
+at 20s now. So is `open_first_note`, which retries the read-then-tap
+pair: the label is read from one snapshot of the tree and used against
+another, and twice a check failed on that race and passed on a re-run.
+
+## 2026-08-31 — the second surface pass: a palette of our own, and an inbox you can empty
+
+Owner: *"avoid gradients, default/system-looking colors, arbitrary
+colors"* (2026-08-30), and *"things are too small in general"*
+(2026-08-31) — the third time, after 2026-08-10 (*"text is too small…
+could in places be a notch bigger"*) and 2026-08-18 (*"ui text is just
+too small throughout"*).
+
+Measured against three recordings in `~/Desktop/Throwaway/new` (Todoist,
+Notion Calendar, Anytype) by counting pixels rather than by eye. The
+number that carries the whole change: **saturated pixels are 0.58% of a
+Todoist screen, 0.31% of Notion Calendar's, 0.01% of Anytype's. Liv's
+Today was 1.05% and Tasks 1.85%** — two to six times as loud — and every
+colour in the app was at 100% saturation, where the loudest routine
+colour in any reference is Todoist's red at 57%. Today and Tasks are now
+0.00% and 0.05%.
+
+**The palette is ours.** This is the surface appearance rev 27 deferred
+on 2026-08-16 (*"we should do the surface appearance last and
+thoroughly"*), and `Theme.swift` predicted it twice — "when the surface
+pass comes it changes the right-hand side of these lines and nothing
+else", and the self-check's own promise that its floors would rise with
+it. Both are kept.
+
+- **Ground `#1A1A1A`, and it is NEUTRAL.** The references are all neutral
+  and all lifted off black (Todoist `#1D1D1D`, Anytype `#1A1A1C`, Notion
+  `#222222`); the system's dark ground is `#1C1C1E`, whose blue sits two
+  points over its red and tinted every grey in the app.
+- **Three elevation steps, about +9 per channel** (`#1A1A1A` → `#232323`
+  → `#2C2C2C`), no shadow and no gradient — a step of tone does it, flat.
+- **Three ink tiers and no more.** `#F5F5F5` (15.96:1 dark / 18.10:1
+  light), `#A5A5A5` (7.07 / 7.23), `#828282` (4.53 / 4.61). Todoist's
+  secondary text is `#9D9D9D` and Anytype's `#8D8D8F`; ours is one notch
+  up, which is what 7:1 on this ground costs.
+- **One accent, and it is not the device tint** (`#5B8BC2` dark,
+  `#3167A5` light). Nothing exceeds 62% saturation and the marks are
+  drawn small.
+- **The floors went up with the palette**, as promised: `livPaletteSelfCheck`
+  now requires every ink to clear 4.5:1 on its ground, the two read tiers
+  7:1, every mark 3:1 for the first time, and no two marks to sit within
+  0.12 of each other in RGB. That last search is why a task is
+  violet-blue rather than sitting on top of the accent.
+
+**One step above the platform.** Twice the answer to "too small" was to
+move UP to Apple's own scale — body 15 → 17, the system's body — and it
+still read small, so matching the platform is no longer the answer. Every
+step goes one notch past iOS: caption 14, label 16, body 18, hero 32.
+Measured against the references first, so this is not
+bigger-because-asked: Todoist's row title is 17–18 and its screen title
+34. The rows went up with the text (`LivRow.height` 56, `LivPanel.row`
+57), because this file's own lesson from 2026-08-10 is that a bigger type
+in the same box is simply more cramped.
+
+**The Inbox is rebuilt on Todoist's geometry**, measured off a 3x crop:
+an 18pt screen margin, a 24pt circle, 15pt of air, the words at 57, a
+17pt title with a 13pt line under it. Ours is that shape at this app's
+own 16pt margin — `LivRow.margin` 16, `.mark` 24, `.markGap` 14, and
+`.text` 54, which is also `.hairline`. **The detail that does the work is
+that the hairline starts at the WORDS, not at the screen edge**, which is
+what makes the mark column read as a spine down the list rather than as
+an indent. `LivRow.hairline` is derived from `LivRow.text` now, so they
+cannot drift; it was 36 while no row's text began at 36.
+
+- **The leading circle IS the accept.** The row carried two 44pt buttons
+  on the right, so nine suggestions meant eighteen controls and a column
+  of ticks down the edge. Todoist empties its inbox by ticking a circle
+  on the left, and agreeing with a suggestion is the same motion.
+  Accepting is not destructive so it acts at once; dismissing IS a
+  discard, so it keeps its own control and still asks first. Drawn at 21,
+  tapped at 24 wide by 44 tall.
+- **Routing and dismissing both ask in the app's own bottom card.**
+  Tapping a capture used to push four buttons INTO the list under the
+  row, shoving everything below it down the screen; dismissing was a
+  `.confirmationDialog`, which SwiftUI drew as an anchored popover lying
+  across the bottom bar. `LivMenu` has supported `from: .bottom` since it
+  was written (standing rule 4), and the card can say WHICH capture it is
+  asking about, which four inline buttons never could.
+- Route's rows measured 40pt — under Apple's 44 touch minimum, and the
+  tightest list in the app, which is part of why they read as small.
+
+**"Nothing springs" is lifted** (owner: *"i said somewhere that
+animations should be used little. ignore that now. modern apps have
+animations"*). The navigation rule stands — a surface replacing a surface
+is still one easing, because a spring on a full-screen move reads as
+wobble. What the lift buys is `LivMotion.list`, for things that arrive
+and leave INSIDE a surface: ticking a suggestion used to make it vanish
+and the rows below jump up a notch, and the motion is what tells you the
+tick landed on the row you aimed at.
+
+**Also:** six shadows in five recipes down to one token (`LivTheme.lift`,
+for a block a finger has picked up), and three dead dot mechanisms,
+`Hue.dot` among them — it hashed a property's NAME to one of five
+colours, and its own comment admitted that meant nothing beyond "these
+two say the same thing", so five hues down a settings list read as a code
+with nothing to decode.
+
+## 2026-08-31 — the properties become a card, and 57 cycles go with the panel
+
+Owner, 2026-08-29: *"maybe card everywhere. start with one."*
+
+**The properties panel is a sheet.** It was a full-height panel on the
+trailing edge, the mirror image of the library on the leading one. It is
+a card now — `.medium` and `.large` detents, a grabber, `LivTheme.surface`
+behind it — which is the container a task's and an event's record card
+already used. The app had two containers for one idea.
+
+**Its door is the note's `•••` → Properties**, which is rev 5's door
+(2026-08-02) doing its original job again; the edge gesture that used to
+summon it is gone, so the `•••` is now the only way in. Anytype for iOS,
+doing the same job at the same size, opens an object's properties the
+same way: from the `•••`, as a sheet from the bottom with a grabber.
+
+**What the old reference was, and why it is dropped.** A metadata panel
+on the right was right while the desktop's own metadata lived in a right
+rail. That is very early to be copying, and the goal is one mobile and
+one desktop app that mirror each other rather than this one chasing that
+one.
+
+**One panel left, so the mirror code goes** (standing rule 6).
+`PanelDrag.Which` had two cases and every member of the struct carried a
+`which == .library ? … : …` for the mirror; the enum had one case left
+and every ternary one live branch. Deleted with it: `toward`, the two-way
+`claimPanel`, the two-way `closePanel`, the desk push that subtracted one
+panel's progress from the other's, and `anyPanel`, which is now just
+`libraryShown`. A card lies OVER the desk, so nothing pushes the desk but
+the library.
+
+**57 AttributeGraph cycles on every note open, all through one line.**
+`updateUIView` runs while SwiftUI is part-way through its own update
+pass; taking first responder from inside it calls UIKit back into
+SwiftUI synchronously (`_UIHostingView._didChange(toFirstResponder:)` →
+`runTransaction` → the graph), and the graph is asked for a value it is
+already computing. Measured with a breakpoint on
+`AG::Graph::print_cycle`: 57 backtraces, all carrying the same six
+frames. A cycle wedges that subtree's update loop — bodies keep
+evaluating with the right values while the pixels stop moving — which is
+the failure this app has now been bitten by three times. The fix is one
+hop of the main queue, with the guards re-checked on arrival so a note
+closed in that hop cannot pull the keyboard back up.
+
+**It gets a check, not a warning.** `drive.sh quiet` boots into Notes,
+opens the first note, and fails if the cycle count moved at all. It
+measures ONE action deliberately: the app boots with two cycles of its
+own and has for as long as anyone has looked, so asserting the total
+would make the check about that instead. `drive.sh check` only warned
+about growth, and a warning is a thing you learn to scroll past.
+
+**Also, in the same surface:** the kind chip under the note's title is
+gone — a pill of 11pt lowercase with a dot in it, "• note", saying what
+the surface around it already says (owner, 2026-08-18: *"eliminate
+unnecessary small text and labels"*). You opened the panel from a note;
+it is a note. The kind survives everywhere two kinds sit side by side:
+the card's label in the switcher, a calendar block's colour, and the hue
+of a chip that links to another entity.
+
+## 2026-08-31 — areas grow
+
+Owner, 2026-08-29: *"make sure areas are not fixed anymore."*
+
+`design/what-liv-is-for.md` said in as many words that "Areas, fields and
+kinds are ours, and they don't grow", and areas shipped as a select a
+user could not add to. They can now: the value picker offers a create row
+for a select, and minting the option is one verb the core already had. A
+select needs its option to EXIST before a value can be written — the core
+refuses a value with no matching option, and that refusal is right,
+because a select's values are entities, not strings — so the picker
+mints, then writes, and lets the write wait for the mint.
+
+**The six remain what the app arrives with, and that was always the
+load-bearing half**: you open Liv and do not have to design a system.
+What goes is the refusal. The cost paragraph in that doc already admitted
+the walls ("someone whose life doesn't divide into these six areas will
+feel the walls"), and a create row is cheaper than that trade. The
+desktop had gone further and stores `area` as free text with no list at
+all, which is why its own query code carries a note about "clicking
+'work' while 'Work' is included"; a named set you can extend sits between
+the two.
+
+**Fields and kinds are unchanged**: they still do not grow in daily use.
+`what-liv-is-for.md` carries the amendment, dated and reasoned, rather
+than being rewritten.
+
+## 2026-08-31 — Tauri is dropped: this tree stops aiming at it
+
+Owner, 2026-08-29: *"1. drop Tauri."*
+
+`shell/ios/` is the only shell, and the desktop is no longer the app in
+the `lovable-notes-hub` working copy. The goal of one mobile and one
+desktop app that mirror each other stands; what the desktop WILL be is an
+open question, and not open work.
+
+**What this reverses** is the 2026-08-22 ruling — *"we can't break or
+change how the tauri app works"*, *"both shells will share one core"* —
+and the convergence plan written around it. That plan had one purpose: to
+keep the Tauri app working while it moved onto this core. With the app
+dropped the purpose is gone. `design/core.md` and `design/core-plan.md`
+now carry a banner saying read the argument, not the schedule, and
+`design/one-core.md` records that its own supersession has itself
+expired.
+
+**What did NOT change.** That working copy is still outside this repo, so
+it is still ask-first, and the owner has said not to touch it. Dropping
+it means this tree stops aiming at it, not that anyone goes and deletes
+it. The deleted Mac shell and the planned WinUI port are still deleted;
+reviving either needs the owner's word.
+
+CLAUDE.md and the architecture-reviewer agent are corrected to say all of
+this.
+
+## 2026-08-29 — one desk: tools lose their planes
+
+Every view had its own plane of tabs, so the bar's tab key counted "tabs
+open in Calendar" — a number about a place there is one of. The switcher
+over Today really did show two Todays beside a third card.
+
+**A document is plural; a tool is singular.** You keep several documents
+open and come back to them, so documents live on ONE desk that follows
+you into every view. What a tool needs remembered is where you left it,
+which is one token, not a list of them. The split was already there and
+undeclared: `open(entity:)` was called with `.notes` at both of its call
+sites, `park` only ever wrote positions, and the sweep read
+`byFeature[.notes]` under a comment saying "only Notes holds entities".
+Declaring it is the whole change. `openRoot` goes with the branch that
+called it — it was the method that minted a second Today — and `newTab()`
+no longer asks which view you are in. This amends phase 4 of
+`design/tabs.md`, which is where the per-view planes were decided a week
+earlier.
+
+**Nothing saved was thrown away.** Measured on the device before and
+after: five v2 planes holding 22 tabs — 12 distinct documents and 10
+positions — became one desk of 12 documents and four tools remembering
+their spot. Only the position you were ON in each view survives; the rest
+were duplicates of a place there is one of. The v2 keys are left
+readable, the same courtesy the 2026-08-22 migration paid v1.
+
+**Two bugs this introduced, both caught before shipping.** `openDoc`
+ignored `state` — free while each view had its own plane (Today's held
+positions and never an entity) and wrong the moment one desk keeps its
+active tab everywhere: `goBack()` from a note into Today reported the
+note as still open. `-places.selfcheck` found it. And the desk
+resurrected itself: the per-plane rule was "no key for an empty plane",
+because "no plane" and "a plane with no tabs" had to be one state.
+Carried over, an absent desk key means NOT YET MIGRATED — so emptying the
+desk sent the next launch back through the v2 fold and brought back every
+tab you had just closed. An empty desk now writes an empty key and says
+so.
+
+**The `+` makes what the place holds.** One tap, checked against the box
+rather than the screen: a task in Tasks, an event on the day Calendar is
+showing, a note in Notes, Inbox and Everything. Today and Tasks route
+through `createRecord`, which already dated a task from
+`desk.contextDay`, so this needed to know nothing about dates. The
+five-item menu moved to a long press. Note creation cost two taps by
+every route before this, including the thing you do most.
+
+`axe` cannot generate a long press — a known-good shipping gesture
+(Calendar's day cell) does not fire through it either — so that half was
+verified with the simulator's own touch path: the menu came up and the
+tap did not fire. `cmd_create` says so rather than leaving a silent gap.
+
+**Also:** Calendar asks for `livHidesChrome` now. It is the one view that
+never did, and it is the one the owner named for the bar always taking up
+space — but the bar is not observably retiring there yet, so this is
+wiring, not a fix.
+
+**The harness.** `drive.sh desk` walks all six views asserting the count
+on the bar does not move. It opens nothing: opening a note raises the
+keyboard and the bar retires under one, so there would be no count to
+read. The tour needed a real correction, not a relaxation — arriving at
+Notes now lands on the DOCUMENT you had open, because the desk keeps its
+active tab, which is the point of a tab. 404 Rust tests, ten suites, nine
+drive checks.
+
+## 2026-08-29 — the surface pass, and Notes gets its notes back
+
+Seven annoyances the owner listed, the two side panels made one recipe,
+and the first step of `design/tabs.md`'s correction. They arrived
+together because they touch the same files.
+
+**Notes' root is the list again.** From 2026-08-24 it was the tab grid,
+on *"make sure it replaces notes list"*. Measured on the simulator four
+days later, that arrangement hid the box: the grid draws `desk.liveTabs`,
+so Notes showed EIGHT of the 134 notes in it and offered no route at all
+to the other 126. A surface named after a thing has to contain it.
+`NotesList` is restored from the commit that deleted it, with two changes
+— the lens comes from `workspaces.admits` (the Swift parser it used to
+filter through went to the core on 2026-08-27), and its bottom margin is
+`LivBar.room` rather than a literal 88, which is why the bar sat on the
+last row. The grid keeps its real job: it is the switcher the numbered
+box opens. One is the shelf, the other is what is on the desk.
+
+**Two things fell out of that.** The numbered box was dead on Notes' root
+for one reason — you cannot open the grid on top of itself. With a list
+underneath, the rule has no cause and is deleted rather than handled.
+`TabSwitcher.asSurface` then had no `true` caller, so it and the four
+branches it gated go too (standing rule 6). Which surfaced a gap: the
+switcher NEVER had a marker except at that one call site, so the grid
+opened from Today or Calendar was invisible to `drive.sh`. It carries
+`LivOverlay.tabs` now — an overlay, because it covers a surface rather
+than replacing one.
+
+**The two panels are one panel.** The properties panel was a full-screen
+curtain over a still desk; the library stopped short and pushed the desk
+aside. They now differ in nothing but which edge they stand on:
+`SidePanel` takes a `side`, both travel `LivPanel.width`, and the desk's
+mask, its shadow and the wash that swallows touches all answer to
+whichever is out. One `closePanel` serves the sliver's tap and its drag,
+so neither decides for itself. `curtain` goes with it — it existed so the
+bar and the pill could fade under a full-screen panel, and nothing fades
+any more. (This is the recipe the 2026-08-31 properties card then cuts in
+half, two days later.)
+
+**The seven.**
+
+1. The top doors wear the bar's glass in a 44pt circle. Bare, they read
+   as loose icons rather than controls — which reverses 2026-08-18's
+   "fewer giant rounded buttons", on the owner's word.
+2. The library door says it is open by WIDENING its column instead of
+   turning blue. A tint says "selected", and a door standing open is not
+   a selection.
+3. `PanelMark`'s corner radius drops to 0.20 of its size, because 0.30
+   drew a squircle.
+4. The desk's leading corners go square while a panel is out: a curve
+   there pulls away from the seam and leaves a wedge of panel showing,
+   which is the gap the owner saw in light mode.
+5. `LivTopScrim` was one fixed height doing two jobs. The panel reserved
+   a 52pt chrome row it has no chrome for; the tab grid reserved the same
+   band AND painted over its own first row. The grid's first card moved
+   from y=187 to y=68.
+6. `New tab` in the grid makes a note. It used to open the create menu,
+   which is the `+` key's job and a different question.
+7. The numbered box glyph: `pen.box(3.5, 4.5, 17, 16)` centred at y=12.5
+   on a canvas whose centre is 12, with a `.offset(y: size * 0.04)`
+   overshooting the correction. Box re-centred at 18x17, offset deleted —
+   measured off the pixels at +0.0 on both axes.
+
+**And dark mode takes the next rung of the system's own ramp** (#000 →
+#1C1C1E → #2C2C2E) rather than a mixed value, so the steps between
+surfaces are unchanged. Light is untouched. (Two days later the second
+surface pass replaces this ground entirely with `#1A1A1A`.)
+
+**The harness.** `drive.sh grid` asserted the arrangement this change
+reverses. Rewritten to guard the hole instead: Notes must list MORE rows
+than there are open tabs. Calibrated — restoring the grid as root gives
+"Notes lists 0 rows while 9 tabs are open". `drive.sh panel` now runs one
+body twice, mirrored, so the panel that only just became testable is
+tested. Everything it asserts is geometry: a closed panel stays mounted
+and moves off screen, so "is its marker there" answers a different
+question. 404 Rust tests, ten suites, seven drive checks.
+
+## 2026-08-28 — a harness that cannot lie about a green run
+
+`suites.sh` runs the ten launch-flag self-checks; `drive.sh` drives the
+running app and asserts what is ON SCREEN. Both existed in the working
+tree already. What this records is what had to be fixed before either was
+worth believing.
+
+**They launched whatever was already installed.** `./build.sh` with no
+argument only COMPILES, and neither script installed, so both tested
+whatever build happened to be on the simulator. Proved by breaking one
+assertion on purpose: all ten suites still printed PASS. Both now install
+`build/Liv.app` and refuse to run against a bundle older than the
+sources. Break an assertion and watch it fail before trusting a green run
+— every check here was calibrated that way.
+
+**Four more ways it could report on something it never measured.**
+
+- `scan()` swallowed every Python exception, so a typo in a reader was
+  indistinguishable from an empty screen. It lets tracebacks through now.
+- `bar_keys` prints ONE line of JSON and the boot gate counted its LINES
+  — 1 for a full bar, 1 for an empty one. `bar_count` counts the array.
+- `panel_open` detected the library by the word "Trash". The settings
+  sheet carries that word too, so any check that left settings open told
+  every later check the panel was up. Panels now carry `.livOverlay(…)` —
+  the same invisible identifier `.livSurface()` uses, a different prefix
+  so the one-surface rule still holds. Ask the structure, never the
+  content.
+- `suites.sh`'s "no verdict — the suite did not run at all" could never
+  print: a pipeline's status is `sed`'s, and `sed` succeeds on empty
+  input. The one case it exists for showed a bare FAIL instead.
+
+**Boot means the whole screen.** Three separate "flaky" failures were
+checks inheriting the screen the previous check walked away from. Every
+asserting check now starts from a launch; `boot` waits for the BAR, not
+just the surface marker, and refuses to proceed if any overlay is still
+up. `cmd_tap` retries for three seconds before calling a label absent —
+"not on screen yet" and "not on screen" are different answers.
+
+**New check: `drive.sh lens`.** Turn a saved filter on, assert the count
+moves. It is the only thing that can see whether the shell asks the core
+for a lens and does anything with the answer; `cargo test` proves the
+core is right and stops at the ABI.
+
+**CLAUDE.md's own numbers had drifted**: 56 FFI verbs where there are 59,
+and standing rule 1 quoting 38 calls over 32 verbs where it is 53 over
+41. The architecture-reviewer agent carried a third, differently wrong
+count, and still called the macOS shell "parked" nine days after it was
+deleted.
+
+**Also, the same kind of untrue claim, in `.gitignore`.** The "built
+binaries — artifacts, not source" comment had no pattern under it: the
+`/shell/macos/build/` line went out with the macOS shell on 2026-08-19
+and the comment stayed, which reads as a rule being enforced. It was not.
+708MB of compiled `shell/macos/build/lotus` is in this history at ~10MB
+per commit, and nothing can remove it without rewriting every hash, so
+restoring the line only stops the next one — the iOS rule below it is
+what does real work now. Found while extracting one file into a
+standalone repo, where stripping that path took the pack from 87 MiB to
+2.8 MiB.
+
+## 2026-08-28 — tabs are the container, and the core answers the queries
+
+Phases 4 and 5 of `design/tabs.md` (per-view planes, and one Inactive
+shelf across all of them — that doc carries what each phase decided), the
+reversal the owner asked for after sending the Notesnook and Obsidian
+recordings, and the Swift parser's deletion. They arrived together
+because they touch the same files; the build does not bisect below this
+point.
+
+**The tab view is the container, not a pane.** Owner, 2026-08-24: *"make
+sure it replaces notes list."* `Notes.swift` is gone. The grid IS Notes'
+root, drawn as the surface rather than laid over it, so the grid can no
+longer be opened on top of itself and the old "‹ Notes" back has nothing
+to point at. One plane per VIEW per workspace (`planeKey` v2); the
+pre-2026-08-22 single-plane key is read once, to become the Notes plane.
+(Reversed the next day — see 2026-08-29. Notes' root is the list again;
+the grid stays as the switcher.)
+
+**The panel is not full screen.** Owner: *"Panel should not be full
+screen!"* The library stops at `LivPanel.width` and leaves a sliver of
+the desk: `peek` is a fixed 100pt, so 330 of a 430pt screen, which is
+what the reference measures. The sliver blocks touches and takes both a
+tap and a drag to close — an overlay swallows the window recognizer's
+touch, so the drag has to be its own gesture, not the host's. The desk
+travels again with it.
+
+**The bar is a browser's, literally.** Five keys, one row: back, forward,
+search, new, tabs. Disabled keys are drawn disabled rather than hidden,
+so the row never reflows under a thumb.
+
+**One parser, and it is not here** (standing rule 4). `LivQuery`,
+`LivTerm`, `parse`, `matches`, `tokenize`, `splitQualifier` and
+`stampSummary` are deleted. What survives is `LivTerms`: spell a term,
+read one back, replace one, build the stamp — text only, never meaning.
+The lens is `liv_query_ids_at`; a draft query is `liv_lex`;
+`Workspace.admits` reads the answer and decides nothing. The self-check
+could not simply shrink — an empty failure list prints PASS — so it was
+rewritten against what the shell still owns. All forty-one of its old
+assertions tested the parser that left.
+
+**Subjects is tags.** Owner: *"rename subjects to tags."* The engine
+already said `tags`; the shell said `subjects`, which made three names
+for one field. The property migrates, and so do saved queries —
+`renameInQueries` rewrites qualifier KEYS only, leaving the word as free
+text alone. Without it the `foo` filter kept `subjects:psychopathy`, and
+an unresolvable property used to become a required word: the filter
+silently matched nothing.
+
+**Wired, not written.** Facets were computed by the core on every search
+since 2026-08-26 and nothing decoded them. Five `liv_vault_*` verbs
+backed the folder promise and no client called one. Both now reach the
+screen.
+
+**The panel counts follow the lens.** With "Work" active the panel said
+"Notes 127" over a list showing only Work's notes. It counts through the
+same `admits` gate every surface uses — and once per render, not once per
+row, which its own comment always claimed and never did.
+
+Ten suites and seven `drive.sh` checks pass. Nothing outside
+`shell/ios`.
+
 ## 2026-08-19 — Scan text: a page becomes a note
 
 Owner: *"do the ocr on the camera door"*, then — after being shown that

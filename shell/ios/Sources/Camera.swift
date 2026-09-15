@@ -12,16 +12,10 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Solid ink for controls sitting on the live viewfinder. The rest of the
-/// shell dropped blur materials (owner, 2026-07-29) and so does this — but
-/// a themed surface would vanish against a bright frame in light mode, so
-/// camera chrome carries its own opaque dark.
-private let cameraChromeFill = Color(red: 0x1B / 255, green: 0x22 / 255, blue: 0x20 / 255)
-
 // MARK: - session tray rows
 
 private struct CameraShot: Identifiable {
-    let id: UInt64  // the committed entity — real from the shutter sound
+    let id: LivEntityID  // the committed entity — real from the shutter sound
     let thumb: UIImage?
 }
 
@@ -278,7 +272,7 @@ struct CameraFlow: View {
     /// Fires on Done with the session's committed entity ids, in shot
     /// order. The chrome may open the last one as a desk tab; the flow
     /// itself never leaves the viewfinder mid-session.
-    var onDone: (([UInt64]) -> Void)? = nil
+    var onDone: (([LivEntityID]) -> Void)? = nil
 
     @EnvironmentObject var model: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
@@ -288,10 +282,10 @@ struct CameraFlow: View {
 
     @State private var permission: CameraPermission = .unknown
     @State private var shots: [CameraShot] = []
-    @State private var target: UInt64 = 0
+    @State private var target: LivEntityID = 0
     @State private var caption = ""
-    @State private var captions: [UInt64: String] = [:]
-    @State private var applied: [UInt64: [CameraApplied]] = [:]
+    @State private var captions: [LivEntityID: String] = [:]
+    @State private var applied: [LivEntityID: [CameraApplied]] = [:]
     @State private var applyAll = false
     @State private var adding: CameraChipKind?
     @State private var chipText = ""
@@ -388,9 +382,9 @@ struct CameraFlow: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: LivType.strong, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(LivTheme.cameraInk)
                 .frame(width: 32, height: 32)
-                .background(cameraChromeFill, in: Circle())
+                .background(LivTheme.cameraChrome, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -398,9 +392,10 @@ struct CameraFlow: View {
 
     private var deniedHint: some View {
         VStack(spacing: 2) {
-            EmptyHint(
-                "Camera access is off. Liv commits the photo at the shutter — allow the camera in Settings to shoot."
-            )
+            // A BLOCKED state, not an empty one — and its remedy is the
+            // button directly under it. The sentence explaining when the
+            // shutter commits was teaching at the worst possible moment.
+            EmptyHint("Camera is off")
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     openURL(url)
@@ -450,7 +445,7 @@ struct CameraFlow: View {
                 .frame(height: 30)
                 .background(
                     RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                        .fill(LivTheme.panel)
+                        .fill(LivTheme.surface)
                 )
             chipRow
         }
@@ -476,7 +471,7 @@ struct CameraFlow: View {
                     LivTheme.panel2.overlay(
                         Image(systemName: "photo")
                             .font(.system(size: LivType.body))
-                            .foregroundStyle(LivTheme.muted)
+                            .foregroundStyle(LivTheme.text2)
                     )
                 }
             }
@@ -567,14 +562,10 @@ struct CameraFlow: View {
                     .frame(height: 30)
                     .background(
                         RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                            .fill(LivTheme.panel)
+                            .fill(LivTheme.surface)
                     )
-                    Button { applyChip(chipText) } label: {
-                        Text("Add")
-                            .font(.system(size: LivType.body, weight: .semibold))
-                            .foregroundStyle(LivTheme.accent)
-                    }
-                    .buttonStyle(.plain)
+                    // A PILL, not a blue word — see ConfirmPill.compact.
+                    ConfirmPill("Add", compact: true) { applyChip(chipText) }
                     Button {
                         adding = nil
                     } label: {
@@ -630,7 +621,7 @@ struct CameraFlow: View {
     /// the difference is only what you wanted out of it.
     @ViewBuilder private var shutterRow: some View {
         VStack(spacing: 6) {
-            if !scanSaid.isEmpty { EmptyHint(scanSaid).padding(.vertical, 0) }
+            if !scanSaid.isEmpty { EmptyHint(scanSaid) }
             if hasCamera {
                 if permission == .granted {
                     ZStack {
@@ -638,9 +629,9 @@ struct CameraFlow: View {
                             engine.shoot()
                         } label: {
                             ZStack {
-                                Circle().strokeBorder(.white, lineWidth: 3)
+                                Circle().strokeBorder(LivTheme.cameraInk, lineWidth: 3)
                                     .frame(width: 62, height: 62)
-                                Circle().fill(.white).frame(width: 50, height: 50)
+                                Circle().fill(LivTheme.cameraInk).frame(width: 50, height: 50)
                             }
                             .contentShape(Circle())
                         }
@@ -657,16 +648,15 @@ struct CameraFlow: View {
                     .frame(maxWidth: .infinity)
                 }
             } else {
-                EmptyHint("simulator: pick a photo to stand in for the shutter")
-                    .padding(.vertical, 0)
+                EmptyHint("Simulator")
                 ZStack {
                     PhotosPicker(selection: $pickerItem, matching: .images) {
                         ZStack {
-                            Circle().strokeBorder(.white, lineWidth: 3)
+                            Circle().strokeBorder(LivTheme.cameraInk, lineWidth: 3)
                                 .frame(width: 62, height: 62)
                             Image(systemName: "photo.on.rectangle")
                                 .font(.system(size: LivType.display))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(LivTheme.cameraInk)
                         }
                         .contentShape(Circle())
                     }
@@ -695,10 +685,10 @@ struct CameraFlow: View {
             Text(scanning ? "Reading…" : "Scan text")
                 .font(.system(size: LivType.label, weight: .medium))
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(LivTheme.cameraInk)
         .padding(.horizontal, 11)
         .frame(height: 36)
-        .background(cameraChromeFill, in: Capsule())
+        .background(LivTheme.cameraChrome, in: Capsule())
         .contentShape(Capsule())
         .opacity(scanning ? 0.6 : 1)
     }
@@ -842,7 +832,7 @@ struct CameraFlow: View {
         }
     }
 
-    private func retarget(_ id: UInt64) {
+    private func retarget(_ id: LivEntityID) {
         commitCaption()
         target = id
         caption = captions[id] ?? ""

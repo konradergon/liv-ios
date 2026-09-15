@@ -1,5 +1,28 @@
 # Building the core — the phased plan
 
+> **BACK ON, 2026-09-13** (owner: *"the 'engine' should have been completed
+> and the goal is to wire it completely with the app"*). This is scheduled
+> work again. The 2026-08-29 note below stood for fifteen days and is kept
+> for the record; what it got right is that the engine was never justified by
+> Tauri, and what it got wrong is treating a paused project as a shelved one.
+>
+> *(Superseded, 2026-08-29: "TAURI IS DROPPED (owner: 'l. drop Tauri'). This
+> document was written for a world with a second, existing shell to
+> accommodate. There is none now… do not read it as scheduled work.")*
+>
+> **Where it actually stands, measured 2026-09-13.** Phases 1–5 are done and
+> **55 tests pass** — codec 10, id 8, log 11, model 13, scale 3, view 10. The
+> crate builds with **zero warnings** and has **zero dependents**: nothing in
+> the workspace links it, so none of it has ever run on a phone. Four commits,
+> all 2026-08-22; nothing since.
+>
+> **Phase 2 was done and never marked.** `engine/tests/codec.rs` has the
+> round-trip, the hostile bytes, the version fence and the monotonicity test
+> the phase asks for. The heading below now says so.
+>
+> **Phase 6 is where the plan and the tree disagree**, and it is re-priced
+> below rather than left at "~2 weeks".
+
 > **Status:** rewritten 2026-08-22, second direction. The design is `core.md`, the
 > encoding is `op-format.md`, the decisions are `core-decisions.md`.
 >
@@ -41,6 +64,9 @@ engine/
 └── api      what a shell calls
 ```
 
+*(As built: `api` is `write.rs` — the verbs, with the merge rule folded in — over
+`engine.rs`, which owns the one transaction. Eight files, 1,911 lines.)*
+
 Rust only, no C ABI in the crate itself — the FFI stays a separate layer, so the
 desktop can link the engine directly the way it links its own core today.
 
@@ -60,9 +86,9 @@ was measured before being accepted.
 
 ---
 
-## Phase 2 — Ids and the op codec
+## Phase 2 — Ids and the op codec · **DONE 2026-08-22**
 
-*~1 week. Pure Rust, no storage, no IO.*
+*Ten tests. Marked here on 2026-09-13; it had shipped unmarked.*
 
 `EntityId`, `DeviceId`, `Dot`, `Hlc`, and the encoder and decoder from
 `op-format.md` §4: group header, op records, the four op kinds, the value kinds.
@@ -165,14 +191,61 @@ Renaming a person is one write, verified against forty notes that reference her.
 
 ## Phase 6 — Snapshot parity
 
-*~2 weeks. Where the engine earns the phone.*
+*Re-priced 2026-09-13. Not ~2 weeks, and not one phase.*
 
-The engine emits the snapshot the shell already decodes — 152 fields across 19 types.
+The engine emits the snapshot the shell already decodes. Measured today that is
+**22 types and 134 fields** — 13 types in `ffi/src/snapshot.rs`, 9 more in
+`services/` (habits, timeviews, tasks). The 2026-08-22 figure of "152 fields
+across 19 types" was right when written; the shape has drifted, not shrunk.
 
 > The same box produces a byte-identical snapshot from the engine and from `core/`.
 
-That test is the only thing that lets 19,685 lines of Swift not change, and it is
-worth more than any amount of design review.
+That test is still the only thing that lets 19,685 lines of Swift not change.
+
+**What the original estimate priced was emitting JSON. The actual obstacle is
+vocabulary.** The `Snapshot` has 19 top-level members. **Six of them the engine
+can express today**: `today`, `unstructured`, `everything`, `dated`, `trashed`,
+and most of `entities`. **Thirteen it cannot** — `occurrences`, `inbox`,
+`workspaces`, `pins`, `layers`, `habits`, `time_entries`, `views`, `widgets`,
+`kinds`, `assist`, `properties`, `note_tasks` — because every one of them needs
+an entity of a shape the furniture has no word for.
+
+That is not an oversight. It is Phase 5 working as designed: `kind` is
+`Holds::Furniture(CLASS_KIND)`, there are exactly six of those, and there is
+nowhere to write a seventh. Compare a fresh `core/` box, which seeds **70
+entities and 226 cells over 13 properties** and lets everything above it read
+the vocabulary back out of the box — property definitions are entities, types
+are entities, options are entities.
+
+**The store underneath is not the problem, and there is a test that says so**
+(`the_model_refuses_a_seventh_kind_but_the_store_would_have_held_it`). `commit`
+takes ops directly and never consults the model, so an entity of an unnamed
+shape lands in the log, lands in the view, and survives the replay gate. Only
+the write API refuses it.
+
+So the fork is real and it is a product question, not an implementation one:
+
+**6a — the part that is not blocked.** Notes, tasks and events over the six
+shown properties is exactly what the engine models. Build the snapshot emitter
+for the six expressible members and gate it on parity against `core/` for a box
+containing only those. This proves the design end to end and is worth doing
+whichever way the fork goes. *~2 weeks — the original estimate, applied to the
+part it actually fits.*
+
+**6b — the fork.** Either
+
+- **the model learns to name what the box holds**: a furniture class for
+  declared kinds and declared properties, so a workspace or a saved view is an
+  entity whose shape is data. This costs part of Phase 5's argument — two
+  devices cannot drift on furniture *because neither seeds it*, and anything
+  declarable is seedable and can drift. It buys the whole shipping app.
+- **or the app that runs on the engine is a smaller app**, and workspaces,
+  layers, widgets, habits, saved views and the proposal inbox come back one at
+  a time afterwards. This keeps Phase 5 intact and breaks the promise that the
+  Swift does not change.
+
+*Unpriced until the fork is called. The second is cheaper to start and more
+expensive to finish.*
 
 ---
 
@@ -180,8 +253,9 @@ worth more than any amount of design review.
 
 *~2 weeks.*
 
-`Box.swift` — 955 lines, 33 verbs, the only shell file that touches the C ABI — is
-repointed at a new FFI over the engine. **The ABI is designed for 16-byte ids from
+`Box.swift` — **1,168 lines and 38 verbs over 48 call sites** as of 2026-09-13,
+still the only shell file that touches the C ABI — is repointed at a new FFI over
+the engine. *(It was 955 lines and 33 verbs when this was written.)* **The ABI is designed for 16-byte ids from
 the start**, with a real error channel rather than `0` meaning failure, so none of
 the 39-of-57 retrofit cost in `core-decisions.md` applies.
 
@@ -268,17 +342,23 @@ Buildable today against the current core, and it pays off again on the engine.
 
 ## What this adds up to
 
-| | |
-|---|---|
-| Phase 1 | **done** |
-| Phases 2–4 | ~4 weeks. Codec, log, view, and the gate that can stop everything |
-| Phases 5–7 | ~6 weeks. Model, parity, and the phone running on it |
-| Phases 8–11 | ~10 weeks. Blocks, history, merge, sync |
-| Phase 12 | 4–8 weeks |
+| | | |
+|---|---|---|
+| Phases 1–5 | **done 2026-08-22** | 55 tests. Substrate, codec, log, view, gate, model |
+| Phase 6a | ~2 weeks | The six snapshot members the engine can already express |
+| Phase 6b | **unpriced** | The vocabulary fork. Blocks everything after it |
+| Phase 7 | ~2 weeks | The phone moves |
+| Phases 8–11 | ~10 weeks | Blocks, history, merge, sync |
+| Phase 12 | 4–8 weeks | Services |
 
 **Roughly five to seven months to the phone on the engine with sync**, one developer —
 and about ten weeks to the phone simply running on it, which is the milestone that
 matters, because everything after it ships against a real user.
+
+*Both numbers are the 2026-08-22 estimate and both are now floors, not estimates:
+they were written when Phase 6 was believed to be two weeks. Six weeks of the
+original ten were Phases 5–7, and Phase 5 is done — so the ten-week figure holds
+only if 6b turns out cheap, which nothing yet says it will.*
 
 **What makes it integrable later, concretely:** one documented on-disk format that is
 not a derive macro; SQLite, which the desktop already uses; no iOS anywhere in the

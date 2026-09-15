@@ -560,18 +560,27 @@ pub fn cycle_date_role(session: &mut Session, entity: Id, from: Id) -> Result<Id
     // would be a guess — refuse, never guess (the review's finding).
     if e.all(from).count() > 1 {
         return Err(WriteError::Refused(format!(
-            "#{entity} carries several {from_name} dates — the cycle is ambiguous"
+            "{} carries several {from_name} dates — the cycle is ambiguous",
+            display_name(store, e)
         )));
     }
     let value = match e.get(from) {
         Some(Value::DateTime(d)) => Value::DateTime(*d),
-        _ => return Err(WriteError::Refused(format!("#{entity} has no {from_name} date"))),
+        _ => {
+            return Err(WriteError::Refused(format!(
+                "{} has no {from_name} date",
+                display_name(store, e)
+            )))
+        }
     };
     let next_name = RING[(position + 1) % RING.len()];
     let next = property_id(store, next_name)
         .ok_or(WriteError::Refused(format!("no property named {next_name}")))?;
     if e.get(next).is_some() {
-        return Err(WriteError::Refused(format!("#{entity} already carries {next_name}")));
+        return Err(WriteError::Refused(format!(
+            "{} already carries {next_name}",
+            display_name(store, e)
+        )));
     }
     session
         .commit(
@@ -627,7 +636,14 @@ pub fn add_cell(session: &mut Session, id: Id, prop_name: &str, raw: &str) -> Re
     // same guard the clerk's `related` proposer applies). Only add is guarded;
     // remove stays open so any pre-existing self-reference can still be cleared.
     if value == Value::Reference(id) {
-        return Err(format!("#{id} cannot reference itself"));
+        // A REFUSAL IS READ BY A PERSON, so it names the thing rather
+        // than numbering it (owner, 2026-09-13).
+        let what = session
+            .store()
+            .get(id)
+            .map(|e| display_name(session.store(), e))
+            .unwrap_or_else(|| "that".to_string());
+        return Err(format!("{what} cannot reference itself"));
     }
     if session.store().get(id).is_some_and(|e| e.has(property, &value)) {
         return Ok(());
@@ -1733,11 +1749,36 @@ pub fn display_name(store: &Store, entity: &Entity) -> String {
 }
 
 /// The note's own display name: the name cell, else its FIRST non-empty
-/// line with any block marker stripped. Never a whole-body summary.
+/// line with any block marker stripped, else a name MADE for it.
+///
+/// **An id is never a name** (owner, 2026-09-13: *"LivID shouldn't be read
+/// by the user"*). This used to end `format!("#{}", entity.id)` and that
+/// string is the snapshot's `title` — so it reached every list, the
+/// workspace switcher, the outbox ledger and every exported file's
+/// front-matter. The shell mapped it away on exactly one surface.
 pub(crate) fn source_name(store: &Store, entity: &Entity, rich: &RichText) -> String {
+    given_name(store, entity, rich).unwrap_or_else(|| liv_views::made_name(store, entity))
+}
+
+/// Was this thing actually NAMED, by a name cell or by its own first line?
+///
+/// The shell needs to know, because a made name is still not a given one
+/// and a list draws it more quietly. It used to ask by comparing the title
+/// against `"#<id>"`, which stopped being a thing the core sends.
+pub fn is_unnamed(store: &Store, entity: &Entity) -> bool {
+    let empty = RichText::default();
+    let rich = match entity.get(props::CONTENT) {
+        Some(Value::RichText(r)) => r,
+        _ => &empty,
+    };
+    given_name(store, entity, rich).is_none()
+}
+
+/// The name someone gave it, if anyone did.
+fn given_name(store: &Store, entity: &Entity, rich: &RichText) -> Option<String> {
     if let Some(Value::Text(name)) = entity.get(props::NAME) {
         if !name.trim().is_empty() {
-            return name.clone();
+            return Some(name.clone());
         }
     }
     let mut text = String::new();
@@ -1749,7 +1790,7 @@ pub(crate) fn source_name(store: &Store, entity: &Entity, rich: &RichText) -> St
                 if started {
                     let line = strip_marker(&block, &text);
                     if !line.is_empty() {
-                        return line;
+                        return Some(line);
                     }
                     text.clear();
                 }
@@ -1768,9 +1809,9 @@ pub(crate) fn source_name(store: &Store, entity: &Entity, rich: &RichText) -> St
     }
     let line = strip_marker(&block, &text);
     if line.is_empty() {
-        format!("#{}", entity.id)
+        None
     } else {
-        line
+        Some(line)
     }
 }
 

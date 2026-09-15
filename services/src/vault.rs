@@ -227,7 +227,7 @@ pub fn render_vault_entity(store: &Store, id: Id) -> Option<String> {
                     .get(target)
                     .and_then(|e| e.get(props::NAME))
                     .map(|v| liv_views::display(store, v))
-                    .unwrap_or_else(|| format!("#{target}"))
+                    .unwrap_or_else(|| crate::tasks::name_of(store, target))
             });
             out.push_str(&body);
         }

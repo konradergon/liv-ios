@@ -1,0 +1,14 @@
+[package]
+name = "liv-convert"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "liv_convert"
+
+[dependencies]
+liv-core = { path = "../core" }
+liv-engine = { path = "../engine" }
+
+[dev-dependencies]
+liv-services = { path = "../services" }

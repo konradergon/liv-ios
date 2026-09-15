@@ -54,7 +54,7 @@ final class EditorBridge: ObservableObject {
     /// Finish the `[[` being typed with a real target.
     /// Write a link to `id` where the caret is: over the `[[query` being
     /// typed when there is one, else inserted whole.
-    func placeLink(id: UInt64, name: String) {
+    func placeLink(id: LivEntityID, name: String) {
         coordinator?.placeLink(id: id, name: name)
     }
 
@@ -76,11 +76,24 @@ final class EditorBridge: ObservableObject {
 // MARK: - fonts
 
 private enum EditorFont {
-    // Bumped one step across the board (owner, 2026-07-31: "clearer,
-    // larger text") — reading comfort beats density in the editor.
-    static let body = UIFont.systemFont(ofSize: 16)
-    static let mono = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    static let codeInline = UIFont.monospacedSystemFont(ofSize: 14.5, weight: .regular)
+    // THE SIZES LIVE IN `LivType.Editor` (Theme.swift), not here. They
+    // were six literals in this file, dated 2026-07-31 — they predate
+    // `LivType` entirely — and standing rule 3 says a size lives in a
+    // type. Moved unchanged on 2026-09-07, values bit-identical, so the
+    // drift they carry is now visible where the rest of the scale is:
+    // this body is 16 while every list row that opens a note is 18.
+    //
+    // One of the six is gone (2026-09-12): a 12pt monospace whose only
+    // reader had been removed on 2026-08-11 and which therefore drew
+    // nothing. See `LivType.Editor`'s own comment for why it is worth
+    // knowing that a cited drift was never on screen.
+    //
+    // These are `UIFont`s because the editor draws with TextKit, which
+    // never sees a SwiftUI font — different UNITS, not different
+    // numbers.
+    static let body = UIFont.systemFont(ofSize: LivType.Editor.body)
+    static let codeInline = UIFont.monospacedSystemFont(
+        ofSize: LivType.Editor.codeInline, weight: .regular)
 
     /// The list GUTTER: every list line's words start this far in, and a
     /// line that wraps carries on under its words rather than under its
@@ -114,9 +127,9 @@ private enum EditorFont {
 
     static func heading(_ level: Int) -> UIFont {
         switch level {
-        case 1: return .systemFont(ofSize: 25, weight: .bold)
-        case 2: return .systemFont(ofSize: 21, weight: .semibold)
-        default: return .systemFont(ofSize: 18, weight: .semibold)
+        case 1: return .systemFont(ofSize: LivType.Editor.h1, weight: .bold)
+        case 2: return .systemFont(ofSize: LivType.Editor.h2, weight: .semibold)
+        default: return .systemFont(ofSize: LivType.Editor.h3, weight: .semibold)
         }
     }
 
@@ -212,18 +225,21 @@ enum MarkStyler {
 
     /// The digits inside a `[[…]]` token — the same grammar the codec
     /// parses, so what is tappable and what is stored can never disagree.
-    private static func refId(_ line: String, _ token: NSRange) -> UInt64? {
+    private static func refId(_ line: String, _ token: NSRange) -> LivEntityID? {
         let n = line as NSString
         guard token.length > 4 else { return nil }
+        // Hex, matching `SpanText.token`: the two halves of one grammar
+        // (standing rule 4), and decimal here read an engine id as its
+        // leading digits — a plausible id for something else.
         var digits = ""
         var i = token.location + 2
         while i < NSMaxRange(token) {
             let c = n.character(at: i)
-            guard c >= 0x30, c <= 0x39 else { break }
+            guard LivIDText.isIdChar(c) else { break }
             digits.append(Character(UnicodeScalar(c)!))
             i += 1
         }
-        return UInt64(digits)
+        return LivIDText.tokenId(digits)
     }
 
     private static func style(
@@ -250,7 +266,7 @@ enum MarkStyler {
         func dim(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             storage.addAttributes(
-                [.font: font, .foregroundColor: LivInk.muted], range: abs(r))
+                [.font: font, .foregroundColor: LivInk.text2], range: abs(r))
         }
 
         /// Syntax OFF the caret's line has no glyphs at all — not clear
@@ -348,6 +364,24 @@ enum MarkStyler {
                 range: abs(NSRange(location: NSMaxRange(visible) - 1, length: 1)))
         }
 
+        /// Hidden EVEN ON THE CARET'S LINE. `mark` below reveals there,
+        /// which is the markdown-editor bargain: you can see the syntax
+        /// you are standing in. A link's id is not part of that bargain
+        /// — it is thirty-two characters of machine address, longer than
+        /// the words around it, and revealing it made the line you are
+        /// editing the one line you cannot read (owner, 2026-09-14:
+        /// "links still show the id when focused, should just be like
+        /// [[name]]").
+        ///
+        /// Only the refToken case reaches this directly. Everything else
+        /// comes through `mark` and still reveals, because everything
+        /// else is syntax a person types.
+        func hide(_ r: NSRange, font: UIFont = EditorFont.body) {
+            guard r.length > 0 else { return }
+            storage.addAttributes(
+                [.font: font, .livHidden: NSNumber(value: true)], range: abs(r))
+        }
+
         func mark(_ r: NSRange, font: UIFont = EditorFont.body) {
             guard r.length > 0 else { return }
             // A marker with NO content is the only thing there is to
@@ -357,8 +391,7 @@ enum MarkStyler {
             if revealed || r.length >= lineLen {
                 dim(r, font: font)
             } else {
-                storage.addAttributes(
-                    [.font: font, .livHidden: NSNumber(value: true)], range: abs(r))
+                hide(r, font: font)
             }
         }
 
@@ -417,9 +450,9 @@ enum MarkStyler {
                 if content.length > 0 {
                     storage.addAttributes(
                         [
-                            .foregroundColor: LivInk.muted,
+                            .foregroundColor: LivInk.text2,
                             .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                            .strikethroughColor: LivInk.muted,
+                            .strikethroughColor: LivInk.text2,
                         ], range: abs(content))
                 }
             }
@@ -450,7 +483,7 @@ enum MarkStyler {
                 // the drawn rule could never sit where the dashes sat
                 // (found measuring, 2026-08-07).
                 storage.addAttribute(
-                    .foregroundColor, value: LivInk.muted,
+                    .foregroundColor, value: LivInk.text2,
                     range: abs(NSRange(location: 0, length: lineLen)))
             } else {
                 let ruleStyle = NSMutableParagraphStyle()
@@ -501,15 +534,31 @@ enum MarkStyler {
                         ], range: abs(r))
                 }
             case .refToken(let whole, let name):
-                // The link reads as a value: name (or id) in accent, the
-                // bracket/id plumbing dimmed. The livRef attribute is what
-                // makes a tap open the target (phase 2).
-                // A link reads as its NAME. The brackets and the id are
-                // the storage, and off the caret's line they are not
-                // shown at all.
-                if let name, name.length > 0, !revealed {
-                    mark(NSRange(location: whole.location, length: name.location - whole.location))
-                    mark(
+                // **A link reads as its NAME, and only its name** (owner,
+                // 2026-09-14: "only render things end users would care
+                // about"). The brackets and the id are storage.
+                //
+                // This used to reveal the plumbing on the caret's line,
+                // the way a markdown editor shows you the syntax you are
+                // standing in. That was fine when an id was `4155`: four
+                // grey characters. An engine id is THIRTY-TWO, so the
+                // plumbing is longer than the content, the caret has to
+                // walk through all of it, and the line is unreadable
+                // while you edit it — which is the one place you need to
+                // read it.
+                //
+                // Nothing is lost by hiding it. The id is not something
+                // anyone can use: it is not memorable, not typed, and not
+                // checked by eye. The name is the link.
+                //
+                // `hide`, not `mark`: `mark` reveals on the caret's line,
+                // which is right for a `#` and wrong for a 32-character
+                // id. Changing WHICH branch runs here was not enough —
+                // both branches went through `mark`, so the plumbing came
+                // back the moment the caret landed on the line.
+                if let name, name.length > 0 {
+                    hide(NSRange(location: whole.location, length: name.location - whole.location))
+                    hide(
                         NSRange(
                             location: NSMaxRange(name),
                             length: NSMaxRange(whole) - NSMaxRange(name)))
@@ -518,7 +567,10 @@ enum MarkStyler {
                 }
                 if let id = refId(line, whole) {
                     storage.addAttribute(
-                        .livRef, value: NSNumber(value: id), range: abs(whole))
+                        // **The id as text, not a number.** An NSNumber
+                        // holds the low eight bytes of a sixteen-byte id,
+                        // so a tap opened something that did not exist.
+                        .livRef, value: id.hex as NSString, range: abs(whole))
                 }
                 if let name, name.length > 0 {
                     storage.addAttributes(
@@ -602,7 +654,7 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 y: rect.minY + EditorFont.ruleCenterFromTop - 0.5,
                 width: container.size.width - container.lineFragmentPadding * 2 - inset * 2,
                 height: 1)
-            LivInk.muted.setFill()
+            LivInk.text2.setFill()
             UIBezierPath(rect: line).fill()
         }
         storage.enumerateAttribute(.livBullet, in: charRange) { value, range, _ in
@@ -653,7 +705,7 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 check.stroke()
             } else {
                 path.lineWidth = 1.5
-                LivInk.muted.setStroke()
+                LivInk.text2.setStroke()
                 path.stroke()
             }
         }
@@ -702,12 +754,23 @@ final class MarkdownTextView: UITextView {
     /// scrolls with the body: the title starts below the floating circles
     /// and slides up under them as you read. A separate SwiftUI header
     /// could never do that — it would stay pinned.
+    /// ONE TITLE FONT, read by the field and by its grey prompt. It was
+    /// the same expression written twice, which is the shape standing
+    /// rule 4 names — and the two have to agree or the prompt jumps to a
+    /// different size the moment you type over it.
+    static let titleFont = UIFont.systemFont(ofSize: LivType.hero, weight: .bold)
+
     let titleView: UITextView = {
         let v = UITextView()
         v.isScrollEnabled = false
         v.backgroundColor = .clear
-        v.font = .systemFont(ofSize: LivType.hero, weight: .bold)
+        v.font = MarkdownTextView.titleFont
         v.textColor = LivInk.text
+        // THE CARET IS OURS. A UIViewRepresentable does not reliably
+        // inherit the SwiftUI tint, so without this the caret, the
+        // selection highlight and the drag handles in the app's main
+        // writing surface came out the device's blue (2026-09-07).
+        v.tintColor = LivInk.accent
         v.textContainerInset = .zero
         v.textContainer.lineFragmentPadding = 0
         v.returnKeyType = .done
@@ -720,8 +783,8 @@ final class MarkdownTextView: UITextView {
     /// The derived title, in grey, when no name cell exists.
     let titlePrompt: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: LivType.hero, weight: .bold)
-        l.textColor = LivInk.muted
+        l.font = MarkdownTextView.titleFont
+        l.textColor = LivInk.text2
         l.numberOfLines = 3
         l.lineBreakMode = .byTruncatingTail
         l.isUserInteractionEnabled = false
@@ -742,6 +805,9 @@ final class MarkdownTextView: UITextView {
         backgroundColor = .clear
         font = EditorFont.body
         textColor = LivInk.text
+        // See `titleView` above: the body's caret needs this for the
+        // same reason the title's does.
+        tintColor = LivInk.accent
         // Both of these belong to a view that scrolls ITSELF. Embedded,
         // the card's own ScrollView owns the swipe-to-dismiss
         // (scrollDismissesKeyboard) and there is nothing to bounce —
@@ -785,9 +851,17 @@ final class MarkdownTextView: UITextView {
     /// layoutSubviews, and the whole document silently stops drawing
     /// (found live — the note went blank). Layout only positions; this
     /// runs from the update path instead.
-    /// The title's minimum height — one line of LivType.hero. Shared
-    /// with the initial inset above, which used to repeat the literal.
-    static let titleFloor: CGFloat = 32
+    ///
+    /// THE FLOOR IS THE TITLE'S POINT SIZE, not a rendered line of it.
+    /// It read `32` and the comment above it said "one line of
+    /// LivType.hero" — both are 32 today, so the literal was right and
+    /// the sentence was not: a rendered line of 32pt bold measures about
+    /// 37.5, so nothing has been floored by this since `hero` reached 32
+    /// on 2026-08-31. What it still does is SEED `titleHeight` before
+    /// the title has been measured once, which is the initial top inset
+    /// and one frame of it. Derived now, so it cannot fall behind `hero`
+    /// a second time.
+    static let titleFloor: CGFloat = LivType.hero
     private var titleHeight: CGFloat = MarkdownTextView.titleFloor
 
     func refreshTitleLayout() {
@@ -873,7 +947,18 @@ final class MarkdownTextView: UITextView {
 /// text and focus flow through the bindings; the save engine stays in
 /// NoteEditorModel, untouched.
 struct MarkdownEditor: UIViewRepresentable {
-    @Binding var text: String
+    /// THE BUFFER, by value. It was `@Binding` to a `@Published`
+    /// property, so every keystroke re-entered the SwiftUI graph and came
+    /// back down here to be compared against the view's own copy — a
+    /// document-length comparison to learn nothing had changed that this
+    /// view had not just done itself.
+    var text: String
+    /// HOW MANY TIMES THE MODEL HAS REPLACED THE TEXT (a load, a conflict
+    /// swap, a re-applied draft). The view follows THIS, not the string:
+    /// when it moves, the buffer is genuinely somebody else's.
+    var imposed: Int
+    /// A keystroke, going up. The text view has already changed itself.
+    var onEdit: (String) -> Void
     @Binding var focused: Bool
     /// The note's name cell, edited in the scrolling title line.
     @Binding var title: String
@@ -885,7 +970,7 @@ struct MarkdownEditor: UIViewRepresentable {
     /// verbs SwiftUI calls back with.
     var bridge: EditorBridge
     /// A tapped `[[…]]` — the desk opens it as a tab.
-    var onOpenRef: (UInt64) -> Void
+    var onOpenRef: (LivEntityID) -> Void
     /// The toolbar's link key — NoteEditor presents SEARCH.
     var onLink: () -> Void
     /// The toolbar's `+` — NoteEditor raises the insert menu.
@@ -901,7 +986,7 @@ struct MarkdownEditor: UIViewRepresentable {
     var embedded: Bool = false
     /// Whose caret to remember (LivCaret). 0 for a record's notes, which
     /// live inside a card that is not torn down by navigation.
-    var note: UInt64 = 0
+    var note: LivEntityID = 0
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView(showsTitle: showsTitle)
@@ -928,10 +1013,17 @@ struct MarkdownEditor: UIViewRepresentable {
             view.titlePrompt.isHidden = !title.isEmpty
             view.refreshTitleLayout()
         }
-        if view.text != text {
+        if context.coordinator.appliedImposed != imposed {
+            context.coordinator.appliedImposed = imposed
             // Programmatic set (load, conflict swap, re-apply): keep the
             // caret sane. Styling arrives via the storage delegate — every
             // character mutation flows through it.
+            //
+            // THE COUNTER, NOT THE STRING (2026-09-06). Comparing
+            // `view.text != text` read the whole document on every
+            // keystroke to decide it had nothing to do. The model bumps
+            // `imposed` exactly when the words are its own, which is the
+            // question this branch was asking.
             let selected = view.selectedRange
             view.text = text
             let n = (text as NSString).length
@@ -965,8 +1057,37 @@ struct MarkdownEditor: UIViewRepresentable {
             // so nothing else recomputes it here).
             context.coordinator.scheduleOutline(text)
         }
+        // TAKING FOCUS HAPPENS AFTER THE UPDATE, NEVER INSIDE IT.
+        //
+        // `updateUIView` runs while SwiftUI is part-way through its own
+        // update pass. Becoming first responder from in here calls back
+        // into SwiftUI synchronously — UIKit tells the hosting view the
+        // responder changed, and `_UIHostingView._didChange(toFirstRespon
+        // der:)` starts a fresh graph transaction on top of the one still
+        // running. The graph is then asked for a value it is already
+        // computing, which is the definition of a cycle.
+        //
+        // Measured 2026-08-30: opening a note fired 57 of them, every one
+        // through this line. 57 backtraces, sampled with a breakpoint on
+        // `AG::Graph::print_cycle`, all carried the same six frames —
+        // updateUIView -> becomeFirstResponder -> _setFirstResponder: ->
+        // _didChange(toFirstResponder:) -> runTransaction -> the graph.
+        // A cycle wedges that subtree's update loop: bodies keep
+        // evaluating with the right values while the pixels stop moving,
+        // which is the failure this app has now been bitten by three
+        // times (see LivBar.room and LivTopScrim for the other two).
+        //
+        // One hop of the main queue puts it after the transaction, and
+        // the caret still lands before anything is drawn. The guards are
+        // RE-CHECKED on arrival: a note closed in that hop must not pull
+        // the keyboard back up.
         if focused, !view.isFirstResponder, view.window != nil, editable {
-            view.becomeFirstResponder()
+            DispatchQueue.main.async { [weak view] in
+                guard let view, !view.isFirstResponder, view.window != nil,
+                    view.isEditable
+                else { return }
+                view.becomeFirstResponder()
+            }
         }
     }
 
@@ -1007,6 +1128,9 @@ struct MarkdownEditor: UIViewRepresentable {
         /// Has this mount already put the caret where it was left? One
         /// shot: after that the live caret is the truth (LivCaret).
         var restored = false
+        /// The `imposed` count this coordinator has already put into the
+        /// view, so an imposition is applied once and typing is free.
+        var appliedImposed = 0
 
         init(_ parent: MarkdownEditor) { self.parent = parent }
 
@@ -1134,7 +1258,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // programmatic-set branch above is the only other place that
             // sets this, and typing never goes through it.
             restored = true
-            parent.text = textView.text
+            parent.onEdit(textView.text)
             trackLink(in: textView)
             scheduleOutline(textView.text)
             keepCaretVisible(textView)
@@ -1216,7 +1340,7 @@ struct MarkdownEditor: UIViewRepresentable {
         /// The published range can lapse while the sheet is up — the
         /// text view is no longer first responder — so this rescans
         /// before giving up on it.
-        func placeLink(id: UInt64, name: String) {
+        func placeLink(id: LivEntityID, name: String) {
             if parent.bridge.openLink == nil, let view,
                 let fresh = MarkScan.openLink(
                     view.text, caret: view.selectedRange.location)
@@ -1230,7 +1354,7 @@ struct MarkdownEditor: UIViewRepresentable {
             completeLink(id: id, name: name)
         }
 
-        private func completeLink(id: UInt64, name: String) {
+        private func completeLink(id: LivEntityID, name: String) {
             guard let view, let link = parent.bridge.openLink else { return }
             // The published range can only lag by a runloop hop, but a hop
             // is enough if the buffer moved: verify before replacing, and
@@ -1250,7 +1374,7 @@ struct MarkdownEditor: UIViewRepresentable {
             let result = EditOps.completeLink(
                 view.text, token: token, id: id, name: name)
             applyThroughSystem(result, to: view)
-            parent.text = view.text
+            parent.onEdit(view.text)
             parent.bridge.openLink = nil
             suppressedLink = nil
             scheduleOutline(view.text)
@@ -1469,8 +1593,10 @@ struct MarkdownEditor: UIViewRepresentable {
             let point = gesture.location(in: view)
             // A tap on a link follows it (Obsidian's shipped iOS grammar —
             // long-press still places the caret through the native loupe).
-            if let id = hit(.livRef, at: point)?.value {
-                parent.onOpenRef(UInt64(truncating: id))
+            if let text = hit(.livRef, at: point)?.value as? String,
+                let id = LivEntityID(hex: text)
+            {
+                parent.onOpenRef(id)
                 return
             }
             guard let result = EditOps.toggleTask(view.text, at: characterIndex(of: point))
@@ -1508,17 +1634,26 @@ struct MarkdownEditor: UIViewRepresentable {
         /// for any point — an index-only gate would swallow taps in empty
         /// space below a trailing task line and silently toggle it (the
         /// audit's finding). Everything else stays native text handling.
+        ///
+        /// **The value comes back as `Any`.** It was typed `NSNumber`,
+        /// which is what `.livTaskBox` carries — and then `.livRef`
+        /// became an `NSString` (an id is sixteen bytes; an NSNumber held
+        /// the low eight and opened something that did not exist). The
+        /// cast below simply failed for links, so `found` stayed nil:
+        /// no tap was a link tap, and `shouldReceive` said no as well,
+        /// which is the whole of "they are not clickable" (owner,
+        /// 2026-09-14). Nothing announced it — a failed `as?` is a nil,
+        /// and a nil here means "you did not tap a link".
         private func hit(
             _ key: NSAttributedString.Key, at point: CGPoint, slack: CGFloat = 6
-        ) -> (range: NSRange, value: NSNumber)? {
+        ) -> (range: NSRange, value: Any)? {
             guard let view = view, (view.text as NSString).length > 0 else { return nil }
             let index = characterIndex(of: point)
             let n = (view.text as NSString).length
-            var found: (NSRange, NSNumber)?
+            var found: (NSRange, Any)?
             for probe in [index, index - 1, index + 1] where probe >= 0 && probe < n {
                 var effective = NSRange(location: 0, length: 0)
                 if let value = view.textStorage.attribute(key, at: probe, effectiveRange: &effective)
-                    as? NSNumber
                 {
                     found = (effective, value)
                     break

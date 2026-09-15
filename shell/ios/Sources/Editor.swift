@@ -56,7 +56,7 @@ enum BlockJSON: Equatable {
 enum SpanJSON: Equatable {
     case text(String, marks: UInt8)
     case brk(BlockJSON)
-    case ref(UInt64)
+    case ref(LivEntityID)
 }
 
 extension SpanJSON: Codable {
@@ -123,7 +123,7 @@ extension SpanJSON: Codable {
             } else {
                 self = .brk(.other)
             }
-        } else if let id = try? c.decode(UInt64.self, forKey: .Ref) {
+        } else if let id = try? c.decode(LivEntityID.self, forKey: .Ref) {
             self = .ref(id)
         } else {
             // An unknown span kind: keep the document, lose nothing that was
@@ -208,14 +208,14 @@ enum SpanText {
     /// the token's. The scanner closed there, the leftover "]" fell into
     /// the note as text, and it compounded: one bracket per save, five
     /// saves gave "]]]]] today" (measured, 2026-08-11).
-    static func token(_ id: UInt64, name: String?) -> String {
+    static func token(_ id: LivEntityID, name: String?) -> String {
         let raw = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return "[[\(id)]]" }
+        guard !raw.isEmpty else { return "[[\(id.hex)]]" }
         let clean =
             raw
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "]", with: "] ")
-        return "[[\(id)|\(clean)]]"
+        return "[[\(id.hex)|\(clean)]]"
     }
 
     /// Spans → the editing buffer. A Break opens a paragraph, so a LEADING
@@ -228,7 +228,7 @@ enum SpanText {
     /// stores the structure. Ordered numbers are presentation: each
     /// consecutive run counts from 1, per depth, whatever was typed.
     static func spansToText(
-        _ spans: [SpanJSON], name: (UInt64) -> String? = { _ in nil }
+        _ spans: [SpanJSON], name: (LivEntityID) -> String? = { _ in nil }
     ) -> String {
         var out = ""
         var wrote = false
@@ -360,7 +360,7 @@ enum SpanText {
     }
 
     static func textToSpans(
-        _ text: String, isKnown: (UInt64) -> Bool = { _ in true }
+        _ text: String, isKnown: (LivEntityID) -> Bool = { _ in true }
     ) -> [SpanJSON] {
         var out: [SpanJSON] = []
         // A fence is the one block that is a RANGE, not a line prefix, so
@@ -440,7 +440,7 @@ enum SpanText {
     /// carries the mark bit, ref tokens become Refs (or stay literal
     /// when unknown). Plain stretches between runs are plain text.
     private static func lineSpans(
-        _ content: String, isKnown: (UInt64) -> Bool
+        _ content: String, isKnown: (LivEntityID) -> Bool
     ) -> [SpanJSON] {
         let n = content as NSString
         var out: [SpanJSON] = []
@@ -525,8 +525,8 @@ enum SpanText {
     /// every one of them to catch an escaped hash is the wrong trade.
     static func carriesFormatting(
         _ spans: [SpanJSON],
-        name: (UInt64) -> String? = { _ in nil },
-        isKnown: (UInt64) -> Bool = { _ in true }
+        name: (LivEntityID) -> String? = { _ in nil },
+        isKnown: (LivEntityID) -> Bool = { _ in true }
     ) -> Bool {
         spans.contains { span in
             switch span {
@@ -565,8 +565,8 @@ enum SpanText {
 
     private static func roundTrip(
         _ spans: [SpanJSON],
-        name: (UInt64) -> String? = { _ in nil },
-        isKnown: (UInt64) -> Bool = { _ in true }
+        name: (LivEntityID) -> String? = { _ in nil },
+        isKnown: (LivEntityID) -> Bool = { _ in true }
     ) -> [SpanJSON] {
         normalised(textToSpans(spansToText(spans, name: name), isKnown: isKnown))
     }
@@ -580,16 +580,24 @@ enum SpanText {
         return Array(spans.dropFirst())
     }
 
-    /// "[[" digits ("|" anything-without-"]]")? "]]" — or nil, and the "[["
+    /// "[[" hex ("|" anything-without-"]]")? "]]" — or nil, and the "[["
     /// stays literal text. Never lenient: a half-typed token is text.
-    private static func token(_ c: [Character], from start: Int) -> (UInt64, Int)? {
+    ///
+    /// **Hex, because an id is sixteen bytes.** This read decimal digits
+    /// and stopped at the first letter, which for an engine id means it
+    /// either found nothing or — worse — found the leading digits of the
+    /// hex and returned a plausible id for something else entirely. A
+    /// link has to round-trip through the text exactly: `.ref(id)` is
+    /// written here and read back here, and anything lossy in between
+    /// silently repoints it.
+    private static func token(_ c: [Character], from start: Int) -> (LivEntityID, Int)? {
         var i = start + 2
         var digits = ""
-        while i < c.count, c[i].isASCII, c[i].isNumber {
+        while i < c.count, LivIDText.isIdChar(c[i]) {
             digits.append(c[i])
             i += 1
         }
-        guard !digits.isEmpty, let id = UInt64(digits) else { return nil }
+        guard let id = LivIDText.tokenId(digits) else { return nil }
         if i + 1 < c.count, c[i] == "]", c[i + 1] == "]" { return (id, i + 2) }
         guard i < c.count, c[i] == "|" else { return nil }
         i += 1
@@ -607,13 +615,76 @@ enum SaveOutcome {
     case clean, saved, stale, busy, invalid
 }
 
+/// HOW FAR THE BUFFER HAS RUN AHEAD OF THE BOX, counted rather than
+/// compared.
+///
+/// The editor used to answer "is this note dirty?" by comparing the whole
+/// buffer against the last thing it saved. Correct, and O(note) on every
+/// keystroke. The comparison earned its keep in one place, which is the
+/// only reason this is a pair of counters and not a flag: a save takes a
+/// COPY of the buffer and travels, and anything typed while it is away
+/// belongs to the NEXT save. A flag set false on arrival would drop those
+/// keystrokes; comparing against what actually landed did not.
+///
+/// So a save marks itself with the buffer it left with, and cleans only
+/// up to that mark.
+struct LivEdits: Equatable {
+    /// Keystrokes since this note was loaded.
+    private(set) var typed = 0
+    /// The mark of the newest save that has landed.
+    private(set) var saved = 0
+
+    var dirty: Bool { typed != saved }
+
+    mutating func edited() { typed &+= 1 }
+
+    /// The buffer a save is leaving with.
+    func inFlight() -> Int { typed }
+
+    /// That save landed. NEVER moves backwards: a retry can put two saves
+    /// in the air, and the older one arriving second must not undo the
+    /// newer one's mark.
+    mutating func landed(_ mark: Int) { saved = max(saved, mark) }
+
+    /// The box's own words arrived — nothing to save.
+    mutating func settle() { saved = typed }
+}
+
 /// The editor's whole state machine. Every save presents the base
 /// fingerprint back to the seam — a save is to a value, never a moment —
 /// and a refused (stale) save NEVER overwrites: the fresh content comes
 /// back, the draft waits in memory behind a banner.
 final class NoteEditorModel: ObservableObject {
-    /// The editing buffer. The one place the user's words live.
-    @Published var text = ""
+    /// THE EDITING BUFFER, and it is NOT `@Published` (2026-09-06).
+    ///
+    /// It used to be, and every keystroke therefore pushed the whole
+    /// document into the SwiftUI graph: the body re-evaluated, the
+    /// representable was rebuilt, `updateUIView` compared the entire
+    /// string against the view's own copy to decide it had not changed,
+    /// and `dirty` compared it against the stored copy as well. Two
+    /// whole-document comparisons and a graph invalidation, per
+    /// character, for a change the text view had already made itself.
+    ///
+    /// The text view owns the text while you type — it is the thing you
+    /// are typing into. This holds the same string so the save engine
+    /// has something to send, and `imposed` below is how the model
+    /// tells the view when the model, not the user, changed it.
+    var text = ""
+
+    /// A COUNTER, BUMPED WHEN THE MODEL REPLACES THE TEXT — a load, a
+    /// conflict swap, a re-applied draft. This is published; the buffer
+    /// is not. `updateUIView` sets `view.text` when this moves and
+    /// otherwise leaves the view alone, so typing no longer costs a
+    /// document-length comparison.
+    @Published private(set) var imposed = 0
+
+    /// The first line, with its markdown markers taken off — what an
+    /// unnamed note shows as its title. Published, because the buffer
+    /// is not: the view can no longer derive it per keystroke.
+    /// Recomputed only when the FIRST LINE changes, which is almost
+    /// never while you are typing further down.
+    @Published private(set) var derivedTitle = ""
+    private var firstLine = ""
     @Published private(set) var loaded = false
     /// The box opened and holds no such entity.
     @Published private(set) var missing = false
@@ -631,14 +702,37 @@ final class NoteEditorModel: ObservableObject {
 
     private(set) var draft: String?
     private(set) var base: UInt64 = 0
+    /// The row recency this editor has already reacted to. Seeded on
+    /// load so the snapshot that CARRIED the load does not immediately
+    /// look like a change — see `snapshotArrived`.
+    private var seenTouch: UInt64 = 0
+    /// **OUR OWN SAVE MOVES IT TOO.** A successful write bumps the row's
+    /// recency, so the very next snapshot would look like somebody else
+    /// had edited the note and this would reload the text out from under
+    /// the caret. The save knows it is about to cause one; this is it
+    /// saying so.
+    private var adoptNextTouch = false
 
-    /// What the box holds right now, as text. Dirty is a comparison, so a
-    /// note that is merely READ is never re-written — no open-and-flatten.
-    private var storedText = ""
-    var dirty: Bool { loaded && !missing && text != storedText }
+    /// WHAT THE BOX HAS versus WHAT YOU HAVE TYPED, counted.
+    ///
+    /// This was `text != storedText` — O(note) on every keystroke. The
+    /// comparison did get one thing right for free, and the counter has
+    /// to keep it: text typed WHILE a save is in flight must stay dirty,
+    /// because that save carried an older buffer. `LivEdits` marks each
+    /// save with the buffer it left with and only cleans up to that
+    /// mark.
+    ///
+    /// One deliberate difference: type a character and delete it again
+    /// and the counter still says dirty where the comparison said clean,
+    /// so one redundant save goes out. That is safe — the core's
+    /// `set_content` treats writing what is already there as a no-op
+    /// before it checks the base — and it is the price of not reading
+    /// the whole note to answer a question about one keystroke.
+    private var edits = LivEdits()
+    var dirty: Bool { loaded && !missing && edits.dirty }
 
     private weak var box: BoxModel?
-    private var id: UInt64 = 0
+    private var id: LivEntityID = 0
     private var idleTimer: Timer?
     private var checkpointTimer: Timer?
     private var saving = false
@@ -649,7 +743,7 @@ final class NoteEditorModel: ObservableObject {
 
     // MARK: lifecycle
 
-    func attach(box: BoxModel, id: UInt64) {
+    func attach(box: BoxModel, id: LivEntityID) {
         guard self.box == nil else {
             // Re-appear after a full-screen cover (a feature window, the
             // tab view, search, the camera): the cover fired onDisappear →
@@ -681,7 +775,7 @@ final class NoteEditorModel: ObservableObject {
         checkpointTimer = nil
     }
 
-    private func title(_ target: UInt64) -> String? {
+    private func title(_ target: LivEntityID) -> String? {
         guard let row = box?.entity(target), let t = row.title, !t.isEmpty else { return nil }
         return t
     }
@@ -707,6 +801,7 @@ final class NoteEditorModel: ObservableObject {
             }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
+            self.seenTouch = self.box?.entity(self.id)?.recency ?? 0
             self.flattens = SpanText.carriesFormatting(
                 spans,
                 name: { [weak self] in self?.title($0) },
@@ -722,10 +817,38 @@ final class NoteEditorModel: ObservableObject {
                 // "optimise" trashed rows out of `entities`.
                 isKnown: { [weak box] id in box?.entity(id) != nil })
             let fresh = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
-            self.storedText = fresh
-            self.text = fresh
             self.loaded = true
+            self.impose(fresh, dirty: false)
         }
+    }
+
+    /// A KEYSTROKE. The text view has already changed itself; this
+    /// records it, marks the buffer dirty and arms the save clocks.
+    func userEdited(_ fresh: String) {
+        text = fresh
+        edits.edited()
+        refreshDerivedTitle()
+        textChanged()
+    }
+
+    /// THE MODEL CHANGING THE TEXT: a load, a conflict swap, a
+    /// re-applied draft. The view is told by `imposed`; whether the
+    /// result is dirty depends on where the words came from — the box's
+    /// own words are clean, a re-applied draft is not.
+    private func impose(_ fresh: String, dirty: Bool) {
+        text = fresh
+        if dirty { edits.edited() } else { edits.settle() }
+        refreshDerivedTitle()
+        imposed &+= 1
+    }
+
+    /// The title costs a LINE, not a document — and only when that line
+    /// has actually moved.
+    private func refreshDerivedTitle() {
+        let head = livFirstLine(text)
+        guard head != firstLine else { return }
+        firstLine = head
+        derivedTitle = livDisplayTitle(head)
     }
 
     // MARK: typing → transactions (the macOS loss budget, verbatim)
@@ -776,11 +899,14 @@ final class NoteEditorModel: ObservableObject {
         checkpointTimer?.invalidate()
         checkpointTimer = nil
         let payload = text
+        // The buffer this save is leaving with. Keystrokes after this
+        // line belong to the next one.
+        let mark = edits.inFlight()
         // Ruling 5: a token pointing at nothing in THIS box saves as text,
         // never as a Ref the core would refuse.
-        let known: (UInt64) -> Bool = { [weak box] id in box?.entity(id) != nil }
+        let known: (LivEntityID) -> Bool = { [weak box] id in box?.entity(id) != nil }
         let spans = SpanText.textToSpans(payload, isKnown: known)
-        attempt(box: box, json: SpanText.json(spans), payload: payload, base: base, retries: 3) {
+        attempt(box: box, json: SpanText.json(spans), mark: mark, base: base, retries: 3) {
             [weak self] outcome in
             guard let self = self else {
                 done?(outcome)
@@ -799,7 +925,7 @@ final class NoteEditorModel: ObservableObject {
     /// The base rides with the payload, captured together in flush(): a
     /// retry may never re-read a base that moved under it.
     private func attempt(
-        box: BoxModel, json: String, payload: String, base: UInt64, retries: Int,
+        box: BoxModel, json: String, mark: Int, base: UInt64, retries: Int,
         done: @escaping (SaveOutcome) -> Void
     ) {
         box.setContent(id, spansJson: json, base: base) { [weak self] status, fresh in
@@ -810,9 +936,12 @@ final class NoteEditorModel: ObservableObject {
             switch status {
             case 1:
                 self.base = fresh
-                // What the box now holds. Anything typed since stays dirty
-                // by comparison — no generation counter needed.
-                self.storedText = payload
+                self.adoptNextTouch = true
+                // What the box now holds. Anything typed since this save
+                // LEFT stays dirty: `mark` is the buffer it carried, and
+                // cleaning only up to that mark is what the old
+                // whole-string comparison did for free.
+                self.edits.landed(mark)
                 self.flattens = false  // the stored value is this plain text now
                 self.conflicted = false
                 self.saveFailed = false
@@ -828,11 +957,12 @@ final class NoteEditorModel: ObservableObject {
                             return
                         }
                         self.attempt(
-                            box: box, json: json, payload: payload, base: base,
+                            box: box, json: json, mark: mark, base: base,
                             retries: retries - 1, done: done)
                     }
                 } else {
-                    Self.log.notice("content save refused for \(self.id, privacy: .public)")
+                    Self.log.notice(
+                        "content save refused for \(LivIDText.written(self.id), privacy: .public)")
                     self.saveFailed = true
                     done(.busy)
                 }
@@ -863,6 +993,7 @@ final class NoteEditorModel: ObservableObject {
             }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
+            self.seenTouch = self.box?.entity(self.id)?.recency ?? 0
             self.flattens = SpanText.carriesFormatting(
                 spans,
                 name: { [weak self] in self?.title($0) },
@@ -879,8 +1010,7 @@ final class NoteEditorModel: ObservableObject {
                 isKnown: { [weak box] id in box?.entity(id) != nil })
             let theirs = SpanText.spansToText(spans, name: { [weak self] in self?.title($0) })
             self.draft = mine
-            self.storedText = theirs
-            self.text = theirs
+            self.impose(theirs, dirty: false)
             self.conflicted = true
             done(.stale)
         }
@@ -890,7 +1020,9 @@ final class NoteEditorModel: ObservableObject {
     /// saves the ordinary way (re-read then save — the seam's only overwrite).
     func reapplyDraft() {
         guard let draft = draft else { return }
-        text = draft
+        // The user's words over the box's fresh base: imposed on the
+        // view, and dirty, because they still have to be saved.
+        impose(draft, dirty: true)
         self.draft = nil
         conflicted = false
         flush()
@@ -904,12 +1036,37 @@ final class NoteEditorModel: ObservableObject {
 
     // MARK: the world moving underneath
 
-    /// Every snapshot answers "did my base move?" for free via
-    /// content_print. Clean → silent reload; dirty → flush now, so the CAS
-    /// surfaces the conflict through the one stale path.
+    /// Every snapshot answers "did my base move?" Clean → silent reload;
+    /// dirty → flush now, so the CAS surfaces the conflict through the
+    /// one stale path.
+    ///
+    /// **IT ASKS THE ROW'S RECENCY, NOT ITS BODY PRINT.** `core/` shipped
+    /// the body's compare-and-swap fingerprint on every row, so this
+    /// compared the exact thing `base` holds. The engine hands that print
+    /// back per body from `liv_read_body` and never per row — so
+    /// `row.contentPrint` answered nil, the guard read `0 != base`, and
+    /// for any note with a body it was TRUE on every refresh: this
+    /// reloaded or flushed on every snapshot the app published, for as
+    /// long as the note was open.
+    ///
+    /// `touched_ms` is the newest transaction that touched this thing,
+    /// and it is already on the wire. It is coarser — a cell write moves
+    /// it too, so a due date set from the card costs one silent reload of
+    /// an unchanged body — and it errs the safe way: it never misses a
+    /// body that moved, and it no longer fires when nothing did.
     func snapshotArrived() {
         guard loaded, !missing, !stopped, let row = box?.entity(id) else { return }
-        guard (row.contentPrint ?? 0) != base else { return }
+        let touched = row.recency ?? 0
+        guard touched != seenTouch else { return }
+        seenTouch = touched
+        // Ours. Adopt the number and do nothing — we already hold what
+        // the box now has. An external change landing in the SAME
+        // snapshot as our save is missed once; the CAS still guards the
+        // write, and the next change reloads.
+        if adoptNextTouch {
+            adoptNextTouch = false
+            return
+        }
         if dirty || saving {
             flush()
         } else {
@@ -921,14 +1078,14 @@ final class NoteEditorModel: ObservableObject {
 // MARK: - the view: the note IS the screen
 
 struct NoteEditor: View {
-    let id: UInt64
+    let id: LivEntityID
     /// The note's name cell, edited in the title line that scrolls with
     /// the body (Obsidian's layout — owner, 2026-08-01).
     @Binding var title: String
     var onTitleCommit: () -> Void
     /// A tapped `[[…]]` lands as a desk tab — the shell's one rule for
     /// opening anything from anywhere.
-    var onOpenRef: (UInt64) -> Void = { _ in }
+    var onOpenRef: (LivEntityID) -> Void = { _ in }
     /// A note created a moment ago: open with the caret already in it, so
     /// "Create a note" lands you writing, not looking at a blank screen.
     var autoFocus: Bool = false
@@ -971,8 +1128,9 @@ struct NoteEditor: View {
         // Embedded there is no title line to prompt, and this scans the
         // WHOLE text — on every keystroke, for something never drawn.
         guard showsTitle, title.isEmpty else { return "" }
-        let derived = livDisplayTitle(model.text)
-        return derived.isEmpty ? "Untitled" : derived
+        // The model keeps this, recomputed only when the first line
+        // moves — the buffer is no longer in the graph to scan here.
+        return model.derivedTitle.isEmpty ? "Untitled" : model.derivedTitle
     }
 
     var body: some View {
@@ -999,7 +1157,6 @@ struct NoteEditor: View {
             || desk.recordCard != nil) { _, up in
             if up { bridge.dismissLink() }
         }
-        .onChange(of: model.text) { _, _ in model.textChanged() }
         .onChange(of: focused) { _, now in
             if !now { model.flush() }
         }
@@ -1043,7 +1200,8 @@ struct NoteEditor: View {
         // same plain string. Swipe down inside the text to dismiss the
         // keyboard (keyboardDismissMode = .interactive).
         MarkdownEditor(
-            text: $model.text, focused: $focused,
+            text: model.text, imposed: model.imposed,
+            onEdit: { model.userEdited($0) }, focused: $focused,
             title: $title, titlePrompt: derivedPrompt, onTitleCommit: onTitleCommit,
             editable: model.loaded && !model.missing,
             bridge: bridge, onOpenRef: onOpenRef,
@@ -1111,7 +1269,7 @@ struct NoteEditor: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if bridge.outline.isEmpty {
-                    EmptyHint("No headings yet.")
+                    EmptyHint("No headings")
                 }
                 ForEach(bridge.outline) { item in
                     Button {
@@ -1171,7 +1329,7 @@ struct NoteEditor: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.panel))
+        .background(RoundedRectangle(cornerRadius: LivTheme.radius).fill(LivTheme.surface))
         .padding(.horizontal, 10)
     }
 
@@ -1200,7 +1358,7 @@ func livSpanCodecSelfCheck() -> [String] {
     func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
         if !ok { failures.append("FAIL \(label) \(detail())") }
     }
-    let names: (UInt64) -> String? = { id in id == 4155 ? "Kitchen rebuild" : nil }
+    let names: (LivEntityID) -> String? = { id in id == 4155 ? "Kitchen rebuild" : nil }
 
     // 1. text → spans → text, over every shape the buffer can hold.
     for sample in [
@@ -1209,8 +1367,12 @@ func livSpanCodecSelfCheck() -> [String] {
         "first\nsecond\nthird",
         "a\n\nb",  // blank paragraph between
         "trailing\n",
-        "see [[4155|Kitchen rebuild]] tomorrow",
-        "[[7]] leads",
+        // **Hex, 32 characters.** An id is sixteen bytes, so the
+        // token carries all of it — `[[12|half` and `[[abc]]` are
+        // literal text now for the same reason they always were:
+        // neither is a whole id.
+        "see [[0000000000000000000000000000103b|Kitchen rebuild]] tomorrow",
+        "[[00000000000000000000000000000007]] leads",
         "not a token [[abc]] nor [[12|half",
         "brackets [ [ ] ] survive",
     ] {
@@ -1388,7 +1550,7 @@ func livSpanCodecSelfCheck() -> [String] {
     //     token's own delimiters, so any "]" in it can close the token
     //     early. The buffer must survive being written with the name and
     //     read back — repeatedly, since a leak compounds every save.
-    let bracket: (UInt64) -> String? = { _ in "Q3 [final]" }
+    let bracket: (LivEntityID) -> String? = { _ in "Q3 [final]" }
     var cycled: [SpanJSON] = [.text("see ", marks: 0), .ref(4155), .text(" today", marks: 0)]
     for _ in 0..<5 {
         cycled = SpanText.textToSpans(SpanText.spansToText(cycled, name: bracket))
@@ -1428,14 +1590,14 @@ func livSpanCodecSelfCheck() -> [String] {
     // 3. A Ref survives a name it has never heard of, and a nameless one.
     check(
         "unknown target keeps the id",
-        SpanText.spansToText([.ref(999)], name: names) == "[[999]]")
-    check("nameless token parses", SpanText.textToSpans("[[999]]") == [.ref(999)])
+        SpanText.spansToText([.ref(999)], name: names) == "[[000000000000000000000000000003e7]]")
+    check("nameless token parses", SpanText.textToSpans("[[000000000000000000000000000003e7]]") == [.ref(999)])
 
     // 4. A mangled token is literal text — never a guess.
     check(
         "mangled token is text",
-        SpanText.textToSpans("[[4155|Kitchen rebuild]")
-            == [.text("[[4155|Kitchen rebuild]", marks: 0)])
+        SpanText.textToSpans("[[0000000000000000000000000000103b|Kitchen rebuild]")
+            == [.text("[[0000000000000000000000000000103b|Kitchen rebuild]", marks: 0)])
 
     // 5. Deleting the token deletes the link, and nothing else.
     check("deleted token drops the ref", SpanText.textToSpans("see  now")
@@ -1444,15 +1606,16 @@ func livSpanCodecSelfCheck() -> [String] {
     // 6. An empty buffer is no spans at all (the seam removes content).
     check("empty buffer removes content", SpanText.textToSpans("").isEmpty)
 
-    // 7. The wire shapes the core will parse — the JSON strings are the
-    //    ones core/src/value.rs's own serde tests assert (key ORDER is
-    //    ours — sorted — since serde parses objects order-independently
-    //    and the fingerprint is FNV over the core's own re-encoding,
-    //    never over the wire bytes).
+    // 7. The wire shapes the box will parse. Text and Break are
+    //    unchanged — `ffi/src/spans.rs` writes exactly these — but a REF
+    //    IS HEX NOW, not a number. An engine id is a UUID and a JSON
+    //    number is not one; `LivID` was built in slice 4 to decode both
+    //    and to encode hex, which is why the editor needed no change when
+    //    the data source swapped.
     check(
         "json of a ref doc",
         SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)])
-            == #"[{"Text":"a"},{"Break":"Body"},{"Ref":9}]"#,
+            == #"[{"Text":"a"},{"Break":"Body"},{"Ref":"00000000000000000000000000000009"}]"#,
         SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)]))
     let vocab: [SpanJSON] = [
         .brk(.heading(2)), .text("b", marks: 1),

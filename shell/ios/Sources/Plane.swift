@@ -44,7 +44,11 @@ struct DeskTab: Identifiable {
     var lastUsed: Int64
 }
 
-/// **Notes only, for now.** The team's ruling of 2026-08-22 is Reading B:
+/// **Not Notes only any more.** The other views' planes arrived with
+/// `.position(String)` and one desk (2026-08-28), so this reads as the
+/// stale half of a sentence whose other half shipped.
+///
+/// The team's ruling of 2026-08-22 is Reading B:
 /// each view owns a tab strip, and a tab is a saved POSITION inside that
 /// view. In Notes that position is a document, which is exactly what this
 /// case was before. The other views' cases arrive with their planes; in
@@ -53,7 +57,7 @@ struct DeskTab: Identifiable {
 /// reversed.
 enum DeskTabContent: Equatable {
     /// Notes: the tab IS a document. What a tab always was.
-    case entity(UInt64)
+    case entity(LivEntityID)
     /// Every other view: a saved POSITION, encoded by the view that owns
     /// it (Reading B, team 2026-08-22).
     ///
@@ -68,9 +72,18 @@ enum DeskTabContent: Equatable {
     /// What goes on disk for this tab. An entity is its id; a position is
     /// its own token. Read back by `readPlane`, which calls anything that
     /// is not a number a position.
+    ///
+    /// **A SEVENTH written form** (`LivID.swift`), and the one that came
+    /// closest to going wrong: `readPlane` was moved onto `LivIDText.read`
+    /// in slice 3 and this half was not, so the two ends of the same
+    /// format sat in one file disagreeing. It did not compile rather than
+    /// silently writing hex and reading decimal — which is luck, not
+    /// design: `String(_:)` happens to have no unlabelled overload for a
+    /// plain `CustomStringConvertible`, and `String(describing:)` would
+    /// have taken it and orphaned every saved tab.
     var token: String {
         switch self {
-        case .entity(let id): return String(id)
+        case .entity(let id): return LivIDText.written(id)
         case .position(let p): return p
         }
     }
@@ -106,14 +119,14 @@ struct DeskPlane {
 struct DeskPlanes {
     /// The workspace these belong to. Every key is scoped by it, so a
     /// switch is a reload and never a merge.
-    private(set) var workspaceId: UInt64
+    private(set) var workspaceId: LivEntityID
     /// The documents you have open. One set, for the whole app.
     private var desk: DeskPlane
     /// Where each tool was left, in that view's own vocabulary
     /// (`Positions.swift`). One token each; absent means its own root.
     private var spots: [Feature: String]
 
-    init(workspace: UInt64) {
+    init(workspace: LivEntityID) {
         workspaceId = workspace
         (desk, spots) = Self.load(workspace)
     }
@@ -190,7 +203,7 @@ struct DeskPlanes {
     /// there is none. Returns the tab to focus — appending and focusing
     /// are the whole difference tabs make, and opening a second note no
     /// longer replaces the first.
-    mutating func open(entity: UInt64) -> UUID {
+    mutating func open(entity: LivEntityID) -> UUID {
         if let existing = desk.tabs.first(where: { $0.content == .entity(entity) }) {
             return existing.id
         }
@@ -256,7 +269,7 @@ struct DeskPlanes {
     /// Is there anything for the sweep to take? A plain read, so a
     /// caller can ask without touching the `@Published` struct that
     /// holds it — see `DeskModel.dropRecordDocument`.
-    func hasStrangers(shapeOf: (UInt64) -> TabShape, knows: (UInt64) -> Bool) -> Bool {
+    func hasStrangers(shapeOf: (LivEntityID) -> TabShape, knows: (LivEntityID) -> Bool) -> Bool {
         desk.tabs.contains { tab in
             guard case .entity(let id) = tab.content else { return false }
             return shapeOf(id) == .record || !knows(id)
@@ -264,7 +277,7 @@ struct DeskPlanes {
     }
 
     mutating func dropRecordsAndStrangers(
-        shapeOf: (UInt64) -> TabShape, knows: (UInt64) -> Bool
+        shapeOf: (LivEntityID) -> TabShape, knows: (LivEntityID) -> Bool
     ) {
         let before = desk.tabs.count
         desk.tabs.removeAll { tab in
@@ -282,7 +295,7 @@ struct DeskPlanes {
 
     /// Swap the workspace. The outgoing planes are saved under THEIR keys
     /// first, so a switch is never a loss; the incoming ones replace them.
-    mutating func adopt(workspace id: UInt64) {
+    mutating func adopt(workspace id: LivEntityID) {
         persist()  // the OUTGOING workspace — `workspaceId` still points at it
         workspaceId = id
         (desk, spots) = Self.load(id)
@@ -293,6 +306,17 @@ struct DeskPlanes {
     /// The pre-M4 single plane, and the per-workspace tab sets that
     /// followed it. READ-ONLY: nothing writes these keys any more.
     private static let legacyKey = "desk.tabs.v1"
+
+    /// THE SIX VIEWS V2 SAVED A PLANE FOR, spelled out rather than taken
+    /// from `Feature.allCases`.
+    ///
+    /// A migration reads what an OLD build wrote, so it has to name the
+    /// old vocabulary. `notes` left the roster on 2026-09-10 (it is a
+    /// lens in Everything now), and reading the current roster would have
+    /// silently stopped folding in the plane that held every open
+    /// document — the one plane in v2 that held entities at all. Never
+    /// remove a name from this list; it is what is on disk.
+    private static let v2Planes = ["notes", "today", "everything", "inbox", "tasks", "calendar"]
 
     /// The desk and the tools' spots, for one workspace.
     ///
@@ -306,7 +330,7 @@ struct DeskPlanes {
     ///
     /// The old keys are left on disk, readable, rather than deleted —
     /// the same courtesy the 2026-08-22 migration paid v1.
-    private static func load(_ workspace: UInt64) -> (DeskPlane, [Feature: String]) {
+    private static func load(_ workspace: LivEntityID) -> (DeskPlane, [Feature: String]) {
         var spots: [Feature: String] = [:]
 
         // v3: already migrated.
@@ -323,10 +347,14 @@ struct DeskPlanes {
         // v2: six planes. Entities to the desk, active positions to spots.
         var desk = DeskPlane()
         var migrated = false
-        for feature in Feature.inOrder {
-            guard let plane = Self.readPlane(WorkspaceModel.planeKey(workspace, feature.rawValue))
+        for name in Self.v2Planes {
+            guard let plane = Self.readPlane(WorkspaceModel.planeKey(workspace, name))
             else { continue }
             migrated = true
+            // A plane whose view no longer exists still gives up its
+            // DOCUMENTS — they belong to the desk, which every view
+            // shares. Only its position has nowhere to go.
+            let feature = Feature(rawValue: name)
             for tab in plane.tabs {
                 switch tab.content {
                 case .entity:
@@ -342,7 +370,7 @@ struct DeskPlanes {
                 case .position(let token):
                     // Only the one you were ON survives. The rest were
                     // duplicates of a place there is one of.
-                    if tab.id == plane.activeTabId { spots[feature] = token }
+                    if tab.id == plane.activeTabId, let feature { spots[feature] = token }
                 }
             }
         }
@@ -369,7 +397,7 @@ struct DeskPlanes {
         var plane = DeskPlane()
         for token in stored["ids"] as? [String] ?? [] {
             let content: DeskTabContent =
-                UInt64(token).map { .entity($0) } ?? .position(token)
+                LivIDText.read(token).map { .entity($0) } ?? .position(token)
             plane.tabs.append(
                 DeskTab(
                     id: UUID(), content: content,
@@ -385,13 +413,13 @@ struct DeskPlanes {
     /// the plane alone would bring back a four-day-old tab set and
     /// silently drop the note actually in use, so the live document is
     /// added and focused, and its key is then removed. One truth, once.
-    private static func foldInLiveDocument(_ plane: DeskPlane, workspace: UInt64) -> DeskPlane {
+    private static func foldInLiveDocument(_ plane: DeskPlane, workspace: LivEntityID) -> DeskPlane {
         var plane = plane
         let docKey = WorkspaceModel.docKey(workspace)
-        guard let saved = UserDefaults.standard.object(forKey: docKey) as? NSNumber,
-            saved.uint64Value != 0
-        else { return plane }
-        let live = saved.uint64Value
+        // The same shape as the active workspace: an id stored as a
+        // `UserDefaults` NUMBER, not a key. `LivIDText.stored` names it.
+        let live = LivIDText.stored(forKey: docKey)
+        guard !live.isAbsent else { return plane }
         if let already = plane.tabs.first(where: { $0.content == .entity(live) }) {
             plane.activeTabId = already.id
         } else {
@@ -445,15 +473,15 @@ struct DeskPlanes {
     // MARK: the self-checks' own corner
 
     /// A workspace no user has. Self-check only.
-    static let scratchWorkspace: UInt64 = .max
+    static let scratchWorkspace: LivEntityID = .max
 
     /// Self-check only: leave nothing behind.
     static func forgetScratch() {
         UserDefaults.standard.removeObject(forKey: WorkspaceModel.deskKey(scratchWorkspace))
         UserDefaults.standard.removeObject(forKey: WorkspaceModel.spotsKey(scratchWorkspace))
-        for feature in Feature.allCases {
+        for name in v2Planes {
             UserDefaults.standard.removeObject(
-                forKey: WorkspaceModel.planeKey(scratchWorkspace, feature.rawValue))
+                forKey: WorkspaceModel.planeKey(scratchWorkspace, name))
         }
     }
 

@@ -107,7 +107,7 @@ pub fn habit_stats(store: &Store, today: i64) -> HabitsSummary {
             id: e.id,
             name: match e.get(props::NAME) {
                 Some(Value::Text(name)) => name.clone(),
-                _ => format!("#{}", e.id),
+                _ => liv_views::made_name(store, e),
             },
             points: match points_prop.and_then(|p| e.get(p)) {
                 Some(Value::Number(n)) => *n,

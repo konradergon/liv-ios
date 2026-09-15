@@ -8,6 +8,11 @@ name = "liv_services"
 
 [dependencies]
 liv-core = { path = "../core" }
+# The query GRAMMAR, imported rather than kept twice. It is pure — no
+# store, no resolution — so it lives in the crate with no dependencies
+# above it, where the engine's own surfaces can reach it. Standing rule 4:
+# two parsers for one user-facing syntax is a defect.
+liv-engine = { path = "../engine" }
 liv-views = { path = "../views" }
 # Markdown import: CommonMark → the span model. A parser must be vetted, not
 # hand-rolled (the same call as sha2 above); no html/getopts/simd needed.
