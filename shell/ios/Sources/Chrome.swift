@@ -1155,7 +1155,19 @@ struct LivTopScrim: View {
         retires && chromeAway ? LivSafeArea.top + LivRow.topFade : LivRow.topInset
     }
 
-    private var height: CGFloat { Self.room(retires: retires, chromeAway: desk.chromeAway) }
+    /// An explicit band, when the caller has already worked one out and
+    /// must not have a SECOND reading of it.
+    ///
+    /// `room` reads `LivSafeArea.top`, which is a live UIKit lookup
+    /// through `keyWindow` — not a constant. Two callers asking for it
+    /// are two readings at two moments, and the panel had exactly that:
+    /// the room it reserved and the band this painted could differ, and
+    /// a scrim taller than its room covers the first row.
+    var band: CGFloat? = nil
+
+    private var height: CGFloat {
+        band ?? Self.room(retires: retires, chromeAway: desk.chromeAway)
+    }
 
     /// SOLID DOWN TO HERE. Everything above it must be fully covered —
     /// the clock, and the glass controls where there are any.

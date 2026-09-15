@@ -52,6 +52,12 @@ struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
     /// How wide the panel stands, leaving the rest of the desk showing.
     let width: CGFloat
+    /// THE TOP BAND, worked out ONCE by the caller and handed to both
+    /// halves of the job — the room the list keeps clear, and the scrim
+    /// painted over it. `LivTopScrim.room` reads `LivSafeArea.top`,
+    /// which is a live `keyWindow` lookup rather than a constant, so two
+    /// callers asking for it are two readings at two moments.
+    let topRoom: CGFloat
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -145,7 +151,7 @@ struct SidePanel<Content: View>: View {
                 // `retires: false` because a panel has no doors to slide
                 // away, so its band never shrinks — the flag decides the
                 // shrink and nothing else now.
-                LivTopScrim(retires: false, ground: LivTheme.surface)
+                LivTopScrim(retires: false, ground: LivTheme.surface, band: topRoom)
                     .frame(width: width)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
@@ -187,12 +193,14 @@ struct LibraryPanel: View {
         // A view still opens WHERE YOU STAND: picking one here closes
         // the panel and the view arrives over what you were looking at,
         // with the bar still under it.
-        SidePanel(onDismiss: onDismiss, width: LivPanel.width) {
-            list
+        // ONE READING of the band, for the room and for the paint.
+        let band = LivTopScrim.room(retires: false, chromeAway: false)
+        return SidePanel(onDismiss: onDismiss, width: LivPanel.width, topRoom: band) {
+            list(band)
         }
     }
 
-    private var list: some View {
+    private func list(_ band: CGFloat) -> some View {
         // ONE walk of the box per render. `counts` used to be a computed
         // property, so every row that read it built a fresh ViewCounts —
         // seven walks per render, which is the exact thing its own doc
@@ -204,20 +212,6 @@ struct LibraryPanel: View {
         // what stops the foot reading as a second bar.
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // THE ROOM THE SCRIM PAINTS, as plain layout.
-                //
-                // `SidePanel` used to reserve this with a
-                // `.safeAreaInset`, and the `.ignoresSafeArea()` below it
-                // in the same chain threw the reservation away — so the
-                // first row sat at the very top with the scrim over it.
-                // A clear block in the scroll content cannot be
-                // cancelled by a modifier, and it is the same number the
-                // overlay paints, asked of the scrim itself.
-                //
-                // `chromeAway: false` to match `retires: false` there: a
-                // panel's band does not shrink.
-                Color.clear
-                    .frame(height: LivTopScrim.room(retires: false, chromeAway: false))
                 // THE VIEWS ARE BACK (team, 2026-08-22 — see
                 // design/tabs.md). They left on 2026-08-18 for the bar's
                 // own key, on the argument that a drawer is the wrong
@@ -311,6 +305,27 @@ struct LibraryPanel: View {
                 Color.clear.frame(height: LivPanel.row)
             }
         }
+        // THE ROOM FOR THE SCRIM IS A CONTENT MARGIN, and that is the
+        // whole of it.
+        //
+        // Two things it is not, both tried and both wrong:
+        //
+        //   - a `.safeAreaInset`, which the `.ignoresSafeArea()` in
+        //     `SidePanel` discards — that modifier's entire job is to
+        //     throw the safe area away, and a safe-area inset IS the
+        //     safe area. The room was asked for and dropped, so the rows
+        //     sat at the top under the scrim;
+        //   - a clear block at the head of this VStack, which IS content
+        //     and therefore SCROLLS AWAY. The first row rode up under
+        //     the fade the moment the list moved a point (owner,
+        //     2026-09-16, and the screenshot showed Today half dissolved
+        //     against the top edge).
+        //
+        // A content margin is room that is not content: the list starts
+        // below it, it counts in the scrollable range, and rows pass
+        // under the scrim on their way up — which is what a soft edge is
+        // for. `CalendarView` reserves its hour label the same way.
+        .contentMargins(.top, band, for: .scrollContent)
         // The rows dissolve as they reach the foot rather than stopping
         // dead behind it.
         .mask(
