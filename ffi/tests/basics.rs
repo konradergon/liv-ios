@@ -1057,3 +1057,95 @@ fn a_property_row_carries_the_token_beside_the_word() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// **A CELL ROW CARRIES THE TOKEN TOO**, for the same reason a property
+/// row does: `name` is what a person reads and `word` is what a shell
+/// keys off.
+///
+/// The properties card hides the cells it already draws as proper rows,
+/// and it matched that skip list against `name`. Two things were wrong
+/// with that the moment it was written and one of them was invisible:
+///
+///   - it skipped "type", which is `core/`'s word. The engine's cell is
+///     `kind`, so the kind row was never hidden and the card carried a
+///     read-only chip saying "Note" on a note (owner, 2026-09-16:
+///     "remove kind row in properties");
+///   - and once `tags` began READING "Subject" (2026-09-16), the same
+///     match would have stopped hiding it — so the card would have drawn
+///     the field twice, once as `Subject` and once as itself.
+#[test]
+fn a_cell_row_carries_the_token_beside_the_word() {
+    let (d, path) = box_at("cell_words");
+
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_make(path.as_ptr(), c(&kind::NOTE.hex()).as_ptr(), c("Roof").as_ptr(), T0, &mut out)
+    };
+    let id = c(took(out)["id"].as_str().unwrap());
+
+    // `tags` is a bare `Holds::Ref`: a tag is a THING, so the value is
+    // an id and not a word. (`#<hex>` is the ABI's own grammar for it.)
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_make(path.as_ptr(), c(&kind::NOTE.hex()).as_ptr(), c("Slates").as_ptr(), T0, &mut out)
+    };
+    let slates = took(out)["id"].as_str().unwrap().to_owned();
+    let tags = prop_id(&path, "tags");
+    assert_eq!(
+        unsafe {
+            liv_add(
+                path.as_ptr(), id.as_ptr(), tags.as_ptr(),
+                c(&format!("#{slates}")).as_ptr(), T0 + 1,
+            )
+        },
+        LIV_OK
+    );
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_cells(path.as_ptr(), id.as_ptr(), &mut out) };
+    let cells = took(out);
+    let cells = cells.as_array().unwrap();
+
+    let tag_row = cells.iter().find(|r| r["word"] == "tags").expect("a tags cell");
+    assert_eq!(tag_row["name"], "Subject", "what a person reads");
+    assert_eq!(tag_row["word"], "tags", "what a shell keys off");
+
+    // The kind cell answers by its own token, which is `kind` and has
+    // never been `type`.
+    let kind_row = cells.iter().find(|r| r["word"] == "kind").expect("a kind cell: {cells:?}");
+    assert_eq!(kind_row["name"], "kind");
+    assert!(
+        !cells.iter().any(|r| r["word"] == "type"),
+        "core/'s word for it is gone: {cells:?}"
+    );
+
+    // A FIELD SOMEONE DECLARED has no compiled-in token — its name is
+    // all it has — so `word` falls back to the name rather than coming
+    // back empty. A shell keying off an empty string would hide every
+    // declared field at once.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_declare_field(
+            path.as_ptr(), c("client").as_ptr(), c("text").as_ptr(), false, T0 + 2, &mut out,
+        )
+    };
+    let field = c(took(out)["id"].as_str().unwrap());
+    assert_eq!(
+        unsafe {
+            liv_set(path.as_ptr(), id.as_ptr(), field.as_ptr(), c("Ada").as_ptr(), T0 + 3)
+        },
+        LIV_OK
+    );
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_cells(path.as_ptr(), id.as_ptr(), &mut out) };
+    let cells = took(out);
+    let mine = cells
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "client")
+        .expect("the declared field");
+    assert_eq!(mine["word"], "client", "a declared field keys off its own name: {mine:?}");
+
+    let _ = std::fs::remove_dir_all(&d);
+}

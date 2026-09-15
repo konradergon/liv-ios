@@ -95,10 +95,19 @@ struct SidePanel<Content: View>: View {
             // `alignment: .top` on a body that ignores the top safe
             // area, so the paint starts at the body's real top edge.
             // "Exactly like in desk" is that, and it is now what this
-            // does — the inset is left holding only the ROOM, so the
-            // first row has not moved.
+            // does — the inset is left holding only the ROOM.
             .safeAreaInset(edge: .top) {
-                Color.clear.frame(height: LivSafeArea.top)
+                // AS MUCH ROOM AS THE OVERLAY PAINTS, asked of the scrim
+                // itself so the two cannot drift. It reserved the status
+                // bar alone while the paint ran 44pt further down, so the
+                // first row sat permanently under the fade (owner,
+                // 2026-09-16: "today is now hidden behind the fade").
+                //
+                // `chromeAway: false` because nothing floats over this
+                // panel for the chrome to take away — the same reason
+                // `underChrome` is false below.
+                Color.clear.frame(
+                    height: LivTopScrim.room(underChrome: false, chromeAway: false))
             }
             //
             // NO BOTTOM INSET: the library's own foot floats and its

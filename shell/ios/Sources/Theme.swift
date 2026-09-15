@@ -514,20 +514,31 @@ enum LivRow {
     /// clock as well.
     static var topInset: CGFloat { LivSafeArea.top + topChrome }
 
-    /// HOW FAR THE SOFT EDGE RAMPS when there is no chrome row to fade
-    /// under — the panel (owner, 2026-09-14: items "should 'fade out'
-    /// into panel background at the top towards statusline exactly like
-    /// in desk, not be cut off").
+    /// HOW FAR THE SOFT EDGE RAMPS — **the same everywhere** (owner,
+    /// 2026-09-16: "fade should be same height as in other places").
     ///
-    /// On the desk the ramp fits inside the band the doors already
-    /// reserve: 45% of `topInset` is solid and the remaining ~61pt is the
-    /// fade. The panel reserves the status bar alone, so a ramp inside it
-    /// would be about 10pt — which is not a fade, it is an edge, and it
-    /// is what "cut off" meant. This is drawn BELOW the reserved band
-    /// instead, so the first row stays where it is (2026-08-28: "In the
-    /// panel, there is a huge cut-off that needs to go" was the opposite
-    /// complaint, about reserving MORE room).
-    static let topFade: CGFloat = 44
+    /// It was two numbers: 55% of the doors' band on the desk, which is
+    /// 61, and a flat 44 on the panel. Two soft edges in one app for no
+    /// reason anyone could state, and the panel's hung BELOW the room it
+    /// reserved — so the first row sat under the fade at rest, which is
+    /// what a soft edge must never do (2026-09-16: "today is now hidden
+    /// behind the fade").
+    ///
+    /// 32, and the number is decided by the SHORTEST band that has to
+    /// hold it. A surface with no chrome reserves the status bar plus
+    /// this, so every point here is a point of empty panel above the
+    /// first row — and the owner has already called that top too empty
+    /// once (2026-08-28: "In the panel, there is a huge cut-off that
+    /// needs to go"). 61 would have put the panel's first row lower than
+    /// the desk's.
+    ///
+    /// WHAT MOVED: the desk's total band is unchanged (its content does
+    /// not shift by a point), but its fade is shorter — 32 where it was
+    /// 61 — so the dissolve is crisper. And a surface whose chrome has
+    /// retired now reserves 32 more than the clock alone, where it used
+    /// to reserve the clock exactly; the band still shrinks when the
+    /// buttons leave (owner, 2026-09-07), by less.
+    static let topFade: CGFloat = 32
 }
 
 /// The floating bottom bar's own size, so anything that must clear it —

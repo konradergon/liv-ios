@@ -21,8 +21,14 @@ use crate::op::Value;
 /// One row of the inspector.
 pub struct Cell {
     pub property: EntityId,
-    /// The property's current name, which a rename moves.
+    /// The property's current name, which a rename moves — what a person
+    /// reads.
     pub name: String,
+    /// **THE TOKEN.** What the query grammar lexes and what a shell keys
+    /// its own rows off, which a rename does NOT move and which may
+    /// differ from `name` even without one: `tags` reads "Subject".
+    /// Empty for a field someone declared, whose name is all it has.
+    pub word: &'static str,
     /// `text`, `number`, `bool`, `datetime`, `reference`, `richtext`,
     /// `file` — so a shell can pick an editor without knowing the id.
     pub holds: &'static str,
@@ -151,6 +157,9 @@ impl Engine {
         Ok(Cell {
             property,
             name: self.display_name(property)?.unwrap_or_else(|| property.hex()),
+            // The compiled-in token, or empty for a declared field —
+            // whose name IS its token, and which the shell falls back to.
+            word: model::prop_def(property).map(|p| p.name).unwrap_or(""),
             holds: shape.map(|s| holds_word(s.holds)).unwrap_or("text"),
             many: shape.map(|s| s.many).unwrap_or(false),
             // A contended register shows both, separated, rather than one

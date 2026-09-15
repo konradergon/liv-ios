@@ -366,6 +366,13 @@ pub unsafe extern "C" fn liv_cells(
                 json!({
                     "property": c.property.hex(),
                     "name": c.name,
+                    // THE TOKEN, beside the word — see `liv_properties`.
+                    // A shell hides the cells it already draws as proper
+                    // rows, and it can only do that by the token: `name`
+                    // moves when someone renames a field, and `tags`
+                    // reads "Subject" without one. Empty for a declared
+                    // field, whose name is all it has.
+                    "word": if c.word.is_empty() { c.name.clone() } else { c.word.to_owned() },
                     "holds": c.holds,
                     "many": c.many,
                     "value": c.shown,

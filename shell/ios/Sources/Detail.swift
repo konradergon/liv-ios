@@ -549,6 +549,15 @@ struct EntityInspector: View {
                 // Templates left the app (2026-08-15); an older box may
                 // still carry the marker cell, and it is not a field.
                 "template", dueProperty(row),
+                // THE KIND IS NOT A FIELD (owner, 2026-09-16: "remove
+                // kind row in properties"). This card has said so since
+                // 2026-08-29 — "NO KIND CHIP… you opened this panel from
+                // a note; it is a note" — and then drew one anyway,
+                // because the word here was `core/`'s "type" and the
+                // engine's cell is `kind`. It is also not editable, and
+                // a row you cannot edit is a lie about what this list is
+                // for (the same 2026-08-06 ruling as `file` above).
+                "kind",
                 // Links have their own section below, with both
                 // directions and a door that makes one. A read-only chip
                 // row up here would be the same fact said twice
@@ -616,7 +625,7 @@ struct EntityInspector: View {
 
     private func cellRow(_ group: DetailCellGroup) -> some View {
         HStack(alignment: .center) {
-            DetailRowLabel(group.property)
+            DetailRowLabel(group.shown)
             Spacer(minLength: 12)
             HStack(spacing: 5) {
                 ForEach(Array(group.values.enumerated()), id: \.offset) { _, value in
@@ -1381,29 +1390,44 @@ private struct DetailCellValue {
 /// stays one line, never N look-alike rows.
 private struct DetailCellGroup: Identifiable {
     let id: Int
+    /// The token, for the skip list and for writes.
     let property: String
+    /// What the row draws.
+    let shown: String
     let kind: String
     let values: [DetailCellValue]
 
+    /// **SKIPPED BY TOKEN, DRAWN BY WORD.** It skipped by the shown name
+    /// and the two were the same string, so nobody noticed — until they
+    /// were not:
+    ///
+    ///   - the list carries "type", which is `core/`'s word. The engine's
+    ///     cell is `kind`, so it never matched and the card drew a
+    ///     read-only chip saying "Note" on a note (owner, 2026-09-16:
+    ///     "remove kind row in properties");
+    ///   - and `tags` reads "Subject" as of the same day, so the four
+    ///     core fields in the skip list would have stopped hiding it and
+    ///     the card would have drawn that field twice.
     static func groups(_ row: EntityRow, skipping skip: Set<String>) -> [DetailCellGroup] {
         var order: [String] = []
         var kinds: [String: String] = [:]
+        var shown: [String: String] = [:]
         var values: [String: [DetailCellValue]] = [:]
         for cell in row.cells ?? [] {
-            guard let property = cell.property, !property.isEmpty,
-                !skip.contains(property)
-            else { continue }
-            if values[property] == nil {
-                order.append(property)
-                kinds[property] = cell.kind ?? ""
+            let token = cell.word ?? cell.property ?? ""
+            guard !token.isEmpty, !skip.contains(token) else { continue }
+            if values[token] == nil {
+                order.append(token)
+                kinds[token] = cell.kind ?? ""
+                shown[token] = cell.property ?? token
             }
-            values[property, default: []].append(
+            values[token, default: []].append(
                 DetailCellValue(value: cell.value ?? "", refTarget: cell.refTarget))
         }
         return order.enumerated().map { i, property in
             DetailCellGroup(
-                id: i, property: property, kind: kinds[property] ?? "",
-                values: values[property] ?? [])
+                id: i, property: property, shown: shown[property] ?? property,
+                kind: kinds[property] ?? "", values: values[property] ?? [])
         }
     }
 }

@@ -1125,44 +1125,57 @@ struct LivTopScrim: View {
     /// Whether the band is the doors' full one, or the clock's alone.
     private var tall: Bool { underChrome && !desk.chromeAway }
 
-    /// What the inset RESERVES: the doors' band, or the clock's alone.
-    private var height: CGFloat { tall ? LivRow.topInset : LivSafeArea.top }
-
-    /// SOLID DOWN TO HERE, in points. Everything above it must be fully
-    /// covered — the clock, and the glass controls where there are any.
+    /// **HOW MUCH ROOM THE BAND NEEDS, paint and all.**
     ///
-    /// A FRACTION on the desk, an absolute on the panel. The 0.45 is
-    /// measured against the doors' band; applied to the status bar alone
-    /// it stopped being solid a third of the way up the clock, and a row
-    /// scrolling past showed through beside it (measured 2026-09-07: a
-    /// checkbox at 48/255 against a ground of 26).
-    private var solid: CGFloat { tall ? height * 0.45 : height }
-
-    /// AND FADES OVER THIS MUCH MORE.
+    /// This was what the inset reserved, and the panel's ramp then hung
+    /// BELOW it — the gradient taller than the space it asked for, "so
+    /// the extra hangs over the first rows without moving them". It
+    /// hung over them at rest too, so the panel's first row lived
+    /// permanently under the fade (owner, 2026-09-16: "today is now
+    /// hidden behind the fade"). A soft edge is for what scrolls INTO
+    /// it, never for what is sitting still.
     ///
-    /// On the desk the ramp is the rest of the reserved band, so the
-    /// gradient is exactly as tall as the inset and nothing changed here.
-    /// On the panel there is no spare band to ramp inside, so it ramps
-    /// BELOW the inset: the gradient is taller than the space it
-    /// reserves, and the extra hangs over the first rows without moving
-    /// them.
-    private var ramp: CGFloat { tall ? height - solid : LivRow.topFade }
+    /// So the drawn height and the reserved height are one number now,
+    /// and it is this one. Nothing may reserve less than it paints.
+    static func room(underChrome: Bool, chromeAway: Bool) -> CGFloat {
+        underChrome && !chromeAway ? LivRow.topInset : LivSafeArea.top + LivRow.topFade
+    }
+
+    private var height: CGFloat { Self.room(underChrome: underChrome, chromeAway: desk.chromeAway) }
+
+    /// SOLID DOWN TO HERE. Everything above it must be fully covered —
+    /// the clock, and the glass controls where there are any.
+    ///
+    /// The desk's band is the doors' (111) and its clock needs the top
+    /// 67 of that; the panel has no doors, so its solid part is the
+    /// status bar and nothing more.
+    private var solid: CGFloat { height - ramp }
+
+    /// AND FADES OVER THIS MUCH.
+    ///
+    /// **THE SAME HEIGHT IN BOTH PLACES** (owner, 2026-09-16: "fade
+    /// should be same height as in other places"). It was a fraction of
+    /// the band on the desk — 55% of 111, so 61 — and a flat 44 on the
+    /// panel, which is two different soft edges in one app for no reason
+    /// anyone could state. One token, and the desk's total band does not
+    /// move: only where its gradient starts inside it.
+    private var ramp: CGFloat { LivRow.topFade }
 
     var body: some View {
         LinearGradient(
             stops: [
                 .init(color: ground, location: 0),
-                .init(color: ground, location: solid / (solid + ramp)),
+                .init(color: ground, location: height > 0 ? solid / height : 0),
                 .init(color: ground.opacity(0), location: 1),
             ],
             startPoint: .top, endPoint: .bottom
         )
-        // DRAWN HEIGHT, then RESERVED height. The outer frame is what the
-        // `.safeAreaInset` measures; pinning the taller gradient to its
-        // top lets the ramp overhang. Nothing clips it — a SwiftUI child
-        // that overflows its frame still draws.
-        .frame(height: solid + ramp)
-        .frame(height: height, alignment: .top)
+        // ONE FRAME. It was two — a taller gradient pinned to the top of
+        // a shorter box, so the ramp overhung what the inset reserved.
+        // That overhang is the bug this change removes, and the second
+        // frame went with it (standing rule 6): `solid + ramp` IS
+        // `height` now, by construction.
+        .frame(height: height)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
     }

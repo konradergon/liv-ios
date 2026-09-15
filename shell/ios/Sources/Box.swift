@@ -20,7 +20,14 @@ import os
 /// something opens it.
 struct CellRow: Decodable {
     var propertyId: LivEntityID? = nil
+    /// WHAT A PERSON READS — a rename moves it, and `tags` reads
+    /// "Subject" without one.
     var property: String? = nil
+    /// THE TOKEN. Key off this; draw `property`. A skip list matched
+    /// against the shown word is a skip list that stops working the day
+    /// someone renames a field, and stopped working for `tags` the day
+    /// it began reading "Subject".
+    var word: String? = nil
     var kind: String? = nil
     var value: String? = nil
     var refTarget: LivEntityID? = nil
@@ -686,7 +693,7 @@ final class BoxModel: ObservableObject {
     static func cellRows(_ cells: [LivCell]) -> [CellRow] {
         cells.map {
             CellRow(
-                propertyId: $0.property, property: $0.name,
+                propertyId: $0.property, property: $0.name, word: $0.word ?? $0.name,
                 kind: $0.holds, value: $0.value, refTarget: $0.ref)
         }
     }
@@ -2045,7 +2052,10 @@ struct LivDayView: Decodable {
 /// One row of the inspector, as `liv_cells` reports it.
 struct LivCell: Decodable, Identifiable {
     var property: LivID?
+    /// What a person reads.
     var name: String?
+    /// The token — see `CellRow.word`.
+    var word: String?
     /// text | number | bool | datetime | reference | richtext | file —
     /// so a row picks its editor without knowing the property.
     var holds: String?
