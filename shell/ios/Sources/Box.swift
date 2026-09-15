@@ -694,9 +694,20 @@ final class BoxModel: ObservableObject {
     /// Days since the epoch — what every engine verb counts in, and NOT
     /// the packed civil the old ABI used. Pretending they are the same
     /// number is how a task ends up on the wrong side of midnight.
-    static var todayDay: Int32 {
-        Int32(floor(Date().timeIntervalSince1970 / 86_400))
-    }
+    ///
+    /// **THE LOCAL CIVIL DAY, not the UTC one.** This was
+    /// `floor(now / 86_400)`, which is the day it is in Greenwich. A due
+    /// is a FLOATING civil day — `DateSpec::Day` is a civil day number
+    /// with no zone in it — so the day handed to the engine has to be
+    /// the day the person is living in, or for the hours either side of
+    /// midnight every surface that splits on "today" splits on the
+    /// wrong one. The same disagreement about what a number means as
+    /// `EntityRow.due`, one layer up.
+    ///
+    /// `Civil.epochDay` already counted it correctly and `EngineCheck`
+    /// already called it — the right answer was in the tree, beside a
+    /// second spelling that was not (standing rule 4).
+    static var todayDay: Int32 { Civil.epochDay(Civil.todayDay()) }
 
     /// Main-thread only: mark busy and schedule one refresh, 0.2s doubling
     /// to a 2.0s ceiling.
@@ -1491,9 +1502,30 @@ struct EntityRow: Decodable, Identifiable {
     /// word or none — and `isTask` above is what new code should ask.
     var kinds: [String]? { kindWord.map { [$0] } }
     var status: String? { statusWord }
-    var due: Int64? { dueMs }
+    /// **THE WIRE COUNTS MILLISECONDS; THE SHELL SPEAKS PACKED CIVILS.**
+    ///
+    /// `Row.due_ms` is epoch ms (`surface/src/lib.rs`), and every reader
+    /// on this side does `Civil.day(of:)` and `CalClock.minutes(of:)` —
+    /// which divide by 10,000 and take a remainder. Handed a count of
+    /// milliseconds those answer a number that is not a time at all: a
+    /// block landed at an arbitrary minute of an arbitrary day, a due
+    /// sheet opened on it, and tapping a quarter past nine wrote 09:15
+    /// and read back something else (owner, 2026-09-15). The write was
+    /// never the broken half.
+    ///
+    /// **UTC, deliberately.** A due crosses as TEXT with no zone, which
+    /// `parse_date` takes as tz 0 — so a due is a floating wall-clock
+    /// time that happens to be stored as ms. Reading it back in UTC is
+    /// what makes 22:15 read as 22:15, on this device and on a device
+    /// three zones over. Local would shift every due in the box the
+    /// moment a plane landed.
+    var due: Int64? { dueMs.map { Civil.civil(ofFloatingMs: $0) } }
     var dueDateOnly: Bool? { allDay }
-    var created: Int64? { createdMs }
+
+    /// The same conversion, but this one IS an instant — `now_ms` off
+    /// this device's clock — so it reads in the zone the person is
+    /// standing in.
+    var created: Int64? { createdMs.map { Civil.civil(ofInstantMs: $0) } }
     /// The MONOTONIC recency key — the newest transaction that touched
     /// this. Never printed as a time.
     var recency: UInt64? { touchedMs.map { UInt64(max(0, $0)) } }
@@ -1534,7 +1566,10 @@ extension EntityRow {
     init(
         id: LivEntityID, title: String? = nil, kinds: [String]? = nil,
         status: String? = nil, cells: [CellRow]? = nil,
-        due: Int64? = nil, allDay: Bool? = nil, archived: Bool? = nil,
+        // MILLISECONDS, like the wire — not the packed civil `row.due`
+        // answers. The label said `due:` and meant ms, which is the
+        // confusion this whole conversion exists to end.
+        dueMs: Int64? = nil, allDay: Bool? = nil, archived: Bool? = nil,
         trashed: Bool? = nil, hasFile: Bool? = nil
     ) {
         self.id = id
@@ -1542,7 +1577,7 @@ extension EntityRow {
         self.kindWord = kinds?.first
         self.statusWord = status
         self.cells = cells
-        self.dueMs = due
+        self.dueMs = dueMs
         self.allDay = allDay
         self.archived = archived
         self.trashed = trashed
@@ -1728,6 +1763,37 @@ enum Civil {
     static func stamp(day: Int64, hhmm: Int64) -> Int64 {
         day * 10_000 + hhmm
     }
+
+    /// THE WIRE'S MILLISECONDS, PACKED. `yyyymmddHHMM`, the one shape
+    /// every reader in the shell divides and remainders.
+    ///
+    /// **The zone is the argument**, because the two callers genuinely
+    /// want different ones and picking either by default is wrong for
+    /// the other. Use the two named wrappers below rather than this.
+    static func civil(ofMs ms: Int64, in zone: TimeZone) -> Int64 {
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000)
+        let c = gregorian.dateComponents(in: zone, from: date)
+        return pack(c.year ?? 0, c.month ?? 0, c.day ?? 0) * 10_000
+            + Int64((c.hour ?? 0) * 100 + (c.minute ?? 0))
+    }
+
+    /// A DUE. It crossed to the engine as text with no zone, which
+    /// `parse_date` reads as UTC, so reading it back in UTC is what
+    /// makes the round trip exact: 22:15 in, 22:15 out, wherever the
+    /// phone is. An all-day due is midnight UTC for the same reason,
+    /// and local would drag it onto the day before west of Greenwich.
+    static func civil(ofFloatingMs ms: Int64) -> Int64 {
+        civil(ofMs: ms, in: utc)
+    }
+
+    /// A REAL INSTANT — when something was made or touched, off this
+    /// device's clock — so it reads in the zone the person is in.
+    static func civil(ofInstantMs ms: Int64) -> Int64 {
+        civil(ofMs: ms, in: gregorian.timeZone)
+    }
+
+    private static let utc = TimeZone(secondsFromGMT: 0) ?? .current
+
 
     static func addDays(_ day: Int64, _ n: Int) -> Int64 {
         guard let date = date(ofDay: day),

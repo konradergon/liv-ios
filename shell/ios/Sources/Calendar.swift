@@ -1559,6 +1559,37 @@ func livCalendarSelfCheck() -> [String] {
         "single-digit months and days keep their zero",
         BoxModel.dateText(202_601_020_903, dateOnly: false) == "2026-01-02 09:03",
         BoxModel.dateText(202_601_020_903, dateOnly: false))
+    // THE WIRE'S MILLISECONDS, READ BACK AS A TIME. `Row.due_ms` is
+    // epoch ms and every reader here does `Civil.day(of:)` — a divide by
+    // 10,000. Handed ms that answers a number that is not a date, which
+    // is why tapping a quarter past nine in the grid wrote 09:15 and the
+    // block came back somewhere else entirely (owner, 2026-09-15). These
+    // pin the round trip in BOTH directions, because either half alone
+    // can be right while the pair disagrees.
+    //
+    // UTC on purpose: a due crosses as text with no zone, which the
+    // engine reads as tz 0, so this is the only reading that returns
+    // what was written. These numbers are therefore fixed, not
+    // machine-dependent — a suite that passed only in one time zone
+    // would be worse than none.
+    check(
+        "the epoch is the first of January",
+        Civil.civil(ofFloatingMs: 0) == 197_001_010_000,
+        "\(Civil.civil(ofFloatingMs: 0))")
+    check(
+        "a due reads back the clock it was written with",
+        Civil.civil(ofFloatingMs: 1_754_345_700_000) == 202_508_042_215,
+        "\(Civil.civil(ofFloatingMs: 1_754_345_700_000))")
+    check(
+        "an all-day due is midnight, not the day before",
+        Civil.civil(ofFloatingMs: 20_304 * 86_400_000) == 202_508_040_000,
+        "\(Civil.civil(ofFloatingMs: 20_304 * 86_400_000))")
+    // And the day number the shell hands the engine is the CIVIL day —
+    // the same counting `DateSpec::Day` uses, and what `todayDay` sends.
+    check("epoch day zero", Civil.epochDay(197_001_010_000 / 10_000) == 0)
+    check(
+        "a civil day counts from the epoch",
+        Civil.epochDay(2_025_08_04) == 20_304, "\(Civil.epochDay(2_025_08_04))")
     // The clock face on its own — same defect, three more call sites.
     check("clock pads both halves", Civil.clock(903) == "09:03", Civil.clock(903))
     check("clock at midnight", Civil.clock(0) == "00:00", Civil.clock(0))
