@@ -280,7 +280,12 @@ struct LibraryPanel: View {
         // and room that is a `.safeAreaInset` is discarded by the
         // `.ignoresSafeArea()` in `SidePanel`. Both were tried. This is
         // what `CalendarView` reserves its hour label with.
-        .contentMargins(.top, LivSafeArea.top, for: .scrollContent)
+        //
+        // AS FAR DOWN AS THE FADE REACHES, so the first row is clear ink
+        // at rest and only dims on its way up (owner, 2026-09-16: "move
+        // down the panel buttons slightly"). It was the status bar
+        // alone, which left the top row sitting in the ramp.
+        .contentMargins(.top, LivTopScrim.height, for: .scrollContent)
         // The rows dissolve as they reach the foot rather than stopping
         // dead behind it.
         .mask(

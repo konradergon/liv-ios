@@ -1102,8 +1102,15 @@ struct LivTopRoom: View {
     @EnvironmentObject private var desk: DeskModel
 
     var body: some View {
+        // NEVER LESS THAN THE FADE REACHES. With the buttons away this
+        // was the status bar alone, and the scrim now covers the status
+        // bar OUTRIGHT and ramps below it — so the first line would have
+        // come to rest inside the ramp, half dimmed, which is the fault
+        // the library panel spent four rounds on.
         Color.clear
-            .frame(height: desk.chromeAway ? LivSafeArea.top : LivRow.topInset)
+            .frame(
+                height: desk.chromeAway
+                    ? max(LivSafeArea.top, LivTopScrim.height) : LivRow.topInset)
     }
 }
 
@@ -1123,18 +1130,42 @@ struct LivTopRoom: View {
 /// It begins at the VERY TOP, above the clock, which is why it ignores
 /// the safe area itself rather than leaving that to each caller (owner,
 /// 2026-09-16: "fade should begin at the very top").
+///
+/// **AND IT IS FULLY OPAQUE ACROSS THE STATUS BAR** (owner, 2026-09-16:
+/// "make the fade more pronounced in both places, having things
+/// completely faded out at the clock, battery indicator and stuff"). A
+/// row passing the clock is gone by the time it gets there, and only
+/// then does the gradient start letting go.
+///
+/// That is NOT the band coming back. The band's fault was never that it
+/// was opaque — it was that it RESERVED the height it painted, so the
+/// first row was pushed under it and sat there at rest. This paints and
+/// reserves nothing; a surface decides for itself where its content
+/// comes to rest, and both of them rest below `height`.
 struct LivTopScrim: View {
     /// The ground it fades FROM — the surface it is laid on, not the
     /// app's. The panel is a step lighter than the desk, and fading to
     /// the desk's ground there painted a band of the wrong colour.
     var ground: Color = LivTheme.canvas
 
+    /// HOW FAR DOWN IT REACHES: the status bar, covered outright, plus
+    /// the ramp. Named once because both the paint and the surfaces that
+    /// rest their content below it ask for the same number.
+    static var height: CGFloat { LivSafeArea.top + LivRow.topFade }
+
     var body: some View {
-        LinearGradient(
-            colors: [ground, ground.opacity(0)],
+        let total = Self.height
+        return LinearGradient(
+            stops: [
+                .init(color: ground, location: 0),
+                // Opaque to the foot of the status bar, so the clock and
+                // the battery have nothing behind them.
+                .init(color: ground, location: total > 0 ? LivSafeArea.top / total : 0),
+                .init(color: ground.opacity(0), location: 1),
+            ],
             startPoint: .top, endPoint: .bottom
         )
-        .frame(height: LivRow.topFade)
+        .frame(height: total)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
         .ignoresSafeArea(edges: .top)
