@@ -177,6 +177,13 @@ struct WireRow {
     created_ms: i64,
     touched_ms: i64,
     has_file: bool,
+    /// **Does it hold any words?** Four shell surfaces ask it and none
+    /// of them could get an answer: on `core/` it was the body's
+    /// compare-and-swap print being non-zero, and the engine hands that
+    /// print back per body rather than per row. So the Inbox listed
+    /// nothing to route while the panel counted eight captures (owner,
+    /// 2026-09-15). Free — `surface::row` already reads the body cell.
+    has_body: bool,
     /// **The word for the kind, not its id**, and lowercase: `note`,
     /// `task`, `event`. It is the same spelling the query grammar uses
     /// (`type:task`), so one word means one thing everywhere.
@@ -219,6 +226,7 @@ impl From<&Row> for WireRow {
             created_ms: r.created_ms,
             touched_ms: r.touched_ms,
             has_file: r.has_file,
+            has_body: r.has_body,
             archived: r.archived,
             trashed: r.trashed,
             kind_word: r.kind_word.clone(),

@@ -938,3 +938,23 @@ func livCanTick(_ row: EntityRow) -> Bool {
     row.kinds?.contains("task") == true || row.status != nil
 }
 
+/// AN UNROUTED CAPTURE: something caught, with words in it, that nobody
+/// has decided about yet. The Inbox's list and the library panel's count
+/// of it.
+///
+/// **They were two spellings and they disagreed out loud** (owner,
+/// 2026-09-15: the panel said Inbox 8, the Inbox said "Nothing to
+/// route"). The panel counted `LivKind.of == .capture`; the Inbox asked
+/// for an empty `kinds` and a non-zero `contentPrint`, and
+/// `contentPrint` answers nil on the engine — so one of them counted
+/// eight and the other counted none, four points apart on the same
+/// screen. A count beside a list is a promise about that list (standing
+/// rule 4).
+///
+/// `LivKind.of` is the app's ONE classifier, so a scrap that has since
+/// been given a status or a file is no longer one — which is right: it
+/// has been decided about.
+func livIsScrap(_ row: EntityRow) -> Bool {
+    row.trashed != true && LivKind.of(row) == .capture && row.hasBody == true
+}
+

@@ -200,6 +200,23 @@ pub struct Row {
     pub touched_ms: i64,
     /// Carries file bytes, which crosscuts kind and decides how it opens.
     pub has_file: bool,
+    /// **Does it hold any words?** Not a fingerprint — the question four
+    /// shell surfaces actually ask is "is there anything in it": whether
+    /// a scrap is an unrouted capture, whether a record card opens with
+    /// its notes showing, whether a tab card says content lives here,
+    /// whether the links list should reload.
+    ///
+    /// `core/` answered all four with the body's compare-and-swap print
+    /// being non-zero. The engine hands that print back per body from
+    /// `liv_read_body` rather than shipping it per row, so the shell's
+    /// accessor returned nil and all four quietly answered "no" — the
+    /// panel counted eight captures while the Inbox said "Nothing to
+    /// route" (owner, 2026-09-15). A fifth caller wants "did MY base
+    /// move", which is a different question and not this one.
+    ///
+    /// Whitespace is not words: a note holding one space has nothing in
+    /// it to go looking for.
+    pub has_body: bool,
     /// **Plumbing on the shelf.** Real, addressable, and on no
     /// front-of-house list: workspaces, saved views, declared fields,
     /// minted areas and status options. `core/` excluded these inside the
@@ -295,6 +312,14 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
         created_ms: id.millis() as i64,
         touched_ms: e.touched(id)?,
         has_file: cells.iter().any(|(p, _, _)| *p == prop::FILE),
+        // Off the SAME `cells_of` everything else here comes from, so
+        // this costs nothing. `plain` is what `body_line` above already
+        // walks; trimming is what makes a body of one space read as the
+        // nothing it is.
+        has_body: match one(prop::BODY) {
+            Some(Value::Rich(spans)) => !liv_engine::rich::plain(spans).trim().is_empty(),
+            _ => false,
+        },
         working: matches!(one(prop::WORKING), Some(Value::Bool(true))),
     })
 }

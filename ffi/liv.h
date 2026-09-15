@@ -417,8 +417,18 @@ int32_t liv_unset_at(const char *path, uint64_t id, const char *property);
 
    A row is
    {"id","title","untitled","kind"?,"due_ms"?,"all_day","status"?,"done",
-    "area"?,"created_ms","touched_ms","has_file"} — already titled, already
-   sorted, and `done` already resolved against which statuses complete. */
+    "area"?,"created_ms","touched_ms","has_file","has_body",
+    "kind_word"?,"status_word"?,"area_word"?,"archived","trashed"}
+   — already titled, already sorted, and `done` already resolved against
+   which statuses complete.
+
+   has_body ADDED 2026-09-15, purely additive: does the thing hold any
+   words (whitespace does not count). Four shell surfaces ask it and on
+   core/ it was answered by the body's compare-and-swap print being
+   non-zero — which the engine hands back per body from liv_read_body,
+   not per row, so all four quietly answered "no" and the Inbox listed
+   nothing to route while the panel counted eight captures. It is NOT a
+   fingerprint: "did MY base move" is a different question. */
 int32_t liv_view_today(const char *path, int32_t day, int32_t today,
                        int64_t now_ms, const char *lens, char **out);
 

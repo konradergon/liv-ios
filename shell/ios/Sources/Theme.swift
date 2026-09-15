@@ -742,7 +742,22 @@ private enum Palette {
     static let canvas = hex(0x1A1A1A, light: 0xFFFFFF)
     static let surface = hex(0x232323, light: 0xF6F6F6)
     static let fill = hex(0x2C2C2C, light: 0xEDEDED)
-    static let selection = hex(0x242424, light: 0xF1F1F1)
+    /// THE "YOU ARE HERE" FILL, the one mark the library panel puts on
+    /// the row you are standing in.
+    ///
+    /// It was `0x242424` on a `0x232323` surface — **one 8-bit step**,
+    /// a contrast ratio of 1.012, which is not a fill, it is a rounding
+    /// error. Light was five steps and 1.045, which is why the owner
+    /// could see it at all and still called it barely visible
+    /// (2026-09-15: "selected things in panel should be slightly darker
+    /// for added contrast (only slightly). it's barely visible now").
+    ///
+    /// 1.095 / 1.103 now — matched across the two schemes, and still a
+    /// step under the app's `fill` so a lit row does not read as a well.
+    /// "Darker" is the LIGHT scheme's word for it; in dark the same
+    /// intent is a step up, and the ratio is what makes them the same
+    /// amount.
+    static let selection = hex(0x2A2A2A, light: 0xEBEBEB)
     static let hairline = hex(0x2E2E2E, light: 0xE4E4E4)
     static let hairline2 = hex(0x3A3A3A, light: 0xD3D3D3)
 

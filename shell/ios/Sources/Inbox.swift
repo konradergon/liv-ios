@@ -36,8 +36,19 @@ struct InboxView: View {
     @State private var chipText: String?
     @State private var chipUndo = 0
 
-    /// (kinds empty) ∧ (contentPrint set) ∧ ¬trashed over the `everything`
-    /// projection — the id lists exclude backstage plumbing.
+    /// THE ONE CLASSIFIER says what a scrap is, and `hasBody` says there
+    /// is something in it to route.
+    ///
+    /// This read `(kinds empty) ∧ (contentPrint ≠ 0)`, and `contentPrint`
+    /// answered nil for every row on the engine — so the list was empty
+    /// forever while the library panel, counting the same pile its own
+    /// way, said 8. The screen said "Nothing to route" and the panel
+    /// disagreed with it four points to the left (owner, 2026-09-15).
+    ///
+    /// `LivKind.of == .capture` is the answer the panel already uses, so
+    /// the two cannot drift again: it is the app's single classifier, and
+    /// it also drops a scrap that has since been given a status or a file
+    /// — which `kinds.isEmpty` alone would still have listed.
     ///
     /// THE WORKSPACE LENS IS NOT APPLIED HERE, EVER (design/ios.md M4). An
     /// unfiled thing must be reachable from every workspace, or a capture
@@ -46,10 +57,7 @@ struct InboxView: View {
     private var scraps: [EntityRow] {
         (box.snap?.everything ?? [])
             .compactMap { box.entity($0) }
-            .filter {
-                ($0.kinds ?? []).isEmpty && ($0.contentPrint ?? 0) != 0
-                    && !($0.trashed ?? false)
-            }
+            .filter(livIsScrap)
             .sorted {
                 let a = $0.created ?? 0
                 let b = $1.created ?? 0

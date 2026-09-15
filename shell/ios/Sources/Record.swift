@@ -330,7 +330,7 @@ struct RecordBody: View {
         seeded = true
         // A record that already carries notes opens with them showing;
         // an empty one does not offer a text box nobody asked for.
-        notesShown = (box.entity(id)?.contentPrint ?? 0) != 0
+        notesShown = box.entity(id)?.hasBody == true
     }
 
     /// The rules live in `LivName.commit` (Kit.swift). This copy was

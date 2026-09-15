@@ -1463,6 +1463,11 @@ struct EntityRow: Decodable, Identifiable {
     var createdMs: Int64?
     var touchedMs: Int64?
     var hasFile: Bool?
+    /// **Does it hold any words?** Optional like every wire field (H1),
+    /// and read as `false` when absent. This replaces `contentPrint`,
+    /// which the engine cannot answer per row — see the note where that
+    /// used to be.
+    var hasBody: Bool?
     /// Filed away, which is NOT thrown away.
     var archived: Bool?
     /// In the trash. False on every surface but the trash, so a row
@@ -1487,7 +1492,7 @@ struct EntityRow: Decodable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, untitled, kind, dueMs, allDay, done, area
-        case createdMs, touchedMs, hasFile, archived, trashed
+        case createdMs, touchedMs, hasFile, hasBody, archived, trashed
         case kindWord, statusWord, areaWord
         case statusId = "status"
     }
@@ -1550,22 +1555,30 @@ struct EntityRow: Decodable, Identifiable {
     /// this. Never printed as a time.
     var recency: UInt64? { touchedMs.map { UInt64(max(0, $0)) } }
 
-    // **Four things the engine cannot answer yet**, each returning
-    // nothing rather than a wrong answer:
+    // **Things the engine cannot answer yet**, each returning nothing
+    // rather than a wrong answer:
     //
     //  - `dueEnd` and `positionedBy` need a date SPAN and a recurrence.
     //    `DateSpec` has no span variant and nothing expands a recurrence,
     //    so a repeating or two-ended event is a gap, not a bug in these
     //    lines (`design/rust-owns-the-mechanisms.md` §5).
-    //  - `contentPrint` is the editor's compare-and-swap fingerprint,
-    //    which `liv_read_body` hands back per body rather than shipping
-    //    for every row in the box.
     //  - `vaultPath`: `hasFile` says whether there is one; WHERE it is on
     //    this device is `liv_file_alerts`, because a path does not
     //    survive a device boundary.
+    //
+    // **`contentPrint` WAS ONE OF THESE AND IS GONE** (2026-09-15). It
+    // returned nil forever, and nil is not a harmless "not yet" when
+    // four call sites read it as a question: `(contentPrint ?? 0) != 0`
+    // is "does this hold words", and it answered no for everything in
+    // the box. The Inbox listed nothing to route while the panel counted
+    // eight captures; a record card never opened with its notes showing;
+    // a tab card never said content lives here. `hasBody` is that
+    // question, answered on the wire, and the fifth caller — the
+    // editor's "did MY base move" — is a different question and now asks
+    // a different thing. A stub that silently answers is worse than one
+    // that is missing (standing rule 6).
     var dueEnd: Int64? { nil }
     var positionedBy: String? { nil }
-    var contentPrint: UInt64? { nil }
     var vaultPath: String? { nil }
     var bookmarked: Bool? { nil }
 }

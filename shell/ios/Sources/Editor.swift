@@ -702,6 +702,16 @@ final class NoteEditorModel: ObservableObject {
 
     private(set) var draft: String?
     private(set) var base: UInt64 = 0
+    /// The row recency this editor has already reacted to. Seeded on
+    /// load so the snapshot that CARRIED the load does not immediately
+    /// look like a change — see `snapshotArrived`.
+    private var seenTouch: UInt64 = 0
+    /// **OUR OWN SAVE MOVES IT TOO.** A successful write bumps the row's
+    /// recency, so the very next snapshot would look like somebody else
+    /// had edited the note and this would reload the text out from under
+    /// the caret. The save knows it is about to cause one; this is it
+    /// saying so.
+    private var adoptNextTouch = false
 
     /// WHAT THE BOX HAS versus WHAT YOU HAVE TYPED, counted.
     ///
@@ -791,6 +801,7 @@ final class NoteEditorModel: ObservableObject {
             }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
+            self.seenTouch = self.box?.entity(self.id)?.recency ?? 0
             self.flattens = SpanText.carriesFormatting(
                 spans,
                 name: { [weak self] in self?.title($0) },
@@ -925,6 +936,7 @@ final class NoteEditorModel: ObservableObject {
             switch status {
             case 1:
                 self.base = fresh
+                self.adoptNextTouch = true
                 // What the box now holds. Anything typed since this save
                 // LEFT stays dirty: `mark` is the buffer it carried, and
                 // cleaning only up to that mark is what the old
@@ -981,6 +993,7 @@ final class NoteEditorModel: ObservableObject {
             }
             let spans = doc.spans ?? []
             self.base = doc.fingerprint ?? 0
+            self.seenTouch = self.box?.entity(self.id)?.recency ?? 0
             self.flattens = SpanText.carriesFormatting(
                 spans,
                 name: { [weak self] in self?.title($0) },
@@ -1023,12 +1036,37 @@ final class NoteEditorModel: ObservableObject {
 
     // MARK: the world moving underneath
 
-    /// Every snapshot answers "did my base move?" for free via
-    /// content_print. Clean → silent reload; dirty → flush now, so the CAS
-    /// surfaces the conflict through the one stale path.
+    /// Every snapshot answers "did my base move?" Clean → silent reload;
+    /// dirty → flush now, so the CAS surfaces the conflict through the
+    /// one stale path.
+    ///
+    /// **IT ASKS THE ROW'S RECENCY, NOT ITS BODY PRINT.** `core/` shipped
+    /// the body's compare-and-swap fingerprint on every row, so this
+    /// compared the exact thing `base` holds. The engine hands that print
+    /// back per body from `liv_read_body` and never per row — so
+    /// `row.contentPrint` answered nil, the guard read `0 != base`, and
+    /// for any note with a body it was TRUE on every refresh: this
+    /// reloaded or flushed on every snapshot the app published, for as
+    /// long as the note was open.
+    ///
+    /// `touched_ms` is the newest transaction that touched this thing,
+    /// and it is already on the wire. It is coarser — a cell write moves
+    /// it too, so a due date set from the card costs one silent reload of
+    /// an unchanged body — and it errs the safe way: it never misses a
+    /// body that moved, and it no longer fires when nothing did.
     func snapshotArrived() {
         guard loaded, !missing, !stopped, let row = box?.entity(id) else { return }
-        guard (row.contentPrint ?? 0) != base else { return }
+        let touched = row.recency ?? 0
+        guard touched != seenTouch else { return }
+        seenTouch = touched
+        // Ours. Adopt the number and do nothing — we already hold what
+        // the box now has. An external change landing in the SAME
+        // snapshot as our save is missed once; the CAS still guards the
+        // write, and the next change reloads.
+        if adoptNextTouch {
+            adoptNextTouch = false
+            return
+        }
         if dirty || saving {
             flush()
         } else {

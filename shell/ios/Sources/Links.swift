@@ -74,7 +74,7 @@ struct LinksSection: View {
         // One user action gets one snapshot (standing rule 8); a link
         // written here rides that same refresh back into this list.
         .onChange(of: box.snap?.entities?.count ?? 0) { _, _ in load() }
-        .onChange(of: box.entity(id)?.contentPrint ?? 0) { _, _ in load() }
+        .onChange(of: box.entity(id)?.recency ?? 0) { _, _ in load() }
         // A link written from anywhere else — another tab's body, the
         // clerk, an import — moves one of these two numbers.
         .onChange(of: box.entity(id)?.cells?.count ?? 0) { _, _ in load() }

@@ -453,3 +453,60 @@ fn a_nameless_thing_gets_a_sensible_name_and_never_an_id() {
     .unwrap();
     assert_eq!(row(&e, scrap).unwrap().title, "Trip planning");
 }
+
+/// **DOES THIS THING HAVE WORDS IN IT?** — one boolean, four callers.
+///
+/// The iOS shell asks it in four places: whether a scrap is an unrouted
+/// capture (the Inbox's list), whether a record card opens with its
+/// notes showing, whether a tab card says "Content lives on this
+/// entity", and whether the links list should reload. On `core/` it was
+/// answered by the body's compare-and-swap fingerprint being non-zero.
+/// The engine hands that print back per body from `liv_read_body`
+/// rather than shipping it for every row, so the shell's accessor
+/// returned nil — and all four questions quietly answered "no".
+///
+/// The Inbox was the one a person could see: the panel counted eight
+/// captures while the screen itself said "Nothing to route" (owner,
+/// 2026-09-15).
+///
+/// A boolean is the right answer here and a fingerprint was never
+/// needed: three of the four want "is there anything in it", and the
+/// fourth wants "did MY base move", which is a different question.
+/// `row` already reads `prop::BODY` out of the same `cells_of` it reads
+/// everything else from, so this costs nothing.
+#[test]
+fn a_row_says_whether_it_holds_any_words() {
+    let mut e = engine();
+    let when = at(DAY, 9, 0) as u64;
+
+    let empty = e.create(kind::NOTE, Some("Nothing in it"), when).unwrap();
+    assert!(!row(&e, empty).unwrap().has_body, "a name is not a body");
+
+    let written = e.create(kind::NOTE, Some("Slates"), when).unwrap();
+    e.set(written, prop::BODY, Value::Rich(vec![Span::text("call the roofer")]), when).unwrap();
+    assert!(row(&e, written).unwrap().has_body);
+
+    // THE INBOX'S OWN CASE: an untyped capture. It has no name and no
+    // kind, and the words it was caught with are the whole of it.
+    let caught = e.capture("ferry times", when).unwrap();
+    let r = row(&e, caught).unwrap();
+    assert!(r.has_body, "a capture is nothing BUT its body");
+    assert_eq!(r.kind_word, None, "and it is still untyped");
+
+    // A capture of nothing is not a capture of something. `clerk.rs`
+    // already makes one of these, so it is a shape that occurs.
+    let blank = e.capture("", when).unwrap();
+    assert!(!row(&e, blank).unwrap().has_body, "an empty body is not a body");
+
+    // A body EMPTIED again says no, rather than staying true because it
+    // once said yes.
+    e.set(written, prop::BODY, Value::Rich(vec![]), when + 1).unwrap();
+    assert!(!row(&e, written).unwrap().has_body);
+
+    // Whitespace is not words. A shell drawing "Content lives on this
+    // entity" for a note holding one space would be lying to the person
+    // who is looking for the content.
+    let spaces = e.create(kind::NOTE, None, when).unwrap();
+    e.set(spaces, prop::BODY, Value::Rich(vec![Span::text("   \n  ")]), when).unwrap();
+    assert!(!row(&e, spaces).unwrap().has_body);
+}

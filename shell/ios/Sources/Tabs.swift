@@ -699,7 +699,7 @@ struct TabCard: View {
             if lines.count == 4 { break }
         }
         if lines.isEmpty {
-            return (row.contentPrint ?? 0) != 0
+            return row.hasBody == true
                 ? "Content lives on this entity." : "No details yet."
         }
         return lines.joined(separator: "\n")

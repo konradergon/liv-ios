@@ -77,13 +77,28 @@ struct SidePanel<Content: View>: View {
             // body keeps evaluating perfectly (2026-08-23, half a day
             // and eight innocent suspects). `LivTopScrim` reads a
             // literal, and so must anything added beside it.
-            // AND IT FADES TO THE PANEL'S OWN GROUND. Left at the
-            // default it fades to `LivTheme.canvas` — the desk's, a step
-            // darker — so the top of the panel wore a band of the desk's
-            // colour and looked like the desk bleeding in from the side
-            // (owner, 2026-09-14).
+            // ROOM ONLY. THE PAINT IS THE OVERLAY AT THE FOOT OF THIS
+            // CHAIN, and that is the whole of the fix.
+            //
+            // A `.safeAreaInset` puts its content at the top of the
+            // safe area as it stands WHEN THE MODIFIER RUNS. The
+            // `.ignoresSafeArea()` further down then grows this whole
+            // thing up to y=0 — so the scrim ended up sitting the height
+            // of the status bar BELOW the panel's real top edge, and the
+            // strip above it was bare. Rows scrolled up through it and
+            // were cut off dead at the edge instead of dissolving:
+            // exactly the cut the owner could still see beside the fade
+            // (2026-09-15), and the reason the fade looked like it began
+            // in the wrong place.
+            //
+            // The desk never had it. `Desk.swift` OVERLAYS its scrim at
+            // `alignment: .top` on a body that ignores the top safe
+            // area, so the paint starts at the body's real top edge.
+            // "Exactly like in desk" is that, and it is now what this
+            // does — the inset is left holding only the ROOM, so the
+            // first row has not moved.
             .safeAreaInset(edge: .top) {
-                LivTopScrim(underChrome: false, ground: LivTheme.surface)
+                Color.clear.frame(height: LivSafeArea.top)
             }
             //
             // NO BOTTOM INSET: the library's own foot floats and its
@@ -123,6 +138,25 @@ struct SidePanel<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .ignoresSafeArea()
+            // THE SOFT EDGE, PINNED TO THE PANEL'S REAL TOP CORNER.
+            //
+            // Last in the chain so it lands after `.ignoresSafeArea()`
+            // has grown this to y=0 — which is the point — and
+            // `.topLeading` + its own width so it covers the panel's
+            // column and not the desk beside it. The documented order
+            // above ("WIDTH FIRST, THEN THE LEADING PIN, THEN the safe
+            // area") is untouched; this hangs off the end of it rather
+            // than moving any of it.
+            //
+            // It fades to the PANEL's ground, not the app's: left at the
+            // default it fades to `LivTheme.canvas`, a step darker, and
+            // the top of the panel wore a band of the desk's colour that
+            // looked like the desk bleeding in from the side (owner,
+            // 2026-09-14).
+            .overlay(alignment: .topLeading) {
+                LivTopScrim(underChrome: false, ground: LivTheme.surface)
+                    .frame(width: width)
+            }
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
             // No .transition: DeskHost positions these with an offset
@@ -446,9 +480,13 @@ struct ViewCounts {
             switch LivKind.of(row) {
             case .task: tasks += 1
             case .event: events += 1
-            case .capture: inbox += 1
             default: break
             }
+            // THE SAME PREDICATE THE INBOX LISTS BY, not a second
+            // reading of the same pile — see `livIsScrap`. This counted
+            // every `.capture` including the empty ones, while the
+            // screen asked for words in it as well.
+            if livIsScrap(row) { inbox += 1 }
             // Today counts what is DUE today or earlier and still open —
             // the same question the Today surface asks.
             if livCanTick(row), let due = row.due, due > 0, Civil.day(of: due) <= now {
