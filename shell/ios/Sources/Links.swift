@@ -36,20 +36,34 @@ struct LinksSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("Links")
+            // A PROPERTY, LIKE EVERY OTHER ROW ON THIS CARD (owner,
+            // 2026-09-15: "should we make the link appear like any
+            // property? the '+ Link…' clickable text looks bad").
+            //
+            // It was a `SectionLabel` over a run of blue words. The card
+            // no longer carries headings over its properties at all
+            // (Detail.swift), and this is a property: `links` on the
+            // left in the same face every field name wears, the door on
+            // the VALUE side as the app's own hollow add chip — the one
+            // the capture sheet's +Tag row already uses.
+            SectionGap()
+            linkRow
             ForEach(Array(visible(links.outRows, all: showAllOut).enumerated()), id: \.element.id) {
                 i, link in
+                DetailHairline()
                 LinkRowView(
                     link: link, row: box.entity(link.id ?? 0),
                     onOpen: { open(link) }, onRemove: removal(for: link))
             }
             moreButton(links.outRows, expanded: $showAllOut)
-            linkButton
             if !links.inRows.isEmpty {
-                SectionLabel("Linked from")
+                SectionGap()
+                DetailRowLabel("linked from")
+                    .frame(height: LivRow.height, alignment: .leading)
                 ForEach(Array(visible(links.inRows, all: showAllIn).enumerated()), id: \.element.id) {
                     i, link in
-                        LinkRowView(
+                    DetailHairline()
+                    LinkRowView(
                         link: link, row: box.entity(link.id ?? 0),
                         onOpen: { open(link) }, onRemove: nil)
                 }
@@ -75,22 +89,24 @@ struct LinksSection: View {
 
     @EnvironmentObject private var workspaces: WorkspaceModel
 
-    /// The one door that makes a link here. Always present: a create key
-    /// that comes and goes is a key you cannot learn (owner, 2026-08-17).
-    private var linkButton: some View {
-        Button { picking = true } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                Text("Link…")
-                    .font(.system(size: LivType.body, weight: .medium))
-                Spacer()
-            }
-            .foregroundStyle(LivTheme.accent)
-            .frame(height: 44)
-            .contentShape(Rectangle())
+    /// THE `links` PROPERTY ROW — a name on the left, the door on the
+    /// right, the geometry every other field on this card has.
+    ///
+    /// The door is always present: a create key that comes and goes is a
+    /// key you cannot learn (owner, 2026-08-17). What changed is its
+    /// dress. It was `+ Link…` in accent ink with no shape around it,
+    /// which reads as a hyperlink — and the owner's rule is that the
+    /// only clickable TEXT in this app is a link inside a note; every
+    /// other tappable thing looks like a button (2026-09-15). `AddChip`
+    /// is the app's existing answer, hollow so it never competes with a
+    /// real value beside it.
+    private var linkRow: some View {
+        HStack(spacing: 10) {
+            DetailRowLabel("links")
+            Spacer(minLength: 12)
+            AddChip("Link") { picking = true }
         }
-        .buttonStyle(.plain)
+        .frame(height: LivRow.height)
     }
 
     private func visible(_ rows: [LinkRow], all: Bool) -> [LinkRow] {
@@ -101,15 +117,15 @@ struct LinksSection: View {
         _ rows: [LinkRow], expanded: Binding<Bool>
     ) -> some View {
         if rows.count > Self.shown && !expanded.wrappedValue {
-            Button { expanded.wrappedValue = true } label: {
-                Text("Show all \(rows.count)")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(height: 44)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+            // A CHIP, not a blue word — the same rule as the add door
+            // above it, and the same recipe with a different mark.
+            HStack {
+                AddChip("Show all \(rows.count)", symbol: "chevron.down") {
+                    expanded.wrappedValue = true
+                }
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
+            .frame(height: LivRow.height)
         }
     }
 

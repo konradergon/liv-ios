@@ -926,7 +926,10 @@ private struct DetailEmptyValue: View {
     }
 }
 
-private struct DetailRowLabel: View {
+/// **Internal, not file-private** (2026-09-15). The Links group draws
+/// its rows as properties now, and a second transcription of this face
+/// would be a second recipe for one thing (standing rule 4).
+struct DetailRowLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
 
@@ -997,7 +1000,7 @@ private struct DetailRowLabel: View {
     }
 }
 
-private struct DetailHairline: View {
+struct DetailHairline: View {
     var body: some View {
         Rectangle().fill(LivTheme.border).frame(height: 0.5)
     }

@@ -66,8 +66,23 @@ struct LivMenu: Identifiable {
 /// the workspace switcher's own at body size with an 18pt one, plus
 /// chips under the label and a hairline under every line. One list of
 /// things to choose from, drawn two ways, is exactly what standing rule
-/// 4 is about — so there is one row now, and the plainer, larger one
-/// won.
+/// 4 is about — so there is one row now.
+///
+/// **THE SIZE HALF OF THAT RULING IS REVERSED** (owner, 2026-09-15: "the
+/// workspaces card has larger text and looks rough"). It went to `title`
+/// (22) and it is `body` (18) now.
+///
+/// The 2026-08-17 comparison was between these two cards and nothing
+/// else, and against each other the larger one did look simpler. What it
+/// could not see is the surface this card actually hangs over: the
+/// library panel, whose rows are `body`. The workspace card is opened
+/// FROM that panel and covers its foot, so the two are on screen in the
+/// same moment four points apart — which is near enough to look like a
+/// mistake and far enough not to look deliberate.
+///
+/// The one-row half of the ruling is untouched, and it is why this moves
+/// the create menu too: a list of things to choose from still must not
+/// look different depending on which card it is in.
 struct LivMenuRow: View {
     let label: String
     var glyph: LivGlyph?
@@ -78,8 +93,20 @@ struct LivMenuRow: View {
     var selected = false
     var chevron = false
     var destructive = false
-    /// A door rather than a choice — "New workspace…" — in the accent.
-    var accent = false
+    // NO `accent` FLAG (owner, 2026-09-15: "especially with the 'New
+    // workspace...' clickable text. Only clickable text in the app
+    // should be links inside notes… otherwise it should look like a
+    // button and be consistent").
+    //
+    // It tinted the door row — "New workspace…" — and that blue word at
+    // the foot of a list of black ones was the whole of what made it
+    // read as a hyperlink. The row shape is already the button: full
+    // width, 44pt, a glyph, a press state. The library panel's own "New
+    // filter" door has always been a plain row with a `+` in front of
+    // it, so two doors to the same kind of thing were dressed two ways.
+    //
+    // Deleted rather than left unread (standing rule 6): the one caller
+    // stopped passing it in the same change.
     /// A hairline above, inset past the icon: rows after the first.
     var divided = false
     let action: () -> Void
@@ -87,20 +114,33 @@ struct LivMenuRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
+                // THE LIBRARY PANEL'S DENSITY, not a size of its own
+                // (owner, 2026-09-15: "the workspaces card has larger
+                // text and looks rough").
+                //
+                // It was `title` (22) while the panel's rows are `body`
+                // (18) — and the workspace card HANGS OVER that panel,
+                // so the two sat on screen together, four points apart,
+                // in the same moment. `body` is the app's ordinary text
+                // and the density this card's own comment already claims
+                // to share ("the same one the + menu draws… a list of
+                // things to choose from should not look different
+                // depending on which card it is in", owner 2026-08-17).
+                // Moving the one recipe moves both, which is the point.
                 Group {
                     if let emoji, !emoji.isEmpty {
-                        Text(emoji).font(.system(size: LivType.title))
+                        Text(emoji).font(.system(size: LivType.body))
                     } else if let glyph {
-                        LivIcon(glyph: glyph, color: tint(icon: true), size: 24)
+                        LivIcon(glyph: glyph, color: tint(icon: true), size: 22)
                     } else if let symbol {
                         Image(systemName: symbol)
-                            .font(.system(size: LivType.title))
+                            .font(.system(size: LivType.body))
                             .foregroundStyle(tint(icon: true))
                     }
                 }
                 .frame(width: 26)
                 Text(label)
-                    .font(.system(size: LivType.title, weight: selected ? .semibold : .regular))
+                    .font(.system(size: LivType.body, weight: selected ? .semibold : .medium))
                     .foregroundStyle(tint(icon: false))
                     .lineLimit(1)
                 Spacer(minLength: 8)
@@ -143,7 +183,6 @@ struct LivMenuRow: View {
 
     private func tint(icon: Bool) -> Color {
         if destructive { return LivTheme.red }
-        if accent { return LivTheme.accent }
         return icon ? LivTheme.text2 : LivTheme.text
     }
 }

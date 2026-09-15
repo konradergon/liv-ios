@@ -388,9 +388,20 @@ struct GlyphShape: Shape {
             pen.line(17.2, 6.5, 16.2, 19.5)
             pen.line(7.8, 19.5, 16.2, 19.5)
         case .settings:
-            pen.circle(12, 12, 6.8)
-            pen.circle(12, 12, 2)
-            pen.rays(12, 12, from: 6.3, to: 9, count: 8)
+            // A COGWHEEL, and it was a SHIP'S WHEEL (owner, 2026-09-15:
+            // "it's not a cogwheel but a pirate ship steering wheel").
+            //
+            // It was a rim at r6.8, a hub at r2, and eight rays from 6.3
+            // to 9 — spokes that cross the rim and poke out past it,
+            // which is a helm: rim, handles, hub. A gear has no rim and
+            // no handles. Its OUTLINE is the toothed profile, its teeth
+            // are wide tapered blocks rather than spikes, and its bore
+            // is large — a gear is mostly a ring.
+            //
+            // `rays` is still the sun's (`.today`), which is what it was
+            // always right for.
+            pen.gear(12, 12, root: 7, tip: 9.2, teeth: 8)
+            pen.circle(12, 12, 3.1)
         case .workspace:
             // r8, not the sheet's 5.6: bare in a row it has to hold the
             // same optical weight as its neighbours, which fill ~80% of
@@ -478,7 +489,45 @@ private struct Pen {
         }
     }
 
-    /// Spokes around a centre — the sun and the gear draw the same eight.
+    /// A TOOTHED RING — the gear's whole outline in one closed path.
+    ///
+    /// Four points per tooth, walked once around: out of the valley at
+    /// the root radius, up the flank to the tip, across the tip, and
+    /// back down. The tooth is NARROWER at the tip than at the root,
+    /// which is the taper that makes it read as a cog rather than as a
+    /// square peg — and the valley between two teeth is a real gap, not
+    /// a line crossing a rim.
+    ///
+    /// `shape` rounds every corner, so the tips and valleys come out
+    /// soft at the weight this app's line art is drawn at. The radius is
+    /// small enough that no corner eats its own segment: the shortest
+    /// run here is the valley floor, and it is over three times 0.45.
+    mutating func gear(
+        _ cx: CGFloat, _ cy: CGFloat, root: CGFloat, tip: CGFloat, teeth: Int
+    ) {
+        guard teeth > 2 else { return }
+        let pitch = 2 * Double.pi / Double(teeth)
+        // Two thirds of the half-pitch at the root, and under half of it
+        // at the tip. Wider and the valleys close up; narrower and the
+        // teeth read as the spikes this is replacing.
+        let rootHalf = pitch * 0.33
+        let tipHalf = pitch * 0.21
+        var pts: [(CGFloat, CGFloat, CGFloat)] = []
+        for i in 0..<teeth {
+            let mid = Double(i) * pitch
+            for (r, offset) in [
+                (root, -rootHalf), (tip, -tipHalf), (tip, tipHalf), (root, rootHalf),
+            ] {
+                let a = mid + offset
+                pts.append((cx + r * CGFloat(cos(a)), cy + r * CGFloat(sin(a)), 0.45))
+            }
+        }
+        shape(pts, closed: true)
+    }
+
+    /// Spokes around a centre — the SUN's. It drew the settings gear too
+    /// until 2026-09-15, which is how that glyph ended up a ship's wheel:
+    /// spokes out of a rim are handles, not teeth.
     mutating func rays(
         _ cx: CGFloat, _ cy: CGFloat, from: CGFloat, to: CGFloat, count: Int
     ) {

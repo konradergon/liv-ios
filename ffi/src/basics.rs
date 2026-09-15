@@ -437,6 +437,52 @@ pub unsafe extern "C" fn liv_property_named(
     }
 }
 
+/// The id of a kind by its name, **the backstage ones included**.
+/// `{"id":hex}`.
+///
+/// `liv_kinds` is the CREATE MENU's list, and `offered_kinds` leaves
+/// `kind::WORKSPACE` and `kind::VIEW` out of it on purpose: a person
+/// never picks one from a list. But the app MAKES both — a saved filter
+/// is a View and a workspace is a Workspace — and that list was the
+/// shell's only way to name a kind. So saving a new filter looked for
+/// "view" among the six, did not find it, and wrote nothing: no filter,
+/// and no error anyone could see (owner, 2026-09-15: "can't save new
+/// filters"). A new workspace failed the same way.
+///
+/// This is the door `liv_property_named` is, for the reason written
+/// there: a shell needs SOME way in, and hard-coding 32 hex characters
+/// in Swift is worse than asking. It does NOT widen the picker — that
+/// list is still the six, and a test says so.
+///
+/// Matched case-insensitively against the one place these words live
+/// (`model::label`), so the shell may spell what it sees. `LIV_ERR_ARG`
+/// for a word that is not a kind: the caller asked for something that
+/// does not exist, which is not the same as an empty answer.
+///
+/// # Safety
+/// `path` and `name` must be valid C strings; `out` as above.
+#[no_mangle]
+pub unsafe extern "C" fn liv_kind_named(
+    path: *const c_char,
+    name: *const c_char,
+    out: *mut *mut c_char,
+) -> i32 {
+    let name = match text_of(name) {
+        Ok(s) => s.trim(),
+        Err(e) => return e,
+    };
+    let Some(&id) = liv_engine::model::ALL_KINDS.iter().find(|&&k| {
+        liv_engine::model::label(k).is_some_and(|l| l.eq_ignore_ascii_case(name))
+    }) else {
+        return LIV_ERR_ARG;
+    };
+    let _: EntityId = id;
+    match with_engine(path, |_| Ok(json!({ "id": id.hex() }))) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
 /// A C string argument, or `LIV_ERR_ARG`.
 ///
 /// # Safety

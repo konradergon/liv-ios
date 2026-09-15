@@ -172,7 +172,7 @@ struct WorkspaceSwitcher: View {
     }
 
     private func addRow(_ label: String, action: @escaping () -> Void) -> some View {
-        LivMenuRow(label: label, symbol: "plus", accent: true, divided: true, action: action)
+        LivMenuRow(label: label, symbol: "plus", divided: true, action: action)
     }
 
     // MARK: the new-workspace form — name + query + the stamp hint

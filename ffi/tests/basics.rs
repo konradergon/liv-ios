@@ -448,6 +448,103 @@ fn a_status_option_says_whether_it_closes_the_thing() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// **THE BACKSTAGE KINDS HAVE NO DOOR.**
+///
+/// `liv_kinds` is the CREATE MENU's list — the six the product names,
+/// plus what a user declared — and `offered_kinds` leaves out
+/// `kind::WORKSPACE` and `kind::VIEW` on purpose: a person never picks
+/// one from a list. But the app MAKES both, and the shell's only way to
+/// name a kind was that list. So saving a new filter looked for a kind
+/// called "view", never found it, and wrote nothing — no filter, no
+/// error a person could see (owner, 2026-09-15: "can't save new
+/// filters"). A new workspace failed the same way, silently.
+///
+/// The same door `liv_property_named` is, for the same reason written
+/// there: a shell needs SOME way in, and hard-coding 32 hex characters
+/// in Swift is worse than asking.
+#[test]
+fn a_shell_can_name_a_backstage_kind() {
+    let (d, path) = box_at("kind_named");
+
+    // The one this was written for. It is NOT in liv_kinds.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_kind_named(path.as_ptr(), c("view").as_ptr(), &mut out) }, LIV_OK);
+    assert_eq!(took(out)["id"], J::String(kind::VIEW.hex()));
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_kind_named(path.as_ptr(), c("workspace").as_ptr(), &mut out) }, LIV_OK);
+    assert_eq!(took(out)["id"], J::String(kind::WORKSPACE.hex()));
+
+    // The picker's list still does not carry them — this verb is the
+    // door, not a widening of that one.
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_kinds(path.as_ptr(), &mut out) };
+    let offered = took(out);
+    let names: Vec<&str> =
+        offered.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"View"), "a create menu must not offer a saved filter: {names:?}");
+    assert!(!names.contains(&"Workspace"), "{names:?}");
+
+    // The six answer here too — one lookup, not a second vocabulary.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_kind_named(path.as_ptr(), c("note").as_ptr(), &mut out) }, LIV_OK);
+    assert_eq!(took(out)["id"], J::String(kind::NOTE.hex()));
+    // A display name with a space in it still resolves, because the
+    // shell spells what it sees.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_kind_named(path.as_ptr(), c("Daily note").as_ptr(), &mut out) }, LIV_OK
+    );
+    assert_eq!(took(out)["id"], J::String(kind::DAILY_NOTE.hex()));
+
+    // A word that is not a kind is an ARGUMENT fault, not an empty
+    // answer: the caller asked for something that does not exist.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_kind_named(path.as_ptr(), c("sandwich").as_ptr(), &mut out) },
+        LIV_ERR_ARG
+    );
+    assert!(out.is_null(), "a refused lookup delivers nothing");
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// And the shell's own path all the way through: a saved filter is made
+/// as a View and keeps its query.
+#[test]
+fn a_saved_filter_is_made_and_found() {
+    let (d, path) = box_at("saved_filter");
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_kind_named(path.as_ptr(), c("view").as_ptr(), &mut out) };
+    let view = c(took(out)["id"].as_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_make(path.as_ptr(), view.as_ptr(), c("Foo").as_ptr(), T0, &mut out) },
+        LIV_OK
+    );
+    let made = c(took(out)["id"].as_str().unwrap());
+
+    let query = prop_id(&path, "query");
+    assert_eq!(
+        unsafe {
+            liv_set(path.as_ptr(), made.as_ptr(), query.as_ptr(), c("area:Work").as_ptr(), T0 + 1)
+        },
+        LIV_OK
+    );
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_cells(path.as_ptr(), made.as_ptr(), &mut out) };
+    let cells = took(out);
+    assert!(
+        cells.as_array().unwrap().iter().any(|r| r["value"] == "area:Work"),
+        "the filter kept its query: {cells:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn the_create_menu_offers_the_six_the_product_names() {
     let (d, path) = box_at("kinds");

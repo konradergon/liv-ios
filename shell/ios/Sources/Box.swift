@@ -1068,17 +1068,29 @@ final class BoxModel: ObservableObject {
 
     /// A backstage thing of one kind, by word. Workspaces and saved
     /// filters are both this.
+    ///
+    /// **NOT through `engineKinds`.** That is the CREATE MENU's list —
+    /// the six the product names plus what a user declared — and it
+    /// leaves Workspace and View out on purpose: a person never picks
+    /// one from a list. So this looked for a kind called "view", never
+    /// found it, and gave up: saving a new filter wrote NOTHING, and a
+    /// new workspace failed the same way, both without an error anyone
+    /// could see (owner, 2026-09-15: "can't save new filters").
+    ///
+    /// `liv_kind_named` is the door for exactly this — the one
+    /// `liv_property_named` already is for properties — and it does not
+    /// widen the picker.
     private func furnish(
         kindWord: String, name: String, _ done: @escaping (LivEntityID) -> Void
     ) {
-        engineKinds { [weak self] kinds in
+        engineKindNamed(kindWord) { [weak self] k in
             guard let self else { return }
-            guard let k = kinds.first(where: { ($0.name ?? "").lowercased() == kindWord }) else {
+            guard let k else {
                 self.verbFailed("furnish \(kindWord)")
                 done(.absent)
                 return
             }
-            self.engineMake(kind: k.id, name: name) { id, _ in done(id ?? .absent) }
+            self.engineMake(kind: k, name: name) { id, _ in done(id ?? .absent) }
         }
     }
 
@@ -2460,6 +2472,14 @@ extension BoxModel {
     /// characters in Swift is worse than asking.
     func engineProperty(_ name: String, _ done: @escaping (LivID?) -> Void) {
         engineRead(LivMade.self, { to, out in liv_property_named(to, name, out) }) { v, _ in
+            done(v?.id)
+        }
+    }
+
+    /// A kind by name, **the backstage ones included** — which is what
+    /// `engineKinds` deliberately does not answer. See `furnish`.
+    func engineKindNamed(_ name: String, _ done: @escaping (LivID?) -> Void) {
+        engineRead(LivMade.self, { to, out in liv_kind_named(to, name, out) }) { v, _ in
             done(v?.id)
         }
     }

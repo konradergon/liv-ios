@@ -209,5 +209,13 @@ old codebase.
 - Keep it dense — this app is deliberately compact. The density reference used
   to be the Mac shell; it is now `shell/ios/Sources/Theme.swift`, which is the
   only place a size or a colour may be defined.
+- **The only clickable TEXT in the app is a link inside a note** (owner,
+  2026-09-15: *"Only clickable text in the app should be links inside notes…
+  otherwise it should look like a button and be consistent"*). Everything else
+  you can tap wears a shape: a full-width row (`LivMenuRow`, the library
+  panel's), a hollow chip (`AddChip`), or a filled pill (`ConfirmPill`). A bare
+  accent word floating on a card reads as a hyperlink and is a defect. This
+  cost three of them — `+ Link…`, `Show all 12`, `New workspace…` — each
+  written on its own day by someone who only had the one to look at.
 - Verify on the simulator before claiming something works; cross-check writes
   against the box with the CLI. A builder's own report is not evidence.

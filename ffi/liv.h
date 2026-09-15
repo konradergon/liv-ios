@@ -711,6 +711,22 @@ int32_t liv_kinds(const char *path, char **out);
    a lookup of something stable, not of a label a user can change. */
 int32_t liv_property_named(const char *path, const char *name, char **out);
 
+/* The id of a kind by its name, THE BACKSTAGE ONES INCLUDED — "view",
+   "workspace", "note". {"id":"<hex>"} LIV_ERR_ARG when nothing is
+   called that. Added 2026-09-15, purely additive.
+
+   liv_kinds above is the CREATE MENU's list and deliberately omits
+   Workspace and View: a person never picks one from a list. But the app
+   MAKES both — a saved filter is a View, a workspace is a Workspace —
+   and that list was the shell's only way to name a kind. So saving a
+   new filter looked for "view" among the six, did not find it, and
+   wrote nothing: no filter, and no error anyone could see.
+
+   This is the door liv_property_named is, for the reason written there.
+   It does NOT widen the picker; liv_kinds still answers the six.
+   Matched case-insensitively against the one place these words live. */
+int32_t liv_kind_named(const char *path, const char *name, char **out);
+
 /* ====================================================================
    FINDING THINGS
 

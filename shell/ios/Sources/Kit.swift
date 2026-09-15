@@ -668,18 +668,28 @@ struct ConfirmPill: View {
 struct AddChip: View {
     let label: String
     var big: Bool = false
+    /// The mark it wears. `plus` because adding is what it nearly always
+    /// does; the Links group's "Show all 12" is the same chip with a
+    /// chevron, because it is the same KIND of control — a quiet button
+    /// that must not read as a link (owner, 2026-09-15: "only clickable
+    /// text in the app should be links inside notes").
+    var symbol: String = "plus"
     let action: () -> Void
 
-    init(_ label: String, big: Bool = false, action: @escaping () -> Void) {
+    init(
+        _ label: String, big: Bool = false, symbol: String = "plus",
+        action: @escaping () -> Void
+    ) {
         self.label = label
         self.big = big
+        self.symbol = symbol
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: big ? 5 : 4) {
-                Image(systemName: "plus")
+                Image(systemName: symbol)
                     .font(.system(size: LivChip.glyph - 3, weight: .semibold))
                 Text(label)
                     .font(.system(size: LivType.caption))
