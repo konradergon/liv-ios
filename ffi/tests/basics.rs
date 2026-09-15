@@ -372,6 +372,82 @@ fn a_picker_asks_the_box_for_its_words() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// **A STATUS OPTION HAS TO SAY WHETHER IT CLOSES THE THING.**
+///
+/// `liv_options` shipped `{id, name}` and nothing else, so a shell
+/// asking for the status vocabulary got three words and no way to tell
+/// which one means done. The iOS ring writes "the option that completes"
+/// — it found none, wrote nothing, and a task could not be ticked at all
+/// (owner, 2026-09-15). The answer was in the box the whole time: the
+/// engine holds `prop::COMPLETES` and `surface::completes` already reads
+/// it for the row's own `done` flag.
+///
+/// `hue` rides along for the same reason — the ring colours itself from
+/// the vocabulary, and a colour invented in Swift is the same mistake as
+/// a word invented in Swift (`one-core.md` §4).
+///
+/// Purely additive: two new keys on a payload that had two.
+#[test]
+fn a_status_option_says_whether_it_closes_the_thing() {
+    let (d, path) = box_at("options_completes");
+    let status = prop_id(&path, "status");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_options(path.as_ptr(), status.as_ptr(), &mut out) }, LIV_OK);
+    let rows = took(out);
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 3, "todo, doing, done");
+
+    // EXACTLY ONE closes. A shell that finds none writes nothing; a
+    // shell that finds two writes whichever it happened to see first.
+    let closing: Vec<&str> = rows
+        .iter()
+        .filter(|r| r["completes"] == J::Bool(true))
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(closing, vec!["Done"], "{rows:?}");
+    // And the other two say so rather than being silent about it — a
+    // missing key and a false one read the same in Swift, but only one
+    // of them is an answer.
+    assert!(
+        rows.iter().all(|r| r["completes"].is_boolean()),
+        "every option answers the question: {rows:?}"
+    );
+
+    // A user's own status joins the vocabulary and does NOT close
+    // anything until it is told to.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_make(
+            path.as_ptr(), c(&kind::STATUS.hex()).as_ptr(), c("Blocked").as_ptr(), T0, &mut out,
+        )
+    };
+    let mine = c(took(out)["id"].as_str().unwrap());
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_options(path.as_ptr(), status.as_ptr(), &mut out) };
+    let rows = took(out);
+    let rows = rows.as_array().unwrap();
+    let blocked = rows.iter().find(|r| r["name"] == "Blocked").unwrap();
+    assert_eq!(blocked["completes"], J::Bool(false), "{blocked:?}");
+
+    // Told to, it closes — the flag is a cell, not a hardcoded list.
+    let completes = prop_id(&path, "completes");
+    assert_eq!(
+        unsafe {
+            liv_set(path.as_ptr(), mine.as_ptr(), completes.as_ptr(), c("yes").as_ptr(), T0 + 1)
+        },
+        LIV_OK
+    );
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_options(path.as_ptr(), status.as_ptr(), &mut out) };
+    let rows = took(out);
+    let rows = rows.as_array().unwrap();
+    let blocked = rows.iter().find(|r| r["name"] == "Blocked").unwrap();
+    assert_eq!(blocked["completes"], J::Bool(true), "{blocked:?}");
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 #[test]
 fn the_create_menu_offers_the_six_the_product_names() {
     let (d, path) = box_at("kinds");

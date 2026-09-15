@@ -59,6 +59,34 @@ import SwiftUI
 ///
 /// It stays Liquid Glass, which the owner asked for by name — now on
 /// three shapes instead of one.
+/// WHERE THE BAR IS STANDING, in window coordinates. `.zero` when it is
+/// not on screen at all.
+///
+/// **A recognizer on the WINDOW sees touches through anything that is
+/// merely drawn on top** — the note beside `LivOverDesk` says the same
+/// thing about the panel's, and four surfaces were fixed one at a time
+/// before that was understood. The calendar's grid recognizer has it
+/// too: holding `+` opened the create menu AND, 0.28s in, started
+/// placing an event on the timeline underneath, so letting go made one
+/// (owner, 2026-09-15).
+///
+/// `LivOverDesk` cannot answer this. It counts what is ALREADY up, and
+/// a press that starts on the bar has raised nothing yet. Only the
+/// bar's own geometry knows.
+///
+/// Not `@Published` and not on `DeskModel` on purpose: the bar's frame
+/// changes on every frame of its retire animation, and nothing should
+/// re-render because of it. The one reader is a gesture delegate asking
+/// a yes-or-no question.
+enum LivBarFrame {
+    static var rect: CGRect = .zero
+
+    /// Did this window-space point land on the bar?
+    static func holds(_ point: CGPoint) -> Bool {
+        rect != .zero && rect.contains(point)
+    }
+}
+
 struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
 
@@ -86,6 +114,21 @@ struct BottomBar: View {
             }
         }
         .padding(.horizontal, LivBar.sideInset)
+        // WHERE IT IS, so a recognizer on the window can refuse it.
+        //
+        // Measured AFTER every modifier that moves it, so the rect
+        // follows the bar off screen when the chrome retires and the
+        // band underneath goes live again. Paired with
+        // `location(in: nil)`, which is the same window space — the
+        // calendar's trash zone already works this way.
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { LivBarFrame.rect = geo.frame(in: .global) }
+                    .onChange(of: geo.frame(in: .global)) { _, f in LivBarFrame.rect = f }
+                    .onDisappear { LivBarFrame.rect = .zero }
+            }
+        )
     }
 
     /// One glass shape holding one or two keys. The glass is per PIECE,

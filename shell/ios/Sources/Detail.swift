@@ -226,6 +226,9 @@ struct EntityInspector: View {
                         .focused($nameFocused)
                         .submitLabel(.done)
                         .onSubmit(commitName)
+                        // See `livNameReturn`: a vertical-axis field
+                        // never calls `.onSubmit`.
+                        .livNameReturn($draftName, $nameFocused)
                         .onChange(of: nameFocused) { _, now in
                             if !now { commitName() }
                         }

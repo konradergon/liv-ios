@@ -1875,10 +1875,21 @@ if lo >= 0 and hi > lo:
 
   cmd_tap "$name" || return 1
   perl -e 'select(undef,undef,undef,1.5)'
-  cmd_tap "Library" || return 1
+
+  # NO SECOND "Library" TAP. Picking a filter used to close the panel, so
+  # this had to re-open it to read the count again. Since 2026-09-15 it
+  # does not: a filter is a lens over the view you are already in, not a
+  # place you go, and the panel stays (owner: "it kind of gives that
+  # incorrect feeling"). Tapping Library here would now CLOSE it.
+  #
+  # So this reads the count off a panel that must still be standing —
+  # which makes it the check for that too. An empty count here means
+  # either the panel closed on the pick, or the row left it.
   after=$(panel_count Everything)
-  [[ -n "$after" ]] || { die "the Everything row left the panel once the
-      filter '$name' was on."; return 1 }
+  [[ -n "$after" ]] || { die "no Everything count after picking '$name'.
+      The panel is supposed to STAY OPEN on a filter — if it closed, the
+      pick is being treated as navigation again (Panel.swift, the filter
+      row). If it is open, the Everything row left it."; return 1 }
   (( after != before )) || {
     die "the filter '$name' changed nothing: $before items before, $after after.
       Either the lens is never asked for, or every row is being admitted.
@@ -1888,8 +1899,11 @@ if lo >= 0 and hi > lo:
 
   # PUT IT BACK. This check turns a filter on, and the filter is
   # remembered; leaving it on would hand every later check a narrowed app
-  # and no clue why.
+  # and no clue why. The panel is still open, so the row is right there —
+  # and the same tap turns it off, because the row is a toggle.
   cmd_tap "$name" >/dev/null 2>&1 || true
+  # And close the panel behind us, which the pick no longer does.
+  cmd_tap "Library" >/dev/null 2>&1 || true
   say "ok    lens: '$name' took Everything from $before to $after"
   cmd_check
 }

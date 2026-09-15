@@ -234,9 +234,26 @@ struct LibraryPanel: View {
                         glyph: .filter,
                         on: workspaces.activeFilterId == view.id
                     ) {
+                        // **A FILTER IS NOT A PLACE, so the panel stays.**
+                        //
+                        // Every row above this one is somewhere you GO,
+                        // and going somewhere closes the drawer you went
+                        // from. A filter is a lens over the view you are
+                        // already standing in — it narrows what you were
+                        // looking at rather than taking you anywhere, and
+                        // it is a TOGGLE: tapping it again turns it off.
+                        // Closing on it said "you have arrived" about a
+                        // move that never happened (owner, 2026-09-15:
+                        // "it kind of gives that incorrect feeling, even
+                        // though it opens the place you were in").
+                        //
+                        // Staying open is also what makes the toggle
+                        // usable: the row's own mark is the confirmation,
+                        // and the counts beside every row above are
+                        // already counted THROUGH the lens, so the whole
+                        // list answers as you press it.
                         workspaces.activeFilterId =
                             workspaces.activeFilterId == view.id ? nil : view.id
-                        onDismiss()
                     }
                     .padding(.top, i == 0 ? LivPanel.row / 2 : 0)
                 }

@@ -452,6 +452,45 @@ enum LivName {
         guard draft != fresh, draft.isEmpty || draft == old else { return nil }
         return fresh
     }
+
+    /// RETURN ENDS A NAME. It does not type a blank line into one.
+    ///
+    /// Both name fields — the properties panel's and the record card's —
+    /// are `TextField(axis: .vertical)` so a long name WRAPS rather than
+    /// scrolling sideways. A vertical-axis field treats the return key
+    /// as a newline and **never calls `.onSubmit`**, so the
+    /// `.submitLabel(.done)` on both of them drew a key that put a line
+    /// break in the title and nothing else (owner, 2026-09-15: "entering
+    /// title in property card and pressing the confirm button enters a
+    /// new line instead of setting title").
+    ///
+    /// Wrapping is worth keeping and a name is still one line, so the
+    /// newline is taken back out and the field gives up focus — which is
+    /// where BOTH fields already commit from, so there is one commit and
+    /// one write.
+    ///
+    /// The same rule in one place rather than in two views (standing
+    /// rule 4); a paste carrying line breaks reads as the same intent.
+    static func endsAt(newlineIn text: inout String) -> Bool {
+        guard text.contains(where: \.isNewline) else { return false }
+        text = text.filter { !$0.isNewline }
+        return true
+    }
+}
+
+extension View {
+    /// `LivName.endsAt` wired to a field: strip the newline, drop focus,
+    /// and let the field's existing blur-commit do the write.
+    func livNameReturn(
+        _ text: Binding<String>, _ focused: FocusState<Bool>.Binding
+    ) -> some View {
+        onChange(of: text.wrappedValue) { _, _ in
+            var typed = text.wrappedValue
+            guard LivName.endsAt(newlineIn: &typed) else { return }
+            text.wrappedValue = typed
+            focused.wrappedValue = false
+        }
+    }
 }
 
 /// A DAY'S NUMBER, AND THE DISC THAT SAYS IT IS THE ONE YOU ARE ON.

@@ -271,7 +271,22 @@ fn bin(path: *const c_char, entity: *const c_char, now_ms: u64, away: bool) -> i
 // ---- what a picker needs -----------------------------------------------
 
 /// Everything a `RefTo` property may point at, named and in order:
-/// `[{"id":hex,"name":…}]`.
+/// `[{"id":hex,"name":…,"completes":bool,"hue":n?}]`.
+///
+/// **`completes` and `hue` are the option's OWN answers**, added
+/// 2026-09-15. Without them the vocabulary was three words with nothing
+/// to choose between: the iOS ring writes "whichever option completes",
+/// found none, wrote nothing, and a task could not be ticked. The engine
+/// has held `prop::COMPLETES` all along and the row's `done` flag
+/// already read it — only the picker was left guessing.
+///
+/// `completes` is always present, never omitted for a false: a missing
+/// key and a `false` decode the same in Swift, and only one of them is
+/// an answer. `hue` is absent when the option has not got one.
+///
+/// They mean something only for a status, and cost a cell read for
+/// everything else — which is the price of one verb over two (standing
+/// rule 4). A picker that does not care simply does not look.
 ///
 /// **The words come from the box, never from the shell.** The current
 /// tree keeps the six area names as a Swift constant, which
@@ -296,12 +311,23 @@ pub unsafe extern "C" fn liv_options(
         Err(e) => return e,
     };
     match with_engine(path, |e| {
-        let rows: Vec<serde_json::Value> = e
-            .options_for(property)
-            .map_err(|_| LIV_ERR_READ)?
-            .into_iter()
-            .map(|(id, name)| json!({ "id": id.hex(), "name": name }))
-            .collect();
+        let mut rows = Vec::new();
+        for (id, name) in e.options_for(property).map_err(|_| LIV_ERR_READ)? {
+            rows.push(json!({
+                "id": id.hex(),
+                "name": name,
+                // `liv_surface::completes` rather than the cell alone —
+                // it also knows the frozen `status::DONE`, which carries
+                // no cell because it has never needed one. Two readings
+                // of "is this done" would be two answers (standing rule
+                // 4); the row's own `done` flag goes through this too.
+                "completes": liv_surface::completes(e, id).map_err(|_| LIV_ERR_READ)?,
+                "hue": match e.one(id, liv_engine::prop::HUE).map_err(|_| LIV_ERR_READ)? {
+                    Some(Value::Number(n)) => json!(n as i64),
+                    _ => serde_json::Value::Null,
+                },
+            }));
+        }
         Ok(serde_json::Value::Array(rows))
     }) {
         Ok(v) => deliver(out, &v),

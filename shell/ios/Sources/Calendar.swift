@@ -1735,6 +1735,13 @@ struct HourGridDrag: UIViewRepresentable {
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
             guard let p = point(g), let scroll else { return false }
             guard scroll.bounds.contains(g.location(in: scroll)) else { return false }
+            // NOT THROUGH THE BAR. `scroll.bounds` is the visible window
+            // into the content, and the bar FLOATS OVER that window — so
+            // a press on `+` is inside the grid by this test and on a
+            // button by every other. Holding it opened the create menu
+            // and placed an event underneath, and letting go made one
+            // (owner, 2026-09-15).
+            guard !LivBarFrame.holds(g.location(in: nil)) else { return false }
             return targets.contains { $0.rect.contains(p) } || true
         }
 

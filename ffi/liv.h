@@ -654,7 +654,21 @@ int32_t liv_trash(const char *path, const char *entity, uint64_t now_ms);
 int32_t liv_restore(const char *path, const char *entity, uint64_t now_ms);
 
 /* Everything a reference property may point at, named and in the order a
-   picker should show them: [{"id":"<hex>","name":…}…]
+   picker should show them:
+   [{"id":"<hex>","name":…,"completes":bool,"hue":N|null}…]
+
+   completes AND hue ADDED 2026-09-15, purely additive. A status
+   vocabulary without them is three words with nothing to choose between:
+   the iOS ring writes "whichever option completes", found none, wrote
+   nothing, and a task could not be ticked at all. The engine has held
+   prop::COMPLETES all along and a row's own "done" flag already read it
+   — only the picker was left guessing.
+
+   completes is ALWAYS present, never omitted for a false: a missing key
+   and a false decode the same in Swift and only one of them is an
+   answer. hue is null when the option has not got one. Both mean
+   something only for a status; every other vocabulary says false and
+   null, and a picker that does not care does not look.
 
    THE WORDS COME FROM THE BOX, NEVER FROM THE SHELL. The current tree
    keeps the six area names as a Swift constant, which one-core.md §4

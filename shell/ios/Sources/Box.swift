@@ -1230,7 +1230,13 @@ final class BoxModel: ObservableObject {
 
     /// The status vocabulary offered to a kind, in the order the box
     /// keeps it. **The words come from the box**, never from a table in
-    /// Swift.
+    /// Swift — and so do `completes` and `hue`.
+    ///
+    /// This dropped both on the floor: it built each option from a name
+    /// and a position and left `completes` nil. The ring writes
+    /// "whichever option completes", found none, and wrote NOTHING — a
+    /// task could not be ticked at all (owner, 2026-09-15). `liv_options`
+    /// now carries the answer; this is the half that reads it.
     func statusOptions(kind: String, done: @escaping ([StatusOption]) -> Void) {
         propertyId("status") { [weak self] p in
             guard let self, let p else {
@@ -1239,7 +1245,9 @@ final class BoxModel: ObservableObject {
             }
             self.engineOptions(p) { named in
                 done(named.enumerated().map { n, o in
-                    StatusOption(name: o.name, order: Double(n))
+                    StatusOption(
+                        name: o.name, hue: o.hue, completes: o.completes ?? false,
+                        order: Double(n))
                 })
             }
         }
@@ -2021,6 +2029,11 @@ struct LivCell: Decodable, Identifiable {
 struct LivNamed: Decodable, Identifiable {
     var id: LivID
     var name: String?
+    /// **Does choosing this CLOSE the thing?** Only a status answers it;
+    /// every other vocabulary says false. Optional like every wire field
+    /// (H1), and nil is read as "no" at the one place that asks.
+    var completes: Bool?
+    var hue: Int?
     var display: String { (name ?? "").isEmpty ? "Untitled" : (name ?? "") }
 }
 

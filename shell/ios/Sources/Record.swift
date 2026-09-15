@@ -285,6 +285,10 @@ struct RecordBody: View {
             .focused($nameFocused)
             .submitLabel(.done)
             .onSubmit(commitName)
+            // A vertical-axis field never calls `.onSubmit` — the return
+            // key types a newline instead. This is what makes the Done
+            // key above it mean what it says.
+            .livNameReturn($name, $nameFocused)
             .onChange(of: nameFocused) { _, now in
                 if !now { commitName() }
             }
