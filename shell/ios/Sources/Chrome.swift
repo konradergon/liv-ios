@@ -1085,41 +1085,19 @@ struct LivTopScrim: View {
     /// chrome row it has not got pushed its first line a sixth of the
     /// way down (owner, 2026-08-28: "a huge cut-off that needs to go").
     ///
-    /// A BOOL, NOT A HEIGHT. The height is read INSIDE this body on
-    /// purpose. Passed in from the call site of a `.safeAreaInset`, the
-    /// safe area feeds itself: AttributeGraph reports a cycle and the
-    /// surface stops repainting while its body keeps evaluating. That is
-    /// the 2026-08-23 bug written three lines above the call in
-    /// SidePanel, and it cost an hour again on 2026-08-28 — the panel
-    /// simply never drew.
-    /// **DOES THIS BAND SHRINK WHEN THE CHROME RETIRES?**
-    ///
-    /// It was `underChrome`, and it decided two things at once: whether
-    /// to reserve the doors' row, and whether to shrink when those doors
-    /// slide away on a scroll. The panel has no doors, so it said false
-    /// — and got a band the height of the status bar, which is a
-    /// different fade from the one every view wears.
-    ///
-    /// The owner's word, 2026-09-16: the panel's fade "should be same
-    /// [as in each view] but have the panels background color". So the
-    /// band is a view's band everywhere and this flag now decides only
-    /// the shrink: a view's retires with its buttons (owner, 2026-09-07
-    /// — an empty 52pt strip where the buttons had been), and a panel's
-    /// has nothing to retire.
-    var retires: Bool = true
-
-    /// WHAT IT FADES TO — the ground of the surface it is laid on, not
-    /// the app's.
-    ///
-    /// It was always `LivTheme.canvas`, which is the DESK's ground and
-    /// one step darker than the panel's `LivTheme.surface`. On the panel
-    /// that painted a band of the desk's colour across the top and then
-    /// dissolved it, so the panel appeared to be bleeding darkness in
-    /// from the desk beside it (owner, 2026-09-14: "See that dark fade in
-    /// panel? seems to be extending from the desk area, it shouldn't").
-    /// It was not coming from the desk; it was the desk's colour, drawn
-    /// by the panel itself.
-    var ground: Color = LivTheme.canvas
+    // THE HEIGHT IS READ INSIDE THIS BODY, never passed in. From the
+    // call site of a `.safeAreaInset` the safe area feeds itself:
+    // AttributeGraph reports a cycle and the surface stops repainting
+    // while its body keeps evaluating (2026-08-23, and again on
+    // 2026-08-28). A `band:` parameter was added on 2026-09-16 and
+    // deleted the same day for the same reason.
+    //
+    // NO `retires`, NO `ground`, NO `band` (2026-09-16). All three were
+    // added so the library panel could borrow this, and the panel does
+    // not want a band at all — it wants a soft edge, which it now draws
+    // itself in four lines. This is the DESK's band: an opaque stretch
+    // that hides the clock and the floating doors, with a ramp off its
+    // bottom. Its two callers both want exactly that and pass nothing.
     @EnvironmentObject private var desk: DeskModel
 
     /// THE BAND SHRINKS WHEN THE BUTTONS LEAVE (owner, 2026-09-07: "the
@@ -1137,36 +1115,13 @@ struct LivTopScrim: View {
     /// ordinary published state, not a safe-area read, so deriving the
     /// height from it cannot feed the cycle `LivBar.room` documents.
     /// Whether the band is the doors' full one, or the clock's alone.
-    private var tall: Bool { !(retires && desk.chromeAway) }
+    private var tall: Bool { !desk.chromeAway }
 
-    /// **HOW MUCH ROOM THE BAND NEEDS, paint and all.**
-    ///
-    /// This was what the inset reserved, and the panel's ramp then hung
-    /// BELOW it — the gradient taller than the space it asked for, "so
-    /// the extra hangs over the first rows without moving them". It
-    /// hung over them at rest too, so the panel's first row lived
-    /// permanently under the fade (owner, 2026-09-16: "today is now
-    /// hidden behind the fade"). A soft edge is for what scrolls INTO
-    /// it, never for what is sitting still.
-    ///
-    /// So the drawn height and the reserved height are one number now,
-    /// and it is this one. Nothing may reserve less than it paints.
-    static func room(retires: Bool, chromeAway: Bool) -> CGFloat {
-        retires && chromeAway ? LivSafeArea.top + LivRow.topFade : LivRow.topInset
-    }
-
-    /// An explicit band, when the caller has already worked one out and
-    /// must not have a SECOND reading of it.
-    ///
-    /// `room` reads `LivSafeArea.top`, which is a live UIKit lookup
-    /// through `keyWindow` — not a constant. Two callers asking for it
-    /// are two readings at two moments, and the panel had exactly that:
-    /// the room it reserved and the band this painted could differ, and
-    /// a scrim taller than its room covers the first row.
-    var band: CGFloat? = nil
-
+    /// HOW MUCH ROOM THE BAND NEEDS, paint and all — one number for the
+    /// drawn height and the reserved height, so nothing can reserve less
+    /// than it paints.
     private var height: CGFloat {
-        band ?? Self.room(retires: retires, chromeAway: desk.chromeAway)
+        tall ? LivRow.topInset : LivSafeArea.top + LivRow.topFade
     }
 
     /// SOLID DOWN TO HERE. Everything above it must be fully covered —
@@ -1181,20 +1136,20 @@ struct LivTopScrim: View {
 
     /// AND FADES OVER THIS MUCH.
     ///
-    /// **THE SAME HEIGHT IN BOTH PLACES** (owner, 2026-09-16: "fade
-    /// should be same height as in other places"). It was a fraction of
-    /// the band on the desk — 55% of 111, so 61 — and a flat 44 on the
-    /// panel, which is two different soft edges in one app for no reason
-    /// anyone could state. One token, and the desk's total band does not
-    /// move: only where its gradient starts inside it.
+    /// **THE SAME HEIGHT EVERYWHERE** (owner, 2026-09-16: "fade should
+    /// be same height as in other places"). It was a fraction of the
+    /// band here — 55% of 111, so 61 — and its own number in the panel,
+    /// which is two soft edges in one app for no reason anyone could
+    /// state. `LivRow.topFade` is the one number, and the panel's own
+    /// gradient is that tall too.
     private var ramp: CGFloat { LivRow.topFade }
 
     var body: some View {
         LinearGradient(
             stops: [
-                .init(color: ground, location: 0),
-                .init(color: ground, location: height > 0 ? solid / height : 0),
-                .init(color: ground.opacity(0), location: 1),
+                .init(color: LivTheme.canvas, location: 0),
+                .init(color: LivTheme.canvas, location: height > 0 ? solid / height : 0),
+                .init(color: LivTheme.canvas.opacity(0), location: 1),
             ],
             startPoint: .top, endPoint: .bottom
         )

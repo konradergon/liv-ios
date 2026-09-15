@@ -52,41 +52,26 @@ struct SidePanel<Content: View>: View {
     let onDismiss: () -> Void
     /// How wide the panel stands, leaving the rest of the desk showing.
     let width: CGFloat
-    /// THE TOP BAND, worked out ONCE by the caller and handed to both
-    /// halves of the job — the room the list keeps clear, and the scrim
-    /// painted over it. `LivTopScrim.room` reads `LivSafeArea.top`,
-    /// which is a live `keyWindow` lookup rather than a constant, so two
-    /// callers asking for it are two readings at two moments.
-    let topRoom: CGFloat
     @ViewBuilder let content: Content
 
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // THE SAME TOP A VIEW HAS (owner, 2026-08-17: "in the left
-            // sidebar it is opaque at the top — do the same as you did
-            // for views here"): the list runs under the clock and fades
-            // out behind it. What was here instead: 56pt of empty band
-            // with a hairline under it, which read as a bar that was not
-            // one.
-            // NO `.safeAreaInset` HERE, and that is the fix.
+            // NOTHING IS RESERVED AT THE TOP. The list runs to the
+            // panel's own top edge and the fade at the foot of this
+            // chain is laid over it — see the note there.
             //
-            // A view ends with `.safeAreaInset(edge: .top) {
-            // LivTopScrim() }` and nothing after it (Navigate.swift).
-            // This chain put the reservation in the same way and then
-            // applied `.ignoresSafeArea()` further down — which is what
-            // that modifier is FOR: it discards the safe area, and a
-            // `safeAreaInset` is the safe area. So the room was asked
-            // for and thrown away, the rows stayed at the top, and the
-            // scrim painted straight over them. Three reports of "the
-            // top of the panel covers things" and two wrong fixes: the
-            // first assumed the inset landed low, the second assumed it
-            // landed at all.
+            // Three mechanisms were tried for a reserved band and all
+            // three are gone, because the band itself was the mistake.
+            // They are named so nobody puts one back by accident:
+            // a `.safeAreaInset`, which the `.ignoresSafeArea()` below
+            // discards (that modifier's job IS to throw the safe area
+            // away, and an inset is the safe area); a clear block at the
+            // head of the list, which is content and therefore scrolls
+            // away, taking the first row up under the fade with it; and
+            // a `.contentMargins`, which works and was still room for
+            // something the panel does not have.
             //
-            // The room is plain layout now — a clear block at the head
-            // of the list (`LibraryPanel.list`), which no modifier can
-            // cancel. The paint is the overlay at the foot of this
-            // chain, pinned to the panel's real top corner.
             //
             // NO BOTTOM INSET: the library's own foot floats and its
             // list runs under it. There was one here until 2026-09-07,
@@ -140,19 +125,31 @@ struct SidePanel<Content: View>: View {
             // the top of the panel wore a band of the desk's colour that
             // looked like the desk bleeding in from the side (owner,
             // 2026-09-14).
+            // THE FADE, AND NOTHING ELSE (owner, 2026-09-16: "REMOVE
+            // THE OVERLAYING AREA IN THE PANEL, keep the fade at the
+            // top").
+            //
+            // `LivTopScrim` is a BAND: an opaque stretch that hides the
+            // clock and the floating doors, with a ramp off its bottom
+            // edge. The desk needs that — its words genuinely run under
+            // the clock. The panel was given the same thing and the
+            // opaque stretch is what has been drawing over its first
+            // row through four attempts at this; every one of those
+            // attempts tried to make ROOM for it rather than asking
+            // whether it belonged here.
+            //
+            // It does not. A soft edge is all the panel ever wanted, so
+            // this is a gradient and no more: the panel's own ground at
+            // the very top, gone by `LivRow.topFade`. Nothing is
+            // reserved, nothing is covered, and a row scrolling up
+            // dissolves into the ground instead of meeting an edge.
             .overlay(alignment: .topLeading) {
-                // A VIEW'S FADE, IN THE PANEL'S COLOUR — the owner's
-                // word, 2026-09-16: "the fade is different from in each
-                // view, should be same but have the panels background
-                // color". It was the short band (the status bar alone),
-                // which is a different soft edge from the one every
-                // other surface wears.
-                //
-                // `retires: false` because a panel has no doors to slide
-                // away, so its band never shrinks — the flag decides the
-                // shrink and nothing else now.
-                LivTopScrim(retires: false, ground: LivTheme.surface, band: topRoom)
-                    .frame(width: width)
+                LinearGradient(
+                    colors: [LivTheme.surface, LivTheme.surface.opacity(0)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(width: width, height: LivRow.topFade)
+                .allowsHitTesting(false)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
@@ -193,14 +190,12 @@ struct LibraryPanel: View {
         // A view still opens WHERE YOU STAND: picking one here closes
         // the panel and the view arrives over what you were looking at,
         // with the bar still under it.
-        // ONE READING of the band, for the room and for the paint.
-        let band = LivTopScrim.room(retires: false, chromeAway: false)
-        return SidePanel(onDismiss: onDismiss, width: LivPanel.width, topRoom: band) {
-            list(band)
+        SidePanel(onDismiss: onDismiss, width: LivPanel.width) {
+            list
         }
     }
 
-    private func list(_ band: CGFloat) -> some View {
+    private var list: some View {
         // ONE walk of the box per render. `counts` used to be a computed
         // property, so every row that read it built a fresh ViewCounts —
         // seven walks per render, which is the exact thing its own doc
@@ -305,27 +300,6 @@ struct LibraryPanel: View {
                 Color.clear.frame(height: LivPanel.row)
             }
         }
-        // THE ROOM FOR THE SCRIM IS A CONTENT MARGIN, and that is the
-        // whole of it.
-        //
-        // Two things it is not, both tried and both wrong:
-        //
-        //   - a `.safeAreaInset`, which the `.ignoresSafeArea()` in
-        //     `SidePanel` discards — that modifier's entire job is to
-        //     throw the safe area away, and a safe-area inset IS the
-        //     safe area. The room was asked for and dropped, so the rows
-        //     sat at the top under the scrim;
-        //   - a clear block at the head of this VStack, which IS content
-        //     and therefore SCROLLS AWAY. The first row rode up under
-        //     the fade the moment the list moved a point (owner,
-        //     2026-09-16, and the screenshot showed Today half dissolved
-        //     against the top edge).
-        //
-        // A content margin is room that is not content: the list starts
-        // below it, it counts in the scrollable range, and rows pass
-        // under the scrim on their way up — which is what a soft edge is
-        // for. `CalendarView` reserves its hour label the same way.
-        .contentMargins(.top, band, for: .scrollContent)
         // The rows dissolve as they reach the foot rather than stopping
         // dead behind it.
         .mask(
