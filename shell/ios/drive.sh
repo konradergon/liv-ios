@@ -519,7 +519,12 @@ panel_closed() {
 
 cmd_goto() {
   local want="$1"
-  local title="$(python3 -c "print('$want'.capitalize())")"
+  # THE ROW'S WORD, which for one view is not its name: `everything` is
+  # drawn as "Notes" since 2026-09-16 (Navigate.swift), and keeps its raw
+  # value in every stored position and route.
+  local title
+  if [[ "$want" == everything ]]; then title="Notes"
+  else title="$(python3 -c "print('$want'.capitalize())")"; fi
   # NORMALISE FIRST. Every hop must start from the same screen or a hop
   # is testing whatever the hop before it left behind — the second way
   # the old harness lied.
@@ -550,9 +555,9 @@ cmd_goto() {
 # on screen. A body that stops repainting fails on the first hop.
 cmd_tour() {
   cmd_boot >/dev/null 2>&1 || { die "could not boot before the tour."; return 1 }
-  # FIVE, since Notes stopped being a view (2026-09-10). Its list is
-  # `EverythingLens.notes`, which `cmd_grid` walks to.
-  local views=(today inbox calendar tasks everything)
+  # FIVE. `everything` is the notes list — drawn as Notes, first in the
+  # panel since 2026-09-16 — and `cmd_goto` knows its word.
+  local views=(everything today inbox calendar tasks)
   local v why failed=0
   for v in $views; do
     print -n "  -> $v  "
@@ -1324,20 +1329,20 @@ print('OK %spt x%d' % (h, n))")
 # you MORE than what you left open is to compare it against the count the
 # bar is already reporting.
 cmd_grid() {
-  # THE LIST IS A LENS NOW (2026-09-10). `-desk.boot notes` still names
-  # this screen and still lands on it; what changed is that the surface
-  # under it is Everything, with the Notes pill on. Both are asserted —
-  # the surface alone would pass on any lens.
+  # THE LIST IS THE VIEW (2026-09-16). `-desk.boot notes` names this
+  # screen and lands on it; its surface is still `everything`, because
+  # that raw value is in every stored position, and it is drawn as
+  # "Notes". Both are asserted — the surface alone would pass on a screen
+  # wearing the old name.
   cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
   [[ "$(cmd_surface)" == "everything" ]] || {
-    die "the notes list draws '$(cmd_surface)', not Everything.
-      Notes is EverythingLens.notes since 2026-09-10; the flag lands on
-      the view and parks the lens."
+    die "the notes list draws '$(cmd_surface)', not the everything surface.
+      Feature.everything is the notes list; the flag lands on it."
     return 1
   }
   tree | grep -q "Notes" || {
-    die "landed on Everything but no Notes lens is on screen.
-      The pill row is the only door to the list now — see EverythingLens."
+    die "landed on the list but nothing on screen says Notes.
+      The screen title is LivScreenTitle(\"Notes\") since 2026-09-16."
     return 1
   }
 
@@ -1351,7 +1356,7 @@ cmd_grid() {
     open_first_note || return 1
     cmd_goto everything >/dev/null 2>&1 || { die "opened a note, but could not get back to the list."; return 1 }
     [[ "$(cmd_surface)" == "everything" ]] || {
-      die "picked Everything with a note open and it drew '$(cmd_surface)', not the list.
+      die "picked Notes with a note open and it drew '$(cmd_surface)', not the list.
       Tapping the view you are in lays the document down (rev 62)."
       return 1
     }
@@ -1586,12 +1591,12 @@ cmd_create() {
   cmd_tap "New" || return 1
   perl -e 'select(undef,undef,undef,1.8)'
   no_create_menu || {
-    die "+ in Everything opened the create menu. It is meant to make a note
+    die "+ in Notes opened the create menu. It is meant to make a note
       and leave the menu to a long press."
     return 1
   }
   [[ "$(cmd_surface)" == "document" ]] || {
-    die "+ in Everything left the screen on '$(cmd_surface)', not a document.
+    die "+ in Notes left the screen on '$(cmd_surface)', not a document.
       A note is a document and opens as one."
     return 1
   }
@@ -1853,8 +1858,8 @@ cmd_lens() {
   cmd_boot everything >/dev/null 2>&1 || { die "could not boot before the lens check."; return 1 }
   cmd_tap "Library" || return 1
   local before after name
-  before=$(panel_count Everything)
-  [[ -n "$before" ]] || { die "the panel prints no count for Everything, so
+  before=$(panel_count Notes)
+  [[ -n "$before" ]] || { die "the panel prints no count for Notes, so
       there is nothing to compare. Check the panel still draws counts."; return 1 }
 
   # The saved filters are the buttons the panel lists between the last view
@@ -1866,7 +1871,7 @@ cmd_lens() {
     if n.get("type") == "Button" and l: SEEN.append(l)
     for c in n.get("children") or []: walk(c)' \
     'SEEN = []' \
-    'lo = max((i for i, l in enumerate(SEEN) if re.match(r"^Everything, [0-9]+$", l)), default=-1)
+    'lo = max((i for i, l in enumerate(SEEN) if re.match(r"^Tasks(, [0-9]+)?$", l)), default=-1)
 hi = next((i for i, l in enumerate(SEEN) if l == "New filter"), -1)
 if lo >= 0 and hi > lo:
     print(chr(10).join(SEEN[lo + 1:hi]))' | head -1)
@@ -1885,11 +1890,11 @@ if lo >= 0 and hi > lo:
   # So this reads the count off a panel that must still be standing —
   # which makes it the check for that too. An empty count here means
   # either the panel closed on the pick, or the row left it.
-  after=$(panel_count Everything)
-  [[ -n "$after" ]] || { die "no Everything count after picking '$name'.
+  after=$(panel_count Notes)
+  [[ -n "$after" ]] || { die "no Notes count after picking '$name'.
       The panel is supposed to STAY OPEN on a filter — if it closed, the
       pick is being treated as navigation again (Panel.swift, the filter
-      row). If it is open, the Everything row left it."; return 1 }
+      row). If it is open, the Notes row left it."; return 1 }
   (( after != before )) || {
     die "the filter '$name' changed nothing: $before items before, $after after.
       Either the lens is never asked for, or every row is being admitted.
@@ -1904,7 +1909,7 @@ if lo >= 0 and hi > lo:
   cmd_tap "$name" >/dev/null 2>&1 || true
   # And close the panel behind us, which the pick no longer does.
   cmd_tap "Library" >/dev/null 2>&1 || true
-  say "ok    lens: '$name' took Everything from $before to $after"
+  say "ok    lens: '$name' took Notes from $before to $after"
   cmd_check
 }
 
@@ -2324,7 +2329,7 @@ cmd_workspace() {
   open_side library || return 1
 
   cmd_tap "Switch workspace" || {
-    die "no 'Switch workspace' door at the foot of the library panel.
+    die "no 'Switch workspace' door at the head of the library panel.
       It is the only way to the workspace card."
     return 1
   }

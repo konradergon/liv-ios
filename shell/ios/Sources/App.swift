@@ -509,11 +509,11 @@ struct RootView: View {
             }
         // The create menu, from the bar's `+`.
         case "newtab", "create": desk.createSomething()
-        // THE LIST OF NOTES. It was a view of its own until 2026-09-10;
-        // it is a lens in Everything now, and the flag keeps its name
-        // because a rehearsal flag is a name for a SCREEN, and this is
-        // still that screen.
-        case "notes", "docs": desk.go(.everything, at: EverythingLens.notes.rawValue)
+        // THE LIST OF NOTES — the view itself since 2026-09-16, which
+        // still answers to `everything` in every stored position and
+        // route (Navigate.swift). The flag keeps its name because a
+        // rehearsal flag names a SCREEN, and this is still that screen.
+        case "notes", "docs": desk.go(.everything)
         default: break
         }
     }

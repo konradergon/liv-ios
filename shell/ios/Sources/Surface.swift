@@ -24,9 +24,9 @@ enum LivSurface {
     /// The desk's two bodies. The five feature views use their
     /// `Feature.rawValue`, so there is one vocabulary, not two.
     ///
-    /// `notes` went with the view on 2026-09-10. The list of notes is
-    /// `EverythingLens.notes`, so the surface under it answers
-    /// `everything` — a lens is a place inside a view, not a view.
+    /// There is no `notes` surface. The list of notes IS the view whose
+    /// raw value is `everything` — drawn as Notes since 2026-09-16, and
+    /// keeping the raw value because it is in every stored position.
     static let document = "document"
 }
 
