@@ -87,6 +87,24 @@ struct SectionLabel: View {
     }
 }
 
+/// A GROUP STARTS HERE, AND IT HAS NO NAME.
+///
+/// The heading's own air without the word — the library panel's device
+/// ("NO SECTION LABELS", owner 2026-08-18: *"eliminate unnecessary small
+/// text and labels"*; one empty row-slot does the separating), as a type
+/// rather than as a literal repeated per surface.
+///
+/// **Derived from the heading's two tokens**, so a change to the app's
+/// section rhythm moves the named groups and the unnamed ones together.
+/// A number of its own here would drift apart from `SectionLabel` on the
+/// first day either was touched, which is standing rule 3 exactly.
+struct SectionGap: View {
+    var body: some View {
+        Color.clear
+            .frame(height: LivRow.sectionTop + LivRow.sectionBottom)
+    }
+}
+
 // MARK: - the filter chip
 
 /// WHICH SLICE OF THE LIST YOU ARE LOOKING AT — one chip, now shared.

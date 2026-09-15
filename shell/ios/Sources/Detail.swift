@@ -248,13 +248,44 @@ struct EntityInspector: View {
                 // of a chip that links to another entity — every place
                 // where two kinds sit side by side and the difference is
                 // worth a word (2026-08-29).
-                SectionLabel("Schedule")
+                // NO HEADING OVER A GROUP OF PROPERTIES.
+                //
+                // "Schedule", "Filing" and "Other" stood above the rows
+                // they named in the same ink at a similar size, and the
+                // rows they named are also single left-aligned words —
+                // so the card read as eleven rows of grey words, four of
+                // which did nothing when tapped (owner, 2026-09-15: "it
+                // is rather hard to see what is a section header and
+                // what is a property").
+                //
+                // The grouping is not lost, because the headings were
+                // never what carried it: rows INSIDE a group are divided
+                // by a hairline and groups are divided by air. Taking
+                // the words out leaves the geometry doing the job on its
+                // own — which is the library panel's answer to the same
+                // question (owner, 2026-08-18: "eliminate unnecessary
+                // small text and labels"), and what Anytype's property
+                // list — already this card's model for its ROWS, see
+                // `DetailRowLabel` — does on the same screen size.
+                //
+                // "Links" and "Suggested" below KEEP their headings.
+                // They do not name a group of properties; they name
+                // content of a different shape, and "Suggested" is the
+                // word that says those rows are the clerk's proposals
+                // rather than your data. Two such words at the foot of
+                // the card, after every property row, are findable
+                // rather than confusable — eleven interleaved were not.
+                //
+                // The first group takes its air here, since the heading
+                // that used to reserve it is gone and the name field
+                // above only clears itself.
+                SectionGap()
                 dueRow(row)
                 if showsStatus(row) {
                     DetailHairline()
                     statusRow(row)
                 }
-                SectionLabel("Filing")
+                SectionGap()
                 // Zero fill pressure: the core fields are always here, even
                 // empty; everything else appears only once it holds a value
                 // (design/editor-study.md §8). Two filled fields is a
@@ -267,7 +298,7 @@ struct EntityInspector: View {
                 }
                 let extras = DetailCellGroup.groups(row, skipping: skipSet(row))
                 if !extras.isEmpty {
-                    SectionLabel("Other")
+                    SectionGap()
                     ForEach(Array(extras.enumerated()), id: \.element.id) { i, group in
                         if i > 0 { DetailHairline() }
                         cellRow(group)
