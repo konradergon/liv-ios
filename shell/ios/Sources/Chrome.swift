@@ -1078,88 +1078,65 @@ extension View {
 // end of it — a soft edge at the top is there because words genuinely
 // run under the clock, and the bar has no such problem to solve.
 
-struct LivTopScrim: View {
-    /// Does chrome float over this surface? The library door does on the
-    /// desk, so the fade runs the full chrome row and the words stay
-    /// legible under it. Nothing floats over the panel, and covering a
-    /// chrome row it has not got pushed its first line a sixth of the
-    /// way down (owner, 2026-08-28: "a huge cut-off that needs to go").
-    ///
-    // THE HEIGHT IS READ INSIDE THIS BODY, never passed in. From the
-    // call site of a `.safeAreaInset` the safe area feeds itself:
-    // AttributeGraph reports a cycle and the surface stops repainting
-    // while its body keeps evaluating (2026-08-23, and again on
-    // 2026-08-28). A `band:` parameter was added on 2026-09-16 and
-    // deleted the same day for the same reason.
-    //
-    // NO `retires`, NO `ground`, NO `band` (2026-09-16). All three were
-    // added so the library panel could borrow this, and the panel does
-    // not want a band at all — it wants a soft edge, which it now draws
-    // itself in four lines. This is the DESK's band: an opaque stretch
-    // that hides the clock and the floating doors, with a ramp off its
-    // bottom. Its two callers both want exactly that and pass nothing.
+/// THE ROOM, and nothing drawn in it.
+///
+/// It reserves what must not be sat under: the status bar, and the 52pt
+/// row the three glass door buttons float in. A surface hands this to
+/// `.safeAreaInset`, so its own content still SCROLLS under both — the
+/// reservation is where the content comes to rest, not a wall.
+///
+/// THE BAND SHRINKS WHEN THE BUTTONS LEAVE (owner, 2026-09-07: "the area
+/// is where the panel button is and reserved for that, but is wasted
+/// space and looks odd when the buttons are dynamically hidden", with a
+/// photograph of the Calendar). `livHidesChrome` slides the buttons up
+/// and this stops reserving their row; without it an empty 52pt strip
+/// was left between the clock and the day's title.
+///
+/// `chromeAway` is ordinary published state, not a safe-area read, so
+/// deriving the height from it cannot feed the cycle `LivBar.room`
+/// documents. Nothing may PASS a height in from a `.safeAreaInset` call
+/// site: the safe area would feed itself, AttributeGraph reports a
+/// cycle, and the surface stops repainting while its body keeps
+/// evaluating (2026-08-23, and again on 2026-08-28).
+struct LivTopRoom: View {
     @EnvironmentObject private var desk: DeskModel
 
-    /// THE BAND SHRINKS WHEN THE BUTTONS LEAVE (owner, 2026-09-07: "the
-    /// area is where the panel button is and reserved for that, but is
-    /// wasted space and looks odd when the buttons are dynamically
-    /// hidden", with a photograph of the Calendar).
-    ///
-    /// This inset is what RESERVES the doors' band, and until now it
-    /// reserved it unconditionally — so `livHidesChrome` slid the buttons
-    /// up by `LivRow.topInset` (Desk.swift) and left an empty 52pt strip
-    /// between the clock and the day's title. The buttons were gone and
-    /// their room was not.
-    ///
-    /// When they are away only the clock needs covering. `chromeAway` is
-    /// ordinary published state, not a safe-area read, so deriving the
-    /// height from it cannot feed the cycle `LivBar.room` documents.
-    /// Whether the band is the doors' full one, or the clock's alone.
-    private var tall: Bool { !desk.chromeAway }
-
-    /// HOW MUCH ROOM THE BAND NEEDS, paint and all — one number for the
-    /// drawn height and the reserved height, so nothing can reserve less
-    /// than it paints.
-    private var height: CGFloat {
-        tall ? LivRow.topInset : LivSafeArea.top + LivRow.topFade
+    var body: some View {
+        Color.clear
+            .frame(height: desk.chromeAway ? LivSafeArea.top : LivRow.topInset)
     }
+}
 
-    /// SOLID DOWN TO HERE. Everything above it must be fully covered —
-    /// the clock, and the glass controls where there are any.
-    ///
-    /// The band is the doors' (111) and the solid part is the rest of it
-    /// once the ramp is taken off the bottom. When the chrome has
-    /// retired the band is the clock plus the ramp, so the solid part is
-    /// the clock exactly — which is the whole of what still has to be
-    /// covered.
-    private var solid: CGFloat { height - ramp }
-
-    /// AND FADES OVER THIS MUCH.
-    ///
-    /// **THE SAME HEIGHT EVERYWHERE** (owner, 2026-09-16: "fade should
-    /// be same height as in other places"). It was a fraction of the
-    /// band here — 55% of 111, so 61 — and its own number in the panel,
-    /// which is two soft edges in one app for no reason anyone could
-    /// state. `LivRow.topFade` is the one number, and the panel's own
-    /// gradient is that tall too.
-    private var ramp: CGFloat { LivRow.topFade }
+/// THE FADE, and nothing else.
+///
+/// **It was a BAND** — an opaque stretch as tall as the room above,
+/// with a ramp off its bottom edge — and the opaque stretch is gone
+/// (owner, 2026-09-16: "there is also a band in each view… remove that,
+/// have the fade take its place"). What is left is the soft edge it
+/// always existed for: words dissolve on their way up rather than
+/// meeting one.
+///
+/// It reserves NOTHING. `LivTopRoom` is the room; this is the paint, and
+/// a surface that mixes the two ends up drawing over its own first row
+/// — four rounds of that in the library panel before they came apart.
+///
+/// It begins at the VERY TOP, above the clock, which is why it ignores
+/// the safe area itself rather than leaving that to each caller (owner,
+/// 2026-09-16: "fade should begin at the very top").
+struct LivTopScrim: View {
+    /// The ground it fades FROM — the surface it is laid on, not the
+    /// app's. The panel is a step lighter than the desk, and fading to
+    /// the desk's ground there painted a band of the wrong colour.
+    var ground: Color = LivTheme.canvas
 
     var body: some View {
         LinearGradient(
-            stops: [
-                .init(color: LivTheme.canvas, location: 0),
-                .init(color: LivTheme.canvas, location: height > 0 ? solid / height : 0),
-                .init(color: LivTheme.canvas.opacity(0), location: 1),
-            ],
+            colors: [ground, ground.opacity(0)],
             startPoint: .top, endPoint: .bottom
         )
-        // ONE FRAME. It was two — a taller gradient pinned to the top of
-        // a shorter box, so the ramp overhung what the inset reserved.
-        // That overhang is the bug this change removes, and the second
-        // frame went with it (standing rule 6): `solid + ramp` IS
-        // `height` now, by construction.
-        .frame(height: height)
+        .frame(height: LivRow.topFade)
         .frame(maxWidth: .infinity)
         .allowsHitTesting(false)
+        .ignoresSafeArea(edges: .top)
     }
 }

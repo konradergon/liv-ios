@@ -57,21 +57,18 @@ struct SidePanel<Content: View>: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // NOTHING IS RESERVED AT THE TOP. The list runs to the
-            // panel's own top edge and the fade at the foot of this
-            // chain is laid over it — see the note there.
+            // NOTHING IS RESERVED HERE. The room the rows come to rest
+            // in is a content margin on the list itself (`list`), and
+            // the fade is the overlay at the foot of this chain. Room
+            // and paint are two jobs; one thing doing both is what drew
+            // over the first row for four rounds.
             //
-            // Three mechanisms were tried for a reserved band and all
-            // three are gone, because the band itself was the mistake.
-            // They are named so nobody puts one back by accident:
-            // a `.safeAreaInset`, which the `.ignoresSafeArea()` below
-            // discards (that modifier's job IS to throw the safe area
-            // away, and an inset is the safe area); a clear block at the
-            // head of the list, which is content and therefore scrolls
-            // away, taking the first row up under the fade with it; and
-            // a `.contentMargins`, which works and was still room for
-            // something the panel does not have.
-            //
+            // Two reservations were tried here and both are gone: a
+            // `.safeAreaInset`, which the `.ignoresSafeArea()` below
+            // discards — that modifier's job IS to throw the safe area
+            // away, and an inset is the safe area — and a clear block at
+            // the head of the list, which is content and so scrolls
+            // away, taking the first row up under the fade with it.
             //
             // NO BOTTOM INSET: the library's own foot floats and its
             // list runs under it. There was one here until 2026-09-07,
@@ -110,46 +107,17 @@ struct SidePanel<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .ignoresSafeArea()
-            // THE SOFT EDGE, PINNED TO THE PANEL'S REAL TOP CORNER.
+            // THE FADE, in the panel's own ground, starting at the
+            // VERY TOP — above the clock, which is why `LivTopScrim`
+            // ignores the safe area itself (owner, 2026-09-16: "now the
+            // fade is starting below the very top and the clock").
             //
-            // Last in the chain so it lands after `.ignoresSafeArea()`
-            // has grown this to y=0 — which is the point — and
-            // `.topLeading` + its own width so it covers the panel's
-            // column and not the desk beside it. The documented order
-            // above ("WIDTH FIRST, THEN THE LEADING PIN, THEN the safe
-            // area") is untouched; this hangs off the end of it rather
-            // than moving any of it.
-            //
-            // It fades to the PANEL's ground, not the app's: left at the
-            // default it fades to `LivTheme.canvas`, a step darker, and
-            // the top of the panel wore a band of the desk's colour that
-            // looked like the desk bleeding in from the side (owner,
-            // 2026-09-14).
-            // THE FADE, AND NOTHING ELSE (owner, 2026-09-16: "REMOVE
-            // THE OVERLAYING AREA IN THE PANEL, keep the fade at the
-            // top").
-            //
-            // `LivTopScrim` is a BAND: an opaque stretch that hides the
-            // clock and the floating doors, with a ramp off its bottom
-            // edge. The desk needs that — its words genuinely run under
-            // the clock. The panel was given the same thing and the
-            // opaque stretch is what has been drawing over its first
-            // row through four attempts at this; every one of those
-            // attempts tried to make ROOM for it rather than asking
-            // whether it belonged here.
-            //
-            // It does not. A soft edge is all the panel ever wanted, so
-            // this is a gradient and no more: the panel's own ground at
-            // the very top, gone by `LivRow.topFade`. Nothing is
-            // reserved, nothing is covered, and a row scrolling up
-            // dissolves into the ground instead of meeting an edge.
+            // It draws only. The rows' room is a content margin on the
+            // list below; a band that did both is what covered the first
+            // row for four rounds.
             .overlay(alignment: .topLeading) {
-                LinearGradient(
-                    colors: [LivTheme.surface, LivTheme.surface.opacity(0)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(width: width, height: LivRow.topFade)
-                .allowsHitTesting(false)
+                LivTopScrim(ground: LivTheme.surface)
+                    .frame(width: width)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
@@ -300,6 +268,19 @@ struct LibraryPanel: View {
                 Color.clear.frame(height: LivPanel.row)
             }
         }
+        // THE CLOCK'S ROOM, and only the clock's.
+        //
+        // The rows ran to the panel's real top edge and the first one
+        // sat beside the status bar (owner, 2026-09-16: "the panel rows
+        // (the buttons) now begin at the very top where the clock is").
+        // Nothing floats over this panel, so unlike a view it needs no
+        // room for door buttons — the status bar is the whole of it.
+        //
+        // A content margin, because room that is CONTENT scrolls away
+        // and room that is a `.safeAreaInset` is discarded by the
+        // `.ignoresSafeArea()` in `SidePanel`. Both were tried. This is
+        // what `CalendarView` reserves its hour label with.
+        .contentMargins(.top, LivSafeArea.top, for: .scrollContent)
         // The rows dissolve as they reach the foot rather than stopping
         // dead behind it.
         .mask(

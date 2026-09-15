@@ -219,7 +219,11 @@ struct FeatureBody: View {
         // state keeps room for both, and its own content scrolls under
         // them (owner, 2026-08-17).
         .safeAreaInset(edge: .bottom) { Color.clear.frame(height: LivBar.room) }
-        .safeAreaInset(edge: .top) { LivTopScrim() }
+        // ROOM, not paint. This was `LivTopScrim()`, which reserved the
+        // band AND drew it opaque; the band is gone and the fade the
+        // desk overlays takes its place, so what is left here is the one
+        // thing an inset is for.
+        .safeAreaInset(edge: .top) { LivTopRoom() }
     }
 }
 
