@@ -63,52 +63,24 @@ struct SidePanel<Content: View>: View {
             // out behind it. What was here instead: 56pt of empty band
             // with a hairline under it, which read as a bar that was not
             // one.
-            // ONLY THE STATUS BAR. `LivTopScrim()`'s default also
-            // reserves the 52pt chrome row, which is right on the desk —
-            // the library door floats there — and wrong here, where
-            // nothing floats over the panel at all. It pushed the first
-            // row a sixth of the way down a panel the owner had already
-            // called too empty at the top (2026-08-28: "In the panel,
-            // there is a huge cut-off that needs to go").
+            // NO `.safeAreaInset` HERE, and that is the fix.
             //
-            // NEVER DERIVE AN INSET'S HEIGHT FROM THE SAFE AREA. A
-            // `.safeAreaInset` that does feeds itself: AttributeGraph
-            // reports a cycle and the surface stops repainting while its
-            // body keeps evaluating perfectly (2026-08-23, half a day
-            // and eight innocent suspects). `LivTopScrim` reads a
-            // literal, and so must anything added beside it.
-            // ROOM ONLY. THE PAINT IS THE OVERLAY AT THE FOOT OF THIS
-            // CHAIN, and that is the whole of the fix.
+            // A view ends with `.safeAreaInset(edge: .top) {
+            // LivTopScrim() }` and nothing after it (Navigate.swift).
+            // This chain put the reservation in the same way and then
+            // applied `.ignoresSafeArea()` further down — which is what
+            // that modifier is FOR: it discards the safe area, and a
+            // `safeAreaInset` is the safe area. So the room was asked
+            // for and thrown away, the rows stayed at the top, and the
+            // scrim painted straight over them. Three reports of "the
+            // top of the panel covers things" and two wrong fixes: the
+            // first assumed the inset landed low, the second assumed it
+            // landed at all.
             //
-            // A `.safeAreaInset` puts its content at the top of the
-            // safe area as it stands WHEN THE MODIFIER RUNS. The
-            // `.ignoresSafeArea()` further down then grows this whole
-            // thing up to y=0 — so the scrim ended up sitting the height
-            // of the status bar BELOW the panel's real top edge, and the
-            // strip above it was bare. Rows scrolled up through it and
-            // were cut off dead at the edge instead of dissolving:
-            // exactly the cut the owner could still see beside the fade
-            // (2026-09-15), and the reason the fade looked like it began
-            // in the wrong place.
-            //
-            // The desk never had it. `Desk.swift` OVERLAYS its scrim at
-            // `alignment: .top` on a body that ignores the top safe
-            // area, so the paint starts at the body's real top edge.
-            // "Exactly like in desk" is that, and it is now what this
-            // does — the inset is left holding only the ROOM.
-            .safeAreaInset(edge: .top) {
-                // AS MUCH ROOM AS THE OVERLAY PAINTS, asked of the scrim
-                // itself so the two cannot drift. It reserved the status
-                // bar alone while the paint ran 44pt further down, so the
-                // first row sat permanently under the fade (owner,
-                // 2026-09-16: "today is now hidden behind the fade").
-                //
-                // `chromeAway: false` because nothing floats over this
-                // panel for the chrome to take away — the same reason
-                // `underChrome` is false below.
-                Color.clear.frame(
-                    height: LivTopScrim.room(underChrome: false, chromeAway: false))
-            }
+            // The room is plain layout now — a clear block at the head
+            // of the list (`LibraryPanel.list`), which no modifier can
+            // cancel. The paint is the overlay at the foot of this
+            // chain, pinned to the panel's real top corner.
             //
             // NO BOTTOM INSET: the library's own foot floats and its
             // list runs under it. There was one here until 2026-09-07,
@@ -163,7 +135,17 @@ struct SidePanel<Content: View>: View {
             // looked like the desk bleeding in from the side (owner,
             // 2026-09-14).
             .overlay(alignment: .topLeading) {
-                LivTopScrim(underChrome: false, ground: LivTheme.surface)
+                // A VIEW'S FADE, IN THE PANEL'S COLOUR — the owner's
+                // word, 2026-09-16: "the fade is different from in each
+                // view, should be same but have the panels background
+                // color". It was the short band (the status bar alone),
+                // which is a different soft edge from the one every
+                // other surface wears.
+                //
+                // `retires: false` because a panel has no doors to slide
+                // away, so its band never shrinks — the flag decides the
+                // shrink and nothing else now.
+                LivTopScrim(retires: false, ground: LivTheme.surface)
                     .frame(width: width)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
@@ -222,6 +204,20 @@ struct LibraryPanel: View {
         // what stops the foot reading as a second bar.
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                // THE ROOM THE SCRIM PAINTS, as plain layout.
+                //
+                // `SidePanel` used to reserve this with a
+                // `.safeAreaInset`, and the `.ignoresSafeArea()` below it
+                // in the same chain threw the reservation away — so the
+                // first row sat at the very top with the scrim over it.
+                // A clear block in the scroll content cannot be
+                // cancelled by a modifier, and it is the same number the
+                // overlay paints, asked of the scrim itself.
+                //
+                // `chromeAway: false` to match `retires: false` there: a
+                // panel's band does not shrink.
+                Color.clear
+                    .frame(height: LivTopScrim.room(retires: false, chromeAway: false))
                 // THE VIEWS ARE BACK (team, 2026-08-22 — see
                 // design/tabs.md). They left on 2026-08-18 for the bar's
                 // own key, on the argument that a drawer is the wrong
