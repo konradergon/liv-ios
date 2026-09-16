@@ -607,12 +607,25 @@ cmd_panel() {
 # The library: opens from its own button and pushes the desk RIGHT.
 check_library() {
   local which=library probe=Library dir=1 rest open_x screen_w mid_x
-  screen_w=$(screen_width)
-  (( screen_w > 0 )) || { die "could not read the screen width."; return 1 }
 
+  # BOOT FIRST, THEN MEASURE. The width came off `axe describe-ui`, which
+  # describes whatever app is in FRONT — so asking before the launch read
+  # the previous app, or nothing at all, and a fresh machine failed here
+  # with a Python traceback rather than with anything about the library
+  # (2026-09-16). Every reading in this file is taken from the app under
+  # test; this one was the exception and had no reason to be.
+  #
   # The library door itself is the probe: it travels with the desk and it
   # is the chrome that stays in the sliver.
   cmd_boot >/dev/null 2>&1 || { die "could not boot before the library check."; return 1 }
+
+  screen_w=$(screen_width)
+  (( screen_w > 0 )) || {
+    die "could not read the screen width: 'axe describe-ui' returned no
+      tree for $UDID with the app booted. Check that axe is installed and
+      that the simulator is the one this run is driving."
+    return 1
+  }
 
   rest=$(button_x "$probe") || {
     die "no '$probe' on screen, so there is nothing to measure the desk by."
@@ -790,12 +803,20 @@ back_at_rest() {
 }
 
 
+# 0 WHEN THERE IS NOTHING TO READ, never a traceback. `axe describe-ui`
+# prints nothing at all when no app is in front — it is not running yet,
+# it crashed, the simulator is still coming up — and `json.load` on an
+# empty pipe raised a nine-line Python traceback over the one line that
+# mattered (2026-09-16). A probe reports; it does not throw.
 screen_width() {
   axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
-d = d if isinstance(d, dict) else d[0]
-print(int((d.get('frame') or {}).get('width', 0)))"
+try:
+    d = json.load(sys.stdin)
+    d = d if isinstance(d, dict) else d[0]
+    print(int((d.get('frame') or {}).get('width', 0)))
+except Exception:
+    print(0)"
 }
 
 # The CENTRE x of a button's frame — what a region tap aims at when the
