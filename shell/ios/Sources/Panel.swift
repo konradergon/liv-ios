@@ -121,17 +121,16 @@ struct SidePanel<Content: View>: View {
             // stopped opening in) and it hangs on the list instead now,
             // as the foot it replaced did — so this overlay does one job.
             //
-            // AND THIS IS THE SHORT FADE AGAIN, the one the owner
-            // approved on 389baec: opaque across the status bar, ramping
-            // below it. The redesign made it opaque across the whole
-            // chrome row so the head's words had something solid behind
-            // them, and that is the one thing separating this revision
-            // from the one the door stops opening in (bisect-panel.sh,
-            // 2026-09-16, which put the fault in this file and cleared
-            // the rename). It comes back only when the run says the fade
-            // was innocent.
+            // OPAQUE THROUGH THE WHOLE CHROME ROW, not the status bar
+            // alone: the library's workspace head lives in that row and
+            // is words, and rows scroll up under it.
+            //
+            // It was suspected of stopping the panel opening and it was
+            // cleared: the short fade and this one failed identically
+            // (bisect-panel.sh, 2026-09-16), which is what moved the
+            // search onto the head's own overlay and found it.
             .overlay(alignment: .topLeading) {
-                LivTopScrim(ground: LivTheme.surface)
+                LivTopScrim(ground: LivTheme.surface, solid: LivRow.topInset)
                     .frame(width: width)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
@@ -291,7 +290,7 @@ struct LibraryPanel: View {
         // and room that is a `.safeAreaInset` is discarded by the
         // `.ignoresSafeArea()` in `SidePanel`. Both were tried. This is
         // what `CalendarView` reserves its hour label with.
-        .contentMargins(.top, LivTopScrim.height(), for: .scrollContent)
+        .contentMargins(.top, LivTopScrim.height(solid: top + LivRow.topChrome), for: .scrollContent)
         // THE HEAD, pinned over the list's top the way the foot was
         // pinned over its bottom. The workspace stands at the head
         // (owner, 2026-09-16: the panel that mirrors the model — "a
@@ -302,9 +301,21 @@ struct LibraryPanel: View {
         // line up across the seam. The fade under it is `SidePanel`'s,
         // and the reason it is not drawn beside it there is written
         // there.
+        //
+        // OFFSET, NOT TOP PADDING, and the difference is the whole of
+        // why the panel stopped opening (bisected 2026-09-16: the fault
+        // was this file, then this overlay, and not the fade).
+        //
+        // Padding grows this overlay UPWARD to the panel's own top-left
+        // corner, which is exactly where `livOverlay` parks the 1x1
+        // marker that says "the library is open" — and a row of buttons
+        // spanning that corner took the marker out of the accessibility
+        // tree, so every reader of that tree, the harness included, was
+        // told the panel had never opened. An offset moves the frame
+        // down instead of growing it, and the corner stays clear.
         .overlay(alignment: .top) {
             head(counts)
-                .padding(.top, top + 6)
+                .offset(y: top + 6)
         }
         // NO FOOT, NO BOTTOM FADE (2026-09-16). The workspace moved to
         // the head, the gear went with it, and nothing floats over the
@@ -378,6 +389,14 @@ struct LibraryPanel: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
         }
+        // TWO ELEMENTS IN A ROW, said out loud. Left alone, SwiftUI
+        // merges a row like this into ONE accessibility element as wide
+        // as the row — the desk's door row was merged with the Spacer
+        // beside it into a 396pt element whose activation point sat in
+        // the middle of the screen (Desk.swift, 2026-08-24), and the
+        // same merge here would swallow Settings into the workspace
+        // name and put a single activation point over both.
+        .accessibilityElement(children: .contain)
         .frame(height: 44)
         .padding(.leading, LivPanel.inset)
         .padding(.trailing, LivPanel.litInset)
