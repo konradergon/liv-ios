@@ -46,23 +46,23 @@ enum Feature: String, CaseIterable, Identifiable {
     /// the side panel makes a second one visible, which is exactly when
     /// two orderings become a bug (standing rule 4).
     ///
-    /// IN TWO GROUPS, and the grouping is the order. **The substance,
-    /// then the instruments** (owner, 2026-09-16, taking the panel that
-    /// mirrors the model): Notes is what a workspace is made of, and the
-    /// four after it are ways of looking at those notes — a day's worth,
-    /// the part not yet addressed, the dated ones on a timeline, the
-    /// ones with a status. The half-row of air after Notes is what says
-    /// so.
+    /// IN TWO GROUPS, and the grouping is the order (owner, 2026-09-16,
+    /// verbatim: "today / inbox // notes / tasks / calendar"). The first
+    /// two are the windows onto the day's work — what is due, what is
+    /// not yet addressed. The three after the gap are the THINGS, one
+    /// row per kind: the notes, the tasks, the events. The half-row of
+    /// air between them is what says so.
     ///
-    /// This replaces the 2026-09-10 split ("today, inbox, and everything
-    /// which only are views into the box" versus the two you add to).
-    /// Under a workspace head every one of them is a view into the
-    /// workspace, so that line stopped being the one worth drawing.
+    /// This is the third ordering in a week and the one the owner wrote
+    /// out by hand. 2026-09-10 split the views into the box from the two
+    /// you add to; 2026-09-16 (morning) put Notes alone at the top as the
+    /// substance the rest looked at. Neither survived Notes becoming a
+    /// list of documents, which makes it a kind among kinds.
     ///
     /// Declared as the groups and flattened, never the other way round:
     /// an order and a split kept as two facts is two facts to keep in
     /// step (standing rule 4).
-    static let groups: [[Feature]] = [[.everything], [.today, .inbox, .calendar, .tasks]]
+    static let groups: [[Feature]] = [[.today, .inbox], [.everything, .tasks, .calendar]]
 
     /// The roster in order, for everything that does not care about the
     /// gap — the migration's key list, the tour, `position`.

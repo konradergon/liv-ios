@@ -1927,7 +1927,7 @@ cmd_lens() {
     if n.get("type") == "Button" and l: SEEN.append(l)
     for c in n.get("children") or []: walk(c)' \
     'SEEN = []' \
-    'lo = max((i for i, l in enumerate(SEEN) if re.match(r"^Tasks(, [0-9]+)?$", l)), default=-1)
+    'lo = max((i for i, l in enumerate(SEEN) if re.match(r"^Calendar(, [0-9]+)?$", l)), default=-1)
 hi = next((i for i, l in enumerate(SEEN) if l == "New filter"), -1)
 if lo >= 0 and hi > lo:
     print(chr(10).join(SEEN[lo + 1:hi]))' | head -1)
