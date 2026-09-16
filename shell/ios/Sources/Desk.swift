@@ -41,6 +41,20 @@ struct DeskHost: View {
     /// finger is on it. 0 at rest. The document follows the finger
     /// (`pullDown`) and either springs back or is laid down.
     @State private var docPull: CGFloat = 0
+    /// THE DOCUMENT THAT IS MOUNTED, and whether it has RISEN — two
+    /// facts, because a rise is an `.offset` animating on a view that is
+    /// already there. The library learned this first (`libraryDrawn` /
+    /// `libraryShown`, Chrome.swift): a `.transition` on an `if` gave no
+    /// motion either way, and mounting first then sliding on the next
+    /// tick is what actually moves. `drawnDoc` follows `desk.openDoc`
+    /// with a lag on the way OUT, so the page has somewhere to slide to
+    /// before it is unmounted.
+    @State private var drawnDoc: LivEntityID?
+    @State private var risen = false
+    /// How tall the desk is — how far down a page parks before it rises,
+    /// and where it slides to on the way out. Measured, the way the menu
+    /// card measures its own height, rather than read off `UIScreen`.
+    @State private var deskHeight: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -74,12 +88,19 @@ struct DeskHost: View {
                     // `openDoc` is non-nil only while one is laid down
                     // (`DeskModel.shown`), so this no longer asks Notes
                     // for permission to draw a note (2026-09-10).
-                    if let id = desk.openDoc {
+                    //
+                    // MOUNTED ON `drawnDoc`, NOT `openDoc`. `drawnDoc`
+                    // lags on the way out (`.onChange` below) so the page
+                    // is still there to slide down; while it is, its
+                    // marker leaves the accessibility tree so the harness
+                    // still reads one surface.
+                    if let id = drawnDoc {
                         // Keyed by ENTITY: a serial capture rewrites the
                         // surface with a new entity, and per-entity
                         // @State (the seeded title) must reseed on that
                         // flip.
                         EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
+                            .accessibilityHidden(desk.openDoc == nil)
                             // Opaque, because there is a view underneath
                             // now and the words must not show through.
                             .background(LivTheme.canvas)
@@ -101,8 +122,6 @@ struct DeskHost: View {
                                     .allowsHitTesting(false)
                                     .accessibilityHidden(true)
                             }
-                            .offset(y: docPull)
-                            .simultaneousGesture(pullDown)
                             // RISES FROM THE BOTTOM, AND GOES BACK DOWN
                             // (owner, 2026-09-16: "get back to the place
                             // you stand in when you open a note with '+',
@@ -110,10 +129,30 @@ struct DeskHost: View {
                             // card"). The arrival is what teaches the
                             // exit: a thing that came up over the view is
                             // a thing you push back down.
-                            .transition(.move(edge: .bottom))
+                            //
+                            // AN OFFSET, NOT A `.transition`. The
+                            // transition popped (owner: "still pops in,
+                            // no rise"), which is the same thing the
+                            // library found on 2026-08-15 and the menu
+                            // card on 2026-09-12: a transition on an
+                            // `if` gives no motion here, and real motion
+                            // is a view that is already mounted moving.
+                            // Parked one desk-height down until `risen`,
+                            // which `.onChange` flips on the next tick.
+                            .offset(y: risen ? docPull : deskHeight)
+                            .simultaneousGesture(pullDown)
                             .zIndex(1)
                     }
                 }
+                // MEASURED, so the page knows how far down "off screen"
+                // is — the menu card's own recipe (Menu.swift).
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { deskHeight = geo.size.height }
+                            .onChange(of: geo.size.height) { _, h in deskHeight = h }
+                    }
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // TO THE VERY TOP: the words run under the clock and the
@@ -325,6 +364,29 @@ struct DeskHost: View {
             desk.createMenu = createMenu
             desk.newNote = createNote
             desk.catchText = catchText
+            // A document restored at launch is already up; it does not
+            // rise, it is simply there.
+            drawnDoc = desk.openDoc
+            risen = desk.openDoc != nil
+        }
+        // THE RISE AND THE FALL, as the library does them: mount, then
+        // slide on the next tick; slide, then unmount after the motion.
+        // Document to document (a link inside a note) swaps in place
+        // without a rise — it replaces, it does not arrive.
+        .onChange(of: desk.openDoc) { _, now in
+            if let now {
+                let wasUp = drawnDoc != nil && risen
+                drawnDoc = now
+                guard !wasUp else { return }
+                DispatchQueue.main.async {
+                    withAnimation(LivMotion.nav) { risen = true }
+                }
+            } else {
+                withAnimation(LivMotion.nav) { risen = false }
+                DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                    if desk.openDoc == nil { drawnDoc = nil }
+                }
+            }
         }
         .fileImporter(
             isPresented: $picking, allowedContentTypes: [.item],
