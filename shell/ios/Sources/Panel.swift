@@ -285,11 +285,7 @@ struct LibraryPanel: View {
         // at rest and only dims on its way up (owner, 2026-09-16: "move
         // down the panel buttons slightly"). It was the status bar
         // alone, which left the top row sitting in the ramp.
-        // `height()` and not `height`: the scrim took a `solid:` on
-        // 2026-09-16 and its reach became a function of it. The default
-        // is the status bar, which is the number this line has always
-        // asked for and what the overlay above paints.
-        .contentMargins(.top, LivTopScrim.height(), for: .scrollContent)
+        .contentMargins(.top, LivTopScrim.height, for: .scrollContent)
         // The rows dissolve as they reach the foot rather than stopping
         // dead behind it.
         .mask(

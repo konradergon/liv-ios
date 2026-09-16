@@ -27,17 +27,12 @@ import SwiftUI
 /// filter, and no lenses of its own. Declared second because it is the
 /// one people reach for.
 enum EverythingLens: String, CaseIterable, Identifiable {
-    // NO `.notes` LENS (2026-09-16). The view is called Notes now, so a
-    // pill inside it saying Notes was the view's name said twice. What
-    // the pill did — documents only, ordered by what you touched last —
-    // went with it on the owner's word ("the old All/Upcoming/Unfiled
-    // become pills inside Notes"); a saved position still holding
-    // "notes" falls back to `.all` in `EverythingView.onAppear`.
-    case all, upcoming, unfiled
+    case all, notes, upcoming, unfiled
     var id: String { rawValue }
     var title: String {
         switch self {
         case .all: return "All"
+        case .notes: return "Notes"
         case .upcoming: return "Upcoming"
         case .unfiled: return "Unfiled"
         }
@@ -210,10 +205,11 @@ enum LivPosition {
         switch feature {
         case .everything:
             switch EverythingLens(rawValue: token) {
-            case .all: return "Everything in this workspace, newest first."
+            case .all: return "Everything in the box, newest first."
+            case .notes: return "What you have written, by what you touched last."
             case .upcoming: return "Dated in the next seven days."
             case .unfiled: return "No area yet."
-            case nil: return "A saved place in Notes."
+            case nil: return "A saved place in Everything."
             }
         case .inbox:
             switch InboxLens(rawValue: token) {
@@ -306,7 +302,7 @@ func livPlanesSelfCheck() -> [String] {
     check("without disturbing the others", desk.position(.everything) == "all")
 
     // ---- the desk follows you ----
-    desk.go(.everything, at: EverythingLens.all.rawValue)
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
     desk.open(7)
     check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == 7)
     desk.go(.calendar)

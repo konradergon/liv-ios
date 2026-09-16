@@ -16,25 +16,19 @@ import SwiftUI
 /// comment claimed for as long as `Calendar.swift` has been ~1,850 lines
 /// of day timeline, month pager and drag-to-move.
 ///
-/// **NOTES IS THE FIRST OF THEM** (owner, 2026-09-16), and it is the
-/// place that used to be called Everything: `case everything` keeps its
-/// raw value because that word is in every saved position and every
-/// `liv://` route, and it is drawn as "Notes" because that is what a
-/// workspace is made of. A task is a note with a status and an event is
-/// a note with a date — that is how the engine stores them and how the
-/// record card already edits them — so "Notes" is the honest name for
-/// all of it, and "Everything" was the name for not having decided.
+/// **NOTES IS NOT ONE OF THEM** since 2026-09-10. Owner: *"notes view
+/// serves too little purpose to be considered a place or state. it just
+/// gives me a simple list and makes '+' act a bit different."* Both
+/// halves were true in the code — `+` made a note in Notes, Inbox AND
+/// Everything alike, and Everything had three lenses where Notes had
+/// none — so Notes was Everything with a kind filter and fewer options.
+/// It is `EverythingLens.notes` now (Positions.swift), which is what it
+/// always was.
 ///
-/// The history, because it went round twice. 2026-08-18: Notes is its
-/// own state ("each state should be treated equally… and the notes
-/// should remain separate"). 2026-09-10: it is not ("notes view serves
-/// too little purpose to be considered a place or state. it just gives
-/// me a simple list") — it became a lens inside Everything, and the
-/// panel lost any row that said the word. 2026-09-16, the owner's
-/// diagnosis: "Everything and having Notes hidden there removes some of
-/// the workspace feel… Notes are central anyways." Both earlier rulings
-/// were about whether Notes deserved a SECOND place; neither was about
-/// whether the one place should carry its name. It carries it now.
+/// This reverses the 2026-08-18 ruling that put it here ("Each state
+/// should be treated equally… and the notes should remain separate"), on
+/// the owner's own word. The notes are still separate — one tap along a
+/// row of lenses — and the list is unchanged.
 enum Feature: String, CaseIterable, Identifiable {
     case today, everything, inbox, tasks, calendar
 
@@ -46,23 +40,23 @@ enum Feature: String, CaseIterable, Identifiable {
     /// the side panel makes a second one visible, which is exactly when
     /// two orderings become a bug (standing rule 4).
     ///
-    /// IN TWO GROUPS, and the grouping is the order. **The substance,
-    /// then the instruments** (owner, 2026-09-16, taking the panel that
-    /// mirrors the model): Notes is what a workspace is made of, and the
-    /// four after it are ways of looking at those notes — a day's worth,
-    /// the part not yet addressed, the dated ones on a timeline, the
-    /// ones with a status. The half-row of air after Notes is what says
-    /// so.
+    /// IN TWO GROUPS, and the grouping is the order (owner, 2026-09-10:
+    /// *"i think they should be next to each other and separated a bit
+    /// from today, inbox, and everything which only are views into the
+    /// box"*).
     ///
-    /// This replaces the 2026-09-10 split ("today, inbox, and everything
-    /// which only are views into the box" versus the two you add to).
-    /// Under a workspace head every one of them is a view into the
-    /// workspace, so that line stopped being the one worth drawing.
+    /// The first three are windows onto the box and nothing else: Today
+    /// is a day's worth of it, Inbox the part not yet addressed,
+    /// Everything all of it. The last two are the views you ADD to — the
+    /// only two that make something other than a note, and they make it
+    /// where it lives (an empty hour on the timeline, the row at the top
+    /// of Tasks). That is the same line the `+` change draws, so the
+    /// panel draws it too.
     ///
     /// Declared as the groups and flattened, never the other way round:
     /// an order and a split kept as two facts is two facts to keep in
     /// step (standing rule 4).
-    static let groups: [[Feature]] = [[.everything], [.today, .inbox, .calendar, .tasks]]
+    static let groups: [[Feature]] = [[.today, .inbox, .everything], [.calendar, .tasks]]
 
     /// The roster in order, for everything that does not care about the
     /// gap — the migration's key list, the tour, `position`.
@@ -78,7 +72,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .today: return "Today"
-        case .everything: return "Notes"
+        case .everything: return "Everything"
         case .inbox: return "Inbox"
         case .tasks: return "Tasks"
         case .calendar: return "Calendar"
@@ -89,7 +83,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var glyph: LivGlyph {
         switch self {
         case .today: return .today
-        case .everything: return .note
+        case .everything: return .everything
         case .inbox: return .inbox
         case .tasks: return .tasks
         case .calendar: return .calendar
@@ -379,10 +373,12 @@ func livPlacesSelfCheck() -> [String] {
     check("the panel lands on the view", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
     check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
 
-    // A DOOR MAY NAME A PLACE INSIDE A VIEW, and the park has to happen
-    // even when the view is already the one you are standing in.
-    desk.go(.everything, at: EverythingLens.unfiled.rawValue)
-    check("a door can park the view it opens", desk.position(.everything) == "unfiled", "\(String(describing: desk.position(.everything)))")
+    // A DOOR MAY NAME A PLACE INSIDE A VIEW. `liv://notes` and
+    // `-desk.boot notes` mean Everything's Notes lens since the view was
+    // retired (2026-09-10), and the park has to happen even when the
+    // view is already the one you are standing in.
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
+    check("a door can park the view it opens", desk.position(.everything) == "notes", "\(String(describing: desk.position(.everything)))")
     desk.go(.today)
     desk.go(.everything, at: EverythingLens.upcoming.rawValue)
     check("and does it arriving from elsewhere too", desk.state == .everything && desk.position(.everything) == "upcoming")
@@ -402,12 +398,12 @@ func livPlacesSelfCheck() -> [String] {
     // regression the desk-state change is for: `land(.state(…))` used to
     // put you where you already were, with the note still drawn on top,
     // so the key visibly did nothing.
-    desk.go(.everything, at: EverythingLens.upcoming.rawValue)
+    desk.go(.everything, at: EverythingLens.notes.rawValue)
     desk.open(21)
     check("a note off the list is on the desk", desk.openDoc == 21 && desk.state == .everything)
     desk.goBack()
     check("back from it is the list, not nothing", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
-    check("and the list is still on the lens it was on", desk.position(.everything) == "upcoming")
+    check("and the list is still on the Notes lens", desk.position(.everything) == "notes")
 
     // Opening the SAME document again is not a step.
     desk.open(11)

@@ -54,9 +54,9 @@ struct DeskHost: View {
                     // THE VIEW. Every state draws itself (FeatureLayer is
                     // gone with the layer it was), and since 2026-09-10
                     // there is no longer a state that draws nothing so a
-                    // document can borrow its name. The list of notes is
-                    // `Feature.everything`, drawn as Notes since
-                    // 2026-09-16.
+                    // document can borrow its name: the list of notes is
+                    // `EverythingLens.notes`, and `NotesList` went with
+                    // the view it was the root of.
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
                 }

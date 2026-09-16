@@ -179,7 +179,7 @@ struct TabSwitcher: View {
     ///
     /// (The grid was the Notes view's own surface for four days. It is
     /// the switcher again since 2026-08-28, and the list it stood in for
-    /// is `Feature.everything`, drawn as Notes since 2026-09-16.)
+    /// is `EverythingLens.notes` since 2026-09-10.)
     private var shown: [DeskTab] { desk.liveTabs }
 
     // MARK: cards
