@@ -59,9 +59,21 @@ git rev-parse --verify "$GOOD^{commit}" >/dev/null 2>&1 || {
     exit 1
 }
 
+# THE SIMULATOR IS LEFT HOLDING THE LAST CANDIDATE, not this commit —
+# restoring the SOURCES does not rebuild the BUNDLE. On 2026-09-16 that
+# sent the owner to look at a panel from the second row of the table and
+# report the workspace in the wrong place, which was true of the app they
+# had and not of the tree. The normal path rebuilds at the end and says
+# so; an interrupted one cannot, so it warns instead.
 restore() { git checkout "$NOW" -- shell/ios/Sources 2>/dev/null; }
+warn_bundle() {
+    echo
+    echo "INTERRUPTED. Sources are back at $(git rev-parse --short "$NOW"),"
+    echo "but build/Liv.app is still the last candidate that built."
+    echo "Rebuild before you look at the app:  ./shell/ios/build.sh run"
+}
 trap 'restore' EXIT
-trap 'restore; exit 130' INT TERM
+trap 'restore; warn_bundle; exit 130' INT TERM
 
 echo "good = $GOOD   head = $(git rev-parse --short "$NOW")"
 echo
@@ -110,5 +122,15 @@ else
     try "head"        "$NOW"  "$NOW"
 fi
 
+restore
+
 echo
-echo "Sources restored to $(git rev-parse --short "$NOW")."
+printf 'Sources restored to %s. Rebuilding so the app matches the tree ... ' \
+    "$(git rev-parse --short "$NOW")"
+if ./shell/ios/build.sh >"$LOG/restore.build.txt" 2>&1; then
+    echo "done."
+    echo "build/Liv.app is this commit again. ./shell/ios/drive.sh boot installs it."
+else
+    echo "FAILED  $LOG/restore.build.txt"
+    echo "build/Liv.app is still the last candidate. Do not judge the app by it."
+fi
