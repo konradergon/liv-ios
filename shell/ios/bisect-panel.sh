@@ -90,10 +90,25 @@ try() {
 
 echo "  candidate          result"
 echo "  ------------------ ----------------------------------------"
-try "base"        "$GOOD" "$GOOD"
-try "panel only"  "$NOW"  "$GOOD"
-try "rename only" "$GOOD" "$NOW"
-try "head"        "$NOW"  "$NOW"
+
+# WITH REFS NAMED, it compares REVISIONS OF THE PANEL against each other
+# rather than the panel against the rename — which is the question left
+# once the four-way run has put the fault in one half. Every candidate
+# gets the same REST (this commit's), because the rename was cleared on
+# 2026-09-16 and re-testing a cleared half costs a build per row.
+#
+#   ./shell/ios/bisect-panel.sh HEAD 4c9c7f7
+#
+if [ "$#" -gt 0 ]; then
+    for ref in "$@"; do
+        try "$(git rev-parse --short "$ref")" "$ref" "$NOW"
+    done
+else
+    try "base"        "$GOOD" "$GOOD"
+    try "panel only"  "$NOW"  "$GOOD"
+    try "rename only" "$GOOD" "$NOW"
+    try "head"        "$NOW"  "$NOW"
+fi
 
 echo
 echo "Sources restored to $(git rev-parse --short "$NOW")."

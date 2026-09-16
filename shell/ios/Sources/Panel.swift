@@ -116,25 +116,22 @@ struct SidePanel<Content: View>: View {
             // list below; a band that did both is what covered the first
             // row for four rounds.
             //
-            // OPAQUE THROUGH THE WHOLE CHROME ROW, not the status bar
-            // alone: the library's workspace head lives in that row
-            // (2026-09-16) and is words, and rows scroll up under it.
-            //
             // THE HEAD IS NOT HERE. It stood beside this fade in a
             // ZStack for one build (a61c3f6, the build the library door
             // stopped opening in) and it hangs on the list instead now,
-            // as the foot it replaced did — so this overlay keeps the
-            // shape the owner approved on 389baec and does one job.
+            // as the foot it replaced did — so this overlay does one job.
             //
-            // Whether the ZStack was the fault was never established:
-            // the fix for it failed to compile, so the two runs that
-            // followed measured the a61c3f6 binary, and the measurement
-            // taken once it did build ruled out the stall this was
-            // assumed to be — the cycle count was flat and the core was
-            // idle. It is one job per modifier because that is the rule
-            // here, not because it was convicted.
+            // AND THIS IS THE SHORT FADE AGAIN, the one the owner
+            // approved on 389baec: opaque across the status bar, ramping
+            // below it. The redesign made it opaque across the whole
+            // chrome row so the head's words had something solid behind
+            // them, and that is the one thing separating this revision
+            // from the one the door stops opening in (bisect-panel.sh,
+            // 2026-09-16, which put the fault in this file and cleared
+            // the rename). It comes back only when the run says the fade
+            // was innocent.
             .overlay(alignment: .topLeading) {
-                LivTopScrim(ground: LivTheme.surface, solid: LivRow.topInset)
+                LivTopScrim(ground: LivTheme.surface)
                     .frame(width: width)
             }
             // VoiceOver's two-finger scrub, Voice Control's escape.
@@ -294,7 +291,7 @@ struct LibraryPanel: View {
         // and room that is a `.safeAreaInset` is discarded by the
         // `.ignoresSafeArea()` in `SidePanel`. Both were tried. This is
         // what `CalendarView` reserves its hour label with.
-        .contentMargins(.top, LivTopScrim.height(solid: top + LivRow.topChrome), for: .scrollContent)
+        .contentMargins(.top, LivTopScrim.height(), for: .scrollContent)
         // THE HEAD, pinned over the list's top the way the foot was
         // pinned over its bottom. The workspace stands at the head
         // (owner, 2026-09-16: the panel that mirrors the model — "a
