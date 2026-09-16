@@ -1148,23 +1148,36 @@ struct LivTopScrim: View {
     /// the desk's ground there painted a band of the wrong colour.
     var ground: Color = LivTheme.canvas
 
-    /// OPAQUE DOWN TO HERE. The status bar by default — the clock and
-    /// the battery have nothing behind them. The library panel asks for
-    /// the whole chrome row instead (`LivRow.topInset`), because its
-    /// workspace head lives in that row and is text, not glass: words
-    /// over a ramp that rows scroll up through are words you cannot
-    /// read.
-    var solid: CGFloat = LivSafeArea.top
+    /// OPAQUE DOWN TO HERE. nil — the default — is the status bar: the
+    /// clock and the battery have nothing behind them. The library panel
+    /// asks for the whole chrome row instead (`LivRow.topInset`), because
+    /// its workspace head lives in that row and is text, not glass:
+    /// words over a ramp that rows scroll up through are words you
+    /// cannot read.
+    ///
+    /// AN OPTIONAL, RESOLVED IN `body`, AND NOT A DEFAULT VALUE. For one
+    /// day (2026-09-16) this was `var solid: CGFloat = LivSafeArea.top`,
+    /// and the library door stopped opening in every build that carried
+    /// it: the panel never mounted, the desk never moved, no cycle, no
+    /// spin — and the only file every failing build shared was this one.
+    /// A default value runs in the CALLER's body, so `LivTopScrim()` on
+    /// the desk read the key window's insets from inside `DeskHost`'s
+    /// own evaluation, where before it read them from inside its own.
+    /// Why that stops a Button on the desk from moving the model is not
+    /// established; that it does is, over seven builds. So the live read
+    /// stays where it has always been.
+    var solid: CGFloat? = nil
 
     /// HOW FAR DOWN IT REACHES: the opaque part plus the ramp. Named
     /// once because both the paint and the surfaces that rest their
     /// content below it ask for the same number.
-    static func height(solid: CGFloat = LivSafeArea.top) -> CGFloat {
-        solid + LivRow.topFade
+    static func height(solid: CGFloat? = nil) -> CGFloat {
+        (solid ?? LivSafeArea.top) + LivRow.topFade
     }
 
     var body: some View {
-        let total = Self.height(solid: solid)
+        let solid = self.solid ?? LivSafeArea.top
+        let total = solid + LivRow.topFade
         return LinearGradient(
             stops: [
                 .init(color: ground, location: 0),
