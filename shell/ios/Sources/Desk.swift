@@ -37,28 +37,64 @@ struct DeskHost: View {
     /// Guards the create doors against a double tap while a write is in
     /// flight.
     @State private var creating = false
+    /// HOW FAR THE DOCUMENT HAS BEEN PULLED DOWN, in points, while a
+    /// finger is on it. 0 at rest. The document follows the finger
+    /// (`pullDown`) and either springs back or is laid down.
+    @State private var docPull: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .top) {
             Group {
-                // THE DOCUMENT LAYER, over whichever view you are in.
-                // `openDoc` is non-nil only while one is laid down
-                // (`DeskModel.shown`), so this no longer asks Notes for
-                // permission to draw a note (2026-09-10).
-                if let id = desk.openDoc {
-                    // Keyed by ENTITY: a serial capture rewrites the
-                    // surface with a new entity, and per-entity @State
-                    // (the seeded title) must reseed on that flip.
-                    EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
-                } else {
+                ZStack {
                     // THE VIEW. Every state draws itself (FeatureLayer is
                     // gone with the layer it was), and since 2026-09-10
                     // there is no longer a state that draws nothing so a
                     // document can borrow its name. The list of notes is
                     // `Feature.everything`, drawn as Notes since
                     // 2026-09-16.
+                    //
+                    // IT STAYS MOUNTED UNDER A DOCUMENT (2026-09-16). It
+                    // used to be the `else` of the document: one slot,
+                    // one occupant, and a note slid in sideways as if it
+                    // were another view. A note is not another view — it
+                    // is a thing you opened FROM this one, and the way
+                    // you know that is that this one is still there
+                    // underneath while it rises. The same physics the
+                    // record card has always had, given to the page.
+                    //
+                    // Hidden from the accessibility tree while covered,
+                    // for the same two reasons the desk hides under a
+                    // panel: VoiceOver must not find it, and the harness
+                    // reads exactly one `liv.surface.` marker at a time.
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
+                        .accessibilityHidden(desk.openDoc != nil)
+
+                    // THE DOCUMENT LAYER, over whichever view you are in.
+                    // `openDoc` is non-nil only while one is laid down
+                    // (`DeskModel.shown`), so this no longer asks Notes
+                    // for permission to draw a note (2026-09-10).
+                    if let id = desk.openDoc {
+                        // Keyed by ENTITY: a serial capture rewrites the
+                        // surface with a new entity, and per-entity
+                        // @State (the seeded title) must reseed on that
+                        // flip.
+                        EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
+                            // Opaque, because there is a view underneath
+                            // now and the words must not show through.
+                            .background(LivTheme.canvas)
+                            .offset(y: docPull)
+                            .simultaneousGesture(pullDown)
+                            // RISES FROM THE BOTTOM, AND GOES BACK DOWN
+                            // (owner, 2026-09-16: "get back to the place
+                            // you stand in when you open a note with '+',
+                            // just like you can close the event / task
+                            // card"). The arrival is what teaches the
+                            // exit: a thing that came up over the view is
+                            // a thing you push back down.
+                            .transition(.move(edge: .bottom))
+                            .zIndex(1)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -399,6 +435,49 @@ struct DeskHost: View {
     /// card away first — it is a layer of the desk, and the desk is
     /// about to leave — and then sliding. Tapping it used to park the
     /// library invisibly behind the card.
+    /// PULL THE DOCUMENT DOWN TO PUT IT DOWN. The page follows the finger
+    /// and, past the sheet's own threshold, is laid down onto the view it
+    /// rose over — which is where you stood when you pressed `+`.
+    ///
+    /// ONLY FROM THE TOP BAND. The body scrolls, and a scroll is a
+    /// vertical drag; the two can only be told apart by where they
+    /// START. The band is the chrome row the doors float in plus the
+    /// title row under it — the page's own grabber, the way the record
+    /// card's is the strip above its name. A drag that starts lower is
+    /// the editor's, and this never sees it move.
+    ///
+    /// THE SAME NUMBERS AS EVERY CARD (Menu.swift, `LivEdgeSheetHost`):
+    /// 90pt of travel or a 220pt/s flick closes; less springs back. One
+    /// rule for how a raised thing is dismissed, whatever was raised.
+    ///
+    /// `simultaneousGesture`, not `gesture`: the editor underneath is
+    /// UIKit and must keep every touch it already handles — a tap into
+    /// the title, a scroll of the body. This only ever adds a reading,
+    /// and only acts on it inside the band.
+    private var pullDown: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .onChanged { g in
+                guard g.startLocation.y <= LivRow.topInset + LivRow.touch else { return }
+                let d = g.translation.height
+                // Downward, and more down than sideways — a sideways drag
+                // from the band is the panel's, and the panel's recogniser
+                // cancels these touches the moment it latches.
+                guard d > abs(g.translation.width) else { return }
+                docPull = max(0, d)
+            }
+            .onEnded { g in
+                guard docPull > 0 else { return }
+                let d = g.translation.height
+                let v = g.predictedEndTranslation.height
+                if d > 90 || v > 220 {
+                    withAnimation(LivMotion.nav) { docPull = 0 }
+                    desk.layDown()
+                } else {
+                    withAnimation(LivMotion.pick) { docPull = 0 }
+                }
+            }
+    }
+
     private func goToLibrary() {
         endEditing()
         guard !desk.libraryShown else {

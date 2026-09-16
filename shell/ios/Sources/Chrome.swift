@@ -899,7 +899,11 @@ final class DeskModel: ObservableObject {
         // panel's lit row keeps saying Today while you read a note you
         // opened from Today, and `‹` puts you back on Today's list of
         // rows rather than on Notes (2026-09-10).
-        shown = true
+        //
+        // ANIMATED, because the document RISES over that view now
+        // (Desk.swift, 2026-09-16) and a rise that is not in a transaction
+        // is a cut. `layDown` and `land` already animate their half.
+        withAnimation(LivMotion.nav) { shown = true }
         // Append or focus — the whole difference tabs make. Opening a
         // second note no longer replaces the first.
         focus(planes.open(entity: entityId))
