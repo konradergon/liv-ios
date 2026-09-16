@@ -35,6 +35,7 @@
 #   ./drive.sh goto <view>       open the panel, pick <view>, assert it rendered
 #   ./drive.sh tour              every view in turn — the one that catches a dead repaint
 #   ./drive.sh panel             the library panel, and the properties card
+#   ./drive.sh library           just the library half of `panel` — needs no notes in the box
 #   ./drive.sh bar               five keys in three pieces, disabled drawn as disabled
 #   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
 #   ./drive.sh history           a note's ••• opens its version history as a card
@@ -2532,6 +2533,12 @@ case "${1:-}" in
   goto)    cmd_goto "${2:?usage: drive.sh goto <view>}" || exit 1 ;;
   tour)    cmd_tour    || exit 1 ;;
   panel)   cmd_panel   || exit 1 ;;
+  # THE LIBRARY HALF OF `panel`, ON ITS OWN. `panel` also opens a note to
+  # measure the properties card, so on an empty box it fails for a reason
+  # that has nothing to do with the door — which is exactly what it did
+  # on 2026-09-16, one revert after the door had already come back, and
+  # cost a round. `bisect-panel.sh` drives this one.
+  library) check_library && say "ok    library: the panel opens from its door and the desk stands aside" || exit 1 ;;
   bar)     cmd_bar     || exit 1 ;;
   workspace) cmd_workspace || exit 1 ;;
   history) cmd_history   || exit 1 ;;
