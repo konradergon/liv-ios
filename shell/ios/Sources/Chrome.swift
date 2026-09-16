@@ -1110,7 +1110,7 @@ struct LivTopRoom: View {
         Color.clear
             .frame(
                 height: desk.chromeAway
-                    ? max(LivSafeArea.top, LivTopScrim.height) : LivRow.topInset)
+                    ? max(LivSafeArea.top, LivTopScrim.height()) : LivRow.topInset)
     }
 }
 
@@ -1148,19 +1148,27 @@ struct LivTopScrim: View {
     /// the desk's ground there painted a band of the wrong colour.
     var ground: Color = LivTheme.canvas
 
-    /// HOW FAR DOWN IT REACHES: the status bar, covered outright, plus
-    /// the ramp. Named once because both the paint and the surfaces that
-    /// rest their content below it ask for the same number.
-    static var height: CGFloat { LivSafeArea.top + LivRow.topFade }
+    /// OPAQUE DOWN TO HERE. The status bar by default — the clock and
+    /// the battery have nothing behind them. The library panel asks for
+    /// the whole chrome row instead (`LivRow.topInset`), because its
+    /// workspace head lives in that row and is text, not glass: words
+    /// over a ramp that rows scroll up through are words you cannot
+    /// read.
+    var solid: CGFloat = LivSafeArea.top
+
+    /// HOW FAR DOWN IT REACHES: the opaque part plus the ramp. Named
+    /// once because both the paint and the surfaces that rest their
+    /// content below it ask for the same number.
+    static func height(solid: CGFloat = LivSafeArea.top) -> CGFloat {
+        solid + LivRow.topFade
+    }
 
     var body: some View {
-        let total = Self.height
+        let total = Self.height(solid: solid)
         return LinearGradient(
             stops: [
                 .init(color: ground, location: 0),
-                // Opaque to the foot of the status bar, so the clock and
-                // the battery have nothing behind them.
-                .init(color: ground, location: total > 0 ? LivSafeArea.top / total : 0),
+                .init(color: ground, location: total > 0 ? solid / total : 0),
                 .init(color: ground.opacity(0), location: 1),
             ],
             startPoint: .top, endPoint: .bottom

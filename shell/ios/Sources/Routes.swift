@@ -87,12 +87,14 @@ enum Route: Equatable {
         }
     }
 
-    /// A HOST THAT NAMED A VIEW AND NO LONGER DOES. One entry, and it
+    /// A HOST THAT NAMES THE VIEW BY ITS DRAWN WORD. One entry, and it
     /// should stay short: this is a compatibility list, not a second
     /// naming scheme. `liv://notes` shipped, so it keeps working, and it
-    /// means what it always meant — the list of what you have written.
+    /// means what it always meant — the list of what you have written,
+    /// which since 2026-09-16 is the view itself (`Feature.everything`,
+    /// drawn as Notes), on its default lens.
     private static let aliases: [String: (Feature, String)] = [
-        "notes": (.everything, EverythingLens.notes.rawValue)
+        "notes": (.everything, EverythingLens.all.rawValue)
     ]
 
     /// The catch itself: `?text=` and/or `?url=`, made into one text by
@@ -132,7 +134,7 @@ func livRoutesSelfCheck() -> [String] {
     // lens now and the link still lands on the same screen (2026-09-10).
     check(
         "a retired view name still lands",
-        route("liv://notes") == .view(.everything, at: "notes"))
+        route("liv://notes") == .view(.everything, at: "all"))
     check("an entity", route("liv://entity/42") == .entity(42))
     check("a bad entity id is nil", route("liv://entity/x") == nil)
     check("unknown host is nil", route("liv://nonsense") == nil)
