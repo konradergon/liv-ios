@@ -94,7 +94,7 @@ enum Route: Equatable {
     /// which since 2026-09-16 is the view itself (`Feature.everything`,
     /// drawn as Notes), on its default lens.
     private static let aliases: [String: (Feature, String)] = [
-        "notes": (.everything, EverythingLens.all.rawValue)
+        "notes": (.everything, EverythingLens.notes.rawValue)
     ]
 
     /// The catch itself: `?text=` and/or `?url=`, made into one text by
@@ -134,7 +134,7 @@ func livRoutesSelfCheck() -> [String] {
     // lens now and the link still lands on the same screen (2026-09-10).
     check(
         "a retired view name still lands",
-        route("liv://notes") == .view(.everything, at: "all"))
+        route("liv://notes") == .view(.everything, at: "notes"))
     check("an entity", route("liv://entity/42") == .entity(42))
     check("a bad entity id is nil", route("liv://entity/x") == nil)
     check("unknown host is nil", route("liv://nonsense") == nil)

@@ -107,32 +107,17 @@ struct SidePanel<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .ignoresSafeArea()
-            // THE FADE, in the panel's own ground, starting at the
-            // VERY TOP — above the clock, which is why `LivTopScrim`
-            // ignores the safe area itself (owner, 2026-09-16: "now the
-            // fade is starting below the very top and the clock").
+            // NO FADE HERE. It was the overlay at the foot of this chain,
+            // and that put it OVER the library's head: the head hangs on
+            // the list, which is `content`, so anything drawn here draws
+            // on top of it, and a fade opaque through the whole chrome
+            // row hid the workspace outright (owner, 2026-09-16:
+            // "workspace is hidden behind the span at the top"). Paint
+            // that has to sit between the rows and the head belongs
+            // where both of them are — `LibraryPanel.list` draws its own
+            // fade under its own head. This container frames and pins;
+            // it paints nothing but its ground and its edge.
             //
-            // It draws only. The rows' room is a content margin on the
-            // list below; a band that did both is what covered the first
-            // row for four rounds.
-            //
-            // THE HEAD IS NOT HERE. It stood beside this fade in a
-            // ZStack for one build (a61c3f6, the build the library door
-            // stopped opening in) and it hangs on the list instead now,
-            // as the foot it replaced did — so this overlay does one job.
-            //
-            // OPAQUE THROUGH THE WHOLE CHROME ROW, not the status bar
-            // alone: the library's workspace head lives in that row and
-            // is words, and rows scroll up under it.
-            //
-            // It was suspected of stopping the panel opening and it was
-            // cleared: the short fade and this one failed identically
-            // (bisect-panel.sh, 2026-09-16), which is what moved the
-            // search onto the head's own overlay and found it.
-            .overlay(alignment: .topLeading) {
-                LivTopScrim(ground: LivTheme.surface, solid: LivRow.topInset)
-                    .frame(width: width)
-            }
             // VoiceOver's two-finger scrub, Voice Control's escape.
             .accessibilityAction(.escape, onDismiss)
             // No .transition: DeskHost positions these with an offset
@@ -302,17 +287,23 @@ struct LibraryPanel: View {
         // and the reason it is not drawn beside it there is written
         // there.
         //
-        // OFFSET, NOT TOP PADDING, and the difference is the whole of
-        // why the panel stopped opening (bisected 2026-09-16: the fault
-        // was this file, then this overlay, and not the fade).
-        //
-        // Padding grows this overlay UPWARD to the panel's own top-left
-        // corner, which is exactly where `livOverlay` parks the 1x1
-        // marker that says "the library is open" — and a row of buttons
-        // spanning that corner took the marker out of the accessibility
-        // tree, so every reader of that tree, the harness included, was
-        // told the panel had never opened. An offset moves the frame
-        // down instead of growing it, and the corner stays clear.
+        // THE FADE FIRST, THEN THE HEAD, in that order, because overlays
+        // stack in the order they are written and the head has to be ON
+        // the fade, not under it. It was `SidePanel`'s overlay, applied
+        // after this whole list, and so it painted over the head and hid
+        // the workspace (owner, 2026-09-16). The fade is opaque through
+        // the whole chrome row — the head is words, and rows scroll up
+        // under it — and it ignores the safe area itself, so it begins
+        // at the very top of the screen whatever this list's frame is.
+        .overlay(alignment: .top) {
+            LivTopScrim(ground: LivTheme.surface, solid: top + LivRow.topChrome)
+        }
+        // OFFSET, NOT TOP PADDING. Padding grows this overlay UPWARD to
+        // the panel's own top-left corner, which is where `livOverlay`
+        // parks the 1x1 marker that says "the library is open", and a
+        // row of buttons spanning that corner takes the marker out of the
+        // accessibility tree. An offset moves the frame down instead of
+        // growing it, and the corner stays clear.
         .overlay(alignment: .top) {
             head(counts)
                 .offset(y: top + 6)
@@ -537,7 +528,12 @@ struct ViewCounts {
     /// "Notes", not "items": a workspace is made of notes, and a task or
     /// an event is a note with a status or a date (Navigate.swift).
     var held: String {
-        let notes = "\(everything) note\(everything == 1 ? "" : "s")"
-        return unfiled > 0 ? notes + " · \(unfiled) unfiled" : notes
+        // ITEMS, not notes. The count is of everything in the workspace
+        // — tasks and events too — and a task is not a note in this app
+        // (owner, 2026-09-16: "a task sure as hell does not look like a
+        // note"). It is one ENTITY among others, and "item" is the word
+        // for that which does not promise a page.
+        let items = "\(everything) item\(everything == 1 ? "" : "s")"
+        return unfiled > 0 ? items + " · \(unfiled) unfiled" : items
     }
 }

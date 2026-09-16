@@ -48,7 +48,7 @@ struct EverythingView: View {
                 // are — Today, Inbox and the Calendar all lead with one,
                 // and a list that starts at its first row reads as a
                 // fragment of a screen rather than a screen.
-                LivScreenTitle("Notes")
+                LivScreenTitle("All")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
                     .padding(.bottom, 6)
@@ -85,7 +85,8 @@ struct EverythingView: View {
 
     private var empty: String {
         switch lens {
-        case .all: return "Nothing written"
+        case .all: return "Empty"
+        case .notes: return "Nothing written"
         case .upcoming: return "Nothing due"
         case .unfiled: return "All filed"
         }
@@ -123,11 +124,18 @@ struct EverythingView: View {
     /// this row outlined. So the reversal is not new here; it is this
     /// row finally getting the change the sentence already claimed.
     private var picker: some View {
+        // NO CHIP FOR `.all`. The view is called All (2026-09-16), so a
+        // chip saying All would be its name said twice — the same
+        // redundancy that briefly put a Notes chip inside a view called
+        // Notes. Each chip is a LENS, a narrowing, and it is a TOGGLE:
+        // tapping the lit one puts the view back to the whole, exactly
+        // as a saved filter's row does in the library panel. None lit
+        // means everything, which is what the title already says.
         HStack(spacing: 6) {
-            ForEach(lenses) { l in
+            ForEach(lenses.filter { $0 != .all }) { l in
                 LivFilterChip(l.title, selected: lens == l) {
                     withAnimation(LivMotion.pick) {
-                        desk.park(.everything, at: l.rawValue)
+                        desk.park(.everything, at: (lens == l ? EverythingLens.all : l).rawValue)
                     }
                 }
             }
@@ -147,6 +155,22 @@ struct EverythingView: View {
         switch lens {
         case .all:
             return all.sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }
+        case .notes:
+            // NOTES, and only notes: a task is a record and opens as a
+            // card, so a list of things that open as a PAGE is the honest
+            // content of the word. Files count; a file is a document you
+            // work on.
+            //
+            // ORDERED BY WHAT YOU TOUCHED LAST, not by when you made it,
+            // which is why this can beat the tab switcher: the note you
+            // were editing ten minutes ago is the first row, and unlike
+            // the switcher it also reaches the note you did NOT leave
+            // open. The key is the log's own `recency` — the seq of the
+            // last transaction that touched the entity, which is what
+            // search tiebreaks with, so the two can never disagree.
+            // Reading a note without changing it does not bump it.
+            return all.filter { TabShape.of($0) != .record }
+                .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
         case .unfiled:
             return all.filter { area($0) == nil }
                 .sorted { ($0.created ?? 0, $0.id) > ($1.created ?? 0, $1.id) }

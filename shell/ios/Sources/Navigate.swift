@@ -78,7 +78,14 @@ enum Feature: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .today: return "Today"
-        case .everything: return "Notes"
+        // ALL, since 2026-09-16, and "Notes" for one day before that. The
+        // owner looked at the list and the word was wrong: "notes makes
+        // you think NOTES (documents)", and a task, which is a card and
+        // a row in Tasks, "sure as hell does not look like a note". All
+        // is what the view holds — every item in the workspace — and it
+        // reads as that under the workspace head the panel now wears.
+        // Notes, the documents, is a lens inside it (Positions.swift).
+        case .everything: return "All"
         case .inbox: return "Inbox"
         case .tasks: return "Tasks"
         case .calendar: return "Calendar"
@@ -89,7 +96,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var glyph: LivGlyph {
         switch self {
         case .today: return .today
-        case .everything: return .note
+        case .everything: return .everything
         case .inbox: return .inbox
         case .tasks: return .tasks
         case .calendar: return .calendar

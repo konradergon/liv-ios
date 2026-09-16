@@ -524,7 +524,7 @@ cmd_goto() {
   # drawn as "Notes" since 2026-09-16 (Navigate.swift), and keeps its raw
   # value in every stored position and route.
   local title
-  if [[ "$want" == everything ]]; then title="Notes"
+  if [[ "$want" == everything ]]; then title="All"
   else title="$(python3 -c "print('$want'.capitalize())")"; fi
   # NORMALISE FIRST. Every hop must start from the same screen or a hop
   # is testing whatever the hop before it left behind — the second way
@@ -1396,9 +1396,10 @@ cmd_grid() {
       Feature.everything is the notes list; the flag lands on it."
     return 1
   }
-  tree | grep -q "Notes" || {
-    die "landed on the list but nothing on screen says Notes.
-      The screen title is LivScreenTitle(\"Notes\") since 2026-09-16."
+  tree | grep -q "All" || {
+    die "landed on the list but nothing on screen says All.
+      The screen title is LivScreenTitle(\"All\") since 2026-09-16; the
+      \`notes\` flag lands on it with the Notes LENS lit."
     return 1
   }
 
@@ -1914,8 +1915,8 @@ cmd_lens() {
   cmd_boot everything >/dev/null 2>&1 || { die "could not boot before the lens check."; return 1 }
   cmd_tap "Library" || return 1
   local before after name
-  before=$(panel_count Notes)
-  [[ -n "$before" ]] || { die "the panel prints no count for Notes, so
+  before=$(panel_count All)
+  [[ -n "$before" ]] || { die "the panel prints no count for All, so
       there is nothing to compare. Check the panel still draws counts."; return 1 }
 
   # The saved filters are the buttons the panel lists between the last view
@@ -1946,11 +1947,11 @@ if lo >= 0 and hi > lo:
   # So this reads the count off a panel that must still be standing —
   # which makes it the check for that too. An empty count here means
   # either the panel closed on the pick, or the row left it.
-  after=$(panel_count Notes)
-  [[ -n "$after" ]] || { die "no Notes count after picking '$name'.
+  after=$(panel_count All)
+  [[ -n "$after" ]] || { die "no All count after picking '$name'.
       The panel is supposed to STAY OPEN on a filter — if it closed, the
       pick is being treated as navigation again (Panel.swift, the filter
-      row). If it is open, the Notes row left it."; return 1 }
+      row). If it is open, the All row left it."; return 1 }
   (( after != before )) || {
     die "the filter '$name' changed nothing: $before items before, $after after.
       Either the lens is never asked for, or every row is being admitted.
@@ -1965,7 +1966,7 @@ if lo >= 0 and hi > lo:
   cmd_tap "$name" >/dev/null 2>&1 || true
   # And close the panel behind us, which the pick no longer does.
   cmd_tap "Library" >/dev/null 2>&1 || true
-  say "ok    lens: '$name' took Notes from $before to $after"
+  say "ok    lens: '$name' took All from $before to $after"
   cmd_check
 }
 

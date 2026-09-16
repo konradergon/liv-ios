@@ -27,17 +27,21 @@ import SwiftUI
 /// filter, and no lenses of its own. Declared second because it is the
 /// one people reach for.
 enum EverythingLens: String, CaseIterable, Identifiable {
-    // NO `.notes` LENS (2026-09-16). The view is called Notes now, so a
-    // pill inside it saying Notes was the view's name said twice. What
-    // the pill did — documents only, ordered by what you touched last —
-    // went with it on the owner's word ("the old All/Upcoming/Unfiled
-    // become pills inside Notes"); a saved position still holding
-    // "notes" falls back to `.all` in `EverythingView.onAppear`.
-    case all, upcoming, unfiled
+    // `.all` IS THE VIEW ITSELF, and draws no pill: the view is called
+    // All (2026-09-16), so a chip inside it saying All would be the
+    // view's name said twice. The three below are LENSES over it —
+    // narrowings, each a toggle, and none lit means the whole. `.notes`
+    // is the one that means NOTES, documents only: it left for a day
+    // when the view briefly wore that word, and came back the moment the
+    // owner looked at the list ("notes makes you think NOTES") — a task
+    // is not a note in this app, and the word for what you wrote has to
+    // reach only what you wrote.
+    case all, notes, upcoming, unfiled
     var id: String { rawValue }
     var title: String {
         switch self {
         case .all: return "All"
+        case .notes: return "Notes"
         case .upcoming: return "Upcoming"
         case .unfiled: return "Unfiled"
         }
@@ -211,9 +215,10 @@ enum LivPosition {
         case .everything:
             switch EverythingLens(rawValue: token) {
             case .all: return "Everything in this workspace, newest first."
+            case .notes: return "What you have written, by what you touched last."
             case .upcoming: return "Dated in the next seven days."
             case .unfiled: return "No area yet."
-            case nil: return "A saved place in Notes."
+            case nil: return "A saved place in All."
             }
         case .inbox:
             switch InboxLens(rawValue: token) {
