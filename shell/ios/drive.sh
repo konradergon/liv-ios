@@ -733,14 +733,48 @@ check_properties_card() {
 # check_properties_card. They have a KEY of their own again as of
 # 2026-09-07, which is a door, not the drag: a card over the desk, not a
 # panel pushing it.)
+#
+# IT SAYS WHY IT DID NOT OPEN. It used to swallow the tap's own error
+# and report one line, and that line cost three rounds on 2026-09-16: a door
+# that is not on screen, a door that is pressed and does nothing, and an
+# app that stopped repainting after the press are three different faults
+# with three different fixes, and "the library panel did not open" is
+# true of all of them. The three readings below separate them — whether
+# the label was ever found, whether a core is pinned (a wedged render
+# loop: bodies keep evaluating while the pixels stop), and whether the
+# graph picked up a cycle across the taps.
 open_side() {
-  local i
+  local i tapped=0
   for i in {1..3}; do
-    cmd_tap "Library" >/dev/null 2>&1
+    cmd_tap "Library" >/dev/null 2>&1 && tapped=1
     perl -e 'select(undef,undef,undef,1.4)'
-    [[ -n "$(overlays | grep -x "$1")" ]] && return 0
+    local o=(${(f)"$(overlays)"})
+    (( ${o[(I)$1]} )) && return 0
   done
-  die "the $1 panel did not open."
+
+  (( tapped )) || {
+    die "no element labelled 'Library' on screen, so the $1 panel's door
+      was never pressed. Either the chrome is hidden (the doors ride up
+      with it) or the door is accessibilityHidden — it carries
+      \`desk.libraryShown || desk.chromeAway\`."
+    return 1
+  }
+
+  local now base after seen surf
+  now=$(cpu)
+  after=$(count_cycles)
+  base=$(cat "$RUN/cycles.base" 2>/dev/null || echo 0)
+  seen=$(overlays | tr '\n' ' ')
+  surf=$(surfaces | tr '\n' ' ')
+  die "the $1 panel did not open. The door WAS pressed, three times, and
+      no '$1' overlay ever arrived.
+        cpu now ......... ${now:-?}%   (sustained >80 is a wedged render loop)
+        cycles .......... $after, against $base at boot
+        overlays ........ ${seen:-none}
+        surfaces ........ ${surf:-none}
+      Cycles grown means the update loop is wedged for that subtree and
+      the model is fine — read them with ./drive.sh cycles. Cycles flat
+      and CPU idle means the door's action never moved the model."
   return 1
 }
 
