@@ -18,35 +18,15 @@
 
 import SwiftUI
 
-/// Everything's slice. Lives here rather than in `Everything.swift`
-/// because the slice is now the tab's content, and content is the plane's
-/// vocabulary, not the view's private state.
-/// **NOTES IS ONE OF THESE** since 2026-09-10 (owner: *"notes view serves
-/// too little purpose to be considered a place or state"*). It was a
-/// sixth view, and a view it could not justify: the same list, one kind
-/// filter, and no lenses of its own. Declared second because it is the
-/// one people reach for.
-enum EverythingLens: String, CaseIterable, Identifiable {
-    // `.all` IS THE VIEW ITSELF, and draws no pill: the view is called
-    // All (2026-09-16), so a chip inside it saying All would be the
-    // view's name said twice. The three below are LENSES over it —
-    // narrowings, each a toggle, and none lit means the whole. `.notes`
-    // is the one that means NOTES, documents only: it left for a day
-    // when the view briefly wore that word, and came back the moment the
-    // owner looked at the list ("notes makes you think NOTES") — a task
-    // is not a note in this app, and the word for what you wrote has to
-    // reach only what you wrote.
-    case all, notes, upcoming, unfiled
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .notes: return "Notes"
-        case .upcoming: return "Upcoming"
-        case .unfiled: return "Unfiled"
-        }
-    }
-}
+// NOTES HAS NO LENS. `EverythingLens` — all, notes, upcoming, unfiled —
+// was the slice of the mixed list that view used to be, and it went with
+// the mixed list (owner, 2026-09-16: "make all just a notes list. remove
+// 'everything' or 'all'"). A tab in Notes holds a DOCUMENT, which is what
+// a tab always was; the view itself has one position, the list. The
+// tokens it wrote ("all", "notes", "upcoming", "unfiled") are still on
+// disk in old planes and are still readable: `LivPosition.title` falls
+// back to the view's name for any token, which is the rule for every
+// retired token.
 
 /// Route or Tidy — the blueprint's two questions (BP-5).
 enum InboxLens: String, CaseIterable {
@@ -199,7 +179,8 @@ enum LivPosition {
     /// user moves, the move mints the tab.
     static func root(_ feature: Feature) -> String {
         switch feature {
-        case .everything: return EverythingLens.all.rawValue
+        // Notes has one position, the list; an empty token names it.
+        case .everything: return ""
         case .inbox: return InboxLens.route.rawValue
         case .tasks: return TasksPosition().token
         case .today: return TodayPosition().token
@@ -213,13 +194,7 @@ enum LivPosition {
     static func detail(_ feature: Feature, _ token: String) -> String {
         switch feature {
         case .everything:
-            switch EverythingLens(rawValue: token) {
-            case .all: return "Everything in this workspace, newest first."
-            case .notes: return "What you have written, by what you touched last."
-            case .upcoming: return "Dated in the next seven days."
-            case .unfiled: return "No area yet."
-            case nil: return "A saved place in All."
-            }
+            return "What you have written, by what you touched last."
         case .inbox:
             switch InboxLens(rawValue: token) {
             case .route: return "Captures still waiting for an address."
@@ -256,7 +231,9 @@ enum LivPosition {
     static func title(_ feature: Feature, _ token: String) -> String {
         switch feature {
         case .everything:
-            return EverythingLens(rawValue: token)?.title ?? feature.title
+            // One position, so one name — and any token an old plane
+            // wrote ("all", "upcoming", …) lands on it too.
+            return feature.title
         case .inbox:
             return InboxLens(rawValue: token)?.title ?? feature.title
         case .tasks:
@@ -295,7 +272,7 @@ func livPlanesSelfCheck() -> [String] {
     // remembered is where you left it.
     desk.go(.everything)
     check("an untouched tool has no spot", desk.position(.everything) == nil)
-    check("so it falls back to its root", LivPosition.root(.everything) == "all")
+    check("so it falls back to its root", LivPosition.root(.everything) == "")
 
     desk.park(.everything, at: "upcoming")
     check("parking remembers the spot", desk.position(.everything) == "upcoming")
@@ -311,7 +288,7 @@ func livPlanesSelfCheck() -> [String] {
     check("without disturbing the others", desk.position(.everything) == "all")
 
     // ---- the desk follows you ----
-    desk.go(.everything, at: EverythingLens.all.rawValue)
+    desk.go(.everything)
     desk.open(7)
     check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == 7)
     desk.go(.calendar)

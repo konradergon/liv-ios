@@ -78,14 +78,11 @@ enum Feature: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .today: return "Today"
-        // ALL, since 2026-09-16, and "Notes" for one day before that. The
-        // owner looked at the list and the word was wrong: "notes makes
-        // you think NOTES (documents)", and a task, which is a card and
-        // a row in Tasks, "sure as hell does not look like a note". All
-        // is what the view holds — every item in the workspace — and it
-        // reads as that under the workspace head the panel now wears.
-        // Notes, the documents, is a lens inside it (Positions.swift).
-        case .everything: return "All"
+        // NOTES, and the list IS notes — documents only — since the
+        // owner's ruling of 2026-09-16 ("make all just a notes list.
+        // remove 'everything' or 'all'"). The raw value stays
+        // `everything` because it is in every stored position and route.
+        case .everything: return "Notes"
         case .inbox: return "Inbox"
         case .tasks: return "Tasks"
         case .calendar: return "Calendar"
@@ -96,7 +93,7 @@ enum Feature: String, CaseIterable, Identifiable {
     var glyph: LivGlyph {
         switch self {
         case .today: return .today
-        case .everything: return .everything
+        case .everything: return .note
         case .inbox: return .inbox
         case .tasks: return .tasks
         case .calendar: return .calendar
@@ -387,12 +384,14 @@ func livPlacesSelfCheck() -> [String] {
     check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
 
     // A DOOR MAY NAME A PLACE INSIDE A VIEW, and the park has to happen
-    // even when the view is already the one you are standing in.
-    desk.go(.everything, at: EverythingLens.unfiled.rawValue)
-    check("a door can park the view it opens", desk.position(.everything) == "unfiled", "\(String(describing: desk.position(.everything)))")
+    // even when the view is already the one you are standing in. The
+    // Inbox is the view with lenses now that Notes has none (2026-09-16).
+    desk.go(.inbox)
+    desk.go(.inbox, at: InboxLens.tidy.rawValue)
+    check("a door can park the view it opens", desk.position(.inbox) == "tidy", "\(String(describing: desk.position(.inbox)))")
     desk.go(.today)
-    desk.go(.everything, at: EverythingLens.upcoming.rawValue)
-    check("and does it arriving from elsewhere too", desk.state == .everything && desk.position(.everything) == "upcoming")
+    desk.go(.inbox, at: InboxLens.route.rawValue)
+    check("and does it arriving from elsewhere too", desk.state == .inbox && desk.position(.inbox) == "route")
     // A POSITION IS NOT A DOCUMENT: a tool keeps where it was left.
     desk.park(.calendar, at: "202609")
     desk.go(.calendar)
@@ -409,12 +408,11 @@ func livPlacesSelfCheck() -> [String] {
     // regression the desk-state change is for: `land(.state(…))` used to
     // put you where you already were, with the note still drawn on top,
     // so the key visibly did nothing.
-    desk.go(.everything, at: EverythingLens.upcoming.rawValue)
+    desk.go(.everything)
     desk.open(21)
     check("a note off the list is on the desk", desk.openDoc == 21 && desk.state == .everything)
     desk.goBack()
     check("back from it is the list, not nothing", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
-    check("and the list is still on the lens it was on", desk.position(.everything) == "upcoming")
 
     // Opening the SAME document again is not a step.
     desk.open(11)

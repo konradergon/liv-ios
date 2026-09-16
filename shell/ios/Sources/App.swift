@@ -513,7 +513,7 @@ struct RootView: View {
         // still answers to `everything` in every stored position and
         // route (Navigate.swift). The flag keeps its name because a
         // rehearsal flag names a SCREEN, and this is still that screen.
-        case "notes", "docs": desk.go(.everything, at: EverythingLens.notes.rawValue)
+        case "notes", "docs": desk.go(.everything)
         default: break
         }
     }
