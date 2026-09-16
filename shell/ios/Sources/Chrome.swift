@@ -903,10 +903,19 @@ final class DeskModel: ObservableObject {
         // ANIMATED, because the document RISES over that view now
         // (Desk.swift, 2026-09-16) and a rise that is not in a transaction
         // is a cut. `layDown` and `land` already animate their half.
-        withAnimation(LivMotion.nav) { shown = true }
-        // Append or focus — the whole difference tabs make. Opening a
-        // second note no longer replaces the first.
-        focus(planes.open(entity: entityId))
+        //
+        // AND THE TAB IN THE SAME TRANSACTION. `openDoc` is `shown` AND
+        // the active tab being this entity, so the document is only
+        // inserted once BOTH are true — and with the focus outside the
+        // block, the insertion landed in an un-animated pass and the
+        // page popped in (owner, 2026-09-16: "it doesn't rise"). One
+        // transaction, one rise.
+        withAnimation(LivMotion.nav) {
+            shown = true
+            // Append or focus — the whole difference tabs make. Opening
+            // a second note no longer replaces the first.
+            focus(planes.open(entity: entityId))
+        }
         switcherShown = false
         surfaceCleanup()
     }

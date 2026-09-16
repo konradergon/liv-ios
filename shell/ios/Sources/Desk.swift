@@ -83,6 +83,24 @@ struct DeskHost: View {
                             // Opaque, because there is a view underneath
                             // now and the words must not show through.
                             .background(LivTheme.canvas)
+                            // THE GRABBER, the one every card wears and
+                            // the one thing that says "this can be pulled
+                            // down" (owner, 2026-09-16: "nothing shows
+                            // that notes can be dragged down"). Centred
+                            // in the doors' row, between the library door
+                            // and the •••, exactly where a sheet's sits.
+                            // It rides the pull and the rise because it is
+                            // ON the page, and it leaves with the chrome
+                            // because it is chrome. Offset, not padding,
+                            // so its frame never reaches the corner the
+                            // surface marker sits in.
+                            .overlay(alignment: .top) {
+                                LivGrabber()
+                                    .offset(y: LivSafeArea.top + 6 + (LivRow.touch - 21) / 2)
+                                    .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
                             .offset(y: docPull)
                             .simultaneousGesture(pullDown)
                             // RISES FROM THE BOTTOM, AND GOES BACK DOWN
