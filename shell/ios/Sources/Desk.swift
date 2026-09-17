@@ -88,7 +88,12 @@ struct DeskHost: View {
                         // bar lower (owner, 2026-09-17: "note's title
                         // and contents are pushed down"). Applied here,
                         // outside each view's own `safeAreaInset`, it is
-                        // the geometry the Group gave them before.
+                        // the geometry the Group gave them before —
+                        // WITH the flexible frame under it, which is the
+                        // half that was missing: ignoring the safe area
+                        // expands the proposal, and only a frame that
+                        // takes all it is offered grows into it.
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .ignoresSafeArea(edges: .top)
 
                     // THE DOCUMENT LAYER, over whichever view you are in.
@@ -108,6 +113,17 @@ struct DeskHost: View {
                         // flip.
                         EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
                             .accessibilityHidden(desk.openDoc == nil)
+                            // THE WHOLE DESK, WHATEVER IS IN IT. A note
+                            // born a second ago is not in the box's
+                            // snapshot when its page mounts, so the body
+                            // above draws its placeholder — a hint the
+                            // width of its words — and a layer sized to
+                            // its content rose as a sliver, then filled
+                            // when the note arrived, which read as a pop
+                            // from `+` and a rise from everywhere else
+                            // (owner, 2026-09-17). The page is the desk's
+                            // size before it has anything to show.
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                             // For itself, as the view under it does — see
                             // there. This is what the editor's own top
                             // room was measured against.
@@ -381,6 +397,10 @@ struct DeskHost: View {
         // Document to document (a link inside a note) swaps in place
         // without a rise — it replaces, it does not arrive.
         .onChange(of: desk.openDoc) { _, now in
+            // A pull the editor's scroll took over never reaches
+            // `onEnded`, and a page left where the finger let go would
+            // stay there. Every arrival and departure starts from rest.
+            docPull = 0
             if let now {
                 let wasUp = drawnDoc != nil && risen
                 drawnDoc = now
