@@ -518,9 +518,15 @@ private struct LivSheetHeight: PreferenceKey {
 enum LivSafeArea {
     static var top: CGFloat { insets?.top ?? 0 }
     static var bottom: CGFloat { insets?.bottom ?? 0 }
-    private static var insets: UIEdgeInsets? {
-        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        return scene?.keyWindow?.safeAreaInsets
+    /// THE WINDOW'S HEIGHT — how far down "off the bottom of the screen"
+    /// is, for a page that parks there before it rises (Desk.swift). The
+    /// one place the key window is read, so the one place its height
+    /// is. 1000 when there is no window yet: off any phone's screen,
+    /// and never 0, because a page parked at 0 does not rise, it pops.
+    static var height: CGFloat { window?.bounds.height ?? 1000 }
+    private static var insets: UIEdgeInsets? { window?.safeAreaInsets }
+    private static var window: UIWindow? {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow
     }
 }
 

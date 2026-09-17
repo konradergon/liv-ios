@@ -51,10 +51,6 @@ struct DeskHost: View {
     /// before it is unmounted.
     @State private var drawnDoc: LivEntityID?
     @State private var risen = false
-    /// How tall the desk is — how far down a page parks before it rises,
-    /// and where it slides to on the way out. Measured, the way the menu
-    /// card measures its own height, rather than read off `UIScreen`.
-    @State private var deskHeight: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -83,6 +79,17 @@ struct DeskHost: View {
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
                         .accessibilityHidden(desk.openDoc != nil)
+                        // EACH LAYER IGNORES THE TOP FOR ITSELF. The
+                        // Group used to apply this to the one child it
+                        // had; with two children in a stack, the stack
+                        // extending under the clock tells its children
+                        // the clock is still unsafe, and every view
+                        // that reserves its own room came out a status
+                        // bar lower (owner, 2026-09-17: "note's title
+                        // and contents are pushed down"). Applied here,
+                        // outside each view's own `safeAreaInset`, it is
+                        // the geometry the Group gave them before.
+                        .ignoresSafeArea(edges: .top)
 
                     // THE DOCUMENT LAYER, over whichever view you are in.
                     // `openDoc` is non-nil only while one is laid down
@@ -101,6 +108,10 @@ struct DeskHost: View {
                         // flip.
                         EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
                             .accessibilityHidden(desk.openDoc == nil)
+                            // For itself, as the view under it does — see
+                            // there. This is what the editor's own top
+                            // room was measured against.
+                            .ignoresSafeArea(edges: .top)
                             // Opaque, because there is a view underneath
                             // now and the words must not show through.
                             .background(LivTheme.canvas)
@@ -137,22 +148,18 @@ struct DeskHost: View {
                             // card on 2026-09-12: a transition on an
                             // `if` gives no motion here, and real motion
                             // is a view that is already mounted moving.
-                            // Parked one desk-height down until `risen`,
+                            // Parked one window-height down until `risen`,
                             // which `.onChange` flips on the next tick.
-                            .offset(y: risen ? docPull : deskHeight)
+                            // The window's height and not a measurement
+                            // of this stack: the measurement was taken
+                            // before the stack had its size, read as 0,
+                            // and a page parked at 0 has nowhere to rise
+                            // from (2026-09-17).
+                            .offset(y: risen ? docPull : LivSafeArea.height)
                             .simultaneousGesture(pullDown)
                             .zIndex(1)
                     }
                 }
-                // MEASURED, so the page knows how far down "off screen"
-                // is — the menu card's own recipe (Menu.swift).
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { deskHeight = geo.size.height }
-                            .onChange(of: geo.size.height) { _, h in deskHeight = h }
-                    }
-                )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // TO THE VERY TOP: the words run under the clock and the
@@ -1184,7 +1191,16 @@ struct EntityTabBody: View {
             // remembered position, and leaving it unconsumed would strand
             // the request for the next thing opened.
             _ = desk.consumeFocus(id)
-            autoFocus = true
+            // AFTER THE RISE, not during it. The page arrives from the
+            // bottom over the length of `nav` (Desk.swift, 2026-09-16),
+            // and the keyboard arriving in the same instant re-lays out
+            // the whole screen under the animation — the page lands
+            // wherever the keyboard leaves it, which reads as a pop. The
+            // caret still lands without a tap; it lands once the page
+            // has.
+            DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                autoFocus = true
+            }
         }
         .onChange(of: storedName) { old, fresh in
             // The snapshot moved under us (undo, another surface). Reseed
