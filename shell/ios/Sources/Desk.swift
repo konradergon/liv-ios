@@ -76,25 +76,24 @@ struct DeskHost: View {
                     // for the same two reasons the desk hides under a
                     // panel: VoiceOver must not find it, and the harness
                     // reads exactly one `liv.surface.` marker at a time.
+                    // NO SAFE-AREA MODIFIER HERE, on either layer. The
+                    // Group already carries `.frame(maxWidth:.infinity,
+                    // maxHeight:.infinity)` and `.ignoresSafeArea(edges:
+                    // .top)` below, and that pair is what a layer needs —
+                    // it is what the single child had before these two
+                    // became siblings. A SECOND `.ignoresSafeArea` for
+                    // the same edge, nested inside the first, is what put
+                    // the note's title a status bar too low (owner,
+                    // 2026-09-17), because the editor is a UIKit scroll
+                    // view that reserves its top room by hand and had the
+                    // safe area added to it again underneath.
+                    //
+                    // They were added on 2026-09-16 to chase a cause that
+                    // did not survive checking, and they go with it
+                    // (standing rule 6).
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
                         .accessibilityHidden(desk.openDoc != nil)
-                        // EACH LAYER IGNORES THE TOP FOR ITSELF. The
-                        // Group used to apply this to the one child it
-                        // had; with two children in a stack, the stack
-                        // extending under the clock tells its children
-                        // the clock is still unsafe, and every view
-                        // that reserves its own room came out a status
-                        // bar lower (owner, 2026-09-17: "note's title
-                        // and contents are pushed down"). Applied here,
-                        // outside each view's own `safeAreaInset`, it is
-                        // the geometry the Group gave them before —
-                        // WITH the flexible frame under it, which is the
-                        // half that was missing: ignoring the safe area
-                        // expands the proposal, and only a frame that
-                        // takes all it is offered grows into it.
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .ignoresSafeArea(edges: .top)
 
                     // THE DOCUMENT LAYER, over whichever view you are in.
                     // `openDoc` is non-nil only while one is laid down
@@ -113,23 +112,10 @@ struct DeskHost: View {
                         // flip.
                         EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
                             .accessibilityHidden(desk.openDoc == nil)
-                            // THE WHOLE DESK, WHATEVER IS IN IT. A note
-                            // born a second ago is not in the box's
-                            // snapshot when its page mounts, so the body
-                            // above draws its placeholder — a hint the
-                            // width of its words — and a layer sized to
-                            // its content rose as a sliver, then filled
-                            // when the note arrived, which read as a pop
-                            // from `+` and a rise from everywhere else
-                            // (owner, 2026-09-17). The page is the desk's
-                            // size before it has anything to show.
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            // For itself, as the view under it does — see
-                            // there. This is what the editor's own top
-                            // room was measured against.
-                            .ignoresSafeArea(edges: .top)
                             // Opaque, because there is a view underneath
                             // now and the words must not show through.
+                            // Its size and its top come from the Group,
+                            // as the layer above's do — see there.
                             .background(LivTheme.canvas)
                             // THE GRABBER, the one every card wears and
                             // the one thing that says "this can be pulled
@@ -821,7 +807,21 @@ struct DeskHost: View {
             creating = false
             workspaces.stamp(id, in: box)
             desk.requestFocus(id)
-            desk.adoptCapture(id)
+            // A TURN OF ITS OWN, so the page arrives the way a tapped row
+            // makes it arrive. This closure runs inside the write's own
+            // main-queue block, alongside the snapshot refresh the write
+            // kicks off; opening from there puts the mount and everything
+            // the refresh republishes in one pass, and the rise is a
+            // mount in one pass and a move in the next. A row tap has a
+            // turn to itself and rises; this is the one door that did not
+            // (owner, 2026-09-17: "no rise... but only through '+'").
+            //
+            // A hypothesis, not a proven cause: the investigation refuted
+            // every other difference between the two doors but could not
+            // finish on this one. If it does not take, the next thing to
+            // try is hosting the page the way `RecordCardHost` hosts the
+            // card rather than hand-rolling its motion.
+            DispatchQueue.main.async { desk.adoptCapture(id) }
         }
     }
 
@@ -840,7 +840,10 @@ struct DeskHost: View {
             guard id != 0 else { return }
             workspaces.stamp(id, in: box)
             desk.requestFocus(id)
-            desk.adoptCapture(id)
+            // The same turn of its own the bar's `+` takes — see
+            // `createNote`. One rule for what a new thing is, not one
+            // per door.
+            DispatchQueue.main.async { desk.adoptCapture(id) }
         }
     }
 
