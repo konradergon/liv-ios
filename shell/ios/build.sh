@@ -14,6 +14,34 @@ PATH="/usr/bin:/bin:$PATH"
 BUNDLE_ID="app.liv.ios"
 SHARE_ID="app.liv.ios.share"
 
+# DEV BY DEFAULT, RELEASE BY NAME (2026-09-17).
+#
+#   ./build.sh [run]           dev: -Onone, incremental — seconds after the first
+#   ./build.sh release [run]   -O, whole program, from scratch — what ships
+#   ./build.sh device [run]    a real iPhone; always release
+#
+# Every build used to be a release build: one `swiftc -O` over 48 files
+# and 30,000 lines, re-parsed, re-typechecked and re-optimised from
+# nothing on every edit, because with no Xcode project there was nothing
+# to remember what had changed. The optimiser is most of that minute.
+#
+# Dev keeps an object per source under build/dev and hands swiftc an
+# output-file-map, which is what its `-incremental` mode needs to know
+# which files a change reaches; an edit to one file recompiles that file
+# and whatever depends on it, then links. `-Onone` is the other half: at
+# -O the optimiser dominates, at -Onone the compiler does. The two
+# binaries behave the same; only one of them is worth waiting for, and
+# only when something is going to ship.
+MODE=dev
+if [ "$1" = "release" ]; then
+    MODE=release
+    shift
+fi
+# A device build is a release build whatever was asked; it is the one
+# that leaves the machine.
+if [ "$1" = "device" ]; then MODE=release; fi
+if [ "$MODE" = "dev" ]; then OPT="-Onone"; else OPT="-O"; fi
+
 # THE SHARE EXTENSION — Liv in every app's share row. A second bundle
 # inside the app (PlugIns/LivShare.appex) with its own binary, built by
 # a second swiftc: `-application-extension` keeps it to the APIs an
@@ -31,7 +59,7 @@ SHARE_ID="app.liv.ios.share"
 share_extension() {
     APPEX="$2/PlugIns/LivShare.appex"
     mkdir -p "$APPEX"
-    swiftc -O -parse-as-library -application-extension \
+    swiftc $OPT -parse-as-library -application-extension \
         -module-name LivShare \
         ShareExtension/*.swift Sources/Catch.swift \
         -sdk "$SDK" \
@@ -171,15 +199,52 @@ SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 SIM_TARGET="arm64-apple-ios17.0-simulator"
 
 mkdir -p build/Liv.app
-swiftc -O -parse-as-library \
-    Sources/*.swift \
-    -sdk "$SDK" \
-    -target "$SIM_TARGET" \
-    -import-objc-header ../../ffi/liv.h \
-    ../../target/aarch64-apple-ios-sim/release/libliv_ffi.a \
-    -framework SwiftUI -framework UIKit -framework AVFoundation \
-    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker Liv.entitlements \
-    -o build/Liv.app/Liv
+
+if [ "$MODE" = "dev" ]; then
+    # INCREMENTAL. swiftc's driver can skip files a change does not
+    # reach, but only if it is told where each file's object and
+    # dependency record live — that is the output-file-map, one entry
+    # per source plus the module-wide "" entry. Written fresh every run
+    # so a new file is in it the moment it exists; the objects and
+    # swiftdeps under build/dev are what carry over between runs.
+    #
+    # Flags must not change between runs or every file recompiles, which
+    # is why -Onone is fixed here rather than taken from the caller.
+    OBJ=build/dev
+    mkdir -p "$OBJ"
+    {
+        printf '{\n  "": { "swift-dependencies": "%s/master.swiftdeps" }' "$OBJ"
+        for f in Sources/*.swift; do
+            b="$(basename "$f" .swift)"
+            printf ',\n  "%s": { "object": "%s/%s.o", "swift-dependencies": "%s/%s.swiftdeps" }' \
+                "$f" "$OBJ" "$b" "$OBJ" "$b"
+        done
+        printf '\n}\n'
+    } > "$OBJ/output-file-map.json"
+    swiftc -Onone -incremental -parse-as-library \
+        -module-name Liv \
+        -output-file-map "$OBJ/output-file-map.json" \
+        Sources/*.swift \
+        -sdk "$SDK" \
+        -target "$SIM_TARGET" \
+        -import-objc-header ../../ffi/liv.h \
+        ../../target/aarch64-apple-ios-sim/release/libliv_ffi.a \
+        -framework SwiftUI -framework UIKit -framework AVFoundation \
+        -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker Liv.entitlements \
+        -o build/Liv.app/Liv
+else
+    # RELEASE: one -O over everything, from nothing, as it always was.
+    swiftc -O -parse-as-library \
+        -module-name Liv \
+        Sources/*.swift \
+        -sdk "$SDK" \
+        -target "$SIM_TARGET" \
+        -import-objc-header ../../ffi/liv.h \
+        ../../target/aarch64-apple-ios-sim/release/libliv_ffi.a \
+        -framework SwiftUI -framework UIKit -framework AVFoundation \
+        -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker Liv.entitlements \
+        -o build/Liv.app/Liv
+fi
 
 cp Info.plist build/Liv.app/Info.plist
 share_extension "$SIM_TARGET" build/Liv.app ShareExtension/Info.plist

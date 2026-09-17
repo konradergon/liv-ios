@@ -127,7 +127,8 @@ cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 **The iOS shell has three of its own, and `cargo test` runs none of them.**
 
 ```
-shell/ios/build.sh          # two swiftc invocations (app + share extension); add `run` to boot a simulator
+shell/ios/build.sh          # dev build: -Onone, incremental (seconds after the first); add `run` to boot a simulator
+shell/ios/build.sh release  # -O, whole program, from scratch — what ships; `device` is always release
 shell/ios/suites.sh         # the ten launch-flag self-checks (the shell's unit tests)
 shell/ios/drive.sh          # drives the running app and asserts what is ON SCREEN
 ```
