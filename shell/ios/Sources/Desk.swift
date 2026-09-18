@@ -130,7 +130,24 @@ struct DeskHost: View {
                             // surface marker sits in.
                             .overlay(alignment: .top) {
                                 LivGrabber()
-                                    .offset(y: LivSafeArea.top + 6 + (LivRow.touch - 21) / 2)
+                                    // FLUSH UNDER THE CLOCK, not centred
+                                    // in the doors' row (owner,
+                                    // 2026-09-18: "reduce the distance
+                                    // between the upper edge of the note
+                                    // curtain and the drag line... just
+                                    // to see what's behind the note
+                                    // faster when you drag it down").
+                                    //
+                                    // THE SAFE AREA IS THE FLOOR, and it
+                                    // is not a style choice: this mark is
+                                    // horizontally centred and so is the
+                                    // Dynamic Island, so anything above
+                                    // `LivSafeArea.top` is drawn behind
+                                    // the island on one phone and inside
+                                    // the notch on another. 2pt of breath
+                                    // under it is as high as a centred
+                                    // mark can go on every device.
+                                    .offset(y: LivSafeArea.top + 2)
                                     .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
                                     .allowsHitTesting(false)
                                     .accessibilityHidden(true)
