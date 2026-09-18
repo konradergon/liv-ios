@@ -730,7 +730,18 @@ final class MarkdownTextView: UITextView {
     /// documentation already says it: anything that speaks at the top of
     /// the screen starts below this, or it lands on the controls. The
     /// title is something that speaks at the top of the screen.
-    private static var titleTop: CGFloat { LivRow.topInset }
+    /// Plus `titleDrop`, so the title clears the doors rather than
+    /// touching the line they sit on.
+    private static var titleTop: CGFloat { LivRow.topInset + titleDrop }
+    /// AIR BETWEEN THE DOORS AND THE NAME (owner, 2026-09-18: "just push
+    /// note title down a 4 pixels or something"). `LivRow.topInset` is
+    /// the band the chrome OWNS — it ends exactly where the door circles
+    /// do, so a title starting on it starts against them.
+    ///
+    /// Local, beside `titleGap`, and not a theme token: this is the gap
+    /// ABOVE the title and that is the gap below it. One pair, one place,
+    /// read together.
+    private static let titleDrop: CGFloat = 4
     private static let gutter: CGFloat = 15
     /// Between the title and the first line of the note. At 6 the note
     /// began almost against its own name.
