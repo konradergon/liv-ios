@@ -1013,9 +1013,28 @@ struct DetailRowLabel: View {
     ///
     /// The glyphs moved to `Settings → Fields`, which is this app's
     /// schema view.
+    /// SENTENCE CASE, DECIDED HERE AND NOWHERE ELSE (owner, 2026-09-18:
+    /// "make all metadata names ('area', 'links') start with capital
+    /// letter").
+    ///
+    /// The FIRST letter only, not `.capitalized`: that would make
+    /// "linked from" into "Linked From", which is a title, not a name.
+    ///
+    /// It is done on the way to the screen rather than in the strings,
+    /// because a property's shown word arrives from the engine
+    /// (`PropDef.reads`, drawn from the wire's `name`) and a shell must
+    /// not edit the box's vocabulary to style it. The seven call sites
+    /// pass what they were given and this decides how it is worn —
+    /// including the two the shell names itself, "links" and "linked
+    /// from", which now cannot drift from the rest.
+    private var shown: String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst()
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            Text(text)
+            Text(shown)
                 // 15pt + 46pt rows: the library panel's density (rev 6 —
                 // "make the grouping UI akin to how the left panel looks").
                 .font(.system(size: LivType.strong))
