@@ -190,8 +190,14 @@ struct InboxView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
                 lensRow(unrouted: scraps.count, tidy: proposals.count)
-                    .padding(.top, 6)
-                    .padding(.bottom, 4)
+                    .padding(.top, LivAir.tight)
+                    // THE JOINT THE OWNER FELT (2026-09-18). At 4, the
+                    // screen's title, its mode switch and its list fused
+                    // into one dense block — a 2pt selection rule
+                    // sitting 4pt above the rows it filters. A control
+                    // gets small gaps inside it and a big one below it,
+                    // which is the app's own heading grammar.
+                    .padding(.bottom, LivAir.room)
                 if workspaces.lensOn {
                     // It explains an EXCEPTION: this one list ignores the
                     // workspace (owner, 2026-08-06).
@@ -207,7 +213,10 @@ struct InboxView: View {
                             .foregroundStyle(LivTheme.text3)
                         Spacer(minLength: 0)
                     }
-                    .padding(.top, 2)
+                    // NO TOP PADDING. It had 2, which stacked a second
+                    // gap onto the lens row's own and left this caption
+                    // floating between two seams. It hangs off the one
+                    // gap above it now (2026-09-18).
                     .padding(.bottom, 6)
                 }
 

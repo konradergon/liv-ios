@@ -74,8 +74,13 @@ struct TasksView: View {
             // are a control, not a heading.
             LivScreenTitle("Tasks")
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 10)
-                .padding(.bottom, 2)
+                .padding(.top, LivAir.snug)
+                // 2 UNTIL 2026-09-18, and the tightest seam in the app:
+                // a 32pt bold hero given less air under it than a 16pt
+                // section label gets. Everything.swift gives 6 for the
+                // identical title-over-a-control pairing; this gives the
+                // scale's own number for it.
+                .padding(.bottom, LivAir.snug)
                 .listRowInsets(
                     EdgeInsets(top: 0, leading: LivRow.margin, bottom: 0, trailing: 16))
                 .listRowSeparator(.hidden)

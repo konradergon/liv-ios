@@ -296,8 +296,15 @@ struct RecordBody: View {
             // 18, not the 56 a screen's name needs: this body is only
             // ever a card, and inside a card there are no floating doors
             // overhead for the name to duck under.
-            .padding(.top, 18)
-            .padding(.bottom, 14)
+            // THE CARD'S FIRST IMPRESSION. At the medium detent this
+            // head and three property rows are all you see, so 18 above
+            // a 32pt name read as a form squeezed under a handle
+            // (owner, 2026-09-18: the metadata card is one of the
+            // cramped ones). It also retired the file's clearest rule-3
+            // drift: one literal 18 doing duty both above a 16pt
+            // heading and above hero type.
+            .padding(.top, LivAir.open)
+            .padding(.bottom, LivAir.snug)
     }
 
     /// THE SAME TITLE THE LIST SHOWED, as the prompt — so the field

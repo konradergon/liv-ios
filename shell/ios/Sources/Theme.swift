@@ -503,8 +503,12 @@ enum LivRow {
     /// agrees on it — a big gap above, a small one below, so a heading
     /// binds downward to the rows it names and separates upward from
     /// the group before it.
-    static let sectionTop: CGFloat = 18
-    static let sectionBottom: CGFloat = 4
+    /// ON THE SCALE SINCE 2026-09-18, and looser by 2: the ratio the
+    /// paragraph above argues for is untouched, but a heading that binds
+    /// downward has to separate upward by more than it did when the only
+    /// grouping signal on a flush list was 18pt against a 56pt row.
+    static let sectionTop: CGFloat = LivAir.room
+    static let sectionBottom: CGFloat = LivAir.tight
 
     /// The same band measured from the very top of the SCREEN. Surfaces
     /// run under the status bar now (owner, 2026-08-17: "the screen
@@ -638,6 +642,50 @@ enum LivBar {
 /// full-screen move reads as wobble. What the lift buys is `list`
 /// below: things that arrive and leave INSIDE a surface, which the app
 /// used to snap in and out with no motion at all.
+/// THE VERTICAL SCALE — how far apart two things stand.
+///
+/// It did not exist until 2026-09-18, and its absence is visible: 188
+/// bare literals across six surfaces, each written by whoever was
+/// looking at that one screen. Standing rule 3 predicted exactly this —
+/// "colours are tokenised and have never drifted; type sizes are prose
+/// and have drifted 38 times" — and spacing was in the state type sizes
+/// are in. The owner felt it before anyone measured it: *"tasks, inbox,
+/// the panel, settings and metadata card could be more spaced out.
+/// throughout the app tend to be cramped in one area."*
+///
+/// **IT IS NOT `LivSpace`.** That name is taken — `struct LivSpace` in
+/// Box.swift is a workspace or a saved filter, and the shell builds as
+/// ONE module, so the obvious name does not compile. `air` is this
+/// codebase's own word for the thing anyway: "the half-row of air"
+/// (Panel.swift, Navigate.swift), "the air between the card and the
+/// screen edge" (below).
+///
+/// SIX STEPS, each about half again the last, and every one of them a
+/// number the app already used somewhere — this is the rhythm that was
+/// there, named, not a new one imposed. What is NOT here is a gap
+/// between rows of a list: rows in this app are flush by design, held
+/// apart by a stated height and a hairline, and a token for the space
+/// between them would invite a change nobody asked for.
+///
+/// SPACE GOES BETWEEN GROUPS, NEVER INSIDE ROWS. The app is deliberately
+/// dense and stays that way; what was missing is the air that says one
+/// block has ended and another has begun.
+enum LivAir {
+    /// Touching, but not merged.
+    static let hair: CGFloat = 2
+    /// Inside one control: a glyph and its label, a chip's own padding.
+    static let tight: CGFloat = 6
+    /// Between lines of a single thought — a title and the line under
+    /// it. The app's most-used inner number by a wide margin.
+    static let snug: CGFloat = 12
+    /// Between a heading and what it names, and under a screen's title.
+    static let room: CGFloat = 20
+    /// Between one group and the next. The workhorse of this pass.
+    static let open: CGFloat = 28
+    /// Above something terminal — a destructive row, the end of a sheet.
+    static let apart: CGFloat = 40
+}
+
 enum LivMotion {
     /// THE ONE CURVE MOST OF THE APP MOVES ON — 35 of the 45
     /// `withAnimation` calls in the shell, plus two `.animation(value:)`

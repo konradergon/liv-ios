@@ -44,7 +44,13 @@ struct SettingsSheet: View {
         // stand on — the elevation ramp already says this is what the
         // two steps are for; nothing here used them.
         ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
+            // 4 UNTIL 2026-09-18. This is the ONLY number on the sheet
+            // that separates one card from the next, and at 4 the five
+            // slabs touched. It composes with each card's own
+            // `LivRow.sectionTop`, so card-to-card reads as
+            // `LivAir.open` — one literal, every group boundary on the
+            // screen, and no row anywhere gets fatter.
+            VStack(alignment: .leading, spacing: LivAir.snug) {
                 LivSheetTitle("Settings")
                 // What a person actually came here to change, first.
                 LivCard(label: "Appearance") { appearanceRow.padding(12) }

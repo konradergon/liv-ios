@@ -217,7 +217,12 @@ struct LibraryPanel: View {
                     // the same separator the saved filters and Trash use
                     // below, and no label — a heading over two rows
                     // costs more than the rows do.
-                    .padding(.top, Feature.startsGroup(feature) ? LivPanel.row / 2 : 0)
+                    // TWO KINDS OF BOUNDARY, TWO NUMBERS (2026-09-18).
+                    // This one splits the views from each other — the
+                    // same kind of row on both sides — so it gets the
+                    // group step. Half a row (28.5) said the same thing
+                    // by accident; `open` says it on purpose.
+                    .padding(.top, Feature.startsGroup(feature) ? LivAir.open : 0)
                 }
 
                 // NO SECTION LABELS (owner, 2026-08-18: "eliminate
@@ -251,7 +256,12 @@ struct LibraryPanel: View {
                         workspaces.activeFilterId =
                             workspaces.activeFilterId == view.id ? nil : view.id
                     }
-                    .padding(.top, i == 0 ? LivPanel.row / 2 : 0)
+                    // A BIGGER GAP, because the KIND of row changes here:
+                    // above are places you go, below are lenses you turn
+                    // on. The panel ran 456pt of rows with one gap in
+                    // them and ~335pt of empty space under Trash — short
+                    // of structure, not of room (2026-09-18).
+                    .padding(.top, i == 0 ? LivAir.apart : 0)
                 }
                 row("New filter", glyph: .plus) {
                     desk.composeFilter = true
@@ -261,7 +271,10 @@ struct LibraryPanel: View {
                 // place you work. Settings moved to the foot with the
                 // workspace (team, 2026-08-22).
                 row("Trash", glyph: .trash) { onTrash() }
-                    .padding(.top, LivPanel.row / 2)
+                    // Trash is house-keeping, not a place you work — the
+                    // third kind of row on this panel, so the same gap
+                    // the filters get.
+                    .padding(.top, LivAir.apart)
                 // The last rows must be able to clear the foot, or a
                 // long filter list ends underneath it with no way to
                 // scroll further.
