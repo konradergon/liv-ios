@@ -815,6 +815,20 @@ final class MarkdownTextView: UITextView {
         // declarations of one thing.
         keyboardDismissMode = showsTitle ? .interactive : .none
         alwaysBounceVertical = showsTitle
+        // THE TOP ROOM IS THIS VIEW'S, ABSOLUTELY, AND IT IS ALREADY
+        // MEASURED FROM THE SCREEN. `titleTop` is `LivRow.topInset` —
+        // the safe area PLUS the doors' 52pt band — and it goes into
+        // `textContainerInset.top` below. A text view is a scroll view,
+        // and a scroll view's default `.automatic` adjustment adds its
+        // own `safeAreaInsets.top` on top of that: the status bar,
+        // counted twice, which is exactly the ~59pt the title sat too
+        // low by (owner, 2026-09-17, with a screenshot; measured again
+        // 2026-09-18 after the desk's layering was cleared of it).
+        //
+        // The accessory row one screen down already pins this for the
+        // same class of reason — a scroll view that states its own
+        // insets must not have UIKit add more.
+        contentInsetAdjustmentBehavior = .never
         // Two hyphens must stay two hyphens — smart dashes would eat the
         // "---" rule (and any -- ) as it is typed. Smart quotes stay on;
         // nothing parses quote characters.
@@ -918,9 +932,16 @@ final class MarkdownTextView: UITextView {
         // on another screen, or one that ends off-frame, covers nothing.
         let mine = convert(bounds, to: window.screen.coordinateSpace)
         let covered = hiding ? 0 : max(0, mine.maxY - end.minY)
-        // The safe area already accounts for the home indicator, which the
-        // keyboard sits on top of — subtracting it stops a doubled gap.
-        let room = max(0, covered - safeAreaInsets.bottom)
+        // HOW MUCH THE KEYBOARD COVERS, AND NOTHING SUBTRACTED. This was
+        // `covered - safeAreaInsets.bottom`, and the subtraction was
+        // right for as long as UIKit was ADDING that same bottom inset
+        // through the automatic adjustment — it stopped a doubled gap
+        // over the home indicator. Since this view pins
+        // `contentInsetAdjustmentBehavior` to `.never` (see `init`),
+        // UIKit adds nothing, so subtracting it would leave the last
+        // line under the keyboard by exactly the home indicator's
+        // height. The two are one decision and have to move together.
+        let room = covered
         guard abs(contentInset.bottom - room) > 0.5 else { return }
         contentInset.bottom = room
         verticalScrollIndicatorInsets.bottom = room
