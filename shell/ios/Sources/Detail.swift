@@ -958,7 +958,12 @@ struct InspectorValueSheet: View {
 /// on 2026-09-05, not a thing to shrink: an empty field read 20pt while
 /// a filled one read 14, so the card said least about the fields that
 /// held most.
-private struct DetailEmptyValue: View {
+/// **Internal, not file-private** (2026-09-18), for the same reason
+/// `DetailRowLabel` below is: the Links group draws its rows as
+/// properties, an empty one has to say "—" in the same face as every
+/// other empty one, and a second transcription of a one-glyph view is
+/// still a second recipe (standing rule 4).
+struct DetailEmptyValue: View {
     var body: some View {
         Text("—")
             .font(.system(size: LivType.strong))

@@ -93,20 +93,45 @@ struct LinksSection: View {
     /// right, the geometry every other field on this card has.
     ///
     /// The door is always present: a create key that comes and goes is a
-    /// key you cannot learn (owner, 2026-08-17). What changed is its
-    /// dress. It was `+ Link…` in accent ink with no shape around it,
-    /// which reads as a hyperlink — and the owner's rule is that the
-    /// only clickable TEXT in this app is a link inside a note; every
-    /// other tappable thing looks like a button (2026-09-15). `AddChip`
-    /// is the app's existing answer, hollow so it never competes with a
-    /// real value beside it.
+    /// key you cannot learn (owner, 2026-08-17). What changed twice is
+    /// its dress.
+    ///
+    /// It was `+ Link…` in accent ink with no shape around it, which
+    /// reads as a hyperlink, and the rule is that the only clickable
+    /// TEXT in this app is a link inside a note (owner, 2026-09-15). It
+    /// became an `AddChip` — right about the shape, wrong about the
+    /// grammar: it left a small hollow pill sitting where every other
+    /// row on this card has its VALUE (owner, 2026-09-18: "links
+    /// metadata has a strange '(+link)' blip. make it same as other
+    /// metadata").
+    ///
+    /// SO IT IS A PROPERTY ROW, EXACTLY (Detail.swift, `row`): the whole
+    /// row is the button, the name is on the left, and the right-hand
+    /// column holds the value — a dash when there is none, the count
+    /// when there is. The door did not go away; the row IS the door,
+    /// which is how every other field on this card opens its own editor.
     private var linkRow: some View {
-        HStack(spacing: 10) {
-            DetailRowLabel("links")
-            Spacer(minLength: 12)
-            AddChip("Link") { picking = true }
+        Button {
+            picking = true
+        } label: {
+            HStack {
+                DetailRowLabel("links")
+                Spacer(minLength: 12)
+                if links.outRows.isEmpty {
+                    DetailEmptyValue()
+                } else {
+                    // The face the standard row's overflow count wears,
+                    // and it counts what the list below holds — including
+                    // the ones folded behind "Show all".
+                    Text("\(links.outRows.count)")
+                        .font(.system(size: LivType.body).monospacedDigit())
+                        .foregroundStyle(LivTheme.text3)
+                }
+            }
+            .frame(minHeight: LivRow.height)
+            .contentShape(Rectangle())
         }
-        .frame(height: LivRow.height)
+        .buttonStyle(.plain)
     }
 
     private func visible(_ rows: [LinkRow], all: Bool) -> [LinkRow] {
