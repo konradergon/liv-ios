@@ -688,6 +688,23 @@ enum LivMotion {
     /// weight; a spring wants a little longer to show its shape.
     static let navSeconds: Double = 0.30
 
+    /// HOW FAR A PULLED-AWAY SURFACE TRAVELS PER POINT OF FINGER.
+    ///
+    /// 1 is the honest default and it is what the document's pull-down
+    /// shipped with — and it made the gesture read as doing nothing
+    /// (owner, 2026-09-18: "when you drag the note down, there is a big
+    /// white area around your thumb, hiding what's behind the note").
+    /// The reason is arithmetic, not feel: the page clears 90pt by the
+    /// dismiss threshold while its own blank top band is taller than
+    /// that, so at the moment you have decided to let go, what you see
+    /// is still mostly empty page.
+    ///
+    /// Above 1 the surface outruns the thumb, so the view behind opens
+    /// at a rate you can read. It stays gentle — past about 2 the page
+    /// arrives at the bottom before the finger has finished asking, and
+    /// a gesture you cannot hold half-done is a button with extra steps.
+    static let pullGain: CGFloat = 1.6
+
     /// A ROW ARRIVING OR LEAVING A LIST.
     ///
     /// Ticking a suggestion in the Inbox used to make it vanish and the

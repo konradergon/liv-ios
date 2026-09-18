@@ -568,7 +568,13 @@ struct DeskHost: View {
                 // from the band is the panel's, and the panel's recogniser
                 // cancels these touches the moment it latches.
                 guard d > abs(g.translation.width) else { return }
-                docPull = max(0, d)
+                // THE PAGE OUTRUNS THE THUMB (`LivMotion.pullGain`), so
+                // the view behind opens at a rate you can read rather
+                // than at the rate a finger crosses glass. The THRESHOLD
+                // below still measures the finger, so how far you have to
+                // pull to commit is exactly what it was — only what you
+                // SEE while pulling changed.
+                docPull = max(0, d) * LivMotion.pullGain
             }
             .onEnded { g in
                 guard docPull > 0 else { return }
