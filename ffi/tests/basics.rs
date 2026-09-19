@@ -1149,3 +1149,52 @@ fn a_cell_row_carries_the_token_beside_the_word() {
 
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A PROPOSAL SAYS WHAT IT WOULD WRITE, not only why.
+///
+/// `reason` is a sentence — "mentions \"Anna\" → Family & Friends?" —
+/// and a shell cannot put a sentence on a chip beside a row. The chip
+/// needs the ANSWER: the word the proposal would file the thing under,
+/// so "file it there?" is one tap. The Inbox had that chip from
+/// 2026-09-09 and it never drew once, because it read a field the wire
+/// did not carry (found 2026-09-18).
+///
+/// The area proposer writes a `Ref`, so this also pins the resolution:
+/// an id crosses as the word a person reads, through the one helper
+/// those words live in.
+#[test]
+fn a_proposal_carries_the_word_it_would_write() {
+    let d = dir("proposal_value");
+    let path = d.join("liv.db");
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        let anna = e.create(kind::PERSON, Some("Anna"), T0).unwrap();
+        // Anna is filed somewhere, so the area proposer has an answer.
+        let area = e.create(kind::AREA, Some("Family & Friends"), T0 + 1).unwrap();
+        e.set(anna, liv_engine::prop::AREA, liv_engine::Value::Ref(area), T0 + 2).unwrap();
+        let scrap = e.create(kind::NOTE, None, T0 + 3).unwrap();
+        e.set_content(scrap, vec![liv_engine::Span::text("ring anna")], 0, T0 + 4).unwrap();
+    }
+    unsafe { liv_view_close_all() };
+    let path = c(path.to_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_ffi::writes::liv_sweep(path.as_ptr(), &mut out) };
+    let rows = took(out);
+    let all = rows.as_array().unwrap();
+
+    let area_row = all
+        .iter()
+        .find(|r| r["proposer"].as_str() == Some("area"))
+        .unwrap_or_else(|| panic!("no area proposal in {rows}"));
+    assert_eq!(
+        area_row["value"].as_str(),
+        Some("Family & Friends"),
+        "the area proposal must carry the area's NAME, not its id: {rows}"
+    );
+
+    // Every proposal carries the key, so a shell may decode it once.
+    for r in all {
+        assert!(r.get("value").is_some(), "no `value` key on {r}");
+    }
+}

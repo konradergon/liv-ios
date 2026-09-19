@@ -360,9 +360,38 @@ pub unsafe extern "C" fn liv_resync_file(
 
 // ---- the clerk ---------------------------------------------------------
 
+/// The word a proposal would write, or null when it has no single
+/// readable answer.
+///
+/// A `Ref` is resolved through `liv_surface::tasks::name_of`, which is
+/// the one place the word for an id lives — for a model option it is the
+/// model's label, for a minted one its name cell. A body (`Rich`), a
+/// blob and a date have no one-word answer a chip could wear, so they
+/// cross as null rather than as something invented here; the `reason`
+/// still says what the proposal is about.
+fn proposed_word(e: &liv_engine::Engine, op: &liv_engine::Op) -> serde_json::Value {
+    use liv_engine::Value;
+    let value = match op {
+        liv_engine::Op::SetCell { value, .. }
+        | liv_engine::Op::AddToSet { value, .. }
+        | liv_engine::Op::RemoveFromSet { value, .. } => value,
+        liv_engine::Op::CreateEntity { .. } => return serde_json::Value::Null,
+    };
+    match value {
+        Value::Text(s) => json!(s),
+        Value::Number(n) => json!(n.to_string()),
+        Value::Bool(b) => json!(b.to_string()),
+        Value::Ref(id) => match liv_surface::tasks::name_of(e, *id) {
+            Ok(name) if !name.is_empty() => json!(name),
+            _ => serde_json::Value::Null,
+        },
+        _ => serde_json::Value::Null,
+    }
+}
+
 /// What the clerk would suggest, as the inbox reads it.
 ///
-/// `[{"entity":hex,"print":N,"proposer":…,"reason":…}]`. **A proposal is
+/// `[{"entity":hex,"print":N,"proposer":…,"reason":…,"value":…}]`. **A proposal is
 /// named by the thing it is about and its fingerprint, never its
 /// position**: the sweep is a pure function of the box and is recomputed
 /// in every process, so an index would mean something different by the
@@ -372,6 +401,16 @@ pub unsafe extern "C" fn liv_resync_file(
 ///
 /// A proposal with no ops proposes nothing and is left out, so `entity` is
 /// always there: a row the shell is shown must be a row it can act on.
+///
+/// `value` IS WHAT IT WOULD WRITE, as a word (2026-09-19, purely
+/// additive). The reason says why in a sentence; the value is the
+/// answer on its own, which is what a shell needs to offer "file it
+/// under Work?" as one tap beside the row rather than a card you have
+/// to open. Without it the Inbox's guess chip read a field nothing
+/// populated and never drew. A `Ref` crosses as the referenced thing's
+/// name (`liv_surface::tasks::name_of`, the one place those words
+/// live); anything with no single readable answer crosses as null, and
+/// a shell must treat it as optional.
 ///
 /// # Safety
 /// `path` a valid C string; `out` as above.
@@ -383,12 +422,14 @@ pub unsafe extern "C" fn liv_sweep(path: *const c_char, out: *mut *mut c_char) -
             found
                 .iter()
                 .filter_map(|p| {
-                    let entity = p.ops.first()?.entity().hex();
+                    let first = p.ops.first()?;
+                    let entity = first.entity().hex();
                     Some(json!({
                         "entity": entity,
                         "print": p.fingerprint(),
                         "proposer": p.proposer,
                         "reason": p.reason,
+                        "value": proposed_word(e, first),
                     }))
                 })
                 .collect(),

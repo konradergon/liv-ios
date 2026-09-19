@@ -128,7 +128,11 @@ fn matches(e: &Engine, r: &Row, filter: Filter) -> Result<bool, LogError> {
 /// cell for a minted one. **The only place these words exist**: the shell
 /// carried the six area names as a Swift constant, which `one-core.md` §4
 /// calls shell-side furnishing and a mistake.
-fn name_of(e: &Engine, id: EntityId) -> Result<String, LogError> {
+/// **Public since 2026-09-19**, for the clerk's wire: a proposal whose
+/// value is a `Ref` has to cross the ABI as the word a person reads, and
+/// a second spelling of "the word for an id" is the drift this comment
+/// already warns about.
+pub fn name_of(e: &Engine, id: EntityId) -> Result<String, LogError> {
     if let Some(label) = model::label(id) {
         return Ok(label.to_owned());
     }
