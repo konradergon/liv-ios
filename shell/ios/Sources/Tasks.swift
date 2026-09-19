@@ -464,7 +464,7 @@ struct TasksView: View {
     }
 
     private func noteLineRow(_ line: NoteTaskRow) -> some View {
-        let owner = line.entity ?? 0
+        let owner = line.entity ?? .absent
         // The wire computes this where the content is — EntityRow.title
         // would read "Roof project - [ ] call the surveyor - [x] paid…".
         let source = line.source ?? ""
