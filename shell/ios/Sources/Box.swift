@@ -1230,14 +1230,14 @@ final class BoxModel: ObservableObject {
 
     func duplicateProperties(of source: LivEntityID, done: ((LivEntityID) -> Void)? = nil) {
         guard let row = entity(source) else {
-            done?(0)
+            done?(.absent)
             return
         }
         let skip: Set<String> = ["name", "content", "created", "type", "template"]
         let skipKinds: Set<String> = ["datetime", "reference", "file"]
         createNote { copy in
-            guard copy != 0 else {
-                done?(0)
+            guard !copy.isAbsent else {
+                done?(.absent)
                 return
             }
             if let kind = row.kinds?.first, !kind.isEmpty, kind != "note" {

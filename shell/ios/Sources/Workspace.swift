@@ -139,7 +139,9 @@ struct SavedViewRow: Decodable, Identifiable {
 /// the workspace list and every saved filter come from the snapshot; the
 /// active choice is device state (UserDefaults), like the desk's tabs.
 final class WorkspaceModel: ObservableObject {
-    /// 0 = "All" — no lens, no stamp. Persisted; drives the desk's tab set.
+    /// `.absent` = "All" — no lens, no stamp. Persisted; drives the desk's
+    /// tab set. It was spelled `0` until 2026-09-19, when the id type
+    /// stopped letting a number stand for "no id".
     @Published private(set) var activeId: LivEntityID = .absent
     /// A saved filter ANDed on top of the workspace lens. Transient by
     /// design: a filter narrows a session, a workspace IS the session.
@@ -249,7 +251,7 @@ final class WorkspaceModel: ObservableObject {
 
     /// True when some lens is on — the surfaces show the chip only then.
     var lensOn: Bool {
-        activeId != 0 || activeFilterId != nil
+        !activeId.isAbsent || activeFilterId != nil
     }
 
     /// The cells a new entity inherits from the WORKSPACE. Read off the

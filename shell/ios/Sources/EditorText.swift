@@ -1074,7 +1074,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // is 0. Every such note therefore opened at the top. A note is
             // a thing you add to; the end is the useful place, and the top
             // is the one place the caret is never wanted.
-            if !context.coordinator.restored, n > 0, note != 0 {
+            if !context.coordinator.restored, n > 0, !note.isAbsent {
                 landing = min(LivCaret.recall(note) ?? n, n)
             }
             // An empty buffer is not the document arriving — a note whose
@@ -1302,7 +1302,7 @@ struct MarkdownEditor: UIViewRepresentable {
             // Where you were, for when this editor is rebuilt. Only after
             // the restore has run, or the programmatic set that precedes
             // it would record a caret of 0 over the real one.
-            if restored, parent.note != 0 {
+            if restored, !parent.note.isAbsent {
                 LivCaret.remember(parent.note, at: textView.selectedRange.location)
             }
             keepCaretVisible(textView)

@@ -193,7 +193,7 @@ enum LivCaret {
     private static var byNote: [LivEntityID: Int] = [:]
 
     static func remember(_ note: LivEntityID, at offset: Int) {
-        guard note != 0 else { return }
+        guard !note.isAbsent else { return }
         byNote[note] = max(0, offset)
     }
 

@@ -378,7 +378,7 @@ enum NoteBytes {
         done: @escaping (LivEntityID) -> Void
     ) {
         box.createNote { id in
-            guard !id.isAbsent else { return done(0) }
+            guard !id.isAbsent else { return done(.absent) }
             if !named.isEmpty { box.set(id, "name", named) }
             box.content(id) { doc in
                 let spans = SpanText.textToSpans(text)

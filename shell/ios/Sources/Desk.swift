@@ -1003,7 +1003,7 @@ struct DeskHost: View {
         copying = true
         box.duplicateProperties(of: id) { copy in
             copying = false
-            guard copy != 0 else {
+            guard !copy.isAbsent else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }

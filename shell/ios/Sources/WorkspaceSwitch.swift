@@ -71,10 +71,10 @@ struct WorkspaceSwitcher: View {
                     // to draw its own smaller, denser list.
                     LivMenuTitle(text: "Workspace")
                     choice(
-                        name: "All", active: workspaces.activeId == 0,
+                        name: "All", active: workspaces.activeId.isAbsent,
                         glyph: .workspaces, divided: false
                     ) {
-                        choose(0)
+                        choose(.absent)
                     }
                     ForEach(Array(workspaces.workspaces.enumerated()), id: \.element.id) { _, ws in
                         choice(
@@ -94,7 +94,7 @@ struct WorkspaceSwitcher: View {
                             }
                             Button(role: .destructive) {
                                 workspaces.forgetQuery(ws.id)
-                                if workspaces.activeId == ws.id { choose(0, close: false) }
+                                if workspaces.activeId == ws.id { choose(.absent, close: false) }
                                 box.trashWorkspace(ws.id)
                             } label: {
                                 Label("Trash workspace", systemImage: "trash")
@@ -130,7 +130,10 @@ struct WorkspaceSwitcher: View {
         .sheet(item: $picking) { pick in
             InspectorValueSheet(
                 field: InspectorField.describe(pick.property, in: box.snap),
-                id: 0,
+                // NO ENTITY: this sheet is picking a value to put in a
+                // QUERY, not a cell on a thing. `.absent` is what "no
+                // thing" is called now that `0` cannot say it.
+                id: .absent,
                 current: [],
                 onPick: { (value: String?) in put(value, for: pick) }
             )
