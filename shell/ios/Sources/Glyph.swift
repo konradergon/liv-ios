@@ -920,11 +920,16 @@ struct GlyphSheet: View {
 func livGlyphSelfCheck() -> [String] {
     var fail: [String] = []
 
+    // A row named by a SMALL NUMBER, through `livSampleId`. This suite
+    // is about kinds and glyphs; the id is only there to tell one
+    // fixture from another, and `row(1, …)` says that where a 32-digit
+    // hex id would bury it.
     func row(
-        _ id: LivEntityID, kinds: [String]? = nil, status: String? = nil,
+        _ n: UInt64, kinds: [String]? = nil, status: String? = nil,
         cells: [CellRow]? = nil
     ) -> EntityRow {
-        EntityRow(id: id, title: "t", kinds: kinds, status: status, cells: cells)
+        EntityRow(
+            id: livSampleId(n), title: "t", kinds: kinds, status: status, cells: cells)
     }
 
     // 1. ONE classifier — colour and glyph never disagree.
