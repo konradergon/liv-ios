@@ -18,20 +18,15 @@
 
 import SwiftUI
 
-/// Everything's slice. Lives here rather than in `Everything.swift`
-/// because the slice is now the tab's content, and content is the plane's
-/// vocabulary, not the view's private state.
-enum EverythingLens: String, CaseIterable, Identifiable {
-    case all, upcoming, unfiled
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .upcoming: return "Upcoming"
-        case .unfiled: return "Unfiled"
-        }
-    }
-}
+// NOTES HAS NO LENS. `EverythingLens` — all, notes, upcoming, unfiled —
+// was the slice of the mixed list that view used to be, and it went with
+// the mixed list (owner, 2026-09-16: "make all just a notes list. remove
+// 'everything' or 'all'"). A tab in Notes holds a DOCUMENT, which is what
+// a tab always was; the view itself has one position, the list. The
+// tokens it wrote ("all", "notes", "upcoming", "unfiled") are still on
+// disk in old planes and are still readable: `LivPosition.title` falls
+// back to the view's name for any token, which is the rule for every
+// retired token.
 
 /// Route or Tidy — the blueprint's two questions (BP-5).
 enum InboxLens: String, CaseIterable {
@@ -177,6 +172,28 @@ struct CalendarPosition: Codable, Equatable {
 
 /// Turning a saved position into words, and back.
 enum LivPosition {
+    /// IS THIS TOKEN ONE OF OURS? (slice 5b, 2026-09-19.)
+    ///
+    /// A saved tab holds either an entity's id or a position's token,
+    /// and `readPlane` used to tell them apart by "an id is a number, so
+    /// anything else is a position". Ids are 32 hex characters now, so
+    /// that test would call a decimal left by an older build a position
+    /// and mint a tab holding the place "1734829" — a row that opens
+    /// nothing and cannot be named.
+    ///
+    /// Every token this app writes is either a lens's raw value or one
+    /// of the four position types' own `token`, and all of them parse
+    /// back. Asking each of them is the honest test, and it is the same
+    /// question `title` and `detail` already ask one view at a time.
+    static func isToken(_ token: String) -> Bool {
+        if token.isEmpty { return true }  // Notes' one position, the list
+        if InboxLens(rawValue: token) != nil { return true }
+        if TasksPosition(token: token).token == token { return true }
+        if TodayPosition(token: token).token == token { return true }
+        if CalendarPosition(token: token).token == token { return true }
+        return false
+    }
+
     /// Where a view opens when its plane has no tab yet.
     ///
     /// A plane is born EMPTY — the same as Notes, where no tabs has
@@ -184,15 +201,12 @@ enum LivPosition {
     /// user moves, the move mints the tab.
     static func root(_ feature: Feature) -> String {
         switch feature {
-        case .everything: return EverythingLens.all.rawValue
+        // Notes has one position, the list; an empty token names it.
+        case .everything: return ""
         case .inbox: return InboxLens.route.rawValue
         case .tasks: return TasksPosition().token
         case .today: return TodayPosition().token
         case .calendar: return CalendarPosition().token
-        /// Notes is the one view where a tab holds an ENTITY, not a
-        /// position — which is what a tab always was, and what "how tabs
-        /// looked for notes before" names.
-        case .notes: return ""
         }
     }
 
@@ -202,12 +216,7 @@ enum LivPosition {
     static func detail(_ feature: Feature, _ token: String) -> String {
         switch feature {
         case .everything:
-            switch EverythingLens(rawValue: token) {
-            case .all: return "Everything in the box, newest first."
-            case .upcoming: return "Dated in the next seven days."
-            case .unfiled: return "No area yet."
-            case nil: return "A saved place in Everything."
-            }
+            return "What you have written, by what you touched last."
         case .inbox:
             switch InboxLens(rawValue: token) {
             case .route: return "Captures still waiting for an address."
@@ -232,8 +241,6 @@ enum LivPosition {
             return pos.day == Civil.todayDay()
                 ? "\(CalGrid.title(pos.month)), on today."
                 : "\(CalGrid.title(pos.month)), on \(Civil.dayLabel(pos.day))."
-        case .notes:
-            return "A saved place in Notes."
         }
     }
 
@@ -246,7 +253,9 @@ enum LivPosition {
     static func title(_ feature: Feature, _ token: String) -> String {
         switch feature {
         case .everything:
-            return EverythingLens(rawValue: token)?.title ?? feature.title
+            // One position, so one name — and any token an old plane
+            // wrote ("all", "upcoming", …) lands on it too.
+            return feature.title
         case .inbox:
             return InboxLens(rawValue: token)?.title ?? feature.title
         case .tasks:
@@ -255,8 +264,6 @@ enum LivPosition {
             return TodayPosition(token: token).title
         case .calendar:
             return CalendarPosition(token: token).title
-        case .notes:
-            return feature.title
         }
     }
 }
@@ -287,7 +294,7 @@ func livPlanesSelfCheck() -> [String] {
     // remembered is where you left it.
     desk.go(.everything)
     check("an untouched tool has no spot", desk.position(.everything) == nil)
-    check("so it falls back to its root", LivPosition.root(.everything) == "all")
+    check("so it falls back to its root", LivPosition.root(.everything) == "")
 
     desk.park(.everything, at: "upcoming")
     check("parking remembers the spot", desk.position(.everything) == "upcoming")
@@ -303,15 +310,15 @@ func livPlanesSelfCheck() -> [String] {
     check("without disturbing the others", desk.position(.everything) == "all")
 
     // ---- the desk follows you ----
-    desk.go(.notes)
-    desk.open(7)
-    check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == 7)
+    desk.go(.everything)
+    desk.open(livSampleId(7))
+    check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == livSampleId(7))
     desk.go(.calendar)
     check("and is still there from another view", desk.tabs.count == 1, "\(desk.tabs.count)")
     check("the key counts the same desk everywhere", desk.liveTabs.count == 1)
-    desk.open(8)
+    desk.open(livSampleId(8))
     check("a document opened from a TOOL lands on the same desk", desk.tabs.count == 2)
-    check("no duplicate for a note already open", { desk.open(7); return desk.tabs.count }() == 2)
+    check("no duplicate for a note already open", { desk.open(livSampleId(7)); return desk.tabs.count }() == 2)
 
     // A new tab is a new note, from anywhere — there is no second Today
     // to open, which is what `openRoot` used to do.
@@ -344,9 +351,9 @@ func livPlanesSelfCheck() -> [String] {
     let old = Civil.stamp(day: Civil.addDays(Civil.todayDay(), -30), hhmm: 900)
 
     desk.replaceTabsForSelfCheck([
-        DeskTab(id: UUID(), content: .entity(41), lastUsed: old),
-        DeskTab(id: UUID(), content: .entity(42), lastUsed: old),
-        DeskTab(id: UUID(), content: .entity(43), lastUsed: now),
+        DeskTab(id: UUID(), content: .entity(livSampleId(41)), lastUsed: old),
+        DeskTab(id: UUID(), content: .entity(livSampleId(42)), lastUsed: old),
+        DeskTab(id: UUID(), content: .entity(livSampleId(43)), lastUsed: now),
     ])
     check("stale tabs go to the shelf", desk.inactiveCount == 2, "\(desk.inactiveCount)")
     check("the active tab is never on it", desk.inactiveTabs.allSatisfy { $0.id != desk.activeTabId })

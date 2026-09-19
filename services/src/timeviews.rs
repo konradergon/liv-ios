@@ -120,10 +120,7 @@ pub fn time_totals(store: &Store, today: i64) -> TimeSummary {
         .into_iter()
         .map(|target| TimeTotal {
             target,
-            name: match store.get(target).and_then(|e| e.get(props::NAME)) {
-                Some(Value::Text(name)) => name.clone(),
-                _ => format!("#{target}"),
-            },
+            name: crate::tasks::name_of(store, target),
             minutes: minutes[&target],
         })
         .collect();
@@ -144,7 +141,7 @@ pub fn saved_views(store: &Store) -> Vec<ViewRow> {
             id: e.id,
             name: match e.get(props::NAME) {
                 Some(Value::Text(name)) => name.clone(),
-                _ => format!("#{}", e.id),
+                _ => liv_views::made_name(store, e),
             },
             query: match e.get(query_prop) {
                 Some(Value::Text(q)) => q.clone(),

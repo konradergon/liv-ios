@@ -94,6 +94,13 @@ pub(crate) struct AssistRow {
 pub(crate) struct EntityRow {
     id: Id,
     title: String,
+    /// **Whether that title was MADE rather than given** (owner,
+    /// 2026-09-13). A thing nobody named still arrives with a sensible
+    /// name — its kind's word and when — so the shell has nothing to
+    /// invent; this is how it knows to draw that name quietly. It used to
+    /// ask by comparing the title against `"#<id>"`, which is a string the
+    /// core no longer sends, because an id is never a name.
+    untitled: bool,
     kinds: Vec<String>,
     /// The POSITIONING date (P11/11f): the first calendar-set property with
     /// a DateTime cell — `date` before `due`, the same one order that
@@ -622,6 +629,7 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
                 // 2026-08-07; test: services/tests/tasks.rs
                 // display_name_is_the_first_line_not_the_whole_body).
                 title: liv_services::content::display_name(store, entity),
+                untitled: liv_services::content::is_unnamed(store, entity),
                 kinds: entity
                     .all(props::TYPE)
                     .filter_map(|v| match v {
@@ -695,7 +703,7 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
                     id: e.id,
                     name: match e.get(props::NAME) {
                         Some(Value::Text(name)) => name.clone(),
-                        _ => format!("#{}", e.id),
+                        _ => liv_views::made_name(store, e),
                     },
                     emoji: text(e, emoji_prop),
                     favorite: flag(e, favorite_prop),
@@ -820,7 +828,7 @@ pub(crate) fn build_snapshot_windowed(store: &Store, from: DateTime, to: DateTim
                     id: e.id,
                     name: match e.get(props::NAME) {
                         Some(Value::Text(name)) => name.clone(),
-                        _ => format!("#{}", e.id),
+                        _ => liv_views::made_name(store, e),
                     },
                     workspace: match ws_prop.and_then(|p| e.get(p)) {
                         Some(Value::Reference(w)) => *w,

@@ -4,7 +4,7 @@
 //! births ride the same commit (the backstage lazy-birth pattern). A
 //! re-import with identical feed fields is a literal no-op; a REFRESH
 //! updates only the FEED-OWNED cells (from/sent/body/source) and never
-//! touches yours (subjects, status, a cleared `unread`). Senders resolve
+//! touches yours (tags, status, a cleared `unread`). Senders resolve
 //! to person entities by exact name match — Liv never guesses; an
 //! unresolved sender stays feed-owned text (`from-label`).
 

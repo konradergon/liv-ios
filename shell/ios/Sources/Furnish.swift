@@ -17,9 +17,10 @@ import Foundation
 enum Furnish {
     /// The six areas — the RESEARCHED canon (PARA, Wheel of Life, Things,
     /// Ultimate Brain; 2026-07-27), not invention. Fixed. No create-new.
-    static let areaNames = [
-        "Work", "Health", "Money", "Home", "Family & Friends", "Learning",
-    ]
+    /// The names live ONCE, on `LivArea` (Glyph.swift) beside the marks
+    /// that draw them — a name and its mark drifting apart would be the
+    /// exact defect one table exists to prevent (2026-09-06).
+    static var areaNames: [String] { LivArea.allCases.map(\.name) }
 
     /// The text fields the capture/camera chips write. `area` is separate:
     /// it is a select, born with its options.
@@ -63,7 +64,7 @@ private final class FurnishPass {
     /// and the word "subjects" appearing as free text is left alone,
     /// because a person searching for that word still means the word.
     private func renameInQueries(_ snap: Snapshot, from old: String, to new: String) {
-        let rows: [(UInt64, String)] =
+        let rows: [(LivEntityID, String)] =
             (snap.workspaces ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
             + (snap.views ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
         for (id, text) in rows {
@@ -148,18 +149,18 @@ private final class FurnishPass {
             // legacy TEXT `area` refuses options harmlessly — values keep
             // flowing as text, and the picker unions live values in.
             let held = (area.options ?? []).compactMap { $0.name }
-            addOptions(to: area.id ?? 0, skipping: held)
+            addOptions(to: area.id ?? .absent, skipping: held)
         } else {
             track()
             box.addProperty("area", kind: "select") { [self] id in
-                if id != 0 { addOptions(to: id, skipping: []) }
+                if !id.isAbsent { addOptions(to: id, skipping: []) }
                 landed()
             }
         }
     }
 
-    private func addOptions(to property: UInt64, skipping held: [String]) {
-        guard property != 0 else { return }
+    private func addOptions(to property: LivEntityID, skipping held: [String]) {
+        guard !property.isAbsent else { return }
         for name in Furnish.areaNames {
             guard
                 !held.contains(where: {

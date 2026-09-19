@@ -94,18 +94,22 @@ enum LivTerms {
 /// lens — the box is its only home (the wire carries it since the M4 ffi
 /// addition; no device-side copy, no second source of truth).
 struct WorkspaceRow: Decodable, Identifiable {
-    var wsId: UInt64?
+    var wsId: LivEntityID?
     var name: String?
     var emoji: String?
     var favorite: Bool?
     var archived: Bool?
     var builtin: String?
-    var parent: UInt64?
+    var parent: LivEntityID?
     var order: Double?
     var query: String?
 
-    var id: UInt64 { wsId ?? 0 }
-    var display: String { (name ?? "").isEmpty ? "#\(id)" : (name ?? "") }
+    var id: LivEntityID { wsId ?? .absent }
+    /// **Never an id** (owner, 2026-09-13: *"LivID shouldn't be read by
+    /// the user"*). The switcher drew `#4142` for a workspace whose name
+    /// cell was empty — one of three places the shell showed one, and the
+    /// only one on a surface a person opens on purpose.
+    var display: String { (name ?? "").isEmpty ? "Workspace" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
         case wsId = "id", name, emoji, favorite, archived, builtin, parent, order,
@@ -116,12 +120,13 @@ struct WorkspaceRow: Decodable, Identifiable {
 /// One saved filter: a view entity with a `query` cell — the same shape a
 /// workspace has, minus the stamp.
 struct SavedViewRow: Decodable, Identifiable {
-    var viewId: UInt64?
+    var viewId: LivEntityID?
     var name: String?
     var query: String?
 
-    var id: UInt64 { viewId ?? 0 }
-    var display: String { (name ?? "").isEmpty ? "#\(id)" : (name ?? "") }
+    var id: LivEntityID { viewId ?? .absent }
+    /// Never an id, as above.
+    var display: String { (name ?? "").isEmpty ? "Filter" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
         case viewId = "id", name, query
@@ -134,18 +139,20 @@ struct SavedViewRow: Decodable, Identifiable {
 /// the workspace list and every saved filter come from the snapshot; the
 /// active choice is device state (UserDefaults), like the desk's tabs.
 final class WorkspaceModel: ObservableObject {
-    /// 0 = "All" — no lens, no stamp. Persisted; drives the desk's tab set.
-    @Published private(set) var activeId: UInt64 = 0
+    /// `.absent` = "All" — no lens, no stamp. Persisted; drives the desk's
+    /// tab set. It was spelled `0` until 2026-09-19, when the id type
+    /// stopped letting a number stand for "no id".
+    @Published private(set) var activeId: LivEntityID = .absent
     /// A saved filter ANDed on top of the workspace lens. Transient by
     /// design: a filter narrows a session, a workspace IS the session.
-    @Published var activeFilterId: UInt64?
+    @Published var activeFilterId: LivEntityID?
     @Published private(set) var workspaces: [WorkspaceRow] = []
     @Published private(set) var filters: [SavedViewRow] = []
 
     static let activeKey = "workspace.active"
 
     init() {
-        activeId = UInt64(UserDefaults.standard.integer(forKey: Self.activeKey))
+        activeId = LivIDText.stored(forKey: Self.activeKey)
     }
 
     /// Fold a fresh snapshot in. An active workspace that left the box falls
@@ -158,13 +165,13 @@ final class WorkspaceModel: ObservableObject {
     func apply(_ snap: Snapshot?) {
         guard let snap else { return }
         if let rows = snap.workspaces {
-            workspaces = rows.filter { $0.id != 0 }
-            if activeId != 0, !workspaces.contains(where: { $0.id == activeId }) {
-                setActive(0)
+            workspaces = rows.filter { !$0.id.isAbsent }
+            if !activeId.isAbsent, !workspaces.contains(where: { $0.id == activeId }) {
+                setActive(.absent)
             }
         }
         if let rows = snap.views {
-            filters = rows.filter { $0.id != 0 }
+            filters = rows.filter { !$0.id.isAbsent }
             if let f = activeFilterId, !filters.contains(where: { $0.id == f }) {
                 activeFilterId = nil
             }
@@ -209,7 +216,7 @@ final class WorkspaceModel: ObservableObject {
     /// `nil` means no lens is on and every row passes. A Set rather than a
     /// predicate because the answer arrives once per lens change and once
     /// per snapshot, not once per row per render.
-    @Published private(set) var lensIds: Set<UInt64>?
+    @Published private(set) var lensIds: Set<LivEntityID>?
 
     /// Does this row pass the lens?
     ///
@@ -244,7 +251,7 @@ final class WorkspaceModel: ObservableObject {
 
     /// True when some lens is on — the surfaces show the chip only then.
     var lensOn: Bool {
-        activeId != 0 || activeFilterId != nil
+        !activeId.isAbsent || activeFilterId != nil
     }
 
     /// The cells a new entity inherits from the WORKSPACE. Read off the
@@ -275,11 +282,11 @@ final class WorkspaceModel: ObservableObject {
     /// return value is the intent; only `landed` is evidence.
     @discardableResult
     func stamp(
-        _ id: UInt64, in box: BoxModel,
+        _ id: LivEntityID, in box: BoxModel,
         landed: (((property: String, value: String)) -> Void)? = nil
     ) -> [(property: String, value: String)] {
         let cells = stampCells
-        guard id != 0, !cells.isEmpty else { return [] }
+        guard !id.isAbsent, !cells.isEmpty else { return [] }
         for cell in cells {
             let done: (Bool) -> Void = { ok in if ok { landed?(cell) } }
             if cell.property == "type" {
@@ -291,57 +298,74 @@ final class WorkspaceModel: ObservableObject {
         return cells
     }
 
-    func setActive(_ id: UInt64) {
+    func setActive(_ id: LivEntityID) {
         activeId = id
         activeFilterId = nil
-        UserDefaults.standard.set(Int(id), forKey: Self.activeKey)
+        LivIDText.store(id, forKey: Self.activeKey)
     }
 
     /// The lens, straight off the wire — the box is the only source.
     /// nil = this workspace has no query cell (an unfiltered workspace).
-    func query(of id: UInt64) -> String? {
-        guard id != 0 else { return nil }
+    func query(of id: LivEntityID) -> String? {
+        guard !id.isAbsent else { return nil }
         let q = workspaces.first { $0.id == id }?.query
         return (q?.isEmpty ?? true) ? nil : q
     }
 
     /// The write already went to the box; the next snapshot carries it.
     /// Kept as a no-op seam so call sites read as intent, not plumbing.
-    func rememberQuery(_ id: UInt64, _ query: String) {
+    func rememberQuery(_ id: LivEntityID, _ query: String) {
         objectWillChange.send()
     }
 
-    func forgetQuery(_ id: UInt64) {}
+    func forgetQuery(_ id: LivEntityID) {}
 
     /// The pre-2026-08-22 key: ONE plane per workspace, holding the Notes
     /// tabs. READ-ONLY — nothing writes it. `DeskPlanes.load` (Plane.swift)
     /// reads it once, to become the Notes plane of v2.
-    static func tabsKey(_ workspace: UInt64) -> String {
-        "desk.tabs.v1.\(workspace)"
+    static func tabsKey(_ workspace: LivEntityID) -> String {
+        "desk.tabs.v1.\(LivIDText.written(workspace))"
     }
 
     /// One plane per VIEW per workspace — the 2026-08-22 shape.
     /// READ-ONLY since 2026-08-28:  folds these into the
     /// one desk and leaves them where they are.
-    static func planeKey(_ workspace: UInt64, _ view: String) -> String {
-        "desk.tabs.v2.\(workspace).\(view)"
+    static func planeKey(_ workspace: LivEntityID, _ view: String) -> String {
+        "desk.tabs.v2.\(LivIDText.written(workspace)).\(view)"
     }
 
     /// THE DESK: the documents open in one workspace. One key, because
     /// there is one desk (2026-08-28).
-    static func deskKey(_ workspace: UInt64) -> String {
-        "desk.v3.\(workspace)"
+    ///
+    /// **EVERY KEY BELOW CHANGED ITS NAME ON 2026-09-19** and none of
+    /// them is versioned for it, deliberately. `LivIDText.written` is
+    /// the whole id now rather than its low half in decimal (slice 5b),
+    /// so `desk.v3.<workspace>` is spelled differently and the old keys
+    /// are simply not found.
+    ///
+    /// That is the conversion, not an accident: what those keys held was
+    /// tab tokens written in the same broken form, so reading them would
+    /// restore ids pointing at nothing — a desk full of rows that open
+    /// nothing is worse than an empty one. A tab is device state, which
+    /// is the reason this is affordable: the notes are all still there,
+    /// and the first thing you open makes a new desk.
+    ///
+    /// The stale values are left on disk rather than deleted. They cost
+    /// a few hundred bytes and they are the only evidence of what a box
+    /// looked like before the swap.
+    static func deskKey(_ workspace: LivEntityID) -> String {
+        "desk.v3.\(LivIDText.written(workspace))"
     }
 
     /// Where each tool was left, view name to position token. One small
     /// map beside the desk, because a place is singular.
-    static func spotsKey(_ workspace: UInt64) -> String {
-        "desk.spots.v3.\(workspace)"
+    static func spotsKey(_ workspace: LivEntityID) -> String {
+        "desk.spots.v3.\(LivIDText.written(workspace))"
     }
 
     /// The one open document, per workspace.
-    static func docKey(_ workspace: UInt64) -> String {
-        "desk.doc.v1.\(workspace)"
+    static func docKey(_ workspace: LivEntityID) -> String {
+        "desk.doc.v1.\(LivIDText.written(workspace))"
     }
 }
 
@@ -357,14 +381,15 @@ struct LensChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            LivIcon(glyph: .filter, color: LivTheme.accent, size: 12)
+            LivIcon(glyph: .filter, color: LivTheme.accent, size: LivChip.glyph)
             Text(label)
                 .font(.system(size: LivType.caption, weight: .medium))
                 .lineLimit(1)
         }
         .foregroundStyle(LivTheme.accent)
         .padding(.horizontal, 7)
-        .frame(height: 17)
+        // The app's chip height. 17 was a raw number seven under it.
+        .frame(height: LivChip.height)
         .background(Capsule().fill(LivTheme.accentSoft))
         .accessibilityLabel("Filtered by \(label)")
     }

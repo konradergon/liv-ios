@@ -15,7 +15,7 @@ enum BoxPath {
             return env
         }
         let base =
-            fm.containerURL(forSecurityApplicationGroupIdentifier: "group.liv.app")
+            LivGroup.container
             ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let dir = base.appendingPathComponent("liv", isDirectory: true)

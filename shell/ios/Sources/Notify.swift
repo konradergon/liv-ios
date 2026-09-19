@@ -29,7 +29,7 @@ final class Notify: NSObject, ObservableObject {
     /// Where a tapped notification lands: the entity opens as a desk tab.
     /// Wired by the chrome once it exists; a cold-launch tap that beats
     /// the wiring parks its id here and flushes on assignment.
-    var onOpen: ((UInt64) -> Void)? {
+    var onOpen: ((LivEntityID) -> Void)? {
         didSet {
             if let id = pendingOpen, let onOpen {
                 pendingOpen = nil
@@ -37,7 +37,7 @@ final class Notify: NSObject, ObservableObject {
             }
         }
     }
-    private var pendingOpen: UInt64?
+    private var pendingOpen: LivEntityID?
 
     /// What the pending queue holds — Settings' honesty line.
     @Published private(set) var scheduledCount = 0
@@ -81,7 +81,7 @@ final class Notify: NSObject, ObservableObject {
     }
 
     private struct Slot {
-        let entity: UInt64
+        let entity: LivEntityID
         let title: String
         let body: String
         let fire: Date
@@ -165,11 +165,18 @@ final class Notify: NSObject, ObservableObject {
             content.title = slot.title
             content.body = slot.body
             content.sound = .default
-            content.userInfo = ["entity": String(slot.entity)]
+            // BOTH halves through `LivIDText`. The `userInfo` one did not
+            // compile after slice 4's flip; the identifier's interpolation
+            // did, silently, as hex — and the tap handler reads it back
+            // with `LivIDText.read`, which would have returned nil for
+            // every one of them. This is the exact failure `LivID.swift`
+            // warns about, and the only reason it was found is that its
+            // twin two lines up happened not to build.
+            content.userInfo = ["entity": LivIDText.written(slot.entity)]
             // No badge: the app's one badge is the proposal-inbox count, by law.
             center.add(
                 UNNotificationRequest(
-                    identifier: "liv-\(slot.entity)", content: content,
+                    identifier: "liv-\(LivIDText.written(slot.entity))", content: content,
                     trigger: UNTimeIntervalNotificationTrigger(
                         timeInterval: interval, repeats: false)))
             added += 1
@@ -199,8 +206,7 @@ final class Notify: NSObject, ObservableObject {
     /// which returns nothing for a stamp ending 0000 and left a reminder
     /// for a midnight event reading just "due" (review, 2026-08-06).
     private static func body(due: Int64) -> String {
-        let hhmm = due % 10_000
-        return String(format: "due %02d:%02d", hhmm / 100, hhmm % 100)
+        "due " + Civil.clock(due % 10_000)
     }
 
     /// Packed civil YYYYMMDDHHMM → a wall-clock Date in the current zone.
@@ -240,7 +246,7 @@ extension Notify: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         if let raw = response.notification.request.content.userInfo["entity"] as? String,
-            let id = UInt64(raw)
+            let id = LivIDText.read(raw)
         {
             if let onOpen {
                 onOpen(id)

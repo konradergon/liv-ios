@@ -62,9 +62,26 @@ The furniture, fixed and few. This is the product.
 **Kinds of thing** — Note · Task · Event · Photo · Person · Link
 
 Projects, tags and people are yours to add freely — that's where real life
-varies. Areas, fields and kinds are ours, and they don't grow. Adding a
-new *kind of field* is possible but it lives behind a door in Settings,
-not in the flow of daily use.
+varies. Adding a new *kind of field* is possible but it lives behind a
+door in Settings, not in the flow of daily use.
+
+> **Amended 2026-08-29 — areas grow.** This said "Areas, fields and kinds
+> are ours, and they don't grow", and areas shipped as a select a user
+> could not add to. They can now: the value picker offers a create row for
+> a select, and minting the option is one verb the core already had.
+>
+> The six remain what the app arrives with, and that was always the
+> load-bearing half — you open Liv and do not have to design a system.
+> What goes is the refusal. The cost paragraph below admitted the walls
+> ("someone whose life doesn't divide into these six areas will feel the
+> walls"); a create row is cheaper than that trade.
+>
+> The desktop had already gone further: it stores `area` as free text with
+> no list at all, which is why its own query code carries a note about
+> "clicking 'work' while 'Work' is included". A named set you can extend
+> sits between the two, and is the half of convergence that costs nothing.
+>
+> Fields and kinds are unchanged: they still do not grow in daily use.
 
 ## What Liv will not do
 
@@ -80,6 +97,10 @@ Deciding for people means being wrong for some of them. Someone whose life
 doesn't divide into these six areas will feel the walls. That is the
 trade: we lose the person who wants to build their own system, and we win
 the far larger number who never wanted to.
+
+*(For areas specifically, that trade was reconsidered on 2026-08-29 — see
+the amendment above. The six are still the furniture; they are no longer
+the fence.)*
 
 The engine underneath can hold any structure at all. We are choosing not
 to show that. It's insurance, not a feature.

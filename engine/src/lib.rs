@@ -15,17 +15,36 @@
 //! a separate layer — so the desktop can link this crate directly, the
 //! way it links its own core today.
 
+pub mod civil;
+pub mod clerk;
+pub mod content;
 pub mod engine;
+pub mod files;
 pub mod id;
+pub mod inspect;
 pub mod log;
 pub mod model;
 pub mod op;
+pub mod query;
+pub mod rename;
+pub mod rich;
+pub mod undo;
+pub mod value;
 pub mod view;
 pub mod write;
 
+pub use civil::{civil_from_days, days_from_civil, split_civil};
+pub use clerk::{print_text, Proposal};
+pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
-pub use model::{area, kind, prop, status, Holds, PropDef, Refused, AREAS, KINDS, PROPS, STATUSES};
-pub use write::{action, WriteError};
+pub use files::{hash_file, FileError, Resync};
+pub use model::{
+    area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,
+};
+pub use query::{lex, Constraint, Op as QueryOp, Query, Sort, Term, TermOp};
+pub use rename::RenameError;
+pub use write::{action, PropShape, WriteError};
 pub use id::{DeviceId, Dot, EntityId, Hlc, IdGen};
 pub use log::{decode_stream, encode_stream, Hold, LogError, VersionVector, BOX_FORMAT};
 pub use op::{Author, DateSpec, DecodeError, Group, Op, Value, RECORD_VERSION};
+pub use rich::{Block, Marks, Span, TextSpan};

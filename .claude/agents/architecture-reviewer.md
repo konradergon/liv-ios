@@ -20,9 +20,10 @@ mutate (each opens the box, runs ONE transaction, closes) and decode one
 JSON `Snapshot` to render. Layers: `core/` (log, store, values) →
 `services/` (projections, search, import/export, clerk, recurrence,
 projection/vault) → `views/` (display helpers) → `ffi/` (the C ABI, 59
-verbs) → shells (`shell/ios` SwiftUI, the only one; the hand-built macOS
-shell was DELETED on 2026-08-19, and the desktop is the Tauri app in the
-lovable-notes-hub working copy).
+verbs) → shells (`shell/ios` SwiftUI, the ONLY one — the hand-built macOS
+shell was deleted on 2026-08-19, and Tauri was dropped on 2026-08-29,
+owner's word. There is no desktop shell; a second one is a goal, not a
+plan, and picking it is not this repo's open work).
 
 ## Read these before judging anything
 
@@ -84,8 +85,10 @@ Look for these first; each has bitten before.
   done-ness must resolve through the `completes` option, never a hardcoded
   string.
 - **Logic marooned in `ffi/`.** The `with_box` + store-cache layer lives in
-  `ffi/` today, so a Tauri shell that links the crates directly cannot
-  reuse it. Flag anything else drifting there.
+  `ffi/` today, so a shell that links the crates directly rather than
+  through the C ABI cannot reuse it. Flag anything else drifting there.
+  (This was written about the Tauri app, which is dropped; the smell is
+  not — the second shell, whatever it turns out to be, meets it too.)
 - **Convenience picking product shape.** Existing machinery being reused
   because it is cheap, not because it is right. Name it when you see it.
 - **Time.** Civil wall-clock `YYYYMMDDHHMM`, no timezone anywhere. Any code

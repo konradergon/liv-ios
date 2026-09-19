@@ -19,7 +19,7 @@ struct SearchView: View {
     /// link opens search, and the whole `[[id|Name]]` is written for
     /// you. One search screen, two endings; there is no second, smaller
     /// search anywhere in the app.
-    var onPick: ((UInt64, String) -> Void)? = nil
+    var onPick: ((LivEntityID, String) -> Void)? = nil
     /// What was already typed at the door — the `[[kit` in the note.
     var seed: String = ""
 
@@ -27,9 +27,33 @@ struct SearchView: View {
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.dismiss) private var dismissSheet
-    @State private var query = ""
+    /// ONE CONSTRAINT A PICKER MADE. Never derived from the text — the
+    /// core is the only parser (standing rule 4), and this is only ever
+    /// SPELLED, by `LivTerms.term`, at the instant it crosses the seam.
+    struct SearchTerm: Equatable, Identifiable {
+        /// The facet label the core sent: "type", "area".
+        let property: String
+        /// The value label: "note".
+        let value: String
+        var exclude: Bool
+        var id: String { "\(property)=\(value)" }
+    }
+
+    /// WHAT THE PERSON TYPED, and nothing else. Until 2026-09-07 this was
+    /// one `query` that the facet chips wrote INTO, so tapping "note" put
+    /// `type:note` in the search field and tapping it again put
+    /// `-type:note` — the storage format on screen, which is exactly what
+    /// standing rule 5 forbids (owner: "clunky things like 'type:foo'
+    /// appearing in search bar").
+    @State private var words = ""
+    /// WHAT THE PICKERS CHOSE, in tap order. Drawn as chips under the
+    /// field, where you can see and undo them.
+    @State private var terms: [SearchTerm] = []
+    /// The facet menu. Search is a `fullScreenCover`, and the desk's menu
+    /// host lives under it at the root — so this surface hosts its own.
+    @State private var menu: LivMenu?
     /// Raw ranked ids from the core, before the workspace lens.
-    @State private var rawHits: [UInt64] = []
+    @State private var rawHits: [LivEntityID] = []
     /// How many matched in total. The core sends the first 200; without
     /// this a query matching 1,800 things looked like it matched 200.
     @State private var totalHits = 0
@@ -38,8 +62,22 @@ struct SearchView: View {
     @State private var seq = 0
     @FocusState private var focused: Bool
 
+    /// THE QUERY THE CORE GETS — words plus the constraints, spelled by
+    /// the one speller. This string is composed at the seam and nowhere
+    /// else; it is never shown, and never written back into the field.
+    private var raw: String {
+        ([words.trimmingCharacters(in: .whitespacesAndNewlines)]
+            + terms.map { LivTerms.term($0.property, $0.value, exclude: $0.exclude) })
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// THE WORDS, trimmed. `create()` and the find-or-create offer use
+    /// this, and until the split they used the whole query — so with a
+    /// chip lit, "Create" made a scrap whose content was `a type:note`.
+    /// Splitting the state fixed that on the way past.
     private var trimmed: String {
-        query.trimmingCharacters(in: .whitespaces)
+        words.trimmingCharacters(in: .whitespaces)
     }
 
     /// The lens, applied to the CORE's ranked ids — rank order is
@@ -53,7 +91,7 @@ struct SearchView: View {
     /// `liv_search_at` ranked for the typed query, `lensIds` is what
     /// `liv_query_ids_at` admits for the workspace, and this is their
     /// intersection.
-    private var hits: [UInt64] {
+    private var hits: [LivEntityID] {
         guard let lens = workspaces.lensIds else { return rawHits }
         return rawHits.filter { lens.contains($0) }
     }
@@ -72,9 +110,9 @@ struct SearchView: View {
     /// colour and its glyph can never disagree. This used to read
     /// `kinds.first` on its own, which put a task filed under "note" in
     /// the wrong group.
-    private var groups: [(kind: LivKind, ids: [UInt64])] {
+    private var groups: [(kind: LivKind, ids: [LivEntityID])] {
         var order: [LivKind] = []
-        var byKind: [LivKind: [UInt64]] = [:]
+        var byKind: [LivKind: [LivEntityID]] = [:]
         for id in hits {
             guard let row = box.entity(id) else { continue }
             let kind = LivKind.of(row)
@@ -98,47 +136,46 @@ struct SearchView: View {
         }
     }
 
+    /// THE FIELD IS AT THE THUMB (owner, 2026-09-13, with a screen
+    /// recording: *"Search should be more similar to the video"*).
+    ///
+    /// It was at the top with the word "Cancel" beside it — the shape
+    /// every search screen had in 2010, and a reach on a 2,532px phone.
+    /// The reference puts the field at the BOTTOM, directly above the
+    /// keyboard, as a plain pill with a round ✕ beside it, and lets the
+    /// results fill everything above.
+    ///
+    /// That is also this app's own argument, made twice already: the tab
+    /// switcher was moved because it "used to start 700pt away at the top
+    /// of the screen", and the bar has always been at the foot. Search
+    /// was the last surface reaching upward.
+    ///
+    /// WHAT MOVES WITH IT. The lens chip, the constraint line and the
+    /// facet row sit with the field now rather than under the old header.
+    /// They are what you TAP to narrow, so they belong in the same reach
+    /// as the field — and a facet row halfway up the screen while your
+    /// thumb is on the keyboard was the same reach problem one layer
+    /// down.
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                pill
-                Button {
-                    close()
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: LivType.body, weight: .medium))
-                        .foregroundStyle(LivTheme.accent)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close search")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-            if workspaces.lensOn {
-                HStack {
-                    LensChip(label: workspaces.lensLabel)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-            }
-            if !facets.isEmpty {
-                facetRow
-            }
             if trimmed.isEmpty {
-                ScrollView {
-                    EmptyHint(
-                        "Search everything you have",
-                        detail: "Notes, tasks, events, files and people.",
-                        glyph: .everything
-                    )
-                    .padding(.top, 40)
-                }
+                // CENTRED, the way the reference centres its own — not
+                // pinned 40pt under a header that is no longer there.
+                //
+                // NO GLYPH, deliberately, though the reference draws one.
+                // `EmptyHint` lost its glyph and its sentence in rev 66 on
+                // the owner's word about verbose empty states, and the
+                // TYPE lost them so they could not come back one surface
+                // at a time (standing rule 3). Adding one here would
+                // reverse that on a screenshot rather than on his word.
+                Spacer(minLength: 0)
+                EmptyHint("Everything you have")
+                Spacer(minLength: 0)
             } else if hits.isEmpty {
                 // Zero results: the Create row IS the empty state, at the
-                // top of the scroll area so the keyboard never hides it.
+                // head of the results area — which is now the TOP of the
+                // screen rather than just under a header, since the field
+                // moved to the foot.
                 ScrollView {
                     createButton
                         .padding(.horizontal, 16)
@@ -174,10 +211,14 @@ struct SearchView: View {
                                 }
                             }
                         } header: {
+                            // NO KIND DOT. The heading names the kind
+                            // in words and every row under it already
+                            // carries that kind's glyph, so the circle
+                            // was the third telling (polish pass,
+                            // 2026-08-30).
                             SectionLabel(
                                 group.kind == .capture ? "captures" : group.kind.wire,
-                                trailing: "\(group.ids.count)",
-                                dot: group.kind.color
+                                trailing: "\(group.ids.count)"
                             )
                             .textCase(nil)
                             .padding(.horizontal, 16)
@@ -208,23 +249,25 @@ struct SearchView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
             }
+            footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(LivTheme.canvas.ignoresSafeArea())
         .onAppear {
             box.refresh()  // hits render off the entity index
-            if query.isEmpty, !seed.isEmpty {
-                query = seed
+            if words.isEmpty, !seed.isEmpty {
+                words = seed
                 kick(debounce: false)
             }
             DispatchQueue.main.async { focused = true }
         }
-        .onChange(of: query) { _, _ in kick(debounce: true) }
+        .onChange(of: words) { _, _ in kick(debounce: true) }
+        .livMenu($menu)
     }
 
     /// The one exit that carries a result. Picking REPORTS it; searching
     /// lands at the desk. Both then drop the veil.
-    private func open(_ id: UInt64) {
+    private func open(_ id: LivEntityID) {
         if let onPick {
             onPick(id, box.entity(id).map(livRowTitle) ?? "")
             close()
@@ -262,7 +305,7 @@ struct SearchView: View {
     private func create() {
         let typed = trimmed
         box.capture(typed) { id in
-            guard id != 0 else { return }
+            guard !id.isAbsent else { return }
             // Search is lensed, so its create door stamps too (M4).
             workspaces.stamp(id, in: box)
             if let onPick {
@@ -274,12 +317,57 @@ struct SearchView: View {
         }
     }
 
+    /// THE FOOT: what narrows the search, and the field itself, in the
+    /// order you reach them. The chips sit ABOVE the field so the field
+    /// stays welded to the top of the keyboard and nothing moves under
+    /// your thumb as facets arrive and leave.
+    @ViewBuilder private var footer: some View {
+        VStack(spacing: 0) {
+            if workspaces.lensOn {
+                HStack {
+                    LensChip(label: workspaces.lensLabel)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+            // WHAT YOU CHOSE, always on screen — the way back when a
+            // constraint has narrowed the list to nothing and the core
+            // sends no facets to un-tap.
+            constraintLine
+            if !facets.isEmpty {
+                facetRow
+            }
+            HStack(spacing: 10) {
+                pill
+                // A ROUND ✕, not the word "Cancel" (the reference's, and
+                // the reason is the same one that took the words off the
+                // bar in rev 68): a glyph everyone already reads, at a
+                // size a thumb can hit, instead of a word spelling out
+                // what the shape already says.
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: LivType.body, weight: .semibold))
+                        .foregroundStyle(LivTheme.text)
+                        .frame(width: LivRow.touch, height: LivRow.touch)
+                        .background(Circle().fill(LivTheme.panel2))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close search")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+        }
+    }
+
     private var pill: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text3)
-            TextField("Search", text: $query)
+            TextField("Search", text: $words)
                 .font(.system(size: LivType.body))
                 .foregroundStyle(LivTheme.text)
                 .focused($focused)
@@ -287,21 +375,26 @@ struct SearchView: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .onSubmit { kick(debounce: false) }
-            if !query.isEmpty {
+            if !words.isEmpty {
                 Button {
-                    query = ""
+                    words = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.muted)
+                        .foregroundStyle(LivTheme.text2)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
+        .padding(.horizontal, 14)
+        // AS TALL AS THE ✕ BESIDE IT. It was 34 against a 44pt touch
+        // floor — under Apple's minimum, and visibly shorter than every
+        // other control the app puts at the foot.
+        .frame(height: LivRow.touch)
+        // NO BORDER. Rev 83 took the hairline off the filter chips on the
+        // owner's word; a field is the same shape making the same
+        // promise, and a fill either reads as a well or it does not.
         .background(Capsule().fill(LivTheme.panel2))
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 
     /// NARROW BY WHAT IS THERE, not by what you can spell.
@@ -316,27 +409,93 @@ struct SearchView: View {
     /// struck through when it excludes it, and the CORE decides which — so a
     /// query typed by hand lights the same chips as one built by tapping.
     private var facetRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 18) {
-                ForEach(facets) { facet in
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(facet.label)
-                            .font(.system(size: LivType.micro, weight: .medium))
-                            .foregroundStyle(LivTheme.text3)
-                            .textCase(.uppercase)
-                            .kerning(0.6)
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(facets) { facet in
+                HStack(alignment: .center, spacing: 10) {
+                    // THE PROPERTY'S NAME, ON SCREEN. It was 12pt
+                    // uppercase kerned `text3` — the label style the
+                    // polish pass removed everywhere else, under the 14
+                    // floor — and every property but the first sat off
+                    // the right edge of one long scroller. So the screen
+                    // never said what you could narrow by (owner,
+                    // 2026-09-06: "it isn't obvious how").
+                    //
+                    // One row per property, the name first at the margin
+                    // in the app's own heading recipe, values scrolling
+                    // sideways within their row.
+                    Text(facet.label.capitalized)
+                        .font(.system(size: LivType.label, weight: .medium))
+                        .foregroundStyle(LivTheme.text2)
+                        .frame(width: 74, alignment: .leading)
+                        .lineLimit(1)
+                    ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(facet.values) { value in
                                 chip(facet.label, value)
                             }
                         }
+                        .padding(.trailing, 16)
                     }
                 }
+                .frame(height: 38)
             }
-            .padding(.horizontal, 16)
         }
-        .frame(height: 52)
-        .padding(.bottom, 6)
+        .padding(.leading, 16)
+        .padding(.bottom, 4)
+    }
+
+    /// WHAT YOU CHOSE, under the field, where you can see it and undo it.
+    ///
+    /// This is the line the old design had nowhere to put, so it put it
+    /// in the search field as grammar. A constraint is a chip: tap it for
+    /// the verbs, tap its ✕ to drop it.
+    @ViewBuilder private var constraintLine: some View {
+        if !terms.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(terms) { term in
+                        Button {
+                            menu = termMenu(term)
+                        } label: {
+                            HStack(spacing: 5) {
+                                if term.exclude {
+                                    Text("not")
+                                        .foregroundStyle(LivTheme.text3)
+                                }
+                                Text(term.value)
+                                    .foregroundStyle(LivTheme.text)
+                                Button {
+                                    drop(term)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: LivChip.glyph, weight: .semibold))
+                                        .foregroundStyle(LivTheme.text3)
+                                        .frame(width: 22, height: LivChip.tall)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel("Remove \(term.value)")
+                            }
+                            .font(.system(size: LivType.label, weight: .medium))
+                            .padding(.leading, 11)
+                            .padding(.trailing, 2)
+                            .frame(height: LivChip.tall)
+                            .livGlass(in: Capsule())
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .livDoor()
+                        .accessibilityLabel(
+                            "\(term.property) \(term.value), "
+                                + (term.exclude ? "hidden" : "only") + ". Change")
+                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .frame(height: LivChip.tall + 8)
+            .animation(LivMotion.pick, value: terms)
+        }
     }
 
     private func chip(_ key: String, _ v: LivFacetValue) -> some View {
@@ -344,53 +503,132 @@ struct SearchView: View {
             cycle(key, v)
         } label: {
             HStack(spacing: 5) {
+                // "not note", not a red strikethrough. Red is the
+                // palette's one warning word and hiding notes from a
+                // search is not a warning; a struck word reads as DONE
+                // in a list app besides. The word says which state it is
+                // in, and both chosen states share ink and weight.
+                if v.excluded {
+                    Text("not").foregroundStyle(LivTheme.text3)
+                }
                 Text(v.label)
-                    .strikethrough(v.excluded, color: LivTheme.red)
                 Text("\(v.count)")
-                    .font(.system(size: LivType.micro, weight: .medium).monospacedDigit())
-                    .foregroundStyle(v.active ? LivTheme.onAccent.opacity(0.7) : LivTheme.text3)
+                    .font(.system(size: LivType.caption).monospacedDigit())
+                    .foregroundStyle(LivTheme.text3)
             }
-            .font(.system(size: LivType.label, weight: v.active ? .semibold : .regular))
-            .foregroundStyle(
-                v.excluded ? LivTheme.red : (v.active ? LivTheme.onAccent : LivTheme.text))
-            .padding(.horizontal, 9)
-            .frame(height: 28)
+            // CHOSEN IS INK AND WEIGHT, not a saturated capsule. The
+            // same mark the Tasks filter row, the Inbox lens and the day
+            // strip use — this was the last chip in the app still
+            // filling itself with the accent and inverting its text
+            // (polish pass, 2026-08-31).
+            .font(
+                .system(
+                    size: LivType.label,
+                    weight: (v.active || v.excluded) ? .medium : .regular))
+            .foregroundStyle((v.active || v.excluded) ? LivTheme.text : LivTheme.text2)
+            .padding(.horizontal, 11)
+            .frame(height: LivChip.tall)
             .background(
-                Capsule().fill(v.active ? LivTheme.accent : LivTheme.panel2))
+                Capsule().fill((v.active || v.excluded) ? LivTheme.panel2 : .clear))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .livDoor()
+        // THE SECOND DOOR to the verbs, for someone who already knows:
+        // hold a chip to hide its value without including it first. The
+        // same simultaneous gesture the bar's `+` uses, so the tap still
+        // fires (Bar.swift).
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                menu = termMenu(
+                    SearchTerm(property: key, value: v.label, exclude: v.excluded))
+            })
+        .accessibilityAction(named: "More") {
+            menu = termMenu(
+                SearchTerm(property: key, value: v.label, exclude: v.excluded))
+        }
         .accessibilityLabel(
             "\(key) \(v.label), \(v.count)"
                 + (v.active ? ", included" : v.excluded ? ", excluded" : ""))
     }
 
-    /// include -> exclude -> off, the cycle the core documents (bp3 a19).
+    /// ONE TAP INCLUDES, and tapping the same chip again drops it.
     ///
-    /// This does NOT parse the query. One grammar, one parser, and the
-    /// parser is in Rust (`services::search::parse`); a second one here
-    /// would be the defect standing rule 4 names. All this does is remove
-    /// the exact spellings THIS function produces and append the next
-    /// state's. A term the user typed in some other equivalent spelling is
-    /// left alone — and the chip still draws correctly, because `active`
-    /// and `excluded` come from the core, not from reading the text back.
+    /// The old gesture was a CYCLE — include, then exclude, then off —
+    /// which cannot be labelled before you tap it, and whose second tap
+    /// flipped the results to the opposite of the first (owner,
+    /// 2026-09-06: "'-type:foo' to exclude is not good on a phone and
+    /// isn't obvious"). Excluding is a named verb in a menu now, so a
+    /// tap only ever means one thing.
     private func cycle(_ key: String, _ v: LivFacetValue) {
-        let include = LivTerms.term(key, v.label)
-        let exclude = LivTerms.term(key, v.label, exclude: true)
-        var q = query
-        for spelling in [exclude, include] {
-            q = q.replacingOccurrences(of: spelling, with: " ")
+        if v.active {
+            drop(SearchTerm(property: key, value: v.label, exclude: false))
+        } else {
+            set(SearchTerm(property: key, value: v.label, exclude: false))
         }
-        q = q.split(separator: " ").joined(separator: " ")
-        let next = v.active ? exclude : (v.excluded ? "" : include)
-        query = next.isEmpty ? q : (q.isEmpty ? next : q + " " + next)
+    }
+
+    /// THE THREE VERBS, in words, on a chip you can see. Reached by
+    /// tapping the constraint chip under the field, or by holding a chip
+    /// in the band.
+    private func termMenu(_ term: SearchTerm) -> LivMenu {
+        let live = terms.first { $0.id == term.id }
+        return LivMenu(
+            id: "facet-\(term.id)",
+            from: .bottom,
+            subject: term.value,
+            subjectDetail: term.property.capitalized,
+            items: [
+                LivMenuItem(
+                    label: "Only \(term.value)",
+                    selected: live?.exclude == false
+                ) { set(SearchTerm(property: term.property, value: term.value, exclude: false)) },
+                LivMenuItem(
+                    label: "Hide \(term.value)",
+                    selected: live?.exclude == true
+                ) { set(SearchTerm(property: term.property, value: term.value, exclude: true)) },
+                LivMenuItem(label: "Any \(term.property)") {
+                    clear(property: term.property)
+                },
+            ])
+    }
+
+    /// Put a constraint in, replacing whatever that PROPERTY said — one
+    /// value per property is what a picker means, and it makes tapping a
+    /// sibling a pivot rather than an accumulation.
+    private func set(_ term: SearchTerm) {
+        terms.removeAll { $0.property == term.property }
+        terms.append(term)
+        kick(debounce: false)
+    }
+
+    private func drop(_ term: SearchTerm) {
+        terms.removeAll { $0.id == term.id }
+        kick(debounce: false)
+    }
+
+    /// "Any type" — the constraint goes, and so does a hand-typed term
+    /// for the same property, in the two canonical spellings this file
+    /// produces. Anything spelled otherwise is the person's own text and
+    /// is left exactly as they wrote it.
+    private func clear(property: String) {
+        terms.removeAll { $0.property == property }
+        for value in facets.first(where: { $0.label == property })?.values ?? [] {
+            for spelling in [
+                LivTerms.term(property, value.label, exclude: true),
+                LivTerms.term(property, value.label),
+            ] {
+                words = words.replacingOccurrences(of: spelling, with: " ")
+            }
+        }
+        words = words.split(separator: " ").joined(separator: " ")
         kick(debounce: false)
     }
 
     private func kick(debounce: Bool) {
         seq += 1
         let ticket = seq
-        let q = trimmed
+        let q = raw
         guard !q.isEmpty else {
             rawHits = []
             facets = []
@@ -426,22 +664,27 @@ private struct SearchCreateRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .fill(LivTheme.accentSoft)
+            // NO PLATE. A tinted tile behind a `+` that sits directly
+            // beside the word "Create" is a box drawn for its own sake:
+            // the row is already a row, and the words already say what
+            // the button does.
+            // PLAIN INK, NOT ACCENT. The row shape is the button — a
+            // full-width 52pt row with a `+` in front of it, which is
+            // exactly the library panel's "New filter" door. The accent
+            // was the only thing making it read as a hyperlink instead
+            // (owner, 2026-09-15), and it was the last of the nine.
+            Image(systemName: "plus")
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
                 .frame(width: 24, height: 24)
-                .overlay(
-                    Image(systemName: "plus")
-                        .font(.system(size: LivType.label, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
-                )
             (Text("Create \"") + Text(query).fontWeight(.semibold)
                 + Text("\""))
                 .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.accent)
+                .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
-        .frame(minHeight: 42)
+        .frame(minHeight: LivRow.height)
         .accessibilityLabel("Create \(query)")
     }
 }
@@ -454,19 +697,20 @@ private struct SearchHitRow: View {
     var body: some View {
         HStack(spacing: 9) {
             // What the hit IS, before what it says.
-            IconChip(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 24)
+            LivIcon(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 22)
             Text(livRowTitle(row))
-                .font(.system(size: LivType.body))
+                .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let due = row.due {
-                Text(dueLabel(due))
-                    .font(.system(size: LivType.caption).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
+                // The app's one second-voice recipe. This was a fifth
+                // hand-rolled copy of it, and it stayed at caption when
+                // the other four moved (2026-09-05).
+                LivRowFact(text: dueLabel(due))
             }
         }
-        .frame(minHeight: 42)
+        .frame(minHeight: LivRow.height)
     }
 
     private func dueLabel(_ due: Int64) -> String {

@@ -1,0 +1,28 @@
+* UX
+
+** Easy way to bring up properties in Note editor is gone.
+
+Before we had the right panel you swiped into. While nice it was inconsistent,
+so the right thing of having a card was implemented. Problem is that
+selecting properties from a menu is too slow and/or inconvenient since it's central in
+the app. Make it faster to get to properties in Note viewer. Also, the note property
+interface seems different from say task properties; you can't rename it in properties.
+
+** Can't search for things by property
+
+As you see in screenshots, I assigned note "First note" to area "Testjunk", but then in search, "test..." only
+gave the literal property and "First note" did not appear.
+
+* Performance
+
+** Date picker is laggy like before
+
+The picker that comes up when you select date title in calendar. It is low fps and laggy. Don't know what's
+going on there.
+
+* UI
+
+** Empty area at top of each view.
+
+The area is where the panel button is and reserved for that, but is wasted space
+and looks odd when the buttons are dynamically hidden.  See Throwaway/Todo/1.PNG
