@@ -385,8 +385,19 @@ enum NoteBytes {
                 box.setContent(
                     id, spansJson: SpanText.json(spans),
                     base: doc?.fingerprint ?? 0
-                ) { status, _ in
-                    done(status == 1 ? id : id)
+                ) { _, _ in
+                    // THE NOTE LANDED EVEN IF ITS BODY DID NOT. It was
+                    // created and named two lines up, so it exists and
+                    // the caller has to hear about it — an id withheld
+                    // here is a note nobody can find, and `adopt` would
+                    // also never reach its count and never open
+                    // anything. A failed body write reports itself
+                    // through the write path.
+                    //
+                    // This read `status == 1 ? id : id` — a ternary with
+                    // one answer, left by a sweep that replaced the `0`
+                    // arm when ids stopped being numbers.
+                    done(id)
                 }
             }
         }

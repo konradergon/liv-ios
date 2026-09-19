@@ -160,7 +160,7 @@ private final class FurnishPass {
     }
 
     private func addOptions(to property: LivEntityID, skipping held: [String]) {
-        guard property != 0 else { return }
+        guard !property.isAbsent else { return }
         for name in Furnish.areaNames {
             guard
                 !held.contains(where: {
