@@ -334,6 +334,23 @@ final class WorkspaceModel: ObservableObject {
 
     /// THE DESK: the documents open in one workspace. One key, because
     /// there is one desk (2026-08-28).
+    ///
+    /// **EVERY KEY BELOW CHANGED ITS NAME ON 2026-09-19** and none of
+    /// them is versioned for it, deliberately. `LivIDText.written` is
+    /// the whole id now rather than its low half in decimal (slice 5b),
+    /// so `desk.v3.<workspace>` is spelled differently and the old keys
+    /// are simply not found.
+    ///
+    /// That is the conversion, not an accident: what those keys held was
+    /// tab tokens written in the same broken form, so reading them would
+    /// restore ids pointing at nothing — a desk full of rows that open
+    /// nothing is worse than an empty one. A tab is device state, which
+    /// is the reason this is affordable: the notes are all still there,
+    /// and the first thing you open makes a new desk.
+    ///
+    /// The stale values are left on disk rather than deleted. They cost
+    /// a few hundred bytes and they are the only evidence of what a box
+    /// looked like before the swap.
     static func deskKey(_ workspace: LivEntityID) -> String {
         "desk.v3.\(LivIDText.written(workspace))"
     }

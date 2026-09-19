@@ -80,11 +80,32 @@ typealias LivEntityID = LivID
 /// one of them — the reminder — not even that. So the format is one
 /// function AND the type refuses to stringify itself (see `LivID`).
 enum LivIDText {
-    /// The written form. **Decimal, unchanged** — it is what every one of
-    /// those places already holds, and changing it would unlink every
-    /// note and orphan every saved plane at once.
+    /// The written form. **HEX, all sixteen bytes** (slice 5b,
+    /// 2026-09-19).
+    ///
+    /// It was `String(id.core)` — the low eight bytes, in decimal — and
+    /// while the shell read a `core/` id that WAS the id. Since the
+    /// engine swap it is half of one, and the half it keeps is the half
+    /// that carries no timestamp. Everything written through here was
+    /// being written down wrong:
+    ///
+    ///  - the desk's saved tabs and its open document (`Plane`), so a
+    ///    relaunch restored ids pointing at nothing;
+    ///  - a reminder's identifier and payload (`Notify`), so tapping one
+    ///    opened nothing;
+    ///  - the outbox ledger's keys (`Outbox`);
+    ///  - the tasks view's filter id (`engineTasks`), which the ABI
+    ///    parses with `parse_id` — 32 hex characters or nothing — so
+    ///    filtering by status or project quietly did no filtering;
+    ///  - a link added from the properties card (`Links`), which crosses
+    ///    as `#<id>` and is read by the engine's `thing_named` with
+    ///    `from_hex`, so the write was refused.
+    ///
+    /// A truncated id is not a wrong id you can spot. It is a plausible
+    /// one for something that does not exist, which is why five separate
+    /// surfaces failed silently and none of them looked related.
     static func written(_ id: LivEntityID) -> String {
-        String(id.core)
+        id.hex
     }
 
     // ---- the `[[id]]` token's id -----------------------------------
@@ -120,8 +141,18 @@ enum LivIDText {
 
     /// And read back. `nil` for anything that is not one — a token that
     /// does not parse is text, not a broken link.
+    ///
+    /// **A DECIMAL LEFT BY AN OLDER BUILD IS NOT AN ID, and reads as
+    /// nil on purpose** (slice 5b). Those are `core/` ids, or engine ids
+    /// with their top half thrown away; either way the box they name is
+    /// not this box. Converting them would hand back a plausible id for
+    /// something that does not exist, which is the failure this whole
+    /// slice is about. Every caller already treats nil as "not one of
+    /// ours" and drops it, so dead state clears itself on the way
+    /// through: a stale reminder opens nothing instead of the wrong
+    /// note, a stale ledger key is skipped, a stale tab is forgotten.
     static func read(_ text: some StringProtocol) -> LivEntityID? {
-        UInt64(text).map(LivEntityID.init(core:))
+        LivEntityID(hex: String(text))
     }
 
     // ---- an id stored as a NUMBER ---------------------------------------
@@ -177,7 +208,9 @@ enum LivIDText {
 //
 // So the type refuses to stringify itself. `\(id)` is now a compile
 // error everywhere, and the only ways to write an id down are
-// `LivIDText.written` (the decimal form on disk) and `.hex` (the ABI's).
+// `LivIDText.written` (the form on disk — hex since slice 5b) and `.hex`
+// (the ABI's, which is now the same sixteen bytes; they stay two names
+// because one is a format this app owns and the other is a contract).
 // Standing rule 3: a rule that matters lives in a type, not in prose —
 // and the prose above this line had been there since slice 3.
 struct LivID: Hashable, Comparable, Codable, ExpressibleByIntegerLiteral {
@@ -377,7 +410,8 @@ func livIdSelfCheck() -> [String] {
     // in this file: it is the format inside a note's `[[…]]` token, inside
     // a `related` cell, and inside every saved plane's UserDefaults key.
     // A change to it that nobody noticed would unlink every note.
-    for n: LivEntityID in [0, 1, 4155, 4_294_967_296, LivEntityID.max] {
+    for hex in cases {
+        guard let n = LivID(hex: hex) else { continue }
         let text = LivIDText.written(n)
         if LivIDText.read(text) != n {
             fail.append(
@@ -390,15 +424,22 @@ func livIdSelfCheck() -> [String] {
             fail.append("read a non-id as one: \(notAnId.isEmpty ? "(empty)" : notAnId)")
         }
     }
-    // The editor's token is the written form, not the description.
-    if LivIDText.written(4155) != "4155" {
-        fail.append("the written form is not decimal — every [[…]] token just moved")
+    // THE WRITTEN FORM IS ALL SIXTEEN BYTES (slice 5b). It was the low
+    // eight in decimal, which was the whole id while the shell read a
+    // `core/` box and is half of one now — the half with no timestamp in
+    // it. Five surfaces were writing ids down wrong and every one of
+    // them failed silently; see `LivIDText.written`.
+    if LivIDText.written(LivID(hex: "0199a1b2c3d47000800a0b0c0d0e0f10")!) != "0199a1b2c3d47000800a0b0c0d0e0f10" {
+        fail.append("the written form is not the whole id — five surfaces just broke again")
     }
-    // The scratch workspace's sentinel goes into three UserDefaults keys.
-    // It round-trips only because it is a `core` id; sixteen ones would
-    // not, and nothing else in the app would have said so.
-    if LivIDText.read(LivIDText.written(LivEntityID.max)) != LivEntityID.max {
-        fail.append("the scratch sentinel does not survive its own written form")
+    // A DECIMAL LEFT BY AN OLDER BUILD IS NOT AN ID. It names something
+    // in a box that is no longer this box, and reading it back as one
+    // would hand every caller a plausible id for a thing that does not
+    // exist. Callers drop a nil, which is how dead state clears itself.
+    for legacy in ["4155", "0", "18446744073709551615"] {
+        if LivIDText.read(legacy) != nil {
+            fail.append("read a core-era decimal as an id: \(legacy)")
+        }
     }
 
     // The stored form, in a scratch suite of its own so the real key is

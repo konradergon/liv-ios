@@ -396,8 +396,25 @@ struct DeskPlanes {
         let used = stored["used"] as? [String: Int] ?? [:]
         var plane = DeskPlane()
         for token in stored["ids"] as? [String] ?? [] {
-            let content: DeskTabContent =
-                LivIDText.read(token).map { .entity($0) } ?? .position(token)
+            // A DEAD ID IS DROPPED, NOT DEMOTED TO A POSITION (slice 5b,
+            // 2026-09-19). "Anything that is not an id is a position" was
+            // right while ids were decimal and positions were words. Now
+            // an id is 32 hex characters, and a token left by a build
+            // that wrote decimal is neither: it names an entity in a box
+            // that is no longer this one. Calling it a position would
+            // mint a tab holding the place "1734829" — a row that opens
+            // nothing and cannot be named.
+            //
+            // A position is a token this app's own vocabulary knows
+            // (`LivPosition`), so that is what it is tested against.
+            let content: DeskTabContent
+            if let id = LivIDText.read(token) {
+                content = .entity(id)
+            } else if LivPosition.isToken(token) {
+                content = .position(token)
+            } else {
+                continue
+            }
             plane.tabs.append(
                 DeskTab(
                     id: UUID(), content: content,

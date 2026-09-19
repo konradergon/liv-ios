@@ -2255,16 +2255,22 @@ struct LivResync: Decodable {
 
 /// An id as the ENGINE spells it: 32 hex characters.
 ///
-/// **Not `LivIDText.written`, which is decimal and is for the SHELL's own
-/// storage** — notification identifiers, `UserDefaults` keys, the outbox
-/// ledger. Those are the shell talking to itself, and changing their
-/// format would orphan everything already written.
+/// **The same sixteen bytes as `LivIDText.written` since slice 5b**, and
+/// still two names on purpose: this one is a CONTRACT with C, that one is
+/// a format this app owns for its own storage — notification
+/// identifiers, `UserDefaults` keys, the outbox ledger, a `[[…]]` token.
+/// Two things that agree today can be changed for different reasons
+/// tomorrow, and the ABI is the one that may not move.
 ///
-/// Using `written` here was a real bug and a quiet one. It is
-/// `String(id.core)` — the low 64 bits, in decimal — and the engine's
-/// `parse_id` wants 32 hex characters, so every id the shell handed to C
-/// came back LIV_ERR_ARG. Reads that take no id worked, which is exactly
-/// why all five screens rendered and nothing could be created or edited.
+/// Using `written` here was a real bug and a quiet one, twice over. It
+/// was `String(id.core)` — the low 64 bits, in decimal — and the
+/// engine's `parse_id` wants 32 hex characters, so every id the shell
+/// handed to C came back LIV_ERR_ARG. Reads that take no id worked,
+/// which is exactly why all five screens rendered and nothing could be
+/// created or edited. The second time was quieter still: three call
+/// sites kept passing `written` after this one was fixed (the tasks
+/// filter, and both ends of a link in the properties card), and those
+/// verbs simply did nothing rather than failing loudly.
 func engineId(_ id: LivEntityID) -> String { id.hex }
 
 
@@ -2695,7 +2701,13 @@ extension BoxModel {
     /// Tasks by band. `filter` is 0 all, 1 status, 2 project.
     func engineTasks(filter: Int32 = 0, filterId: LivID? = nil, today: Int32,
                      _ done: @escaping ([LivTaskGroup]?, String?) -> Void) {
-        let f = filterId.map(LivIDText.written)
+        // `engineId`, NOT `written`: this id crosses to C, where
+        // `parse_id` takes 32 hex characters or nothing. It was the
+        // shell's storage form, so `named()` never resolved and the
+        // status and project filters quietly returned every task (slice
+        // 5b, 2026-09-19). The two forms agree today; the reason they
+        // are two names is that this one may not move.
+        let f = filterId.map(engineId)
         engineRead([LivTaskGroup].self, { to, out in
             liv_view_tasks(to, filter, f, today, nil, out)
         }, done)

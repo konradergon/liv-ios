@@ -172,6 +172,28 @@ struct CalendarPosition: Codable, Equatable {
 
 /// Turning a saved position into words, and back.
 enum LivPosition {
+    /// IS THIS TOKEN ONE OF OURS? (slice 5b, 2026-09-19.)
+    ///
+    /// A saved tab holds either an entity's id or a position's token,
+    /// and `readPlane` used to tell them apart by "an id is a number, so
+    /// anything else is a position". Ids are 32 hex characters now, so
+    /// that test would call a decimal left by an older build a position
+    /// and mint a tab holding the place "1734829" — a row that opens
+    /// nothing and cannot be named.
+    ///
+    /// Every token this app writes is either a lens's raw value or one
+    /// of the four position types' own `token`, and all of them parse
+    /// back. Asking each of them is the honest test, and it is the same
+    /// question `title` and `detail` already ask one view at a time.
+    static func isToken(_ token: String) -> Bool {
+        if token.isEmpty { return true }  // Notes' one position, the list
+        if InboxLens(rawValue: token) != nil { return true }
+        if TasksPosition(token: token).token == token { return true }
+        if TodayPosition(token: token).token == token { return true }
+        if CalendarPosition(token: token).token == token { return true }
+        return false
+    }
+
     /// Where a view opens when its plane has no tab yet.
     ///
     /// A plane is born EMPTY — the same as Notes, where no tabs has

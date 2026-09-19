@@ -161,13 +161,17 @@ struct LinksSection: View {
             // `#<id>` is the ABI's own grammar for "a reference to this"
             // (services parses it with `trim_start_matches('#')`), not a
             // string anyone reads. It is a write, not a label.
-            box.removeCell(id, "related", "#\(LivIDText.written(target))") { _ in load() }
+            // `engineId`, not `written`: this value crosses to C and the
+        // engine reads it with `thing_named`, which is `from_hex` past
+        // the `#`. The shell's storage form was decimal, so both ends of
+        // a link in the properties card were refused (slice 5b).
+        box.removeCell(id, "related", "#\(engineId(target))") { _ in load() }
         }
     }
 
     private func link(to target: LivEntityID) {
         guard target != 0, target != id else { return }
-        box.addCell(id, "related", "#\(LivIDText.written(target))") { _ in load() }
+        box.addCell(id, "related", "#\(engineId(target))") { _ in load() }
     }
 
     private func open(_ link: LinkRow) {
