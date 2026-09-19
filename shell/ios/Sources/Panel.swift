@@ -467,25 +467,34 @@ struct ViewCounts {
     init(box: BoxModel, lens: WorkspaceModel) {
         let now = Civil.todayDay()
         for row in box.entities.values where row.trashed != true {
+            // THE INBOX IS COUNTED BEFORE THE LENS, because the Inbox
+            // LIST ignores the workspace and always has (design/ios.md
+            // M4: an unfiled thing must be reachable from every
+            // workspace, or a capture made under the wrong lens appears
+            // to vanish). Counting it after the gate is how the panel
+            // came to say 8 while the screen said nothing — twice, in
+            // two different shapes (2026-09-15, again 2026-09-18). A
+            // count beside a row is a promise about the list that row
+            // opens, so it obeys that list's rule, not this loop's.
+            if livIsUnfiled(row) { inbox += 1 }
+
             // The same gate every surface uses, so the number beside a
             // view is the number of rows that view will show.
             guard lens.admits(row) else { continue }
             everything += 1
             // THE SAME TEST THE LIST USES: a page, not a record.
             if TabShape.of(row) != .record { notes += 1 }
-            if !(row.cells ?? []).contains(where: { $0.property == "area" && !($0.value ?? "").isEmpty }) {
-                unfiled += 1
-            }
+            // THE ROW'S OWN FIELD, not its cells. `cells` is nil until
+            // something asks the box for that row, so on a fresh launch
+            // this counted EVERY item as unfiled — "312 items · 312
+            // unfiled" — and then drifted down as other screens fetched.
+            // `area` is on the row the moment the row exists.
+            if row.area == nil { unfiled += 1 }
             switch LivKind.of(row) {
             case .task: tasks += 1
             case .event: events += 1
             default: break
             }
-            // THE SAME PREDICATE THE INBOX LISTS BY, not a second
-            // reading of the same pile — see `livIsScrap`. This counted
-            // every `.capture` including the empty ones, while the
-            // screen asked for words in it as well.
-            if livIsScrap(row) { inbox += 1 }
             // Today counts what is DUE today or earlier and still open —
             // the same question the Today surface asks.
             if livCanTick(row), let due = row.due, due > 0, Civil.day(of: due) <= now {

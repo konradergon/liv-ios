@@ -369,22 +369,17 @@ struct EntityInspector: View {
         // 2026-08-04).
         let summary = proposal.reason?.isEmpty == false
             ? proposal.reason!
-            : (proposal.commands ?? []).prefix(3)
-                .compactMap { c in
-                    [c.property, c.value].compactMap { $0 }.filter { !$0.isEmpty }
-                        .joined(separator: " ")
-                }
-                .joined(separator: ", ")
+            : (proposal.proposed ?? "")
         return HStack(alignment: .center, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
-                // The diff: what would change, stated as chips.
-                HStack(spacing: 5) {
-                    ForEach(
-                        Array((proposal.commands ?? []).prefix(3).enumerated()),
-                        id: \.offset
-                    ) { _, command in
-                        commandChip(command)
-                    }
+                // WHAT IT WOULD WRITE, as one chip. It was up to three
+                // +/− chips off a command list the engine has never
+                // sent, so this row has drawn its reason and nothing
+                // else since 2026-09-14 (found 2026-09-18). One word is
+                // what the wire carries and what a person needs beside
+                // the sentence: the answer, then why.
+                if let word = proposal.proposed, !word.isEmpty {
+                    ValueChip(word)
                 }
                 if let reason = proposal.reason, !reason.isEmpty {
                     Text(reason)
@@ -421,19 +416,6 @@ struct EntityInspector: View {
             .accessibilityLabel("Apply suggestion: \(summary)")
         }
         .frame(minHeight: LivRow.tall)
-    }
-
-    @ViewBuilder private func commandChip(_ command: ProposalCommandRow) -> some View {
-        let sign = (command.kind == "remove" || command.kind == "trash") ? "−" : "+"
-        let label = [command.property, command.value]
-            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-        if !label.isEmpty {
-            ValueChip("\(sign) \(label)")
-        } else if let kind = command.kind, !kind.isEmpty {
-            // A merge proposal's Trash/Redirect legs carry no property or
-            // value — the verb itself is the diff (audit, 2026-08-04).
-            ValueChip("\(sign) \(kind)")
-        }
     }
 
     // MARK: due — a row even when absent

@@ -57,17 +57,19 @@ struct ProposalRow: Decodable, Identifiable {
     var fingerprint: UInt64? = nil
     var reason: String? = nil
     var author: String? = nil
-    /// The structured writes this proposal makes — the diff's source.
-    var commands: [ProposalCommandRow]? = nil
-}
-
-/// One command of a proposal, for the +/− diff.
-struct ProposalCommandRow: Decodable {
-    var kind: String? = nil  // add | remove | trash | redirect | create | restore
-    var property: String? = nil
-    var value: String? = nil
-    var valueKind: String? = nil
-    var refTarget: LivEntityID? = nil
+    /// THE ONE WORD IT WOULD WRITE — an area, a status, a priority — or
+    /// nil when the proposal has no one-word answer (`liv_sweep`'s
+    /// `value`, 2026-09-19).
+    ///
+    /// It replaces `commands: [ProposalCommandRow]?`, a structured diff
+    /// the engine never sent: since the swap on 2026-09-14 every
+    /// proposal was assembled with `commands: nil`, so the Inbox's
+    /// filter on `commands.first.kind == "add"` emptied the Tidy lens
+    /// entirely and the clerk's guess chip could not draw. Five days of
+    /// a screen that had nothing to show while the clerk was running.
+    /// The +/− chips that list fed were never rendered on this shell
+    /// either — `reason` is what the app actually reads out.
+    var proposed: String? = nil
 }
 
 /// The assist switch: the entity the toggle writes to, and the switch
@@ -604,7 +606,14 @@ final class BoxModel: ObservableObject {
                     fingerprint: $0.print,
                     reason: $0.reason,
                     author: $0.proposer,
-                    commands: nil)
+                    // THE ENGINE SHIPS NO COMMAND LIST, and the shell
+                    // stopped pretending otherwise on 2026-09-19. A
+                    // proposal crosses as what it is about, why, and the
+                    // one word it would write; the +/− diff the command
+                    // list existed for was never drawn on this shell.
+                    // The Inbox filtered on `commands.first.kind ==
+                    // "add"` for five days and so showed nothing at all.
+                    proposed: $0.value)
             },
             assist: AssistRow(
                 id: nil, on: assistOn,
@@ -2102,6 +2111,12 @@ struct LivSuggestion: Decodable, Identifiable {
     var print: UInt64?
     var proposer: String?
     var reason: String?
+    /// The WORD it would write — the area's name, the status, the
+    /// priority (`liv_sweep`, 2026-09-19). `reason` says why in a
+    /// sentence; this is the answer on its own, which is what a chip
+    /// beside a row can wear. Optional, as every wire field must be: a
+    /// proposal whose value has no one-word form sends null.
+    var value: String?
     var id: String { "\(engineId(entity ?? .absent)).\(print ?? 0)" }
 }
 

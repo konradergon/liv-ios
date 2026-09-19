@@ -55,9 +55,13 @@ struct InboxView: View {
     /// made under the wrong lens appears to vanish. This is a stated
     /// safety rule, not an oversight; do not "fix" it.
     private var scraps: [EntityRow] {
-        (box.snap?.everything ?? [])
-            .compactMap { box.entity($0) }
-            .filter(livIsScrap)
+        // THE INDEX, NOT A CELL FETCH. `box.entity(id)` asks the box for
+        // one row's cells, so mapping it over every live id kicked off a
+        // `liv_cells` call for the whole box on this screen's first
+        // render — for rows it does not draw — and republished once per
+        // answer. `area` and `hasBody` are on the row already.
+        box.rows
+            .filter(livIsUnfiled)
             .sorted {
                 let a = $0.created ?? 0
                 let b = $1.created ?? 0
@@ -76,9 +80,16 @@ struct InboxView: View {
         // pencilled in, and two lenses both asking it would make the
         // Inbox count one decision twice.
         let unrouted = Set(scraps.map(\.id))
+        // NO SHAPE GATE. It kept only proposals whose first command was
+        // an `add`, and since the engine swap on 2026-09-14 no proposal
+        // has carried commands at all — so this lens has been empty for
+        // five days while the clerk swept five proposers (found
+        // 2026-09-18). The gate guarded an accept seam that no longer
+        // exists: accepting is `liv_accept` by fingerprint, which
+        // re-derives the proposal on the engine and takes whatever shape
+        // it is.
         return (box.snap?.inbox ?? []).filter {
-            ($0.commands?.first?.kind ?? "") == "add"
-                && !($0.author == "area" && unrouted.contains($0.entity ?? 0))
+            !($0.author == "area" && unrouted.contains($0.entity ?? 0))
         }
     }
 
@@ -88,7 +99,7 @@ struct InboxView: View {
     /// about Sam belongs where Sam is filed (`clerk.rs`, `propose_area`).
     private func suggestedArea(_ row: EntityRow) -> (p: ProposalRow, area: String)? {
         guard let p = box.proposals(for: row.id).first(where: { $0.author == "area" }),
-            let area = p.commands?.first?.value, !area.isEmpty
+            let area = p.proposed, !area.isEmpty
         else { return nil }
         return (p, area)
     }
@@ -428,15 +439,26 @@ struct InboxView: View {
                 file(row, under: name)
             }
         }
-        items.append(
-            LivMenuItem(label: "Not a note…", symbol: "ellipsis.circle", chevron: true) {
-                desk.menu = kindMenu(row)
-            })
+        // THE KIND DOOR IS ONLY FOR A THING WITH NO KIND. Since the
+        // Inbox became the unfiled queue (2026-09-19) a task or an event
+        // can stand in this list, and for those the card has exactly one
+        // question — where does it go. What a thing IS, once it is
+        // something, is changed on its own card, not behind the filing
+        // menu.
+        let untyped = LivKind.of(row) == .capture
+        if untyped {
+            items.append(
+                LivMenuItem(label: "Not a note…", symbol: "ellipsis.circle", chevron: true) {
+                    desk.menu = kindMenu(row)
+                })
+        }
         return LivMenu(
             id: "route-\(LivIDText.written(row.id))",
             from: .bottom,
             subject: displayTitle(row),
-            subjectDetail: "Unfiled capture — where does it go?",
+            subjectDetail: untyped
+                ? "Unfiled capture — where does it go?"
+                : "Unfiled \(LivKind.of(row).word) — where does it go?",
             items: items)
     }
 
@@ -463,6 +485,17 @@ struct InboxView: View {
     /// The type goes first so a failure there files nothing, rather
     /// than leaving an area on a thing with no kind.
     private func file(_ row: EntityRow, under area: String) {
+        // A ROW THAT ALREADY KNOWS WHAT IT IS KEEPS ITS KIND. Filing
+        // answers WHERE; only a thing with no kind at all also needs
+        // WHAT. Since the Inbox became the unfiled queue (2026-09-19) an
+        // unanswered task or event can stand in this list, and writing
+        // "note" over it would answer a question nobody asked — and lose
+        // the row's status or its date along with its kind.
+        guard LivKind.of(row) == .capture else {
+            return box.set(row.id, "area", area) { ok in
+                ok ? flash("Filed under \(area)", undo: 1) : refused()
+            }
+        }
         box.setType(row.id, "note") { ok in
             guard ok else { return refused() }
             box.set(row.id, "area", area) { ok in
@@ -479,6 +512,11 @@ struct InboxView: View {
     private func fileSuggested(_ row: EntityRow, _ p: ProposalRow, under area: String) {
         box.accept(p) { ok in
             guard ok else { return refused() }
+            // Same rule as `file`: the consent lands the area, and only
+            // an untyped thing also gets a kind.
+            guard LivKind.of(row) == .capture else {
+                return flash("Filed under \(area)", undo: 1)
+            }
             box.setType(row.id, "note") { ok in
                 ok ? flash("Filed under \(area)", undo: 2) : flash("Area \(area) set", undo: 1)
             }
@@ -490,15 +528,27 @@ struct InboxView: View {
     private func routeTask(_ row: EntityRow) {
         box.setType(row.id, "task") { ok in
             guard ok else { return refused() }
-            if let first = taskOptions.first(where: { $0.completes != true })?.name,
+            guard let first = taskOptions.first(where: { $0.completes != true })?.name,
                 !first.isEmpty
-            {
-                box.set(row.id, "status", first)
-                flash("Routed to Task", undo: 2)
-            } else {
-                flash("Routed to Task", undo: 1)
+            else { return stillUnfiled("task", undo: 1) }
+            // THE FLASH WAITS FOR THE WRITE. It promised two undos before
+            // the status write had landed, so a refused one sent the
+            // second undo past the routing and into whatever came
+            // before — for a fresh capture, the capture itself, which
+            // Undo then took back with no trash entry to find it in.
+            // `file` has always done it this way.
+            box.set(row.id, "status", first) { ok in
+                stillUnfiled("task", undo: ok ? 2 : 1)
             }
         }
+    }
+
+    /// A KIND IS NOT AN ADDRESS. These verbs answer WHAT, and the Inbox
+    /// lists what has no WHERE — so the row stays, now wearing its kind,
+    /// and the card it opens has one question left. Saying "routed"
+    /// would promise a departure that does not happen (2026-09-19).
+    private func stillUnfiled(_ kind: String, undo: Int) {
+        flash("Now a \(kind) — still unfiled", undo: undo)
     }
 
     /// Event = type + the date editor, because an event without a date
@@ -514,7 +564,7 @@ struct InboxView: View {
 
     private func route(_ row: EntityRow, to type: String, as label: String) {
         box.setType(row.id, type) { ok in
-            ok ? flash("Routed to \(label)", undo: 1) : refused()
+            ok ? stillUnfiled(label.lowercased(), undo: 1) : refused()
         }
     }
 
@@ -534,10 +584,13 @@ struct InboxView: View {
                     .font(.system(size: LivType.body))
                     .foregroundStyle(LivTheme.text2)
                 Spacer()
-                Button("Settings") { settingsShown = true }
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .buttonStyle(.borderless)
+                // A CHIP, not an accent word. The 2026-09-16 sweep took
+                // twelve bare accent words out of the app and missed
+                // this one and the flash's Undo, which are the two on
+                // this screen (found 2026-09-18). A quiet secondary verb
+                // wears the hollow chip; the only clickable TEXT in this
+                // app is a link inside a note.
+                AddChip("Settings", symbol: "gearshape") { settingsShown = true }
             }
             .frame(minHeight: LivRow.band)
         } else {
@@ -739,9 +792,7 @@ struct InboxView: View {
     /// loser happened to carry and says nothing about the merge, and a
     /// promotion's heading already says what it makes.
     private func proposedValue(_ p: ProposalRow) -> String? {
-        guard let commands = p.commands, commands.count == 1,
-            let value = commands[0].value, !value.isEmpty
-        else { return nil }
+        guard let value = p.proposed, !value.isEmpty else { return nil }
         return value
     }
 
@@ -764,13 +815,15 @@ struct InboxView: View {
             Text(text)
                 .font(.system(size: LivType.body, weight: .medium))
                 .foregroundStyle(LivTheme.text)
-            Button("Undo") {
+            // THE PRIMARY VERB OF THIS CHIP, so the filled pill — the
+            // shape the app gives the one thing a surface most wants you
+            // to be able to do. It was a bare accent word, which reads
+            // as a hyperlink (owner, 2026-09-15; swept 2026-09-16 and
+            // this one was missed).
+            ConfirmPill("Undo", compact: true) {
                 for _ in 0..<max(1, chipUndo) { box.undo() }
                 withAnimation(LivMotion.nav) { chipText = nil }
             }
-            .font(.system(size: LivType.body, weight: .semibold))
-            .foregroundStyle(LivTheme.accent)
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .frame(height: 36)

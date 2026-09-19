@@ -957,7 +957,28 @@ func livCanTick(_ row: EntityRow) -> Bool {
 /// `LivKind.of` is the app's ONE classifier, so a scrap that has since
 /// been given a status or a file is no longer one — which is right: it
 /// has been decided about.
-func livIsScrap(_ row: EntityRow) -> Bool {
-    row.trashed != true && LivKind.of(row) == .capture && row.hasBody == true
+/// **UNDECIDED MEANS UNFILED, NOT UNTYPED** (owner, 2026-09-19, choosing
+/// among three options: "option 1").
+///
+/// It asked for `LivKind.of(row) == .capture` — a thing with no kind at
+/// all — and nothing the app makes is one. `+` births a typed note
+/// everywhere, and so do the create menu, the Tasks add row, the
+/// Calendar and the camera; only the share sheet, a `liv://capture` link
+/// and Search's create row still make an untyped capture. So the Inbox
+/// counted zero on any phone whose owner used the `+`, which is what
+/// "not playing any role" meant.
+///
+/// The address is the decision, and that is the 2026-09-09 routing
+/// ruling read back to itself: "one tap sets the area and the kind
+/// together, so the scrap is a filed note in one gesture" — out of the
+/// Inbox and out of Unfiled at the same moment. A kind says WHAT a thing
+/// is; only an area says where it lives, and a note with no area is the
+/// pile that actually builds up (what-liv-is-for.md's second success
+/// test). Nothing has listed that pile since the Unfiled lens went on
+/// 2026-09-16.
+///
+/// `hasBody` stays: an empty thing is not a decision anyone owes.
+func livIsUnfiled(_ row: EntityRow) -> Bool {
+    row.trashed != true && row.area == nil && row.hasBody == true
 }
 
