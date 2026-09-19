@@ -1208,7 +1208,7 @@ struct NoteEditor: View {
             onLink: { linkShown = true },
             onInsert: { insertMenu() },
             showsTitle: showsTitle, embedded: embedded,
-            note: embedded ? 0 : id
+            note: embedded ? .absent : id
         )
         .frame(
             maxWidth: .infinity,
@@ -1358,7 +1358,7 @@ func livSpanCodecSelfCheck() -> [String] {
     func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
         if !ok { failures.append("FAIL \(label) \(detail())") }
     }
-    let names: (LivEntityID) -> String? = { id in id == 4155 ? "Kitchen rebuild" : nil }
+    let names: (LivEntityID) -> String? = { id in id == livSampleId(4155) ? "Kitchen rebuild" : nil }
 
     // 1. text → spans → text, over every shape the buffer can hold.
     for sample in [
@@ -1385,7 +1385,7 @@ func livSpanCodecSelfCheck() -> [String] {
     //    only `.other` — a block NEWER than this build — still flattens.
     //    Code and Callout stopped flattening on 2026-08-20.
     let refDoc: [SpanJSON] = [
-        .text("see ", marks: 0), .ref(4155), .text(" now", marks: 0),
+        .text("see ", marks: 0), .ref(livSampleId(4155)), .text(" now", marks: 0),
         .brk(.body), .text("line two", marks: 0),
     ]
     check("ref round-trip", SpanText.textToSpans(SpanText.spansToText(refDoc, name: names)) == refDoc)
@@ -1494,10 +1494,10 @@ func livSpanCodecSelfCheck() -> [String] {
     check("marks round-trip through the buffer",
         SpanText.textToSpans(SpanText.spansToText([
             .brk(.task(depth: 0, done: false)), .text("call ", marks: 0),
-            .ref(4155), .text(" ", marks: 0), .text("now", marks: 1),
+            .ref(livSampleId(4155)), .text(" ", marks: 0), .text("now", marks: 1),
         ], name: names)) == [
             .brk(.task(depth: 0, done: false)), .text("call ", marks: 0),
-            .ref(4155), .text(" ", marks: 0), .text("now", marks: 1),
+            .ref(livSampleId(4155)), .text(" ", marks: 0), .text("now", marks: 1),
         ])
 
     // 2f. What still cannot be held says so — and ONLY that.
@@ -1551,19 +1551,19 @@ func livSpanCodecSelfCheck() -> [String] {
     //     early. The buffer must survive being written with the name and
     //     read back — repeatedly, since a leak compounds every save.
     let bracket: (LivEntityID) -> String? = { _ in "Q3 [final]" }
-    var cycled: [SpanJSON] = [.text("see ", marks: 0), .ref(4155), .text(" today", marks: 0)]
+    var cycled: [SpanJSON] = [.text("see ", marks: 0), .ref(livSampleId(4155)), .text(" today", marks: 0)]
     for _ in 0..<5 {
         cycled = SpanText.textToSpans(SpanText.spansToText(cycled, name: bracket))
     }
     check(
         "a name ending in ] does not leak into the note",
-        cycled == [.text("see ", marks: 0), .ref(4155), .text(" today", marks: 0)],
+        cycled == [.text("see ", marks: 0), .ref(livSampleId(4155)), .text(" today", marks: 0)],
         "\(cycled)")
     check(
         "a name full of brackets still round-trips",
         SpanText.textToSpans(SpanText.spansToText(
-            [.ref(4155)], name: { _ in "]]] [[[ ]" }))
-            == [.ref(4155)])
+            [.ref(livSampleId(4155))], name: { _ in "]]] [[[ ]" }))
+            == [.ref(livSampleId(4155))])
 
     // 2g. Canonicalisations, pinned: reload may normalise these exact
     //     forms (and no others in this corpus).
@@ -1590,8 +1590,8 @@ func livSpanCodecSelfCheck() -> [String] {
     // 3. A Ref survives a name it has never heard of, and a nameless one.
     check(
         "unknown target keeps the id",
-        SpanText.spansToText([.ref(999)], name: names) == "[[000000000000000000000000000003e7]]")
-    check("nameless token parses", SpanText.textToSpans("[[000000000000000000000000000003e7]]") == [.ref(999)])
+        SpanText.spansToText([.ref(livSampleId(999))], name: names) == "[[000000000000000000000000000003e7]]")
+    check("nameless token parses", SpanText.textToSpans("[[000000000000000000000000000003e7]]") == [.ref(livSampleId(999))])
 
     // 4. A mangled token is literal text — never a guess.
     check(
@@ -1614,9 +1614,9 @@ func livSpanCodecSelfCheck() -> [String] {
     //    the data source swapped.
     check(
         "json of a ref doc",
-        SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)])
+        SpanText.json([.text("a", marks: 0), .brk(.body), .ref(livSampleId(9))])
             == #"[{"Text":"a"},{"Break":"Body"},{"Ref":"00000000000000000000000000000009"}]"#,
-        SpanText.json([.text("a", marks: 0), .brk(.body), .ref(9)]))
+        SpanText.json([.text("a", marks: 0), .brk(.body), .ref(livSampleId(9))]))
     let vocab: [SpanJSON] = [
         .brk(.heading(2)), .text("b", marks: 1),
         .brk(.task(depth: 0, done: false)),

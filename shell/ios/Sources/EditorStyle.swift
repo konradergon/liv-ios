@@ -1011,19 +1011,19 @@ func livEditorSelfCheck() -> [String] {
     // codec 2026-08-11 lived on here until the two were joined).
     check(
         "link to a bracketed name is spaced",
-        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]")
+        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: livSampleId(7), name: "Q3 [final]")
             .text == "see [[00000000000000000000000000000007|Q3 [final] ]]",
-        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]").text)
+        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: livSampleId(7), name: "Q3 [final]").text)
     check(
         "link to a nameless thing carries no pipe",
-        EditOps.completeLink("[[", token: NSRange(location: 0, length: 2), id: 9, name: "  ")
+        EditOps.completeLink("[[", token: NSRange(location: 0, length: 2), id: livSampleId(9), name: "  ")
             .text == "[[00000000000000000000000000000009]]")
     let done = EditOps.completeLink(
-        "see [[kit", token: NSRange(location: 4, length: 5), id: 4155, name: "Kitchen rebuild")
+        "see [[kit", token: NSRange(location: 4, length: 5), id: livSampleId(4155), name: "Kitchen rebuild")
     check("link completes", done.text == "see [[0000000000000000000000000000103b|Kitchen rebuild]]", done.text)
     check("caret lands after the token", done.selection.location == (done.text as NSString).length)
     let noName = EditOps.completeLink(
-        "x [[q", token: NSRange(location: 2, length: 3), id: 7, name: "  ")
+        "x [[q", token: NSRange(location: 2, length: 3), id: livSampleId(7), name: "  ")
     check("nameless token when the name is blank", noName.text == "x [[00000000000000000000000000000007]]", noName.text)
     let outline = livOutline("# One\nbody\n### Three\n- not a heading\n## Two")
     check("outline finds three headings", outline.count == 3, "\(outline.count)")
@@ -1037,8 +1037,8 @@ func livEditorSelfCheck() -> [String] {
             == [.text("see [[000000000000000000000000000003e7]]", marks: 0)])
     check(
         "known id still saves as a ref",
-        SpanText.textToSpans("see [[000000000000000000000000000003e7]]", isKnown: { $0 == 999 })
-            == [.text("see ", marks: 0), .ref(999)])
+        SpanText.textToSpans("see [[000000000000000000000000000003e7]]", isKnown: { $0 == livSampleId(999) })
+            == [.text("see ", marks: 0), .ref(livSampleId(999))])
 
     // WHICH LINE THE CARET IS ON. The reveal decides whether a line
     // shows its markers or its rendering, and it was blind to the one

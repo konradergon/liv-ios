@@ -353,6 +353,32 @@ struct LivID: Hashable, Comparable, Codable {
     }
 }
 
+/// **A SAMPLE ID FOR A SELF-CHECK**, from a small readable number.
+///
+/// The suites name their fixtures `7`, `21`, `43` — which is the right
+/// way to write a test, because `desk.open(7)` says what it is doing and
+/// `desk.open(LivID(hex: "0199a1b2c3d47000800a0b0c0d0e0f10")!)` does not.
+/// Until slice 5b those literals WERE ids, through
+/// `ExpressibleByIntegerLiteral`, and that conformance is the exact
+/// footgun this slice removed: it let `0` mean `.absent` anywhere in the
+/// app, not just in a suite.
+///
+/// So the convenience stays and the footgun does not. A suite says
+/// `livSampleId(7)`; nowhere else can a number stand where an id
+/// belongs, because nowhere else is this function called.
+///
+/// It is the number itself, in the low word — so the id WRITES DOWN as
+/// that number, zero-padded to 32 characters, and the editor's suite can
+/// keep asserting its expected text as a literal
+/// (`"[[00000000000000000000000000000007|Q3]]"`). An expected string
+/// built by the same code as the thing under test checks nothing.
+///
+/// **`livSampleId(0)` IS the absent id**, exactly as the literal `0`
+/// always was. A suite that wants a live document must not ask for zero.
+func livSampleId(_ n: UInt64) -> LivEntityID {
+    LivID(hi: 0, lo: n)
+}
+
 /// `-livid.selfcheck 1`.
 ///
 /// The round trip and the ordering, because both are claims this type
@@ -438,6 +464,16 @@ func livIdSelfCheck() -> [String] {
             fail.append("read a core-era decimal as an id: \(legacy)")
         }
     }
+
+    // THE SUITES' OWN FIXTURE. Four other suites name their documents
+    // with `livSampleId(7)`, and the editor's asserts its written form
+    // as a literal string — so what that form IS belongs here.
+    if livSampleId(7).hex != "00000000000000000000000000000007" {
+        fail.append("a sample id no longer writes down as its own number")
+    }
+    if livSampleId(7) == livSampleId(8) { fail.append("two sample ids collided") }
+    if !livSampleId(0).isAbsent { fail.append("sample zero is the absent id, as the literal was") }
+    if livSampleId(7).isAbsent { fail.append("a sample id from a real number must not be absent") }
 
     // The stored form, in a scratch suite of its own so the real key is
     // never touched. `.absent` is the claim that matters here: it is

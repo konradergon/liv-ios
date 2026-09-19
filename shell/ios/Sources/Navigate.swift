@@ -340,24 +340,24 @@ func livPlacesSelfCheck() -> [String] {
     // where you came from. Until 2026-09-10 it moved you to Notes, which
     // is what made the panel's lit row lie and `‹` off the Notes list do
     // nothing.
-    desk.open(7)
+    desk.open(livSampleId(7))
     check("a document lands on the desk", desk.shown)
     check("and does not move you", desk.state == .calendar, "\(desk.state)")
-    check("the open document is the one asked for", desk.openDoc == 7)
+    check("the open document is the one asked for", desk.openDoc == livSampleId(7))
     check("back goes where you came from", desk.back == .state(.calendar), "\(String(describing: desk.back))")
 
     // A link jump: document to document, and back to the first.
-    desk.open(9)
-    check("the second document replaces the first", desk.openDoc == 9)
-    check("back is the note you were reading", desk.back == .document(7))
+    desk.open(livSampleId(9))
+    check("the second document replaces the first", desk.openDoc == livSampleId(9))
+    check("back is the note you were reading", desk.back == .document(livSampleId(7)))
     desk.goBack()
-    check("stepping back re-opens it", desk.openDoc == 7 && desk.state == .calendar)
+    check("stepping back re-opens it", desk.openDoc == livSampleId(7) && desk.state == .calendar)
     check("and it does not push itself back on", desk.back == .state(.calendar))
 
     // Lay it down and the view is uncovered — the state never moved.
     desk.layDown()
     check("laying it down leaves the view", desk.state == .calendar && desk.openDoc == nil)
-    check("and the tab is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
+    check("and the tab is still on the desk", desk.tabs.contains { $0.content == .entity(livSampleId(7)) })
     check("and nothing is beneath it", desk.back == nil)
 
     // A TAB PICKED FROM THE SWITCHER, standing somewhere else, comes up
@@ -365,9 +365,9 @@ func livPlacesSelfCheck() -> [String] {
     // back to it. (Until 2026-09-09 the switcher only made the tab
     // active, and from Today nothing visibly happened.)
     desk.go(.today)
-    if let tab = desk.tabs.first(where: { $0.content == .entity(7) }) {
+    if let tab = desk.tabs.first(where: { $0.content == .entity(livSampleId(7)) }) {
         desk.show(tab)
-        check("a switcher pick shows the document", desk.openDoc == 7, "\(String(describing: desk.openDoc))")
+        check("a switcher pick shows the document", desk.openDoc == livSampleId(7), "\(String(describing: desk.openDoc))")
         check("over the view you were standing in", desk.state == .today, "\(desk.state)")
         check("and remembers where you stood", desk.back == .state(.today), "\(String(describing: desk.back))")
     } else {
@@ -378,10 +378,10 @@ func livPlacesSelfCheck() -> [String] {
     // 2026-09-09 arriving at Notes from elsewhere restored whatever was
     // open, so the same row meant two things. It needed its own verb
     // until 2026-09-10; `go` is the whole rule now.
-    desk.open(7)
+    desk.open(livSampleId(7))
     desk.go(.everything)
     check("the panel lands on the view", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
-    check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(7) })
+    check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(livSampleId(7)) })
 
     // A DOOR MAY NAME A PLACE INSIDE A VIEW, and the park has to happen
     // even when the view is already the one you are standing in. The
@@ -398,7 +398,7 @@ func livPlacesSelfCheck() -> [String] {
     check("a tool keeps its spot", desk.state == .calendar && desk.position(.calendar) == "202609")
     // TAPPING THE VIEW YOU ARE IN, with a document over it, is how you
     // get out of the document — and with nothing over it, it is a no-op.
-    desk.open(7)
+    desk.open(livSampleId(7))
     desk.go(.calendar)
     check("the row you are on lays the document down", desk.state == .calendar && desk.openDoc == nil)
     desk.go(.calendar)
@@ -409,19 +409,19 @@ func livPlacesSelfCheck() -> [String] {
     // put you where you already were, with the note still drawn on top,
     // so the key visibly did nothing.
     desk.go(.everything)
-    desk.open(21)
-    check("a note off the list is on the desk", desk.openDoc == 21 && desk.state == .everything)
+    desk.open(livSampleId(21))
+    check("a note off the list is on the desk", desk.openDoc == livSampleId(21) && desk.state == .everything)
     desk.goBack()
     check("back from it is the list, not nothing", desk.state == .everything && desk.openDoc == nil, "\(String(describing: desk.openDoc))")
 
     // Opening the SAME document again is not a step.
-    desk.open(11)
+    desk.open(livSampleId(11))
     let before = desk.returns.count
-    desk.open(11)
+    desk.open(livSampleId(11))
     check("re-opening the open document adds no step", desk.returns.count == before)
 
     // The stack is a stack, not a diary.
-    for id in 100..<160 { desk.open(LivEntityID(core: UInt64(id))) }
+    for id in 100..<160 { desk.open(livSampleId(UInt64(id))) }
     check("the way back is capped", desk.returns.count <= 20, "\(desk.returns.count)")
 
     // THE FORWARD LEG (2026-08-23, with the bar's `›` key).
@@ -429,13 +429,13 @@ func livPlacesSelfCheck() -> [String] {
     fresh.shapeOf = { _ in .document }
     check("nothing to go forward to at rest", fresh.forward == nil)
     fresh.go(.today)
-    fresh.open(3)
+    fresh.open(livSampleId(3))
     check("still nothing forward after a normal journey", fresh.forward == nil)
     fresh.goBack()
-    check("back leaves a forward step", fresh.forward == .document(3), "\(String(describing: fresh.forward))")
+    check("back leaves a forward step", fresh.forward == .document(livSampleId(3)), "\(String(describing: fresh.forward))")
     check("and back went where it said", fresh.state == .today && fresh.openDoc == nil)
     fresh.goForward()
-    check("forward returns you", fresh.openDoc == 3 && fresh.state == .today)
+    check("forward returns you", fresh.openDoc == livSampleId(3) && fresh.state == .today)
     check("and nothing is left ahead", fresh.forward == nil)
     check("while back is where you came from", fresh.back == .state(.today))
     // A FRESH navigation ends the forward journey — you cannot go
@@ -445,7 +445,7 @@ func livPlacesSelfCheck() -> [String] {
     fresh.go(.calendar)
     check("a new move clears the way forward", fresh.forward == nil, "\(String(describing: fresh.forward))")
     // The forward stack is capped like the back one.
-    for id in 200..<260 { fresh.open(LivEntityID(core: UInt64(id))) }
+    for id in 200..<260 { fresh.open(livSampleId(UInt64(id))) }
     for _ in 0..<60 { fresh.goBack() }
     check("the way forward is capped", fresh.returns.forwardCount <= 20, "\(fresh.returns.forwardCount)")
     DeskModel.forgetScratchForSelfCheck()
@@ -453,8 +453,8 @@ func livPlacesSelfCheck() -> [String] {
     // A record never becomes the document surface — it rises as a card.
     desk.shapeOf = { _ in .record }
     let openBefore = desk.openDoc
-    desk.open(5)
-    check("a record opens as a card", desk.recordCard == 5 && desk.openDoc == openBefore)
+    desk.open(livSampleId(5))
+    check("a record opens as a card", desk.recordCard == livSampleId(5) && desk.openDoc == openBefore)
 
     DeskModel.forgetScratchForSelfCheck()
     return failures

@@ -469,9 +469,9 @@ func livTabsSelfCheck() -> [String] {
     UserDefaults.standard.set(21, forKey: LivTabs.key)
     let model = DeskModel.scratchForSelfCheck()
     model.replaceTabsForSelfCheck([
-        DeskTab(id: UUID(), content: .entity(1), lastUsed: daysAgo(90)),
-        DeskTab(id: UUID(), content: .entity(2), lastUsed: daysAgo(40)),
-        DeskTab(id: UUID(), content: .entity(3), lastUsed: daysAgo(0)),
+        DeskTab(id: UUID(), content: .entity(livSampleId(1)), lastUsed: daysAgo(90)),
+        DeskTab(id: UUID(), content: .entity(livSampleId(2)), lastUsed: daysAgo(40)),
+        DeskTab(id: UUID(), content: .entity(livSampleId(3)), lastUsed: daysAgo(0)),
     ])
     check("three tabs held", model.tabs.count == 3, "\(model.tabs.count)")
     check("two are inactive", model.inactiveTabs.count == 2, "\(model.inactiveTabs.count)")
@@ -494,9 +494,9 @@ func livTabsSelfCheck() -> [String] {
     // screen out from under you.
     let aged = DeskModel.scratchForSelfCheck()
     aged.replaceTabsForSelfCheck([
-        DeskTab(id: UUID(), content: .entity(1), lastUsed: daysAgo(90)),
-        DeskTab(id: UUID(), content: .entity(2), lastUsed: daysAgo(40)),
-        DeskTab(id: UUID(), content: .entity(3), lastUsed: daysAgo(0)),
+        DeskTab(id: UUID(), content: .entity(livSampleId(1)), lastUsed: daysAgo(90)),
+        DeskTab(id: UUID(), content: .entity(livSampleId(2)), lastUsed: daysAgo(40)),
+        DeskTab(id: UUID(), content: .entity(livSampleId(3)), lastUsed: daysAgo(0)),
     ])
     aged.activateForSelfCheck(aged.tabs.first?.id)  // the 90-day-old one
     check("ancient active tab is not inactive", !aged.inactiveTabs.contains { $0.id == aged.activeTabId })

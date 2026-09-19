@@ -136,8 +136,15 @@ func livRoutesSelfCheck() -> [String] {
     check(
         "a retired view name still lands",
         route("liv://notes") == .view(.everything, at: nil))
-    check("an entity", route("liv://entity/42") == .entity(42))
+    // AN ENTITY LINK CARRIES THE WHOLE ID — 32 hex characters, since
+    // slice 5b. It used to be a decimal, and a link holding one names a
+    // thing in the `core/` box, which is not this box; it parses to nil
+    // and the door drops it, rather than opening a plausible id for
+    // something that does not exist.
+    let sample = "0199a1b2c3d47000800a0b0c0d0e0f10"
+    check("an entity", route("liv://entity/\(sample)") == .entity(LivEntityID(hex: sample)!))
     check("a bad entity id is nil", route("liv://entity/x") == nil)
+    check("a core-era decimal id is nil", route("liv://entity/42") == nil)
     check("unknown host is nil", route("liv://nonsense") == nil)
     check("wrong scheme is nil", route("http://capture") == nil)
     check("scheme is case-blind", route("LIV://capture") == .capture(nil))

@@ -311,14 +311,14 @@ func livPlanesSelfCheck() -> [String] {
 
     // ---- the desk follows you ----
     desk.go(.everything)
-    desk.open(7)
-    check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == 7)
+    desk.open(livSampleId(7))
+    check("a document opens onto the desk", desk.tabs.count == 1 && desk.openDoc == livSampleId(7))
     desk.go(.calendar)
     check("and is still there from another view", desk.tabs.count == 1, "\(desk.tabs.count)")
     check("the key counts the same desk everywhere", desk.liveTabs.count == 1)
-    desk.open(8)
+    desk.open(livSampleId(8))
     check("a document opened from a TOOL lands on the same desk", desk.tabs.count == 2)
-    check("no duplicate for a note already open", { desk.open(7); return desk.tabs.count }() == 2)
+    check("no duplicate for a note already open", { desk.open(livSampleId(7)); return desk.tabs.count }() == 2)
 
     // A new tab is a new note, from anywhere — there is no second Today
     // to open, which is what `openRoot` used to do.
@@ -351,9 +351,9 @@ func livPlanesSelfCheck() -> [String] {
     let old = Civil.stamp(day: Civil.addDays(Civil.todayDay(), -30), hhmm: 900)
 
     desk.replaceTabsForSelfCheck([
-        DeskTab(id: UUID(), content: .entity(41), lastUsed: old),
-        DeskTab(id: UUID(), content: .entity(42), lastUsed: old),
-        DeskTab(id: UUID(), content: .entity(43), lastUsed: now),
+        DeskTab(id: UUID(), content: .entity(livSampleId(41)), lastUsed: old),
+        DeskTab(id: UUID(), content: .entity(livSampleId(42)), lastUsed: old),
+        DeskTab(id: UUID(), content: .entity(livSampleId(43)), lastUsed: now),
     ])
     check("stale tabs go to the shelf", desk.inactiveCount == 2, "\(desk.inactiveCount)")
     check("the active tab is never on it", desk.inactiveTabs.allSatisfy { $0.id != desk.activeTabId })

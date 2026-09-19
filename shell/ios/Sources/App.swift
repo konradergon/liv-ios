@@ -255,7 +255,8 @@ struct RootView: View {
             // The tab plane learns what an id IS (Option C). Reading the
             // live snapshot each time means the answer is never stale —
             // deciding once at open() would race the refresh that follows
-            // a creation (Box.actId calls back before the snapshot moves).
+            // a creation (a creating verb calls back before the snapshot
+            // moves).
             desk.shapeOf = { [weak box] id in TabShape.of(box?.entity(id)) }
             desk.knows = { [weak box] id in box?.entity(id) != nil }
         }

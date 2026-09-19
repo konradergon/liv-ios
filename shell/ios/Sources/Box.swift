@@ -812,24 +812,12 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    /// An id-returning verb; 0 = failure. `done` always receives the id.
-    ///
-    /// **The ONE place a `core/` id becomes a `LivID`.** Every creating
-    /// verb in the old ABI returns a raw `UInt64`, so the conversion
-    /// belongs here rather than at nine call sites — and when slice 5
-    /// swaps the source, this is the one line that changes.
-    private func actId(
-        _ verb: String, _ done: ((LivEntityID) -> Void)?, _ work: @escaping () -> UInt64
-    ) {
-        boxQueue.async {
-            let id = LivEntityID(core: work())
-            if id.isAbsent { self.verbFailed(verb) }
-            DispatchQueue.main.async {
-                done?(id)
-                if !id.isAbsent { self.refresh() }
-            }
-        }
-    }
+    // `actId` WENT WITH THE CORE BOX (slice 5b, 2026-09-19). It was the
+    // one place a `core/` id became a `LivID`, because every creating
+    // verb in the old ABI answered with a raw `UInt64`. No verb the
+    // shell calls answers that way any more, so it had no callers —
+    // standing rule 6: a decision that makes code unnecessary deletes it
+    // in the same change.
 
     // MARK: writes — the same doors, the engine behind them
     //

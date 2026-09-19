@@ -127,25 +127,27 @@ func livShareSelfCheck() -> [String] {
 
     check(
         "the filename is the name",
-        NoteExport.filename("Roof project", id: 7) == "Roof project.md",
-        NoteExport.filename("Roof project", id: 7))
+        NoteExport.filename("Roof project", id: livSampleId(7)) == "Roof project.md",
+        NoteExport.filename("Roof project", id: livSampleId(7)))
     check(
         "slashes and colons cannot reach the filesystem",
-        !NoteExport.filename("a/b:c", id: 7).contains("/")
-            && !NoteExport.filename("a/b:c", id: 7).contains(":"),
-        NoteExport.filename("a/b:c", id: 7))
+        !NoteExport.filename("a/b:c", id: livSampleId(7)).contains("/")
+            && !NoteExport.filename("a/b:c", id: livSampleId(7)).contains(":"),
+        NoteExport.filename("a/b:c", id: livSampleId(7)))
     check(
         "a nameless note still gets a findable file",
-        NoteExport.filename("", id: 42) == "liv-note-42.md",
-        NoteExport.filename("", id: 42))
+        NoteExport.filename("", id: livSampleId(42))
+            == "liv-note-0000000000000000000000000000002a.md",
+        NoteExport.filename("", id: livSampleId(42)))
     check(
         "a punctuation-only name is treated as nameless",
-        NoteExport.filename("///", id: 9) == "liv-note-9.md",
-        NoteExport.filename("///", id: 9))
+        NoteExport.filename("///", id: livSampleId(9))
+            == "liv-note-00000000000000000000000000000009.md",
+        NoteExport.filename("///", id: livSampleId(9)))
     check(
         "a very long name is capped",
-        NoteExport.filename(String(repeating: "x", count: 200), id: 1).count <= 63)
-    check("every filename is markdown", NoteExport.filename("x", id: 1).hasSuffix(".md"))
+        NoteExport.filename(String(repeating: "x", count: 200), id: livSampleId(1)).count <= 63)
+    check("every filename is markdown", NoteExport.filename("x", id: livSampleId(1)).hasSuffix(".md"))
 
     return failures
 }
