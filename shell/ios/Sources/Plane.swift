@@ -380,7 +380,7 @@ struct DeskPlanes {
         // its own key — see `foldInLiveDocument`.
         let legacy =
             Self.readPlane(WorkspaceModel.tabsKey(workspace))
-            ?? (workspace == 0 ? Self.readPlane(legacyKey) : nil)
+            ?? (workspace.isAbsent ? Self.readPlane(legacyKey) : nil)
         return (Self.foldInLiveDocument(legacy ?? DeskPlane(), workspace: workspace), spots)
     }
 

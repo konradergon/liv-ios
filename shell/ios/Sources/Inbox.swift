@@ -89,7 +89,7 @@ struct InboxView: View {
         // re-derives the proposal on the engine and takes whatever shape
         // it is.
         return (box.snap?.inbox ?? []).filter {
-            !($0.author == "area" && unrouted.contains($0.entity ?? 0))
+            !($0.author == "area" && unrouted.contains($0.entity ?? .absent))
         }
     }
 

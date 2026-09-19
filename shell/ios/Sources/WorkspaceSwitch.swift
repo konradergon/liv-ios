@@ -341,7 +341,7 @@ struct WorkspaceSwitcher: View {
             finish(id)
         } else {
             box.createWorkspace(name: name) { id in
-                guard id != 0 else { return }
+                guard !id.isAbsent else { return }
                 write(query, to: id)
                 finish(id)
             }
@@ -375,7 +375,7 @@ struct WorkspaceSwitcher: View {
         let query = trimmed(filterQuery)
         guard !name.isEmpty, !query.isEmpty else { return }
         box.createView(name: name, query: query) { id in
-            guard id != 0 else { return }
+            guard !id.isAbsent else { return }
             filterName = ""
             filterQuery = ""
             composingFilter = false

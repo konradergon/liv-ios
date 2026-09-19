@@ -449,7 +449,7 @@ struct RootView: View {
             }
             let item = waiting[i]
             box.capture(item.text) { id in
-                if id != 0 {
+                if !id.isAbsent {
                     item.done()
                     workspaces.stamp(id, in: box)
                 }

@@ -22,9 +22,12 @@
 //      flip in slice 4.
 //   4. The alias flips and `LivID` carries a `core` half so the old ABI
 //      still takes it.
-//   5. The data source swaps to the engine verbs, and the `core` half —
-//      `init(core:)`, `.core`, `ExpressibleByIntegerLiteral`, the
-//      number wire form — goes with it.
+//   5b. **DONE 2026-09-19.** The data source is the engine verbs, and
+//      the `core` half went with it: `init(core:)`, `.core`,
+//      `ExpressibleByIntegerLiteral` and the number wire form are gone,
+//      and `written` is all sixteen bytes rather than the low eight in
+//      decimal. That last one had been writing five surfaces' ids down
+//      wrong — see `LivIDText.written`.
 //
 // **Two words, not sixteen bytes in a tuple.** Swift has no fixed-size
 // array, and a 16-tuple is neither `Hashable` nor pleasant. Two `UInt64`s
@@ -213,21 +216,18 @@ enum LivIDText {
 // because one is a format this app owns and the other is a contract).
 // Standing rule 3: a rule that matters lives in a type, not in prose —
 // and the prose above this line had been there since slice 3.
-struct LivID: Hashable, Comparable, Codable, ExpressibleByIntegerLiteral {
-    // **`ExpressibleByIntegerLiteral` IS TRANSITIONAL, and it has the same
-    // deletion date as `core`.** It exists so that slice 4 — which cannot
-    // compile in halves, since the fixes and the flip must land together —
-    // does not also have to rewrite every `= 0`, `?? 0`, `!= 0` and
-    // `== 4155` in twenty-two files on a machine with no compiler. While
-    // the shell reads `core/` ids, an integer literal genuinely IS one.
-    //
-    // It is a footgun kept on purpose and briefly: it lets a number stand
-    // where an id belongs, which is exactly what this whole refactor is
-    // ending. Slice 5 removes it and the compiler then names the handful
-    // of sites that were leaning on it.
-    init(integerLiteral value: UInt64) {
-        self.init(core: value)
-    }
+// **A NUMBER CAN NO LONGER STAND WHERE AN ID BELONGS** (slice 5b,
+// 2026-09-19). `ExpressibleByIntegerLiteral` was kept on purpose through
+// slice 4, so that flip did not also have to rewrite every `= 0`,
+// `?? 0` and `!= 0` in twenty-two files with no compiler to check the
+// result. It was always a footgun: it let `0` mean `.absent`, which is
+// the confusion this type exists to end — and it is exactly how a
+// truncated id went unnoticed for five days.
+//
+// It is gone with `init(core:)` and `.core`, and the 43 sites leaning on
+// it now say what they mean: `!id.isAbsent` rather than `id != 0`,
+// `?? .absent` rather than `?? 0`.
+struct LivID: Hashable, Comparable, Codable {
     /// Bytes 0–7, big-endian. The v7 timestamp lives in the top 48 bits,
     /// which is why this one leads.
     let hi: UInt64
@@ -275,26 +275,20 @@ struct LivID: Hashable, Comparable, Codable, ExpressibleByIntegerLiteral {
         return out
     }
 
-    // ---- the core box's ids, while the core box is the source ---------
+    // ---- THE CORE BOX'S IDS ARE GONE (slice 5b, 2026-09-19) -----------
     //
-    // **A TRANSITIONAL HALF OF THIS TYPE, and it has a deletion date**
-    // (standing rule 7): it goes when slice 5 swaps the data source to the
-    // engine and the shell stops seeing a `core/` id at all.
+    // `init(core:)` and `.core` were the transitional half of this type,
+    // kept under standing rule 7 with a stated deletion date: they go
+    // when the shell stops seeing a `core/` id at all. It does. Every
+    // verb the shell calls is an engine verb and every id it handles is
+    // sixteen bytes.
     //
-    // Until then the snapshot sends a `UInt64` and every `liv_*_at` verb
-    // takes one, so a `LivID` has to be able to BE one. It holds it in
-    // `lo` with `hi` zero — which cannot collide with an engine id, whose
-    // `hi` carries a v7 millisecond and is never zero for anything minted
-    // after 1970.
-
-    /// A `core/` id, as an id.
-    init(core: UInt64) {
-        self.init(hi: 0, lo: core)
-    }
-
-    /// And back, for the ABI. Meaningless for an engine id, which is why
-    /// slice 5 deletes it rather than leaving it to be misread.
-    var core: UInt64 { lo }
+    // They are worth a paragraph on the way out, because leaving them
+    // cost five days. `.core` returned the low eight bytes and read as
+    // "the id, as a number" at a glance; it was the WHOLE id while the
+    // core box was the source and half of one afterwards, and it went on
+    // compiling either way. Five surfaces wrote ids down through it and
+    // every one failed silently — see `LivIDText.written`.
 
     /// The absent id. `0` in the old ABI, where it means BOTH "no id" and
     /// "the verb failed" — a conflation the new seam's error channel
@@ -310,13 +304,17 @@ struct LivID: Hashable, Comparable, Codable, ExpressibleByIntegerLiteral {
 
     /// The scratch workspace's sentinel, which was `UInt64.max`.
     ///
-    /// **A `core` id, not sixteen ones**, and the self-check is what said
-    /// so: the sentinel is interpolated into three `UserDefaults` keys
+    /// **`hi: 0`, not sixteen ones**, and that half is what matters: it
+    /// keeps the sentinel out of the engine's range, where a v7 id's
+    /// high word is a millisecond and is never zero for anything minted
+    /// after 1970. The low word can be anything no real id will be.
+    ///
+    /// It is interpolated into three `UserDefaults` keys
     /// (`DeskPlanes.forget`), so it has to survive `LivIDText` like any
-    /// other id — and the written form can only carry the low word. `hi:
-    /// 0` also keeps it out of the engine's range, where a v7 id's high
-    /// word is a millisecond.
-    static let max = LivID(core: .max)
+    /// other id. It does: the written form is all sixteen bytes now, so
+    /// the old reason this had to be a `core` id — that the written form
+    /// could carry only the low word — is gone with `core` itself.
+    static let max = LivID(hi: 0, lo: .max)
 
     /// Byte order, which for a v7 id is creation order.
     static func < (a: LivID, b: LivID) -> Bool {
@@ -330,22 +328,21 @@ struct LivID: Hashable, Comparable, Codable, ExpressibleByIntegerLiteral {
     // is what `ffi/src/surfaces.rs` sends and what a person reading a
     // payload would expect.
 
-    /// **Two wire forms, for as long as there are two sources.** The new
-    /// seam sends 32 hex characters; the snapshot sends a JSON number,
-    /// because a `core/` id is a `UInt64`. Accepting both is what lets one
-    /// type serve both paths through slices 4 and 5 — and the number half
-    /// goes with `core`, when the snapshot does.
+    /// **ONE WIRE FORM: 32 hex characters** (slice 5b, 2026-09-19).
+    ///
+    /// It accepted a JSON number too, because a `core/` id was a
+    /// `UInt64` and one type had to serve both sources while the swap
+    /// was in progress. There is one source now, and a number arriving
+    /// where an id belongs is a wire that has drifted — which is
+    /// something to find out about, not to decode into a plausible id
+    /// with an empty high word.
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if let number = try? container.decode(UInt64.self) {
-            self.init(core: number)
-            return
-        }
         let raw = try container.decode(String.self)
         guard let parsed = LivID(hex: raw) else {
             throw DecodingError.dataCorruptedError(
                 in: container,
-                debugDescription: "neither a number nor a 32-character hex id: \(raw)")
+                debugDescription: "not a 32-character hex id: \(raw)")
         }
         self = parsed
     }
@@ -451,8 +448,9 @@ func livIdSelfCheck() -> [String] {
     if LivIDText.stored(forKey: "k", in: defaults) != .absent {
         fail.append("an absent key is not the absent id")
     }
-    LivIDText.store(4155, forKey: "k", in: defaults)
-    if LivIDText.stored(forKey: "k", in: defaults) != 4155 {
+    let sample = LivID(hex: "0199a1b2c3d47000800a0b0c0d0e0f10")!
+    LivIDText.store(sample, forKey: "k", in: defaults)
+    if LivIDText.stored(forKey: "k", in: defaults) != sample {
         fail.append("the stored form did not come back")
     }
     LivIDText.store(.absent, forKey: "k", in: defaults)

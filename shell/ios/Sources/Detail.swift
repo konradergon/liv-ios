@@ -122,7 +122,7 @@ struct InspectorField: Identifiable {
             kind: row?.kind ?? "text",
             multi: isMulti(property),
             options: options,
-            propertyId: row?.id ?? 0)
+            propertyId: row?.id ?? .absent)
     }
 }
 
@@ -842,7 +842,7 @@ struct InspectorValueSheet: View {
         // A mint that fails hands back `.absent`; writing the name anyway
         // would just be a second refusal, and the first one has already
         // told the user.
-        if field.mintsValues, field.propertyId != 0,
+        if field.mintsValues, !field.propertyId.isAbsent,
             !field.options.contains(where: { same($0, value) })
         {
             box.addOption(field.propertyId, value) { [self] made in

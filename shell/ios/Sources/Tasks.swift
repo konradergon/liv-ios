@@ -313,7 +313,7 @@ struct TasksView: View {
         DispatchQueue.main.async { addFocused = true }
         model.createTask { id in
             addingBusy = false
-            guard id != 0 else {
+            guard !id.isAbsent else {
                 // GIVE THE WORDS BACK. The field is cleared the moment
                 // you hit return, because that IS the acknowledgment —
                 // but a refused create then ate the sentence and said

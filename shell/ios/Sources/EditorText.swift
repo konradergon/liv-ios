@@ -1018,7 +1018,7 @@ struct MarkdownEditor: UIViewRepresentable {
     var embedded: Bool = false
     /// Whose caret to remember (LivCaret). 0 for a record's notes, which
     /// live inside a card that is not torn down by navigation.
-    var note: LivEntityID = 0
+    var note: LivEntityID = .absent
 
     func makeUIView(context: Context) -> MarkdownTextView {
         let view = MarkdownTextView(showsTitle: showsTitle)

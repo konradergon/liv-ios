@@ -420,7 +420,7 @@ struct CalendarView: View {
             // the real block is about to replace it, or nothing was made
             // and it must not linger.
             placing = nil
-            guard id != 0 else {
+            guard !id.isAbsent else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }

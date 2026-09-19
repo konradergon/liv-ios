@@ -732,7 +732,7 @@ final class NoteEditorModel: ObservableObject {
     var dirty: Bool { loaded && !missing && edits.dirty }
 
     private weak var box: BoxModel?
-    private var id: LivEntityID = 0
+    private var id: LivEntityID = .absent
     private var idleTimer: Timer?
     private var checkpointTimer: Timer?
     private var saving = false

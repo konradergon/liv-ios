@@ -104,7 +104,7 @@ struct WorkspaceRow: Decodable, Identifiable {
     var order: Double?
     var query: String?
 
-    var id: LivEntityID { wsId ?? 0 }
+    var id: LivEntityID { wsId ?? .absent }
     /// **Never an id** (owner, 2026-09-13: *"LivID shouldn't be read by
     /// the user"*). The switcher drew `#4142` for a workspace whose name
     /// cell was empty — one of three places the shell showed one, and the
@@ -124,7 +124,7 @@ struct SavedViewRow: Decodable, Identifiable {
     var name: String?
     var query: String?
 
-    var id: LivEntityID { viewId ?? 0 }
+    var id: LivEntityID { viewId ?? .absent }
     /// Never an id, as above.
     var display: String { (name ?? "").isEmpty ? "Filter" : (name ?? "") }
 
@@ -140,7 +140,7 @@ struct SavedViewRow: Decodable, Identifiable {
 /// active choice is device state (UserDefaults), like the desk's tabs.
 final class WorkspaceModel: ObservableObject {
     /// 0 = "All" — no lens, no stamp. Persisted; drives the desk's tab set.
-    @Published private(set) var activeId: LivEntityID = 0
+    @Published private(set) var activeId: LivEntityID = .absent
     /// A saved filter ANDed on top of the workspace lens. Transient by
     /// design: a filter narrows a session, a workspace IS the session.
     @Published var activeFilterId: LivEntityID?
@@ -163,13 +163,13 @@ final class WorkspaceModel: ObservableObject {
     func apply(_ snap: Snapshot?) {
         guard let snap else { return }
         if let rows = snap.workspaces {
-            workspaces = rows.filter { $0.id != 0 }
-            if activeId != 0, !workspaces.contains(where: { $0.id == activeId }) {
-                setActive(0)
+            workspaces = rows.filter { !$0.id.isAbsent }
+            if !activeId.isAbsent, !workspaces.contains(where: { $0.id == activeId }) {
+                setActive(.absent)
             }
         }
         if let rows = snap.views {
-            filters = rows.filter { $0.id != 0 }
+            filters = rows.filter { !$0.id.isAbsent }
             if let f = activeFilterId, !filters.contains(where: { $0.id == f }) {
                 activeFilterId = nil
             }
@@ -284,7 +284,7 @@ final class WorkspaceModel: ObservableObject {
         landed: (((property: String, value: String)) -> Void)? = nil
     ) -> [(property: String, value: String)] {
         let cells = stampCells
-        guard id != 0, !cells.isEmpty else { return [] }
+        guard !id.isAbsent, !cells.isEmpty else { return [] }
         for cell in cells {
             let done: (Bool) -> Void = { ok in if ok { landed?(cell) } }
             if cell.property == "type" {
@@ -305,7 +305,7 @@ final class WorkspaceModel: ObservableObject {
     /// The lens, straight off the wire — the box is the only source.
     /// nil = this workspace has no query cell (an unfiltered workspace).
     func query(of id: LivEntityID) -> String? {
-        guard id != 0 else { return nil }
+        guard !id.isAbsent else { return nil }
         let q = workspaces.first { $0.id == id }?.query
         return (q?.isEmpty ?? true) ? nil : q
     }

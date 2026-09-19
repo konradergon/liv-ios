@@ -52,7 +52,7 @@ struct LinksSection: View {
                 i, link in
                 DetailHairline()
                 LinkRowView(
-                    link: link, row: box.entity(link.id ?? 0),
+                    link: link, row: box.entity(link.id ?? .absent),
                     onOpen: { open(link) }, onRemove: removal(for: link))
             }
             moreButton(links.outRows, expanded: $showAllOut)
@@ -64,7 +64,7 @@ struct LinksSection: View {
                     i, link in
                     DetailHairline()
                     LinkRowView(
-                        link: link, row: box.entity(link.id ?? 0),
+                        link: link, row: box.entity(link.id ?? .absent),
                         onOpen: { open(link) }, onRemove: nil)
                 }
                 moreButton(links.inRows, expanded: $showAllIn)
@@ -170,7 +170,7 @@ struct LinksSection: View {
     }
 
     private func link(to target: LivEntityID) {
-        guard target != 0, target != id else { return }
+        guard !target.isAbsent, target != id else { return }
         box.addCell(id, "related", "#\(engineId(target))") { _ in load() }
     }
 

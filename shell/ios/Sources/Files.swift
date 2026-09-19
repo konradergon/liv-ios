@@ -378,7 +378,7 @@ enum NoteBytes {
         done: @escaping (LivEntityID) -> Void
     ) {
         box.createNote { id in
-            guard id != 0 else { return done(0) }
+            guard !id.isAbsent else { return done(0) }
             if !named.isEmpty { box.set(id, "name", named) }
             box.content(id) { doc in
                 let spans = SpanText.textToSpans(text)
@@ -477,7 +477,7 @@ enum FileImport {
             DispatchQueue.main.async {
                 var landed: [LivEntityID] = []
                 let finish: (LivEntityID) -> Void = { id in
-                    guard id != 0 else { return }
+                    guard !id.isAbsent else { return }
                     workspaces.stamp(id, in: box)
                     landed.append(id)
                     if landed.count == picks.count, let last = landed.last {
@@ -490,7 +490,7 @@ enum FileImport {
                         NoteBytes.land(text, named: name, box: box, done: finish)
                     case .file(let path, let name):
                         box.addFile(path) { id in
-                            guard id != 0 else { return }
+                            guard !id.isAbsent else { return }
                             // The copy is named by a random id on disk;
                             // the name a person reads is the one they
                             // picked.

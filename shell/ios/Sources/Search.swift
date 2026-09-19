@@ -305,7 +305,7 @@ struct SearchView: View {
     private func create() {
         let typed = trimmed
         box.capture(typed) { id in
-            guard id != 0 else { return }
+            guard !id.isAbsent else { return }
             // Search is lensed, so its create door stamps too (M4).
             workspaces.stamp(id, in: box)
             if let onPick {

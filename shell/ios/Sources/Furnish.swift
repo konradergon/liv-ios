@@ -149,11 +149,11 @@ private final class FurnishPass {
             // legacy TEXT `area` refuses options harmlessly — values keep
             // flowing as text, and the picker unions live values in.
             let held = (area.options ?? []).compactMap { $0.name }
-            addOptions(to: area.id ?? 0, skipping: held)
+            addOptions(to: area.id ?? .absent, skipping: held)
         } else {
             track()
             box.addProperty("area", kind: "select") { [self] id in
-                if id != 0 { addOptions(to: id, skipping: []) }
+                if !id.isAbsent { addOptions(to: id, skipping: []) }
                 landed()
             }
         }

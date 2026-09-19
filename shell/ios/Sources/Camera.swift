@@ -282,7 +282,7 @@ struct CameraFlow: View {
 
     @State private var permission: CameraPermission = .unknown
     @State private var shots: [CameraShot] = []
-    @State private var target: LivEntityID = 0
+    @State private var target: LivEntityID = .absent
     @State private var caption = ""
     @State private var captions: [LivEntityID: String] = [:]
     @State private var applied: [LivEntityID: [CameraApplied]] = [:]
@@ -766,7 +766,7 @@ struct CameraFlow: View {
                 return
             }
             model.createNote { id in
-                guard id != 0 else {
+                guard !id.isAbsent else {
                     scanning = false
                     CameraFlow.buzz()
                     return
@@ -816,7 +816,7 @@ struct CameraFlow: View {
                 of: CGSize(width: 160, height: 160))
             DispatchQueue.main.async {
                 model.addFile(path) { id in
-                    guard id != 0 else {
+                    guard !id.isAbsent else {
                         CameraFlow.buzz()
                         return
                     }
@@ -840,7 +840,7 @@ struct CameraFlow: View {
 
     /// Caption is per-shot (the apply-all toggle governs chips only).
     private func commitCaption() {
-        guard target != 0 else { return }
+        guard !target.isAbsent else { return }
         let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text != (captions[target] ?? ""), !text.isEmpty else { return }
         captions[target] = text
@@ -877,7 +877,7 @@ struct CameraFlow: View {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
         let ids = applyAll ? shots.map(\.id) : [target]
-        for id in ids where id != 0 {
+        for id in ids where !id.isAbsent {
             let done: (Bool) -> Void = { ok in
                 guard ok else { return CameraFlow.buzz() }
                 var list = applied[id, default: []]

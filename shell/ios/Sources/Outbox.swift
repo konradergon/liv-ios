@@ -191,7 +191,7 @@ final class Outbox: ObservableObject {
     /// Called from the BoxModel create paths (via `tracking`). Idempotent;
     /// 0 is never an id.
     func track(entityId: LivEntityID, kind: OutboxKind) {
-        guard entityId != 0, ledger[entityId] == nil else { return }
+        guard !entityId.isAbsent, ledger[entityId] == nil else { return }
         ledger[entityId] = LedgerRecord(
             uuid: UUID().uuidString, state: .pending, kind: kind,
             captured: Civil.nowStamp())
@@ -203,7 +203,7 @@ final class Outbox: ObservableObject {
     /// committed entity enters the ledger before the caller sees the id.
     static func tracking(_ kind: OutboxKind, _ done: ((LivEntityID) -> Void)?) -> (LivEntityID) -> Void {
         { id in
-            if id != 0 { Outbox.shared.track(entityId: id, kind: kind) }
+            if !id.isAbsent { Outbox.shared.track(entityId: id, kind: kind) }
             done?(id)
         }
     }

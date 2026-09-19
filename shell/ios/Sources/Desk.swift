@@ -818,7 +818,7 @@ struct DeskHost: View {
         guard !creating else { return }
         creating = true
         box.createNote { id in
-            guard id != 0 else {
+            guard !id.isAbsent else {
                 creating = false
                 return
             }
@@ -855,7 +855,7 @@ struct DeskHost: View {
         creating = true
         box.capture(text) { id in
             creating = false
-            guard id != 0 else { return }
+            guard !id.isAbsent else { return }
             workspaces.stamp(id, in: box)
             desk.requestFocus(id)
             // The same turn of its own the bar's `+` takes — see
@@ -925,7 +925,7 @@ struct DeskHost: View {
             hhmm: Int64(LivDue.defaultHHMM))
         let landed: (LivEntityID) -> Void = { id in
             creating = false
-            guard id != 0 else {
+            guard !id.isAbsent else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
@@ -938,7 +938,7 @@ struct DeskHost: View {
             box.createEvent(dueCivil: stamp, dateOnly: false, done: landed)
         } else {
             box.createTask { id in
-                guard id != 0 else {
+                guard !id.isAbsent else {
                     landed(0)
                     return
                 }
