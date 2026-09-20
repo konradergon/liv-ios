@@ -939,7 +939,7 @@ struct DeskHost: View {
         } else {
             box.createTask { id in
                 guard !id.isAbsent else {
-                    landed(0)
+                    landed(.absent)
                     return
                 }
                 box.setSpan(id, "due", start: stamp, end: 0, dateOnly: false)
