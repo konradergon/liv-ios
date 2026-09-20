@@ -91,7 +91,15 @@ say()  { print -r -- "$1" }
 # `die "..."` reported the failure and then carried on to return 0, and
 # the tour passed on a build that was visibly broken. A harness that
 # prints FAIL and exits 0 is worse than no harness.
-die()  { print -r -- "FAIL  $1"; return 1 }
+# **TO STDERR**, so a caller that hides a helper's chatter cannot hide
+# its FAILURE too (2026-09-20). Every one of the 26 `cmd_boot` call sites
+# ran it under `>/dev/null 2>&1` to keep "ok boot ..." out of the
+# transcript, and threw away the one sentence that said what went wrong
+# with it — so "could not boot before the tour" was the whole report for
+# six distinct causes, from a stale bundle to a springboard alert. Those
+# sites hide stdout only now. It also keeps a FAIL out of the captures
+# (`$(surfaces)`, `$(bar_count)`) that read another function's stdout.
+die()  { print -r -- "FAIL  $1" >&2; return 1 }
 
 # EVERY `axe` CALL IS BOUNDED. A HANG IS AS USELESS AS A LIE.
 #
@@ -555,7 +563,7 @@ cmd_goto() {
 # THE ONE THAT CATCHES A DEAD REPAINT. Every view in turn, each asserted
 # on screen. A body that stops repainting fails on the first hop.
 cmd_tour() {
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the tour."; return 1 }
+  cmd_boot >/dev/null || { die "could not boot before the tour."; return 1 }
   # FIVE. `everything` is the notes list — drawn as Notes, first in the
   # panel since 2026-09-16 — and `cmd_goto` knows its word.
   local views=(everything today inbox calendar tasks)
@@ -618,7 +626,7 @@ check_library() {
   #
   # The library door itself is the probe: it travels with the desk and it
   # is the chrome that stays in the sliver.
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the library check."; return 1 }
+  cmd_boot >/dev/null || { die "could not boot before the library check."; return 1 }
 
   screen_w=$(screen_width)
   (( screen_w > 0 )) || {
@@ -706,7 +714,7 @@ check_library() {
 # here, but only as the POSITION PROBE for the desk — the assertion
 # below needs a landmark that survives the sheet.
 check_properties_card() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   local rest after moved
   open_first_note || return 1
 
@@ -858,7 +866,7 @@ raise SystemExit(1)" "$1"
 # must never move as navigation state does, and that is what "one row,
 # five keys, always" checks.
 cmd_bar() {
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the bar check."; return 1 }
+  cmd_boot >/dev/null || { die "could not boot before the bar check."; return 1 }
   # 1. THE SHAPE. Five keys, in order, on one row — and in THREE PIECES
   #    since 2026-09-11, which is the thing this check could not see
   #    before and the owner asked for by name.
@@ -1069,7 +1077,7 @@ cmd_chrome() {
     return 0
   fi
   local view="$1"
-  cmd_boot "$view" >/dev/null 2>&1 || { die "could not boot into $view."; return 1 }
+  cmd_boot "$view" >/dev/null || { die "could not boot into $view."; return 1 }
   # LET THE SURFACE SETTLE. Calendar scrolls itself to the current hour on
   # appear (`openAtTheDay`); a swipe that lands during that animation is
   # absorbed by it and the check reports a chrome that never moved.
@@ -1146,7 +1154,7 @@ door_y() {
 # that a StaticText carrying "unfiled" or a shipped area name sits between
 # the date and the day strip.
 cmd_areas() {
-  cmd_boot today >/dev/null 2>&1 || { die "could not boot into Today."; return 1 }
+  cmd_boot today >/dev/null || { die "could not boot into Today."; return 1 }
   local line
   line=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
 import json, sys
@@ -1197,7 +1205,7 @@ open_url() {
 }
 
 cmd_routes() {
-  cmd_boot today >/dev/null 2>&1 || { die "could not boot before the route check."; return 1 }
+  cmd_boot today >/dev/null || { die "could not boot before the route check."; return 1 }
 
   # 1. A VIEW BY NAME. `liv://inbox` is the one the spec names; the other
   #    five come free from the same `Feature` enum.
@@ -1331,7 +1339,7 @@ print(json.dumps(sorted(hs.items(), key=lambda kv: -kv[1])))"
 
 cmd_rows() {
   local view="${1:-tasks}"
-  cmd_boot "$view" >/dev/null 2>&1 || { die "could not boot into $view."; return 1 }
+  cmd_boot "$view" >/dev/null || { die "could not boot into $view."; return 1 }
   # NORMALISE FIRST, the way `cmd_goto` does. Tasks remembers its filter
   # across launches, so a run that left it on "Move" hands the next one
   # an empty list and the check reports "no rows" about a build that is
@@ -1390,7 +1398,7 @@ cmd_grid() {
   # that raw value is in every stored position, and it is drawn as
   # "Notes". Both are asserted — the surface alone would pass on a screen
   # wearing the old name.
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   [[ "$(cmd_surface)" == "everything" ]] || {
     die "the notes list draws '$(cmd_surface)', not the everything surface.
       Feature.everything is the notes list; the flag lands on it."
@@ -1643,7 +1651,7 @@ SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
 # did not fire.
 cmd_create() {
   # A NOTE, in one tap and with no menu.
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   cmd_tap "New" || return 1
   perl -e 'select(undef,undef,undef,1.8)'
   no_create_menu || {
@@ -1662,7 +1670,7 @@ cmd_create() {
   # word "Task" under itself; a word that changes under a key that does
   # not move is the riddle the words were added to end. Tasks makes its
   # own things in its own add row, which the next step drives.
-  cmd_boot tasks >/dev/null 2>&1 || { die "could not boot into Tasks."; return 1 }
+  cmd_boot tasks >/dev/null || { die "could not boot into Tasks."; return 1 }
   cmd_tap "New" || return 1
   perl -e 'select(undef,undef,undef,1.8)'
   no_create_menu || { die "+ in Tasks opened the create menu."; return 1 }
@@ -1677,7 +1685,7 @@ cmd_create() {
   # LANDS. A write returning an id proves nothing here: the row has to
   # appear in the list you typed it into, which is what the status the
   # add row picks is for. Counted before and after.
-  cmd_boot tasks >/dev/null 2>&1 || { die "could not boot back into Tasks."; return 1 }
+  cmd_boot tasks >/dev/null || { die "could not boot back into Tasks."; return 1 }
   local before after stamp
   before=$(task_rows)
   stamp="drive $(date +%H%M%S)"
@@ -1721,7 +1729,7 @@ cmd_create() {
   # task, so the keyboard is still up and a List is lazy: rows under the
   # keyboard are not in the tree at all, and counting them here would
   # fail about the fold rather than about the write.
-  cmd_boot tasks >/dev/null 2>&1 || { die "could not boot back into Tasks to read the list."; return 1 }
+  cmd_boot tasks >/dev/null || { die "could not boot back into Tasks to read the list."; return 1 }
   after=$(task_rows)
   (( after > before )) || {
     die "typed '${stamp}' into the add row and Tasks lists ${after} rows
@@ -1780,7 +1788,7 @@ no_create_menu() {
 # It does not open anything: opening a note raises the keyboard, and the
 # bar retires under one, so there would be no count to read.
 cmd_desk() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   local first n v
   first=$(tab_count) || { die "the bar reports no tab count on the notes list."; return 1 }
   (( first > 0 )) || {
@@ -1790,7 +1798,7 @@ cmd_desk() {
   }
 
   for v in today calendar tasks inbox everything; do
-    cmd_goto "$v" >/dev/null 2>&1 || { die "could not reach $v."; return 1 }
+    cmd_goto "$v" >/dev/null || { die "could not reach $v."; return 1 }
     n=$(tab_count) || { die "no tab count in $v — the bar should carry one everywhere."; return 1 }
     (( n == first )) || {
       die "the desk changed size on the way to ${v}: ${first} in Notes, ${n} here.
@@ -1810,7 +1818,7 @@ cmd_desk() {
   # rendered surface. The card is found by its frame (the grid's cards
   # are the only 150pt buttons on screen), for the reason `open_first_note`
   # gives: two unnamed notes share one label.
-  cmd_goto today >/dev/null 2>&1 || { die "could not reach Today for the switcher pick."; return 1 }
+  cmd_goto today >/dev/null || { die "could not reach Today for the switcher pick."; return 1 }
   cmd_tap "$(bar_tab_label)" || return 1
   local x y
   read x y <<< "$(first_card_point)"
@@ -1864,7 +1872,7 @@ if CARDS:
 # Break it on purpose before trusting the green: make `land` set `state`
 # and leave `shown` alone, and step 1 goes red.
 cmd_under() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   open_first_note || return 1
   cmd_tap "Back" || return 1
   [[ "$(cmd_surface)" == "everything" ]] || {
@@ -1878,7 +1886,7 @@ cmd_under() {
 
   # AND FROM ANOTHER VIEW: the note lies OVER Today, so Back uncovers
   # Today — not the list, which you never picked.
-  cmd_goto today >/dev/null 2>&1 || { die "could not reach Today."; return 1 }
+  cmd_goto today >/dev/null || { die "could not reach Today."; return 1 }
   cmd_tap "$(bar_tab_label)" || return 1
   local x y
   read x y <<< "$(first_card_point)"
@@ -1911,7 +1919,7 @@ cmd_lens() {
   #
   # So: read the count the panel prints, turn a saved filter on, read it
   # again. The number has to move.
-  cmd_boot everything >/dev/null 2>&1 || { die "could not boot before the lens check."; return 1 }
+  cmd_boot everything >/dev/null || { die "could not boot before the lens check."; return 1 }
   cmd_tap "Library" || return 1
   local before after name
   before=$(panel_count Notes)
@@ -1981,13 +1989,13 @@ cmd_facets() {
   # up, and the bar retires under a keyboard — so the Search key is not on
   # screen and the check fails about the wrong thing. Every check that needs
   # the bar starts from a known launch.
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the facet check."; return 1 }
+  cmd_boot >/dev/null || { die "could not boot before the facet check."; return 1 }
   cmd_tap "Search" || return 1
   # WAIT for the field, do not assume the sheet is up. Typing into a sheet
   # that has not arrived types into whatever has focus, and the check then
   # reports "no facet chips" about a screen that was never search.
   wait_field || { die "the search sheet did not open."; return 1 }
-  axe type "note" --udid "$UDID" >/dev/null 2>&1 || { die "could not type into search."; return 1 }
+  axe type "note" --udid "$UDID" >/dev/null || { die "could not type into search."; return 1 }
   perl -e 'select(undef,undef,undef,2.5)'
   local chips
   chips=$(facet_chips)
@@ -2189,7 +2197,7 @@ query_text() {
 # is emptiest — a tap that lands on an existing block OPENS it, which is
 # the grid's own rule, and the check says so rather than failing blind.
 cmd_event() {
-  cmd_boot calendar >/dev/null 2>&1 || { die "could not boot into the Calendar."; return 1 }
+  cmd_boot calendar >/dev/null || { die "could not boot into the Calendar."; return 1 }
   perl -e 'select(undef,undef,undef,1.2)'
 
   local before after mid_x
@@ -2223,7 +2231,7 @@ cmd_event() {
   # card is a detent sheet with no Done button, and a fresh boot is the
   # only reading of the timeline that owes nothing to what is over it.
   sim terminate "$UDID" "$APP" >/dev/null 2>&1
-  cmd_boot calendar >/dev/null 2>&1 || { die "could not boot back into the Calendar."; return 1 }
+  cmd_boot calendar >/dev/null || { die "could not boot back into the Calendar."; return 1 }
   perl -e 'select(undef,undef,undef,1.2)'
   after=$(block_count)
 
@@ -2267,7 +2275,7 @@ block_count() {
 # when the log has actually been overwritten, which needs a tampered
 # fixture rather than a boot.
 cmd_settings() {
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the settings check."; return 1 }
+  cmd_boot >/dev/null || { die "could not boot before the settings check."; return 1 }
   cmd_tap "Library" || return 1
   cmd_tap "Settings" || return 1
   perl -e 'select(undef,undef,undef,1.5)'
@@ -2341,7 +2349,7 @@ except Exception: print(0)' "$CONSOLE"
 # with two cycles of its own and has for as long as anyone has looked,
 # and asserting the total would make this check about that instead.
 cmd_quiet() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   local before after row
   before=$(count_cycles)
   open_first_note || return 1
@@ -2381,7 +2389,7 @@ cmd_quiet() {
 # for one assertion. So this guards the FLOW and the GEOMETRY, and the
 # layering stays an eyes-on check.
 cmd_workspace() {
-  cmd_boot >/dev/null 2>&1 || { die "could not boot before the workspace check."; return 1 }
+  cmd_boot >/dev/null || { die "could not boot before the workspace check."; return 1 }
   open_side library || return 1
 
   cmd_tap "Switch workspace" || {
@@ -2445,7 +2453,7 @@ cmd_workspace() {
 # ffi tests already prove a restore appends a version and never rewrites
 # the log. What a driver can add is that the card is reachable at all.
 cmd_history() {
-  cmd_boot notes >/dev/null 2>&1 || { die "could not boot into the notes list."; return 1 }
+  cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   open_first_note || return 1
 
   cmd_tap "Note actions" || return 1
@@ -2484,7 +2492,7 @@ cmd_history() {
 # say "Saved to Liv" and be lying.
 cmd_spool() {
   # Install first, so the group container exists to write into.
-  cmd_boot inbox >/dev/null 2>&1 || { die "could not boot into the Inbox."; return 1 }
+  cmd_boot inbox >/dev/null || { die "could not boot into the Inbox."; return 1 }
   local group
   group=$(sim get_app_container "$UDID" "$APP" "$GROUP" 2>/dev/null)
   [[ -n "$group" && -d "$group" ]] || {
@@ -2500,7 +2508,7 @@ cmd_spool() {
 
   # The drain runs at launch, so relaunch — the file was written after
   # the first one.
-  cmd_boot inbox >/dev/null 2>&1 || { die "could not relaunch into the Inbox."; return 1 }
+  cmd_boot inbox >/dev/null || { die "could not relaunch into the Inbox."; return 1 }
   local i
   for i in {1..10}; do
     tree | grep -q "$words" && break
