@@ -69,6 +69,14 @@ cd "${0:A:h}"
 # instrument reporting confidently about something it never measured — so
 # the fix belongs here, once, rather than as a dodge at each call site.
 # System tools first; homebrew after it, for `axe`.
+#
+# `axe` is AXe (github.com/cameroncooke/AXe), the accessibility CLI every
+# reading in this file goes through, and it installs from a TAP:
+#
+#     brew install cameroncooke/axe/axe
+#
+# A bare `brew install axe` matches no formula, which is what it looks
+# like when it is missing (2026-09-21).
 path=(/usr/bin /bin /usr/sbin /sbin /opt/homebrew/bin $path)
 UDID=${LIV_UDID:-8E699FF6-03A1-433B-A602-C51A30B14E87}
 APP=app.liv.ios
@@ -134,6 +142,7 @@ axe() {
     print -r -- "axe: no runnable \`axe\` on PATH — the harness has no eyes.
       Every reading in this file comes from \`axe describe-ui\`, so
       nothing can be said about the app until this is fixed.
+      brew install cameroncooke/axe/axe   (a TAP — bare \`axe\` is not a formula)
       PATH searched: $path" >&2
     return 3
   }
@@ -487,7 +496,13 @@ cmd_boot() {
       printed here would be a statement about your build.
       \`suites.sh\` does not use it (simctl only), which is why the
       suites can be green while this is broken.
-      Install AXe, or point \`LIV_AXE\` at it.
+
+          brew install cameroncooke/axe/axe
+
+      It is AXe (github.com/cameroncooke/AXe) and it lives in a TAP, so
+      a bare \`brew install axe\` finds nothing — which is how this
+      looked on 2026-09-21. Already installed somewhere off PATH: point
+      \`LIV_AXE\` at the binary.
       PATH searched: $path"; return 1 }
   [[ -d build/Liv.app ]] || { die "no build/Liv.app — run ./build.sh first"; return 1 }
   local stale

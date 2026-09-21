@@ -138,6 +138,19 @@ work: the app does not exit after a self-check, so a bare `simctl launch
 --console-pty` never returns, and bounding it with SIGALRM fails because
 `xcrun` forks `simctl`. The script has the working form and the reason.
 
+**`drive.sh` needs `axe` and `suites.sh` does not** — which is why the
+suites can be green while `drive.sh` cannot see the screen at all. Every
+reading it takes comes from `axe describe-ui`; without the binary, nothing
+it prints is a statement about the app. It installs from a TAP, so a bare
+`brew install axe` matches no formula:
+
+```
+brew install cameroncooke/axe/axe     # github.com/cameroncooke/AXe
+```
+
+`LIV_AXE` points at it if it lives off PATH. Written down here because on
+2026-09-21 its absence read as "the app drew nothing" for a day.
+
 Both scripts INSTALL `build/Liv.app` themselves and refuse to run against
 a bundle older than the sources. Until 2026-08-27 they did not, and
 launched whatever was already on the simulator — a deliberately broken
