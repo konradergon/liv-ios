@@ -42,6 +42,7 @@
 #   ./drive.sh spool             a catch the share sheet left is in the Inbox at the next launch
 #   ./drive.sh cycles            AttributeGraph cycles since boot
 #   ./drive.sh quiet             opening a note adds NO AttributeGraph cycles
+#   ./drive.sh console [n]       the last n lines the app itself printed
 #
 # Build first (`./build.sh`); `boot` installs what it finds and refuses
 # to run against a bundle older than the sources.
@@ -308,10 +309,37 @@ cmd_boot() {
       simulator asks these on first launch."
       return 1
     fi
-    die "no surface marker appeared in 10s.
-      Either the app did not start, or nothing on screen calls
-      \`.livSurface()\` — and a harness that cannot see the surface
-      cannot tell you anything. Check Surface.swift is in the build."
+    # SAY WHICH OF THE THREE IT IS. "No surface marker" has three
+    # causes and they want three different things done about them, and
+    # this printed one sentence covering all of them (2026-09-21). The
+    # app's own stdout and stderr have been going to $CONSOLE since this
+    # function was written — a crash, a `fatalError`, a failed decode
+    # all land in there — and nothing ever read it back.
+    local pid tail_out probe rc
+    pid=$(pgrep -f "Liv.app/Liv" | head -1)
+    # Is the accessibility read itself working? `surfaces()` hides axe's
+    # stderr, so a broken or missing `axe` looks exactly like an app
+    # that drew nothing, and the blame lands on the wrong side.
+    probe=$(axe describe-ui --udid "$UDID" 2>&1 >/dev/null); rc=$?
+    tail_out=$(tail -n 25 "$CONSOLE" 2>/dev/null)
+    if (( rc != 0 )); then
+      die "the accessibility read failed, so nothing can be said about the app.
+      \`axe describe-ui\` exited $rc: ${probe:-(no message)}
+      That is the harness's own eyes, not your build."
+      return 1
+    fi
+    if [[ -z "$pid" ]]; then
+      die "the app is not running — it started and died.
+      The last 25 lines of its console ($CONSOLE):
+${tail_out:-      (the console is empty, which means it died before printing anything)}"
+      return 1
+    fi
+    die "the app is running (pid $pid) but drew no surface marker in 10s.
+      So it launched and something above the views is refusing to
+      render, or nothing on screen calls \`.livSurface()\`. Check
+      Surface.swift is in the build.
+      The last 25 lines of its console ($CONSOLE):
+${tail_out:-      (nothing on the console)}"
     return 1
   fi
   # SETTLE before saying ready. A surface marker appears while the app is
@@ -2565,6 +2593,11 @@ case "${1:-}" in
   settings) cmd_settings || exit 1 ;;
   cycles)  cmd_cycles  || exit 1 ;;
   quiet)   cmd_quiet   || exit 1 ;;
+  # WHAT THE APP ITSELF SAID. The launch is backgrounded with its stdout
+  # and stderr going to $CONSOLE, which held a crash, a `fatalError` or
+  # a failed decode for every boot that ever went wrong here, and had no
+  # way to be read short of knowing the path (2026-09-21).
+  console) tail -n "${2:-60}" "$CONSOLE" 2>/dev/null || { die "no console at $CONSOLE — nothing has been launched yet."; exit 1 } ;;
   # The usage block, all of it. This said `2,33p`, which stopped at
   # `goto` — everything added after it (tour, panel, bar, workspace,
   # history, spool, cycles, quiet) was documented at the top of the file
