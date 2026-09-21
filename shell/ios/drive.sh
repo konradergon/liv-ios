@@ -116,8 +116,29 @@ die()  { print -r -- "FAIL  $1" >&2; return 1 }
 # and would make this file depend on a homebrew coreutils being present.
 # Twenty seconds is far above the p100 of a healthy call and far below
 # the patience of whoever is waiting.
+#
+# AND A FAILED EXEC MUST SAY SO (2026-09-21). `exec @ARGV` with no `or
+# die` is the hole this wrapper had: when `whence -p axe` finds nothing
+# it expands to the EMPTY STRING, perl's exec fails, the -e program has
+# nothing left to run, and perl EXITS 0 having printed nothing at all.
+# A read that never happened then wears the clothes of an empty screen —
+# which is exactly the report this file produced on 2026-09-21: an empty
+# tree, exit 0, an empty stderr, and the blame laid on the app.
+#
+# `$AXE` is resolved ONCE rather than per call, so the answer to "are
+# there eyes" is the same for every reading in a run.
+AXE=${LIV_AXE:-$(whence -p axe)}
+
 axe() {
-  perl -e 'alarm shift; exec @ARGV' 20 "$(whence -p axe)" "$@"
+  [[ -x "$AXE" ]] || {
+    print -r -- "axe: no runnable \`axe\` on PATH — the harness has no eyes.
+      Every reading in this file comes from \`axe describe-ui\`, so
+      nothing can be said about the app until this is fixed.
+      PATH searched: $path" >&2
+    return 3
+  }
+  perl -e 'alarm shift; exec @ARGV or die "cannot exec $ARGV[0]: $!\n"' \
+    20 "$AXE" "$@"
 }
 
 # AND `simctl`, FOR THE SAME REASON. `xcrun simctl io … screenshot` wedged
@@ -133,17 +154,67 @@ axe() {
 # NOT the backgrounded `launch --console-pty` (in `cmd_boot`): that one is
 # MEANT to outlive the call, because it is what captures the console for
 # the whole run. Bounding it would kill the log after 90 seconds.
+# The same `or die` as `axe()`, for the same reason: without it a failed
+# exec exits 0, and `sim install … || die` would certify an install that
+# never ran — disarming the 2026-08-27 guard that exists because a
+# deliberately broken assertion still printed ten PASSes.
+XCRUN=${LIV_XCRUN:-$(whence -p xcrun)}
+
 sim() {
-  perl -e 'alarm shift; exec @ARGV' 90 "$(whence -p xcrun)" simctl "$@"
+  [[ -x "$XCRUN" ]] || {
+    print -r -- "sim: no runnable \`xcrun\` on PATH — nothing can drive the simulator." >&2
+    return 3
+  }
+  perl -e 'alarm shift; exec @ARGV or die "cannot exec $ARGV[0]: $!\n"' \
+    90 "$XCRUN" simctl "$@"
 }
 
 container() { sim get_app_container "$UDID" "$APP" data 2>/dev/null }
 
-# THE ACCESSIBILITY TREE, or nothing. Every reader below pipes through
+# THE ACCESSIBILITY TREE, or a REASON. Every reader below pipes through
 # this, so a shut-down simulator or a dead app produces one clear line
 # instead of six Python tracebacks — a harness that panics in public is
 # hard to believe when it says something calm.
-tree() { axe describe-ui --udid "$UDID" 2>/dev/null }
+#
+# **"NOTHING" AND "I COULD NOT SEE" ARE DIFFERENT ANSWERS** (2026-09-21),
+# and for a year this returned the first for both. It was
+# `axe describe-ui … 2>/dev/null`: a stalled server, an unrunnable
+# binary and a healthy simulator showing a blank window all came back as
+# an empty string, and every reader above went on to make a claim about
+# the app. On 2026-09-21 that cost a day — `axe` exited 0 having printed
+# zero bytes, and the harness reported "the app is running but drew no
+# surface marker", about an app nobody had managed to look at.
+#
+# So: exit 0 with the tree, or exit 3 having put the reason in `AX_WHY`.
+# Callers that only want text (`tree | grep -q …`) are unaffected — they
+# still see an empty pipe — but anything that draws a CONCLUSION from an
+# empty read has a way to know it must not.
+AX_WHY=""
+
+tree() {
+  AX_WHY=""
+  local out rc err="$RUN/axe.err"
+  out=$(axe describe-ui --udid "$UDID" 2>"$err"); rc=$?
+  if (( rc == 142 )); then
+    AX_WHY="\`axe describe-ui\` TIMED OUT after 20s. The accessibility server
+      stalls (2026-08-31) — restart the simulator. This is the harness's
+      own eyes, not your build."
+    return 3
+  fi
+  if (( rc != 0 )); then
+    AX_WHY="\`axe describe-ui\` exited $rc: $(cat "$err" 2>/dev/null)"
+    return 3
+  fi
+  if [[ -z "$out" ]]; then
+    AX_WHY="\`axe describe-ui\` exited 0 and printed ZERO BYTES.
+      That is a read that did not happen, not a screen with nothing on
+      it — a healthy simulator always answers with at least a root node.
+      Usually: no frontmost app (the launch has not taken the screen
+      yet), or an \`axe\` that cannot run. $(cat "$err" 2>/dev/null)"
+    return 3
+  fi
+  print -r -- "$out"
+}
 
 # Run a python snippet over the tree. `walk(n)` is called for every node;
 # print whatever you want. $2 is a PREAMBLE (before the walk), $3 a
@@ -187,8 +258,45 @@ PY
 # — on this machine plan9port's, which has no -o and does not match this
 # pattern at all — and a harness whose readings depend on that is the
 # thing this file exists to stop being.
+# EVERY Liv process, and THE ONE UNDER TEST.
+#
+# `cpu` was `pgrep … | head -1`, which takes whichever pid the kernel
+# happened to list first. On 2026-09-21 that was a survivor from an
+# earlier run: the failure report named its pid and its idle 0.0% for a
+# launch that was a different process entirely, and the settle-wait
+# below broke on the survivor's first sample instead of waiting for the
+# app. A harness that names the wrong process has already lost the
+# argument.
+#
+# NOT `tail -1` either. `pgrep` does not promise an order, and a pid is
+# not a clock — they wrap. The youngest process is the one with the
+# smallest ELAPSED TIME, which `ps` will say outright.
+app_pids() { pgrep -f "Liv.app/Liv" }
+
+app_pid() {
+  local pids; pids=(${(f)"$(app_pids)"})
+  (( $#pids )) || return 0
+  (( $#pids == 1 )) && { print -r -- "$pids[1]"; return 0 }
+  ps -o pid=,etime= -p ${(j: :)pids} 2>/dev/null | python3 -c '
+import sys
+def secs(e):
+    d, _, rest = e.partition("-")
+    if not rest: d, rest = "0", e
+    p = [int(x) for x in rest.split(":")]
+    while len(p) < 3: p.insert(0, 0)
+    return int(d) * 86400 + p[0] * 3600 + p[1] * 60 + p[2]
+best = None
+for line in sys.stdin:
+    f = line.split()
+    if len(f) != 2: continue
+    try: t = secs(f[1])
+    except Exception: continue
+    if best is None or t < best[1]: best = (f[0], t)
+print(best[0] if best else "")'
+}
+
 cpu() {
-  local pid; pid=$(pgrep -f "Liv.app/Liv" | head -1)
+  local pid; pid=$(app_pid)
   [[ -n "$pid" ]] || return 0
   ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' '
 }
@@ -201,7 +309,13 @@ surfaces() {
   # read came back a usage message, so the harness reported "the screen
   # shows none" for a perfectly healthy app and failed all six hops. A
   # tool that has to be believed cannot rest on which grep it got.
-  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
+  #
+  # AND IT ANSWERS "I COULD NOT SEE" WITH 3, never with an empty list.
+  # The `except: pass` below used to turn an unreadable tree into "no
+  # markers", which is the lie `tree()` above now refuses to tell.
+  local t
+  t=$(tree) || return 3
+  print -r -- "$t" | python3 -c '
 import json, sys
 out = []
 def walk(n):
@@ -211,9 +325,10 @@ def walk(n):
 try:
     d = json.load(sys.stdin)
     walk(d if isinstance(d, dict) else d[0])
-except Exception:
-    pass
-print("\n".join(sorted(out)))' 2>/dev/null
+except Exception as e:
+    sys.stderr.write("the tree would not parse: %s\n" % e)
+    raise SystemExit(3)
+print("\n".join(sorted(out)))'
 }
 
 # A SPRINGBOARD ALERT, if one is covering the app.
@@ -257,12 +372,32 @@ except Exception:
 print(hit[0] if hit else "")' 2>/dev/null
 }
 
+# 0 = a surface is up. 1 = the screen was readable and had none. 3 = the
+# screen could not be READ, and `AX_WHY` says why.
+#
+# **BOUNDED BY THE CLOCK, AND IT SAYS WHAT IT SPENT** (2026-09-21). This
+# counted 40 iterations and the failure quoted "10s" — the sleeps only.
+# A healthy `describe-ui` is ~1.7s (see the note on `axe`), so the real
+# wait was over a minute, and with the 20s bound up to thirteen minutes.
+# A reader told "10s" concludes the first body hung; a reader told the
+# truth concludes something else entirely. An unmeasured number in a
+# failure report is worse than no number.
+#
+# And it STOPS at the first unreadable read rather than retrying it
+# forty times and then blaming the app.
+WAIT_SECS=0
+WAIT_READS=0
 wait_for_surface() {
-  local i
-  for i in {1..40}; do
-    [[ -n "$(surfaces)" ]] && return 0
+  local deadline=$(( $(date +%s) + 45 )) s rc
+  WAIT_READS=0
+  while (( $(date +%s) < deadline )); do
+    s=$(surfaces); rc=$?
+    (( WAIT_READS++ ))
+    (( rc == 3 )) && { WAIT_SECS=$(( 45 - (deadline - $(date +%s)) )); return 3 }
+    [[ -n "$s" ]] && { WAIT_SECS=$(( 45 - (deadline - $(date +%s)) )); return 0 }
     perl -e 'select(undef,undef,undef,0.25)'
   done
+  WAIT_SECS=45
   return 1
 }
 
@@ -278,7 +413,12 @@ wait_for_surface() {
 # So: how many elements, how deep, and the first few things a person
 # would recognise. A blank window is a handful of elements and no words.
 tree_sketch() {
-  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
+  # THROUGH `tree()`, like every other reader — so an unreadable screen
+  # says so here too instead of printing a parse error about an empty
+  # stream, which is how this read presented on 2026-09-21.
+  local t
+  t=$(tree) || { print -r -- "      the screen could not be read: $AX_WHY"; return 0 }
+  print -r -- "$t" | python3 -c '
 import json, sys
 n = 0
 depth = 0
@@ -306,7 +446,7 @@ print("      identifiers: %s" % (", ".join(ids) if ids else "(none)"))' 2>/dev/n
 # HOW MANY OF THE APP ARE RUNNING. `suites.sh` leaves the app alive on
 # purpose (it does not exit after a self-check), so a second instance is
 # an ordinary thing to have and a confusing thing to debug around.
-liv_pids() { pgrep -f "Liv.app/Liv" | tr '\n' ' ' }
+liv_pids() { app_pids | tr '\n' ' ' }
 
 cmd_boot() {
   # A NAMED PLACE, ALWAYS. With no argument this used to launch and let
@@ -333,6 +473,23 @@ cmd_boot() {
   # Let the terminate land. Running this straight after `suites.sh`
   # otherwise races its own last terminate and boots into nothing.
   perl -e 'select(undef,undef,undef,0.6)'
+  # AND MAKE SURE IT LANDED. `suites.sh` launches the app eleven times
+  # and the app does not exit after a self-check, so a survivor is an
+  # ordinary thing to have — and on 2026-09-21 one was still up while
+  # this function launched another. Two instances share one box, and
+  # every reading afterwards is taken from whichever one `axe` happened
+  # to describe. Asking the question AFTER the boot fails is too late:
+  # this is the launch's own hygiene, not a diagnosis.
+  local left; left=(${(f)"$(app_pids)"})
+  if (( $#left )); then
+    kill $left 2>/dev/null
+    perl -e 'select(undef,undef,undef,0.5)'
+    left=(${(f)"$(app_pids)"})
+    (( $#left == 0 )) || { die "could not clear $#left leftover instance(s) of the app (${left[*]}).
+      They share one box with the launch about to happen, so nothing
+      measured afterwards would be about a single app. Kill them by
+      hand: \`pkill -f 'Liv.app/Liv'\`"; return 1 }
+  fi
   : > "$CONSOLE"
   # `boot <flag>` starts the app somewhere specific using the app's OWN
   # rehearsal flags (`-desk.boot`, documented in App.swift). Driving the
@@ -341,7 +498,8 @@ cmd_boot() {
   local args=()
   [[ -n "$where" ]] && args=(-desk.boot "$where")
   ( xcrun simctl launch --console-pty "$UDID" "$APP" $args > "$CONSOLE" 2>&1 & echo $! > "$RUN/pid" )
-  if ! wait_for_surface; then
+  wait_for_surface; local waited=$?
+  if (( waited != 0 )); then
     local alert; alert="$(system_alert)"
     if [[ -n "$alert" ]]; then
       die "the system is covering the app with: $alert
@@ -351,32 +509,33 @@ cmd_boot() {
       simulator asks these on first launch."
       return 1
     fi
-    # SAY WHICH OF THE THREE IT IS. "No surface marker" has three
-    # causes and they want three different things done about them, and
-    # this printed one sentence covering all of them (2026-09-21). The
-    # app's own stdout and stderr have been going to $CONSOLE since this
-    # function was written — a crash, a `fatalError`, a failed decode
-    # all land in there — and nothing ever read it back.
-    local pid tail_out probe rc
-    pid=$(pgrep -f "Liv.app/Liv" | head -1)
-    # Is the accessibility read itself working? `surfaces()` hides axe's
-    # stderr, so a broken or missing `axe` looks exactly like an app
-    # that drew nothing, and the blame lands on the wrong side.
-    probe=$(axe describe-ui --udid "$UDID" 2>&1 >/dev/null); rc=$?
+    local pid tail_out
+    pid=$(app_pid)
     tail_out=$(tail -n 25 "$CONSOLE" 2>/dev/null)
-    if (( rc != 0 )); then
-      die "the accessibility read failed, so nothing can be said about the app.
-      \`axe describe-ui\` exited $rc: ${probe:-(no message)}
-      That is the harness's own eyes, not your build."
+
+    # THE HARNESS'S OWN EYES COME FIRST, and they are asked properly now.
+    # The previous version probed `axe describe-ui 2>&1 >/dev/null` and
+    # branched on the EXIT CODE — which throws the tree away and keeps
+    # only stderr, so a healthy axe and one that printed nothing both
+    # give exit 0 and an empty message. It was a test that could not
+    # fail. `wait_for_surface` returns 3 with the reason in `AX_WHY`.
+    if (( waited == 3 )); then
+      die "could not read the screen at all, after ${WAIT_SECS}s and ${WAIT_READS} attempts.
+      $AX_WHY
+      That is the harness's own eyes, not your build — nothing here is a
+      statement about the app. Every Liv process: $(liv_pids)
+      The last 25 lines of the app's console ($CONSOLE):
+${tail_out:-      (nothing on the console)}"
       return 1
     fi
+
     if [[ -z "$pid" ]]; then
       die "the app is not running — it started and died.
       The last 25 lines of its console ($CONSOLE):
 ${tail_out:-      (the console is empty, which means it died before printing anything)}"
       return 1
     fi
-    die "the app is running (pid $pid) but drew no surface marker in 10s.
+    die "the app is running (pid $pid) but drew no surface marker in ${WAIT_SECS}s (${WAIT_READS} reads).
       cpu now: $(cpu)%   every Liv process: $(liv_pids)
       What the screen actually holds:
 $(tree_sketch)
@@ -384,8 +543,6 @@ $(tree_sketch)
       look for a hang before the first body. A full screen of words with
       no \`liv.surface.\` identifier means the app IS rendering and the
       marker is missing, which is FeatureBody or Surface.swift.
-      More than one pid means an older instance is still up: \`suites.sh\`
-      leaves the app running on purpose, and two of them share one box.
       The last 25 lines of its console ($CONSOLE):
 ${tail_out:-      (nothing on the console)}"
     return 1
