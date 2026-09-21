@@ -266,6 +266,48 @@ wait_for_surface() {
   return 1
 }
 
+# WHAT IS ACTUALLY ON SCREEN, in one paragraph, for a failure to quote.
+#
+# `surfaces()` answers one question — which surface markers are there —
+# and when the answer is "none" that is the end of what the harness can
+# say. It was the end for a real boot failure on 2026-09-21: the app was
+# alive, the console was clean, and "no surface marker" covered both a
+# window that never drew and a window drawing the whole app with one
+# element missing. Those want opposite investigations.
+#
+# So: how many elements, how deep, and the first few things a person
+# would recognise. A blank window is a handful of elements and no words.
+tree_sketch() {
+  axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
+import json, sys
+n = 0
+depth = 0
+seen = []
+ids = []
+def walk(x, d):
+    global n, depth
+    n += 1
+    depth = max(depth, d)
+    t = (x.get("AXLabel") or "").strip()
+    if t and len(seen) < 12 and t not in seen: seen.append(t)
+    u = x.get("AXUniqueId") or ""
+    if u and len(ids) < 8 and u not in ids: ids.append(u)
+    for c in x.get("children") or []: walk(c, d + 1)
+try:
+    d = json.load(sys.stdin)
+    walk(d if isinstance(d, dict) else d[0], 0)
+except Exception as e:
+    print("      the tree would not parse: %s" % e); raise SystemExit(0)
+print("      %d elements, %d deep" % (n, depth))
+print("      labels: %s" % (", ".join(seen) if seen else "(none — nothing on screen has words)"))
+print("      identifiers: %s" % (", ".join(ids) if ids else "(none)"))' 2>/dev/null
+}
+
+# HOW MANY OF THE APP ARE RUNNING. `suites.sh` leaves the app alive on
+# purpose (it does not exit after a self-check), so a second instance is
+# an ordinary thing to have and a confusing thing to debug around.
+liv_pids() { pgrep -f "Liv.app/Liv" | tr '\n' ' ' }
+
 cmd_boot() {
   # A NAMED PLACE, ALWAYS. With no argument this used to launch and let
   # the app restore wherever it was left, which meant "boot" landed
@@ -335,9 +377,15 @@ ${tail_out:-      (the console is empty, which means it died before printing any
       return 1
     fi
     die "the app is running (pid $pid) but drew no surface marker in 10s.
-      So it launched and something above the views is refusing to
-      render, or nothing on screen calls \`.livSurface()\`. Check
-      Surface.swift is in the build.
+      cpu now: $(cpu)%   every Liv process: $(liv_pids)
+      What the screen actually holds:
+$(tree_sketch)
+      A handful of elements with no words is a window that never drew —
+      look for a hang before the first body. A full screen of words with
+      no \`liv.surface.\` identifier means the app IS rendering and the
+      marker is missing, which is FeatureBody or Surface.swift.
+      More than one pid means an older instance is still up: \`suites.sh\`
+      leaves the app running on purpose, and two of them share one box.
       The last 25 lines of its console ($CONSOLE):
 ${tail_out:-      (nothing on the console)}"
     return 1
