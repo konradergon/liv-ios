@@ -587,23 +587,35 @@ fn a_query_with_an_equals_costs_its_answer_not_the_box() {
     let mut small = box_of(500);
     let mut large = box_of(5_000);
     // Ten matches in each box, so both answers are the same size.
+    //
+    // The area is MINTED, not compiled in — so each box gets its own
+    // "Work" with its own id, and each side of the ratio is asked about
+    // the id its own box holds. The carriers are chosen BEFORE the mint
+    // so that "the first ten entities" still means ten notes, not nine
+    // and an area. `declare` (never `create`) keeps the area `working`,
+    // which is what stops `run` from counting it as an eleventh match.
+    let mut works: Vec<EntityId> = Vec::new();
     for (e, t) in [(&mut small, 2_000u64), (&mut large, 3_000u64)] {
-        for (i, id) in e.all_entities().unwrap().into_iter().take(10).enumerate() {
-            e.set(id, prop::AREA, Value::Ref(area::WORK), t + i as u64).unwrap();
+        let carriers: Vec<EntityId> = e.all_entities().unwrap().into_iter().take(10).collect();
+        let work = e.declare(kind::AREA, "Work", t).unwrap();
+        for (i, id) in carriers.into_iter().enumerate() {
+            e.set(id, prop::AREA, Value::Ref(work), t + i as u64).unwrap();
         }
+        works.push(work);
     }
-    let work = Query {
+    let asking_for = |work: EntityId| Query {
         constraints: vec![Constraint {
             property: prop::AREA,
-            op: QueryOp::Equals(Value::Ref(area::WORK)),
+            op: QueryOp::Equals(Value::Ref(work)),
         }],
         ..Default::default()
     };
+    let (small_work, large_work) = (asking_for(works[0]), asking_for(works[1]));
 
     let ratio = best_ratio(
         12,
-        || time(|| assert_eq!(small.run(&work).unwrap().len(), 10)),
-        || time(|| assert_eq!(large.run(&work).unwrap().len(), 10)),
+        || time(|| assert_eq!(small.run(&small_work).unwrap().len(), 10)),
+        || time(|| assert_eq!(large.run(&large_work).unwrap().len(), 10)),
     );
     assert!(ratio < 4.0, "ten matches is ten matches in either box: {ratio:.1}x");
 }

@@ -248,8 +248,9 @@ fn a_name_split_across_a_paragraph_is_not_a_mention() {
 #[test]
 fn where_it_goes_is_read_off_what_it_mentions() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let anna = e.create(kind::PERSON, Some("Anna"), T0).unwrap();
-    e.set(anna, prop::AREA, Value::Ref(area::WORK), T0 + 1).unwrap();
+    e.set(anna, prop::AREA, Value::Ref(work), T0 + 1).unwrap();
     let id = scrap(&mut e, "call anna about the roof");
 
     let p = sweep(&e).unwrap();
@@ -259,7 +260,7 @@ fn where_it_goes_is_read_off_what_it_mentions() {
         vec![Op::SetCell {
             entity: id,
             prop: prop::AREA,
-            value: Value::Ref(area::WORK),
+            value: Value::Ref(work),
             replaces: vec![]
         }]
     );
@@ -270,10 +271,12 @@ fn where_it_goes_is_read_off_what_it_mentions() {
 #[test]
 fn two_mentions_filed_differently_say_nothing() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let home = e.declare(kind::AREA, "Home", T0).unwrap();
     let anna = e.create(kind::PERSON, Some("Anna"), T0).unwrap();
     let bruno = e.create(kind::PERSON, Some("Bruno"), T0).unwrap();
-    e.set(anna, prop::AREA, Value::Ref(area::WORK), T0 + 1).unwrap();
-    e.set(bruno, prop::AREA, Value::Ref(area::HOME), T0 + 2).unwrap();
+    e.set(anna, prop::AREA, Value::Ref(work), T0 + 1).unwrap();
+    e.set(bruno, prop::AREA, Value::Ref(home), T0 + 2).unwrap();
     scrap(&mut e, "anna and bruno both replied");
 
     assert!(!proposers(&e).contains(&"area".to_owned()));
@@ -282,9 +285,10 @@ fn two_mentions_filed_differently_say_nothing() {
 #[test]
 fn a_mention_filed_nowhere_says_nothing_and_does_not_veto() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let anna = e.create(kind::PERSON, Some("Anna"), T0).unwrap();
     e.create(kind::PERSON, Some("Bruno"), T0).unwrap();
-    e.set(anna, prop::AREA, Value::Ref(area::WORK), T0 + 1).unwrap();
+    e.set(anna, prop::AREA, Value::Ref(work), T0 + 1).unwrap();
     scrap(&mut e, "anna and bruno both replied");
 
     // Bruno is filed nowhere; he neither names an area nor blocks Anna's.
@@ -397,8 +401,9 @@ fn something_already_typed_is_not_promoted() {
 #[test]
 fn the_sweep_is_a_pure_function_of_the_box() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let anna = e.create(kind::PERSON, Some("Anna"), T0).unwrap();
-    e.set(anna, prop::AREA, Value::Ref(area::WORK), T0 + 1).unwrap();
+    e.set(anna, prop::AREA, Value::Ref(work), T0 + 1).unwrap();
     scrap(&mut e, "call anna tomorrow about the roof");
     scrap(&mut e, "email anna friday");
 
@@ -431,6 +436,11 @@ fn backstage_and_trashed_are_not_swept() {
 /// where it lives.
 #[test]
 fn a_proposal_that_would_set_private_is_not_permitted() {
+    // The box the sweep below runs on, opened first so the "fine"
+    // proposal can point at a real minted area rather than a number.
+    let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+
     let hostile = Proposal {
         ops: vec![Op::SetCell {
             entity: EntityId([0x11; 16]),
@@ -447,7 +457,7 @@ fn a_proposal_that_would_set_private_is_not_permitted() {
         ops: vec![Op::SetCell {
             entity: EntityId([0x11; 16]),
             prop: prop::AREA,
-            value: Value::Ref(area::WORK),
+            value: Value::Ref(work),
             replaces: vec![],
         }],
         proposer: "area".into(),
@@ -456,7 +466,6 @@ fn a_proposal_that_would_set_private_is_not_permitted() {
     assert!(permitted(&fine));
 
     // And the sweep applies it.
-    let mut e = engine();
     e.create(kind::PERSON, Some("Anna"), T0).unwrap();
     scrap(&mut e, "call anna tomorrow");
     assert!(sweep(&e).unwrap().iter().all(permitted));

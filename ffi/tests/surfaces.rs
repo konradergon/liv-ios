@@ -51,13 +51,15 @@ fn a_screen_asks_for_itself_and_gets_itself() {
     let path = box_path("today");
     let (task_id, area_id) = {
         let mut e = Engine::open_local(&path).unwrap();
+        // The user's own area, minted like any other piece of vocabulary.
+        let health = e.declare(kind::AREA, "Health", 1_000).unwrap();
         let a = e.create(kind::TASK, Some("Dentist"), 1_000).unwrap();
         e.set(a, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, 14, 0), tz: 0 }), 1_001)
             .unwrap();
-        e.set(a, prop::AREA, Value::Ref(area::HEALTH), 1_002).unwrap();
+        e.set(a, prop::AREA, Value::Ref(health), 1_002).unwrap();
         let late = e.create(kind::TASK, Some("Overdue"), 1_003).unwrap();
         e.set(late, prop::DUE, Value::Date(DateSpec::Day(DAY - 2)), 1_004).unwrap();
-        (a, area::HEALTH)
+        (a, health)
     };
     unsafe { liv_view_close_all() };
 

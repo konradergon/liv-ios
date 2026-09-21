@@ -359,7 +359,7 @@ struct InboxView: View {
                     Button {
                         fileSuggested(row, guess.p, under: guess.area)
                     } label: {
-                        ValueChip("\(guess.area)?", glyph: LivArea.glyph(named: guess.area))
+                        ValueChip("\(guess.area)?", glyph: .area)
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("File under \(guess.area)")
@@ -435,7 +435,7 @@ struct InboxView: View {
     private func routeMenu(_ row: EntityRow) -> LivMenu {
         let areas = InspectorField.describe("area", in: box.snap).options
         var items: [LivMenuItem] = areas.map { name in
-            LivMenuItem(label: name, glyph: LivArea.glyph(named: name)) {
+            LivMenuItem(label: name, glyph: .area) {
                 file(row, under: name)
             }
         }

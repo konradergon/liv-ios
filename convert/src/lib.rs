@@ -299,16 +299,13 @@ fn property_map(
 
 /// Core OPTION entity → what it is in the engine.
 ///
-/// **An option of `area` IS an area**, and if it is one of the six it is
-/// the frozen one — not a copy of it. This is the whole reason the
-/// converter has to understand the box rather than copy it: a converted
-/// "Work" that is not `area::WORK` is precisely the drift the compiled-in
-/// furniture exists to prevent, and it would sit next to the real Work in
-/// every picker.
+/// **An option of `area` IS an area**, and since 2026-09-21 it is always
+/// a MINTED one: the six frozen areas are gone, so there is nothing a
+/// converted "Work" could be the same as. It becomes a `kind::AREA`
+/// entity like every other area in the box.
 ///
-/// An option the six do not cover becomes a minted area, which is what
-/// the 2026-08-29 amendment allows. An option of `status` gets the same
-/// treatment against the three. Anything else is a plain `kind::OPTION`.
+/// An option of `status` still resolves against the three frozen ones —
+/// statuses did not change. Anything else is a plain `kind::OPTION`.
 fn option_map(
     store: &Store,
     names: &HashMap<liv_core::Id, String>,
@@ -320,11 +317,13 @@ fn option_map(
         for value in e.all(props::OPTIONS) {
             let CoreValue::Reference(opt) = value else { continue };
             let name = names.get(opt).map(String::as_str).unwrap_or_default();
+            // EVERY AREA IS MINTED NOW (2026-09-21). The six frozen ones
+            // are gone, so there is nothing for a converted "Work" to be
+            // the same as — it becomes a minted area like any other name
+            // the old box held. The drift this branch guarded against
+            // cannot happen when there is only one kind of area.
             let what = if owner == prop::AREA {
-                match frozen_area(name) {
-                    Some(a) => Frozen::Is(a),
-                    None => Frozen::Mint(kind::AREA),
-                }
+                Frozen::Mint(kind::AREA)
             } else if owner == prop::STATUS {
                 match frozen_status(name) {
                     Some(st) => Frozen::Is(st),
@@ -345,10 +344,6 @@ fn option_map(
 enum Frozen {
     Is(EntityId),
     Mint(EntityId),
-}
-
-fn frozen_area(name: &str) -> Option<EntityId> {
-    liv_engine::AREAS.iter().copied().find(|a| eqi(model::label(*a), name))
 }
 
 fn frozen_status(name: &str) -> Option<EntityId> {

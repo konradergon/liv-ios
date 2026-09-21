@@ -910,7 +910,7 @@ func livAnchorChip(of row: EntityRow) -> ValueChip? {
     guard let anchor = livAnchor(of: row) else { return nil }
     return ValueChip(
         anchor.value,
-        glyph: anchor.property == "area" ? LivArea.glyph(named: anchor.value) : nil)
+        glyph: anchor.property == "area" ? .area : nil)
 }
 
 /// Whether that name was MADE rather than given — asked of the core,

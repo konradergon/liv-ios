@@ -182,16 +182,18 @@ fn unfiled_means_no_area_and_not_no_type() {
     // over was missing from every area AND from the Inbox. This one keys
     // on area, so it catches exactly that task.
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", 1_000).unwrap();
     let filed = task(&mut e, "Filed task", 1_000);
     let loose = task(&mut e, "Hesitated-over task", 1_001);
     let note = e.create(kind::NOTE, Some("Loose note"), 1_002).unwrap();
-    e.set(filed, prop::AREA, Value::Ref(area::WORK), 1_010).unwrap();
+    e.set(filed, prop::AREA, Value::Ref(work), 1_010).unwrap();
 
     let unfiled = everything(&e, Slice::Unfiled, &Lens::Everything, DAY).unwrap();
     assert_eq!(titles(&unfiled), vec!["Loose note", "Hesitated-over task"]);
     let _ = (loose, note);
 
-    // A minted area files a thing just as well as one of ours.
+    // A second area files a thing just as well as the first — every area
+    // is minted, and filing reads the cell, not which area it points at.
     let mine = e.declare(kind::AREA, "Woodworking", 2_000).unwrap();
     e.set(loose, prop::AREA, Value::Ref(mine), 2_001).unwrap();
     let unfiled = everything(&e, Slice::Unfiled, &Lens::Everything, DAY).unwrap();

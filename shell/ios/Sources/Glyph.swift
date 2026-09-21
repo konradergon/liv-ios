@@ -25,52 +25,19 @@ import SwiftUI
 
 // MARK: - what a thing is
 
-/// THE SIX AREAS OF LIFE, drawn. `what-liv-is-for.md` calls the furniture
-/// "the product", and until 2026-09-06 no screen showed it: Today was a
-/// column of "Untitled" that could have been any app's. These are the
-/// six the app arrives with (researched, not invented; 2026-07-27), each
-/// with a mark in the same pen that draws the note leaf and the tray —
-/// the one hand-made thing the app already had.
-///
-/// NO COLOUR, deliberately. Direction A adds not one saturated pixel:
-/// the marks draw in the ink tiers like every field glyph. Colour for
-/// areas is a separate direction ("Rooms"), which stacks on top of this
-/// one if the owner wants it later.
-///
-/// An area a person mints later has no mark of its own and wears the
-/// field's — `.area`, the four quarters — which is honest: it is an area,
-/// and it is theirs.
-enum LivArea: CaseIterable {
-    case work, health, money, home, family, learning
-
-    var name: String {
-        switch self {
-        case .work: return "Work"
-        case .health: return "Health"
-        case .money: return "Money"
-        case .home: return "Home"
-        case .family: return "Family & Friends"
-        case .learning: return "Learning"
-        }
-    }
-
-    var glyph: LivGlyph {
-        switch self {
-        case .work: return .work
-        case .health: return .health
-        case .money: return .money
-        case .home: return .home
-        case .family: return .people
-        case .learning: return .learning
-        }
-    }
-
-    /// The mark for an area's NAME, as a row's cell spells it. A name the
-    /// app did not ship wears the field's own mark.
-    static func glyph(named value: String) -> LivGlyph {
-        allCases.first { $0.name.caseInsensitiveCompare(value) == .orderedSame }?.glyph ?? .area
-    }
-}
+// **NO `LivArea`** (owner, 2026-09-21: *"Areas are all created by the
+// user, so whatever fixed areas are in code should be removed"*).
+//
+// It was an enum of the six the app shipped, each with a mark — a
+// briefcase for Work, a heart for Health — and `glyph(named:)` matched
+// a row's area cell against those names, falling back to the field's
+// own mark for anything minted. With no shipped area there is nothing
+// left to match: every name is minted, so every one takes the fallback,
+// and a table that always returns the same answer is not a table
+// (standing rule 6).
+//
+// Giving a user's own area a mark of its own is a real thing to want —
+// and it is a picker and a cell, not a switch over six strings.
 
 /// The seven kinds the app draws. A kind carries its colour and its
 /// glyph together, because a thing that is purple in one list and blue
@@ -192,9 +159,9 @@ enum LivGlyph: Equatable {
     /// the two shells read as one product.
     ///
     /// TWO OF THE SIX FIELD MARKS SURVIVE, and they survive as AREA
-    /// marks rather than as field marks: `.area` is what
-    /// `LivArea.glyph(named:)` falls back to for a name this app did not
-    /// ship, and `.people` is the mark the Family & Friends area wears.
+    /// marks rather than as field marks: `.area` is what EVERY area
+    /// wears now that none is compiled in (2026-09-21), and `.people`
+    /// is the mark the old Family & Friends area wore.
     ///
     /// `due`, `status`, `project` and `tags` went on 2026-09-12 with the
     /// Settings Fields card, which was the last thing that could show
@@ -869,7 +836,17 @@ struct GlyphSheet: View {
     private static let named: [(String, LivGlyph)] = [
         ("area", .area), ("people", .people),
     ]
-    private static let areas: [(String, LivGlyph)] = LivArea.allCases.map { ($0.name, $0.glyph) }
+    /// THE MARKS AN AREA COULD WEAR, by what each one DRAWS.
+    ///
+    /// This was `LivArea.allCases`, labelled by the six area names the
+    /// app shipped. It ships none (2026-09-21), so there is no area to
+    /// name them after — but the drawings are still the drawings, and
+    /// this sheet is the icon reference. They are kept for the day a
+    /// person gets to choose a mark for an area they made.
+    private static let areas: [(String, LivGlyph)] = [
+        ("briefcase", .work), ("heart", .health), ("coin", .money),
+        ("house", .home), ("book", .learning),
+    ]
     private static let existing: [(String, LivGlyph)] = [
         ("note", .note), ("task", .task), ("event", .event),
         ("person", .person), ("link", .link), ("calendar", .calendar),
@@ -880,7 +857,7 @@ struct GlyphSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                block("Areas of life", Self.areas)
+                block("Marks an area could wear", Self.areas)
                 block("Area marks", Self.named)
                 block("Existing, for comparison", Self.existing)
             }

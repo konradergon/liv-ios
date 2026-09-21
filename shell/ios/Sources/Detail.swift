@@ -897,7 +897,7 @@ struct InspectorValueSheet: View {
                     // the area's drawing instead — a signal with something
                     // to decode, in ink. Sorting becomes six drawings you
                     // recognise, not six words.
-                    LivIcon(glyph: LivArea.glyph(named: label), color: LivTheme.text2, size: 19)
+                    LivIcon(glyph: .area, color: LivTheme.text2, size: 19)
                         .frame(width: 16)
                 } else {
                     // NO DOT. `Hue.dot` hashed the property's NAME to one

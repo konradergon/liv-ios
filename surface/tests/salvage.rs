@@ -200,9 +200,10 @@ fn a_contended_trash_state_is_not_the_trash() {
 #[test]
 fn a_row_carries_the_words_it_draws() {
     let mut e = engine();
+    let home = e.declare(kind::AREA, "Home", T0).unwrap();
     let t = e.create(kind::TASK, Some("Fix the roof"), T0).unwrap();
     e.set(t, prop::STATUS, Value::Ref(status::DOING), T0 + 1).unwrap();
-    e.set(t, prop::AREA, Value::Ref(area::HOME), T0 + 2).unwrap();
+    e.set(t, prop::AREA, Value::Ref(home), T0 + 2).unwrap();
 
     let r = liv_surface::row(&e, t).unwrap();
     // Lowercase for the kind: the same spelling `type:task` uses, so one

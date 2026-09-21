@@ -7,7 +7,7 @@
 
 use std::ffi::{CStr, CString};
 
-use liv_engine::{area, kind, prop, status, Engine, Span, Value};
+use liv_engine::{kind, prop, status, Engine, EntityId, Span, Value};
 use liv_ffi::finding::*;
 use liv_ffi::surfaces::{liv_view_close_all, LIV_ERR_ARG, LIV_OK};
 use serde_json::Value as J;
@@ -32,22 +32,42 @@ fn took(out: *mut std::ffi::c_char) -> J {
     serde_json::from_str(&json).unwrap()
 }
 
-/// A box with a few things worth finding.
-fn stocked(name: &str) -> (std::path::PathBuf, CString) {
+/// A box with a few things worth finding, and the Home it files two of
+/// them under.
+///
+/// **Every area is minted here** (owner, 2026-09-21: *"Areas are all
+/// created by the user"*). Nothing is compiled in to file something
+/// under any more, so the box declares the three it wants before it
+/// files anything — `declare`, never `create`, because `declare` writes
+/// `working` and that is what keeps a piece of vocabulary out of the
+/// hits, the lists and the counts.
+///
+/// Money is declared and deliberately left empty: `values_in_use` asks
+/// what the box CARRIES rather than what it allows, and an area that
+/// exists with nothing filed under it is what makes that answer worth
+/// asserting. It is also the name `liv_set` resolves against when a
+/// test files something under "Money" by word.
+fn stocked(name: &str) -> (std::path::PathBuf, CString, EntityId) {
     let d = dir(name);
     let path = d.join("liv.db");
+    let home;
     {
         let mut e = Engine::open_local(&path).unwrap();
+        home = e.declare(kind::AREA, "Home", T0).unwrap();
+        let work = e.declare(kind::AREA, "Work", T0).unwrap();
+        // Minted and left empty on purpose — see above.
+        e.declare(kind::AREA, "Money", T0).unwrap();
+
         let roof = e.create(kind::TASK, Some("Fix the roof"), T0).unwrap();
-        e.set(roof, prop::AREA, Value::Ref(area::HOME), T0).unwrap();
+        e.set(roof, prop::AREA, Value::Ref(home), T0).unwrap();
         e.set(roof, prop::STATUS, Value::Ref(status::TODO), T0).unwrap();
 
         let ferry = e.create(kind::TASK, Some("Book the ferry"), T0 + 1).unwrap();
-        e.set(ferry, prop::AREA, Value::Ref(area::HOME), T0 + 1).unwrap();
+        e.set(ferry, prop::AREA, Value::Ref(home), T0 + 1).unwrap();
         e.set(ferry, prop::STATUS, Value::Ref(status::DONE), T0 + 1).unwrap();
 
         let invoice = e.create(kind::TASK, Some("Send the invoice"), T0 + 2).unwrap();
-        e.set(invoice, prop::AREA, Value::Ref(area::WORK), T0 + 2).unwrap();
+        e.set(invoice, prop::AREA, Value::Ref(work), T0 + 2).unwrap();
 
         // Something whose only match is in its body.
         let note = e.create(kind::NOTE, Some("Saturday"), T0 + 3).unwrap();
@@ -59,7 +79,7 @@ fn stocked(name: &str) -> (std::path::PathBuf, CString) {
     }
     unsafe { liv_view_close_all() };
     let p = c(path.to_str().unwrap());
-    (d, p)
+    (d, p, home)
 }
 
 fn hits(v: &J) -> Vec<String> {
@@ -76,7 +96,7 @@ fn search(path: &CString, q: &str, limit: u32) -> J {
 
 #[test]
 fn a_search_ranks_its_hits_and_says_where_each_matched() {
-    let (d, path) = stocked("rank");
+    let (d, path, _) = stocked("rank");
     let found = search(&path, "roof", 0);
 
     let rows = found["hits"].as_array().unwrap();
@@ -102,7 +122,7 @@ fn a_search_ranks_its_hits_and_says_where_each_matched() {
 /// useless for pivoting, which is the one thing a facet row is for.
 #[test]
 fn a_limit_cuts_the_list_and_leaves_the_counts_honest() {
-    let (d, path) = stocked("limit");
+    let (d, path, _) = stocked("limit");
 
     let all = search(&path, "the", 0);
     let capped = search(&path, "the", 1);
@@ -131,7 +151,7 @@ fn a_limit_cuts_the_list_and_leaves_the_counts_honest() {
 /// file to get backwards, because both readings return rows.
 #[test]
 fn the_same_words_widen_a_search_and_restrict_a_lens() {
-    let (d, path) = stocked("modes");
+    let (d, path, _) = stocked("modes");
 
     // Searching: the archived one joins the live ones.
     let widened = search(&path, "roof is:archived", 0);
@@ -159,8 +179,13 @@ fn the_same_words_widen_a_search_and_restrict_a_lens() {
 
 #[test]
 fn a_qualifier_narrows_and_a_facet_says_what_else_it_could_be() {
-    let (d, path) = stocked("facets");
-    let found = search(&path, "area:home", 0);
+    let (d, path, _) = stocked("facets");
+    // **Spelled as the area is named.** A qualifier's value resolves
+    // against what the box holds, and a minted area is found by its
+    // stored name (`surface::search::named_thing`), which is an exact
+    // match — there is no compiled-in Home left to answer a lowercased
+    // one.
+    let found = search(&path, "area:Home", 0);
     assert_eq!(found["hits"].as_array().unwrap().len(), 2, "{found}");
 
     let areas = found["facets"]
@@ -187,7 +212,7 @@ fn a_qualifier_narrows_and_a_facet_says_what_else_it_could_be() {
 /// never quietly dropped to salvage some results.
 #[test]
 fn a_word_that_matches_nothing_finds_nothing() {
-    let (d, path) = stocked("typo");
+    let (d, path, _) = stocked("typo");
     assert!(search(&path, "rooof", 0)["hits"].as_array().unwrap().is_empty());
     assert!(search(&path, "roof zzzz", 0)["hits"].as_array().unwrap().is_empty(), "ANDed");
     let _ = std::fs::remove_dir_all(&d);
@@ -241,7 +266,7 @@ fn lexing_needs_no_box_and_refuses_nothing() {
 /// hold; this asks what it does.
 #[test]
 fn values_in_use_are_what_the_box_carries_not_what_it_allows() {
-    let (d, path) = stocked("inuse");
+    let (d, path, home) = stocked("inuse");
     let area = c(&prop::AREA.hex());
 
     let mut out = std::ptr::null_mut();
@@ -250,10 +275,12 @@ fn values_in_use_are_what_the_box_carries_not_what_it_allows() {
     let labels: Vec<&str> =
         rows.as_array().unwrap().iter().map(|r| r["label"].as_str().unwrap()).collect();
 
-    // Two areas are in use out of six that exist, commonest first.
+    // Two areas are in use out of the three the box minted, commonest
+    // first — Money exists and is offered by nothing, which is the whole
+    // difference between what a cell holds and what it may hold.
     assert_eq!(labels, vec!["Home", "Work"], "{rows}");
     assert_eq!(rows[0]["count"].as_u64().unwrap(), 2);
-    assert_eq!(rows[0]["ref"].as_str().unwrap(), area::HOME.hex(), "and the chip is tappable");
+    assert_eq!(rows[0]["ref"].as_str().unwrap(), home.hex(), "and the chip is tappable");
 
     // **The trash is not "in use".** Offering what the trash holds is
     // offering someone their own deletions back — and the only thing
@@ -354,7 +381,7 @@ fn a_missing_file_is_told_apart_from_one_that_never_arrived() {
 /// one and there is no verb here that does. This only reads.
 #[test]
 fn a_workspace_is_made_with_the_ordinary_verbs_and_read_back_here() {
-    let (d, path) = stocked("workspaces");
+    let (d, path, _) = stocked("workspaces");
 
     let mut out = std::ptr::null_mut();
     unsafe {
@@ -374,7 +401,7 @@ fn a_workspace_is_made_with_the_ordinary_verbs_and_read_back_here() {
                 path.as_ptr(),
                 ws.as_ptr(),
                 query.as_ptr(),
-                c("area:home").as_ptr(),
+                c("area:Home").as_ptr(),
                 T0 + 11,
             )
         },
@@ -385,14 +412,14 @@ fn a_workspace_is_made_with_the_ordinary_verbs_and_read_back_here() {
     assert_eq!(unsafe { liv_workspaces(path.as_ptr(), &mut out) }, LIV_OK);
     let rows = took(out);
     let row = rows.as_array().unwrap().iter().find(|r| r["name"] == "House").unwrap();
-    assert_eq!(row["query"], "area:home");
+    assert_eq!(row["query"], "area:Home");
     assert_eq!(row["favorite"], false);
     assert_eq!(row["archived"], false);
     assert!(row["parent"].is_null());
 
     // And its query, run as a lens, is what the workspace admits.
     let mut out = std::ptr::null_mut();
-    unsafe { liv_lens(path.as_ptr(), c("area:home").as_ptr(), &mut out) };
+    unsafe { liv_lens(path.as_ptr(), c("area:Home").as_ptr(), &mut out) };
     assert_eq!(took(out)["ids"].as_array().unwrap().len(), 2);
 
     let _ = std::fs::remove_dir_all(&d);
@@ -403,7 +430,7 @@ fn a_workspace_is_made_with_the_ordinary_verbs_and_read_back_here() {
 /// choice away from the shell.
 #[test]
 fn an_archived_workspace_is_reported_not_hidden() {
-    let (d, path) = stocked("archived_ws");
+    let (d, path, _) = stocked("archived_ws");
     let mut out = std::ptr::null_mut();
     unsafe {
         liv_ffi::basics::liv_make(
@@ -443,7 +470,7 @@ fn an_archived_workspace_is_reported_not_hidden() {
 
 #[test]
 fn a_saved_filter_reads_back_with_its_query() {
-    let (d, path) = stocked("views");
+    let (d, path, _) = stocked("views");
     let mut out = std::ptr::null_mut();
     unsafe {
         liv_ffi::basics::liv_make(
@@ -478,7 +505,7 @@ fn a_saved_filter_reads_back_with_its_query() {
 /// An older box that never set it is not a box that said no.
 #[test]
 fn the_assist_switch_is_on_until_it_is_explicitly_off() {
-    let (d, path) = stocked("assist");
+    let (d, path, _) = stocked("assist");
 
     let mut out = std::ptr::null_mut();
     assert_eq!(unsafe { liv_assist(path.as_ptr(), &mut out) }, LIV_OK);
@@ -517,7 +544,7 @@ fn the_assist_switch_is_on_until_it_is_explicitly_off() {
 
 #[test]
 fn a_bad_id_is_an_argument_error_and_never_a_panic() {
-    let (d, path) = stocked("badid");
+    let (d, path, _) = stocked("badid");
     for bad in ["", "abc", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"] {
         let mut out = std::ptr::null_mut();
         assert_eq!(
@@ -534,7 +561,7 @@ fn a_bad_id_is_an_argument_error_and_never_a_panic() {
 
 #[test]
 fn the_trash_has_its_own_verb_because_every_other_surface_hides_it() {
-    let (d, path) = stocked("trash");
+    let (d, path, _) = stocked("trash");
 
     let mut out = std::ptr::null_mut();
     assert_eq!(unsafe { liv_view_trash(path.as_ptr(), &mut out) }, LIV_OK);

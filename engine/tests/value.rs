@@ -98,22 +98,26 @@ fn a_date_range_is_refused_rather_than_half_kept() {
 
 /// **An option is matched by NAME and never minted.**
 ///
-/// Naming a new option is a decision; typing a typo is not. And the same
-/// rule reaches compiled-in furniture and a user's own: "Work" is frozen,
-/// "Woodworking" is minted, and both are typed the same way.
+/// Naming a new option is a decision; typing a typo is not. Every area is
+/// the user's own (owner, 2026-09-21 — there are no compiled-in areas),
+/// and the same rule reaches one declared as vocabulary and one made as
+/// an ordinary thing: "Work" is `declare`d, "Woodworking" is `create`d,
+/// and both are typed the same way.
 #[test]
 fn an_option_is_found_by_name_and_never_invented() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let family = e.declare(kind::AREA, "Family & Friends", T0).unwrap();
 
-    assert_eq!(e.parse_value(prop::AREA, "Work").unwrap(), Value::Ref(area::WORK));
-    assert_eq!(e.parse_value(prop::AREA, "work").unwrap(), Value::Ref(area::WORK), "case");
+    assert_eq!(e.parse_value(prop::AREA, "Work").unwrap(), Value::Ref(work));
+    assert_eq!(e.parse_value(prop::AREA, "work").unwrap(), Value::Ref(work), "case");
     assert_eq!(
         e.parse_value(prop::AREA, "  Family & Friends ").unwrap(),
-        Value::Ref(area::FAMILY),
-        "and the label is the only place those words live"
+        Value::Ref(family),
+        "trimmed, and the area's own name is the only place those words live"
     );
 
-    // A user's own area is reached by the same rule.
+    // An area made the plain way is reached by the same rule.
     let mine = e.create(kind::AREA, Some("Woodworking"), T0).unwrap();
     assert_eq!(e.parse_value(prop::AREA, "woodworking").unwrap(), Value::Ref(mine));
 
@@ -122,7 +126,9 @@ fn an_option_is_found_by_name_and_never_invented() {
         e.parse_value(prop::AREA, "Wrok"),
         Err(ValueError::NoSuchOption(_))
     ));
-    assert_eq!(e.of_kind(kind::AREA).unwrap().len(), 1, "and created nothing trying");
+    // The three this test made itself, and not a fourth: the typo created
+    // nothing trying.
+    assert_eq!(e.of_kind(kind::AREA).unwrap().len(), 3, "and created nothing trying");
 }
 
 #[test]
@@ -163,6 +169,7 @@ fn a_property_nothing_declares_is_not_a_property() {
 #[test]
 fn everything_that_parses_is_a_value_the_cell_takes() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let id = e.create(kind::TASK, Some("roof"), T0).unwrap();
 
     for (property, raw) in [
@@ -177,6 +184,6 @@ fn everything_that_parses_is_a_value_the_cell_takes() {
         e.set(id, property, value, T0 + 1)
             .unwrap_or_else(|err| panic!("{raw} parsed but the cell refused it: {err:?}"));
     }
-    assert_eq!(e.one(id, prop::AREA).unwrap(), Some(Value::Ref(area::WORK)));
+    assert_eq!(e.one(id, prop::AREA).unwrap(), Some(Value::Ref(work)));
     assert_eq!(e.one(id, prop::STATUS).unwrap(), Some(Value::Ref(status::DOING)));
 }

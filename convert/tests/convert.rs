@@ -80,14 +80,16 @@ fn a_seeded_box_converts_and_the_things_in_it_arrive() {
     let e = Engine::open_local(&to).unwrap();
     assert_eq!(e.entity_count().unwrap() as usize, report.entities);
 
-    // The proof that resolving worked: the six areas and three statuses
-    // are the FROZEN ids, and the box minted no copies of them.
-    for a in liv_engine::AREAS {
-        assert!(liv_engine::model::is_furniture(*a));
-    }
-    let minted_areas = e.of_kind(kind::AREA).unwrap();
-    assert!(minted_areas.is_empty(), "a seeded box invents no seventh area");
+    // STATUSES resolve onto the FROZEN three and the box mints no copy
+    // of them — that half is unchanged.
     assert!(e.of_kind(kind::STATUS).unwrap().is_empty(), "nor a fourth status");
+
+    // AND NO AREAS AT ALL, which is a fact about the SEED rather than
+    // about the converter: `seed_if_fresh` never wrote the six: they
+    // were compiled into the engine, and now (2026-09-21) they are not
+    // compiled into anything. An old box carrying areas of its own is
+    // the next test.
+    assert!(e.of_kind(kind::AREA).unwrap().is_empty(), "a seeded box has no areas");
 
     // THE THINGS, by name, with their kinds carried across.
     let named: Vec<(String, Option<liv_engine::EntityId>)> = e
@@ -310,6 +312,94 @@ fn the_civil_arithmetic_is_exact_across_the_awkward_dates() {
     assert_eq!(days_from_civil(0, 0, 0), 0);
     assert_eq!(days_from_civil(2026, 13, 1), 0);
     assert_eq!(split_civil(2026_09_13_1430), (2026, 9, 13, 14, 30));
+}
+
+/// **AN OLD BOX'S AREA ARRIVES MINTED, NOT RESOLVED** (2026-09-21).
+///
+/// It used to resolve: an option of `area` named "Work" became
+/// `area::WORK`, the frozen one, and a converted box that minted its own
+/// copy would have put two Works in every picker. That is the drift the
+/// compiled-in furniture existed to prevent.
+///
+/// The owner removed the fixed areas, so there is nothing left to
+/// resolve ONTO and the branch inverts. What has to stay true is the
+/// rest of it: the area comes across with its name, says it is an area,
+/// carries `working` so it stays out of lists and searches, and the
+/// thing filed under it still points at it.
+#[test]
+fn an_old_boxs_area_comes_across_as_a_minted_one() {
+    let dir = temp("old_area");
+    let path = dir.join("liv.log");
+    {
+        let mut s = Session::open(&path).unwrap();
+        liv_services::seed_if_fresh(&mut s).unwrap();
+        let area_prop = s.allocate_id();
+        let work = s.allocate_id();
+        let note = s.allocate_id();
+        s.commit(
+            vec![
+                Command::Create { entity: work },
+                Command::AddCell {
+                    entity: work,
+                    cell: Cell { property: props::NAME, value: Value::text("Work") },
+                },
+                Command::Create { entity: area_prop },
+                Command::AddCell {
+                    entity: area_prop,
+                    cell: Cell { property: props::NAME, value: Value::text("area") },
+                },
+                Command::AddCell {
+                    entity: area_prop,
+                    cell: Cell { property: props::OPTIONS, value: Value::Reference(work) },
+                },
+                Command::Create { entity: note },
+                Command::AddCell {
+                    entity: note,
+                    cell: Cell { property: props::NAME, value: Value::text("Order slates") },
+                },
+                Command::AddCell {
+                    entity: note,
+                    cell: Cell { property: area_prop, value: Value::Reference(work) },
+                },
+            ],
+            "an area of their own",
+            Author::User,
+        )
+        .unwrap();
+    }
+
+    let to = dir.join("liv.db");
+    convert(&path, &to).unwrap();
+    let e = Engine::open_local(&to).unwrap();
+
+    let areas = e.of_kind(kind::AREA).unwrap();
+    assert_eq!(areas.len(), 1, "one area in, one area out: {areas:?}");
+    let work = areas[0];
+    assert_eq!(e.name(work).unwrap().as_deref(), Some("Work"), "with its name");
+    assert!(!liv_engine::model::is_furniture(work), "minted, never frozen");
+
+    // VOCABULARY, so it stays out of every list. This is the half that
+    // `liv_add_option` got wrong until today, and a converted box must
+    // not reintroduce it.
+    assert!(
+        e.run(&liv_engine::Query::default()).unwrap().iter().all(|id| *id != work),
+        "an area is not a thing the box lists"
+    );
+
+    // AND THE FILING SURVIVED: the note still points at it.
+    let note = e
+        .all_entities()
+        .unwrap()
+        .into_iter()
+        .find(|id| e.name(*id).unwrap().as_deref() == Some("Order slates"))
+        .expect("the note came across");
+    assert_eq!(
+        e.one(note, prop::AREA).unwrap(),
+        Some(liv_engine::Value::Ref(work)),
+        "filed under the area it was filed under"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

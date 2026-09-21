@@ -26,6 +26,12 @@ fn engine() -> Engine {
 }
 
 /// "This scrap mentions the Alpha kickoff — file it under Work."
+///
+/// **The area is minted, not compiled in** (owner, 2026-09-21: *"Areas
+/// are all created by the user"*). Every test below declares the areas it
+/// needs on its own engine and threads the id in here — which is also
+/// closer to the real thing, since a box has no area until someone makes
+/// one.
 fn filing(entity: EntityId, area: EntityId) -> Proposal {
     Proposal {
         ops: vec![Op::SetCell {
@@ -44,12 +50,13 @@ fn filing(entity: EntityId, area: EntityId) -> Proposal {
 #[test]
 fn accepting_a_proposal_writes_it_under_the_proposers_name() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
 
     e.accept(&p, T0 + 1).unwrap();
 
-    assert_eq!(e.one(scrap, prop::AREA).unwrap(), Some(Value::Ref(area::WORK)));
+    assert_eq!(e.one(scrap, prop::AREA).unwrap(), Some(Value::Ref(work)));
     // **The proposer is preserved**, not laundered into the user. The box
     // can say afterwards which suggestions were taken, and a clerk that
     // proposes badly is answerable for it.
@@ -60,8 +67,9 @@ fn accepting_a_proposal_writes_it_under_the_proposers_name() {
 #[test]
 fn an_accepted_proposal_is_one_undo() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    e.accept(&filing(scrap, area::WORK), T0 + 1).unwrap();
+    e.accept(&filing(scrap, work), T0 + 1).unwrap();
 
     e.undo(T0 + 2).unwrap();
     assert_eq!(e.one(scrap, prop::AREA).unwrap(), None, "taking a suggestion is undoable");
@@ -93,15 +101,18 @@ fn a_proposal_that_would_be_refused_as_a_write_is_refused_as_a_proposal() {
 #[test]
 fn a_group_of_proposals_lands_as_one_action() {
     let mut e = engine();
+    // Minted before `before` is read, so the area's own group is not
+    // mistaken for the one the acceptance writes.
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let a = e.create(kind::NOTE, Some("one"), T0).unwrap();
     let b = e.create(kind::NOTE, Some("two"), T0 + 1).unwrap();
     let before = e.group_count().unwrap();
 
-    e.accept_all(&[filing(a, area::WORK), filing(b, area::WORK)], T0 + 2).unwrap();
+    e.accept_all(&[filing(a, work), filing(b, work)], T0 + 2).unwrap();
 
     assert_eq!(e.group_count().unwrap(), before + 1, "ONE group");
-    assert_eq!(e.one(a, prop::AREA).unwrap(), Some(Value::Ref(area::WORK)));
-    assert_eq!(e.one(b, prop::AREA).unwrap(), Some(Value::Ref(area::WORK)));
+    assert_eq!(e.one(a, prop::AREA).unwrap(), Some(Value::Ref(work)));
+    assert_eq!(e.one(b, prop::AREA).unwrap(), Some(Value::Ref(work)));
 
     e.undo(T0 + 3).unwrap();
     assert_eq!(e.one(a, prop::AREA).unwrap(), None, "and one undo takes the lot");
@@ -113,8 +124,11 @@ fn one_bad_member_refuses_the_whole_group() {
     // All-or-nothing. Half a consent is worse than none: the user said
     // yes to a set, and a set that half-landed is not what they agreed to.
     let mut e = engine();
+    // Again before `before`: the mint is setup, not part of what is
+    // being counted.
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let a = e.create(kind::NOTE, Some("one"), T0).unwrap();
-    let good = filing(a, area::WORK);
+    let good = filing(a, work);
     let bad = Proposal {
         ops: vec![Op::SetCell {
             entity: a,
@@ -145,8 +159,9 @@ fn accepting_nothing_writes_nothing() {
 #[test]
 fn a_declined_proposal_is_never_offered_again() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
 
     assert!(!e.is_declined(&p).unwrap(), "not yet");
     e.decline(&p, T0 + 1).unwrap();
@@ -155,19 +170,24 @@ fn a_declined_proposal_is_never_offered_again() {
     // The sweep re-derives the same draft in every process, so it is the
     // identical proposal that must be recognised — not a remembered
     // object, a recomputed one.
-    assert!(e.is_declined(&filing(scrap, area::WORK)).unwrap());
+    assert!(e.is_declined(&filing(scrap, work)).unwrap());
 }
 
 #[test]
 fn declining_one_does_not_decline_its_neighbours() {
     let mut e = engine();
+    // Two areas, minted once each: two `declare`s of one name would be
+    // two different areas and the second assertion would stop meaning
+    // "a different suggestion".
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let home = e.declare(kind::AREA, "Home", T0).unwrap();
     let a = e.create(kind::NOTE, Some("one"), T0).unwrap();
     let b = e.create(kind::NOTE, Some("two"), T0 + 1).unwrap();
 
-    e.decline(&filing(a, area::WORK), T0 + 2).unwrap();
+    e.decline(&filing(a, work), T0 + 2).unwrap();
 
-    assert!(!e.is_declined(&filing(b, area::WORK)).unwrap(), "a different subject");
-    assert!(!e.is_declined(&filing(a, area::HOME)).unwrap(), "a different suggestion");
+    assert!(!e.is_declined(&filing(b, work)).unwrap(), "a different subject");
+    assert!(!e.is_declined(&filing(a, home)).unwrap(), "a different suggestion");
 }
 
 #[test]
@@ -176,9 +196,10 @@ fn the_reason_is_part_of_what_was_declined() {
     // due Tuesday". A proposer that finds the same write for a better
     // reason is entitled to ask.
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let one = filing(scrap, area::WORK);
-    let mut two = filing(scrap, area::WORK);
+    let one = filing(scrap, work);
+    let mut two = filing(scrap, work);
     two.reason = "you file every kickoff under Work".into();
 
     e.decline(&one, T0 + 2).unwrap();
@@ -192,12 +213,13 @@ fn accepting_a_proposal_that_was_declined_still_works() {
     // user later does the same thing themselves, or changes their mind
     // from a list of past suggestions, nothing should stand in the way.
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
     e.decline(&p, T0 + 1).unwrap();
 
     e.accept(&p, T0 + 2).unwrap();
-    assert_eq!(e.one(scrap, prop::AREA).unwrap(), Some(Value::Ref(area::WORK)));
+    assert_eq!(e.one(scrap, prop::AREA).unwrap(), Some(Value::Ref(work)));
 }
 
 // ---- a refusal travels -------------------------------------------------
@@ -213,8 +235,11 @@ fn accepting_a_proposal_that_was_declined_still_works() {
 #[test]
 fn a_refusal_made_on_one_device_is_honoured_on_the_other() {
     let mut laptop = Engine::open_in_memory(dev(1)).unwrap();
+    // The laptop mints the area; the phone learns it from the same
+    // groups it learns the note from, so both ends mean the same area.
+    let work = laptop.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = laptop.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
 
     let mut phone = Engine::open_in_memory(dev(2)).unwrap();
     for g in laptop.groups().unwrap() {
@@ -247,8 +272,9 @@ fn a_refusal_survives_a_replay_because_it_is_in_the_log() {
 
     let p = {
         let mut e = Engine::open_local(&path).unwrap();
+        let work = e.declare(kind::AREA, "Work", T0).unwrap();
         let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-        let p = filing(scrap, area::WORK);
+        let p = filing(scrap, work);
         e.decline(&p, T0 + 1).unwrap();
         p
     };
@@ -275,8 +301,9 @@ fn a_refusal_survives_a_replay_because_it_is_in_the_log() {
 #[test]
 fn a_refusal_stores_every_bit_of_its_fingerprint() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
     let print = p.fingerprint();
     assert!(print > (1u64 << 53), "the fixture must exceed an f64's mantissa: {print}");
 
@@ -307,8 +334,9 @@ fn a_refusal_stores_every_bit_of_its_fingerprint() {
 #[test]
 fn refusing_twice_is_refusing_once() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
 
     e.decline(&p, T0 + 1).unwrap();
     e.decline(&p, T0 + 2).unwrap();
@@ -329,8 +357,9 @@ fn refusing_twice_is_refusing_once() {
 #[test]
 fn a_refusal_can_be_undone() {
     let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let scrap = e.create(kind::NOTE, Some("kickoff notes"), T0).unwrap();
-    let p = filing(scrap, area::WORK);
+    let p = filing(scrap, work);
 
     e.decline(&p, T0 + 1).unwrap();
     assert!(e.is_declined(&p).unwrap());

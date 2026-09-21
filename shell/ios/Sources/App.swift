@@ -427,8 +427,7 @@ struct RootView: View {
     /// a file into the App Group spool and goes (Catch.swift says why it
     /// does not write the box itself); this turns each file into a
     /// capture, oldest first, through the same `liv_capture_at` the
-    /// `liv://` door uses, and stamps it into the workspace the way that
-    /// door does. NOT focused or opened: a share is fire-and-forget, and
+    /// `liv://` door uses. NOT focused or opened: a share is fire-and-forget, and
     /// landing in a note you shared an hour ago when the app comes to the
     /// front would be the wrong surprise. It is in the Inbox, where an
     /// unrouted capture waits.
@@ -452,7 +451,15 @@ struct RootView: View {
             box.capture(item.text) { id in
                 if !id.isAbsent {
                     item.done()
-                    workspaces.stamp(id, in: box)
+                    // **NO WORKSPACE STAMP** (owner, 2026-09-21). See
+                    // `catchText` in Desk.swift for the whole reasoning:
+                    // a thing made INSIDE the app was made while you
+                    // stood somewhere, and inherits; a thing that
+                    // arrived from OUTSIDE was not, and inherits
+                    // nothing. Sharing a link from Safari while a Work
+                    // workspace happened to be open made it `area:Work`,
+                    // which is the app's state written down as though it
+                    // were yours.
                 }
                 next(i + 1)
             }

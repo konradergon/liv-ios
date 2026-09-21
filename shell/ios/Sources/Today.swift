@@ -869,9 +869,8 @@ private struct TodayDateStrip: View {
 
 /// THE DAY BY AREA. Pure, so the cost check and the self-check can hold
 /// it: one pass over the rows, counting each area cell, and the rows
-/// with none as `unfiled`. Areas come out in the order the app ships
-/// them, then any minted ones by name — so "Work" is always first when
-/// present and the line does not shuffle as counts change.
+/// with none as `unfiled`. Areas come out by name — the app ships none
+/// since 2026-09-21 — so the line does not shuffle as counts change.
 struct LivAreaCounts: Equatable {
     var named: [(name: String, count: Int)] = []
     var unfiled = 0
@@ -889,9 +888,12 @@ func livAreaCounts(_ rows: [EntityRow]) -> LivAreaCounts {
         let area = (row.cells ?? []).first { $0.property == "area" }?.value ?? ""
         if area.isEmpty { out.unfiled += 1 } else { tally[area, default: 0] += 1 }
     }
-    let shipped = LivArea.allCases.map(\.name)
-    let ordered = shipped.filter { tally[$0] != nil }
-        + tally.keys.filter { !shipped.contains($0) }.sorted()
+    // BY NAME. This used to lead with the six the app shipped, so "Work"
+    // was always first; none ships now (2026-09-21), so every area is
+    // one a person made and alphabetical is the only order that is not
+    // an opinion — and, like the old one, it does not shuffle as the
+    // counts change.
+    let ordered = tally.keys.sorted()
     out.named = ordered.map { ($0, tally[$0] ?? 0) }
     return out
 }

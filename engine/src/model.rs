@@ -437,16 +437,24 @@ pub mod kind {
     pub const DAILY_NOTE: EntityId = frozen(CLASS_KIND, 21);
 }
 
-pub mod area {
-    use super::{frozen, CLASS_AREA};
-    use crate::id::EntityId;
-    pub const WORK: EntityId = frozen(CLASS_AREA, 0);
-    pub const HEALTH: EntityId = frozen(CLASS_AREA, 1);
-    pub const MONEY: EntityId = frozen(CLASS_AREA, 2);
-    pub const HOME: EntityId = frozen(CLASS_AREA, 3);
-    pub const FAMILY: EntityId = frozen(CLASS_AREA, 4);
-    pub const LEARNING: EntityId = frozen(CLASS_AREA, 5);
-}
+// **THE SIX AREAS ARE GONE** (owner, 2026-09-21: *"Areas are all created
+// by the user, so whatever fixed areas are in code should be removed"*).
+//
+// Work, Health, Money, Home, Family & Friends and Learning were frozen
+// here, each a `frozen(CLASS_AREA, n)`. There are now no compiled-in
+// areas at all: an area is an ordinary minted thing of `kind::AREA`,
+// declared like any other piece of a user's own vocabulary, and a fresh
+// box has none until someone makes one.
+//
+// `CLASS_AREA` stays defined and its number stays reserved. It is the
+// nibble inside the ids those six had, and a box written before today
+// still holds cells pointing at them; re-using 3 for a future class
+// would make an old cell resolve to something new. A class number is
+// cheap and a collision is not.
+//
+// What did NOT change: `kind::AREA` (a minted area still says what it
+// is) and `prop::AREA` (the field itself). The presets went; the concept
+// did not.
 
 pub mod status {
     use super::{frozen, CLASS_STATUS};
@@ -491,15 +499,6 @@ pub fn label(id: EntityId) -> Option<&'static str> {
             21 => "Daily note",
             _ => return None,
         }),
-        CLASS_AREA => Some(match id.0[7] {
-            0 => "Work",
-            1 => "Health",
-            2 => "Money",
-            3 => "Home",
-            4 => "Family & Friends",
-            5 => "Learning",
-            _ => return None,
-        }),
         CLASS_STATUS => Some(match id.0[7] {
             0 => "To do",
             1 => "Doing",
@@ -526,11 +525,6 @@ pub const ALL_KINDS: &[EntityId] = &[
     kind::DAILY_NOTE,
 ];
 
-/// Every area, in product order — the six researched rather than
-/// invented (`what-liv-is-for.md`, 2026-07-27).
-pub const AREAS: &[EntityId] =
-    &[area::WORK, area::HEALTH, area::MONEY, area::HOME, area::FAMILY, area::LEARNING];
-
 pub const STATUSES: &[EntityId] = &[status::TODO, status::DOING, status::DONE];
 
 /// The compiled-in things of one kind — the inverse of `furniture_kind`.
@@ -540,9 +534,9 @@ pub const STATUSES: &[EntityId] = &[status::TODO, status::DOING, status::DONE];
 /// rule; `of_kind` finds the minted ones in the box and this finds the
 /// frozen ones, which are in no table to be found.
 pub fn furniture_of(kind: EntityId) -> &'static [EntityId] {
-    if kind == self::kind::AREA {
-        AREAS
-    } else if kind == self::kind::STATUS {
+    // NO ARM FOR `kind::AREA`. There is no compiled-in area to hand
+    // back — every one is minted, and `of_kind` finds those in the box.
+    if kind == self::kind::STATUS {
         STATUSES
     } else if kind == self::kind::KIND {
         ALL_KINDS

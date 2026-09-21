@@ -846,17 +846,31 @@ struct DeskHost: View {
     /// A CATCH FROM OUTSIDE — `liv://capture?text=…` (2026-09-09). The
     /// text is saved FIRST, through the same `liv_capture_at` the search
     /// field's find-or-create uses; a catch is not a draft, and if you
-    /// can start it, it is saved. Then it is treated exactly as the note
-    /// `+` makes: stamped into the workspace, focused, adopted as an
-    /// Inbox capture — the same three lines as `createNote`, so there is
-    /// one rule for what a new thing is and not one per door.
+    /// can start it, it is saved.
+    ///
+    /// **AND IT INHERITS NOTHING** (owner, 2026-09-21: *"If we want to
+    /// have Capture, it should be a note … that doesn't get Area or
+    /// Subject of the workspace"*).
+    ///
+    /// This used to call `workspaces.stamp`, the same as the note `+`
+    /// makes — and that is right for `+` and wrong here. The line
+    /// between them is not which verb ran, it is WHERE THE THING CAME
+    /// FROM. Something you make inside the app was made while you stood
+    /// somewhere, so the workspace is a fact about it. Something that
+    /// arrives from outside — this door, the share sheet, whatever comes
+    /// next — was not: the workspace is only what the app happened to
+    /// have open, and stamping it writes a guess down as a fact nobody
+    /// can tell from a decision afterwards.
+    ///
+    /// A link sent from Safari about a bicycle became `area:Work`
+    /// because Work was on screen. It lands unfiled now, in Unsorted,
+    /// where it is one of the few things actually waiting on a person.
     private func catchText(_ text: String) {
         guard !creating else { return }
         creating = true
         box.capture(text) { id in
             creating = false
             guard !id.isAbsent else { return }
-            workspaces.stamp(id, in: box)
             desk.requestFocus(id)
             // The same turn of its own the bar's `+` takes — see
             // `createNote`. One rule for what a new thing is, not one

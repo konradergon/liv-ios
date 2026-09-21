@@ -140,8 +140,10 @@ fn typing_the_start_of_a_filing_reaches_what_is_filed_there() {
     let mut e = engine();
     // An AREA, not a bare option — `area` is `RefTo(kind::AREA)`. And it
     // goes in no `options` list: a select's choices are registered there,
-    // but an area is its own KIND, so a seventh one is found by being an
-    // area rather than by being listed.
+    // but an area is its own KIND, so an area is found by BEING one
+    // rather than by being listed. Every area is minted (owner,
+    // 2026-09-21); none is compiled in, so this one is declared here like
+    // any other piece of a user's vocabulary.
     let junk = e.declare(kind::AREA, "Testjunk", T0).unwrap();
     let filed = e.create(kind::NOTE, Some("a note"), T0 + 2).unwrap();
     e.set(filed, prop::AREA, Value::Ref(junk), T0 + 3).unwrap();
@@ -225,24 +227,36 @@ fn a_query_of_only_qualifiers_is_still_a_search() {
 #[test]
 fn a_reference_qualifier_resolves_by_name() {
     let mut e = engine();
+    // Minted, because there are no compiled-in areas (owner, 2026-09-21).
+    // Which is also why the typed name is `Work` and not `work`: a kind
+    // resolves through `model::label`, case-insensitively, but a minted
+    // thing resolves through its `name` cell, which matches exactly.
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     let task = e.create(kind::TASK, Some("ship it"), T0).unwrap();
     e.create(kind::NOTE, Some("a note"), T0 + 1).unwrap();
-    e.set(task, prop::AREA, Value::Ref(area::WORK), T0 + 2).unwrap();
+    e.set(task, prop::AREA, Value::Ref(work), T0 + 2).unwrap();
 
     assert_eq!(hits(&e, "kind:task"), vec![task], "a compiled-in kind, by its word");
-    assert_eq!(hits(&e, "area:work"), vec![task]);
+    assert_eq!(hits(&e, "area:Work"), vec![task], "and a minted area, by the name it was given");
     assert!(hits(&e, "area:nowhere").is_empty(), "an unknown name finds nothing");
 }
 
 // ---- facets ------------------------------------------------------------
 
+/// Three tasks over two areas. The areas are MINTED — there are no
+/// compiled-in ones any more (owner, 2026-09-21) — and each is declared
+/// exactly once per engine, so "Work" is one area and not two wearing one
+/// name. `declare` (not `create`) is what puts `working = true` on them,
+/// which is what keeps them out of `run` and so out of every count below.
 fn board(e: &mut Engine) -> (EntityId, EntityId, EntityId) {
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let home = e.declare(kind::AREA, "Home", T0).unwrap();
     let a = e.create(kind::TASK, Some("roof"), T0).unwrap();
     let b = e.create(kind::TASK, Some("invoice"), T0 + 1).unwrap();
     let c = e.create(kind::TASK, Some("laundry"), T0 + 2).unwrap();
-    e.set(a, prop::AREA, Value::Ref(area::WORK), T0 + 3).unwrap();
-    e.set(b, prop::AREA, Value::Ref(area::WORK), T0 + 4).unwrap();
-    e.set(c, prop::AREA, Value::Ref(area::HOME), T0 + 5).unwrap();
+    e.set(a, prop::AREA, Value::Ref(work), T0 + 3).unwrap();
+    e.set(b, prop::AREA, Value::Ref(work), T0 + 4).unwrap();
+    e.set(c, prop::AREA, Value::Ref(home), T0 + 5).unwrap();
     (a, b, c)
 }
 
@@ -268,7 +282,9 @@ fn a_facet_counts_what_each_value_would_yield() {
 fn a_chosen_facet_still_shows_its_siblings() {
     let mut e = engine();
     board(&mut e);
-    let s = parse(&e, "area:work").unwrap();
+    // `Work`, not `work`: a minted area resolves through its `name` cell,
+    // which matches exactly.
+    let s = parse(&e, "area:Work").unwrap();
     let f = facet(&e, &s, prop::AREA).unwrap();
 
     let counts: Vec<(String, usize, bool)> =
@@ -284,7 +300,7 @@ fn a_chosen_facet_still_shows_its_siblings() {
 fn an_excluded_value_says_so() {
     let mut e = engine();
     board(&mut e);
-    let s = parse(&e, "-area:work").unwrap();
+    let s = parse(&e, "-area:Work").unwrap();
     let f = facet(&e, &s, prop::AREA).unwrap();
     let work = f.values.iter().find(|v| v.label == "Work").expect("still offered");
     assert!(work.excluded && !work.active);

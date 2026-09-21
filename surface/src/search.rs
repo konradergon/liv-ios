@@ -233,7 +233,11 @@ fn value_for(e: &Engine, property: EntityId, raw: &str) -> Result<Option<Value>,
 /// which is a question the box cannot answer.
 fn named_thing(e: &Engine, raw: &str) -> Result<Option<EntityId>, LogError> {
     let mut found = None;
-    for id in model::ALL_KINDS.iter().chain(model::AREAS).chain(model::STATUSES) {
+    // NO AREAS IN THIS CHAIN any more (2026-09-21). There is no
+    // compiled-in area to resolve a typed name against; every one is a
+    // minted thing, so the loop below over `prop::NAME` finds it the
+    // same way it finds a project or a person.
+    for id in model::ALL_KINDS.iter().chain(model::STATUSES) {
         if model::label(*id).is_some_and(|l| l.eq_ignore_ascii_case(raw)) {
             if found.is_some() {
                 return Ok(None);

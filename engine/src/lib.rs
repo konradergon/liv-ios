@@ -39,7 +39,7 @@ pub use content::{fingerprint, ContentError, ContentVersion};
 pub use engine::Engine;
 pub use files::{hash_file, FileError, Resync};
 pub use model::{
-    area, kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, AREAS, KINDS, PROPS, STATUSES,
+    kind, prop, status, Holds, PropDef, Refused, ALL_KINDS, KINDS, PROPS, STATUSES,
 };
 pub use query::{lex, Constraint, Op as QueryOp, Query, Sort, Term, TermOp};
 pub use rename::RenameError;

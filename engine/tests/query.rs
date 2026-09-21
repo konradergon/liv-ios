@@ -111,16 +111,31 @@ fn the_lexer_touches_no_box() {
 
 // ---- running one ------------------------------------------------------
 
+/// What `tasks` files, and the areas it filed them under.
+///
+/// There are no compiled-in areas: an area is ordinary minted vocabulary,
+/// so the fixture declares the two it needs and hands back their ids for
+/// the tests to query with.
+struct Filed {
+    a: EntityId,
+    b: EntityId,
+    c: EntityId,
+    work: EntityId,
+    home: EntityId,
+}
+
 /// Three tasks: two in Work, one at Home; one of the Work ones is done.
-fn tasks(e: &mut Engine) -> (EntityId, EntityId, EntityId) {
+fn tasks(e: &mut Engine) -> Filed {
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let home = e.declare(kind::AREA, "Home", T0).unwrap();
     let a = e.create(kind::TASK, Some("roof"), T0).unwrap();
     let b = e.create(kind::TASK, Some("invoice"), T0 + 1).unwrap();
     let c = e.create(kind::TASK, Some("laundry"), T0 + 2).unwrap();
-    e.set(a, prop::AREA, Value::Ref(area::WORK), T0 + 3).unwrap();
-    e.set(b, prop::AREA, Value::Ref(area::WORK), T0 + 4).unwrap();
-    e.set(c, prop::AREA, Value::Ref(area::HOME), T0 + 5).unwrap();
+    e.set(a, prop::AREA, Value::Ref(work), T0 + 3).unwrap();
+    e.set(b, prop::AREA, Value::Ref(work), T0 + 4).unwrap();
+    e.set(c, prop::AREA, Value::Ref(home), T0 + 5).unwrap();
     e.set(b, prop::STATUS, Value::Ref(status::DONE), T0 + 6).unwrap();
-    (a, b, c)
+    Filed { a, b, c, work, home }
 }
 
 fn q(constraints: Vec<Constraint>) -> Query {
@@ -134,13 +149,13 @@ fn eq(property: EntityId, value: Value) -> Constraint {
 #[test]
 fn a_conjunction_of_constraints() {
     let mut e = engine();
-    let (a, b, c) = tasks(&mut e);
+    let Filed { a, b, c, work, home } = tasks(&mut e);
 
-    assert_eq!(e.run(&q(vec![eq(prop::AREA, Value::Ref(area::WORK))])).unwrap(), vec![a, b]);
-    assert_eq!(e.run(&q(vec![eq(prop::AREA, Value::Ref(area::HOME))])).unwrap(), vec![c]);
+    assert_eq!(e.run(&q(vec![eq(prop::AREA, Value::Ref(work))])).unwrap(), vec![a, b]);
+    assert_eq!(e.run(&q(vec![eq(prop::AREA, Value::Ref(home))])).unwrap(), vec![c]);
     assert_eq!(
         e.run(&q(vec![
-            eq(prop::AREA, Value::Ref(area::WORK)),
+            eq(prop::AREA, Value::Ref(work)),
             Constraint {
                 property: prop::STATUS,
                 op: QueryOp::NotEquals(Value::Ref(status::DONE))
@@ -157,7 +172,7 @@ fn not_equals_is_vacuously_true_when_the_property_is_absent() {
     // A task with no status satisfies `status != done`. The opposite
     // reading hides every unstarted task from every negative filter.
     let mut e = engine();
-    let (a, _, c) = tasks(&mut e);
+    let Filed { a, c, .. } = tasks(&mut e);
     let out = e
         .run(&q(vec![Constraint {
             property: prop::STATUS,
@@ -170,7 +185,7 @@ fn not_equals_is_vacuously_true_when_the_property_is_absent() {
 #[test]
 fn missing_is_stronger_than_not_equals() {
     let mut e = engine();
-    let (a, _, _) = tasks(&mut e);
+    let Filed { a, .. } = tasks(&mut e);
     let missing = e
         .run(&q(vec![Constraint { property: prop::STATUS, op: QueryOp::Missing }]))
         .unwrap();
@@ -185,7 +200,7 @@ fn missing_is_stronger_than_not_equals() {
 #[test]
 fn backstage_and_trashed_stay_out_unless_asked_for() {
     let mut e = engine();
-    let (a, b, c) = tasks(&mut e);
+    let Filed { a, b, c, .. } = tasks(&mut e);
     e.trash(c, T0 + 10).unwrap();
     // A declared field is working plumbing, and it has a name like
     // anything else.
@@ -246,8 +261,8 @@ fn sorting_puts_things_without_the_property_last_in_either_direction() {
 #[test]
 fn results_are_stable_without_a_sort() {
     let mut e = engine();
-    let (a, b, _) = tasks(&mut e);
-    let out = e.run(&q(vec![eq(prop::AREA, Value::Ref(area::WORK))])).unwrap();
+    let Filed { a, b, work, .. } = tasks(&mut e);
+    let out = e.run(&q(vec![eq(prop::AREA, Value::Ref(work))])).unwrap();
     assert_eq!(out, vec![a, b], "by id, which for a v7 id is creation order");
-    assert_eq!(e.run(&q(vec![eq(prop::AREA, Value::Ref(area::WORK))])).unwrap(), out);
+    assert_eq!(e.run(&q(vec![eq(prop::AREA, Value::Ref(work))])).unwrap(), out);
 }

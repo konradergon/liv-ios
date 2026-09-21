@@ -171,6 +171,17 @@ fn a_value_crosses_as_text_and_the_property_reads_it() {
     };
     let id = c(took(out)["id"].as_str().unwrap());
 
+    // "Work" IS NOT AN AREA UNTIL SOMEONE MAKES ONE (2026-09-21). An
+    // option is matched by name and never minted by `liv_set` — typing
+    // a typo must not create an area — so the vocabulary has to exist
+    // before a value can name it.
+    let area_prop = prop_id(&path, "area");
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_add_option(path.as_ptr(), area_prop.as_ptr(), c("Work").as_ptr(), T0, &mut out)
+    };
+    took(out);
+
     for (property, raw) in
         [("area", "Work"), ("status", "Doing"), ("due", "2026-09-13"), ("private", "yes")]
     {
@@ -339,9 +350,14 @@ fn trashing_is_a_cell_so_restoring_is_a_write() {
 
 // ---- what a picker needs -----------------------------------------------
 
-/// **The words come from the box, never from the shell.** The current
-/// tree keeps the six area names as a Swift constant, which
-/// `one-core.md` §4 records as a mistake.
+/// **The words come from the box, never from the shell** — and since
+/// 2026-09-21 there are no words until someone writes one.
+///
+/// This asserted the six the app shipped, in product order. The owner
+/// removed them (*"Areas are all created by the user"*), so a fresh
+/// box's area vocabulary is EMPTY, and what this pins now is the shape
+/// that replaced them: empty at the start, and whatever a person makes
+/// after that, by the same one rule the cell already used.
 #[test]
 fn a_picker_asks_the_box_for_its_words() {
     let (d, path) = box_at("options");
@@ -350,25 +366,33 @@ fn a_picker_asks_the_box_for_its_words() {
     let mut out = std::ptr::null_mut();
     assert_eq!(unsafe { liv_options(path.as_ptr(), area.as_ptr(), &mut out) }, LIV_OK);
     let rows = took(out);
-    let names: Vec<&str> = rows.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
-    assert_eq!(
-        names,
-        vec!["Work", "Health", "Money", "Home", "Family & Friends", "Learning"],
-        "the six, in product order, spelled by the box"
+    assert!(
+        rows.as_array().unwrap().is_empty(),
+        "a fresh box ships no area at all: {rows}"
     );
 
-    // A user's own area joins the same list, because that is what the
-    // cell accepts — one rule, not two.
-    let mut out = std::ptr::null_mut();
-    unsafe {
-        liv_make(path.as_ptr(), c(&kind::AREA.hex()).as_ptr(), c("Woodworking").as_ptr(), T0, &mut out)
-    };
-    took(out);
+    // A user's own areas ARE the list now.
+    for name in ["Woodworking", "Allotment"] {
+        let mut out = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                liv_add_option(path.as_ptr(), area.as_ptr(), c(name).as_ptr(), T0, &mut out)
+            },
+            LIV_OK
+        );
+        took(out);
+    }
     let mut out = std::ptr::null_mut();
     unsafe { liv_options(path.as_ptr(), area.as_ptr(), &mut out) };
     let rows = took(out);
-    assert_eq!(rows.as_array().unwrap().len(), 7);
-    assert_eq!(rows[6]["name"], "Woodworking");
+    let names: Vec<&str> =
+        rows.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+    // IN THE ORDER THEY WERE MADE, which is id order, which for a v7 id
+    // is creation order. Worth pinning rather than assuming: the six
+    // used to arrive in a product order somebody chose, and nobody
+    // chooses this one. Whether a picker should sort by name instead is
+    // a question for the picker, not for the ABI.
+    assert_eq!(names, vec!["Woodworking", "Allotment"], "{rows}");
 
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -938,11 +962,21 @@ fn the_property_list_offers_fields_and_not_plumbing() {
 
 /// **A picker gets the field AND its vocabulary.** One without the other
 /// is an empty list, and a picker with an empty list treats everything
-/// typed into it as new — so choosing "Work" from the six that exist
-/// tried to mint a seventh called Work.
+/// typed into it as new — so choosing a word that already exists tried
+/// to mint a second one by the same name.
+///
+/// The vocabulary is a person's own since 2026-09-21, so this mints one
+/// first rather than reading the six off the shelf. The claim is
+/// unchanged: `liv_properties` carries the field's values with it.
 #[test]
 fn a_property_carries_the_options_a_picker_offers() {
     let (d, path) = box_at("prop_options");
+    let area_prop = prop_id(&path, "area");
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_add_option(path.as_ptr(), area_prop.as_ptr(), c("Allotment").as_ptr(), T0, &mut out)
+    };
+    took(out);
 
     let mut out = std::ptr::null_mut();
     assert_eq!(unsafe { liv_properties(path.as_ptr(), &mut out) }, LIV_OK);
@@ -950,11 +984,7 @@ fn a_property_carries_the_options_a_picker_offers() {
     let area = rows.as_array().unwrap().iter().find(|r| r["name"] == "area").unwrap();
     let names: Vec<&str> =
         area["options"].as_array().unwrap().iter().map(|o| o["name"].as_str().unwrap()).collect();
-    assert_eq!(
-        names,
-        vec!["Work", "Health", "Money", "Home", "Family & Friends", "Learning"],
-        "{area}"
-    );
+    assert_eq!(names, vec!["Allotment"], "{area}");
 
     // A text field has no vocabulary, and says so with an empty list
     // rather than being absent.

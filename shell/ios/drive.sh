@@ -1444,25 +1444,30 @@ door_y() {
 # its date — "Work 3 · Home 1 · 2 unfiled" — since 2026-09-06 (direction A,
 # "the furniture shows"). It draws only when the day holds something, so
 # the check boots into Today, confirms the late pile is there, and asserts
-# that a StaticText carrying "unfiled" or a shipped area name sits between
+# that a StaticText carrying "unfiled" or "<an area> <a count>" sits between
 # the date and the day strip.
 cmd_areas() {
   cmd_boot today >/dev/null || { die "could not boot into Today."; return 1 }
   local line
   line=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
 import json, sys
-areas = ('Work', 'Health', 'Money', 'Home', 'Family & Friends', 'Learning')
+# NO LIST OF AREA NAMES (2026-09-21). The app ships none — every area
+# is one the person made — so this cannot match against six words it
+# knows. The shape is the test instead: a StaticText on the area line
+# is either the unfiled count or "<some name> <a number>".
+import re
+named = re.compile(r'^.+ \d+$')
 hits = []
 def walk(n):
-    l = n.get('AXLabel') or ''
+    l = (n.get('AXLabel') or '').strip()
     f = n.get('frame') or {}
     if n.get('type') == 'StaticText' and 60 < f.get('y', 0) < 260 and (
-        'unfiled' in l or any(l.startswith(a + ' ') for a in areas)):
+        'unfiled' in l or named.match(l)):
         hits.append((round(f.get('y', 0)), f.get('x', 0), l))
     for c in n.get('children') or []: walk(c)
 d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
-# SCREEN ORDER, left to right: the app puts the shipped areas first and
-# the unfiled count last, and the report should read the way the line does.
+# SCREEN ORDER, left to right: areas by name, then the unfiled count,
+# and the report should read the way the line does.
 hits.sort(); print(' · '.join(l for _, _, l in hits))")
   [[ -n "$line" ]] || {
     die "Today shows no area line under its date. With a late pile on

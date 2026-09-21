@@ -121,12 +121,17 @@ fn a_silenced_clerk_does_not_read_the_box() {
 // ---- search ------------------------------------------------------------
 
 /// A box of tasks, ten of them filed under Work.
+///
+/// The area is MINTED here, once per box — there are no compiled-in areas
+/// (owner, 2026-09-21), and `declare` is the verb that files it as
+/// vocabulary (`working = true`), so it stays out of what `run` returns.
 fn searchable_box(n: u64) -> Engine {
     let mut e = Engine::open_in_memory(dev(1)).unwrap();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
     for i in 0..n {
         let id = e.create(kind::TASK, Some(&format!("task {i} about invoices")), T0 + i).unwrap();
         if i < 10 {
-            e.set(id, prop::AREA, Value::Ref(area::WORK), T0 + i).unwrap();
+            e.set(id, prop::AREA, Value::Ref(work), T0 + i).unwrap();
         }
     }
     e
@@ -134,14 +139,18 @@ fn searchable_box(n: u64) -> Engine {
 
 /// **A qualifier search costs its answer, not the box.**
 ///
-/// The whole point of `run` seeking: `area:work` is an index lookup, so
+/// The whole point of `run` seeking: `area:Work` is an index lookup, so
 /// ten matches cost ten whether the box holds five hundred or five
 /// thousand. Scoring then touches only the survivors.
+///
+/// The value is spelled as the area was NAMED: a minted area resolves by
+/// an exact name match (`with_value` on `prop::NAME`), unlike the
+/// compiled-in furniture that `area:work` used to hit case-insensitively.
 #[test]
 fn a_qualifier_search_costs_its_answer() {
     let small = searchable_box(500);
     let large = searchable_box(5_000);
-    let q = |e: &Engine| liv_surface::search::parse(e, "area:work").unwrap();
+    let q = |e: &Engine| liv_surface::search::parse(e, "area:Work").unwrap();
     let (qs, ql) = (q(&small), q(&large));
 
     let ratio = best_ratio(
