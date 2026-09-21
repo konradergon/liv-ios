@@ -267,13 +267,31 @@ ${3:-}"
 }
 plist()     { echo "$(container)/Library/Preferences/$APP.plist" }
 
+# THE ACTIVE WORKSPACE, and "All" IS AN ANSWER (2026-09-21).
+#
+# This printed `?` for three different things: no plist, an unreadable
+# plist, and the key simply not being there. The last one is not a
+# failure — `LivIDText.store` REMOVES the key for the absent id, and
+# the absent id is what "All" means (LivID.swift), so the ordinary
+# case read as a fault. Same rule as the rest of this file: do not
+# answer a question you could not ask.
 workspace() {
   local p="$(plist)"
-  [[ -f "$p" ]] || { echo "?"; return }
+  [[ -f "$p" ]] || { echo "?no-plist"; return }
   python3 - "$p" <<'PY'
 import plistlib, sys
-try: print(plistlib.load(open(sys.argv[1],'rb')).get("workspace.active", "?"))
-except Exception: print("?")
+try:
+    d = plistlib.load(open(sys.argv[1], 'rb'))
+except Exception:
+    print('?unreadable'); raise SystemExit(0)
+v = d.get('workspace.active')
+# Absent key = the absent id = All. A 32-character hex string is a
+# real workspace, shown by its first eight. An INTEGER is a core-era
+# value this build no longer reads (slice 5b), and saying so beats
+# printing a number that names nothing.
+if v is None: print('All')
+elif isinstance(v, str): print(v[:8] if len(v) == 32 else v)
+else: print('?stale-%s' % type(v).__name__)
 PY
 }
 
