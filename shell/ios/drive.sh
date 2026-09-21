@@ -185,32 +185,46 @@ container() { sim get_app_container "$UDID" "$APP" data 2>/dev/null }
 # zero bytes, and the harness reported "the app is running but drew no
 # surface marker", about an app nobody had managed to look at.
 #
-# So: exit 0 with the tree, or exit 3 having put the reason in `AX_WHY`.
-# Callers that only want text (`tree | grep -q …`) are unaffected — they
-# still see an empty pipe — but anything that draws a CONCLUSION from an
-# empty read has a way to know it must not.
-AX_WHY=""
+# So: exit 0 with the tree, or exit 3 having written the reason where the
+# caller can read it. Callers that only want text (`tree | grep -q …`)
+# are unaffected — they still see an empty pipe — but anything that draws
+# a CONCLUSION from an empty read has a way to know it must not.
+#
+# **A FILE, NOT A VARIABLE** (2026-09-21, one round after this was
+# written as a variable and shipped). Every reader reaches `tree` through
+# a command substitution — `s=$(surfaces)`, and `surfaces` itself does
+# `t=$(tree)` — so an assignment made in here happens in a subshell two
+# deep and is gone before the caller sees it. The first run of the
+# variable version printed a blank line where the reason belonged, which
+# is the same silence this whole change is about, one level up.
+AX_WHY_FILE="$RUN/why.txt"
+: > "$AX_WHY_FILE"
+
+# Why the last read failed, in the shell that is asking.
+ax_why() { cat "$AX_WHY_FILE" 2>/dev/null }
 
 tree() {
-  AX_WHY=""
   local out rc err="$RUN/axe.err"
+  : > "$AX_WHY_FILE"
   out=$(axe describe-ui --udid "$UDID" 2>"$err"); rc=$?
   if (( rc == 142 )); then
-    AX_WHY="\`axe describe-ui\` TIMED OUT after 20s. The accessibility server
+    print -r -- "\`axe describe-ui\` TIMED OUT after 20s. The accessibility server
       stalls (2026-08-31) — restart the simulator. This is the harness's
-      own eyes, not your build."
+      own eyes, not your build." > "$AX_WHY_FILE"
     return 3
   fi
   if (( rc != 0 )); then
-    AX_WHY="\`axe describe-ui\` exited $rc: $(cat "$err" 2>/dev/null)"
+    print -r -- "\`axe describe-ui\` exited $rc.
+$(sed 's/^/      /' "$err" 2>/dev/null)" > "$AX_WHY_FILE"
     return 3
   fi
   if [[ -z "$out" ]]; then
-    AX_WHY="\`axe describe-ui\` exited 0 and printed ZERO BYTES.
+    print -r -- "\`axe describe-ui\` exited 0 and printed ZERO BYTES.
       That is a read that did not happen, not a screen with nothing on
       it — a healthy simulator always answers with at least a root node.
-      Usually: no frontmost app (the launch has not taken the screen
-      yet), or an \`axe\` that cannot run. $(cat "$err" 2>/dev/null)"
+      Usually: no frontmost app, the launch not having taken the screen
+      yet.
+$(sed 's/^/      /' "$err" 2>/dev/null)" > "$AX_WHY_FILE"
     return 3
   fi
   print -r -- "$out"
@@ -373,7 +387,7 @@ print(hit[0] if hit else "")' 2>/dev/null
 }
 
 # 0 = a surface is up. 1 = the screen was readable and had none. 3 = the
-# screen could not be READ, and `AX_WHY` says why.
+# screen could not be READ, and `ax_why` says why.
 #
 # **BOUNDED BY THE CLOCK, AND IT SAYS WHAT IT SPENT** (2026-09-21). This
 # counted 40 iterations and the failure quoted "10s" — the sleeps only.
@@ -417,7 +431,7 @@ tree_sketch() {
   # says so here too instead of printing a parse error about an empty
   # stream, which is how this read presented on 2026-09-21.
   local t
-  t=$(tree) || { print -r -- "      the screen could not be read: $AX_WHY"; return 0 }
+  t=$(tree) || { print -r -- "      the screen could not be read:"; ax_why; return 0 }
   print -r -- "$t" | python3 -c '
 import json, sys
 n = 0
@@ -462,6 +476,19 @@ cmd_boot() {
   # whatever build happened to be on the simulator. Caught on 2026-08-27
   # when a deliberately broken assertion still reported PASS. Same guard
   # as suites.sh, and for the same reason.
+  # THE EYES FIRST, before a build, an install and a launch are spent on
+  # a run that cannot report anything (2026-09-21 — that exact run, and
+  # the day it cost). Every assertion in this file is read through
+  # `axe describe-ui`; without the binary there is nothing to say about
+  # the app, and the honest place to say so is here.
+  [[ -x "$AXE" ]] || { die "no runnable \`axe\` on PATH — the harness has no eyes.
+      Every check in this file is read from the accessibility tree via
+      \`axe describe-ui\`, so not one of them can run, and nothing
+      printed here would be a statement about your build.
+      \`suites.sh\` does not use it (simctl only), which is why the
+      suites can be green while this is broken.
+      Install AXe, or point \`LIV_AXE\` at it.
+      PATH searched: $path"; return 1 }
   [[ -d build/Liv.app ]] || { die "no build/Liv.app — run ./build.sh first"; return 1 }
   local stale
   stale=$(find Sources -name '*.swift' -newer build/Liv.app/Liv 2>/dev/null | head -1)
@@ -518,10 +545,10 @@ cmd_boot() {
     # branched on the EXIT CODE — which throws the tree away and keeps
     # only stderr, so a healthy axe and one that printed nothing both
     # give exit 0 and an empty message. It was a test that could not
-    # fail. `wait_for_surface` returns 3 with the reason in `AX_WHY`.
+    # fail. `wait_for_surface` returns 3 and `ax_why` has the reason.
     if (( waited == 3 )); then
       die "could not read the screen at all, after ${WAIT_SECS}s and ${WAIT_READS} attempts.
-      $AX_WHY
+$(ax_why)
       That is the harness's own eyes, not your build — nothing here is a
       statement about the app. Every Liv process: $(liv_pids)
       The last 25 lines of the app's console ($CONSOLE):
