@@ -841,7 +841,18 @@ pub unsafe extern "C" fn liv_add_option(
             // A text or number field has no vocabulary to add to.
             return Err(LIV_ERR_REFUSED);
         };
-        let made = e.create(class, Some(name), now_ms).map_err(wrote)?;
+        // **`declare`, NOT `create`** (2026-09-21). They differ by one
+        // cell and it is the one that matters: `declare` also writes
+        // `working`, which is what `Engine::run` skips — so vocabulary
+        // stays out of every search, list and count. `create` writes
+        // only `kind` and `name`, so every option minted here came out
+        // as an ordinary visible thing: typing "high" found the OPTION
+        // "high", and a minted area turned up beside the notes filed
+        // under it, in the hits AND in the facets.
+        //
+        // `Engine::declare` was written for exactly this and had no
+        // caller anywhere outside its own tests.
+        let made = e.declare(class, name, now_ms).map_err(wrote)?;
         // Only where the property keeps a list. `area` keeps none and
         // takes anything of its kind, so a minted area is choosable the
         // moment it exists.

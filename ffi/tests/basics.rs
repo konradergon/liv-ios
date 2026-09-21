@@ -9,6 +9,7 @@ use std::ffi::{CStr, CString};
 
 use liv_engine::{kind, prop, Engine};
 use liv_ffi::basics::*;
+use liv_ffi::finding::liv_search;
 use liv_ffi::surfaces::{liv_view_close_all, LIV_ERR_ARG, LIV_OK};
 use liv_ffi::writes::{LIV_ERR_NOTHING, LIV_ERR_REFUSED, LIV_ERR_STALE};
 use serde_json::Value as J;
@@ -1014,6 +1015,69 @@ fn a_new_option_is_made_of_the_kind_the_property_points_at() {
     assert_eq!(
         unsafe { liv_add_option(path.as_ptr(), due.as_ptr(), c("soon").as_ptr(), T0 + 4, &mut out) },
         LIV_ERR_REFUSED
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **A MINTED OPTION IS VOCABULARY, NOT A THING** — it must not turn up
+/// in a search, a list or a count.
+///
+/// The box holds both halves of the app: your things, and the words the
+/// app files them with. An option — "high", a status you added, an area
+/// you named — is the second kind, and `working` is the cell that says
+/// so. `Engine::run` skips anything carrying it, which is what keeps
+/// every surface free of the app's own furniture.
+///
+/// `liv_add_option` minted through `Engine::create`, which writes only
+/// `kind` and `name`. `Engine::declare` exists for exactly this and had
+/// no callers anywhere outside tests. So every area, status and select
+/// value a person made came out as an ordinary visible thing: typing
+/// "high" found the OPTION "high", and the panel's counts included it.
+///
+/// That was cosmetic while the six areas shipped compiled-in. It stops
+/// being cosmetic the moment every area is minted (2026-09-21).
+#[test]
+fn a_minted_option_is_backstage_and_never_a_search_hit() {
+    let (d, path) = box_at("option_backstage");
+    let area = prop_id(&path, "area");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_add_option(path.as_ptr(), area.as_ptr(), c("Woodworking").as_ptr(), T0, &mut out)
+        },
+        LIV_OK
+    );
+    let made = took(out)["id"].as_str().unwrap().to_owned();
+
+    // A REAL thing by the same word, so the search has something honest
+    // to find and "no hits" cannot pass for success.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_make(
+            path.as_ptr(),
+            c(&kind::NOTE.hex()).as_ptr(),
+            c("Woodworking bench").as_ptr(),
+            T0 + 1,
+            &mut out,
+        )
+    };
+    let note = took(out)["id"].as_str().unwrap().to_owned();
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_search(path.as_ptr(), c("woodworking").as_ptr(), 0, &mut out) },
+        LIV_OK
+    );
+    let found = took(out);
+    let hits: Vec<&str> =
+        found["hits"].as_array().unwrap().iter().filter_map(|h| h["id"].as_str()).collect();
+
+    assert!(hits.contains(&note.as_str()), "the note is findable: {found}");
+    assert!(
+        !hits.contains(&made.as_str()),
+        "the OPTION is vocabulary and must not be a hit: {found}"
     );
 
     let _ = std::fs::remove_dir_all(&d);
