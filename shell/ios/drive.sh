@@ -38,7 +38,7 @@
 #   ./drive.sh bar               five keys in three pieces, disabled drawn as disabled
 #   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
 #   ./drive.sh history           a note's ••• opens its version history as a card
-#   ./drive.sh spool             a catch the share sheet left is in the Inbox at the next launch
+#   ./drive.sh spool             a catch the share sheet left is in Unsorted at the next launch
 #   ./drive.sh cycles            AttributeGraph cycles since boot
 #   ./drive.sh quiet             opening a note adds NO AttributeGraph cycles
 #   ./drive.sh console [n]       the last n lines the app itself printed
@@ -1511,7 +1511,7 @@ cmd_routes() {
   #    five come free from the same `Feature` enum.
   open_url "liv://inbox" || return 1
   [[ "$(cmd_surface)" == "inbox" ]] || {
-    die "liv://inbox landed on '$(cmd_surface)', not the Inbox."
+    die "liv://inbox landed on '$(cmd_surface)', not Unsorted."
     return 1
   }
   open_url "liv://tasks" || return 1
@@ -1531,7 +1531,7 @@ cmd_routes() {
   }
 
   # 3. CAPTURE MAKES A NOTE AND PUTS THE CARET IN IT — the same door `+`
-  #    opens, so what it makes is an Inbox capture.
+  #    opens, so what it makes is an Unsorted capture.
   #
   #    The count is read BEFORE, from Tasks: once the note is open the
   #    caret is in it, the keyboard is up, and the bar retires under a
@@ -2728,7 +2728,7 @@ cmd_history() {
 # say "Saved to Liv" and be lying.
 cmd_spool() {
   # Install first, so the group container exists to write into.
-  cmd_boot inbox >/dev/null || { die "could not boot into the Inbox."; return 1 }
+  cmd_boot inbox >/dev/null || { die "could not boot into Unsorted."; return 1 }
   local group
   group=$(sim get_app_container "$UDID" "$APP" "$GROUP" 2>/dev/null)
   [[ -n "$group" && -d "$group" ]] || {
@@ -2744,26 +2744,26 @@ cmd_spool() {
 
   # The drain runs at launch, so relaunch — the file was written after
   # the first one.
-  cmd_boot inbox >/dev/null || { die "could not relaunch into the Inbox."; return 1 }
+  cmd_boot inbox >/dev/null || { die "could not relaunch into Unsorted."; return 1 }
   local i
   for i in {1..10}; do
     tree | grep -q "$words" && break
     perl -e 'select(undef,undef,undef,0.5)'
   done
   tree | grep -q "$words" || {
-    die "a file in the spool did not become a capture: '$words' is not in the Inbox.
+    die "a file in the spool did not become a capture: '$words' is not in Unsorted.
       RootView.drainSpool reads <group>/liv/spool at launch and on every
       foreground; check that it ran, and that Spool.dir resolves the same
       container simctl just named ($group)."
     return 1
   }
   [[ ! -e "$file" ]] || {
-    die "the catch is in the Inbox but its spool file is still there — it
+    die "the catch is in Unsorted but its spool file is still there — it
       will be caught AGAIN at the next foreground. Item.done() removes the
       file once the box answers with an id."
     return 1
   }
-  say "ok    spool: a file left in the App Group spool is an Inbox capture at the next launch, and the file is gone"
+  say "ok    spool: a file left in the App Group spool is an Unsorted capture at the next launch, and the file is gone"
   cmd_check
 }
 

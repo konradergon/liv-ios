@@ -1,22 +1,24 @@
-// liv iOS — Inbox (design/ios.md §6; rebuilt phase 5, owner-approved
-// mockup 2026-08-05). The Inbox is THE DECISION QUEUE: exactly two
-// things belong here — a capture the app knows nothing about yet, and a
-// suggestion the clerk is waiting on. One list, two sections, no modes
-// (the old fake Route/Tidy segments are gone). When both are empty the
-// app has no questions for you: Inbox zero is a real, earned state.
+// liv iOS — Unsorted (rebuilt 2026-09-22; owner: "why have Tidy and
+// Route instead of just one list?"). ONE LIST: every note, task and
+// event with no area, newest first, each wearing the clerk's guess at
+// where it goes — one tap says yes. Under it, the clerk's other
+// questions (dates, mentions, priority). No lenses.
 //
-// Routing FINISHES the object instead of stamping half of one: Task
-// lands with its first status, Event opens the date editor (an event
-// with no date cannot appear in the Calendar — owner-approved), Note and
-// Link write directly. Every routing offers Undo on a transient chip; a
-// refused write is a haptic, never silence.
+// Why it exists (owner, 2026-09-22): things WILL be made without anyone
+// pressing the metadata button, and a box of a million anonymous things
+// is a box nobody can search. This screen is where that pile is visible
+// and cheap to clear; the guess on each row is what makes clearing it a
+// tap instead of a chore.
+//
+// The feature's rawValue stays `inbox` — it is written into saved
+// planes — and only the word a person reads changed.
 
 import SwiftUI
 import UIKit
 
-/// The routed capture whose date is being picked (the Event verb's
-/// second half — the arbitrary date-and-time door).
-private struct InboxDuePick: Identifiable {
+/// The row a sheet is about: the date picker (the Event verb's second
+/// half) or the area picker (New area…).
+private struct InboxPick: Identifiable {
     let entity: LivEntityID
     var id: LivEntityID { entity }
 }
@@ -27,7 +29,8 @@ struct InboxView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
 
     @State private var taskOptions: [StatusOption] = []
-    @State private var duePick: InboxDuePick?
+    @State private var duePick: InboxPick?
+    @State private var areaPick: InboxPick?
     @State private var settingsShown = false
     /// The proposal a ✕ is about to dismiss — rejection is PERMANENT
     /// (the clerk never re-asks), so it costs one ask.
@@ -36,19 +39,9 @@ struct InboxView: View {
     @State private var chipText: String?
     @State private var chipUndo = 0
 
-    /// THE ONE CLASSIFIER says what a scrap is, and `hasBody` says there
-    /// is something in it to route.
-    ///
-    /// This read `(kinds empty) ∧ (contentPrint ≠ 0)`, and `contentPrint`
-    /// answered nil for every row on the engine — so the list was empty
-    /// forever while the library panel, counting the same pile its own
-    /// way, said 8. The screen said "Nothing to route" and the panel
-    /// disagreed with it four points to the left (owner, 2026-09-15).
-    ///
-    /// `LivKind.of == .capture` is the answer the panel already uses, so
-    /// the two cannot drift again: it is the app's single classifier, and
-    /// it also drops a scrap that has since been given a status or a file
-    /// — which `kinds.isEmpty` alone would still have listed.
+    /// WHAT IS UNSORTED is `livIsUnfiled` — the same predicate the
+    /// library panel counts with, so the number beside the door and the
+    /// rows behind it cannot disagree (they did, twice, in September).
     ///
     /// THE WORKSPACE LENS IS NOT APPLIED HERE, EVER (design/ios.md M4). An
     /// unfiled thing must be reachable from every workspace, or a capture
@@ -74,11 +67,9 @@ struct InboxView: View {
     /// Trash-first merge would render as a card whose ✓ returns 0 forever
     /// (the filed FFI chip). Until that lands, they stay out of the list.
     private var proposals: [ProposalRow] {
-        // A question about an unrouted capture is asked ON ITS ROW, in
-        // Route (`suggestedArea`), not a second time here: the clerk's
-        // area guess for a scrap is the routing question with an answer
-        // pencilled in, and two lenses both asking it would make the
-        // Inbox count one decision twice.
+        // An area guess about an unsorted thing is asked ON ITS ROW
+        // (`suggestedArea`), not a second time here: asking it twice
+        // would count one decision twice.
         let unrouted = Set(scraps.map(\.id))
         // NO SHAPE GATE. It kept only proposals whose first command was
         // an `add`, and since the engine swap on 2026-09-14 no proposal
@@ -121,132 +112,49 @@ struct InboxView: View {
     /// semantics (owner-approved default).
     private var assistOff: Bool { box.snap?.assist?.on == false }
 
-    /// Which question you are answering. The blueprint's Route / Tidy.
-    ///
-    /// NOT `@State` since 2026-08-22 — it is what this view's tab HOLDS
-    /// (design/tabs.md, Reading B), so it lives in the plane and is saved
-    /// with it.
-    private var lens: InboxLens {
-        InboxLens(rawValue: desk.position(.inbox) ?? "") ?? .route
-    }
-
-    /// The two lenses, as the blueprint names and counts them.
-    private func lensRow(unrouted: Int, tidy: Int) -> some View {
-        HStack(spacing: 8) {
-            ForEach(InboxLens.allCases, id: \.self) { l in
-                let count = l == .route ? unrouted : tidy
-                Button {
-                    withAnimation(LivMotion.pick) { desk.park(.inbox, at: l.rawValue) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(l.title)
-                            .font(.system(size: LivType.body, weight: lens == l ? .semibold : .regular))
-                            .foregroundStyle(lens == l ? LivTheme.text : LivTheme.text2)
-                        if count > 0 {
-                            Text("\(count)")
-                                .font(.system(size: LivType.label).monospacedDigit())
-                                .foregroundStyle(LivTheme.text3)
-                        }
-                    }
-                    // THE SAME MARK THE DAY STRIP USES: full ink, full
-                    // weight, and a 2pt rule under the chosen one.
-                    //
-                    // This was a pair of capsules — a fill on the chosen
-                    // one, an outline on the other — so both states were
-                    // decorated and the row read as two competing
-                    // buttons sitting under the title. The app now has
-                    // ONE way of saying "this is the one you are on"
-                    // (standing rule 4), and it is the quietest of the
-                    // three it used to have.
-                    .padding(.trailing, 18)
-                    .frame(height: 34)
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(lens == l ? LivTheme.text : Color.clear)
-                            .frame(height: 2)
-                            .padding(.trailing, 18)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-        }
+    /// The clerk's area guesses standing on this list's rows, for the
+    /// one-tap accept-all.
+    private func guesses(_ scraps: [EntityRow]) -> [ProposalRow] {
+        scraps.compactMap { suggestedArea($0)?.p }
     }
 
     var body: some View {
         let scraps = self.scraps
         let groups = proposalGroups
+        let guessed = guesses(scraps)
 
         List {
             Group {
-                // TWO LENSES, the blueprint's own pair (BP-5 B1): ROUTE
-                // is the orphans waiting for an address, TIDY is the
-                // assist queue. One cleanup home, two questions — "where
-                // does this go" and "what did the clerk notice" — and
-                // they were stacked in one scroll before, so a full
-                // Route list buried the suggestions under it.
-                // BOTH COUNTS IN THE SAME UNIT — items (owner,
-                // 2026-08-20: the two numbers meant different things, so
-                // "Route 6 · Tidy 2" could mean six things and twenty
-                // edits). Tidy counted PROPOSERS, which is a grouping
-                // detail nobody outside this file can see.
-                // THE SCREEN'S NAME. It had none — the surface opened
-                // straight onto a row of filter pills, so nothing on it
-                // said where you were. Every reference leads with a
-                // large bold left-aligned title (Todoist's "Inbox" is
-                // the same word this screen is missing), and the whole
-                // top of the screen reads as chrome without it.
-                LivScreenTitle("Inbox")
+                LivScreenTitle("Unsorted")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
-                lensRow(unrouted: scraps.count, tidy: proposals.count)
-                    .padding(.top, LivAir.tight)
-                    // THE JOINT THE OWNER FELT (2026-09-18). At 4, the
-                    // screen's title, its mode switch and its list fused
-                    // into one dense block — a 2pt selection rule
-                    // sitting 4pt above the rows it filters. A control
-                    // gets small gaps inside it and a big one below it,
-                    // which is the app's own heading grammar.
-                    .padding(.bottom, LivAir.room)
+                    .padding(.bottom, LivAir.tight)
                 if workspaces.lensOn {
                     // It explains an EXCEPTION: this one list ignores the
-                    // workspace (owner, 2026-08-06).
-                    // PROSE, NOT A PILL. A capsule is the shape this app
-                    // uses for a value you can act on; this is a
-                    // sentence explaining why the list ignores the
-                    // workspace, and it cannot be tapped. It was also
-                    // the one chip on the screen with no neighbours, so
-                    // it read as a control that had lost its row.
+                    // workspace (owner, 2026-08-06) — a thing made under
+                    // the wrong workspace must not vanish.
                     HStack(spacing: 8) {
                         Text("All workspaces")
                             .font(.system(size: LivType.caption))
                             .foregroundStyle(LivTheme.text3)
                         Spacer(minLength: 0)
                     }
-                    // NO TOP PADDING. It had 2, which stacked a second
-                    // gap onto the lens row's own and left this caption
-                    // floating between two seams. It hangs off the one
-                    // gap above it now (2026-09-18).
                     .padding(.bottom, 6)
                 }
 
-                if lens == .route {
-                    if scraps.isEmpty {
-                        // The blueprint's own copy (BP-5 B8).
-                        // "Nothing to route", not "Inbox zero" — that is
-                        // GTD's slogan, and this screen's own word for
-                        // its job is on the lens above it.
-                        EmptyHint("Nothing to route")
-                    } else {
-                        ForEach(scraps) { row in
-                            routeCard(row)
-                        }
-                    }
+                if scraps.isEmpty {
+                    EmptyHint("Nothing unsorted")
                 } else {
-                    if groups.isEmpty && !assistOff {
-                        EmptyHint("Nothing to tidy")
+                    unsortedHeader(count: scraps.count, guessed: guessed)
+                    ForEach(scraps) { row in
+                        routeCard(row)
                     }
+                }
+
+                // THE CLERK'S OTHER QUESTIONS, under the pile rather than
+                // behind a second lens. Area guesses on unsorted rows are
+                // not repeated here — they are on their rows above.
+                if !groups.isEmpty || assistOff {
                     suggestedSection(groups)
                 }
             }
@@ -280,6 +188,20 @@ struct InboxView: View {
             DetailDueSheet(model: box, id: pick.entity, property: "due")
                 .presentationDetents([.medium])
         }
+        .sheet(item: $areaPick) { pick in
+            // THE INSPECTOR'S OWN PICKER, reporting instead of writing, so
+            // filing from here stays one gesture with one Undo whether
+            // the area is old or typed new.
+            InspectorValueSheet(
+                field: InspectorField.describe("area", in: box.snap),
+                id: pick.entity, current: [],
+                onPick: { (value: String?) in
+                    guard let value, let row = box.entity(pick.entity) else { return }
+                    fileNew(row, under: value)
+                }
+            )
+            .environmentObject(box)
+        }
         .sheet(isPresented: $settingsShown) { SettingsSheet() }
         .overlay(alignment: .top) {
             if let text = chipText { chip(text) }
@@ -290,7 +212,27 @@ struct InboxView: View {
         }
     }
 
-    // MARK: route — a card per unrouted capture
+    // MARK: the pile — a card per unsorted thing
+
+    /// How many, and — when the clerk has guessed for two or more — one
+    /// chip that says yes to every guess at once. The guesses are on the
+    /// rows, so you have read what you are accepting.
+    private func unsortedHeader(count: Int, guessed: [ProposalRow]) -> some View {
+        HStack(spacing: 7) {
+            Text("\(count) without an area")
+                .font(.system(size: LivType.label, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
+            Spacer()
+            if guessed.count > 1 && !assistOff {
+                AddChip("Accept \(guessed.count) guesses", symbol: "checkmark") {
+                    box.acceptGroup(guessed.compactMap(\.fingerprint)) { ok in
+                        if !ok { refused() }
+                    }
+                }
+            }
+        }
+        .padding(.top, LivRow.sectionTop).padding(.bottom, LivRow.sectionBottom)
+    }
 
     /// THE ROUTING QUESTION IS A CARD, NOT AN ACCORDION.
     ///
@@ -420,9 +362,8 @@ struct InboxView: View {
     /// Inbox-zero and filed were two different states, and the app
     /// celebrated the first (`Inbox.swift:6`).
     ///
-    /// Now the six areas lead — the furniture the thesis says makes
-    /// filing "a tap, not a project" — plus any the person has added,
-    /// read from the same property the inspector reads. Tapping one
+    /// Now the person's areas lead, read from the same property the
+    /// inspector reads, with a door to make a new one. Tapping one
     /// makes the scrap a filed note in one gesture: area set, kind set,
     /// out of the Inbox and out of Unfiled together. The kinds that are
     /// not a note stand one door further, behind "Not a note…", so the
@@ -439,6 +380,13 @@ struct InboxView: View {
                 file(row, under: name)
             }
         }
+        // A NEW AREA FROM HERE. Areas are the user's own since 2026-09-21
+        // and a fresh box has none, so without this door the card asked
+        // "where does it go?" and offered nowhere.
+        items.append(
+            LivMenuItem(label: areas.isEmpty ? "Make an area…" : "New area…", symbol: "plus", chevron: true) {
+                areaPick = InboxPick(entity: row.id)
+            })
         // THE KIND DOOR IS ONLY FOR A THING WITH NO KIND. Since the
         // Inbox became the unfiled queue (2026-09-19) a task or an event
         // can stand in this list, and for those the card has exactly one
@@ -457,8 +405,8 @@ struct InboxView: View {
             from: .bottom,
             subject: displayTitle(row),
             subjectDetail: untyped
-                ? "Unfiled capture — where does it go?"
-                : "Unfiled \(LivKind.of(row).word) — where does it go?",
+                ? "Unsorted capture — where does it go?"
+                : "Unsorted \(LivKind.of(row).word) — where does it go?",
             items: items)
     }
 
@@ -501,6 +449,19 @@ struct InboxView: View {
             box.set(row.id, "area", area) { ok in
                 ok ? flash("Filed under \(area)", undo: 2) : flash("Routed to Note", undo: 1)
             }
+        }
+    }
+
+    /// Filing under an area the picker may have just been TYPED into: a
+    /// name the vocabulary lacks is minted first (the engine refuses a
+    /// value with no entity behind it), then filed as usual.
+    private func fileNew(_ row: EntityRow, under area: String) {
+        let field = InspectorField.describe("area", in: box.snap)
+        guard !field.options.contains(where: { $0.compare(area, options: .caseInsensitive) == .orderedSame })
+        else { return file(row, under: area) }
+        guard !field.propertyId.isAbsent else { return refused() }
+        box.addOption(field.propertyId, area) { made in
+            made == .absent ? refused() : file(row, under: area)
         }
     }
 
@@ -558,7 +519,7 @@ struct InboxView: View {
     private func routeEvent(_ row: EntityRow) {
         box.setType(row.id, "event") { ok in
             guard ok else { return refused() }
-            duePick = InboxDuePick(entity: row.id)
+            duePick = InboxPick(entity: row.id)
         }
     }
 

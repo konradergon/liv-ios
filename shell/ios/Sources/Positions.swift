@@ -28,17 +28,9 @@ import SwiftUI
 // back to the view's name for any token, which is the rule for every
 // retired token.
 
-/// Route or Tidy — the blueprint's two questions (BP-5).
-enum InboxLens: String, CaseIterable {
-    case route, tidy
-
-    var title: String {
-        switch self {
-        case .route: return "Route"
-        case .tidy: return "Tidy"
-        }
-    }
-}
+// UNSORTED HAS NO LENS. Route / Tidy went on 2026-09-22 (owner: "why
+// have Tidy and Route instead of just one list?"). Their tokens are still
+// in old planes and read as the view's own name, like every retired token.
 
 /// Where you are in Tasks: which chip is on, and which completes-groups
 /// you have unfolded.
@@ -187,7 +179,6 @@ enum LivPosition {
     /// question `title` and `detail` already ask one view at a time.
     static func isToken(_ token: String) -> Bool {
         if token.isEmpty { return true }  // Notes' one position, the list
-        if InboxLens(rawValue: token) != nil { return true }
         if TasksPosition(token: token).token == token { return true }
         if TodayPosition(token: token).token == token { return true }
         if CalendarPosition(token: token).token == token { return true }
@@ -203,7 +194,7 @@ enum LivPosition {
         switch feature {
         // Notes has one position, the list; an empty token names it.
         case .everything: return ""
-        case .inbox: return InboxLens.route.rawValue
+        case .inbox: return ""
         case .tasks: return TasksPosition().token
         case .today: return TodayPosition().token
         case .calendar: return CalendarPosition().token
@@ -218,11 +209,7 @@ enum LivPosition {
         case .everything:
             return "What you have written, by what you touched last."
         case .inbox:
-            switch InboxLens(rawValue: token) {
-            case .route: return "Captures still waiting for an address."
-            case .tidy: return "What the clerk is proposing."
-            case nil: return "A saved place in the Inbox."
-            }
+            return "Everything without an area, and what the clerk suggests."
         case .tasks:
             let pos = TasksPosition(token: token)
             let groups = pos.expanded.isEmpty
@@ -257,7 +244,7 @@ enum LivPosition {
             // wrote ("all", "upcoming", …) lands on it too.
             return feature.title
         case .inbox:
-            return InboxLens(rawValue: token)?.title ?? feature.title
+            return feature.title
         case .tasks:
             return TasksPosition(token: token).title
         case .today:
@@ -305,8 +292,8 @@ func livPlanesSelfCheck() -> [String] {
     check("parking again overwrites", desk.position(.everything) == "all")
     check("and still mints no tab", desk.tabs.isEmpty, "\(desk.tabs.count)")
 
-    desk.park(.inbox, at: InboxLens.tidy.rawValue)
-    check("each tool keeps its own", desk.position(.inbox) == "tidy")
+    desk.park(.calendar, at: "202609")
+    check("each tool keeps its own", desk.position(.calendar) == "202609")
     check("without disturbing the others", desk.position(.everything) == "all")
 
     // ---- the desk follows you ----

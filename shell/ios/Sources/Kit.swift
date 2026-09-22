@@ -977,8 +977,22 @@ func livCanTick(_ row: EntityRow) -> Bool {
 /// test). Nothing has listed that pile since the Unfiled lens went on
 /// 2026-09-16.
 ///
-/// `hasBody` stays: an empty thing is not a decision anyone owes.
+/// **A NAME COUNTS AS MUCH AS A BODY** (owner, 2026-09-22: the pile
+/// that builds up unfiled "is also for tasks and events"). This asked
+/// for `hasBody`, which is the NOTE body only — so a task called "Call
+/// the dentist" was never unsorted, however long it sat without an
+/// area. An empty thing is still not a decision anyone owes: nothing
+/// typed and no given name (`untitled`) stays out.
+///
+/// The kinds are the ones a person files. A person, a project or a list
+/// is furniture the areas are FOR, not a thing waiting to be put in one.
 func livIsUnfiled(_ row: EntityRow) -> Bool {
-    row.trashed != true && row.area == nil && row.hasBody == true
+    guard row.trashed != true, row.archived != true, row.area == nil else { return false }
+    guard livSortedKinds.contains(row.kindWord ?? "") else { return false }
+    return row.hasBody == true || row.untitled != true
 }
+
+/// What Unsorted lists, by kind word. "" is a thing with no kind yet —
+/// a share-sheet or `liv://` capture.
+let livSortedKinds: Set<String> = ["", "note", "task", "event", "link", "photo", "file"]
 

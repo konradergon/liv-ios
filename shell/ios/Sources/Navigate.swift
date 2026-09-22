@@ -83,7 +83,7 @@ enum Feature: String, CaseIterable, Identifiable {
         // remove 'everything' or 'all'"). The raw value stays
         // `everything` because it is in every stored position and route.
         case .everything: return "Notes"
-        case .inbox: return "Inbox"
+        case .inbox: return "Unsorted"
         case .tasks: return "Tasks"
         case .calendar: return "Calendar"
         }
@@ -384,14 +384,17 @@ func livPlacesSelfCheck() -> [String] {
     check("and the note is still on the desk", desk.tabs.contains { $0.content == .entity(livSampleId(7)) })
 
     // A DOOR MAY NAME A PLACE INSIDE A VIEW, and the park has to happen
-    // even when the view is already the one you are standing in. The
-    // Inbox is the view with lenses now that Notes has none (2026-09-16).
-    desk.go(.inbox)
-    desk.go(.inbox, at: InboxLens.tidy.rawValue)
-    check("a door can park the view it opens", desk.position(.inbox) == "tidy", "\(String(describing: desk.position(.inbox)))")
+    // even when the view is already the one you are standing in. Tasks
+    // is the view with positions to name since Unsorted lost its lenses
+    // (2026-09-22).
+    let finished = TasksPosition(filter: .status("Done")).token
+    let project = TasksPosition(filter: .project("Garden")).token
+    desk.go(.tasks)
+    desk.go(.tasks, at: finished)
+    check("a door can park the view it opens", desk.position(.tasks) == finished, "\(String(describing: desk.position(.tasks)))")
     desk.go(.today)
-    desk.go(.inbox, at: InboxLens.route.rawValue)
-    check("and does it arriving from elsewhere too", desk.state == .inbox && desk.position(.inbox) == "route")
+    desk.go(.tasks, at: project)
+    check("and does it arriving from elsewhere too", desk.state == .tasks && desk.position(.tasks) == project)
     // A POSITION IS NOT A DOCUMENT: a tool keeps where it was left.
     desk.park(.calendar, at: "202609")
     desk.go(.calendar)
