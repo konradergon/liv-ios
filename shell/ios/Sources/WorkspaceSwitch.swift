@@ -340,11 +340,20 @@ struct WorkspaceSwitcher: View {
         guard !name.isEmpty else { return }
         if let id = editing {
             box.set(id, "name", name)
+            workspaces.remember(id, name: name, query: query)
             write(query, to: id)
             finish(id)
         } else {
             box.createWorkspace(name: name) { id in
                 guard !id.isAbsent else { return }
+                // THE MODEL LEARNS IT BEFORE THE SNAPSHOT DOES. `finish`
+                // makes this workspace active, and a snapshot taken
+                // before the create lands a beat later carrying no such
+                // id — which `apply` reads as "it left the box" and
+                // answers by falling back to All. Handing the row over
+                // here is what stops the new workspace throwing you off
+                // itself (owner, 2026-09-22).
+                workspaces.remember(id, name: name, query: query)
                 write(query, to: id)
                 finish(id)
             }

@@ -165,7 +165,18 @@ final class WorkspaceModel: ObservableObject {
     func apply(_ snap: Snapshot?) {
         guard let snap else { return }
         if let rows = snap.workspaces {
-            workspaces = rows.filter { !$0.id.isAbsent }
+            var list = rows.filter { !$0.id.isAbsent }
+            // A ROW THIS SESSION MADE STAYS until the box's own answer
+            // carries it — see `remember`. Arriving is what retires it,
+            // so a workspace trashed elsewhere still falls back to All.
+            for (id, row) in justMade {
+                if list.contains(where: { $0.id == id }) {
+                    justMade[id] = nil
+                } else {
+                    list.append(row)
+                }
+            }
+            workspaces = list
             if !activeId.isAbsent, !workspaces.contains(where: { $0.id == activeId }) {
                 setActive(.absent)
             }
@@ -312,13 +323,51 @@ final class WorkspaceModel: ObservableObject {
         return (q?.isEmpty ?? true) ? nil : q
     }
 
-    /// The write already went to the box; the next snapshot carries it.
-    /// Kept as a no-op seam so call sites read as intent, not plumbing.
-    func rememberQuery(_ id: LivEntityID, _ query: String) {
-        objectWillChange.send()
+    /// **A WORKSPACE YOU JUST MADE EXISTS BEFORE THE SNAPSHOT SAYS SO.**
+    ///
+    /// These were no-op seams: the write went to the box and the next
+    /// snapshot was supposed to carry it. Between those two moments the
+    /// model does not know the workspace, and `apply` below reads exactly
+    /// that — an `activeId` it cannot find in `workspaces` is one that
+    /// left the box, so it falls back to All. Creating a workspace sets
+    /// it active immediately, so a snapshot already in flight lands a
+    /// beat later and throws you straight back off it (owner,
+    /// 2026-09-22: *"after creating workspace, you are thrown back to old
+    /// workspace"*).
+    ///
+    /// So the model holds the row itself until a snapshot carries one by
+    /// the same id. Everything downstream — the lens, the STAMP, the
+    /// switcher's label — reads `workspaces` and needs no special case;
+    /// this is the one place that knows the difference between "not there
+    /// yet" and "gone".
+    private var justMade: [LivEntityID: WorkspaceRow] = [:]
+
+    func remember(_ id: LivEntityID, name: String, query: String) {
+        guard !id.isAbsent else { return }
+        let row = WorkspaceRow(wsId: id, name: name, query: query)
+        justMade[id] = row
+        if let at = workspaces.firstIndex(where: { $0.id == id }) {
+            workspaces[at] = row
+        } else {
+            workspaces.append(row)
+        }
     }
 
-    func forgetQuery(_ id: LivEntityID) {}
+    /// The query alone, for the save path that writes it after the name.
+    func rememberQuery(_ id: LivEntityID, _ query: String) {
+        guard !id.isAbsent else {
+            objectWillChange.send()
+            return
+        }
+        let name = workspaces.first { $0.id == id }?.name ?? ""
+        remember(id, name: name, query: query)
+    }
+
+    /// Trashed: stop holding it, or `apply` would keep putting it back.
+    func forgetQuery(_ id: LivEntityID) {
+        justMade[id] = nil
+        workspaces.removeAll { $0.id == id }
+    }
 
     /// The pre-2026-08-22 key: ONE plane per workspace, holding the Notes
     /// tabs. READ-ONLY — nothing writes it. `DeskPlanes.load` (Plane.swift)
