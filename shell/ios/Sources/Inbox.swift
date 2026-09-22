@@ -198,13 +198,15 @@ struct InboxView: View {
                 onPick: { (value: String?) in
                     guard let value, let row = box.entity(pick.entity) else { return }
                     fileNew(row, under: value)
-                }
+                },
+                startTyping: true
             )
             .environmentObject(box)
         }
         .sheet(isPresented: $settingsShown) { SettingsSheet() }
-        .overlay(alignment: .top) {
-            if let text = chipText { chip(text) }
+        .livAckChip(chipText) {
+            for _ in 0..<max(1, chipUndo) { box.undo() }
+            withAnimation(LivMotion.nav) { chipText = nil }
         }
         .onAppear {
             box.refresh()
@@ -769,29 +771,6 @@ struct InboxView: View {
             guard chipText == shown else { return }
             withAnimation(LivMotion.nav) { chipText = nil }
         }
-    }
-
-    private func chip(_ text: String) -> some View {
-        HStack(spacing: 12) {
-            Text(text)
-                .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.text)
-            // THE PRIMARY VERB OF THIS CHIP, so the filled pill — the
-            // shape the app gives the one thing a surface most wants you
-            // to be able to do. It was a bare accent word, which reads
-            // as a hyperlink (owner, 2026-09-15; swept 2026-09-16 and
-            // this one was missed).
-            ConfirmPill("Undo", compact: true) {
-                for _ in 0..<max(1, chipUndo) { box.undo() }
-                withAnimation(LivMotion.nav) { chipText = nil }
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .background(LivTheme.panel2, in: Capsule())
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .padding(.top, 8)
-        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     // MARK: small helpers

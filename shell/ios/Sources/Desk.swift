@@ -457,14 +457,15 @@ struct DeskHost: View {
         )
         // The acknowledgment chip: a verb that changes something you can
         // no longer see (the copy, the trashed note) says so, briefly.
-        .overlay(alignment: .top) {
-            if let text = chipText {
-                chip(text)
-                    .padding(.top, LivRow.topInset)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(2)
+        .livAckChip(chipText, undo: chipUndo.map { undo -> () -> Void in
+            {
+                undo()
+                withAnimation(LivMotion.nav) {
+                    chipText = nil
+                    chipUndo = nil
+                }
             }
-        }
+        })
         // FROM THE BOTTOM: the workspace button and "New filter" both
         // live at the FOOT of the library panel (team, 2026-08-22), and
         // this card was still falling from the top of the screen because
@@ -1058,30 +1059,6 @@ struct DeskHost: View {
                 chipUndo = nil
             }
         }
-    }
-
-    private func chip(_ text: String) -> some View {
-        HStack(spacing: 12) {
-            Text(text)
-                .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.text)
-            if let undo = chipUndo {
-                Button("Undo") {
-                    undo()
-                    withAnimation(LivMotion.nav) {
-                        chipText = nil
-                        chipUndo = nil
-                    }
-                }
-                .font(.system(size: LivType.body, weight: .semibold))
-                .foregroundStyle(LivTheme.accent)
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .background(LivTheme.panel2, in: Capsule())
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 }
 

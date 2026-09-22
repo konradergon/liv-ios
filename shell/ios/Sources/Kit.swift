@@ -996,3 +996,43 @@ func livIsUnfiled(_ row: EntityRow) -> Bool {
 /// a share-sheet or `liv://` capture.
 let livSortedKinds: Set<String> = ["", "note", "task", "event", "link", "photo", "file"]
 
+/// THE ACKNOWLEDGMENT CHIP — what just happened, and Undo when it can be
+/// taken back. One view for the desk and Unsorted, which had one each.
+///
+/// AT THE FOOT, over the bar (owner, 2026-09-22: the undo message
+/// appeared "inconveniently at the top"). The thumb that just acted is
+/// at the bottom of the screen; the offer to take it back belongs there
+/// too. Callers place it with `.livAckChip`.
+struct LivAckChip: View {
+    let text: String
+    var undo: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(text)
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text)
+            if let undo {
+                ConfirmPill("Undo", compact: true) { undo() }
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+        .background(LivTheme.panel2, in: Capsule())
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+    }
+}
+
+extension View {
+    /// Hang the acknowledgment chip above the bottom bar.
+    func livAckChip(_ text: String?, undo: (() -> Void)?) -> some View {
+        overlay(alignment: .bottom) {
+            if let text {
+                LivAckChip(text: text, undo: undo)
+                    .padding(.bottom, LivBar.room + LivAir.tight)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
+            }
+        }
+    }
+}

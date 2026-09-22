@@ -677,9 +677,14 @@ struct InspectorValueSheet: View {
     /// the search all behave identically, which is the whole point of
     /// not writing a second one (standing rule 4).
     var onPick: ((String?) -> Void)? = nil
+    /// Opened by a door that says "new…": the caret is already in the
+    /// field (owner, 2026-09-22: "you have to manually select the text
+    /// box"). Off for the inspector, where picking is the usual act.
+    var startTyping = false
 
     @EnvironmentObject var box: BoxModel
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var typing: Bool
     @State private var typed = ""
     @State private var known: [String] = []
     /// The value being renamed everywhere, and the name being typed for
@@ -736,6 +741,7 @@ struct InspectorValueSheet: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
                     .onSubmit { if creatable { add(trimmed) } }
+                    .focused($typing)
                     .padding(.horizontal, 12)
                     .frame(height: 40)
                     .background(
@@ -779,6 +785,13 @@ struct InspectorValueSheet: View {
             // Once per open, never per keystroke.
             guard !field.closed else { return }
             box.distinctValues(property: field.property) { known = $0 }
+            // After the sheet's own motion: focus asked for mid-slide is
+            // dropped by the system.
+            if startTyping {
+                DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                    typing = true
+                }
+            }
         }
         .alert(
             "Rename everywhere",
