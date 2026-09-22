@@ -60,8 +60,14 @@ fn table_draws_properties_as_columns() {
             columns: vec![props::NAME, DUE, 4400],
         },
     );
-    // Header: named property resolves, unnamed falls back to its id.
-    assert_eq!(rendered.header, vec!["#1", "due", "#4400"]);
+    // Header: a named property resolves; one with no definition reads
+    // "Field" rather than its id.
+    //
+    // TWO UNNAMED COLUMNS NOW READ ALIKE, and that is the honest cost of
+    // never showing an id. It cannot happen in a real box — every
+    // property definition is seeded with a name, and this fixture makes
+    // none — so the ambiguity lives only where the ambiguity is real.
+    assert_eq!(rendered.header, vec!["Field", "due", "Field"]);
     assert_eq!(rendered.rows.len(), 1);
     // A date-only value renders without an invented 00:00; a reference
     // draws as its target's name.
@@ -128,7 +134,14 @@ fn broken_references_render_broken() {
     );
     // A reference to a trashed entity is a broken link — shown, not hidden,
     // and certainly not repaired. Deletion never cascades.
-    assert_eq!(rendered.rows[0].cells, vec![format!("#{project}!")]);
+    //
+    // **In words, not in an id** (owner, 2026-09-13: "LivID shouldn't be
+    // read by the user"). It used to read `#4096!`, which told a person
+    // nothing they could act on and leaked ours. A trashed target and a
+    // missing one are also no longer the same string: one can be restored
+    // and the other cannot.
+    assert_eq!(rendered.rows[0].cells, vec!["Capture (trashed)".to_string()]);
+    let _ = project;
 }
 
 #[test]

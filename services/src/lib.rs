@@ -545,7 +545,10 @@ fn seed_assist(session: &mut Session) -> Result<(), PersistError> {
 
 /// Habits (P18b): the `habit` type (front of house — habits belong in
 /// Everything) with `points` (number, default 1 at read) and `cadence`
-/// (display text; N-per-week semantics deferred, feature-map #19), plus the
+/// (display text; N-per-week semantics deferred — feature-map §16, "Habit /
+/// metric tracking"; the bare "#19" this used to cite is the prompt library
+/// in that file's OTHER numbered list, which is the trap two lists numbered
+/// to the teens sets), plus the
 /// backstage `check-in` type and its `habit` reference. Self-guarded on
 /// `cadence`, additive on an older box's next open.
 fn seed_habits(session: &mut Session) -> Result<(), PersistError> {

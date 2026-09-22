@@ -18,21 +18,28 @@ import SwiftUI
 /// can honestly offer.
 struct TrashView: View {
     @EnvironmentObject var box: BoxModel
-    @Environment(\.dismiss) private var dismiss
 
     private var rows: [EntityRow] {
         (box.snap?.trashed ?? []).compactMap { box.entity($0) }
     }
 
     var body: some View {
-        NavigationStack {
+        // NO NavigationStack, and no `Done` in a toolbar. This was the
+        // one screen in the app still wearing system navigation
+        // furniture: a nav bar with the platform's own chrome material,
+        // title font and hairline, and a confirmation-action button
+        // that — with no tint anywhere in the subtree — came out in iOS
+        // system blue. Every other sheet in the app draws its own header
+        // and is dismissed by its grabber; this one now does the same
+        // (2026-09-07).
+        VStack(alignment: .leading, spacing: 4) {
+            // ABOVE the Group, not inside the ScrollView: the empty
+            // branch is not in a ScrollView, so a header placed there
+            // would leave an empty trash with no name on it.
+            LivSheetTitle("Trash")
             Group {
                 if rows.isEmpty {
-                    EmptyHint(
-                        "Nothing in the trash",
-                        detail: "Deleted things wait here until you put them back.",
-                        glyph: .trash
-                    )
+                    EmptyHint("Empty")
                     .padding(.top, 40)
                 } else {
                     ScrollView {
@@ -44,32 +51,23 @@ struct TrashView: View {
                                         title: livRowTitle(row),
                                         untitled: livRowIsUntitled(row),
                                         divided: i < rows.count - 1)
-                                    Button {
+                                    ConfirmPill("Put back", compact: true) {
                                         box.restore(row.id)
-                                    } label: {
-                                        Text("Put back")
-                                            .font(.system(size: LivType.body, weight: .medium))
-                                            .foregroundStyle(LivTheme.accent)
-                                            .padding(.horizontal, 12)
-                                            .frame(height: 44)
-                                            .contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain)
+                                    .padding(.leading, 8)
                                 }
                             }
                         }
-                        .padding(.horizontal, 18)
+                        .padding(.horizontal, LivRow.margin)
                     }
                 }
             }
-            .background(LivTheme.canvas)
-            .navigationTitle("Trash")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
+        // FILL BOTH WAYS, so `canvas` paints the whole sheet. The empty
+        // branch is a hint that hugs its own text — without this the
+        // ground would stop under it and the sheet's default grey would
+        // show below.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(LivTheme.canvas)
     }
 }

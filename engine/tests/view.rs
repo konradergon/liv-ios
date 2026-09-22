@@ -53,6 +53,41 @@ fn a_write_lands_in_the_view() {
     assert_eq!(cell[0].1, Value::Text("Roof project".into()));
 }
 
+/// **Trash is a cell, and the view must show it as one.**
+///
+/// `op.rs` keeps the vocabulary at four by making trash, restore and
+/// redirect `SetCell` on reserved properties. The `entities` table used to
+/// carry a `trashed` column from before that decision, and no op ever
+/// wrote it — every row held 0 forever while `is_trashed` read the cell
+/// and answered correctly. A column that always says "no" is worse than no
+/// column, so it went; this is the test that says what has to keep working
+/// without it, and what the digest has to keep noticing.
+#[test]
+fn trashing_is_visible_in_the_view_and_moves_the_digest() {
+    let mut e = engine();
+    let id = e.create(kind::NOTE, Some("Roof project"), 1_787_391_635_000).unwrap();
+    let before = e.digest().unwrap();
+    assert!(!e.is_trashed(id).unwrap(), "born live");
+
+    e.trash(id, 1_787_391_636_000).unwrap();
+    assert!(e.is_trashed(id).unwrap(), "the cell says trashed");
+    let trashed = e.digest().unwrap();
+    assert_ne!(trashed, before, "the view noticed");
+
+    e.restore(id, 1_787_391_637_000).unwrap();
+    assert!(!e.is_trashed(id).unwrap(), "and it comes back — there is no Delete");
+    assert_ne!(e.digest().unwrap(), trashed, "the view noticed that too");
+
+    // The entity itself never went anywhere: trash is soft, so the row
+    // stays and only the cell changes.
+    assert_eq!(e.entity_count().unwrap(), 1);
+
+    // And the whole of it survives the gate.
+    let live = e.digest().unwrap();
+    e.replay().unwrap();
+    assert_eq!(e.digest().unwrap(), live, "trash and restore replay to the same view");
+}
+
 #[test]
 fn replay_rebuilds_the_view_exactly() {
     // THE GATE. Everything after Phase 4 rests on this.
@@ -340,4 +375,93 @@ fn the_view_survives_a_restart_and_still_matches_its_log() {
     e.replay().unwrap();
     assert_eq!(e.digest().unwrap(), before, "and the log still implies it");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **Last touched, maintained by the fold.** `core/` recomputed this by
+/// walking the whole history on every call — 99 ms per search at 500,000
+/// entities, identical every time — until T3 indexed it. Here it is a
+/// column the fold raises, so the lesson is paid once.
+#[test]
+fn an_entity_remembers_when_it_was_last_touched() {
+    let mut e = engine();
+    let a = e.create(kind::NOTE, Some("First"), 1_000).unwrap();
+    let b = e.create(kind::NOTE, Some("Second"), 2_000).unwrap();
+
+    // Newest first, and it is the WRITE that counts, not the creation.
+    assert_eq!(e.by_touch().unwrap(), vec![b, a]);
+    e.set(a, prop::BODY, Value::Rich(vec![Span::text("edited")]), 3_000).unwrap();
+    assert_eq!(e.by_touch().unwrap(), vec![a, b], "editing the older one moves it up");
+    assert_eq!(e.touched(a).unwrap(), 3_000);
+
+    // NEVER LOWERED. A late op from a device whose clock is behind must
+    // not make an entity look older than an edit that already landed.
+    e.set(a, prop::NAME, Value::Text("First again".into()), 1_500).unwrap();
+    assert_eq!(e.touched(a).unwrap(), 3_000, "a slow clock does not drag it back");
+
+    // And it replays: the column is a consequence of the log like
+    // everything else in the view.
+    let before = e.digest().unwrap();
+    e.replay().unwrap();
+    assert_eq!(e.digest().unwrap(), before);
+    assert_eq!(e.touched(a).unwrap(), 3_000);
+}
+
+/// **`one_each` is `one`, in bulk, and must agree with it everywhere.**
+///
+/// It exists because the clerk's gazetteer was asking entity by entity —
+/// two point queries each, 36 ms at a thousand entities. A bulk read that
+/// resolved contention differently would make the clerk see a name the
+/// rest of the app does not, so the agreement is the whole contract and
+/// not an optimisation detail.
+#[test]
+fn one_each_answers_exactly_what_one_answers_entity_by_entity() {
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+
+    // Some named, some not.
+    let a = e.create(kind::NOTE, Some("Roof"), 1_000).unwrap();
+    let b = e.create(kind::NOTE, Some("Ferry"), 1_001).unwrap();
+    let bare = e.create(kind::NOTE, None, 1_002).unwrap();
+
+    // And one contended name, which `one` refuses to answer.
+    let split = e.create(kind::NOTE, None, 1_003).unwrap();
+    // Two devices name it without seeing each other, so neither cites the
+    // other's dot in `replaces` and both values stay live.
+    for (n, (d, text)) in [(dev(2), "Anna"), (dev(3), "Anne")].into_iter().enumerate() {
+        e.receive(Group {
+            device: d,
+            first_seq: 0,
+            hlc: Hlc { wall_ms: 2_000 + n as u64, ctr: 0 },
+            author: Author::User,
+            action: 1,
+            reverses: None,
+            ops: vec![Op::SetCell {
+                entity: split,
+                prop: prop::NAME,
+                value: Value::Text(text.into()),
+                replaces: vec![],
+            }],
+        })
+        .unwrap();
+    }
+    assert!(e.contended(split, prop::NAME).unwrap(), "the setup must actually contend");
+
+    let bulk: std::collections::HashMap<EntityId, Value> =
+        e.one_each(prop::NAME).unwrap().into_iter().collect();
+
+    for id in e.all_entities().unwrap() {
+        assert_eq!(
+            bulk.get(&id).cloned(),
+            e.one(id, prop::NAME).unwrap(),
+            "one_each and one disagree about {}",
+            id.hex()
+        );
+    }
+
+    // Named things are there, the bare one is not, and the contended one
+    // is LEFT OUT rather than resolved — the same "not one answer" that
+    // `one` gives.
+    assert_eq!(bulk.get(&a), Some(&Value::Text("Roof".into())));
+    assert_eq!(bulk.get(&b), Some(&Value::Text("Ferry".into())));
+    assert_eq!(bulk.get(&bare), None);
+    assert_eq!(bulk.get(&split), None, "a contended name is not an answer");
 }

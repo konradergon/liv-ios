@@ -1,7 +1,14 @@
-//! The one C seam the macOS shell crosses — milestone 4, reshaped by the
-//! single-writer lock of the review: the agent holds no session. Capture
-//! opens the box, writes, and closes — the lock lives for milliseconds,
-//! so the CLI stays usable while the agent sits in the menu bar.
+//! THE ONE C SEAM. Every shell crosses here and nowhere else.
+//!
+//! It says "the macOS shell" no longer: that shell was deleted on
+//! 2026-08-19 and the Tauri app was dropped on 2026-08-29, so the only
+//! caller today is `shell/ios` (see CLAUDE.md). A second shell is still
+//! the goal and what it will be is undecided — which changes nothing
+//! here, because the seam was never shaped for a particular one.
+//!
+//! The shape it WAS given by the review still holds: no shell holds a
+//! session. A capture opens the box, writes, and closes, so the lock
+//! lives for milliseconds and the CLI stays usable alongside.
 //!
 //! The clerk is not run here: pending proposals are re-derived by the
 //! sweep at every open, so the next `liv inbox` sees exactly what this
@@ -12,6 +19,21 @@ use std::ffi::{c_char, CStr, CString};
 // The snapshot types + builder (T6, 2026-08-09 — lib.rs had reached
 // 5,785 lines; rule 9 called for the seam).
 mod snapshot;
+// The new seam (rust-owns-the-mechanisms.md §3): one verb per screen over
+// the engine, beside the snapshot rather than through it. Additive — the
+// old verbs are untouched and both work until the shell has moved.
+/// A body on the wire, in the shape the shell already writes.
+mod spans;
+pub mod surfaces;
+
+/// The engine's write verbs — what slice 5a is named for.
+pub mod writes;
+
+/// The verbs every tap uses: make a thing, change a cell, throw it away.
+pub mod basics;
+
+/// Finding things: search, the query grammar, workspaces and filters.
+pub mod finding;
 use snapshot::{build_snapshot, build_snapshot_windowed, fingerprint};
 
 
@@ -365,11 +387,11 @@ fn last_day_of_month(year: i32, month: u32) -> u32 {
     }
 }
 
+/// **An id is never a name** (owner, 2026-09-13). One helper answers it
+/// for the whole tree; this used to be a fourth copy of the question with
+/// its own wrong answer.
 fn reference_name(store: &Store, id: Id) -> String {
-    match store.get(id).and_then(|e| e.get(props::NAME)) {
-        Some(Value::Text(name)) => name.clone(),
-        _ => format!("#{id}"),
-    }
+    liv_services::tasks::name_of(store, id)
 }
 
 /// Everything the window renders, as one JSON document.
@@ -506,6 +528,43 @@ pub unsafe extern "C" fn liv_search_at(
 ///
 /// # Safety
 /// `raw_query` must be a valid NUL-terminated UTF-8 string.
+/// One lexed term, on the wire.
+///
+/// **The wire shape lives here, not in the engine.** `liv_engine::Term` is
+/// a plain Rust type with no serde: that crate's whole argument is that a
+/// derive macro must not decide what anything looks like from outside, and
+/// it holds for a JSON payload as much as for the on-disk format. Every
+/// other wire struct in this layer is written out the same way
+/// (`surfaces.rs`).
+#[derive(Serialize)]
+struct WireTerm {
+    op: &'static str,
+    key: String,
+    value: String,
+    raw: String,
+}
+
+impl From<&search::Term> for WireTerm {
+    fn from(t: &search::Term) -> WireTerm {
+        WireTerm {
+            // The same lowercase spellings serde derived before the type
+            // moved, so the shell's decoder is untouched.
+            op: match t.op {
+                search::TermOp::Equals => "equals",
+                search::TermOp::NotEquals => "notequals",
+                search::TermOp::AtMost => "atmost",
+                search::TermOp::Has => "has",
+                search::TermOp::No => "no",
+                search::TermOp::Is => "is",
+                search::TermOp::Text => "text",
+            },
+            key: t.key.clone(),
+            value: t.value.clone(),
+            raw: t.raw.clone(),
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn liv_lex(raw_query: *const c_char) -> *mut c_char {
     if raw_query.is_null() {
@@ -514,7 +573,8 @@ pub unsafe extern "C" fn liv_lex(raw_query: *const c_char) -> *mut c_char {
     let Ok(raw) = CStr::from_ptr(raw_query).to_str() else {
         return std::ptr::null_mut();
     };
-    match serde_json::to_string(&search::lex(raw)).ok().and_then(|s| CString::new(s).ok()) {
+    let terms: Vec<WireTerm> = search::lex(raw).iter().map(WireTerm::from).collect();
+    match serde_json::to_string(&terms).ok().and_then(|s| CString::new(s).ok()) {
         Some(s) => s.into_raw(),
         None => std::ptr::null_mut(),
     }
@@ -586,9 +646,10 @@ pub unsafe extern "C" fn liv_query_ids_at(
         #[derive(Serialize)]
         struct LensResult {
             ids: Vec<u64>,
-            terms: Vec<search::Term>,
+            terms: Vec<WireTerm>,
         }
-        let result = LensResult { ids, terms: search::lex(raw) };
+        let result =
+            LensResult { ids, terms: search::lex(raw).iter().map(WireTerm::from).collect() };
         let out = match serde_json::to_string(&result).ok().and_then(|s| CString::new(s).ok()) {
             Some(s) => s.into_raw(),
             None => std::ptr::null_mut(),

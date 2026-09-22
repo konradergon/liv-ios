@@ -15,8 +15,11 @@ struct DeskHost: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
 
-    /// The ••• menu's trash leg asks once before it acts.
-    @State private var confirmTrash = false
+    /// The bar and the pill retire under a keyboard, and they live here
+    /// now (2026-09-08), so the watch does too — it was `RootView`'s
+    /// while they were, and nothing else there read it.
+    @StateObject private var keyboard = KeyboardWatch()
+
     /// The drag lives on the model now (the bar reads it too); this is
     /// the short name for it in here.
     private typealias PanelDrag = DeskModel.PanelDrag
@@ -34,39 +37,142 @@ struct DeskHost: View {
     /// Guards the create doors against a double tap while a write is in
     /// flight.
     @State private var creating = false
+    /// HOW FAR THE DOCUMENT HAS BEEN PULLED DOWN, in points, while a
+    /// finger is on it. 0 at rest. The document follows the finger
+    /// (`pullDown`) and either springs back or is laid down.
+    @State private var docPull: CGFloat = 0
+    /// THE DOCUMENT THAT IS MOUNTED, and whether it has RISEN — two
+    /// facts, because a rise is an `.offset` animating on a view that is
+    /// already there. The library learned this first (`libraryDrawn` /
+    /// `libraryShown`, Chrome.swift): a `.transition` on an `if` gave no
+    /// motion either way, and mounting first then sliding on the next
+    /// tick is what actually moves. `drawnDoc` follows `desk.openDoc`
+    /// with a lag on the way OUT, so the page has somewhere to slide to
+    /// before it is unmounted.
+    @State private var drawnDoc: LivEntityID?
+    @State private var risen = false
 
     var body: some View {
         ZStack(alignment: .top) {
             Group {
-                if let id = desk.openDoc, desk.state == .notes {
-                    // Keyed by ENTITY: a serial capture rewrites the
-                    // surface with a new entity, and per-entity @State
-                    // (the seeded title) must reseed on that flip.
-                    EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
-                } else if desk.state == .notes {
-                    // NOTES' ROOT IS THE LIST AGAIN (2026-08-28).
+                ZStack {
+                    // THE VIEW. Every state draws itself (FeatureLayer is
+                    // gone with the layer it was), and since 2026-09-10
+                    // there is no longer a state that draws nothing so a
+                    // document can borrow its name. The list of notes is
+                    // `Feature.everything`, drawn as Notes since
+                    // 2026-09-16.
                     //
-                    // From 2026-08-24 it was the tab grid, on the
-                    // owner's "make sure it replaces notes list". The
-                    // argument against `NotesList` then was that search
-                    // reaches what the grid cannot. Measured on the
-                    // simulator four days later, that is not what
-                    // happened: the grid draws `desk.liveTabs`, so Notes
-                    // showed EIGHT of the box's hundred and thirty-four
-                    // notes and offered no route at all to the other
-                    // hundred and twenty-six. A surface named after a
-                    // thing has to contain it.
+                    // IT STAYS MOUNTED UNDER A DOCUMENT (2026-09-16). It
+                    // used to be the `else` of the document: one slot,
+                    // one occupant, and a note slid in sideways as if it
+                    // were another view. A note is not another view — it
+                    // is a thing you opened FROM this one, and the way
+                    // you know that is that this one is still there
+                    // underneath while it rises. The same physics the
+                    // record card has always had, given to the page.
                     //
-                    // The grid keeps its real job — it is the tab
-                    // switcher, opened by the numbered box on the bar.
-                    // One is the shelf, the other is what is on the desk.
-                    NotesList().livSurface(LivSurface.notes)
-                } else {
-                    // Another state entirely — Today, the calendar. The
-                    // views draw themselves (FeatureLayer is gone with
-                    // the layer it was).
+                    // Hidden from the accessibility tree while covered,
+                    // for the same two reasons the desk hides under a
+                    // panel: VoiceOver must not find it, and the harness
+                    // reads exactly one `liv.surface.` marker at a time.
+                    // NO SAFE-AREA MODIFIER HERE, on either layer. The
+                    // Group already carries `.frame(maxWidth:.infinity,
+                    // maxHeight:.infinity)` and `.ignoresSafeArea(edges:
+                    // .top)` below, and that pair is what a layer needs —
+                    // it is what the single child had before these two
+                    // became siblings. A SECOND `.ignoresSafeArea` for
+                    // the same edge, nested inside the first, is what put
+                    // the note's title a status bar too low (owner,
+                    // 2026-09-17), because the editor is a UIKit scroll
+                    // view that reserves its top room by hand and had the
+                    // safe area added to it again underneath.
+                    //
+                    // They were added on 2026-09-16 to chase a cause that
+                    // did not survive checking, and they go with it
+                    // (standing rule 6).
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
+                        .accessibilityHidden(desk.openDoc != nil)
+
+                    // THE DOCUMENT LAYER, over whichever view you are in.
+                    // `openDoc` is non-nil only while one is laid down
+                    // (`DeskModel.shown`), so this no longer asks Notes
+                    // for permission to draw a note (2026-09-10).
+                    //
+                    // MOUNTED ON `drawnDoc`, NOT `openDoc`. `drawnDoc`
+                    // lags on the way out (`.onChange` below) so the page
+                    // is still there to slide down; while it is, its
+                    // marker leaves the accessibility tree so the harness
+                    // still reads one surface.
+                    if let id = drawnDoc {
+                        // Keyed by ENTITY: a serial capture rewrites the
+                        // surface with a new entity, and per-entity
+                        // @State (the seeded title) must reseed on that
+                        // flip.
+                        EntityTabBody(id: id).id(id).livSurface(LivSurface.document)
+                            .accessibilityHidden(desk.openDoc == nil)
+                            // Opaque, because there is a view underneath
+                            // now and the words must not show through.
+                            // Its size and its top come from the Group,
+                            // as the layer above's do — see there.
+                            .background(LivTheme.canvas)
+                            // THE GRABBER, the one every card wears and
+                            // the one thing that says "this can be pulled
+                            // down" (owner, 2026-09-16: "nothing shows
+                            // that notes can be dragged down"). Centred
+                            // in the doors' row, between the library door
+                            // and the •••, exactly where a sheet's sits.
+                            // It rides the pull and the rise because it is
+                            // ON the page, and it leaves with the chrome
+                            // because it is chrome. Offset, not padding,
+                            // so its frame never reaches the corner the
+                            // surface marker sits in.
+                            .overlay(alignment: .top) {
+                                LivGrabber()
+                                    // CENTRED IN THE DOORS' ROW, level
+                                    // with the library door and the •••.
+                                    //
+                                    // It was moved up flush under the
+                                    // clock on 2026-09-18 to open the
+                                    // view behind sooner, and moved
+                                    // straight back on sight: 16pt
+                                    // higher bought nothing, because how
+                                    // much you reveal is how far you
+                                    // drag, not where you take hold. The
+                                    // row is where a mark that is chrome
+                                    // belongs.
+                                    .offset(y: LivSafeArea.top + 6 + (LivRow.touch - 21) / 2)
+                                    .offset(y: desk.chromeAway ? -LivRow.topInset : 0)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                            // RISES FROM THE BOTTOM, AND GOES BACK DOWN
+                            // (owner, 2026-09-16: "get back to the place
+                            // you stand in when you open a note with '+',
+                            // just like you can close the event / task
+                            // card"). The arrival is what teaches the
+                            // exit: a thing that came up over the view is
+                            // a thing you push back down.
+                            //
+                            // AN OFFSET, NOT A `.transition`. The
+                            // transition popped (owner: "still pops in,
+                            // no rise"), which is the same thing the
+                            // library found on 2026-08-15 and the menu
+                            // card on 2026-09-12: a transition on an
+                            // `if` gives no motion here, and real motion
+                            // is a view that is already mounted moving.
+                            // Parked one window-height down until `risen`,
+                            // which `.onChange` flips on the next tick.
+                            // The window's height and not a measurement
+                            // of this stack: the measurement was taken
+                            // before the stack had its size, read as 0,
+                            // and a page parked at 0 has nowhere to rise
+                            // from (2026-09-17).
+                            .offset(y: risen ? docPull : LivSafeArea.height)
+                            .simultaneousGesture(pullDown)
+                            .zIndex(1)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -75,6 +181,30 @@ struct DeskHost: View {
             // (owner, 2026-08-17). What must not land under the buttons
             // keeps `LivRow.topInset` for itself.
             .overlay(alignment: .top) { LivTopScrim() }
+            // THE BAR IS PART OF THE SURFACE (owner, 2026-09-08: "the
+            // bar should be 'part of' the right view").
+            //
+            // It was a sibling of the whole app body in `RootView`'s
+            // ZStack, painted after it — so it floated over everything
+            // there is, and every cover that had to appear ABOVE it had
+            // to be hoisted out of the surface and re-hosted up there
+            // beside it. Three were: the one menu, the record card, the
+            // properties sheet. The workspace card was not, so it came
+            // up UNDERNEATH the bar, scrim and all — the same bug the
+            // menu had before it moved, with the reason still written
+            // above `livMenu` in App.swift.
+            //
+            // Inside the card, that whole class of bug is gone rather
+            // than fixed case by case: anything a surface puts over
+            // itself is over its bar, because its bar is part of it.
+            // Three special cases go with it — the bar no longer needs
+            // its own `deskShift` (the card travels and it travels
+            // with it), the library panel covers it by being a later
+            // sibling instead of by the bar retiring, and the wash that
+            // takes the desk's touches takes the bar's too, so a bar in
+            // the sliver is no longer live under a panel that says it
+            // has your attention.
+            .overlay(alignment: .bottom) { surfaceFoot }
             .ignoresSafeArea(edges: .top)
             // THE DESK AS A CARD. The panel stops 100pt short of the
             // right edge (owner, 2026-08-23: "Panel should not be full
@@ -95,29 +225,22 @@ struct DeskHost: View {
             // there is nothing to see. The trailing corners keep the
             // device's radius, which is where the screen's own edge is.
             .mask {
-                // SQUARE ON THE EDGE THAT MEETS THE PANEL, whichever
-                // edge that is. A curve there pulls away from the seam
-                // and leaves a wedge of panel showing at the top and the
-                // bottom — the "ugly gaps" the owner reported
-                // (2026-08-28). The far edge keeps the device's radius,
-                // which is where the screen's own corner is.
-                let meetsLeading = desk.openPanel == .library
-                let meetsTrailing = desk.openPanel == .inspector
+                let meetsLeading = desk.panelOut > 0
                 UnevenRoundedRectangle(
                     topLeadingRadius: meetsLeading ? 0 : LivPanel.deskRadius,
                     bottomLeadingRadius: meetsLeading ? 0 : LivPanel.deskRadius,
-                    bottomTrailingRadius: meetsTrailing ? 0 : LivPanel.deskRadius,
-                    topTrailingRadius: meetsTrailing ? 0 : LivPanel.deskRadius,
+                    bottomTrailingRadius: LivPanel.deskRadius,
+                    topTrailingRadius: LivPanel.deskRadius,
                     style: .continuous
                 )
                 .ignoresSafeArea()
             }
-            // Cast BACK onto the panel, no vertical offset — so the
-            // direction follows which panel it is falling on.
-            .shadow(
-                color: .black.opacity(LivPanel.shadowOpacity),
-                radius: LivPanel.shadowRadius,
-                x: desk.openPanel == .inspector ? 4 : -4, y: 0)
+            // NO SHADOW. It was cast back onto the panel and never
+            // arrived: the panel is `.zIndex(1)` and this Group has none
+            // (0), so the shadow painted under an opaque surface. Two
+            // days of the app's largest depth event being a hard
+            // one-pixel step. The panel draws its own edge now
+            // (Panel.swift), which is a line you can actually see.
             // A WASH, not a scrim: the reference fades the content to
             // ~50% and leaves the background alone, so this is the app's
             // own ground laid over the top. A black scrim in a dark theme
@@ -135,14 +258,13 @@ struct DeskHost: View {
             // it is the way back, and now it behaves like one.
             .overlay {
                 let showing = desk.panelOut
-                let which = desk.openPanel
                 LivTheme.canvas
                     .opacity(LivPanel.wash * showing)
                     .contentShape(Rectangle())
                     // At rest this must be completely absent, or every
                     // tap on the desk would land here instead.
                     .allowsHitTesting(showing > 0)
-                    .onTapGesture { closePanel(which) }
+                    .onTapGesture { closePanel() }
                     // AND THE DRAG, because this layer swallows it.
                     //
                     // The panel is dragged open and shut from anywhere
@@ -157,13 +279,9 @@ struct DeskHost: View {
                     .gesture(
                         DragGesture(minimumDistance: 18)
                             .onEnded { g in
-                                // Toward the panel's own edge closes it:
-                                // left for the library, right for the
-                                // properties panel.
-                                let away = which == .inspector
-                                    ? g.translation.width > 40
-                                    : g.translation.width < -40
-                                if away { closePanel(which) }
+                                // Toward the panel's own edge closes it,
+                                // and its edge is the leading one.
+                                if g.translation.width < -40 { closePanel() }
                             }
                     )
                     // The desk is already hidden from VoiceOver behind a
@@ -212,8 +330,11 @@ struct DeskHost: View {
                 .accessibilityLabel("Library")
                 Spacer()
                 // The ••• is the open DOCUMENT's menu — share, export,
-                // trash — so it belongs to Docs and to nothing else.
-                if desk.state == .notes, let id = desk.openDoc {
+                // trash — so it belongs to the document on screen and to
+                // nothing else. `openDoc` says exactly that; the
+                // `state == .notes` half it used to carry said it twice.
+                if let id = desk.openDoc {
+                    propertiesKey()
                     noteMenu(id)
                 }
             }
@@ -244,31 +365,17 @@ struct DeskHost: View {
             // Mounted while shown OR while a finger is dragging one, and
             // positioned by that drag — they follow the hand rather than
             // waiting for it to let go (owner, 2026-08-08).
-            if desk.libraryDrawn || desk.panelDrag?.which == .library {
+            if desk.libraryDrawn || desk.panelDrag != nil {
                 LibraryPanel(
                     onDismiss: { desk.setLibrary(false) },
                     onWorkspace: { desk.workspaceShown = true },
                     onSettings: { desk.settingsShown = true },
                     onTrash: { desk.trashShown = true }
                 )
-                .offset(x: panelOffset(.library))
+                .offset(x: panelOffset())
                 // Exit transitions render BELOW later siblings without an
                 // explicit z — the panel would vanish behind the desk
                 // instead of sliding out (audit, 2026-08-01).
-                .zIndex(1)
-            }
-            if let id = desk.openDoc, desk.state == .notes,
-                desk.inspectorShown || desk.panelDrag?.which == .inspector
-            {
-                SidePanel(
-                    onDismiss: { closePanel(.inspector) },
-                    width: LivPanel.width,
-                    side: .trailing
-                ) {
-                    EntityInspector(id: id)
-                        .livOverlay(LivOverlay.properties)
-                }
-                .offset(x: panelOffset(.inspector))
                 .zIndex(1)
             }
 
@@ -276,8 +383,35 @@ struct DeskHost: View {
         .background(LivTheme.canvas)
         .onAppear {
             desk.createMenu = createMenu
-            desk.createHere = createHere
             desk.newNote = createNote
+            desk.catchText = catchText
+            // A document restored at launch is already up; it does not
+            // rise, it is simply there.
+            drawnDoc = desk.openDoc
+            risen = desk.openDoc != nil
+        }
+        // THE RISE AND THE FALL, as the library does them: mount, then
+        // slide on the next tick; slide, then unmount after the motion.
+        // Document to document (a link inside a note) swaps in place
+        // without a rise — it replaces, it does not arrive.
+        .onChange(of: desk.openDoc) { _, now in
+            // A pull the editor's scroll took over never reaches
+            // `onEnded`, and a page left where the finger let go would
+            // stay there. Every arrival and departure starts from rest.
+            docPull = 0
+            if let now {
+                let wasUp = drawnDoc != nil && risen
+                drawnDoc = now
+                guard !wasUp else { return }
+                DispatchQueue.main.async {
+                    withAnimation(LivMotion.nav) { risen = true }
+                }
+            } else {
+                withAnimation(LivMotion.nav) { risen = false }
+                DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                    if desk.openDoc == nil { drawnDoc = nil }
+                }
+            }
         }
         .fileImporter(
             isPresented: $picking, allowedContentTypes: [.item],
@@ -309,11 +443,11 @@ struct DeskHost: View {
             PanelDragInstaller(
                 active: { desk.deskInFront && desk.menu == nil },
                 mayClaim: { dx in claimPanel(dx) != nil },
+                pagerZone: { desk.pagerZone },
                 onLatch: { dx in
-                    if let claim = claimPanel(dx) {
+                    if let opening = claimPanel(dx) {
                         endEditing()
-                        desk.panelDrag = PanelDrag(
-                            which: claim.which, opening: claim.opening, amount: dx)
+                        desk.panelDrag = PanelDrag(opening: opening, amount: dx)
                     }
                 },
                 onMove: { dx in desk.panelDrag?.amount = dx },
@@ -323,25 +457,22 @@ struct DeskHost: View {
         )
         // The acknowledgment chip: a verb that changes something you can
         // no longer see (the copy, the trashed note) says so, briefly.
-        .overlay(alignment: .top) {
-            if let text = chipText {
-                chip(text)
-                    .padding(.top, LivRow.topInset)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(2)
-            }
-        }
-        .confirmationDialog(
-            "Move to Trash?", isPresented: $confirmTrash, titleVisibility: .visible
-        ) {
-            Button("Move to Trash", role: .destructive) {
-                if let id = desk.openDoc, desk.state == .notes {
-                    trashNote(id)
+        .livAckChip(chipText, undo: chipUndo.map { undo -> () -> Void in
+            {
+                undo()
+                withAnimation(LivMotion.nav) {
+                    chipText = nil
+                    chipUndo = nil
                 }
             }
-        }
-        .livTopSheet(isPresented: $desk.workspaceShown) {
+        })
+        // FROM THE BOTTOM: the workspace button and "New filter" both
+        // live at the FOOT of the library panel (team, 2026-08-22), and
+        // this card was still falling from the top of the screen because
+        // that is where the button used to be.
+        .livSheet(from: .bottom, isPresented: $desk.workspaceShown) {
             WorkspaceSwitcher(onClose: { desk.workspaceShown = false })
+                .livOverlay(LivOverlay.workspace)
                 .environmentObject(box)
                 .environmentObject(workspaces)
                 .environmentObject(desk)
@@ -355,10 +486,53 @@ struct DeskHost: View {
         }
     }
 
-    /// Any full-screen surface covering the desk body.
-    private var anyPanel: Bool {
-        desk.libraryShown || desk.inspectorShown
+    /// THE SURFACE'S OWN FOOT: the bar, and the pill that stands on it.
+    ///
+    /// Both were mounted in `RootView` until 2026-09-08 and both carried
+    /// `.offset(x: desk.deskShift)` by hand to fake travelling with a
+    /// desk they were not part of. They are part of it now, so the
+    /// offset is the card's and they inherit it.
+    @ViewBuilder private var surfaceFoot: some View {
+        ZStack(alignment: .bottom) {
+            // IT DOES NOT RETIRE FOR AN EMPTY DESK: the bar is the only
+            // way out of one, and its `+` is what the empty desk's hint
+            // points at. The pill follows the bar, since it is
+            // positioned against it.
+            //
+            // Both retire under a KEYBOARD: keyboard avoidance would
+            // park the bar above the editor's formatting row, two bars
+            // deep (owner, 2026-08-02).
+            // The bar FIRST, so the pill declared after it keeps the
+            // z order the two had as `zIndex(1)` and `zIndex(2)` in
+            // RootView. They do not overlap — the pill is padded up by
+            // the bar's whole room — but the order is the record of
+            // which stands on which.
+            if !keyboard.up && desk.menu == nil {
+                BottomBar()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .accessibilityHidden(desk.chromeAway)
+                    // OUT OF THE WAY WHILE YOU READ (owner's clips,
+                    // 2026-08-20). Its own height plus the safe area it
+                    // sits in, so it leaves the screen rather than
+                    // peeking over the edge. The extra 12 carries it
+                    // past the bottom safe area; both are pure
+                    // translations.
+                    .offset(y: desk.chromeAway ? LivBar.clearance + 12 : 0)
+                    .transition(.move(edge: .bottom).combined(with: .offset(y: 40)))
+            }
+            if let id = desk.minimisedRecord, !keyboard.up {
+                MinimisedRecordPill(id: id)
+                    .padding(.bottom, LivBar.room + LivBar.gap)
+                    .accessibilityHidden(desk.chromeAway)
+            }
+        }
     }
+
+    /// Any full-screen surface covering the desk body. One panel left —
+    /// the properties are a card, and a card is a sheet the system
+    /// hosts, not a layer of the desk.
+    private var anyPanel: Bool { desk.libraryShown }
 
     /// The library door. It stays LIT with the properties card up
     /// (owner, 2026-08-15: "that button should be visible with the
@@ -367,6 +541,55 @@ struct DeskHost: View {
     /// card away first — it is a layer of the desk, and the desk is
     /// about to leave — and then sliding. Tapping it used to park the
     /// library invisibly behind the card.
+    /// PULL THE DOCUMENT DOWN TO PUT IT DOWN. The page follows the finger
+    /// and, past the sheet's own threshold, is laid down onto the view it
+    /// rose over — which is where you stood when you pressed `+`.
+    ///
+    /// ONLY FROM THE TOP BAND. The body scrolls, and a scroll is a
+    /// vertical drag; the two can only be told apart by where they
+    /// START. The band is the chrome row the doors float in plus the
+    /// title row under it — the page's own grabber, the way the record
+    /// card's is the strip above its name. A drag that starts lower is
+    /// the editor's, and this never sees it move.
+    ///
+    /// THE SAME NUMBERS AS EVERY CARD (Menu.swift, `LivEdgeSheetHost`):
+    /// 90pt of travel or a 220pt/s flick closes; less springs back. One
+    /// rule for how a raised thing is dismissed, whatever was raised.
+    ///
+    /// `simultaneousGesture`, not `gesture`: the editor underneath is
+    /// UIKit and must keep every touch it already handles — a tap into
+    /// the title, a scroll of the body. This only ever adds a reading,
+    /// and only acts on it inside the band.
+    private var pullDown: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .onChanged { g in
+                guard g.startLocation.y <= LivRow.topInset + LivRow.touch else { return }
+                let d = g.translation.height
+                // Downward, and more down than sideways — a sideways drag
+                // from the band is the panel's, and the panel's recogniser
+                // cancels these touches the moment it latches.
+                guard d > abs(g.translation.width) else { return }
+                // THE PAGE OUTRUNS THE THUMB (`LivMotion.pullGain`), so
+                // the view behind opens at a rate you can read rather
+                // than at the rate a finger crosses glass. The THRESHOLD
+                // below still measures the finger, so how far you have to
+                // pull to commit is exactly what it was — only what you
+                // SEE while pulling changed.
+                docPull = max(0, d) * LivMotion.pullGain
+            }
+            .onEnded { g in
+                guard docPull > 0 else { return }
+                let d = g.translation.height
+                let v = g.predictedEndTranslation.height
+                if d > 90 || v > 220 {
+                    withAnimation(LivMotion.nav) { docPull = 0 }
+                    desk.layDown()
+                } else {
+                    withAnimation(LivMotion.pick) { docPull = 0 }
+                }
+            }
+    }
+
     private func goToLibrary() {
         endEditing()
         guard !desk.libraryShown else {
@@ -393,54 +616,39 @@ struct DeskHost: View {
 
     // MARK: the note's ••• menu (rev 6: SECONDARY verbs only)
 
-    /// Frequent actions get dedicated UI (owner principle) — Properties
-    /// left this menu for its own door. What remains ACTS on the
-    /// document, rarely: duplicate, share, trash.
-    /// The secondary verbs. Every tab is a document now (Option C), so
-    /// the kind branch that used to hide share/export is gone.
-    /// How far off its own edge a panel currently sits. A panel with no
-    /// drag in flight is simply open (0) — the transition handles its
-    /// arrival and departure as before.
-    /// Shut whichever panel is out. The wash and its drag both need
-    /// this, and they must not each decide it for themselves.
-    private func closePanel(_ which: PanelDrag.Which?) {
-        switch which {
-        case .library: desk.setLibrary(false)
-        case .inspector: withAnimation(LivMotion.nav) { desk.inspectorShown = false }
-        case nil: break
-        }
+    // Four doc comments had stacked up here over one function, none of
+    // them about it — the residue of three deletions that each left
+    // their prose behind. The two that are still true have gone back to
+    // what they describe: the ••• menu's own doc is on `noteVerbs`, and
+    // the properties door's is on `propertiesKey`. Untangled 2026-09-07.
+
+    /// Shut the panel. The wash and its drag both need this, and they
+    /// must not each decide it for themselves.
+    private func closePanel() { desk.setLibrary(false) }
+
+    private func panelOffset() -> CGFloat {
+        -(1 - desk.panelProgress) * DeskModel.travel
     }
 
-    private func panelOffset(_ which: PanelDrag.Which) -> CGFloat {
-        let hidden = (1 - desk.panelProgress(which)) * DeskModel.travel(which)
-        return which == .library ? -hidden : hidden
-    }
-
-    /// What a drag moving `dx` would do: which panel, opening or
-    /// closing. nil = nothing to claim in that direction, so the
-    /// recognizer must not latch (and must not cancel any touches).
-    private func claimPanel(
-        _ dx: CGFloat
-    ) -> (which: PanelDrag.Which, opening: Bool)? {
-        if dx > 0 {
-            // Rightward: put the properties away, else summon the library.
-            if desk.inspectorShown { return (.inspector, false) }
-            if !desk.libraryShown { return (.library, true) }
-        } else {
-            // Leftward: put the library away, else summon the properties.
-            if desk.libraryShown { return (.library, false) }
-            if !desk.inspectorShown, desk.openDoc != nil, desk.state == .notes {
-                return (.inspector, true)
-            }
-        }
-        return nil
+    /// Would a drag moving `dx` do anything? nil = nothing to claim in
+    /// that direction, so the recognizer must not latch (and must not
+    /// cancel any touches). The Bool is whether it OPENS.
+    ///
+    /// ONE PANEL LEFT, so one claim each way. The properties used to be
+    /// summoned by a leftward drag and put away by a rightward one; they
+    /// open as a CARD now (2026-08-29), from the note's ••• menu, which
+    /// is where Anytype puts them and where this app's other card verbs
+    /// already live.
+    private func claimPanel(_ dx: CGFloat) -> Bool? {
+        if dx > 0 { return desk.libraryShown ? nil : true }
+        return desk.libraryShown ? false : nil
     }
 
     /// Let go: finish the journey the finger started, or put it back.
     /// A flick commits from anywhere; a slow drag commits past halfway.
     private func settleDrag(_ dx: CGFloat, _ velocity: CGFloat) {
         guard let live = desk.panelDrag else { return }
-        let width = DeskModel.travel(live.which)
+        let width = DeskModel.travel
         // A real flick is fast: 700pt/s is a sharp throw, well above
         // the drift a finger has at the end of a deliberate drag. At
         // 250 a moderate release read as a flick and a 30%% drag flew
@@ -453,13 +661,10 @@ struct DeskHost: View {
         // stopped. The first version asked "did the drag commit" and
         // inverted the slow-close case: a 57% pull away snapped back
         // open (found live, 2026-08-09).
-        let towardVisible = live.which == .library ? velocity > 0 : velocity < 0
+        let towardVisible = velocity > 0
         let shown = flicked ? towardVisible : live.progress(width) > 0.5
         withAnimation(LivMotion.nav) {
-            switch live.which {
-            case .library: desk.setLibrary(shown, animated: false)
-            case .inspector: desk.inspectorShown = shown
-            }
+            desk.setLibrary(shown, animated: false)
             desk.panelDrag?.amount = live.amount(for: shown ? 1 : 0, width: width)
         } completion: {
             desk.panelDrag = nil
@@ -470,7 +675,35 @@ struct DeskHost: View {
     /// under the button that opened them (owner, 2026-08-13). It was a
     /// SwiftUI `Menu`, which is a fourth look for the same idea; now it
     /// is the one menu, pointed the other way.
-    private func noteMenu(_ id: UInt64) -> some View {
+    /// PROPERTIES, ONE TAP.
+    ///
+    /// It was an item inside the ••• menu, which is two taps and a read
+    /// for the thing the owner calls central to the app (todo.org:
+    /// *"selecting properties from a menu is too slow and/or
+    /// inconvenient since it's central in the app"*).
+    ///
+    /// MOVED, NOT ADDED. Leaving the menu item in place would have made
+    /// two doors to one room — which is precisely why the old (i) door
+    /// was deleted on 2026-08-14 (standing rule 4), so the item goes in
+    /// the same change.
+    ///
+    /// Not the edge drag it used to be, either: `PanelDrag.Which`, the
+    /// two-way claim and the two-panel desk push were all deleted when
+    /// the properties became a card, and the card is a system `.sheet`
+    /// with detents that `settleDrag` has no way to drive. Bringing the
+    /// gesture back means rebuilding that machinery.
+    private func propertiesKey() -> some View {
+        Button {
+            endEditing()
+            withAnimation(LivMotion.nav) { desk.inspectorShown = true }
+        } label: {
+            FloatCircleLabel(symbol: "slider.horizontal.3")
+        }
+        .livTopButton()
+        .accessibilityLabel("Properties")
+    }
+
+    private func noteMenu(_ id: LivEntityID) -> some View {
         Button {
             endEditing()
             desk.menu = noteVerbs(id)
@@ -481,15 +714,26 @@ struct DeskHost: View {
         .accessibilityLabel("Note actions")
     }
 
-    private func noteVerbs(_ id: UInt64) -> LivMenu {
+    /// The SECONDARY verbs — what remains once Properties took its own
+    /// key: things that ACT on the document, rarely. Every tab is a
+    /// document now (Option C), so the kind branch that used to hide
+    /// share/export is gone.
+    private func noteVerbs(_ id: LivEntityID) -> LivMenu {
         let row = box.entity(id)
         let isFile = TabShape.of(row) == .file
         var items: [LivMenuItem] = [
+            // NO PROPERTIES ITEM. It was first in this list and was the
+            // stated reason the ••• existed on a note at all; it became
+            // its own key on the top row on 2026-09-07, because two taps
+            // is too many for the app's most central card and a menu you
+            // have to read is not a door (owner, todo.org). It is not
+            // ALSO here — one door to one room.
+            //
             // The owner's own name for it — the copy carries the
             // PROPERTIES, deliberately not the body.
             LivMenuItem(label: "Duplicate note", symbol: "plus.square.on.square") {
                 duplicate(id)
-            }
+            },
         ]
         // A file hands its BYTES to whatever owns the format. Share and
         // Export are about MARKDOWN, so a file has none.
@@ -500,6 +744,14 @@ struct DeskHost: View {
                 })
         }
         if !isFile {
+            // EVERY VERSION IS STILL THERE — the thesis's promise, and
+            // until 2026-09-09 a promise the core kept and the shell
+            // never showed. A file has no history here: its bytes live
+            // on disk and the box holds a reference.
+            items.append(
+                LivMenuItem(label: "History", symbol: "clock.arrow.circlepath") {
+                    withAnimation(LivMotion.nav) { desk.historyShown = true }
+                })
             items.append(
                 LivMenuItem(label: "Share", symbol: "square.and.arrow.up") {
                     shareNote(id, asFile: false)
@@ -510,8 +762,28 @@ struct DeskHost: View {
                 })
         }
         items.append(
+            // ASKS IN THE SAME CARD IT WAS ASKED FROM.
+            //
+            // This raised a `.confirmationDialog`, which SwiftUI drew as
+            // an anchored popover with an arrow tail, landing part-way
+            // down the screen and across the bottom bar — the defect the
+            // owner caught in the Inbox on 2026-08-31 ("a message
+            // popping up at a random place at the bottom"). Both are the
+            // app's own menu now, which comes from the bottom edge every
+            // time and names what it is about (standing rule 4).
             LivMenuItem(label: "Move to Trash", symbol: "trash", destructive: true) {
-                confirmTrash = true
+                let name = row.map(livRowTitle) ?? "This note"
+                desk.menu = LivMenu(
+                    id: "trash-\(LivIDText.written(id))",
+                    from: .bottom,
+                    subject: name,
+                    subjectDetail: "Moved to Trash, and undoable",
+                    items: [
+                        LivMenuItem(
+                            label: "Move to Trash", symbol: "trash",
+                            destructive: true
+                        ) { trashNote(id) }
+                    ])
             })
         // THE MENU SAYS WHAT IT IS ABOUT (owner's clips, 2026-08-20).
         // Five verbs with no subject is the same defect the owner named
@@ -528,18 +800,83 @@ struct DeskHost: View {
     /// Birth an empty note and land in it: the editor takes the screen
     /// with the caret already in it. The workspace stamps it exactly as
     /// any other creation door does.
+    ///
+    /// **THIS IS WHAT `+` DOES, EVERYWHERE** (owner, 2026-09-10: *"'+'
+    /// creates note everywhere. holding it lets you create anything."*).
+    /// It used to be `createHere`, a switch on `Feature.makes` — a task
+    /// in Tasks, an event on the Calendar — so the key's word changed
+    /// under a key that did not move. Tasks and the Calendar make their
+    /// own things where those things live (the add row at the top of
+    /// Tasks; an empty hour on the timeline), which is what freed this.
+    ///
+    /// `createNote` calls `adoptCapture`, so a note made from the bar IS
+    /// the capture the Inbox is a list of. The menu's Task and Event
+    /// still go through `createRecord`, which dates from
+    /// `desk.contextDay` — so a task made from the hold menu in Today is
+    /// still due the day you are looking at. That is what the hold keeps
+    /// for the two views that lost the tap.
     private func createNote() {
         guard !creating else { return }
         creating = true
         box.createNote { id in
-            guard id != 0 else {
+            guard !id.isAbsent else {
                 creating = false
                 return
             }
             creating = false
             workspaces.stamp(id, in: box)
             desk.requestFocus(id)
-            desk.adoptCapture(id)
+            // A TURN OF ITS OWN, so the page arrives the way a tapped row
+            // makes it arrive. This closure runs inside the write's own
+            // main-queue block, alongside the snapshot refresh the write
+            // kicks off; opening from there puts the mount and everything
+            // the refresh republishes in one pass, and the rise is a
+            // mount in one pass and a move in the next. A row tap has a
+            // turn to itself and rises; this is the one door that did not
+            // (owner, 2026-09-17: "no rise... but only through '+'").
+            //
+            // A hypothesis, not a proven cause: the investigation refuted
+            // every other difference between the two doors but could not
+            // finish on this one. If it does not take, the next thing to
+            // try is hosting the page the way `RecordCardHost` hosts the
+            // card rather than hand-rolling its motion.
+            DispatchQueue.main.async { desk.adoptCapture(id) }
+        }
+    }
+
+    /// A CATCH FROM OUTSIDE — `liv://capture?text=…` (2026-09-09). The
+    /// text is saved FIRST, through the same `liv_capture_at` the search
+    /// field's find-or-create uses; a catch is not a draft, and if you
+    /// can start it, it is saved.
+    ///
+    /// **AND IT INHERITS NOTHING** (owner, 2026-09-21: *"If we want to
+    /// have Capture, it should be a note … that doesn't get Area or
+    /// Subject of the workspace"*).
+    ///
+    /// This used to call `workspaces.stamp`, the same as the note `+`
+    /// makes — and that is right for `+` and wrong here. The line
+    /// between them is not which verb ran, it is WHERE THE THING CAME
+    /// FROM. Something you make inside the app was made while you stood
+    /// somewhere, so the workspace is a fact about it. Something that
+    /// arrives from outside — this door, the share sheet, whatever comes
+    /// next — was not: the workspace is only what the app happened to
+    /// have open, and stamping it writes a guess down as a fact nobody
+    /// can tell from a decision afterwards.
+    ///
+    /// A link sent from Safari about a bicycle became `area:Work`
+    /// because Work was on screen. It lands unfiled now, in Unsorted,
+    /// where it is one of the few things actually waiting on a person.
+    private func catchText(_ text: String) {
+        guard !creating else { return }
+        creating = true
+        box.capture(text) { id in
+            creating = false
+            guard !id.isAbsent else { return }
+            desk.requestFocus(id)
+            // The same turn of its own the bar's `+` takes — see
+            // `createNote`. One rule for what a new thing is, not one
+            // per door.
+            DispatchQueue.main.async { desk.adoptCapture(id) }
         }
     }
 
@@ -563,24 +900,6 @@ struct DeskHost: View {
     /// It supersedes 2026-08-12's "task and event don't belong in new
     /// tab" — that was aimed at the full-screen New Tab page and its
     /// four-way chooser, both long deleted, and neither is what this is.
-    /// What `+` makes, decided by where you are standing.
-    ///
-    /// Tasks and Today both go through `createRecord`, which already
-    /// dates the task from `desk.contextDay` — so a task made in Today
-    /// is due today and one made on a Calendar day is due that day,
-    /// without this function knowing anything about dates.
-    ///
-    /// Notes, Inbox and Everything all make a NOTE, and that is not a
-    /// fallback: `createNote` calls `adoptCapture`, so a note made from
-    /// the bar IS the capture the Inbox is a list of.
-    private func createHere() {
-        switch desk.state {
-        case .tasks, .today: createRecord(event: false)
-        case .calendar: createRecord(event: true)
-        case .notes, .inbox, .everything: createNote()
-        }
-    }
-
     private func createMenu() -> LivMenu {
         LivMenu(
             id: "create",
@@ -619,9 +938,9 @@ struct DeskHost: View {
         let stamp = Civil.stamp(
             day: desk.contextDay ?? Civil.todayDay(),
             hhmm: Int64(LivDue.defaultHHMM))
-        let landed: (UInt64) -> Void = { id in
+        let landed: (LivEntityID) -> Void = { id in
             creating = false
-            guard id != 0 else {
+            guard !id.isAbsent else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
@@ -634,8 +953,8 @@ struct DeskHost: View {
             box.createEvent(dueCivil: stamp, dateOnly: false, done: landed)
         } else {
             box.createTask { id in
-                guard id != 0 else {
-                    landed(0)
+                guard !id.isAbsent else {
+                    landed(.absent)
                     return
                 }
                 box.setSpan(id, "due", start: stamp, end: 0, dateOnly: false)
@@ -654,9 +973,8 @@ struct DeskHost: View {
     /// markdown, handed over as text or as a real .md file so "Save to
     /// Files" produces markdown rather than a .txt of the same words.
     /// Neither writes to the box — sharing a note is a READ.
-    private func shareNote(_ id: UInt64, asFile: Bool) {
-        let name = (box.entity(id)?.cells ?? [])
-            .first { $0.property == "name" }?.value ?? ""
+    private func shareNote(_ id: LivEntityID, asFile: Bool) {
+        let name = LivName.stored(box.entity(id))
         box.content(id) { doc in
             guard let doc, doc.missing != true else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -695,12 +1013,12 @@ struct DeskHost: View {
     /// A fresh note wearing THIS note's property cells — the filing
     /// context without the body (owner, 2026-08-03). The source is never
     /// touched; the copy opens as a tab with the caret in it.
-    private func duplicate(_ id: UInt64) {
+    private func duplicate(_ id: LivEntityID) {
         guard !copying else { return }
         copying = true
         box.duplicateProperties(of: id) { copy in
             copying = false
-            guard copy != 0 else {
+            guard !copy.isAbsent else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
@@ -709,18 +1027,19 @@ struct DeskHost: View {
         }
     }
 
-    /// Trash leaves the desk showing the LIST (a trashed note has no
-    /// business on it) and offers Undo on the chip — the box has no restore verb yet, and
+    /// Trash lays the document down (a trashed note has no business on
+    /// the desk), uncovering the view you opened it from, and offers Undo
+    /// on the chip — the box has no restore verb yet, and
     /// undo-right-after IS restore ONLY while the trash is the last
     /// transaction. So the order matters: end editing FIRST, which
     /// flushes any dirty title/body onto the serial lane ahead of the
     /// trash; a teardown flush after the trash would slip between it and
     /// the Undo, and the chip would undo the wrong thing (found live,
     /// 2026-08-02).
-    private func trashNote(_ id: UInt64) {
+    private func trashNote(_ id: LivEntityID) {
         endEditing()
         box.trash(id)
-        desk.showList()
+        desk.layDown()
         flash("Moved to Trash", undo: {
             box.undo()
             desk.open(id)
@@ -740,47 +1059,6 @@ struct DeskHost: View {
                 chipUndo = nil
             }
         }
-    }
-
-    private func chip(_ text: String) -> some View {
-        HStack(spacing: 12) {
-            Text(text)
-                .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.text)
-            if let undo = chipUndo {
-                Button("Undo") {
-                    undo()
-                    withAnimation(LivMotion.nav) {
-                        chipText = nil
-                        chipUndo = nil
-                    }
-                }
-                .font(.system(size: LivType.body, weight: .semibold))
-                .foregroundStyle(LivTheme.accent)
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-        .background(LivTheme.panel2, in: Capsule())
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
-    }
-}
-
-/// One quiet floating control: 36pt circle, 44pt target.
-struct FloatCircle: View {
-    let symbol: String
-    var on: Bool = false
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            FloatCircleLabel(symbol: symbol, on: on)
-        }
-        .livTopButton(on: on)
-        .accessibilityLabel(label)
     }
 }
 
@@ -819,8 +1097,13 @@ extension View {
     /// test driving by label are not. In that position, put
     /// `.frame(width: 40, height: 40).contentShape(Rectangle())` inside
     /// the label instead — see the library door above (2026-08-24).
-    func livTopButton(on: Bool = false) -> some View {
+    ///
+    /// It took an `on:` flag until 2026-09-07 and never read it — the
+    /// only caller passing one was `FloatCircle`, which had no callers
+    /// of its own and went in the same change.
+    func livTopButton() -> some View {
         buttonStyle(.plain)
+            .livDoor()
             .livTopKeyShape()
     }
 
@@ -840,7 +1123,6 @@ extension View {
 /// (`livTopButton`); this is only what goes in it.
 struct FloatCircleLabel: View {
     let symbol: String
-    var on: Bool = false
 
     var body: some View {
         Image(systemName: symbol)
@@ -849,7 +1131,12 @@ struct FloatCircleLabel: View {
             // the whole difference between an icon that announces
             // itself and one that is just there.
             .font(.system(size: LivType.title, weight: .light))
-            .foregroundStyle(on ? LivTheme.accent : LivTheme.text)
+            // FULL INK, always. There was an `on` state here that
+            // turned the glyph accent, reachable only through
+            // `FloatCircle` — which nothing called. A top door says it
+            // is open by its mark's geometry, never by going blue
+            // (see `LivGlass` in Chrome.swift for the same removal).
+            .foregroundStyle(LivTheme.text)
             // A FIXED square, so a wide glyph and a narrow one come out
             // the same button.
             .frame(width: 24, height: 24)
@@ -863,7 +1150,7 @@ struct FloatCircleLabel: View {
 /// floating metadata chevron (DeskHost), and the title, when the entity
 /// has one, is the only thing above the text.
 struct EntityTabBody: View {
-    let id: UInt64
+    let id: LivEntityID
 
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
@@ -878,7 +1165,7 @@ struct EntityTabBody: View {
             content
         } else {
             // A persisted tab whose entity left the box — dropped lazily.
-            EmptyHint("This was deleted.")
+            EmptyHint("Deleted")
                 .frame(maxHeight: .infinity)
         }
     }
@@ -936,7 +1223,16 @@ struct EntityTabBody: View {
             // remembered position, and leaving it unconsumed would strand
             // the request for the next thing opened.
             _ = desk.consumeFocus(id)
-            autoFocus = true
+            // AFTER THE RISE, not during it. The page arrives from the
+            // bottom over the length of `nav` (Desk.swift, 2026-09-16),
+            // and the keyboard arriving in the same instant re-lays out
+            // the whole screen under the animation — the page lands
+            // wherever the keyboard leaves it, which reads as a pop. The
+            // caret still lands without a tap; it lands once the page
+            // has.
+            DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
+                autoFocus = true
+            }
         }
         .onChange(of: storedName) { old, fresh in
             // The snapshot moved under us (undo, another surface). Reseed
@@ -945,19 +1241,17 @@ struct EntityTabBody: View {
             // reads the new value, so the old guard could only ever fire on
             // an empty field and an external rename froze the title, which
             // a later commit then silently reverted (audit, 2026-08-04).
-            if title != fresh, title == "" || title == old { title = fresh }
+            if let seed = LivName.reseed(draft: title, was: old, now: fresh) {
+                title = seed
+            }
         }
     }
 
     // MARK: title — lives in the editor's scroll view now
 
-    /// The NAME CELL, never row.title — the wire title is a derived
-    /// display string ("#id" for an empty note, the first content line for
-    /// a scrap) and belongs in the grey prompt, not in the field.
-    private var storedName: String {
-        (box.entity(id)?.cells ?? [])
-            .first { $0.property == "name" }?.value ?? ""
-    }
+    /// The name cell — `LivName.stored` since 2026-09-07, so the desk,
+    /// the record card and the properties card all read it one way.
+    private var storedName: String { LivName.stored(box.entity(id)) }
 
     private func seedTitle() {
         guard !titleSeeded else { return }
@@ -965,19 +1259,14 @@ struct EntityTabBody: View {
         titleSeeded = true
     }
 
+    /// The rules live in `LivName.commit` (Kit.swift) — including the
+    /// trashed-entity guard this function used to carry alone, and which
+    /// the record card's own copy never had.
     private func commitTitle() {
-        // A gone or trashed note takes no name: after a trash, the entity
-        // stops resolving, storedName reads empty, and the equality guard
-        // below would happily write the old name back onto the trashed
-        // note — the stray transaction that broke the chip's Undo
-        // (found live, 2026-08-02).
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard typed != stored, !typed.isEmpty else {
-            title = stored  // an emptied field reverts, never erases the name
-            return
+        switch LivName.commit(typed: title, row: box.entity(id)) {
+        case .write(let typed): box.set(id, "name", typed)
+        case .revert(let stored): title = stored
+        case .ignore: break
         }
-        box.set(id, "name", typed)
     }
 }

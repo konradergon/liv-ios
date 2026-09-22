@@ -12,8 +12,7 @@ import SwiftUI
 /// Which lens row is being picked, and which draft it writes back to.
 struct WorkspacePick: Identifiable {
     let property: String
-    let forFilter: Bool
-    var id: String { "\(property)-\(forFilter)" }
+    var id: String { property }
 }
 
 // MARK: - the workspace switcher (M4)
@@ -34,32 +33,37 @@ struct WorkspaceSwitcher: View {
     /// nil while composing a NEW workspace; the id being edited otherwise.
     /// Editing exists because the box ships a seeded "Home" workspace: with
     /// a create-only form it could never become a workspace at all.
-    @State private var editing: UInt64?
+    @State private var editing: LivEntityID?
     @State private var draftName = ""
     @State private var draftQuery = ""
-    @State private var composingFilter = false
-    @State private var filterName = ""
-    @State private var filterQuery = ""
     /// Which picker row is open, and whose draft it edits.
     @State private var picking: WorkspacePick?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-                // Making a FILTER shows the filter form and nothing else.
-                // This sheet is the workspace switcher, and the form only
-                // borrows it (standing rule 4: one form, one place) — but
-                // a list of workspaces above a filter you are naming is
-                // the wrong screen (owner, 2026-08-13).
-                if !composingFilter {
+                // A FORM SHOWS THE FORM AND NOTHING ELSE.
+                //
+                // The rule is the owner's, from 2026-08-13: a list of
+                // workspaces above a thing you are naming is the wrong
+                // screen.
+                //
+                // The title says which form it is, so the card is never
+                // unlabelled, and editing gets an honest one instead of
+                // borrowing the word "Workspace" from the list it
+                // replaces.
+                if composing {
+                    LivMenuTitle(text: editing == nil ? "New workspace" : "Edit workspace")
+                    newWorkspaceForm
+                } else {
                     // The SAME title and rows the `+` menu wears (owner,
                     // 2026-08-17: bigger text, simpler). This card used
                     // to draw its own smaller, denser list.
                     LivMenuTitle(text: "Workspace")
                     choice(
-                        name: "All", active: workspaces.activeId == 0,
+                        name: "All", active: workspaces.activeId.isAbsent,
                         glyph: .workspaces, divided: false
                     ) {
-                        choose(0)
+                        choose(.absent)
                     }
                     ForEach(Array(workspaces.workspaces.enumerated()), id: \.element.id) { _, ws in
                         choice(
@@ -79,29 +83,19 @@ struct WorkspaceSwitcher: View {
                             }
                             Button(role: .destructive) {
                                 workspaces.forgetQuery(ws.id)
-                                if workspaces.activeId == ws.id { choose(0, close: false) }
+                                if workspaces.activeId == ws.id { choose(.absent, close: false) }
                                 box.trashWorkspace(ws.id)
                             } label: {
                                 Label("Trash workspace", systemImage: "trash")
                             }
                         }
                     }
-                    if composing {
-                        newWorkspaceForm
-                    } else {
-                        addRow("New workspace…") {
-                            editing = nil
-                            draftName = ""
-                            draftQuery = ""
-                            composing = true
-                        }
+                    addRow("New workspace…") {
+                        editing = nil
+                        draftName = ""
+                        draftQuery = ""
+                        composing = true
                     }
-                }
-                // Filters LIVE in the library panel now; only their form
-                // is still here, opened by the panel's "New filter…".
-                if composingFilter {
-                    LivMenuTitle(text: "New filter")
-                    newFilterForm
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -111,18 +105,15 @@ struct WorkspaceSwitcher: View {
         // No .presentationDetents: it is not a sheet any more. It hangs
         // from the workspace button at the top (LivTopSheetHost), which
         // sizes itself to this content and scrolls only when it must.
-        .onAppear {
-            if desk.composeFilter {
-                composingFilter = true
-                desk.composeFilter = false
-            }
-        }
         // The SAME picker the properties panel uses, told to report the
         // choice instead of writing a cell.
         .sheet(item: $picking) { pick in
             InspectorValueSheet(
                 field: InspectorField.describe(pick.property, in: box.snap),
-                id: 0,
+                // NO ENTITY: this sheet is picking a value to put in a
+                // QUERY, not a cell on a thing. `.absent` is what "no
+                // thing" is called now that `0` cannot say it.
+                id: .absent,
                 current: [],
                 onPick: { (value: String?) in put(value, for: pick) }
             )
@@ -134,13 +125,11 @@ struct WorkspaceSwitcher: View {
     ///
     /// Kept OUT of the `.sheet` closure with every type spelled out.
     private func put(_ value: String?, for pick: WorkspacePick) {
-        let raw: String = pick.forFilter ? filterQuery : draftQuery
-        let terms: [BoxModel.LivQueryTerm] = box.lex(raw)
-        let next: String = LivTerms.setting(pick.property, to: value, in: terms)
-        if pick.forFilter { filterQuery = next } else { draftQuery = next }
+        let terms: [BoxModel.LivQueryTerm] = box.lex(draftQuery)
+        draftQuery = LivTerms.setting(pick.property, to: value, in: terms)
     }
 
-    private func choose(_ id: UInt64, close: Bool = true) {
+    private func choose(_ id: LivEntityID, close: Bool = true) {
         workspaces.setActive(id)
         if close { onClose() }
     }
@@ -152,8 +141,7 @@ struct WorkspaceSwitcher: View {
     ///
     /// The lens chips that used to sit under each name are gone with the
     /// smaller type they belonged to. A workspace's lens is still on
-    /// screen where it acts: the filter chip in every view's header, and
-    /// the filters in the menu.
+    /// screen where it acts: the lens chip in every view's header.
     private func choice(
         name: String, active: Bool, glyph: LivGlyph,
         emoji: String? = nil, divided: Bool, action: @escaping () -> Void
@@ -164,7 +152,7 @@ struct WorkspaceSwitcher: View {
     }
 
     private func addRow(_ label: String, action: @escaping () -> Void) -> some View {
-        LivMenuRow(label: label, symbol: "plus", accent: true, divided: true, action: action)
+        LivMenuRow(label: label, symbol: "plus", divided: true, action: action)
     }
 
     // MARK: the new-workspace form — name + query + the stamp hint
@@ -172,26 +160,23 @@ struct WorkspaceSwitcher: View {
     private var newWorkspaceForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             field("Name", text: $draftName)
-            lensRows($draftQuery, forFilter: false)
+            lensRows($draftQuery)
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") {
                     composing = false
                     editing = nil
                 }
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text3)
+                // text2, not text3. A control is not a placeholder, and
+                // text3 is the tier the palette check exempts from the
+                // read floor on the grounds that it holds placeholders
+                // and timestamps (rev 79). It stays QUIETER than the
+                // filled pill beside it, which is the pair a form wants:
+                // one primary, one way out.
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text2)
                 .buttonStyle(.plain)
-                Button(action: saveWorkspace) {
-                    Text(editing == nil ? "Create" : "Save")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.onAccent)
-                        .padding(.horizontal, 14)
-                        .frame(height: 28)
-                        .background(Capsule().fill(LivTheme.accent))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
+                ConfirmPill(editing == nil ? "Create" : "Save", action: saveWorkspace)
                 .disabled(trimmed(draftName).isEmpty)
                 .opacity(trimmed(draftName).isEmpty ? 0.45 : 1)
             }
@@ -219,15 +204,24 @@ struct WorkspaceSwitcher: View {
     /// itself and nothing else; the old "stamps area:Work" hint is gone
     /// with it.
     @ViewBuilder private func lensRows(
-        _ query: Binding<String>, forFilter: Bool
+        _ query: Binding<String>
     ) -> some View {
         ForEach(["area", "tags"], id: \.self) { property in
             let value: String? = pickedValue(property, in: query.wrappedValue)
             Button {
-                picking = WorkspacePick(property: property, forFilter: forFilter)
+                picking = WorkspacePick(property: property)
             } label: {
                 HStack(spacing: 8) {
-                    Text(property == "area" ? "Area" : "Tags")
+                    // THE BOX'S WORD FOR IT, not a pair spelled here.
+                    //
+                    // This was `property == "area" ? "Area" : "Tags"` —
+                    // a two-entry word table in a view file, which is
+                    // the shell-side furnishing `one-core.md` §4 records
+                    // as a mistake. It is also how the owner ended up
+                    // asking what "Tags" was (2026-09-16): a tag in this
+                    // app is what a thing is ABOUT, the box says
+                    // "Subject", and this file said otherwise.
+                    Text(InspectorField.describe(property, in: box.snap).shown.capitalized)
                         .font(.system(size: LivType.body))
                         .foregroundStyle(LivTheme.text)
                     Spacer(minLength: 8)
@@ -254,52 +248,31 @@ struct WorkspaceSwitcher: View {
         }
     }
 
-    private var newFilterForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            field("Name", text: $filterName)
-            lensRows($filterQuery, forFilter: true)
-            HStack(spacing: 10) {
-                Spacer()
-                Button("Cancel") {
-                    composingFilter = false
-                }
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text3)
-                .buttonStyle(.plain)
-                Button(action: createFilter) {
-                    Text("Save")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.onAccent)
-                        .padding(.horizontal, 14)
-                        .frame(height: 28)
-                        .background(Capsule().fill(LivTheme.accent))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty)
-                .opacity(
-                    trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty ? 0.45 : 1)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
     /// One dress, one font. The mono variant existed for the raw query
     /// field, which is gone (owner, 2026-08-14).
+    ///
+    /// IT FILLED WITH THE COLOUR BEHIND IT (fixed 2026-09-13, owner:
+    /// *"These spaces need visual polish"*). The card is
+    /// `LivTheme.surface` and this field was `LivTheme.surface`, so the
+    /// only thing separating them was a 0.5pt hairline — which is why
+    /// "Name" read as a placeholder floating loose in the card rather
+    /// than as a field waiting for a word. `panel2` is the app's own
+    /// answer for a well: "a quiet fill for a lit row, a chip, a well".
+    ///
+    /// The border goes with the same argument rev 83 used on the filter
+    /// chips: a fill either reads as a well or it does not, and a
+    /// hairline propping up a fill that does not is two devices for one
+    /// job. The capsule matches the search field, which is the app's
+    /// other place you type a word into a shape.
     private func field(_ prompt: String, text: Binding<String>) -> some View {
         TextField(prompt, text: text)
             .font(.system(size: LivType.body))
             .foregroundStyle(LivTheme.text)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: LivTheme.radiusSm).fill(LivTheme.panel))
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
-            )
+            .padding(.horizontal, 14)
+            .frame(height: LivRow.touch)
+            .background(Capsule().fill(LivTheme.panel2))
     }
 
     private func trimmed(_ s: String) -> String {
@@ -316,11 +289,20 @@ struct WorkspaceSwitcher: View {
         guard !name.isEmpty else { return }
         if let id = editing {
             box.set(id, "name", name)
+            workspaces.remember(id, name: name, query: query)
             write(query, to: id)
             finish(id)
         } else {
             box.createWorkspace(name: name) { id in
-                guard id != 0 else { return }
+                guard !id.isAbsent else { return }
+                // THE MODEL LEARNS IT BEFORE THE SNAPSHOT DOES. `finish`
+                // makes this workspace active, and a snapshot taken
+                // before the create lands a beat later carrying no such
+                // id — which `apply` reads as "it left the box" and
+                // answers by falling back to All. Handing the row over
+                // here is what stops the new workspace throwing you off
+                // itself (owner, 2026-09-22).
+                workspaces.remember(id, name: name, query: query)
                 write(query, to: id)
                 finish(id)
             }
@@ -329,36 +311,57 @@ struct WorkspaceSwitcher: View {
 
     /// The `query` cell IS the workspace. An emptied query clears the cell
     /// rather than leaving a stale lens behind.
-    private func write(_ query: String, to id: UInt64) {
+    ///
+    /// **AND THE WORDS IT NAMES HAVE TO EXIST** — both of them, which is
+    /// the half this got wrong (owner, 2026-09-22).
+    ///
+    /// It already minted a missing PROPERTY, because `set` refuses a
+    /// property name the box has never seen and the stamp would then do
+    /// nothing. The same is true one level down and was not handled: a
+    /// select's VALUE is matched by name and never minted — a typo must
+    /// not create an area — so a workspace whose query says
+    /// `area:test1`, written by typing a new name into the form's Area
+    /// row, stamps nothing at all. Every note made in it came out
+    /// unfiled, in silence, while the form showed the area as set.
+    ///
+    /// Picking an area that already existed worked, which is what made
+    /// it look like the stamp was broken rather than the vocabulary.
+    ///
+    /// Typing a name into that row IS how an area is born now that none
+    /// ships (2026-09-21), so minting here is not a convenience — it is
+    /// the only door that form has.
+    ///
+    /// Both verbs are idempotent by name, so a workspace saved twice
+    /// mints nothing the second time. `addProperty` was not, until the
+    /// same day — it left a duplicate field behind on every save.
+    private func write(_ query: String, to id: LivEntityID) {
         if query.isEmpty {
             box.unset(id, "query")
         } else {
             box.set(id, "query", query)
             for cell in LivTerms.stamps(box.lex(query)) where cell.property != "type" {
-                box.addProperty(cell.property)
+                box.addProperty(cell.property) { pid in
+                    guard !pid.isAbsent else { return }
+                    // ONLY A FIELD THAT KEEPS A VOCABULARY. `tags` is
+                    // text and holds no options, and asking it to mint
+                    // one is refused — which would raise a fault chip
+                    // about a workspace that saved perfectly well.
+                    // `mintsValues` is the box's own answer to that
+                    // question and the one the value picker already uses.
+                    guard InspectorField.describe(cell.property, in: box.snap).mintsValues
+                    else { return }
+                    box.addOption(pid, cell.value)
+                }
             }
         }
         workspaces.rememberQuery(id, query)
     }
 
-    private func finish(_ id: UInt64) {
+    private func finish(_ id: LivEntityID) {
         draftName = ""
         draftQuery = ""
         composing = false
         editing = nil
         choose(id)
-    }
-
-    private func createFilter() {
-        let name = trimmed(filterName)
-        let query = trimmed(filterQuery)
-        guard !name.isEmpty, !query.isEmpty else { return }
-        box.createView(name: name, query: query) { id in
-            guard id != 0 else { return }
-            filterName = ""
-            filterQuery = ""
-            composingFilter = false
-            workspaces.activeFilterId = id
-        }
     }
 }

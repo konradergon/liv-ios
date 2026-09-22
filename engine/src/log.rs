@@ -119,32 +119,97 @@ pub fn open_in_memory() -> Result<rusqlite::Connection, LogError> {
 }
 
 fn prepare(conn: rusqlite::Connection) -> Result<rusqlite::Connection, LogError> {
-        // WAL is why an app extension can read while the app writes —
-        // the reason SQLite was chosen over a hand-rolled file
-        // (core-decisions.md §5).
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
+    // WAL is why an app extension can read while the app writes — the
+    // reason SQLite was chosen over a hand-rolled file
+    // (core-decisions.md §5).
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.execute_batch(SCHEMA)?;
 
-        // The version fence, checked before a single byte is read.
-        let found: Option<String> = conn
-            .query_row("SELECT value FROM meta WHERE key = 'box_format'", [], |r| r.get(0))
-            .ok();
-        match found {
-            None => {
-                conn.execute(
-                    "INSERT INTO meta(key, value) VALUES ('box_format', ?1)",
-                    [BOX_FORMAT.to_string()],
-                )?;
-            }
-            Some(v) => {
-                let found: u32 = v.parse().unwrap_or(u32::MAX);
-                if found > BOX_FORMAT {
-                    return Err(LogError::UnsupportedBox { found, supported: BOX_FORMAT });
-                }
+    // The version fence, checked before a single byte is read.
+    let found: Option<String> =
+        conn.query_row("SELECT value FROM meta WHERE key = 'box_format'", [], |r| r.get(0)).ok();
+    match found {
+        None => {
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('box_format', ?1)",
+                [BOX_FORMAT.to_string()],
+            )?;
+        }
+        Some(v) => {
+            let found: u32 = v.parse().unwrap_or(u32::MAX);
+            if found > BOX_FORMAT {
+                return Err(LogError::UnsupportedBox { found, supported: BOX_FORMAT });
             }
         }
+    }
     Ok(conn)
+}
+
+/// **The box remembers which device it belongs to.**
+///
+/// A `DeviceId` names a WRITER and is never reused (`id.rs`), and a dot is
+/// `(device, seq)` with seq counted per device. So a device id re-minted on
+/// every open would restart that counter against history the box already
+/// holds — every new op colliding with an old dot, which is the one thing
+/// the design calls irreversible. It is written once, on the first open,
+/// and read back after that.
+///
+/// It is stored in `meta`, which `drop_all` does not touch: the device is
+/// not derived from the log and must survive a replay.
+pub fn device(conn: &rusqlite::Connection) -> Result<DeviceId, LogError> {
+    // Hex rather than raw bytes: `meta.value` is declared TEXT, and
+    // SQLite's dynamic typing would have stored a blob there happily
+    // while making the column's declaration a lie.
+    let found: Option<String> =
+        conn.query_row("SELECT value FROM meta WHERE key = 'device'", [], |r| r.get(0)).ok();
+    if let Some(hex) = found {
+        if let Some(id) = from_hex(&hex) {
+            return Ok(DeviceId(id));
+        }
+    }
+    let fresh = mint_device();
+    let hex: String = fresh.0.iter().map(|b| format!("{b:02x}")).collect();
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('device', ?1)",
+        rusqlite::params![hex],
+    )?;
+    Ok(fresh)
+}
+
+fn from_hex(hex: &str) -> Option<[u8; 8]> {
+    if hex.len() != 16 {
+        return None;
+    }
+    let mut out = [0u8; 8];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Eight bytes that will not collide with another install's.
+///
+/// `RandomState` is seeded by the OS, so hashing a constant with two fresh
+/// ones yields entropy without the crate taking a dependency to get it —
+/// and the crate having no dependencies but SQLite is a property worth
+/// keeping. It is an identifier, not a secret: nothing here is a key.
+fn mint_device() -> DeviceId {
+    use std::hash::{BuildHasher, Hasher};
+    let mut out = [0u8; 8];
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(0x4c49_5644_4556_0001);
+    let a = h.finish();
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(a);
+    let b = h.finish();
+    out.copy_from_slice(&(a ^ b.rotate_left(17)).to_le_bytes());
+    // All zeroes would read as "unset" to anything that checks; one bit
+    // costs nothing and removes the case.
+    if out == [0u8; 8] {
+        out[0] = 1;
+    }
+    DeviceId(out)
 }
 
     /// Append a group. The caller is responsible for its seq being the
@@ -226,6 +291,54 @@ pub fn range(
             out.push(op::decode(&row?)?.0);
         }
         Ok(out)
+    }
+
+    /// This device's groups, NEWEST FIRST, until `f` says stop.
+    ///
+    /// Lazy on purpose: undo's reading of the tail (`undo.rs`) stops at
+    /// the first group still in effect, which in a box nobody has undone
+    /// in is the very first row. Loading the history to look at its last
+    /// entry is what the engine exists not to do.
+pub fn walk_back<F>(
+        conn: &rusqlite::Connection,
+        device: DeviceId,
+        mut f: F,
+    ) -> Result<(), LogError>
+    where
+        F: FnMut(&Group) -> bool,
+    {
+        let mut stmt = conn.prepare(
+            "SELECT bytes FROM ops WHERE device = ?1 ORDER BY first_seq DESC",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![&device.0[..]])?;
+        while let Some(row) = rows.next()? {
+            let bytes: Vec<u8> = row.get(0)?;
+            let g = op::decode(&bytes)?.0;
+            if !f(&g) {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// The group one dot names, if this box holds it.
+    ///
+    /// A dot names an OP, and a group's seqs are consecutive from
+    /// `first_seq` — so the group is the newest one on that device whose
+    /// first seq is not past it, and only if its ops reach that far.
+pub fn group_at(conn: &rusqlite::Connection, dot: Dot) -> Result<Option<Group>, LogError> {
+        let found: Option<(i64, Vec<u8>)> = conn
+            .query_row(
+                "SELECT op_count, bytes FROM ops
+                 WHERE device = ?1 AND first_seq <= ?2
+                 ORDER BY first_seq DESC LIMIT 1",
+                rusqlite::params![&dot.device.0[..], dot.seq as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        let Some((count, bytes)) = found else { return Ok(None) };
+        let g = op::decode(&bytes)?.0;
+        Ok(if dot.seq < g.first_seq + count as u64 { Some(g) } else { None })
     }
 
     /// The whole log in causal order — what replay reads.

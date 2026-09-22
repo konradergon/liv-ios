@@ -29,6 +29,19 @@ impl Engine {
         Engine::wrap(log::open_in_memory()?, device)
     }
 
+    /// Open a box as THIS device, whichever that turns out to be.
+    ///
+    /// The box carries its own device id: minted on the first open and
+    /// read back on every one after. A caller that passes its own is
+    /// saying "I am this writer" and had better mean it — a re-minted id
+    /// restarts a per-device seq counter against history the box already
+    /// holds. Shells use this one.
+    pub fn open_local(path: &std::path::Path) -> Result<Engine, LogError> {
+        let conn = log::open(path)?;
+        let device = log::device(&conn)?;
+        Engine::wrap(conn, device)
+    }
+
     fn wrap(conn: Connection, device: DeviceId) -> Result<Engine, LogError> {
         conn.execute_batch(view::SCHEMA)?;
         Ok(Engine { conn, hold: Hold::default(), ids: IdGen::new(device) })
@@ -58,10 +71,27 @@ impl Engine {
         author: Author,
         now_ms: u64,
     ) -> Result<Dot, LogError> {
+        self.commit_reversing(ops, action, author, now_ms, None)
+    }
+
+    /// The same write, pointing at the group it takes back.
+    ///
+    /// `reverses` is what makes undo a reading of the log rather than a
+    /// stack held beside it — see `undo.rs`. Nothing else sets it, and
+    /// nothing else should: a group that claims to reverse something it
+    /// does not would make the tail walk lie.
+    pub(crate) fn commit_reversing(
+        &mut self,
+        ops: Vec<Op>,
+        action: u16,
+        author: Author,
+        now_ms: u64,
+        reverses: Option<Dot>,
+    ) -> Result<Dot, LogError> {
         let device = self.ids.device();
         let first_seq = log::next_seq(&self.conn, device)?;
         let hlc = self.ids.stamp(now_ms);
-        let g = Group { device, first_seq, hlc, author, action, reverses: None, ops };
+        let g = Group { device, first_seq, hlc, author, action, reverses, ops };
 
         let tx = self.conn.transaction()?;
         log::append(&tx, &g)?;
@@ -155,6 +185,11 @@ impl Engine {
         self.hold.len()
     }
 
+    /// Does the box hold this thing? A trashed one still does.
+    pub fn exists(&self, id: EntityId) -> Result<bool, LogError> {
+        Ok(view::exists(&self.conn, id)?)
+    }
+
     pub fn entity_count(&self) -> Result<u64, LogError> {
         Ok(view::entity_count(&self.conn)?)
     }
@@ -175,5 +210,75 @@ impl Engine {
     /// writing.
     pub fn stamp(&mut self, now_ms: u64) -> Hlc {
         self.ids.stamp(now_ms)
+    }
+
+    // ---- asking the box a question ------------------------------------
+
+    /// Everything whose `prop` holds this value — every task, everything
+    /// filed under Work, every note that mentions Anna.
+    pub fn with_value(
+        &self,
+        prop: EntityId,
+        value: &crate::op::Value,
+    ) -> Result<Vec<EntityId>, LogError> {
+        Ok(view::with_value(&self.conn, prop, value)?)
+    }
+
+    /// Every entity's live value of one property, in ONE query — the bulk
+    /// form of `one`, and it keeps `one`'s rule: a contended cell is not
+    /// an answer, so it is left out rather than resolved.
+    ///
+    /// This exists because the clerk's gazetteer wants every name in the
+    /// box and was asking entity by entity.
+    pub fn one_each(
+        &self,
+        prop: EntityId,
+    ) -> Result<Vec<(EntityId, crate::op::Value)>, LogError> {
+        Ok(view::with_prop(&self.conn, prop)?
+            .into_iter()
+            .filter_map(|(id, mut values)| {
+                (values.len() == 1).then(|| (id, values.pop().unwrap()))
+            })
+            .collect())
+    }
+
+    /// Everything of one kind.
+    pub fn of_kind(&self, kind: EntityId) -> Result<Vec<EntityId>, LogError> {
+        self.with_value(crate::model::prop::KIND, &crate::op::Value::Ref(kind))
+    }
+
+    /// Everything whose `prop` is a time in `[from_ms, to_ms]`, soonest
+    /// first, with that time.
+    pub fn in_window(
+        &self,
+        prop: EntityId,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<(EntityId, i64)>, LogError> {
+        Ok(view::in_window(&self.conn, prop, from_ms, to_ms)?)
+    }
+
+    /// Everything one entity holds, in one query rather than one per
+    /// property.
+    pub fn cells_of(
+        &self,
+        entity: EntityId,
+    ) -> Result<Vec<(EntityId, Dot, crate::op::Value)>, LogError> {
+        Ok(view::cells_of(&self.conn, entity)?)
+    }
+
+    /// Every entity, oldest first.
+    pub fn all_entities(&self) -> Result<Vec<EntityId>, LogError> {
+        Ok(view::all_entities(&self.conn)?)
+    }
+
+    /// Every entity, most recently touched first.
+    pub fn by_touch(&self) -> Result<Vec<EntityId>, LogError> {
+        Ok(view::by_touch(&self.conn)?)
+    }
+
+    /// When one entity was last touched.
+    pub fn touched(&self, id: EntityId) -> Result<i64, LogError> {
+        Ok(view::touched(&self.conn, id)?)
     }
 }

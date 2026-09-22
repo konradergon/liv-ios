@@ -1,6 +1,6 @@
-// liv iOS — the furnishing pass (design/ios.md §10, what-liv-is-for v2).
-// The app arrives furnished: the area select with exactly six options,
-// and the three text properties the
+// liv iOS — the furnishing pass (design/ios.md §10).
+// The app arrives with the FIELDS it needs — the area select, and the
+// three text properties the
 // capture chips write (project / tags / people — whose absence on a
 // fresh box made the chips silently write NOTHING; `set` and `addCell`
 // refuse unknown property names).
@@ -15,14 +15,8 @@
 import Foundation
 
 enum Furnish {
-    /// The six areas — the RESEARCHED canon (PARA, Wheel of Life, Things,
-    /// Ultimate Brain; 2026-07-27), not invention. Fixed. No create-new.
-    static let areaNames = [
-        "Work", "Health", "Money", "Home", "Family & Friends", "Learning",
-    ]
-
     /// The text fields the capture/camera chips write. `area` is separate:
-    /// it is a select, born with its options.
+    /// it is a select, and since 2026-09-21 it is born EMPTY.
     static let textProperties = ["project", "tags", "people"]
 
     /// The name this field used to carry. The product says Tags and the
@@ -57,15 +51,14 @@ private final class FurnishPass {
         finishIfDone()
     }
 
-    /// Rewrite `old:` to `new:` in every saved workspace and filter query.
+    /// Rewrite `old:` to `new:` in every saved workspace query.
     ///
     /// Only the QUALIFIER KEY is touched — `subjects:x` becomes `tags:x`,
     /// and the word "subjects" appearing as free text is left alone,
     /// because a person searching for that word still means the word.
     private func renameInQueries(_ snap: Snapshot, from old: String, to new: String) {
-        let rows: [(UInt64, String)] =
+        let rows: [(LivEntityID, String)] =
             (snap.workspaces ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
-            + (snap.views ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
         for (id, text) in rows {
             let rewritten = text
                 .split(separator: " ", omittingEmptySubsequences: false)
@@ -142,32 +135,24 @@ private final class FurnishPass {
             box.addProperty(name) { [self] _ in landed() }
         }
 
-        if let area = existing("area") {
-            // Present. Add only the missing options (liv_add_option_at is
-            // idempotent anyway; the guard just skips the round-trip). A
-            // legacy TEXT `area` refuses options harmlessly — values keep
-            // flowing as text, and the picker unions live values in.
-            let held = (area.options ?? []).compactMap { $0.name }
-            addOptions(to: area.id ?? 0, skipping: held)
-        } else {
+        // THE FIELD, AND NOT ONE VALUE IN IT (owner, 2026-09-21: *"Areas
+        // are all created by the user, so whatever fixed areas are in
+        // code should be removed"*).
+        //
+        // This used to seed six options — Work, Health, Money, Home,
+        // Family & Friends, Learning — on every launch, against a
+        // matching six frozen in `engine/src/model.rs`. Those are gone,
+        // so seeding them here would not restore a preset: it would MINT
+        // all six as the user's own on first launch, which is the one
+        // outcome the ruling rules out. A fresh box has no areas until
+        // someone makes one.
+        //
+        // `addOptions` went with it (standing rule 6). The picker's
+        // create row is how an area comes into being now, and
+        // `liv_add_option` is the verb behind it.
+        if existing("area") == nil {
             track()
-            box.addProperty("area", kind: "select") { [self] id in
-                if id != 0 { addOptions(to: id, skipping: []) }
-                landed()
-            }
-        }
-    }
-
-    private func addOptions(to property: UInt64, skipping held: [String]) {
-        guard property != 0 else { return }
-        for name in Furnish.areaNames {
-            guard
-                !held.contains(where: {
-                    $0.compare(name, options: .caseInsensitive) == .orderedSame
-                })
-            else { continue }
-            track()
-            box.addOption(property, name) { [self] _ in landed() }
+            box.addProperty("area", kind: "select") { [self] _ in landed() }
         }
     }
 

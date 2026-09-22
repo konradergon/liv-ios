@@ -1,6 +1,6 @@
 // liv iOS — the shared kit (design/ios.md §6–7). Compact density is law:
-// the budgets below are CODE, not convention. Chips render neutral; the
-// value's color is only the 6pt Hue dot. Amber = AI presence — the Inbox
+// the budgets below are CODE, not convention. Chips render neutral, and
+// wear a 6pt dot only when they stand for a KIND. Amber = AI presence — the Inbox
 // proposal capsule is the app's ONE in-app badge.
 
 import SwiftUI
@@ -10,26 +10,28 @@ import SwiftUI
 struct SectionLabel: View {
     let text: String
     var trailing: String? = nil
-    var trailingAction: (() -> Void)? = nil
-    /// A heading that names a KIND wears that kind's color as a small
-    /// dot. Nothing else does — a dot on every heading would say nothing.
-    var dot: Color? = nil
+    /// A short WARNING about the group, drawn once beside its name — "12
+    /// late". It is the only place this app raises its voice in a list,
+    /// and it exists so that individual rows do not have to: colouring
+    /// every overdue date turned a column of forty-seven dates red and
+    /// told you nothing you could act on.
+    var note: String? = nil
 
     init(
-        _ text: String, trailing: String? = nil, dot: Color? = nil,
-        trailingAction: (() -> Void)? = nil
+        _ text: String, trailing: String? = nil, note: String? = nil
     ) {
         self.text = text
         self.trailing = trailing
-        self.dot = dot
-        self.trailingAction = trailingAction
+        self.note = note
     }
 
     var body: some View {
         HStack(spacing: 7) {
-            if let dot {
-                Circle().fill(dot).frame(width: 7, height: 7)
-            }
+            // NO DOT. A heading that named a kind used to wear that
+            // kind's colour as a 7pt circle. Nothing passed one — the
+            // parameter had zero callers on 2026-08-30 — and the device
+            // itself is the kind the polish pass is removing: a coloured
+            // dot beside a word that already says the thing (rule 6).
             // 13pt semibold text2, not 11pt bold text3 (owner,
             // 2026-08-06: "headings and UI text are too subtle"). One
             // recipe, 28 call sites — the whole app's section hierarchy
@@ -43,21 +45,22 @@ struct SectionLabel: View {
             Text(text)
                 .font(.system(size: LivType.label, weight: .medium))
                 .foregroundStyle(LivTheme.text2)
+            if let note {
+                Text(note)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.red)
+            }
             Spacer()
+            // NO ACCENT VERB HERE (2026-09-15). A `trailingAction` drew
+            // this count as a blue button, and its ONE caller — the Done
+            // group in Tasks — already makes the whole heading tappable
+            // with `.onTapGesture`. So a fold that has one door had two,
+            // and the second was a blue word (rules 4 and 6, and the
+            // owner's: the only clickable text is a link in a note).
             if let trailing {
-                if let trailingAction {
-                    Button(action: trailingAction) {
-                        Text(trailing)
-                            .font(.system(size: LivType.body, weight: .medium))
-                            .foregroundStyle(LivTheme.accent)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Text(trailing)
-                        .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.muted)
-                }
+                Text(trailing)
+                    .font(.system(size: LivType.label))
+                    .foregroundStyle(LivTheme.text2)
             }
         }
         // THE HEADING OWNS ITS OWN ROOM (2026-08-21). Leaving it to the
@@ -71,42 +74,595 @@ struct SectionLabel: View {
     }
 }
 
+/// A GROUP STARTS HERE, AND IT HAS NO NAME.
+///
+/// The heading's own air without the word — the library panel's device
+/// ("NO SECTION LABELS", owner 2026-08-18: *"eliminate unnecessary small
+/// text and labels"*; one empty row-slot does the separating), as a type
+/// rather than as a literal repeated per surface.
+///
+/// **Derived from the heading's two tokens**, so a change to the app's
+/// section rhythm moves the named groups and the unnamed ones together.
+/// A number of its own here would drift apart from `SectionLabel` on the
+/// first day either was touched, which is standing rule 3 exactly.
+struct SectionGap: View {
+    var body: some View {
+        Color.clear
+            .frame(height: LivRow.sectionTop + LivRow.sectionBottom)
+    }
+}
+
+// MARK: - the filter chip
+
+/// WHICH SLICE OF THE LIST YOU ARE LOOKING AT — one chip, now shared.
+///
+/// Owner, 2026-09-12: *"make everything buttons (All, Notes…) match
+/// style of equivalents in Tasks."*
+///
+/// This was `TasksFilterChip`, private to `Tasks.swift`, and its own
+/// comment has claimed since 2026-08-30 that it is "the same mark the
+/// lens row and the day strip use — the app has one way of saying 'this
+/// one'". Measured, the app had three ways, and this row was the one
+/// that had been polished:
+///
+/// - **Tasks** — a filled capsule when chosen, and a bare word when not.
+/// - **Everything** — the same, PLUS a hairline border around every
+///   unchosen chip, semibold rather than medium when chosen, and 14pt of
+///   side padding rather than 12. The border is the whole visual gap: it
+///   made four outlined pills where Tasks has four words.
+/// - **Inbox** — no capsule at all; a 2pt rule under the chosen lens.
+///
+/// The 2026-08-30 pass took four devices down to one in Tasks (an accent
+/// fill, an accent border, accent ink and a heavier weight, with a
+/// coloured dot repeating the status the chip already spells) and wrote
+/// the sentence about consistency above the one row it had fixed. The
+/// same shape as the Inbox heading that claimed to match `SectionLabel`
+/// while sitting at its own numbers: a rule asserted in prose next to
+/// the site that obeys it.
+///
+/// INBOX IS DELIBERATELY NOT SWEPT IN. Its underline is a different
+/// device with its own dated reasoning — it is the mark the day strip
+/// uses, and it carries a count beside each lens that a capsule has
+/// nowhere to put. Making it a capsule is a visible change the owner did
+/// not ask for; it is named here so the third recipe is on the record
+/// rather than rediscovered.
+struct LivFilterChip: View {
+    let text: String
+    let selected: Bool
+    let action: () -> Void
+
+    init(_ text: String, selected: Bool, action: @escaping () -> Void) {
+        self.text = text
+        self.selected = selected
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(text)
+                // `body`, not `label` (2026-09-05). This row decides
+                // which slice of the list you are looking at, and it sat
+                // at the same size as the group heading below it — a
+                // control reading as quietly as a caption.
+                .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
+                .lineLimit(1)
+                .foregroundStyle(selected ? LivTheme.text : LivTheme.text2)
+                .padding(.horizontal, 12)
+                .frame(height: LivChip.tall)
+                .background(Capsule().fill(selected ? LivTheme.panel2 : .clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - the two titles
+
+/// A SCREEN'S OWN NAME — hero(32), bold, full ink.
+///
+/// WHY THIS IS A TYPE NOW, and why it is only two of the six jobs the
+/// weight-and-ink census measured (2026-09-12).
+///
+/// That census found 149 pieces of text drawn in 64 different
+/// combinations of size, weight and ink, and named six jobs a reader
+/// would recognise. Four of them already live in types — `SectionLabel`
+/// (17 callers), `LivRowFact`, `LivMenuTitle`, and a list row's title
+/// inside `LivListRow` — so standing rule 3 is already satisfied for
+/// those, whatever else is true of them.
+///
+/// The two that had NO type are the two that were hand-rolled: a
+/// screen's name, copied identically at five sites, and a sheet's,
+/// copied identically at three. Those eight copies are the whole of what
+/// this change fixes, and because every copy was byte-identical it moves
+/// no pixels.
+///
+/// WHAT IS DELIBERATELY NOT HERE. A row's primary title is drawn with
+/// seven different triples across 21 sites, and a bare tappable word
+/// with three across thirteen. There is no canonical triple to put in a
+/// type, because nobody has picked one — and a name holding an answer
+/// nobody chose is prose with extra steps, which is the failure standing
+/// rule 3 exists to name rather than an instance of obeying it. Those
+/// two are visible decisions and they are the owner's.
+///
+/// NO WEIGHT RAMP EITHER, for the same reason. `Theme.swift` declares
+/// eight sizes and zero weights, and the tempting fix is a weight scale
+/// beside the type scale. But a weight is never chosen on its own: it is
+/// chosen WITH a size and an ink, for a job. The place it belongs is
+/// inside the job's own type, which is where it already sits for every
+/// job that has one.
+///
+/// THE LAYOUT STAYS WITH THE CALLER. Three of the five screens wrap this
+/// in a full-width frame and 10pt of top padding; the Calendar and Today
+/// put it in an `HStack` beside a chevron or a busy mark. Unlike
+/// `SectionLabel`, whose room was the thing that had drifted, these five
+/// agreed on the type and disagreed on the frame — so the type takes the
+/// half they agreed on.
+struct LivScreenTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: LivType.hero, weight: .bold))
+            .foregroundStyle(LivTheme.text)
+    }
+}
+
+/// A SHEET'S OWN NAME — title(22), bold, full ink, and the inset and top
+/// room all three callers already gave it.
+///
+/// Here the room DOES belong to the type: History, Settings and Trash
+/// wrote the same `LivRow.cardInset + 4` and the same top 16 as well as
+/// the same font and ink, so all four lines were the copy.
+///
+/// ONE THING THIS DOES NOT SETTLE. `LivMenuTitle` draws the same size in
+/// SEMIBOLD, so a title on a card is still two weights depending on
+/// which kind of card it is. Converging them is a visible change in one
+/// direction or the other — bold is also the screen title's weight, so
+/// reusing it here blurs the rank between the screen you are in and the
+/// sheet on top of it, which argues for semibold; and semibold at 22
+/// against an owner who has called this app's text too small three times
+/// argues for bold. That is a judgement, so it is left alone and the two
+/// weights are written down here rather than discovered again later.
+struct LivSheetTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: LivType.title, weight: .bold))
+            .foregroundStyle(LivTheme.text)
+            .padding(.horizontal, LivRow.cardInset + 4)
+            .padding(.top, 16)
+    }
+}
+
 // MARK: - ValueChip / AddChip
 
-/// The one chip recipe (O2): NEUTRAL body — panel2 fill, text2 ink,
-/// hairline capsule — with the value's color only as the 6pt leading Hue
-/// dot. `dotted: false` is the variant dates/recurrence/tier REQUIRE.
+/// The one chip recipe: a NEUTRAL capsule — one quiet fill, text2 ink,
+/// and nothing else.
+///
+/// ONE DEVICE, NOT TWO (polish pass, 2026-08-30). It carried a fill AND
+/// a hairline border, which is two ways of saying the same edge, and
+/// between this and `AddChip` that pair reached forty-odd call sites —
+/// the single biggest source of visual noise in the app. A filled shape
+/// does not also need to be outlined.
+///
+/// THE DOT IS GONE with it. A chip standing for a thing wore that
+/// thing's kind colour as a 6pt circle; the only remaining caller passed
+/// one for a reference chip, where the words already name the thing. A
+/// coloured dot next to a word that says the same thing is decoration.
 struct ValueChip: View {
     let text: String
-    var dotted: Bool = true
     var big: Bool = false
-    /// Overrides the dot's color. A chip standing for a THING (a kind, a
-    /// reference to another entity) wears that thing's kind color; every
-    /// other chip keeps the Hue hash, which is stable per word and means
-    /// nothing beyond "these two say the same thing".
-    var hue: Color? = nil
+    /// A leading GLYPH. Used by the Fields list, which is this app's
+    /// schema view: there a row of forty names needs finding, which is
+    /// what an icon is for.
+    var glyph: LivGlyph? = nil
 
-    init(_ text: String, dotted: Bool = true, big: Bool = false, hue: Color? = nil) {
+    init(_ text: String, big: Bool = false, glyph: LivGlyph? = nil) {
         self.text = text
-        self.dotted = dotted
         self.big = big
-        self.hue = hue
+        self.glyph = glyph
     }
 
     var body: some View {
         HStack(spacing: big ? 5 : 4) {
-            if dotted {
-                Circle().fill(hue ?? Hue.dot(text)).frame(width: 6, height: 6)
+            if let glyph {
+                LivIcon(
+                    glyph: glyph, color: LivTheme.text3,
+                    size: big ? LivChip.valueGlyph : LivChip.glyph)
             }
+            // NEVER 11pt. The small chip's text was `micro`, which is the
+            // size reserved for a badge — a thing you glance at, not a
+            // word you read — and these chips carry area names, project
+            // names and dates.
+            //
+            // THE TWO VARIANTS ARE TWO VOICES (owner, 2026-09-05: "tasks
+            // fields are especially small"). They differed in padding
+            // alone, both at `caption`, which was right for a chip
+            // trailing a row and wrong for the properties card: there the
+            // chip IS the value, and it sat at 14 in a column where an
+            // EMPTY field's em-dash reads 20. One column, one thing, two
+            // sizes — and the filled field was the smaller of the two.
             Text(text)
-                .font(.system(size: big ? 13 : 11))
+                .font(.system(size: big ? LivType.strong : LivType.caption))
                 .lineLimit(1)
         }
         .foregroundStyle(LivTheme.text2)
-        .padding(.horizontal, big ? 10 : 7)
-        .frame(height: big ? 24 : 17)
-        .background(Capsule().fill(LivTheme.panel2))
-        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
+        .padding(.horizontal, big ? 12 : 8)
+        .frame(height: big ? LivChip.value : LivChip.height)
+        // GLASS, LIKE THE BAR (owner, 2026-09-06: "animations and glossy
+        // ui stuff is welcome"). A chip is a thing you can act on, and the
+        // app's one material for things you can act on is the bar's
+        // glass; a flat #2C2C2C fill was a second answer to the same
+        // question. Where glass is unavailable the modifier falls back
+        // to the thin material with the same hairline.
+        .livGlass(in: Capsule())
+    }
+}
+
+/// A SEGMENTED CHOICE, in the app's own language.
+///
+/// It replaces `.pickerStyle(.segmented)`, whose selected thumb measures
+/// #6D6D72 — a grey that is not neutral (blue five points over red) and
+/// is not in `Palette`, sitting on a #232323 card. It was the single
+/// most off-key object in the app, and the only place a control still
+/// arrived with a colour nobody here chose.
+///
+/// The mark is the one this app uses everywhere else for "this is the
+/// one you are on": a quiet fill and full ink, no accent, no inversion.
+/// 44pt tall, because a control is a touch target before it is a shape.
+struct LivSegment<Value: Hashable>: View {
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(options, id: \.value) { option in
+                let on = option.value == selection
+                Button {
+                    withAnimation(LivMotion.pick) { selection = option.value }
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: LivType.label, weight: on ? .medium : .regular))
+                        .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background(
+                            RoundedRectangle(
+                                cornerRadius: LivTheme.radiusSm, style: .continuous
+                            )
+                            .fill(on ? LivTheme.panel2 : .clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? [.isSelected] : [])
+            }
+        }
+        .frame(height: 44)
+    }
+}
+
+/// A SWITCH, in the app's own language.
+///
+/// The two `Toggle(…).tint(accent)` this replaces were the app's LOUDEST
+/// stock controls, and a system switch is a saturated slab about 51x31 —
+/// on a screen measured at 0.74% saturated pixels against 0.05–0.19%
+/// everywhere else, the two of them were most of the difference.
+///
+/// AND THE LAST ONES SINCE 2026-09-07. This said two `DatePicker`s
+/// remained in `Detail.swift` and that replacing them was "real work,
+/// not a token change, and it is not done". It was real work: the
+/// calendar's month grid moved to `Month.swift` so both screens could
+/// draw one grid, and the compact clock became a quarter-hour stepper —
+/// its true fault was never the look but that it let you dial 11:47
+/// while `CalClock` says times land on quarter hours. No stock control
+/// in this app now arrives with a colour or a grammar nobody here
+/// chose.
+///
+/// The colour moves into the TRACK at a quarter strength rather than
+/// filling it, so "on" is legible without the control being the
+/// brightest thing on the screen. The knob is ink.
+struct LivSwitch: View {
+    @Binding var isOn: Bool
+    /// A switch the app has disabled still has to READ disabled — the
+    /// platform dims a stock control for free and a hand-built one gets
+    /// nothing.
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button {
+            withAnimation(LivMotion.pick) { isOn.toggle() }
+        } label: {
+            Capsule()
+                .fill(isOn ? LivTheme.tint(LivTheme.accent, 0.55) : LivTheme.panel2)
+                .frame(width: 46, height: 28)
+                .overlay(alignment: isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(isOn ? LivTheme.text : LivTheme.text3)
+                        .frame(width: 20, height: 20)
+                        .padding(4)
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// EDITING A NAME CELL — the rules, once.
+///
+/// Three surfaces let you type a name: the desk's document title, the
+/// record card's field, and (since 2026-09-07) the properties card. The
+/// first two each carried their own `storedName` + seed + commit, and
+/// the two had already diverged — the desk's version carries two guards
+/// that were each bought with a live bug, and the record's carries
+/// neither. A third hand-written copy in the inspector would have
+/// reintroduced both (standing rule 4).
+///
+/// These are pure decisions, not a view: each surface keeps its own
+/// `@State` draft and its own field, and asks here what to do.
+enum LivName {
+    /// THE NAME CELL, never `row.title`. The wire title is a derived
+    /// display string — "#id" for an empty note, the first content line
+    /// for a scrap, the KIND word for anything unnamed — and belongs in
+    /// the grey prompt, never in the field you are typing into.
+    static func stored(_ row: EntityRow?) -> String {
+        (row?.cells ?? []).first { $0.property == "name" }?.value ?? ""
+    }
+
+    /// What a commit should do.
+    enum Commit: Equatable {
+        /// Write this to the name cell.
+        case write(String)
+        /// Put this back in the field and write nothing — an emptied
+        /// field REVERTS, it never erases the name.
+        case revert(String)
+        /// Nothing to do.
+        case ignore
+    }
+
+    /// Decide, given what was typed and what the box holds.
+    ///
+    /// A GONE OR TRASHED ENTITY TAKES NO NAME. After a trash the entity
+    /// stops resolving, `stored` reads empty, and a naive equality guard
+    /// happily writes the old name back onto the trashed thing — the
+    /// stray transaction that broke the chip's Undo (found live,
+    /// 2026-08-02). That is why this takes the row and not just a string.
+    ///
+    /// `pending` is the last value the caller wrote, so a field that
+    /// commits twice (blur after submit) does not write twice.
+    static func commit(typed raw: String, row: EntityRow?, pending: String? = nil) -> Commit {
+        guard let row, row.trashed != true else { return .ignore }
+        let stored = stored(row)
+        let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if typed.isEmpty { return .revert(stored) }
+        guard typed != stored, typed != pending else { return .ignore }
+        return .write(typed)
+    }
+
+    /// The snapshot moved under us (an undo, another surface). Returns
+    /// the value to put in the field, or nil to leave the draft alone.
+    ///
+    /// COMPARED AGAINST THE OLD STORED NAME. Comparing against the new
+    /// one cannot work: by the time the change is observed the property
+    /// already reads the new value, so the guard could only ever fire on
+    /// an empty field — an external rename froze the title, and a later
+    /// commit then silently reverted it (audit, 2026-08-04).
+    static func reseed(draft: String, was old: String, now fresh: String) -> String? {
+        guard draft != fresh, draft.isEmpty || draft == old else { return nil }
+        return fresh
+    }
+
+    /// RETURN ENDS A NAME. It does not type a blank line into one.
+    ///
+    /// Both name fields — the properties panel's and the record card's —
+    /// are `TextField(axis: .vertical)` so a long name WRAPS rather than
+    /// scrolling sideways. A vertical-axis field treats the return key
+    /// as a newline and **never calls `.onSubmit`**, so the
+    /// `.submitLabel(.done)` on both of them drew a key that put a line
+    /// break in the title and nothing else (owner, 2026-09-15: "entering
+    /// title in property card and pressing the confirm button enters a
+    /// new line instead of setting title").
+    ///
+    /// Wrapping is worth keeping and a name is still one line, so the
+    /// newline is taken back out and the field gives up focus — which is
+    /// where BOTH fields already commit from, so there is one commit and
+    /// one write.
+    ///
+    /// The same rule in one place rather than in two views (standing
+    /// rule 4); a paste carrying line breaks reads as the same intent.
+    static func endsAt(newlineIn text: inout String) -> Bool {
+        guard text.contains(where: \.isNewline) else { return false }
+        text = text.filter { !$0.isNewline }
+        return true
+    }
+}
+
+extension View {
+    /// `LivName.endsAt` wired to a field: strip the newline, drop focus,
+    /// and let the field's existing blur-commit do the write.
+    func livNameReturn(
+        _ text: Binding<String>, _ focused: FocusState<Bool>.Binding
+    ) -> some View {
+        onChange(of: text.wrappedValue) { _, _ in
+            var typed = text.wrappedValue
+            guard LivName.endsAt(newlineIn: &typed) else { return }
+            text.wrappedValue = typed
+            focused.wrappedValue = false
+        }
+    }
+}
+
+/// A DAY'S NUMBER, AND THE DISC THAT SAYS IT IS THE ONE YOU ARE ON.
+///
+/// One mark, three readings, no collision possible:
+///   selected            — ink disc, number knocked out
+///   today, selected     — ACCENT disc, number knocked out
+///   today, not selected — accent number, no disc
+///
+/// The knock-out is drawn in the GROUND, which reads on both discs and
+/// in both schemes: near-black on the ink disc and on the accent one in
+/// dark, white on both in light.
+///
+/// This is the correction rev 47 made standing (owner: *"today's date is
+/// marked by a tiny dot that is completely hidden by a horizontal bar
+/// when selected… you have a tendency to make UI elements tiny and
+/// subtle. Try to go for the opposite."*). It landed on Today's week
+/// strip and nowhere else, so until 2026-09-07 the calendar's month grid
+/// still drew the 4pt dot and 2pt rule the owner had just named — two
+/// marks for one idea, in one app (standing rule 4).
+///
+/// ONLY THE NUMBER AND ITS DISC. The two grids are not the same tile:
+/// the strip carries a weekday letter, and the month cell carries
+/// out-of-month dimming, three busy dots, a long press and its own
+/// accessibility label. Each caller keeps its tile; this is the mark
+/// they share. The diameter comes in because a month cell cannot carry
+/// the strip's 36 — see `LivDay` for the arithmetic.
+struct LivDayMark: View {
+    let number: Int
+    let selected: Bool
+    let today: Bool
+    let diameter: CGFloat
+    /// The ink when the day is neither selected nor today — the caller's
+    /// own, so the month grid can dim a day outside its month.
+    var rest: Color = LivTheme.text2
+
+    var body: some View {
+        Text("\(number)")
+            .font(
+                .system(
+                    size: LivType.body,
+                    weight: (selected || today) ? .semibold : .regular
+                )
+                .monospacedDigit()
+            )
+            .foregroundStyle(
+                selected ? LivTheme.canvas : (today ? LivTheme.accent : rest))
+            .frame(width: diameter, height: diameter)
+            .background(
+                Circle()
+                    .fill(
+                        selected
+                            ? (today ? LivTheme.accent : LivTheme.text)
+                            : Color.clear))
+    }
+}
+
+/// THE ONE BUSY MARK.
+///
+/// The box is merely locked and a retry is scheduled — quiet busyness,
+/// never a fault, which is why it is `text3` and not the red.
+///
+/// It was drawn twice and identically (Today's header and the
+/// calendar's), and it was the last untinted system control left after
+/// the 2026-09-05 stock-control inventory that produced `LivSwitch` and
+/// `LivSegment` above: no `.tint`, so it came out in the system's
+/// secondary grey rather than a colour anybody here chose.
+///
+/// `scaleEffect`, NOT `controlSize` — `controlSize` does not resize a
+/// circular `ProgressView` on iOS, so swapping it silently restores the
+/// spinner to full size. The 0.7 stays in here rather than in
+/// `Theme.swift` because a recipe holds its own geometry, the way
+/// `LivSwitch` holds 46x28 and `LivSegment` holds 44.
+struct LivBusy: View {
+    var body: some View {
+        ProgressView()
+            .scaleEffect(0.7)
+            .tint(LivTheme.text3)
+    }
+}
+
+/// THE TRASH SWIPE, once.
+///
+/// Soft and undoable at every call site — never a hard delete; the row
+/// goes to Trash and comes back from it.
+///
+/// It was hand-built four times (Everything, Tasks, Notes, Inbox) and
+/// three of them passed no `.tint`, so SwiftUI painted them its own
+/// ~100%-saturation destructive red — the loudest pixels left in an app
+/// whose palette tops out at 62%.
+///
+/// This returns ONLY THE BUTTON, deliberately, so each site keeps its
+/// own `edge:` and its own `allowsFullSwipe:`. Those are not the same:
+/// Inbox passes `false` on purpose, so an unrouted capture cannot be
+/// thrown away by a thumb that kept going. A helper that wrapped the
+/// whole `.swipeActions` container would have flattened that.
+@ViewBuilder
+func livTrashAction(_ action: @escaping () -> Void) -> some View {
+    Button(role: .destructive, action: action) {
+        Label("Trash", systemImage: "trash")
+    }
+    .tint(LivTheme.red)
+}
+
+/// The switch above, as a `ToggleStyle`, so the two call sites keep
+/// reading as `Toggle(isOn:) { label }` and only the control changes.
+struct LivSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+            Spacer(minLength: 8)
+            LivSwitch(isOn: configuration.$isOn)
+        }
+    }
+}
+
+/// THE FORM CONFIRM: Create, Save — the one filled control on a sheet.
+///
+/// A primary action earns the accent, and there is exactly one per form,
+/// so this is not the kind of colour the polish pass went after. What it
+/// went after was the DUPLICATION: `WorkspaceSwitch` carried this shape
+/// twice, byte for byte, once for a workspace and once for a filter
+/// (standing rule 4 — the same shape drawn from two places is how two
+/// shapes start).
+struct ConfirmPill: View {
+    let label: String
+    /// THE VERB AT THE END OF A ROW, rather than at the foot of a form.
+    ///
+    /// **Nine places wanted this and none of them had it**, so each
+    /// wrote an accent word instead: Add (twice), Done, Close all, Put
+    /// back, Restore, Accept all, Route them, Create. A bare accent word
+    /// is a hyperlink, and the only clickable text in this app is a link
+    /// inside a note (owner, 2026-09-15). They were written on nine
+    /// different days by someone who only had the one in front of them,
+    /// which is what a missing shape costs.
+    ///
+    /// `value` height (34) rather than `touch` (44): these sit INSIDE a
+    /// row that is itself 44 or 52, and a pill as tall as its row reads
+    /// as a second row. The text stays `body` — the same word at the
+    /// same size, in a capsule.
+    var compact: Bool = false
+    let action: () -> Void
+
+    init(_ label: String, compact: Bool = false, action: @escaping () -> Void) {
+        self.label = label
+        self.compact = compact
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                // THE APP'S VERB FACE, and as tall as what it sits
+                // beside (2026-09-13). It was `label`(16) in a 34pt
+                // capsule: under the 44pt touch floor, and SMALLER than
+                // the Cancel word next to it — a primary quieter than the
+                // way out. `body`/semibold is the face rev 81 settled on
+                // for a tappable word, and 44 matches the name field
+                // above it in both forms that draw this.
+                .font(.system(size: LivType.body, weight: .semibold))
+                .foregroundStyle(LivTheme.onAccent)
+                .padding(.horizontal, compact ? 14 : 20)
+                .frame(height: compact ? LivChip.value : LivRow.touch)
+                .background(Capsule().fill(LivTheme.accent))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -115,26 +671,40 @@ struct ValueChip: View {
 struct AddChip: View {
     let label: String
     var big: Bool = false
+    /// The mark it wears. `plus` because adding is what it nearly always
+    /// does; the Links group's "Show all 12" is the same chip with a
+    /// chevron, because it is the same KIND of control — a quiet button
+    /// that must not read as a link (owner, 2026-09-15: "only clickable
+    /// text in the app should be links inside notes").
+    var symbol: String = "plus"
     let action: () -> Void
 
-    init(_ label: String, big: Bool = false, action: @escaping () -> Void) {
+    init(
+        _ label: String, big: Bool = false, symbol: String = "plus",
+        action: @escaping () -> Void
+    ) {
         self.label = label
         self.big = big
+        self.symbol = symbol
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: big ? 4 : 3) {
-                Image(systemName: "plus")
-                    .font(.system(size: big ? 9.5 : 8, weight: .semibold))
+            HStack(spacing: big ? 5 : 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: LivChip.glyph - 3, weight: .semibold))
                 Text(label)
-                    .font(.system(size: big ? 13 : 11))
+                    .font(.system(size: LivType.caption))
                     .lineLimit(1)
             }
             .foregroundStyle(LivTheme.text3)
-            .padding(.horizontal, big ? 10 : 7)
-            .frame(height: big ? 24 : 17)
+            .padding(.horizontal, big ? 10 : 8)
+            .frame(height: big ? LivChip.tall : LivChip.height)
+            // HOLLOW is this chip's whole meaning — it is the ADD
+            // affordance, and standing empty beside filled values is how
+            // it says so. So it keeps its outline and takes no fill:
+            // still one device, the other one.
             .overlay(Capsule().strokeBorder(LivTheme.border2, lineWidth: 0.5))
             .contentShape(Capsule())
         }
@@ -178,61 +748,29 @@ struct StatusRing: View {
                                 .foregroundStyle(LivTheme.onAccent)
                         )
                 } else {
+                    // AN OPEN BOX IS INK, NOT COLOUR.
+                    //
+                    // The ring wore the status option's own hue whether
+                    // it was ticked or not, so a list of forty-seven
+                    // open tasks drew forty-seven coloured outlines down
+                    // its left edge — every reference draws that column
+                    // grey. The hue is what TICKING it means, so it is
+                    // kept for the filled state and only there: the
+                    // colour then marks the few rows that carry it
+                    // rather than the many that do not.
                     RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(hue ?? LivTheme.muted, lineWidth: 1.5)
+                        .strokeBorder(LivTheme.text3, lineWidth: 1.5)
                 }
             }
             .frame(width: compact ? 13 : 15, height: compact ? 13 : 15)
             .padding(compact ? 2 : 8)
+            // THE FINGER, NOT THE INK. The padding gives 31; the rows
+            // around this grew to 56 and the checkbox three lines away
+            // in the same list is `LivRow.touch`, so this was the one
+            // control in a Tasks row still under the minimum. Compact
+            // rings live inside a 26pt capsule and must not grow.
+            .frame(height: compact ? 17 : LivRow.touch)
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - CountTile
-
-/// The dashboard count tile (Today's 2×2, Tasks header): count over an
-/// uppercase label. Danger = the Overdue red.
-struct CountTile: View {
-    let count: Int
-    let label: String
-    var danger: Bool = false
-    let action: () -> Void
-
-    init(
-        count: Int, label: String, danger: Bool = false,
-        action: @escaping () -> Void
-    ) {
-        self.count = count
-        self.label = label
-        self.danger = danger
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(count)")
-                    .font(.system(size: LivType.title, weight: .bold).monospacedDigit())
-                    .foregroundStyle(danger ? LivTheme.red : LivTheme.text)
-                Text(label.uppercased())
-                    .font(.system(size: LivType.micro, weight: .semibold))
-                    .kerning(0.5)
-                    .foregroundStyle(LivTheme.text3)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 56)
-            .background(
-                RoundedRectangle(cornerRadius: 12).fill(LivTheme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(LivTheme.border, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
     }
@@ -255,42 +793,37 @@ struct CountTile: View {
 /// call sites are a passing state ("This was deleted") rather than a
 /// place you have landed and must now start from. Only a surface a user
 /// can sit and look at earns the glyph and the button.
+/// WHAT AN EMPTY SURFACE SAYS: one or two words, in the muted ink, and
+/// nothing else (owner, 2026-09-11: *"Ugly messages littered all over.
+/// For example when today is empty, you get a verbose message saying so.
+/// Should be two to one word indications, such as 'empty' or similar."*).
+///
+/// It used to take a `detail` sentence and a 30pt glyph as well, and six
+/// surfaces passed all three — so an empty day answered "Nothing
+/// scheduled" and then explained, in a sentence that named your six
+/// areas, what a day is for. An empty screen is the worst place in the
+/// app to teach it: you came to read something and there is nothing, and
+/// a paragraph is the app talking about itself.
+///
+/// THE RULE IS THE TYPE, not prose (standing rule 3). There is nowhere
+/// to put the sentence any more, so it cannot come back one surface at a
+/// time — which is how it arrived.
+///
+/// The furnished/unfurnished fork went with it: every empty state now
+/// draws at one weight in one ink, so none of them shouts louder than
+/// another about having nothing to say.
 struct EmptyHint: View {
     let text: String
-    /// The quieter second line. Says what the surface is FOR.
-    var detail: String? = nil
-    var glyph: LivGlyph? = nil
 
     init(_ text: String) { self.text = text }
 
-    init(_ text: String, detail: String? = nil, glyph: LivGlyph? = nil) {
-        self.text = text
-        self.detail = detail
-        self.glyph = glyph
-    }
-
-    private var furnished: Bool { detail != nil || glyph != nil }
-
     var body: some View {
-        VStack(spacing: 10) {
-            if let glyph {
-                LivIcon(glyph: glyph, color: LivTheme.text3, size: 30)
-                    .padding(.bottom, 2)
-            }
-            Text(text)
-                .font(.system(size: LivType.strong, weight: furnished ? .semibold : .regular))
-                .foregroundStyle(furnished ? LivTheme.text : LivTheme.muted)
-                .multilineTextAlignment(.center)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(LivTheme.text2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 280)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        Text(text)
+            .font(.system(size: LivType.strong))
+            .foregroundStyle(LivTheme.text2)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
     }
 }
 
@@ -338,17 +871,59 @@ enum LivDue {
 /// The "#id" the core sends for an entity with no words at all is a
 /// placeholder, not a name — no list shows it.
 func livRowTitle(_ row: EntityRow) -> String {
-    livRowIsUntitled(row) ? "Untitled" : (row.title ?? "")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+    // A NAMELESS ROW SAYS WHAT IT IS, AND WHEN — "Task · 13 Sep 14:32".
+    //
+    // "Untitled" is Obsidian's word, and Apple Notes' and Notion's: the
+    // vault's word for a failure to name. The 2026-09-06 ruling replaced
+    // it with the kind's word, which was right and not enough — fourteen
+    // rows reading "Task" distinguish each other no better than fourteen
+    // reading "Untitled", and the harness had already tripped over
+    // exactly that, unable to aim at one of three notes sharing a label.
+    // Amended 2026-09-13 on his word: "Unnamed task/event/note should get
+    // a sensible name."
+    //
+    // **THE SHELL NO LONGER PICKS THE WORDS.** The core sends a name that
+    // is never empty and never an id, so this returns it — and the muted
+    // ink comes from `livRowIsUntitled`, which is now a flag the core
+    // sets rather than a string the shell recognises.
+    (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// Whether that name is a placeholder, asked directly. A list that greys
-/// the nameless rows used to compare the RESULT against "untitled" in
-/// lower case, which never matched — so nameless rows drew at full
-/// strength, on the one screen built to show them quietly.
+/// THE ROW'S ONE ANCHOR — the thing it is attached to — in one order:
+/// project, people, tags, area. Three surfaces carried their own copy of
+/// this loop and two of them disagreed on the order (Everything put tags
+/// before people). One helper, one order (standing rule 4, 2026-09-06).
+///
+/// Returns the property too, so a caller can give an AREA its mark.
+func livAnchor(of row: EntityRow) -> (property: String, value: String)? {
+    for property in ["project", "people", "tags", "area"] {
+        let hit = (row.cells ?? []).first {
+            $0.property == property && !($0.value ?? "").isEmpty
+        }
+        if let value = hit?.value, !value.isEmpty { return (property, value) }
+    }
+    return nil
+}
+
+/// The anchor as a chip: an area leads with its own mark.
+func livAnchorChip(of row: EntityRow) -> ValueChip? {
+    guard let anchor = livAnchor(of: row) else { return nil }
+    return ValueChip(
+        anchor.value,
+        glyph: anchor.property == "area" ? .area : nil)
+}
+
+/// Whether that name was MADE rather than given — asked of the core,
+/// which is the only thing that knows.
+///
+/// It has been wrong twice, both times because the shell was inferring it
+/// from the string: once comparing the RESULT against "untitled" in lower
+/// case, which never matched, so nameless rows drew at full strength on
+/// the one screen built to show them quietly; and once against `"#<id>"`,
+/// a placeholder the core stopped sending on 2026-09-13. A fact about a
+/// thing is not recoverable from how it reads.
 func livRowIsUntitled(_ row: EntityRow) -> Bool {
-    let raw = (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    return raw.isEmpty || raw == "#\(row.id)"
+    row.untitled ?? (row.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 }
 
 // The icon language — what a row looks like, and the carved chip it
@@ -366,38 +941,105 @@ func livCanTick(_ row: EntityRow) -> Bool {
     row.kinds?.contains("task") == true || row.status != nil
 }
 
-/// The face every create-menu verb wears: 46pt tall, full width, rounded,
-/// a hairline border, primary filled with the accent.
+/// AN UNROUTED CAPTURE: something caught, with words in it, that nobody
+/// has decided about yet. The Inbox's list and the library panel's count
+/// of it.
 ///
-/// ONE recipe, because two of them already drifted: "Add a file" was
-/// hand-dressed to match and copied the fill but not the BORDER. In dark
-/// mode that passed, since surface (#1E1E20) reads against canvas
-/// (#161618). In light mode both are #FFFFFF — the border IS the shape —
-/// so the button had no shape at all (owner, 2026-08-10).
-struct LivVerbFace: ViewModifier {
-    var primary = false
+/// **They were two spellings and they disagreed out loud** (owner,
+/// 2026-09-15: the panel said Inbox 8, the Inbox said "Nothing to
+/// route"). The panel counted `LivKind.of == .capture`; the Inbox asked
+/// for an empty `kinds` and a non-zero `contentPrint`, and
+/// `contentPrint` answers nil on the engine — so one of them counted
+/// eight and the other counted none, four points apart on the same
+/// screen. A count beside a list is a promise about that list (standing
+/// rule 4).
+///
+/// `LivKind.of` is the app's ONE classifier, so a scrap that has since
+/// been given a status or a file is no longer one — which is right: it
+/// has been decided about.
+/// **UNDECIDED MEANS UNFILED, NOT UNTYPED** (owner, 2026-09-19, choosing
+/// among three options: "option 1").
+///
+/// It asked for `LivKind.of(row) == .capture` — a thing with no kind at
+/// all — and nothing the app makes is one. `+` births a typed note
+/// everywhere, and so do the create menu, the Tasks add row, the
+/// Calendar and the camera; only the share sheet, a `liv://capture` link
+/// and Search's create row still make an untyped capture. So the Inbox
+/// counted zero on any phone whose owner used the `+`, which is what
+/// "not playing any role" meant.
+///
+/// The address is the decision, and that is the 2026-09-09 routing
+/// ruling read back to itself: "one tap sets the area and the kind
+/// together, so the scrap is a filed note in one gesture" — out of the
+/// Inbox and out of Unfiled at the same moment. A kind says WHAT a thing
+/// is; only an area says where it lives, and a note with no area is the
+/// pile that actually builds up (what-liv-is-for.md's second success
+/// test). Nothing has listed that pile since the Unfiled lens went on
+/// 2026-09-16.
+///
+/// **A NAME COUNTS AS MUCH AS A BODY** (owner, 2026-09-22: the pile
+/// that builds up unfiled "is also for tasks and events"). This asked
+/// for `hasBody`, which is the NOTE body only — so a task called "Call
+/// the dentist" was never unsorted, however long it sat without an
+/// area. An empty thing is still not a decision anyone owes: nothing
+/// typed and no given name (`untitled`) stays out.
+///
+/// The kinds are the ones a person files. A person, a project or a list
+/// is furniture the areas are FOR, not a thing waiting to be put in one.
+///
+/// **AN AREA WITH NO NAME IS NO AREA.** The six built-in areas were
+/// deleted on 2026-09-21, and a thing filed under one of them still
+/// points at it — so it counted as filed while every screen showed it
+/// with no area at all (owner, 2026-09-22: notes made in All never
+/// reached Unsorted). Filing it again replaces the dead reference.
+func livIsUnfiled(_ row: EntityRow) -> Bool {
+    guard row.trashed != true, row.archived != true else { return false }
+    guard row.area == nil || (row.areaWord ?? "").isEmpty else { return false }
+    guard livSortedKinds.contains(row.kindWord ?? "") else { return false }
+    return row.hasBody == true || row.untitled != true
+}
 
-    func body(content: Content) -> some View {
-        content
-            .font(.system(size: LivType.strong, weight: primary ? .semibold : .regular))
-            .foregroundStyle(primary ? LivTheme.onAccent : LivTheme.text)
-            .frame(maxWidth: .infinity)
-            .frame(height: LivRow.height)
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radius)
-                    .fill(primary ? LivTheme.accent : LivTheme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: LivTheme.radius)
-                    .strokeBorder(
-                        primary ? Color.clear : LivTheme.border, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: LivTheme.radius))
+/// What Unsorted lists, by kind word. "" is a thing with no kind yet —
+/// a share-sheet or `liv://` capture.
+let livSortedKinds: Set<String> = ["", "note", "task", "event", "link", "photo", "file"]
+
+/// THE ACKNOWLEDGMENT CHIP — what just happened, and Undo when it can be
+/// taken back. One view for the desk and Unsorted, which had one each.
+///
+/// AT THE FOOT, over the bar (owner, 2026-09-22: the undo message
+/// appeared "inconveniently at the top"). The thumb that just acted is
+/// at the bottom of the screen; the offer to take it back belongs there
+/// too. Callers place it with `.livAckChip`.
+struct LivAckChip: View {
+    let text: String
+    var undo: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(text)
+                .font(.system(size: LivType.body, weight: .medium))
+                .foregroundStyle(LivTheme.text)
+            if let undo {
+                ConfirmPill("Undo", compact: true) { undo() }
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+        .background(LivTheme.panel2, in: Capsule())
+        .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
     }
 }
 
 extension View {
-    func livVerbFace(primary: Bool = false) -> some View {
-        modifier(LivVerbFace(primary: primary))
+    /// Hang the acknowledgment chip above the bottom bar.
+    func livAckChip(_ text: String?, undo: (() -> Void)?) -> some View {
+        overlay(alignment: .bottom) {
+            if let text {
+                LivAckChip(text: text, undo: undo)
+                    .padding(.bottom, LivBar.room + LivAir.tight)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
+            }
+        }
     }
 }
