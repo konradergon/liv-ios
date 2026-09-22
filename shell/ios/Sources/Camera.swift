@@ -850,23 +850,13 @@ struct CameraFlow: View {
     private func openChip(_ kind: CameraChipKind) {
         adding = kind
         chipText = ""
-        if kind == .area {
-            // Fixed furniture first; union in whatever the box holds.
-            suggestions = Furnish.areaNames
-            model.distinctValues(property: "area") { live in
-                var merged = Furnish.areaNames
-                for v in live
-                where !merged.contains(where: {
-                    $0.compare(v, options: .caseInsensitive) == .orderedSame
-                }) {
-                    merged.append(v)
-                }
-                suggestions = merged
-            }
-        } else {
-            suggestions = []
-            model.distinctValues(property: kind.property) { suggestions = $0 }
-        }
+        // AREA IS NO LONGER A SPECIAL CASE (2026-09-21). It led with the
+        // six the app shipped and unioned the box's own in after them;
+        // the app ships none, so there is nothing to lead with and the
+        // union had one side. Every chip asks the box the same way now,
+        // which is the rule the other three already followed.
+        suggestions = []
+        model.distinctValues(property: kind.property) { suggestions = $0 }
     }
 
     /// One verb per entity: membership properties addCell, project/area
