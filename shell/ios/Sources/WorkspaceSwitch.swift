@@ -12,8 +12,7 @@ import SwiftUI
 /// Which lens row is being picked, and which draft it writes back to.
 struct WorkspacePick: Identifiable {
     let property: String
-    let forFilter: Bool
-    var id: String { "\(property)-\(forFilter)" }
+    var id: String { property }
 }
 
 // MARK: - the workspace switcher (M4)
@@ -37,9 +36,6 @@ struct WorkspaceSwitcher: View {
     @State private var editing: LivEntityID?
     @State private var draftName = ""
     @State private var draftQuery = ""
-    @State private var composingFilter = false
-    @State private var filterName = ""
-    @State private var filterQuery = ""
     /// Which picker row is open, and whose draft it edits.
     @State private var picking: WorkspacePick?
 
@@ -48,21 +44,14 @@ struct WorkspaceSwitcher: View {
                 // A FORM SHOWS THE FORM AND NOTHING ELSE.
                 //
                 // The rule is the owner's, from 2026-08-13: a list of
-                // workspaces above a filter you are naming is the wrong
-                // screen. It was applied to the FILTER form and not to
-                // the workspace one, so naming a workspace left the whole
-                // list of workspaces sitting above the field — the same
-                // shape of miss as the chip row that kept its border
-                // after the rule said otherwise (rev 83).
+                // workspaces above a thing you are naming is the wrong
+                // screen.
                 //
                 // The title says which form it is, so the card is never
                 // unlabelled, and editing gets an honest one instead of
                 // borrowing the word "Workspace" from the list it
                 // replaces.
-                if composingFilter {
-                    LivMenuTitle(text: "New filter")
-                    newFilterForm
-                } else if composing {
+                if composing {
                     LivMenuTitle(text: editing == nil ? "New workspace" : "Edit workspace")
                     newWorkspaceForm
                 } else {
@@ -101,9 +90,6 @@ struct WorkspaceSwitcher: View {
                             }
                         }
                     }
-                    // Filters LIVE in the library panel now; only their
-                    // form is still here, opened by the panel's
-                    // "New filter…".
                     addRow("New workspace…") {
                         editing = nil
                         draftName = ""
@@ -119,12 +105,6 @@ struct WorkspaceSwitcher: View {
         // No .presentationDetents: it is not a sheet any more. It hangs
         // from the workspace button at the top (LivTopSheetHost), which
         // sizes itself to this content and scrolls only when it must.
-        .onAppear {
-            if desk.composeFilter {
-                composingFilter = true
-                desk.composeFilter = false
-            }
-        }
         // The SAME picker the properties panel uses, told to report the
         // choice instead of writing a cell.
         .sheet(item: $picking) { pick in
@@ -145,10 +125,8 @@ struct WorkspaceSwitcher: View {
     ///
     /// Kept OUT of the `.sheet` closure with every type spelled out.
     private func put(_ value: String?, for pick: WorkspacePick) {
-        let raw: String = pick.forFilter ? filterQuery : draftQuery
-        let terms: [BoxModel.LivQueryTerm] = box.lex(raw)
-        let next: String = LivTerms.setting(pick.property, to: value, in: terms)
-        if pick.forFilter { filterQuery = next } else { draftQuery = next }
+        let terms: [BoxModel.LivQueryTerm] = box.lex(draftQuery)
+        draftQuery = LivTerms.setting(pick.property, to: value, in: terms)
     }
 
     private func choose(_ id: LivEntityID, close: Bool = true) {
@@ -163,8 +141,7 @@ struct WorkspaceSwitcher: View {
     ///
     /// The lens chips that used to sit under each name are gone with the
     /// smaller type they belonged to. A workspace's lens is still on
-    /// screen where it acts: the filter chip in every view's header, and
-    /// the filters in the menu.
+    /// screen where it acts: the lens chip in every view's header.
     private func choice(
         name: String, active: Bool, glyph: LivGlyph,
         emoji: String? = nil, divided: Bool, action: @escaping () -> Void
@@ -183,7 +160,7 @@ struct WorkspaceSwitcher: View {
     private var newWorkspaceForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             field("Name", text: $draftName)
-            lensRows($draftQuery, forFilter: false)
+            lensRows($draftQuery)
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") {
@@ -227,12 +204,12 @@ struct WorkspaceSwitcher: View {
     /// itself and nothing else; the old "stamps area:Work" hint is gone
     /// with it.
     @ViewBuilder private func lensRows(
-        _ query: Binding<String>, forFilter: Bool
+        _ query: Binding<String>
     ) -> some View {
         ForEach(["area", "tags"], id: \.self) { property in
             let value: String? = pickedValue(property, in: query.wrappedValue)
             Button {
-                picking = WorkspacePick(property: property, forFilter: forFilter)
+                picking = WorkspacePick(property: property)
             } label: {
                 HStack(spacing: 8) {
                     // THE BOX'S WORD FOR IT, not a pair spelled here.
@@ -269,34 +246,6 @@ struct WorkspaceSwitcher: View {
                 }
             }
         }
-    }
-
-    private var newFilterForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            field("Name", text: $filterName)
-            lensRows($filterQuery, forFilter: true)
-            HStack(spacing: 10) {
-                Spacer()
-                Button("Cancel") {
-                    composingFilter = false
-                }
-                // text2, not text3. A control is not a placeholder, and
-                // text3 is the tier the palette check exempts from the
-                // read floor on the grounds that it holds placeholders
-                // and timestamps (rev 79). It stays QUIETER than the
-                // filled pill beside it, which is the pair a form wants:
-                // one primary, one way out.
-                .font(.system(size: LivType.body, weight: .medium))
-                .foregroundStyle(LivTheme.text2)
-                .buttonStyle(.plain)
-                ConfirmPill("Save", action: createFilter)
-                .disabled(trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty)
-                .opacity(
-                    trimmed(filterName).isEmpty || trimmed(filterQuery).isEmpty ? 0.45 : 1)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     /// One dress, one font. The mono variant existed for the raw query
@@ -414,18 +363,5 @@ struct WorkspaceSwitcher: View {
         composing = false
         editing = nil
         choose(id)
-    }
-
-    private func createFilter() {
-        let name = trimmed(filterName)
-        let query = trimmed(filterQuery)
-        guard !name.isEmpty, !query.isEmpty else { return }
-        box.createView(name: name, query: query) { id in
-            guard !id.isAbsent else { return }
-            filterName = ""
-            filterQuery = ""
-            composingFilter = false
-            workspaces.activeFilterId = id
-        }
     }
 }

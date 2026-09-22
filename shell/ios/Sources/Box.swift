@@ -301,7 +301,6 @@ struct Snapshot {
     var properties: [PropertyRow]?
     var kinds: [KindRow]?
     var workspaces: [WorkspaceRow]?
-    var views: [SavedViewRow]?
     var inbox: [ProposalRow]?
     var assist: AssistRow?
     var noteTasks: [NoteTaskRow]?
@@ -328,7 +327,6 @@ final class BoxModel: ObservableObject {
     @Published private(set) var trashRows: [EntityRow] = []
     @Published private(set) var suggestions: [LivSuggestion] = []
     @Published private(set) var spaces: [LivSpace] = []
-    @Published private(set) var filters: [LivSpace] = []
     @Published private(set) var noteTasks: [LivNoteTask] = []
     /// **Absent or true is ON.** Only an explicit no silences the clerk,
     /// so a box that never said anything is not a box that said no.
@@ -528,10 +526,6 @@ final class BoxModel: ObservableObject {
             self?.spaces = $0
             self?.assemble()
         }
-        engineViews { [weak self] in
-            self?.filters = $0
-            self?.assemble()
-        }
         engineNoteTasks { [weak self] in
             self?.noteTasks = $0
             self?.assemble()
@@ -593,7 +587,6 @@ final class BoxModel: ObservableObject {
                     builtin: $0.builtin, parent: $0.parent,
                     order: $0.order, query: $0.query)
             },
-            views: filters.map { SavedViewRow(viewId: $0.id, name: $0.name, query: $0.query) },
             inbox: suggestions.map {
                 ProposalRow(
                     entity: $0.entity,
@@ -1047,7 +1040,7 @@ final class BoxModel: ObservableObject {
         engineTrash(id)
     }
 
-    // MARK: workspaces + saved filters
+    // MARK: workspaces
 
     /// Birth a workspace. **An ordinary entity**, so this is `make` plus
     /// its cells — there is no special verb, which is the whole point of
@@ -1071,19 +1064,8 @@ final class BoxModel: ObservableObject {
         engineTrash(id)
     }
 
-    /// Save a filter: a view entity carrying the query string.
-    func createView(name: String, query: String, done: ((LivEntityID) -> Void)? = nil) {
-        furnish(kindWord: "view", name: name) { [weak self] id in
-            guard let self, !id.isAbsent else {
-                done?(id)
-                return
-            }
-            self.set(id, "query", query) { _ in done?(id) }
-        }
-    }
-
-    /// A backstage thing of one kind, by word. Workspaces and saved
-    /// filters are both this.
+    /// A backstage thing of one kind, by word — a workspace. (Saved filters
+    /// were this too, until they went on 2026-09-22.)
     ///
     /// **NOT through `engineKinds`.** That is the CREATE MENU's list —
     /// the six the product names plus what a user declared — and it
@@ -2705,10 +2687,6 @@ extension BoxModel {
         engineRead([LivSpace].self, { to, out in liv_workspaces(to, out) }) { v, _ in
             done(v ?? [])
         }
-    }
-
-    func engineViews(_ done: @escaping ([LivSpace]) -> Void) {
-        engineRead([LivSpace].self, { to, out in liv_views(to, out) }) { v, _ in done(v ?? []) }
     }
 
     /// Why the box will not open. **A shell that cannot open the box has

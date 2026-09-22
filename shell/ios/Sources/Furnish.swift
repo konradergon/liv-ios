@@ -51,7 +51,7 @@ private final class FurnishPass {
         finishIfDone()
     }
 
-    /// Rewrite `old:` to `new:` in every saved workspace and filter query.
+    /// Rewrite `old:` to `new:` in every saved workspace query.
     ///
     /// Only the QUALIFIER KEY is touched — `subjects:x` becomes `tags:x`,
     /// and the word "subjects" appearing as free text is left alone,
@@ -59,7 +59,6 @@ private final class FurnishPass {
     private func renameInQueries(_ snap: Snapshot, from old: String, to new: String) {
         let rows: [(LivEntityID, String)] =
             (snap.workspaces ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
-            + (snap.views ?? []).compactMap { r in (r.query?.isEmpty ?? true) ? nil : (r.id, r.query!) }
         for (id, text) in rows {
             let rewritten = text
                 .split(separator: " ", omittingEmptySubsequences: false)

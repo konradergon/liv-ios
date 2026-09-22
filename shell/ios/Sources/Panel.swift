@@ -214,7 +214,7 @@ struct LibraryPanel: View {
                     // 2026-09-10): Today, Inbox and Everything are
                     // windows onto the box; Calendar and Tasks are the
                     // two you add to. One empty half-row separates them,
-                    // the same separator the saved filters and Trash use
+                    // the same separator Trash uses
                     // below, and no label — a heading over two rows
                     // costs more than the rows do.
                     // TWO KINDS OF BOUNDARY, TWO NUMBERS (2026-09-18).
@@ -225,59 +225,16 @@ struct LibraryPanel: View {
                     .padding(.top, Feature.startsGroup(feature) ? LivAir.open : 0)
                 }
 
-                // NO SECTION LABELS (owner, 2026-08-18: "eliminate
-                // unnecessary small text and labels"). One empty row-slot
-                // does the separating — which is also exactly how the
-                // reference spaces its one section heading.
-                ForEach(Array(workspaces.filters.enumerated()), id: \.element.id) { i, view in
-                    row(
-                        view.display,
-                        glyph: .filter,
-                        on: workspaces.activeFilterId == view.id
-                    ) {
-                        // **A FILTER IS NOT A PLACE, so the panel stays.**
-                        //
-                        // Every row above this one is somewhere you GO,
-                        // and going somewhere closes the drawer you went
-                        // from. A filter is a lens over the view you are
-                        // already standing in — it narrows what you were
-                        // looking at rather than taking you anywhere, and
-                        // it is a TOGGLE: tapping it again turns it off.
-                        // Closing on it said "you have arrived" about a
-                        // move that never happened (owner, 2026-09-15:
-                        // "it kind of gives that incorrect feeling, even
-                        // though it opens the place you were in").
-                        //
-                        // Staying open is also what makes the toggle
-                        // usable: the row's own mark is the confirmation,
-                        // and the counts beside every row above are
-                        // already counted THROUGH the lens, so the whole
-                        // list answers as you press it.
-                        workspaces.activeFilterId =
-                            workspaces.activeFilterId == view.id ? nil : view.id
-                    }
-                    // A BIGGER GAP, because the KIND of row changes here:
-                    // above are places you go, below are lenses you turn
-                    // on. The panel ran 456pt of rows with one gap in
-                    // them and ~335pt of empty space under Trash — short
-                    // of structure, not of room (2026-09-18).
-                    .padding(.top, i == 0 ? LivAir.apart : 0)
-                }
-                row("New filter", glyph: .plus) {
-                    desk.composeFilter = true
-                    onWorkspace()
-                }
                 // Trash stays in the list — it is house-keeping, not a
                 // place you work. Settings moved to the foot with the
                 // workspace (team, 2026-08-22).
                 row("Trash", glyph: .trash) { onTrash() }
                     // Trash is house-keeping, not a place you work — the
-                    // third kind of row on this panel, so the same gap
-                    // the filters get.
+                    // different kind of row from the places above, so it
+                    // gets the gap that says so. (Filters sat between
+                    // until 2026-09-22 and had the same gap.)
                     .padding(.top, LivAir.apart)
-                // The last rows must be able to clear the foot, or a
-                // long filter list ends underneath it with no way to
-                // scroll further.
+                // The last row must be able to clear the foot.
                 Color.clear.frame(height: LivPanel.row)
             }
         }
@@ -443,9 +400,9 @@ struct LibraryPanel: View {
 
 /// The counts beside the view rows, and the line under the workspace.
 ///
-/// Counted THROUGH THE LENS. With a filter on, the panel used to say
-/// "Everything 246" over a screen showing nothing (found 2026-08-27 by
-/// `drive.sh lens`) — the count answered a question nobody had asked.
+/// Counted THROUGH THE LENS. With a lens on, the panel used to say
+/// "Everything 246" over a screen showing nothing (found 2026-08-27) —
+/// the count answered a question nobody had asked.
 ///
 /// **One pass over the box, not one per row.** Six rows each asking the
 /// box a question would be the same shape as the four defects

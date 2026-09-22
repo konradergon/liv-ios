@@ -288,11 +288,6 @@ final class DeskModel: ObservableObject {
     /// its name added here, so it raises this instead and any number of
     /// them can be up at once.
     @Published var cards = 0
-    /// The workspace sheet should open with the NEW FILTER form already
-    /// composing. Filters are reached from the library panel now; the
-    /// form still lives in the sheet, so this is how the panel asks for
-    /// it without a second copy of the form (standing rule 4).
-    @Published var composeFilter = false
     /// The one menu on screen, or nil (Menu.swift). Every menu in the
     /// app rides this: the `+` that makes things, the note's •••, and
     /// the editor's insert menu.

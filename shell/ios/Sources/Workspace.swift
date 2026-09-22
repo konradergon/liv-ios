@@ -1,5 +1,5 @@
-// liv iOS — workspaces + filters (design/ios.md, M4). The workspace and
-// filter model, the snapshot row decoders, the term-spelling helpers and
+// liv iOS — workspaces (design/ios.md, M4). The workspace model, the
+// snapshot row decoders, the term-spelling helpers and
 // the lens chip. The query PARSER is not here: it moved to the core on
 // 2026-08-27.
 //
@@ -12,12 +12,11 @@
 //           on objects created while the workspace is active.
 //
 // Terms that are not plain equality (`-tag:old`, `has:x`, `no:x`, `is:x`)
-// FILTER but never stamp — they have no single value to write. A saved
-// filter is the same thing minus the stamp: a view entity with a `query`
-// cell. One grammar, one parser, one mental model.
+// FILTER but never stamp — they have no single value to write. One
+// grammar, one parser, one mental model.
 //
-// The lens is answered by the CORE. `refreshLens` sends the combined
-// workspace-and-filter query to `liv_query_ids_at` and keeps the id set it
+// The lens is answered by the CORE. `refreshLens` sends the workspace's
+// query to `liv_query_ids_at` and keeps the id set it
 // returns; `admits` only reads that set. One round-trip per lens change
 // and one per snapshot — not one per surface, and not one per keystroke:
 // editing a draft query lexes it with `liv_lex`, which opens no box.
@@ -117,21 +116,20 @@ struct WorkspaceRow: Decodable, Identifiable {
     }
 }
 
-/// One saved filter: a view entity with a `query` cell — the same shape a
-/// workspace has, minus the stamp.
-struct SavedViewRow: Decodable, Identifiable {
-    var viewId: LivEntityID?
-    var name: String?
-    var query: String?
-
-    var id: LivEntityID { viewId ?? .absent }
-    /// Never an id, as above.
-    var display: String { (name ?? "").isEmpty ? "Filter" : (name ?? "") }
-
-    private enum CodingKeys: String, CodingKey {
-        case viewId = "id", name, query
-    }
-}
+// **NO SAVED FILTERS** (owner, 2026-09-22: *"I don't see the value of
+// Filter. at least it's extremely crude as of now and should maybe be
+// removed and replaced by something better later"*).
+//
+// A filter was a view entity with a `query` cell — a workspace minus the
+// stamp and the desk, picked from the same two rows of the same form and
+// ANDed on top of whichever workspace you stood in. Two mechanisms for
+// "narrow what I see" (standing rule 4), and its own comment called it
+// transient by design, which made it a workspace you could not keep.
+//
+// The one thing it did that a workspace cannot — narrow INSIDE a
+// workspace without changing desks — is real, and if it earns its place
+// it comes back designed for that job. The engine keeps `kind::VIEW` and
+// `liv_views`: old boxes hold views, and the ABI only grows.
 
 // MARK: - the model
 
@@ -143,11 +141,7 @@ final class WorkspaceModel: ObservableObject {
     /// tab set. It was spelled `0` until 2026-09-19, when the id type
     /// stopped letting a number stand for "no id".
     @Published private(set) var activeId: LivEntityID = .absent
-    /// A saved filter ANDed on top of the workspace lens. Transient by
-    /// design: a filter narrows a session, a workspace IS the session.
-    @Published var activeFilterId: LivEntityID?
     @Published private(set) var workspaces: [WorkspaceRow] = []
-    @Published private(set) var filters: [SavedViewRow] = []
 
     static let activeKey = "workspace.active"
 
@@ -181,12 +175,6 @@ final class WorkspaceModel: ObservableObject {
                 setActive(.absent)
             }
         }
-        if let rows = snap.views {
-            filters = rows.filter { !$0.id.isAbsent }
-            if let f = activeFilterId, !filters.contains(where: { $0.id == f }) {
-                activeFilterId = nil
-            }
-        }
     }
 
     var active: WorkspaceRow? {
@@ -198,28 +186,15 @@ final class WorkspaceModel: ObservableObject {
         active?.display ?? "All"
     }
 
-    /// The name the lens chip shows — workspace, filter, or both.
-    var lensLabel: String {
-        let filter = filters.first { $0.id == activeFilterId }?.display
-        switch (active?.display, filter) {
-        case (let w?, let f?): return "\(w) · \(f)"
-        case (let w?, nil): return w
-        case (nil, let f?): return f
-        default: return ""
-        }
-    }
+    /// The name the lens chip shows.
+    var lensLabel: String { active?.display ?? "" }
 
-    /// The lens as RAW TEXT: the workspace's query and any chosen filter,
-    /// joined with a space. There is nothing to AND — a query is already a
-    /// conjunction, so concatenation is the whole operation, and the core
-    /// parses the result exactly as it would if a person had typed it.
+    /// The lens as RAW TEXT: the workspace's query, which the core parses
+    /// exactly as it would if a person had typed it. It used to be the
+    /// workspace's query and a saved filter's, joined — filters are gone
+    /// (2026-09-22), so the lens and the stamp read the same one query.
     var activeRaw: String {
-        [query(of: activeId) ?? "", activeFilterId.flatMap { f in
-            filters.first(where: { $0.id == f })?.query
-        } ?? ""]
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-        .filter { !$0.isEmpty }
-        .joined(separator: " ")
+        (query(of: activeId) ?? "").trimmingCharacters(in: .whitespaces)
     }
 
     /// WHICH ENTITIES THE LENS ADMITS, answered by the core.
@@ -261,21 +236,17 @@ final class WorkspaceModel: ObservableObject {
     }
 
     /// True when some lens is on — the surfaces show the chip only then.
-    var lensOn: Bool {
-        !activeId.isAbsent || activeFilterId != nil
-    }
+    var lensOn: Bool { !activeId.isAbsent }
 
     /// The cells a new entity inherits from the WORKSPACE. Read off the
     /// terms the core lexed, not off the text.
     ///
-    /// The workspace only — never the saved filter. A filter narrows what
-    /// you are looking at; it does not say what you are making.
     var stampCells: [(property: String, value: String)] {
         LivTerms.stamps(workspaceTerms)
     }
 
-    /// The active WORKSPACE's terms, lexed separately from the lens: the
-    /// lens is workspace-and-filter, the stamp is workspace-only.
+    /// The active workspace's terms. Set synchronously in `refreshLens`
+    /// so a thing made in the first moment of a workspace is stamped.
     @Published private(set) var workspaceTerms: [BoxModel.LivQueryTerm] = []
 
     /// Write the active workspace's stamp onto something just created.
@@ -311,7 +282,6 @@ final class WorkspaceModel: ObservableObject {
 
     func setActive(_ id: LivEntityID) {
         activeId = id
-        activeFilterId = nil
         LivIDText.store(id, forKey: Self.activeKey)
     }
 

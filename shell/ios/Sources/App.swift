@@ -403,11 +403,6 @@ struct RootView: View {
             desk.adopt(workspace: id)
             workspaces.refreshLens(box)
         }
-        // A saved filter is the other half of the lens, and it changes
-        // without the workspace changing.
-        .onChange(of: workspaces.activeFilterId) { _, _ in
-            workspaces.refreshLens(box)
-        }
         // Below the doors' band, like every other thing that speaks:
         // centred at the very top it printed itself over the workspace
         // name (owner, 2026-08-15).

@@ -26,7 +26,6 @@
 #   ./drive.sh create            + makes a NOTE everywhere; the Tasks add row makes a task
 #   ./drive.sh desk              one desk of documents, the same in every view; a switcher pick lands
 #   ./drive.sh under             a document lies OVER the view you opened it from, and Back uncovers it
-#   ./drive.sh lens              a saved filter actually narrows the app
 #   ./drive.sh facets            search draws the core's counts, and chips cycle
 #   ./drive.sh event            a tap on the hour grid makes a block you can see
 #   ./drive.sh settings         the Settings cards render, and two deleted ones stay gone
@@ -2209,74 +2208,10 @@ cmd_under() {
   cmd_check
 }
 
-cmd_lens() {
-  # DOES A SAVED FILTER ACTUALLY NARROW THE APP?
-  #
-  # The query parser moved from Swift to the core on 2026-08-27. `cargo
-  # test` proves the core answers correctly; it cannot see whether the
-  # shell asks, or whether it does anything with the answer. Between the
-  # two sits `Workspace.admits`, and a lens that quietly admits everything
-  # looks exactly like no lens at all.
-  #
-  # So: read the count the panel prints, turn a saved filter on, read it
-  # again. The number has to move.
-  cmd_boot everything >/dev/null || { die "could not boot before the lens check."; return 1 }
-  cmd_tap "Library" || return 1
-  local before after name
-  before=$(panel_count Notes)
-  [[ -n "$before" ]] || { die "the panel prints no count for Notes, so
-      there is nothing to compare. Check the panel still draws counts."; return 1 }
-
-  # The saved filters are the buttons the panel lists between the last view
-  # row and "New filter". Positional rather than a name list: the check has
-  # to work on any box's furniture, and a filter can be called anything at
-  # all — including "Settings".
-  name=$(scan 'def walk(n):
-    l = n.get("AXLabel") or ""
-    if n.get("type") == "Button" and l: SEEN.append(l)
-    for c in n.get("children") or []: walk(c)' \
-    'SEEN = []' \
-    'lo = max((i for i, l in enumerate(SEEN) if re.match(r"^Calendar(, [0-9]+)?$", l)), default=-1)
-hi = next((i for i, l in enumerate(SEEN) if l == "New filter"), -1)
-if lo >= 0 and hi > lo:
-    print(chr(10).join(SEEN[lo + 1:hi]))' | head -1)
-  [[ -n "$name" ]] || { die "no saved filter listed in the library panel, so
-      there is nothing to switch on. Make one in the app first."; return 1 }
-
-  cmd_tap "$name" || return 1
-  perl -e 'select(undef,undef,undef,1.5)'
-
-  # NO SECOND "Library" TAP. Picking a filter used to close the panel, so
-  # this had to re-open it to read the count again. Since 2026-09-15 it
-  # does not: a filter is a lens over the view you are already in, not a
-  # place you go, and the panel stays (owner: "it kind of gives that
-  # incorrect feeling"). Tapping Library here would now CLOSE it.
-  #
-  # So this reads the count off a panel that must still be standing —
-  # which makes it the check for that too. An empty count here means
-  # either the panel closed on the pick, or the row left it.
-  after=$(panel_count Notes)
-  [[ -n "$after" ]] || { die "no Notes count after picking '$name'.
-      The panel is supposed to STAY OPEN on a filter — if it closed, the
-      pick is being treated as navigation again (Panel.swift, the filter
-      row). If it is open, the Notes row left it."; return 1 }
-  (( after != before )) || {
-    die "the filter '$name' changed nothing: $before items before, $after after.
-      Either the lens is never asked for, or every row is being admitted.
-      Look at Workspace.refreshLens and Workspace.admits."
-    return 1
-  }
-
-  # PUT IT BACK. This check turns a filter on, and the filter is
-  # remembered; leaving it on would hand every later check a narrowed app
-  # and no clue why. The panel is still open, so the row is right there —
-  # and the same tap turns it off, because the row is a toggle.
-  cmd_tap "$name" >/dev/null 2>&1 || true
-  # And close the panel behind us, which the pick no longer does.
-  cmd_tap "Library" >/dev/null 2>&1 || true
-  say "ok    lens: '$name' took Notes from $before to $after"
-  cmd_check
-}
+# `cmd_lens` WENT WITH SAVED FILTERS (owner, 2026-09-22). It asked
+# whether a saved filter actually narrowed the app, and there are no
+# saved filters. A workspace's lens is the same core path and is walked
+# by every check that boots into one.
 
 # THE FACET ROW: the counts the core has always computed, finally drawn.
 #
@@ -2860,7 +2795,6 @@ case "${1:-}" in
   create)  cmd_create  || exit 1 ;;
   desk)    cmd_desk    || exit 1 ;;
   under)   cmd_under   || exit 1 ;;
-  lens)    cmd_lens    || exit 1 ;;
   facets)  cmd_facets  || exit 1 ;;
   event)   cmd_event    || exit 1 ;;
   settings) cmd_settings || exit 1 ;;
