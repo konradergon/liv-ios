@@ -409,7 +409,8 @@ struct InboxView: View {
             subjectDetail: untyped
                 ? "Unsorted capture — where does it go?"
                 : "Unsorted \(LivKind.of(row).word) — where does it go?",
-            items: items)
+            items: items,
+            atDoor: true)
     }
 
     /// The kinds that are not a note, one door behind the areas.
@@ -426,7 +427,8 @@ struct InboxView: View {
                 LivMenuItem(label: "Link", glyph: .link) {
                     route(row, to: "link", as: "Link")
                 },
-            ])
+            ],
+            atDoor: true)
     }
 
     /// FILED, in one tap: a note, under an area. Two writes, so two

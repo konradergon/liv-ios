@@ -986,8 +986,15 @@ func livCanTick(_ row: EntityRow) -> Bool {
 ///
 /// The kinds are the ones a person files. A person, a project or a list
 /// is furniture the areas are FOR, not a thing waiting to be put in one.
+///
+/// **AN AREA WITH NO NAME IS NO AREA.** The six built-in areas were
+/// deleted on 2026-09-21, and a thing filed under one of them still
+/// points at it — so it counted as filed while every screen showed it
+/// with no area at all (owner, 2026-09-22: notes made in All never
+/// reached Unsorted). Filing it again replaces the dead reference.
 func livIsUnfiled(_ row: EntityRow) -> Bool {
-    guard row.trashed != true, row.archived != true, row.area == nil else { return false }
+    guard row.trashed != true, row.archived != true else { return false }
+    guard row.area == nil || (row.areaWord ?? "").isEmpty else { return false }
     guard livSortedKinds.contains(row.kindWord ?? "") else { return false }
     return row.hasBody == true || row.untitled != true
 }

@@ -54,6 +54,12 @@ struct LivMenu: Identifiable {
     var subject: String?
     var subjectDetail: String?
     let items: [LivMenuItem]
+    /// AT ITS DOOR, not on an edge (owner, 2026-09-22: the card a row
+    /// opens "should appear where row is"). The card hangs just under
+    /// the door that raised it, or just over it when there is no room
+    /// below; `from` still says which way a drag dismisses it. With no
+    /// door recorded it falls back to `from`'s edge.
+    var atDoor = false
 }
 
 // MARK: - one row, for every card
@@ -567,7 +573,8 @@ struct LivMenuHost: ViewModifier {
         content.overlay {
             if active, let drawn {
                 let up = drawn.from == .bottom
-                ZStack(alignment: drawn.from == .top ? .topLeading : .bottomLeading) {
+                let doorY = doorTop(drawn)
+                ZStack(alignment: doorY != nil || drawn.from == .top ? .topLeading : .bottomLeading) {
                     // The scrim: everything behind it is out of reach
                     // until this closes, and tapping it closes.
                     Rectangle()
@@ -597,10 +604,11 @@ struct LivMenuHost: ViewModifier {
                         )
                         .padding(.leading, cardX())
                         .padding(
-                            drawn.from == .top ? .top : .bottom,
-                            LivMenuCard.margin
-                                + (drawn.from == .top
-                                    ? LivSafeArea.top : LivSafeArea.bottom))
+                            doorY != nil || drawn.from == .top ? .top : .bottom,
+                            doorY
+                                ?? (LivMenuCard.margin
+                                    + (drawn.from == .top
+                                        ? LivSafeArea.top : LivSafeArea.bottom)))
                         // DRAG IT BACK TOWARD ITS DOOR TO DISMISS.
                         //
                         // This arrived on 2026-08-30 to make the grabber
@@ -683,12 +691,26 @@ struct LivMenuHost: ViewModifier {
     /// few points out on a menu's first open shifts where the growth
     /// appears to start and nothing else; `height` is exact from the
     /// second open of that menu onward.
-    private func cardBox(_ edge: VerticalEdge) -> CGRect {
+    private func cardBox(_ menu: LivMenu) -> CGRect {
         let m = LivMenuCard.margin
-        let y = edge == .top
-            ? LivSafeArea.top + m
-            : LivScreen.height - LivSafeArea.bottom - m - height
+        let y = doorTop(menu)
+            ?? (menu.from == .top
+                ? LivSafeArea.top + m
+                : LivScreen.height - LivSafeArea.bottom - m - height)
         return CGRect(x: cardX(), y: y, width: LivMenuCard.width, height: height)
+    }
+
+    /// The card's top edge for a menu that hangs at its door: under the
+    /// door when it fits, over it when it does not, and never off
+    /// screen. Nil for an edge card, or when no door was recorded.
+    private func doorTop(_ menu: LivMenu) -> CGFloat? {
+        guard menu.atDoor, let door = LivDoors.lastPressed else { return nil }
+        let m = LivMenuCard.margin
+        let gap: CGFloat = 4
+        let floor = LivScreen.height - LivSafeArea.bottom - m
+        let ceiling = LivSafeArea.top + m
+        if door.maxY + gap + height <= floor { return door.maxY + gap }
+        return max(ceiling, min(door.minY - gap - height, floor - height))
     }
 
     /// Mount first, THEN slide: a view inserted and offset in the same
@@ -704,7 +726,7 @@ struct LivMenuHost: ViewModifier {
             // screen and the last measured height, which is exact for
             // every card after the first and close for the first.
             drawn = menu
-            origin = LivDoors.anchor(in: cardBox(menu.from))
+            origin = LivDoors.anchor(in: cardBox(menu))
             shown = false
             // The motion is asked for EXPLICITLY, here, rather than left
             // to an `.animation(value:)` on the modified content — that
