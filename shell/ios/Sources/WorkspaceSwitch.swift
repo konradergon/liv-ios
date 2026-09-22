@@ -353,13 +353,47 @@ struct WorkspaceSwitcher: View {
 
     /// The `query` cell IS the workspace. An emptied query clears the cell
     /// rather than leaving a stale lens behind.
+    ///
+    /// **AND THE WORDS IT NAMES HAVE TO EXIST** — both of them, which is
+    /// the half this got wrong (owner, 2026-09-22).
+    ///
+    /// It already minted a missing PROPERTY, because `set` refuses a
+    /// property name the box has never seen and the stamp would then do
+    /// nothing. The same is true one level down and was not handled: a
+    /// select's VALUE is matched by name and never minted — a typo must
+    /// not create an area — so a workspace whose query says
+    /// `area:test1`, written by typing a new name into the form's Area
+    /// row, stamps nothing at all. Every note made in it came out
+    /// unfiled, in silence, while the form showed the area as set.
+    ///
+    /// Picking an area that already existed worked, which is what made
+    /// it look like the stamp was broken rather than the vocabulary.
+    ///
+    /// Typing a name into that row IS how an area is born now that none
+    /// ships (2026-09-21), so minting here is not a convenience — it is
+    /// the only door that form has.
+    ///
+    /// Both verbs are idempotent by name, so a workspace saved twice
+    /// mints nothing the second time. `addProperty` was not, until the
+    /// same day — it left a duplicate field behind on every save.
     private func write(_ query: String, to id: LivEntityID) {
         if query.isEmpty {
             box.unset(id, "query")
         } else {
             box.set(id, "query", query)
             for cell in LivTerms.stamps(box.lex(query)) where cell.property != "type" {
-                box.addProperty(cell.property)
+                box.addProperty(cell.property) { pid in
+                    guard !pid.isAbsent else { return }
+                    // ONLY A FIELD THAT KEEPS A VOCABULARY. `tags` is
+                    // text and holds no options, and asking it to mint
+                    // one is refused — which would raise a fault chip
+                    // about a workspace that saved perfectly well.
+                    // `mintsValues` is the box's own answer to that
+                    // question and the one the value picker already uses.
+                    guard InspectorField.describe(cell.property, in: box.snap).mintsValues
+                    else { return }
+                    box.addOption(pid, cell.value)
+                }
             }
         }
         workspaces.rememberQuery(id, query)

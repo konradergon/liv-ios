@@ -125,6 +125,18 @@ impl Engine {
     /// It is an ordinary entity of `kind::FIELD` carrying its name and its
     /// shape, minted ONCE on one device. That is why it cannot drift the
     /// way a seeded copy does: there is no second copy.
+    /// **ASKING TWICE ASKS ONCE** (2026-09-22). `declare_value` below has
+    /// always handed back the one that exists rather than a second thing
+    /// by the same name; this minted unconditionally, and the difference
+    /// was invisible because nothing can reach a shadowed field:
+    /// `property_named` reads the compiled-in `PROPS` first, and a minted
+    /// field carries `working` so no list shows it.
+    ///
+    /// A caller that has to ASK is the whole point of the verb — the
+    /// shell mints a workspace's properties precisely because `set`
+    /// refuses a name the box has never seen, and it cannot know in
+    /// advance. So every save of such a workspace left another "area"
+    /// behind, in an append-only box that was never going to tidy up.
     pub fn declare_field(
         &mut self,
         name: &str,
@@ -134,6 +146,17 @@ impl Engine {
     ) -> Result<EntityId, WriteError> {
         if model::Holds::named(holds).is_none() {
             return Err(WriteError::Refused(Refused::UnknownProperty));
+        }
+        // A NAME THE APP SHIPPED IS ALREADY DECLARED, and the frozen id
+        // is the one every reader resolves to — minting beside it would
+        // make a field nothing can reach.
+        if let Some(def) = model::PROPS.iter().find(|d| d.name.eq_ignore_ascii_case(name)) {
+            return Ok(def.id);
+        }
+        for id in self.of_kind(model::kind::FIELD)? {
+            if self.name(id)?.is_some_and(|n| n.eq_ignore_ascii_case(name)) {
+                return Ok(id);
+            }
         }
         let id = self.mint(now_ms);
         let ops = vec![

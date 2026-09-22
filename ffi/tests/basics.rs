@@ -1050,6 +1050,89 @@ fn a_new_option_is_made_of_the_kind_the_property_points_at() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// **DECLARING A FIELD TWICE IS DECLARING IT ONCE** — the same rule its
+/// sibling `liv_add_option` has always had, and did not.
+///
+/// `liv_add_option` says it in its own words: *"Already called that? Hand
+/// back the one that exists rather than a second thing with the same
+/// name."* `liv_declare_field` minted unconditionally, so every caller
+/// that asks for a field it is not sure about left a duplicate behind.
+///
+/// `WorkspaceSwitch.write` is exactly that caller: saving a workspace
+/// mints any property its query names, because `set` refuses a name the
+/// box has never seen. It does not check first — and could not, since
+/// asking is what this verb is for. So every save of a workspace with an
+/// `area:` term minted another field called "area".
+///
+/// They were invisible (`working` keeps them out of lists) and harmless
+/// to a query, because `liv_property_named` and `property_named` both
+/// read the compiled-in `PROPS` before anything minted. Junk that cannot
+/// be reached is still junk, and the box is append-only: nothing was
+/// going to clean it up.
+#[test]
+fn declaring_a_field_that_exists_hands_back_the_one_that_exists() {
+    let (d, path) = box_at("declare_twice");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_declare_field(path.as_ptr(), c("fabric").as_ptr(), c("text").as_ptr(), false, T0, &mut out)
+        },
+        LIV_OK
+    );
+    let first = took(out)["id"].as_str().unwrap().to_owned();
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_declare_field(
+                path.as_ptr(), c("fabric").as_ptr(), c("text").as_ptr(), false, T0 + 1, &mut out)
+        },
+        LIV_OK
+    );
+    assert_eq!(took(out)["id"].as_str().unwrap(), first, "the same field, not a second one");
+
+    // CASE-INSENSITIVELY, like the option verb: "Area" and "area" are one
+    // field, and a caller that guesses the capitalisation differently
+    // must not split the box in two.
+    let mut out = std::ptr::null_mut();
+    unsafe {
+        liv_declare_field(path.as_ptr(), c("FABRIC").as_ptr(), c("text").as_ptr(), false, T0 + 2, &mut out)
+    };
+    assert_eq!(took(out)["id"].as_str().unwrap(), first, "case-insensitively");
+
+    // AND THE BOX HOLDS ONE. This is the assertion that would have caught
+    // it: the id coming back is only half the claim.
+    let mut out = std::ptr::null_mut();
+    unsafe { liv_properties(path.as_ptr(), &mut out) };
+    let rows = took(out);
+    let n = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["name"].as_str().is_some_and(|s| s.eq_ignore_ascii_case("fabric")))
+        .count();
+    assert_eq!(n, 1, "one field named fabric: {rows}");
+
+    // A COMPILED-IN NAME IS ALREADY DECLARED. `area` ships with the app,
+    // so asking for it hands back the frozen one rather than shadowing
+    // it with a minted field nothing can reach.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            liv_declare_field(path.as_ptr(), c("area").as_ptr(), c("select").as_ptr(), false, T0 + 3, &mut out)
+        },
+        LIV_OK
+    );
+    assert_eq!(
+        took(out)["id"].as_str().unwrap(),
+        liv_engine::prop::AREA.hex(),
+        "the compiled-in area, not a copy of it"
+    );
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// **A MINTED OPTION IS VOCABULARY, NOT A THING** — it must not turn up
 /// in a search, a list or a count.
 ///
