@@ -1454,7 +1454,10 @@ import json, sys
 # NO LIST OF AREA NAMES (2026-09-21). The app ships none — every area
 # is one the person made — so this cannot match against six words it
 # knows. The shape is the test instead: a StaticText on the area line
-# is either the unfiled count or "<some name> <a number>".
+# is either the unfiled count, or a name followed by a number.
+# NO DOUBLE QUOTE IN HERE: this python is inside a double-quoted shell
+# string, so one would close it early and zsh would read the next < as
+# a redirect (2026-09-22, and that is the whole of that bug).
 import re
 named = re.compile(r'^.+ \d+$')
 hits = []
