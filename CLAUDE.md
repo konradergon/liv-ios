@@ -2,7 +2,8 @@
 
 > **Naming:** the product and the code are both **Liv** — crates (`liv-core`,
 > `liv-ffi`, …), the `liv_*` FFI symbol prefix, `ffi/liv.h`, and the
-> box file (`…/Application Support/liv/liv.log`). The old codename **`lotus`**
+> box file (`…/Application Support/liv/liv.db`, the engine's; the core-era
+> `liv.log` beside it is history — nothing reads it at launch). The old codename **`lotus`**
 > was renamed away (2026-07-22); it survives in exactly two frozen places, on
 > purpose: (1) codename-era boxes carry the on-disk header key `lotus_log` and
 > legacy box paths — the core reads both and preserves the key on in-place
@@ -22,13 +23,23 @@ shell over the same Rust FFI.
 ## Architecture — one core, many shells
 
 ```
-core/       Rust — the append-only log, entities = property→value cells, commands
-engine/     Rust — THE REPLACEMENT for core/, being built beside it. Ops over
-            SQLite, built for sync. Nothing links it yet; the app runs on core/.
-services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
-views/      Rust — value display + rendering helpers (cross-platform)
-ffi/        Rust — the ONE C ABI (59 `liv_*` fns); staticlib + cdylib + rlib
-cli/        Rust — a headless CLI over the same core; the VERIFICATION tool
+engine/     Rust — THE core the app runs on (since slice 5b, 2026-09-19): ops over
+            SQLite in `liv.db`, built for sync.
+surface/    Rust — what each screen asks the engine (Today, Tasks, Notes, the day,
+            search, trash) and the clerk's proposers. Pure reads over the engine.
+convert/    Rust — the one-time converter from a core-era `liv.log` to `liv.db`.
+core/       Rust — the OLD append-only log. The app no longer runs on it; it is
+            being deleted (stage 5 of design/rust-owns-the-mechanisms.md §5,
+            owner 2026-09-29), together with what only it needs:
+services/   Rust — core-era projections, search, import/export, clerk, recurrence
+views/      Rust — value display helpers over core types
+ffi/        Rust — the ONE C ABI; staticlib + cdylib + rlib. `Box.swift` names
+            47 verbs: 46 run over the engine, and `liv_view_convert` reads
+            the old log through `convert/` (only Settings' Engine card calls
+            it). The 58 old core verbs are exported, called by nothing in the
+            app, and go in stage 5 with the card.
+cli/        Rust — a headless CLI; the VERIFICATION tool. STILL ON core/: it
+            reads and writes `.log` boxes, not the app's `liv.db` (stage 5 moves it)
 shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
 shell/ios/ShareExtension/   the share-sheet extension: UIKit + Foundation only, no Rust;
                             it spools text into the App Group and the app captures it
@@ -79,13 +90,23 @@ tests, zero warnings, **zero dependents** — nothing links it, so none of it ha
 run on a phone. The plan, its measured state and the one fork that blocks Phase 6
 are in `design/core-plan.md`; the design is `design/core.md`.
 
+**Since then (measured 2026-09-29):** the plan of record is
+`design/rust-owns-the-mechanisms.md` §5, which supersedes `one-core.md` and
+rewrites `core-plan.md` from Phase 6 on. Its slice 5b is DONE (2026-09-19): the
+app's screens run entirely on the engine. The one exception is Settings' Engine
+card, a diagnostic whose `liv_view_convert` reads the old log. Stage 5, deleting
+`core/` and what only it needs, started
+2026-09-29 (owner: *"work on deleting core/"*). The owner's standing word on
+data, 2026-09-13: *"it's all for testing! so nuke or change anything you want
+(except how the interface looks rn)."*
+
 ## The boundary — READ THIS BEFORE EDITING
 
 | Zone | Rule |
 |---|---|
 | `shell/ios/**` | The app. Edit freely. |
-| `core/**`, `services/**`, `views/**` | **Settled.** Change only with the owner's word, failing-test-first. Logic two shells would both need belongs HERE, not in a shell. |
-| `engine/**` | **Open, and the active work** (owner, 2026-09-13). Still failing-test-first, and still no iOS, no Swift assumptions, no phone-shaped verbs — the desktop must be able to link it. It is NOT settled: it ships nothing yet, so a wrong shape here is cheap to fix and will not be later. Follow `design/core-plan.md`. |
+| `core/**`, `services/**`, `views/**` | **Settled, and being deleted** (stage 5, owner 2026-09-29). Change only with the owner's word, failing-test-first. Logic two shells would both need belongs in `engine/` or `surface/` now, not here. |
+| `engine/**`, `surface/**` | **Open, and the active work** (owner, 2026-09-13). Still failing-test-first, and still no iOS, no Swift assumptions, no phone-shaped verbs — the desktop must be able to link it. NOT settled — but it has shipped since slice 5b (2026-09-19), so a wrong on-disk shape is no longer free to fix. Follow `design/rust-owns-the-mechanisms.md` §5. |
 | `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), mirror `with_box` + `Committed`, ship with a test, and be flagged to the owner. |
 | `design/**`, `*.md` specs | **READ** for the behavioural spec. Amend deliberately; don't rewrite history. |
 | `cli/**` | The verification tool. Keep every verb the shell has a way to reach. |
@@ -106,13 +127,16 @@ architecturally clean and product-wrong is still wrong.
 
 ## The FFI contract (how a shell talks to the core)
 
-- **Mutations**: call a `liv_*_at(box_path, …)` verb. Each opens the box, runs
-  one transaction, checks in. Returns an id / count / status. Never hold the box
-  lock across long IO.
-- **Reads**: `liv_snapshot` (or `liv_snapshot_window_at` for the calendar)
-  returns a JSON `Snapshot` — decode it into your native models. Every wire field
-  the shell adds must be **optional** in the decoder, or one missing key drops
-  the whole snapshot (a real, recurring bug — see the macOS `applySnapshot`).
+- **Every verb takes the engine box's path** (`liv.db`) and runs over
+  `with_engine`. Mutations (`liv_set`, `liv_add`, `liv_make`, `liv_trash`, …)
+  run one transaction each. Never hold the box lock across long IO.
+- **Reads are per screen**, already filtered and sorted: `liv_view_today`,
+  `liv_view_tasks`, `liv_view_everything`, `liv_view_day`, `liv_view_trash`,
+  `liv_cells`, `liv_search`, `liv_links`, … — JSON, decoded into native models.
+  Every wire field must be **optional** in the decoder, or one missing key drops
+  the whole answer (a real, recurring bug). A verb answers the value OR a fault,
+  exactly one. Ids are 32 hex characters and are never shown to anyone.
+  (`liv_snapshot` and the `*_at` verbs are the old core lane; nothing calls them.)
 - Strings cross as UTF-8 C strings; free returned strings with `liv_string_free`.
 - The full verb list + shapes live in `ffi/src/lib.rs` and `ffi/liv.h`.
 
@@ -123,6 +147,11 @@ cargo test                        # the whole Rust workspace (run before every P
 cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
 ./target/release/liv --log <box> list --all   # inspect a box from the CLI
 ```
+
+The CLI still reads only core-era `.log` boxes, not the app's `liv.db`. Until
+stage 5 moves it onto the engine, a test box is made by writing a `.log` with it
+and running `liv --log <box.log> convert <out.db>`; the app opens that `liv.db`
+through `LIV_BOX_PATH` (`SIMCTL_CHILD_LIV_BOX_PATH=<dir>/liv.log`).
 
 **The iOS shell has three of its own, and `cargo test` runs none of them.**
 
@@ -243,4 +272,5 @@ old codebase.
   how the area picker broke on 2026-09-14, and it is why `InspectorField`
   carries `property` and `shown` separately.
 - Verify on the simulator before claiming something works; cross-check writes
-  against the box with the CLI. A builder's own report is not evidence.
+  against the box with the CLI (once it reads `liv.db` — stage 5). A builder's
+  own report is not evidence.

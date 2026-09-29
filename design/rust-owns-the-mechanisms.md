@@ -534,6 +534,19 @@ replacement passes.
           core box is converted once and becomes history, and `LivID`'s
           `core` half goes with it.
 
+          > **DONE 2026-09-19** (68dd988, 77f5cfd), and seen on the
+          > simulator since. Measured 2026-09-29: `Box.swift` names 47
+          > verbs. 46 run over `with_engine`; the 47th, `liv_view_convert`,
+          > reads the old log through `convert/` and is reached only from
+          > Settings' Engine card — a diagnostic whose own comment gave it
+          > a deletion date, and whose Rebuild button deletes the live
+          > `liv.db` and rebuilds it from the stale log. Nothing converts
+          > at launch. The paragraph above that calls 5b's Swift half
+          > remaining is kept as written — it was true the day it was.
+          > What 5b left behind is stage 5's to remove: 48 core verbs
+          > still exported and called by nothing in the app, the snapshot
+          > builder, and a CLI that still reads only `.log` boxes.
+
         Undo landed without a stack. `core/` keeps two `Vec<u64>` in
         memory and rebuilds them by scanning the whole log at open, which
         is the one property the engine was chosen for. Here the answer is
@@ -613,6 +626,12 @@ replacement passes.
         back the other's last write.
 5. **Delete `core/`, the old FFI verbs, and the snapshot builder.** No
    feature flag, no parallel period beyond stage 4 (standing rule 7).
+
+   > **STARTED 2026-09-29** (owner: *"work on deleting core/"*). What
+   > depends on `core/` at the start: `services/` (15.7k lines), `views/`,
+   > `ffi/` (the old verbs and the snapshot builder), `cli/` and
+   > `convert/`. The CLI moves first: it is the verification tool, and it
+   > cannot read the app's `liv.db` today.
 6. **Sync.** The engine was built for it: ops, dots, version vectors and
    the hold buffer are already there and tested.
 

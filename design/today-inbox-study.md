@@ -1,5 +1,18 @@
 # Today & Inbox, redefined (roadmap phase 5)
 
+> **2026-09-22 — the Inbox became UNSORTED** (de7033f, 611df63, becf7fd;
+> recorded here 2026-09-29, when this file was the only place a reader would
+> look). One list of everything without an area — notes, tasks, events,
+> links — newest first. Each row carries the clerk's area guess, one tap
+> files it, and "File N by their guesses" takes them all. The clerk's other
+> suggestions sit under the list; there is no Route/Tidy lens any more. A
+> row's card opens at the row, with "New area…" for a box that has none. A
+> thing filed under an area that no longer has a name counts as unsorted.
+> The code still calls the view `inbox` (`Feature.inbox`, `InboxView`, the
+> `liv.surface.inbox` marker, `-desk.boot inbox`); the word on screen is
+> Unsorted. **Open:** Today's subtitle still says "N unfiled" for the same
+> idea, and no `drive.sh` check files a row by its guess or makes an area.
+
 Status: **SHIPPED 2026-08-05** — all four questions approved by the
 owner: build both, LATE means incomplete tasks only, sections not
 segments, and routing to Event opens the date editor. Mockup:

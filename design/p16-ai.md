@@ -1,5 +1,27 @@
 # P16 — AI (the assist socket): finish the socket, fence the brain
 
+> **Status 2026-09-29 — read this first.** Everything below was written for
+> the macOS shell (deleted 2026-08-19) over `core/` (being deleted, stage 5).
+> What runs now, on iOS over the engine:
+> - **The clerk is `surface/src/clerk.rs`**: deterministic, offline, no
+>   model. Five proposers — dates, mentions, area, priority, promotion.
+>   `propose_dedupe` did not come across: its merge needs a redirect
+>   property the engine has not declared, and merging without one would
+>   orphan every link to the loser (the file's own note says so).
+> - **Consent lives in the engine** (`engine/src/clerk.rs`): accept,
+>   decline, accept-all as one action. A refusal is an op on a reserved
+>   `declined` set, so it will travel with sync and undo reaches it.
+> - **The switch** is Settings → Suggestions (`liv_assist`/`liv_set_assist`;
+>   absent or true is on).
+> - **Where it shows**: Unsorted (each row's area guess, "File N by their
+>   guesses", the other suggestions under the list) and the Properties
+>   sheet's "Suggested" card.
+> - **Still fenced, still unbuilt**: every model-backed piece in §6 —
+>   Copilot, vault chat, the answerer, an LLM clerk.
+> - **§7's six owner calls were never answered on record.** Most were about
+>   the Mac shell; D1 (deterministic only, generative fenced) is what the
+>   code does.
+
 P16 builds lotus's AI as the **deterministic, offline, rules-based assist layer**
 over the clerk that already exists (`services/src/clerk.rs`: the pure sweep,
 dates+mentions proposers, the declined sidecar). It finishes the *socket* — the
