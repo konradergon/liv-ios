@@ -10,7 +10,7 @@ use std::ffi::{CStr, CString};
 use liv_engine::{kind, prop, Engine};
 use liv_ffi::basics::*;
 use liv_ffi::finding::liv_search;
-use liv_ffi::surfaces::{liv_view_close_all, LIV_ERR_ARG, LIV_OK};
+use liv_ffi::surfaces::{liv_view_close_all, liv_view_day, liv_view_everything, LIV_ERR_ARG, LIV_OK};
 use liv_ffi::writes::{LIV_ERR_NOTHING, LIV_ERR_REFUSED, LIV_ERR_STALE};
 use serde_json::Value as J;
 
@@ -1374,4 +1374,131 @@ fn a_proposal_carries_the_word_it_would_write() {
     for r in all {
         assert!(r.get("value").is_some(), "no `value` key on {r}");
     }
+}
+
+/// **THE CALENDAR'S OWN WRITE, END TO END, on the engine** — the flow
+/// `Calendar.create` runs when a finger lands on an empty hour (owner,
+/// 2026-09-13: *"clicking in day timeline … events don't appear in
+/// calendar"*).
+///
+/// The shell's path (`BoxModel.createEvent`): the kind by its word, one
+/// `liv_make`, then `liv_set` of `due` as the text `Box.dateText` writes.
+/// The calendar draws what `liv_view_everything` says an event's `due_ms`
+/// is, and the day timeline places it from `liv_view_day`. Every step is
+/// asserted, because a break anywhere looks identical on a device: an
+/// event that was made and cannot be seen. Moved here from the core-era
+/// `an_event_made_at_an_hour_lands_in_dated` (2026-09-29), which ran the
+/// old verbs this path no longer touches.
+#[test]
+fn an_event_made_at_an_hour_is_timed_and_on_its_day() {
+    let (d, path) = box_at("calendar_tap");
+    let day = liv_engine::days_from_civil(2026, 9, 13);
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_kind_named(path.as_ptr(), c("event").as_ptr(), &mut out) }, LIV_OK);
+    let event = c(took(out)["id"].as_str().unwrap());
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_make(path.as_ptr(), event.as_ptr(), c("").as_ptr(), T0, &mut out) },
+        LIV_OK
+    );
+    let made = took(out)["id"].as_str().unwrap().to_owned();
+    let id = c(&made);
+    let due = prop_id(&path, "due");
+    assert_eq!(
+        unsafe {
+            liv_set(path.as_ptr(), id.as_ptr(), due.as_ptr(), c("2026-09-13 09:15").as_ptr(), T0 + 1)
+        },
+        LIV_OK,
+        "the verb refused a perfectly ordinary hour"
+    );
+
+    // THE CALENDAR'S READING: a TIMED due at the minute the tap computed.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_view_everything(path.as_ptr(), 0, day, std::ptr::null(), &mut out) },
+        LIV_OK
+    );
+    let rows = took(out);
+    let row = rows
+        .as_array()
+        .expect("a list of rows")
+        .iter()
+        .find(|r| r["id"] == made)
+        .expect("the event is in the list the calendar reads")
+        .clone();
+    let at = day as i64 * 86_400_000 + 9 * 3_600_000 + 15 * 60_000;
+    assert_eq!(row["due_ms"].as_i64(), Some(at), "the minute the tap computed is the minute stored");
+    assert_eq!(row["all_day"], false, "a tap on an hour makes a TIMED event");
+
+    // AND THE DAY TIMELINE PLACES IT.
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_view_day(path.as_ptr(), day, std::ptr::null(), &mut out) }, LIV_OK);
+    let v = took(out);
+    let ids: Vec<&str> =
+        v["blocks"].as_array().unwrap().iter().filter_map(|b| b["row"]["id"].as_str()).collect();
+    assert_eq!(ids, vec![made.as_str()], "the event is a block on its own day");
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **ONE WRITE THROUGH THE ABI STAYS FLAT AS THE BOX GROWS** (standing
+/// rule 2; 2026-09-29).
+///
+/// The write path is where the app was once quadratic — one core-era
+/// `liv_set_at` cost 39.7 ms on 500 notes and did not finish in ten
+/// minutes on 2,000 (2026-08-19), because every edit re-ran the clerk and
+/// rewrote its queue. `engine/tests/scale.rs` guards the engine's own
+/// write; this guards the LAYER that bug lived in: the C verb the app
+/// calls, through `with_engine`, on a box with named notes carrying
+/// bodies — what a sweep would look at if one crept back onto the write.
+/// It replaces `ffi/src/tests.rs one_write_stays_flat_as_the_box_grows`,
+/// which timed the core verb and goes with `core/` in stage 5.
+#[test]
+fn one_write_through_the_abi_stays_flat_as_the_box_grows() {
+    fn boxed(name: &str, notes: u64) -> (std::path::PathBuf, CString, CString) {
+        let (d, path) = box_at(name);
+        let mut last = None;
+        {
+            let mut e = Engine::open_local(std::path::Path::new(path.to_str().unwrap())).unwrap();
+            let body = vec![liv_engine::Span::Text(liv_engine::TextSpan::plain(
+                "Meeting with Anna about the rebuild, due friday.",
+            ))];
+            for i in 0..notes {
+                let id = e.create(kind::NOTE, Some(&format!("note number {i}")), T0 + i).unwrap();
+                e.set_content(id, body.clone(), 0, T0 + i).unwrap();
+                last = Some(id);
+            }
+        }
+        (d, path, c(&last.unwrap().hex()))
+    }
+    let (small_dir, small, small_id) = boxed("write_flat_small", 250);
+    let (large_dir, large, large_id) = boxed("write_flat_large", 500);
+    let name_small = prop_id(&small, "name");
+    let name_large = prop_id(&large, "name");
+
+    let once = |p: &CString, id: &CString, name: &CString, tag: &str, at: u64| {
+        let value = c(tag);
+        let start = std::time::Instant::now();
+        let code = unsafe { liv_set(p.as_ptr(), id.as_ptr(), name.as_ptr(), value.as_ptr(), at) };
+        let took = start.elapsed();
+        assert_eq!(code, LIV_OK);
+        took
+    };
+    // A write mutates, so each round is a fresh value; the best of five
+    // rounds keeps one scheduler hiccup from deciding the verdict.
+    let ratio = (0..5u64)
+        .map(|k| {
+            let s = once(&small, &small_id, &name_small, &format!("small {k}"), T0 + 10_000 + k);
+            let l = once(&large, &large_id, &name_large, &format!("large {k}"), T0 + 10_000 + k);
+            l.as_secs_f64() / s.as_secs_f64().max(1e-9)
+        })
+        .fold(f64::INFINITY, f64::min);
+    let _ = std::fs::remove_dir_all(&small_dir);
+    let _ = std::fs::remove_dir_all(&large_dir);
+    assert!(
+        ratio < 2.6,
+        "doubling the box multiplied ONE property edit by {ratio:.2}x; \
+         the write path is doing work proportional to the whole box"
+    );
 }

@@ -538,6 +538,42 @@ fn a_converted_box_reads_through_the_new_seam() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// **A capture has no name, and its title is its first line** — on a box
+/// the engine made itself (2026-09-29).
+///
+/// The same promise as the converted-box test below, which goes with
+/// `convert/` in stage 5 of `design/rust-owns-the-mechanisms.md`. What has
+/// to stay true is the app's half of it: a scrap caught as words lists as
+/// those words, and a thing with neither a name nor a body reads as its
+/// kind and when — never an empty string, never an id.
+#[test]
+fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
+    let path = box_path("scrap_title");
+    let day = days_from_civil(2026, 9, 13);
+    {
+        let mut e = Engine::open_local(&path).unwrap();
+        let scrap = e.capture("call the roofer about the slates", at(day, 10, 0) as u64).unwrap();
+        let bare = e.create(kind::TASK, None, at(day, 10, 30) as u64).unwrap();
+        for (thing, hour) in [(scrap, 9), (bare, 10)] {
+            let due = Value::Date(DateSpec::Instant { ms: at(day, hour, 0), tz: 0 });
+            e.set(thing, prop::DUE, due, at(day, 11, 0) as u64).unwrap();
+        }
+    }
+    unsafe { liv_view_close_all() };
+    let c = CString::new(path.to_str().unwrap()).unwrap();
+
+    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), day, std::ptr::null(), out) }).unwrap();
+    let blocks = v["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2, "both are on the day");
+
+    assert_eq!(blocks[0]["row"]["title"], "call the roofer about the slates");
+    assert_eq!(blocks[0]["row"]["untitled"], false);
+    assert_eq!(blocks[1]["row"]["untitled"], true, "still flagged, so it can draw quietly");
+    assert_eq!(blocks[1]["row"]["title"], "Task · 13 Sep 10:30");
+
+    unsafe { liv_view_close_all() };
+}
+
 /// **A capture has no name, and its title is its first line.**
 ///
 /// Prompted by the first device run, which showed `First row: Untitled`.
@@ -619,4 +655,66 @@ fn a_captured_scrap_keeps_its_first_line_as_its_title() {
 
     unsafe { liv_view_close_all() };
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **ONE REFRESH STAYS LINEAR IN THE BOX** (standing rule 2; 2026-09-29).
+///
+/// What the app pays after every action is not one read but EIGHT —
+/// exactly the ones `BoxModel.loadEverything` makes: the notes list, the
+/// trash, the clerk's sweep, the workspaces, the checkbox lines in notes,
+/// the assist switch, the property list and the kinds. Six of the eight had
+/// no cost test. It replaces `ffi/src/tests.rs
+/// the_snapshot_stays_linear_in_box_size`, which timed the core
+/// `liv_snapshot` those eight replaced, and goes with `core/` in stage 5.
+///
+/// Notes carry DISTINCT names and bodies the clerk reads — a date word and
+/// a name it can mention — so a proposer that turned quadratic would show.
+#[test]
+fn one_refresh_stays_linear_in_the_box() {
+    use liv_ffi::basics::{liv_kinds, liv_properties};
+    use liv_ffi::finding::{liv_assist, liv_note_tasks, liv_view_trash, liv_workspaces};
+    use liv_ffi::writes::liv_sweep;
+
+    fn boxed(name: &str, notes: u64) -> std::path::PathBuf {
+        let path = box_path(name);
+        let mut e = Engine::open_local(&path).unwrap();
+        e.create(kind::PERSON, Some("Anna"), 1_000).unwrap();
+        for i in 0..notes {
+            let id = e.create(kind::NOTE, Some(&format!("note number {i}")), 2_000 + i).unwrap();
+            let words = format!("Call Anna about part {i} of the rebuild, due friday.");
+            e.set_content(id, vec![Span::Text(TextSpan::plain(words))], 0, 2_000 + i).unwrap();
+        }
+        path
+    }
+    let small = boxed("refresh_small", 200);
+    let large = boxed("refresh_large", 400);
+    unsafe { liv_view_close_all() };
+
+    let refresh = |path: &std::path::Path| {
+        let p = CString::new(path.to_str().unwrap()).unwrap();
+        let start = std::time::Instant::now();
+        call(|out| unsafe { liv_view_everything(p.as_ptr(), 0, DAY, std::ptr::null(), out) }).unwrap();
+        call(|out| unsafe { liv_view_trash(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_sweep(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_workspaces(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_note_tasks(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_assist(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_properties(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe { liv_kinds(p.as_ptr(), out) }).unwrap();
+        start.elapsed()
+    };
+    // Warm both, then interleaved rounds, best ratio — reads repeat.
+    refresh(&small);
+    refresh(&large);
+    let ratio = (0..5)
+        .map(|_| {
+            let s = refresh(&small);
+            let l = refresh(&large);
+            l.as_secs_f64() / s.as_secs_f64().max(1e-9)
+        })
+        .fold(f64::INFINITY, f64::min);
+    unsafe { liv_view_close_all() };
+    let _ = std::fs::remove_dir_all(small.parent().unwrap());
+    let _ = std::fs::remove_dir_all(large.parent().unwrap());
+    assert!(ratio < 2.8, "doubling the box multiplied one refresh by {ratio:.2}x");
 }

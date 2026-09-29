@@ -215,9 +215,12 @@ old codebase.
    a verb NAME in a comment; none call one.) The share extension is a
    second BINARY and calls none either: it writes a file into the App
    Group spool and the app captures it (`Catch.swift`).
-2. **Anything on the snapshot path OR THE WRITE PATH ships with a COST
-   test**, not just a correctness one — see `services/tests/scale.rs` and
-   `ffi/src/tests.rs` (`one_write_stays_flat_as_the_box_grows`). The
+2. **Anything on the refresh path OR THE WRITE PATH ships with a COST
+   test**, not just a correctness one — see `engine/tests/scale.rs`,
+   `surface/tests/sweep_cost.rs`, and through the ABI
+   `ffi/tests/basics.rs` (`one_write_through_the_abi_stays_flat_as_the_box_grows`)
+   and `ffi/tests/surfaces.rs` (`one_refresh_stays_linear_in_the_box`, the
+   eight reads one refresh makes). The
    write path was added on 2026-08-19 because every existing cost test
    covered a READ, which is exactly why a whole-box clerk sweep on every
    write went unseen for weeks (`design/write-cost.md`). The file projection
