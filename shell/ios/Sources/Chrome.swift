@@ -283,7 +283,7 @@ final class DeskModel: ObservableObject {
     /// them — as DeskHost-local @State they outlived a notification tap
     /// and the landing tab hid behind them (audit, 2026-08-04).
     @Published var settingsShown = false
-    /// The trash list — the only door to `liv_restore_at`.
+    /// The trash list — the only door to `liv_restore`.
     @Published var trashShown = false
     @Published var workspaceShown = false
     /// ANY OTHER CARD A SURFACE PUTS UP over itself — the calendar's day

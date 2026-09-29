@@ -1,7 +1,7 @@
 // liv iOS — the note editor (design/ios.md §9, M3: "notes on the phone").
 // The phone could capture a thought but not read it back; this is the
 // surface that closes that hole. One entity's content, in the phone's own
-// box, through liv_content_at / liv_set_content_at with the core's
+// box, through liv_read_body / liv_write_body with the engine's
 // fingerprint compare-and-swap. No sync is involved anywhere here.
 //
 // The phone's buffer is PLAIN TEXT — a UITextView, not the desktop's

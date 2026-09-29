@@ -193,13 +193,7 @@ impl Engine {
         let Some(Value::Blob(hash)) = self.one(id, prop::FILE)? else {
             return Ok(());
         };
-        self.remember_hash_path(&hash, path)
-    }
-
-    /// The same, by hash — for a caller that has the bytes' identity but
-    /// not an entity to ask, which is what the converter has.
-    pub fn remember_hash_path(&self, hash: &[u8; 32], path: &str) -> Result<(), LogError> {
-        crate::view::remember_path(self.conn(), hash, path)?;
+        crate::view::remember_path(self.conn(), &hash, path)?;
         Ok(())
     }
 }

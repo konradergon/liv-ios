@@ -98,8 +98,8 @@ struct SettingsSheet: View {
     // was reachable, and filling was not.
     //
     // §10 IS THEREFORE REVERSED, on his word. Schema growth is a CLI and
-    // desktop affair now: `liv_add_property_at` is untouched in the ABI,
-    // and `Box.addProperty` stays because the workspace switcher and
+    // desktop affair now: `liv_declare_field` is in the ABI (and the CLI's
+    // `field`), and `Box.addProperty` stays because the workspace switcher and
     // `Furnish` both still call it to mint the furniture a new box needs.
     // What went is the door a person could open, the chip row that showed
     // the vocabulary, and `LivGlyph.field` — the name-to-mark lookup this

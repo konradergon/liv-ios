@@ -468,39 +468,6 @@ fn an_archived_workspace_is_reported_not_hidden() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-#[test]
-fn a_saved_filter_reads_back_with_its_query() {
-    let (d, path, _) = stocked("views");
-    let mut out = std::ptr::null_mut();
-    unsafe {
-        liv_ffi::basics::liv_make(
-            path.as_ptr(),
-            c(&kind::VIEW.hex()).as_ptr(),
-            c("Overdue at home").as_ptr(),
-            T0 + 10,
-            &mut out,
-        )
-    };
-    let v = c(took(out)["id"].as_str().unwrap());
-    unsafe {
-        liv_ffi::basics::liv_set(
-            path.as_ptr(),
-            v.as_ptr(),
-            c(&prop::QUERY.hex()).as_ptr(),
-            c("area:home -status:done").as_ptr(),
-            T0 + 11,
-        )
-    };
-
-    let mut out = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_views(path.as_ptr(), &mut out) }, LIV_OK);
-    let rows = took(out);
-    assert_eq!(rows[0]["name"], "Overdue at home");
-    assert_eq!(rows[0]["query"], "area:home -status:done");
-
-    let _ = std::fs::remove_dir_all(&d);
-}
-
 /// **Absent or true is ON; only an explicit `false` silences the clerk.**
 /// An older box that never set it is not a box that said no.
 #[test]

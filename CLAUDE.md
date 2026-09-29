@@ -26,17 +26,14 @@ engine/     Rust — THE core the app runs on (since slice 5b, 2026-09-19): ops 
             SQLite in `liv.db`, built for sync.
 surface/    Rust — what each screen asks the engine (Today, Tasks, Notes, the day,
             search, trash) and the clerk's proposers. Pure reads over the engine.
-convert/    Rust — the one-time converter from a core-era `liv.log` to `liv.db`.
 core/       Rust — the OLD append-only log. The app no longer runs on it; it is
             being deleted (stage 5 of design/rust-owns-the-mechanisms.md §5,
             owner 2026-09-29), together with what only it needs:
 services/   Rust — core-era projections, search, import/export, clerk, recurrence
 views/      Rust — value display helpers over core types
-ffi/        Rust — the ONE C ABI; staticlib + cdylib + rlib. `Box.swift` names
-            47 verbs: 46 run over the engine, and `liv_view_convert` reads
-            the old log through `convert/` (only Settings' Engine card calls
-            it). The 58 old core verbs are exported, called by nothing in the
-            app, and go in stage 5 with the card.
+ffi/        Rust — the ONE C ABI; staticlib + cdylib + rlib. 48 exports, every
+            verb over the engine (`ffi/src/{surfaces,basics,writes,finding}.rs`);
+            the core-era verbs went in stage 5 (2026-09-29)
 cli/        Rust — a headless CLI; the VERIFICATION tool. It calls the app's
             own verbs through the ffi rlib, on the app's `liv.db` (since
             2026-09-29), and seeds test boxes (`liv new task … --area Work`)
@@ -93,9 +90,8 @@ are in `design/core-plan.md`; the design is `design/core.md`.
 **Since then (measured 2026-09-29):** the plan of record is
 `design/rust-owns-the-mechanisms.md` §5, which supersedes `one-core.md` and
 rewrites `core-plan.md` from Phase 6 on. Its slice 5b is DONE (2026-09-19): the
-app's screens run entirely on the engine. The one exception is Settings' Engine
-card, a diagnostic whose `liv_view_convert` reads the old log. Stage 5, deleting
-`core/` and what only it needs, started
+app runs entirely on the engine. Stage 5, deleting `core/` and what only it
+needs, started
 2026-09-29 (owner: *"work on deleting core/"*). The owner's standing word on
 data, 2026-09-13: *"it's all for testing! so nuke or change anything you want
 (except how the interface looks rn)."*
@@ -136,9 +132,9 @@ architecturally clean and product-wrong is still wrong.
   Every wire field must be **optional** in the decoder, or one missing key drops
   the whole answer (a real, recurring bug). A verb answers the value OR a fault,
   exactly one. Ids are 32 hex characters and are never shown to anyone.
-  (`liv_snapshot` and the `*_at` verbs are the old core lane; nothing calls them.)
 - Strings cross as UTF-8 C strings; free returned strings with `liv_string_free`.
-- The full verb list + shapes live in `ffi/src/lib.rs` and `ffi/liv.h`.
+- The full verb list + shapes live in `ffi/src/{surfaces,basics,writes,finding}.rs`
+  and `ffi/liv.h`; `ffi/tests/header.rs` checks the two name the same verbs.
 
 ## Build & test
 

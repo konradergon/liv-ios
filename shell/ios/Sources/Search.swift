@@ -1,5 +1,5 @@
 // liv iOS — Search (design/ios.md §6): the global full-screen overlay the
-// chrome presents while desk.searchShown. A pill bar over liv_search_at —
+// chrome presents while desk.searchShown. A pill bar over liv_search —
 // the DSL parses in Rust, never here; the shell sends the raw query (150ms
 // debounce) and renders the ranked ids from the snapshot index, grouped by
 // first kind — task → event → note → file, then the rest alphabetical,
@@ -88,8 +88,8 @@ struct SearchView: View {
     /// re-filtered the core's own ranked answer through a parser written in
     /// Swift, so one list was decided by two grammars that disagreed
     /// sixteen ways. Both sides are the core's now: `rawHits` is what
-    /// `liv_search_at` ranked for the typed query, `lensIds` is what
-    /// `liv_query_ids_at` admits for the workspace, and this is their
+    /// `liv_search` ranked for the typed query, `lensIds` is what
+    /// `liv_lens` admits for the workspace, and this is their
     /// intersection.
     private var hits: [LivEntityID] {
         guard let lens = workspaces.lensIds else { return rawHits }

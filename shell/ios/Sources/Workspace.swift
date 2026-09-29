@@ -16,10 +16,10 @@
 // grammar, one parser, one mental model.
 //
 // The lens is answered by the CORE. `refreshLens` sends the workspace's
-// query to `liv_query_ids_at` and keeps the id set it
+// query to `liv_lens` and keeps the id set it
 // returns; `admits` only reads that set. One round-trip per lens change
 // and one per snapshot — not one per surface, and not one per keystroke:
-// editing a draft query lexes it with `liv_lex`, which opens no box.
+// editing a draft query lexes it with `liv_terms`, which opens no box.
 
 import Combine
 import Foundation
@@ -128,8 +128,9 @@ struct WorkspaceRow: Decodable, Identifiable {
 //
 // The one thing it did that a workspace cannot — narrow INSIDE a
 // workspace without changing desks — is real, and if it earns its place
-// it comes back designed for that job. The engine keeps `kind::VIEW` and
-// `liv_views`: old boxes hold views, and the ABI only grows.
+// it comes back designed for that job. The engine keeps `kind::VIEW`, so
+// a box that holds views still reads; `liv_views`, the verb nothing
+// called, went with `core/` in stage 5 (2026-09-29).
 
 // MARK: - the model
 
@@ -220,7 +221,7 @@ final class WorkspaceModel: ObservableObject {
     /// the box knows whether it belongs.
     func refreshLens(_ box: BoxModel) {
         // The STAMP is workspace-only and needs no box, so it is set here
-        // and now — synchronously, off `liv_lex`. Waiting for the lens's
+        // and now — synchronously, off `liv_terms`. Waiting for the lens's
         // round-trip would leave a capture made in the first moments of a
         // workspace unstamped.
         workspaceTerms = box.lex(query(of: activeId) ?? "")

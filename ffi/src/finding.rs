@@ -163,9 +163,8 @@ pub unsafe extern "C" fn liv_lens(
 /// whether a property exists.
 ///
 /// Named `liv_terms` rather than `liv_lex` because the core-era ABI
-/// already exports a `liv_lex` over `core/`'s grammar. Both live until
-/// `core/` goes; every engine verb is purely additive, and a collision
-/// would be the one way to break the old shell while replacing it.
+/// exported a `liv_lex` over `core/`'s grammar while both lived; it went
+/// with `core/` in stage 5 (2026-09-29).
 ///
 /// `[{"op":…,"key":…,"value":…,"raw":…}]`. `raw` is the term respelled
 /// canonically, so joining a term list back together reproduces a query
@@ -302,25 +301,10 @@ pub unsafe extern "C" fn liv_file_alerts(path: *const c_char, out: *mut *mut c_c
 /// `path` a valid C string; `out` as above.
 #[no_mangle]
 pub unsafe extern "C" fn liv_workspaces(path: *const c_char, out: *mut *mut c_char) -> i32 {
-    furniture(path, out, liv_engine::model::kind::WORKSPACE, true)
+    furniture(path, out, liv_engine::model::kind::WORKSPACE)
 }
 
-/// The saved filters: the same shape, and the same reason there is no
-/// verb here that makes one.
-///
-/// # Safety
-/// As `liv_workspaces`.
-#[no_mangle]
-pub unsafe extern "C" fn liv_views(path: *const c_char, out: *mut *mut c_char) -> i32 {
-    furniture(path, out, liv_engine::model::kind::VIEW, false)
-}
-
-fn furniture(
-    path: *const c_char,
-    out: *mut *mut c_char,
-    of: EntityId,
-    tree: bool,
-) -> i32 {
+fn furniture(path: *const c_char, out: *mut *mut c_char, of: EntityId) -> i32 {
     match with_engine(path, |e| {
         let mut rows = Vec::new();
         for id in e.of_kind(of).map_err(|_| LIV_ERR_READ)? {
@@ -340,27 +324,25 @@ fn furniture(
                 "name": as_text(one(prop::NAME)),
                 "query": as_text(one(prop::QUERY)),
             });
-            if tree {
-                let m = row.as_object_mut().unwrap();
-                m.insert("emoji".into(), json!(as_text(one(prop::EMOJI))));
-                m.insert("favorite".into(), json!(as_bool(one(prop::FAVORITE))));
-                m.insert("archived".into(), json!(as_bool(one(prop::ARCHIVED))));
-                m.insert("builtin".into(), json!(as_text(one(prop::BUILTIN))));
-                m.insert(
-                    "parent".into(),
-                    json!(match one(prop::PARENT) {
-                        Some(Value::Ref(p)) => Some(p.hex()),
-                        _ => None,
-                    }),
-                );
-                m.insert(
-                    "order".into(),
-                    json!(match one(prop::ORDER) {
-                        Some(Value::Number(n)) => Some(n),
-                        _ => None,
-                    }),
-                );
-            }
+            let m = row.as_object_mut().unwrap();
+            m.insert("emoji".into(), json!(as_text(one(prop::EMOJI))));
+            m.insert("favorite".into(), json!(as_bool(one(prop::FAVORITE))));
+            m.insert("archived".into(), json!(as_bool(one(prop::ARCHIVED))));
+            m.insert("builtin".into(), json!(as_text(one(prop::BUILTIN))));
+            m.insert(
+                "parent".into(),
+                json!(match one(prop::PARENT) {
+                    Some(Value::Ref(p)) => Some(p.hex()),
+                    _ => None,
+                }),
+            );
+            m.insert(
+                "order".into(),
+                json!(match one(prop::ORDER) {
+                    Some(Value::Number(n)) => Some(n),
+                    _ => None,
+                }),
+            );
             rows.push(row);
         }
         Ok(serde_json::Value::Array(rows))

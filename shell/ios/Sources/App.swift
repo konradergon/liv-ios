@@ -412,7 +412,7 @@ struct RootView: View {
     /// A CATCH THE SHARE SHEET LEFT (2026-09-09). The extension writes
     /// a file into the App Group spool and goes (Catch.swift says why it
     /// does not write the box itself); this turns each file into a
-    /// capture, oldest first, through the same `liv_capture_at` the
+    /// capture, oldest first, through the same `liv_capture` the
     /// `liv://` door uses. NOT focused or opened: a share is fire-and-forget, and
     /// landing in a note you shared an hour ago when the app comes to the
     /// front would be the wrong surprise. It is in the Inbox, where an

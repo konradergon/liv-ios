@@ -1,6 +1,6 @@
 // liv iOS — Tasks (design/ios.md §6): a Feature-view lens — status-grouped
 // flat list over every task in the box. Groups come from the vocabulary
-// (liv_status_options_at, board order); `completes` groups collapse by
+// (liv_options, board order); `completes` groups collapse by
 // default. Filters are client-side state only — the snapshot is never
 // re-queried to filter: a segmented control of statuses, and a Project
 // segment that is a menu. Done boxes wear the OPTION's hue (quantized to

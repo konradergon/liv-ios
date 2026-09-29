@@ -26,7 +26,7 @@ enum Catch {
     /// The catch itself: the words and/or the URL, each trimmed, words
     /// first, one line break between; nil when there is nothing to
     /// catch. A blank catch is not an empty note with a space in it —
-    /// `liv_capture_at` refuses empty text anyway, so the door decides
+    /// `liv_capture` refuses empty text anyway, so the door decides
     /// before the box has to.
     static func text(_ words: String?, _ url: String?) -> String? {
         let parts = [words, url].compactMap { raw -> String? in
@@ -42,7 +42,7 @@ enum Catch {
 /// foreground (RootView, `drainSpool`).
 ///
 /// WHY A FOLDER AND NOT THE BOX. The extension could link the Rust seam
-/// and call `liv_capture_at` itself — the box is in the same container.
+/// and call `liv_capture` itself — the box is in the same container.
 /// It does not, for three reasons that each stand alone: every `liv_*`
 /// call lives in Box.swift (standing rule 1, and the extension is a
 /// second binary); an extension has a memory ceiling and a few seconds
@@ -60,7 +60,7 @@ enum Spool {
         let text: String
 
         /// The box has it: the file is finished with. Called by the
-        /// drain only after `liv_capture_at` answered with an id, so a
+        /// drain only after `liv_capture` answered with an id, so a
         /// catch the box refused waits for the next foreground rather
         /// than being lost.
         func done() {

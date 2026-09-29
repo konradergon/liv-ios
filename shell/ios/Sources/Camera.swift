@@ -1,6 +1,6 @@
 // liv iOS — the camera flow (design/ios.md §6). Shoot FIRST, tag after:
 // the entity is committed at the shutter sound (bytes → Application
-// Support/liv/photos, then liv_add_file_at); the tray tags while the
+// Support/liv/photos, then liv_add_file); the tray tags while the
 // viewfinder stays live. On the simulator (no camera device) a
 // PhotosPicker stands in for the shutter — same downstream path.
 // Failure = haptic buzz (the phone's beep), never an alert.
@@ -805,7 +805,7 @@ struct CameraFlow: View {
     }
 
     /// Shutter and picker converge here: bytes to disk off-main, then
-    /// liv_add_file_at — the entity exists before any tagging happens.
+    /// liv_add_file — the entity exists before any tagging happens.
     private func ingest(_ data: Data) {
         DispatchQueue.global(qos: .userInitiated).async {
             guard let path = CameraStore.write(data) else {

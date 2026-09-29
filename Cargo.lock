@@ -253,15 +253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "liv-convert"
-version = "0.1.0"
-dependencies = [
- "liv-core",
- "liv-engine",
- "liv-services",
-]
-
-[[package]]
 name = "liv-core"
 version = "0.1.0"
 dependencies = [
@@ -281,13 +272,8 @@ dependencies = [
 name = "liv-ffi"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "liv-convert",
- "liv-core",
  "liv-engine",
- "liv-services",
  "liv-surface",
- "liv-views",
  "rusqlite",
  "serde",
  "serde_json",

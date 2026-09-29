@@ -53,7 +53,7 @@ fn exported() -> BTreeSet<String> {
             }
         }
     }
-    assert!(found.len() > 50, "the scraper found almost nothing: {}", found.len());
+    assert!(found.len() > 40, "the scraper found almost nothing: {}", found.len());
     found
 }
 
@@ -80,7 +80,7 @@ fn declared() -> BTreeSet<String> {
             found.insert(name);
         }
     }
-    assert!(found.len() > 50, "the header parser found almost nothing: {}", found.len());
+    assert!(found.len() > 40, "the header parser found almost nothing: {}", found.len());
     found
 }
 

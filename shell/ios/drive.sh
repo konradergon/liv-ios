@@ -2446,12 +2446,12 @@ query_text() {
 # THE TIMELINE MAKES AN EVENT YOU CAN SEE (owner, 2026-09-13:
 # "clicking in day timeline … events don't appear in calendar").
 #
-# The core is not the fault and that is already proved: `cargo test`
-# carries `an_event_made_at_an_hour_lands_in_dated`, which runs the
-# shell's exact arithmetic through `liv_create_event_at` and then reads
-# the windowed snapshot back, asserting the due cell and the id's place
-# in `dated`. Every link from the tap to the snapshot was read by hand
-# too. So whatever is wrong is on screen, and only a device can say it.
+# The box is not the fault and that is already proved: `cargo test`
+# carries `an_event_made_at_an_hour_is_timed_and_on_its_day`
+# (ffi/tests/basics.rs), which runs the calendar's own verbs —
+# liv_kind_named, liv_make, liv_set due — and reads the event back as
+# liv_view_everything's due_ms and a liv_view_day block. So whatever is
+# wrong is on screen, and only a device can say it.
 #
 # This is that check. It taps bare grid, then counts BLOCKS — not a
 # returned id, not a card appearing — because "it was made" and "you can
@@ -2752,7 +2752,7 @@ cmd_history() {
   # read failed and the card is hiding it.
   tree | grep -q '"current"' || {
     die "the History card is up but shows no current version. The read
-      of liv_content_history_at came back empty for a note that has words."
+      of liv_body_history came back empty for a note that has words."
     return 1
   }
 

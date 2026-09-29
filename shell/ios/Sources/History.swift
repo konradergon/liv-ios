@@ -3,7 +3,7 @@
 // The thesis promised this in its fourth paragraph — "Every version of
 // every note is still there — read what you wrote three weeks ago, put
 // it back" — and the core has kept it since the history was built:
-// `liv_content_history_at` is in the ABI and tested three times. Until
+// `liv_body_history` is in the ABI and tested three times. Until
 // 2026-09-09 no screen read it, so the promise was core-only and a user
 // of this app could not do the thing the product is named for.
 //

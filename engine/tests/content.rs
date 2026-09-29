@@ -4,7 +4,8 @@
 //! fingerprint it last read; if the stored body moved underneath it, the
 //! save is refused and the editor re-reads. `core/` has exactly this
 //! contract (`services/src/content.rs`) and the shell already speaks it —
-//! `liv_set_content_at` returns -1 for stale, and `Editor.swift` holds a
+//! the core-era `liv_set_content_at` returned -1 for stale, as
+//! `liv_write_body` answers LIV_ERR_STALE, and `Editor.swift` holds a
 //! `base` for the round trip. Two save buttons that behave differently is
 //! a defect even while only one of them ships.
 //!

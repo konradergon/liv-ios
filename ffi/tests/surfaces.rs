@@ -436,116 +436,14 @@ fn one_days_view_stays_flat_as_the_box_grows() {
     unsafe { liv_view_close_all() };
 }
 
-/// **The end of the chain, and the thing stage 4 rests on.**
-///
-/// A real `core/` box — seeded the way a phone seeds it — is converted,
-/// and then read through the same C entry points the shell will call.
-/// Every earlier test in this file built its box with the engine's own
-/// API, which proves the seam but not that anything already in the world
-/// can reach it.
-#[test]
-fn a_converted_box_reads_through_the_new_seam() {
-    let dir = std::env::temp_dir().join("liv_ffi_converted");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let log = dir.join("liv.log");
-    let db = dir.join("liv.db");
-
-    // A box the old way: seeded, then two things caught and one of them
-    // given a date and a status.
-    {
-        use liv_core::{props, Author, Cell, Command, DateTime, Session, Value as CV};
-        let mut s = Session::open(&log).unwrap();
-        liv_services::seed_if_fresh(&mut s).unwrap();
-        let due = liv_services::property_id(s.store(), "due").unwrap();
-        let task = liv_services::content::create_task(
-            &mut s,
-            DateTime { civil: 2026_09_13_1000, date_only: false, end: None },
-        )
-        .unwrap();
-        s.commit(
-            vec![
-                Command::AddCell {
-                    entity: task,
-                    cell: Cell { property: props::NAME, value: CV::text("Order slates") },
-                },
-                Command::AddCell {
-                    entity: task,
-                    cell: Cell {
-                        property: due,
-                        // Day 20_714 is 2026-09-18.
-                        value: CV::DateTime(DateTime {
-                            civil: 2026_09_18_0900,
-                            date_only: false,
-                            end: None,
-                        }),
-                    },
-                },
-            ],
-            "task",
-            Author::User,
-        )
-        .unwrap();
-        liv_services::content::create_note(
-            &mut s,
-            DateTime { civil: 2026_09_13_1100, date_only: false, end: None },
-        )
-        .unwrap();
-    }
-
-    let report = liv_convert::convert(&log, &db).unwrap();
-    assert!(report.clean(), "{report:?}");
-    assert!(report.resolved > 50, "the box's schema resolved onto the furniture, not into it");
-
-    unsafe { liv_view_close_all() };
-    let c = CString::new(db.to_str().unwrap()).unwrap();
-    let the_day = liv_convert::days_from_civil(2026, 9, 18);
-
-    // THE DAY. The task's `due` landed on `prop::DUE` — the frozen id
-    // every surface reads — which is the whole point of resolving the
-    // box's schema rather than copying it.
-    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), the_day, std::ptr::null(), out) })
-        .unwrap();
-    let blocks = v["blocks"].as_array().unwrap();
-    assert_eq!(blocks.len(), 1, "one thing is due that day");
-    assert_eq!(blocks[0]["row"]["title"], "Order slates");
-    assert_eq!(blocks[0]["start_min"], 9 * 60, "at 09:00");
-
-    // TASKS. The task arrived with its kind, so `of_kind` finds it.
-    let v = call(|out| unsafe {
-        liv_view_tasks(c.as_ptr(), 0, std::ptr::null(), the_day, std::ptr::null(), out)
-    })
-    .unwrap();
-    let found: Vec<String> =
-        v.as_array().unwrap().iter().flat_map(|g| titles(&g["rows"])).collect();
-    assert_eq!(found, vec!["Order slates"]);
-
-    // EVERYTHING. Two things, and NOT the sixty pieces of schema — those
-    // resolved onto the compiled-in furniture, and backstage things are
-    // on no front-of-house surface anyway.
-    let v = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, the_day, std::ptr::null(), out)
-    })
-    .unwrap();
-    let names = titles(&v);
-    assert!(names.contains(&"Order slates".to_owned()), "{names:?}");
-    assert!(
-        names.len() < 5,
-        "a converted box's front of house is its content, not its schema: {names:?}"
-    );
-
-    unsafe { liv_view_close_all() };
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// **A capture has no name, and its title is its first line** — on a box
 /// the engine made itself (2026-09-29).
 ///
-/// The same promise as the converted-box test below, which goes with
-/// `convert/` in stage 5 of `design/rust-owns-the-mechanisms.md`. What has
-/// to stay true is the app's half of it: a scrap caught as words lists as
-/// those words, and a thing with neither a name nor a body reads as its
-/// kind and when — never an empty string, never an id.
+/// Prompted by the first device run, which showed `First row: Untitled`.
+/// It carries on the core-era converted-box test that went with `convert/`
+/// in stage 5 (2026-09-29): a scrap caught as words lists as those words,
+/// and a thing with neither a name nor a body reads as its kind and when —
+/// never an empty string, never an id.
 #[test]
 fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
     let path = box_path("scrap_title");
@@ -572,89 +470,6 @@ fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
     assert_eq!(blocks[1]["row"]["title"], "Task · 13 Sep 10:30");
 
     unsafe { liv_view_close_all() };
-}
-
-/// **A capture has no name, and its title is its first line.**
-///
-/// Prompted by the first device run, which showed `First row: Untitled`.
-/// That is the right answer for a thing with neither a name nor a body,
-/// and the wrong one for a scrap — so the question is which, and the way
-/// to settle it is a test rather than a squint at a screenshot.
-///
-/// The chain has three places it could be lost: `capture` writes
-/// `props::CONTENT` as RichText; the converter flattens that to markdown
-/// in `prop::BODY`; and `surface::row` falls back to the body's first
-/// line when there is no name.
-#[test]
-fn a_captured_scrap_keeps_its_first_line_as_its_title() {
-    let dir = std::env::temp_dir().join("liv_ffi_capture_title");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let log = dir.join("liv.log");
-    let db = dir.join("liv.db");
-
-    let the_day = liv_convert::days_from_civil(2026, 9, 13);
-    {
-        use liv_core::{Author, Cell, Command, DateTime, Session, Value as CV};
-        let mut s = Session::open(&log).unwrap();
-        liv_services::seed_if_fresh(&mut s).unwrap();
-        let due = liv_services::property_id(s.store(), "due").unwrap();
-
-        // A scrap, the way the app catches one: content, no name.
-        let scrap = liv_services::capture(
-            &mut s,
-            "call the roofer about the slates",
-            DateTime { civil: 2026_09_13_1000, date_only: false, end: None },
-        )
-        .unwrap();
-        // A thing with neither, so both answers appear on one screen.
-        let bare = liv_services::content::create_task(
-            &mut s,
-            DateTime { civil: 2026_09_13_1030, date_only: false, end: None },
-        )
-        .unwrap();
-        for (e, hhmm) in [(scrap, 0900i64), (bare, 1000)] {
-            s.commit(
-                vec![Command::AddCell {
-                    entity: e,
-                    cell: Cell {
-                        property: due,
-                        value: CV::DateTime(DateTime {
-                            civil: 2026_09_13_0000 + hhmm,
-                            date_only: false,
-                            end: None,
-                        }),
-                    },
-                }],
-                "due",
-                Author::User,
-            )
-            .unwrap();
-        }
-    }
-
-    liv_convert::convert(&log, &db).unwrap();
-    unsafe { liv_view_close_all() };
-    let c = CString::new(db.to_str().unwrap()).unwrap();
-
-    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), the_day, std::ptr::null(), out) })
-        .unwrap();
-    let blocks = v["blocks"].as_array().unwrap();
-    assert_eq!(blocks.len(), 2, "both are on the day");
-
-    // THE SCRAP CARRIES ITS WORDS ACROSS.
-    assert_eq!(blocks[0]["row"]["title"], "call the roofer about the slates");
-    assert_eq!(blocks[0]["row"]["untitled"], false);
-
-    // AND A THING WITH NOTHING GETS A SENSIBLE NAME (owner, 2026-09-13),
-    // not an empty string and never an id. The kind's word and when —
-    // which is what distinguishes fourteen nameless rows from each other,
-    // where "Untitled" fourteen times does not.
-    assert_eq!(blocks[1]["row"]["untitled"], true, "still flagged, so it can draw quietly");
-    assert_eq!(blocks[1]["row"]["title"], "Task · 13 Sep 10:30");
-
-    unsafe { liv_view_close_all() };
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// **ONE REFRESH STAYS LINEAR IN THE BOX** (standing rule 2; 2026-09-29).

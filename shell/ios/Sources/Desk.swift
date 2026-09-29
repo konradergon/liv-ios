@@ -847,7 +847,7 @@ struct DeskHost: View {
     }
 
     /// A CATCH FROM OUTSIDE — `liv://capture?text=…` (2026-09-09). The
-    /// text is saved FIRST, through the same `liv_capture_at` the search
+    /// text is saved FIRST, through the same `liv_capture` the search
     /// field's find-or-create uses; a catch is not a draft, and if you
     /// can start it, it is saved.
     ///

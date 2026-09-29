@@ -1,31 +1,16 @@
 //! Days from the epoch, and the calendar dates they are.
 //!
 //! **It lives here because the engine defines what a `DateSpec::Day` IS.**
-//! Reading one back as a date is reading its own format, and three crates
-//! now need to: the converter (a `core/` box packs a civil stamp as
-//! `YYYYMMDD * 10_000 + HHMM`), the surfaces (a made name says
-//! `13 Sep 14:32`), and anything after them. Two copies of a date
-//! algorithm is standing rule 4's exact shape of defect.
+//! Reading one back as a date is reading its own format, and more than the
+//! engine needs to: the surfaces (a made name says `13 Sep 14:32`), the
+//! clerk's date words, search's `due:` values, the CLI. Two copies of a
+//! date algorithm is standing rule 4's exact shape of defect.
 //!
 //! **Hinnant's algorithm, not a library.** It is exact for every
 //! proleptic-Gregorian date, it is fifteen lines, and it has no zone in
-//! it — which matters, because the value being converted is deliberately
+//! it — which matters, because a `DateSpec::Day` is deliberately
 //! zoneless and a library that "helpfully" localises it would put a
-//! floating day on the wrong side of midnight. `chrono` is already in the
-//! tree for the FFI's clock; this is not that job.
-
-/// Unpack `YYYYMMDDHHMM` into its parts.
-pub fn split_civil(civil: i64) -> (i32, u32, u32, u32, u32) {
-    let day_part = civil / 10_000;
-    let time = (civil % 10_000).max(0);
-    (
-        (day_part / 10_000) as i32,
-        ((day_part / 100) % 100) as u32,
-        (day_part % 100) as u32,
-        (time / 100) as u32,
-        (time % 100) as u32,
-    )
-}
+//! floating day on the wrong side of midnight.
 
 /// Days since 1970-01-01, for any proleptic-Gregorian date.
 ///

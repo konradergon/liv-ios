@@ -120,7 +120,7 @@ struct KindRow: Decodable {
     var name: String?
 }
 
-/// One liv_status_options_at row. The wire's hue is a float degree;
+/// One liv_options row. The wire's hue is a float degree;
 /// the shell keeps a rounded Int. The wire's numeric `id` is ignored —
 /// options identify by name here.
 struct StatusOption: Decodable, Identifiable {
@@ -151,7 +151,7 @@ struct StatusOption: Decodable, Identifiable {
     }
 }
 
-/// One entity's content, fresh from the box (liv_content_at). EVERY field
+/// One entity's content, fresh from the box (liv_read_body). EVERY field
 /// Optional — the standing law; a missing key must never drop the doc.
 /// `spans` are the log's own serde encoding of Span, verbatim (Editor.swift
 /// holds the total decoder).
@@ -168,7 +168,7 @@ struct ContentDoc: Decodable {
     var spans: [SpanJSON]?
 }
 
-/// One past version of an entity's content (liv_content_history_at).
+/// One past version of an entity's content (liv_body_history).
 /// EVERY field Optional — the standing law. `spans` is the same shape
 /// `ContentDoc.spans` carries, so a restore is `SpanText.json` of it
 /// handed back to `setContent`.
@@ -181,7 +181,7 @@ struct ContentVersion: Decodable {
     var spans: [SpanJSON]?
 }
 
-/// One end of a link, as the box reports it (liv_links_at). EVERY field
+/// One end of a link, as the box reports it (liv_links). EVERY field
 /// Optional — the standing law.
 struct LinkRow: Decodable, Identifiable, Equatable {
     var id: LivEntityID?
@@ -1956,14 +1956,13 @@ enum Civil {
     }
 }
 
-// MARK: - the engine lane, complete
+// MARK: - the engine verbs
 //
-// **This is 5b's Swift half.** Everything above the `path` extension
-// is the core lane: one `liv_snapshot` holding the whole box, decoded into
-// `Snapshot`, which every screen reads. The engine answers questions
-// instead — one verb per surface, already filtered, already sorted — and
-// the ABI for all of it landed in 5a (`design/rust-owns-the-mechanisms.md`
-// §5). These are the Swift doors to it.
+// **The only lane.** The core lane — one `liv_snapshot` holding the whole
+// box, decoded into `Snapshot` — was 5b's to replace and went with `core/`
+// in stage 5 (`design/rust-owns-the-mechanisms.md` §5). The engine
+// answers questions instead — one verb per surface, already filtered,
+// already sorted. These are the Swift doors to it.
 //
 // Three rules hold across every one of them, and they are not style:
 //

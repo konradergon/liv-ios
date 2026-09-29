@@ -4,7 +4,7 @@
 // .md file the share sheet can save to Files (Export).
 //
 // Both read the same two things the editor reads — the name cell and
-// `liv_content_at`'s spans — and flatten them with `SpanText.spansToText`,
+// `liv_read_body`'s spans — and flatten them with `SpanText.spansToText`,
 // the one flattener in the shell. Nothing new crosses the FFI, nothing is
 // written to the box: sharing a note is a READ.
 
