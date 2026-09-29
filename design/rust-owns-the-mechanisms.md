@@ -632,6 +632,23 @@ replacement passes.
    > `ffi/` (the old verbs and the snapshot builder), `cli/` and
    > `convert/`. The CLI moves first: it is the verification tool, and it
    > cannot read the app's `liv.db` today.
+   >
+   > **DONE 2026-09-29**, in order: tests that guarded things the app still
+   > does moved onto the engine (c0f5544, and 6351921 for two search
+   > behaviours the engine had lost); the CLI onto the app's own verbs and
+   > `liv.db` (480c08a); the Engine card, the satellite outbox and
+   > `BoxPath`'s log name out of the Swift (5afe3f2 — the owner approved the
+   > card's removal); the ABI's core-era half, 58 verbs plus
+   > `liv_view_convert` and `liv_views`, and `convert/` (8984a6e — the
+   > owner to be told: an ABI removal); `core/`, `services/` and `views/`
+   > (fd7acd8). The workspace is four crates: engine, surface, ffi, cli —
+   > 30,847 lines deleted and 1,125 added (e178348..fd7acd8). Recurrence expansion, markdown import/export,
+   > the vault projection, habits, time tracking, message import, pins,
+   > layers, daily notes, widgets, the clerk's dedupe and file-content
+   > search left with them, none reachable from the app; all of it is in
+   > git at `fd7acd8^`. Found on the way and fixed first: a reopened box
+   > re-minted its previous session's ids (d82c57d), which had kept
+   > `cargo test` red.
 6. **Sync.** The engine was built for it: ops, dots, version vectors and
    the hold buffer are already there and tested.
 

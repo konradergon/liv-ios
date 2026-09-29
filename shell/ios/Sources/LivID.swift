@@ -1,10 +1,11 @@
 // liv iOS — THE ID, as sixteen bytes.
 //
-// The engine names a thing with a UUID. The shell has always named one
-// with a `UInt64`, because that is what `core/`'s ids are, and it appears
-// 236 times across 22 files — the navigation chain, the editor, the tab
-// plane. That type is the whole of what stands between the
-// app and the engine (`design/rust-owns-the-mechanisms.md` §5, stage 4b).
+// The engine names a thing with a UUID. The shell named one with a
+// `UInt64`, because that is what `core/`'s ids were (core/ went in stage 5,
+// 2026-09-29), and it appeared 236 times across 22 files — the navigation
+// chain, the editor, the tab plane. That type was the whole of what stood
+// between the app and the engine (`design/rust-owns-the-mechanisms.md` §5,
+// stage 4b).
 //
 // **Slice 4 flipped it.** `LivEntityID` IS this type now, everywhere —
 // the navigation chain, the editor, the plane. The four

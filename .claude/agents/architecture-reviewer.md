@@ -11,19 +11,21 @@ on, not a summary of what you read.
 
 ## The system, in one paragraph
 
-Liv is a personal information app on an append-only log. One file per box:
-a JSON header line, then one JSON transaction per line, replayed into memory
-on open. Entities are bags of `property → value` cells; properties are
-themselves entities, so there is no schema and no migrations. Everything
-above `ffi/` is portable Rust. Shells are thin: they call `liv_*` verbs to
-mutate (each opens the box, runs ONE transaction, closes) and decode one
-JSON `Snapshot` to render. Layers: `core/` (log, store, values) →
-`services/` (projections, search, import/export, clerk, recurrence,
-projection/vault) → `views/` (display helpers) → `ffi/` (the C ABI, 59
-verbs) → shells (`shell/ios` SwiftUI, the ONLY one — the hand-built macOS
-shell was deleted on 2026-08-19, and Tauri was dropped on 2026-08-29,
-owner's word. There is no desktop shell; a second one is a goal, not a
-plan, and picking it is not this repo's open work).
+Liv is a personal information app on **the engine**: a log of operations in
+SQLite (`liv.db`), built for sync. One user action is one GROUP of ops,
+stamped by its device with a hybrid clock; the cells a screen reads are a view
+folded from the log. Entities are bags of `property → value` cells; the
+furniture (properties, kinds, statuses) is compiled in, and a person's own
+vocabulary (areas, options, fields) is minted into the box. Everything above
+`ffi/` is portable Rust. Layers: `engine/` (the log, the view, writes, undo,
+consent) → `surface/` (what each screen asks: Today, Tasks, Notes, the day,
+search, and the clerk's proposers — pure reads) → `ffi/` (the C ABI, 48
+exports; every verb runs over `with_engine` and answers JSON or a fault code)
+→ shells (`shell/ios` SwiftUI, the ONLY one — the hand-built macOS shell was
+deleted on 2026-08-19, and Tauri was dropped on 2026-08-29, owner's word.
+There is no desktop shell; a second one is a goal, not a plan, and picking it
+is not this repo's open work). `cli/` checks the box through the same verbs.
+The core-era log (`core/`, `services/`, `views/`) was deleted on 2026-09-29.
 
 ## Read these before judging anything
 
@@ -42,22 +44,26 @@ plan, and picking it is not this repo's open work).
 
 Report a violation of any of these as a finding, with the file:line.
 
-1. **One gesture = one transaction = one undo.** Verbs open the box, run
-   one transaction, check in. Never hold the box lock across long IO.
-2. **Append-only.** Nothing rewrites history. Undo appends an inverse
-   transaction. Restore re-commits an old value.
-3. **Single writer.** An advisory file lock per call, held for
-   milliseconds. Two boxes cannot merge: `seq` is the index into history,
-   ids come from an unlogged counter, replay is strict and non-idempotent.
-   Any design implying two writers to one log is wrong at the root.
+1. **One gesture = one group = one undo.** A user action commits ONE group
+   of ops (`Engine::commit`); undo is a group that reverses one, and undo
+   is what YOU did on THIS device. Never hold the box across long IO.
+2. **Append-only.** Nothing rewrites history. Undo appends a reversing
+   group. Restore re-commits an old value.
+3. **Built for more than one writer.** Ids are v7, minted per device, and
+   a reopened box resumes its clock from its newest stamp; ops carry dots
+   (device, seq); a single-valued cell names what it `replaces`, and a set
+   is observed-remove. Sync itself is stage 6 and not built — a design
+   that quietly assumes one writer forever is building against the plan.
 4. **No second source of truth.** Import copies, export projects; the box
    is the truth. Device state (tabs, prefs, view state) is never cells;
    user truth is never UserDefaults.
-5. **Every snapshot wire field is Optional in every decoder.** One missing
-   key must never drop the whole snapshot. This bug has recurred in two
-   shells — check every new decoder.
-6. **AI writes are proposals only.** Nothing model-driven writes directly;
-   it goes through the pending queue and an explicit accept.
+5. **Every wire field is Optional in every decoder.** One missing key must
+   never drop the whole answer. This bug has recurred in two shells —
+   check every new decoder.
+6. **AI writes are proposals only.** The clerk (`surface/src/clerk.rs`)
+   proposes; only an explicit accept writes (`engine/src/clerk.rs`), and a
+   refusal is itself an op, so it travels. Nothing model-driven writes
+   directly.
 7. **Capture asks nothing.** A capture is content + created. No token
    grammar, no required fields, no silent metadata stamps (a stamp must be
    visible and removable).
@@ -77,35 +83,36 @@ Look for these first; each has bitten before.
 - **Silent refusal.** `set`/`add_cell` refuse unknown properties and return
   a soft failure; a shell that ignores the result shows success and writes
   nothing.
-- **Non-idempotent furnishing.** `liv_create_workspace_at`,
-  `liv_add_status_option_at`, `liv_create_view_at` duplicate on re-run.
-  Anything that runs at every launch must presence-check first.
+- **Non-idempotent furnishing.** Anything that runs at every launch must
+  presence-check first; `liv_add_option` hands back the option that exists,
+  and a plain `liv_make` does not.
 - **Predicate drift.** The same concept ("is this a task?", "is this done?")
   implemented differently in two places, so surfaces disagree. Status
   done-ness must resolve through the `completes` option, never a hardcoded
   string.
-- **Logic marooned in `ffi/`.** The `with_box` + store-cache layer lives in
-  `ffi/` today, so a shell that links the crates directly rather than
-  through the C ABI cannot reuse it. Flag anything else drifting there.
-  (This was written about the Tauri app, which is dropped; the smell is
-  not — the second shell, whatever it turns out to be, meets it too.)
+- **Logic marooned in `ffi/`.** `ffi/` should hold the pool of open boxes,
+  argument parsing and JSON — nothing a second shell linking `engine/` and
+  `surface/` directly would have to reimplement. Flag any rule drifting
+  there.
 - **Convenience picking product shape.** Existing machinery being reused
   because it is cheap, not because it is right. Name it when you see it.
-- **Time.** Civil wall-clock `YYYYMMDDHHMM`, no timezone anywhere. Any code
-  round-tripping through `Date`/instants for storage is a bug.
+- **Time.** A date is a `DateSpec`: a zoneless `Day` (days since the
+  epoch) or an `Instant` in milliseconds with its offset. It crosses the
+  ABI as text ("2026-09-13 09:15") and the property decides how it reads.
+  A floating day pushed through a timezone lands on the wrong side of
+  midnight — that is the bug to look for.
 
 ## Known structural limits — do not "discover" these as findings
 
 State them only if a proposal ignores them:
 
-- Single-writer means the phone cannot be a peer; the satellite/outbox
-  design exists because of it.
-- Content edits replace the whole rich-text value. There is no merge
-  structure, so concurrent editing has a ceiling.
-- The log only grows; there is no compaction story. A cache exists because
-  replay-per-call was too slow.
-- Cell values are display strings parsed by convention — type safety is
-  discipline, not the type system.
+- Sync is not built (stage 6), so nothing yet exercises two writers.
+- Content edits replace the whole rich-text value, guarded by a
+  compare-and-swap on its fingerprint. There is no merge structure, so
+  concurrent editing has a ceiling.
+- The log only grows; there is no compaction story.
+- The clerk's duplicate-merge is blocked: it needs a redirect property the
+  engine has not declared (`surface/src/clerk.rs`).
 
 ## How to review
 
@@ -119,7 +126,7 @@ State them only if a proposal ignores them:
    thing first, no optimisation without measurement, data model before
    code. If a change adds a cache, an index, or a second store, ask what
    measurement justified it.
-5. **Check the tests.** Core/services/ffi changes are failing-test-first.
+5. **Check the tests.** Engine/surface/ffi changes are failing-test-first.
    A behavioural change with no test is a finding.
 
 ## Output

@@ -1,15 +1,13 @@
 # Liv — project guide
 
-> **Naming:** the product and the code are both **Liv** — crates (`liv-core`,
+> **Naming:** the product and the code are both **Liv** — crates (`liv-engine`,
 > `liv-ffi`, …), the `liv_*` FFI symbol prefix, `ffi/liv.h`, and the
-> box file (`…/Application Support/liv/liv.db`, the engine's). The old codename **`lotus`**
-> was renamed away (2026-07-22); it survives in exactly two frozen places, on
-> purpose: (1) codename-era boxes carry the on-disk header key `lotus_log` and
-> legacy box paths — the core reads both and preserves the key on in-place
-> upgrades (see `core/src/persist.rs` + `core/tests/versioning.rs`); (2) the
-> historical spec/design docs (`design/p*.md`, `interface.md`, `feature-map.md`,
-> …) still say `lotus_*` — read them as `liv_*`. Do not reintroduce `lotus`
-> into code. (The specs were ported from an OLDER Tauri app, also called Liv, that
+> box file (`…/Application Support/liv/liv.db`). The old codename **`lotus`**
+> was renamed away (2026-07-22); it survives in one frozen place, on purpose:
+> the historical spec/design docs (`design/p*.md`, `interface.md`,
+> `feature-map.md`, …) still say `lotus_*` — read them as `liv_*`. (A second,
+> the `lotus_log` header of codename-era core boxes, went with `core/` on
+> 2026-09-29.) Do not reintroduce `lotus` into code. (The specs were ported from an OLDER Tauri app, also called Liv, that
 > lived at `~/src/friend-fixes`. That checkout no longer exists on this
 > machine, and it is NOT the desktop your team is building — see
 > `design/spec-alignment.md`.)
@@ -26,11 +24,6 @@ engine/     Rust — THE core the app runs on (since slice 5b, 2026-09-19): ops 
             SQLite in `liv.db`, built for sync.
 surface/    Rust — what each screen asks the engine (Today, Tasks, Notes, the day,
             search, trash) and the clerk's proposers. Pure reads over the engine.
-core/       Rust — the OLD append-only log. The app no longer runs on it; it is
-            being deleted (stage 5 of design/rust-owns-the-mechanisms.md §5,
-            owner 2026-09-29), together with what only it needs:
-services/   Rust — core-era projections, search, import/export, clerk, recurrence
-views/      Rust — value display helpers over core types
 ffi/        Rust — the ONE C ABI; staticlib + cdylib + rlib. 48 exports, every
             verb over the engine (`ffi/src/{surfaces,basics,writes,finding}.rs`);
             the core-era verbs went in stage 5 (2026-09-29)
@@ -67,11 +60,12 @@ What did NOT change: the Tauri working copy is still there and is still
 directly: don't change it). Dropping it means this tree stops aiming at it. It
 does not mean going and deleting it.
 
-**Two crates are named `liv-core`**: this one (the append-only log) and the
-desktop's (a SQLite engine, 1,784 lines). This one is the core. The other now
-has no shell over it and nothing here should link, mirror or migrate to it —
-which is what `design/one-core.md` §3 recommended on 2026-08-19, before the
-ruling that has now itself been dropped.
+**The desktop's SQLite engine is a crate named `liv-core`** (1,784 lines,
+outside this repo). This repo had its own crate of that name — the append-only
+log — until stage 5 deleted it (2026-09-29). The desktop's has no shell over it,
+and nothing here should link, mirror or migrate to it — which is what
+`design/one-core.md` §3 recommended on 2026-08-19, before the ruling that has
+now itself been dropped.
 
 The hand-built Mac shell and the planned WinUI port are **gone** (deleted
 2026-08-19, owner's word, because Tauri covered macOS, Windows and Linux). That
@@ -87,23 +81,22 @@ tests, zero warnings, **zero dependents** — nothing links it, so none of it ha
 run on a phone. The plan, its measured state and the one fork that blocks Phase 6
 are in `design/core-plan.md`; the design is `design/core.md`.
 
-**Since then (measured 2026-09-29):** the plan of record is
-`design/rust-owns-the-mechanisms.md` §5, which supersedes `one-core.md` and
-rewrites `core-plan.md` from Phase 6 on. Its slice 5b is DONE (2026-09-19): the
-app runs entirely on the engine. Stage 5, deleting `core/` and what only it
-needs, started
-2026-09-29 (owner: *"work on deleting core/"*). The owner's standing word on
-data, 2026-09-13: *"it's all for testing! so nuke or change anything you want
-(except how the interface looks rn)."*
+**Since then:** the plan of record is `design/rust-owns-the-mechanisms.md` §5,
+which supersedes `one-core.md` and rewrites `core-plan.md` from Phase 6 on. Slice
+5b is DONE (2026-09-19): the app runs entirely on the engine. Stage 5 is DONE
+(2026-09-29, owner: *"work on deleting core/"*): `core/`, `services/`, `views/`,
+`convert/` and the ABI's core-era half are deleted, and the workspace is four
+crates — engine, surface, ffi, cli. Next is stage 6, sync. The owner's standing
+word on data, 2026-09-13: *"it's all for testing! so nuke or change anything
+you want (except how the interface looks rn)."*
 
 ## The boundary — READ THIS BEFORE EDITING
 
 | Zone | Rule |
 |---|---|
 | `shell/ios/**` | The app. Edit freely. |
-| `core/**`, `services/**`, `views/**` | **Settled, and being deleted** (stage 5, owner 2026-09-29). Change only with the owner's word, failing-test-first. Logic two shells would both need belongs in `engine/` or `surface/` now, not here. |
-| `engine/**`, `surface/**` | **Open, and the active work** (owner, 2026-09-13). Still failing-test-first, and still no iOS, no Swift assumptions, no phone-shaped verbs — the desktop must be able to link it. NOT settled — but it has shipped since slice 5b (2026-09-19), so a wrong on-disk shape is no longer free to fix. Follow `design/rust-owns-the-mechanisms.md` §5. |
-| `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), mirror `with_box` + `Committed`, ship with a test, and be flagged to the owner. |
+| `engine/**`, `surface/**` | **Open, and the active work** (owner, 2026-09-13). Failing-test-first, and no iOS, no Swift assumptions, no phone-shaped verbs — the desktop must be able to link it. Logic two shells would both need belongs HERE, not in a shell. NOT settled — but it has shipped since slice 5b (2026-09-19), so a wrong on-disk shape is no longer free to fix. Follow `design/rust-owns-the-mechanisms.md` §5. |
+| `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), run over `with_engine` and answer through `deliver`, ship with a test, and be flagged to the owner. A removal needs the owner's word. |
 | `design/**`, `*.md` specs | **READ** for the behavioural spec. Amend deliberately; don't rewrite history. |
 | `cli/**` | The verification tool. Keep every verb the shell has a way to reach. |
 | everything outside this repo | Ask first. |
@@ -207,9 +200,9 @@ keeps it avoided — each one exists because its absence is visible in the
 old codebase.
 
 1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
-   second file calling the C ABI is a defect. (Measured 2026-08-28: 53
-   calls over 41 distinct verbs, one file. Nine other Swift files mention
-   a verb NAME in a comment; none call one.) The share extension is a
+   second file calling the C ABI is a defect. (Measured 2026-09-29: 42
+   calls to 39 distinct verbs plus `liv_string_free`, one file; other Swift
+   files mention a verb NAME in a comment, and none call one.) The share extension is a
    second BINARY and calls none either: it writes a file into the App
    Group spool and the app captures it (`Catch.swift`).
 2. **Anything on the refresh path OR THE WRITE PATH ships with a COST
@@ -244,7 +237,7 @@ old codebase.
 
 ## House rules
 
-- **Failing-test-first** for any `core`/`services`/`ffi` change; **mockup-first**
+- **Failing-test-first** for any `engine`/`surface`/`ffi` change; **mockup-first**
   for visible UI. Where a spec collides with the constitution, take the most
   faithful reconciliation and record the delta in the design doc.
 - AI features are quarantined (proposals only); don't build them into a shell.

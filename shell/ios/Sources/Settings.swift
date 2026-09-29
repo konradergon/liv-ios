@@ -201,26 +201,15 @@ struct SettingsSheet: View {
 
     // MARK: the log's own notices
 
-    /// WHAT THE LOG SAYS ABOUT ITSELF, and it had no way to say it.
+    /// THE FILES THIS DEVICE CANNOT OPEN (`liv_file_alerts`): one not
+    /// synced here yet ("has not reached this device"), or one no longer
+    /// where Liv last saw it. A HASH TRAVELS AND A PATH DOES NOT, so the two
+    /// are different answers.
     ///
-    /// `liv_vault_alerts_at` drains three notices the FFI raises on EVERY
-    /// box open, in `hit()`, before any projection is considered: the log
-    /// SHRANK against what the cache last proved, the log was REPLACED in
-    /// place (same length, new inode), or a conflicted copy of it exists
-    /// beside it. Each one means something outside this app wrote over the
-    /// append-only source, and each one is the only notice that ever
-    /// arrives — the open refuses the fast path and replays honestly, so
-    /// nothing is adopted silently, but a person is told nothing.
-    ///
-    /// They were drained inside `guard st?.isVault == true`, and on a
-    /// phone that guard is ALWAYS FALSE: `vault_root_of` wants the log at
-    /// `<root>/.liv/box/<log>` and `BoxPath.resolve` puts it at
-    /// `<container>/liv/liv.log`, whose parent is named `liv` and not
-    /// `box`. So the app has never been able to show one of these, and the
-    /// static they queue in was never drained either. That is the bug this
-    /// card fixes, and it is a bug about the log rather than about the
-    /// folder projection — which is why the two are separate now, and why
-    /// this one survives the vault card being questioned.
+    /// Until 2026-09-29 this card's comment described the core-era log's
+    /// tamper notices (a log that shrank, was replaced in place, or had a
+    /// conflicted copy beside it). Those were `core/`'s, and went with it;
+    /// the engine is a database that notices none of that and needs to.
     @ViewBuilder private var logRows: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(alerts, id: \.self) { line in
@@ -237,7 +226,7 @@ struct SettingsSheet: View {
     // him more strongly than he knew: it could never show anything else.
     //
     // `vault_root_of` wants the log at `<root>/.liv/box/<log>` and checks
-    // both directory names; `BoxPath.resolve` puts it at
+    // both directory names; `BoxPath.resolve` put it at
     // `<container>/liv/liv.log`, whose parent is named `liv`. So
     // `isVault` is false on every iOS install, every vault verb bails on
     // its own `vault_root_of` guard before doing anything, and the card
@@ -248,21 +237,21 @@ struct SettingsSheet: View {
     // What went, under standing rule 6: `vaultRows`, `vaultLine`,
     // `shortRoot`, `finding`, `vaultButton`, `syncVault`, `rebuildVault`,
     // the four `@State` vars they read, and in `Box.swift` the four
-    // wrappers and two types nothing else called. `vaultAlerts` STAYS —
-    // it is about the log, not the folder, and the commit before this one
-    // is why.
+    // wrappers and two types nothing else called. `vaultAlerts` stayed —
+    // it was about the log, not the folder (it reads the box's missing
+    // files now, as `fileAlerts`).
     //
     // This is not a claim that the projection was a bad idea. It is a
     // claim about the phone: the box lives in an App Group container, and
     // a vault is a folder you keep your own way. A desktop shell over the
-    // same core is where these verbs have a reachable surface, and the
-    // FFI and the CLI keep all five for it.
+    // same core was where these verbs had a reachable surface; they went
+    // with `core/` in stage 5 (2026-09-29), and a desktop shell that wants
+    // the projection builds it on the engine.
 
-    /// Drain the log's notices, once, on appear. Never polled: a log that
-    /// has not been tampered with has nothing to say, and the verb is
-    /// read-and-clear, so asking twice would lose them.
+    /// Ask once, on appear. Never polled: a box whose files are all where
+    /// they belong has nothing to say.
     private func loadLogNotices() {
-        box.vaultAlerts { alerts = $0 }
+        box.fileAlerts { alerts = $0 }
     }
 
 }

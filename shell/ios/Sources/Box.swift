@@ -1397,7 +1397,7 @@ final class BoxModel: ObservableObject {
     /// a file added on the laptop reaches the phone as a valid reference
     /// with no copy here — that is "find it for me", not "this is
     /// broken".
-    func vaultAlerts(done: @escaping ([String]) -> Void) {
+    func fileAlerts(done: @escaping ([String]) -> Void) {
         engineFileAlerts { alerts in
             done(alerts.map { a in
                 let name = a.name ?? "A file"

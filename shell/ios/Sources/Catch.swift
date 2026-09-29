@@ -68,8 +68,8 @@ enum Spool {
         }
     }
 
-    /// `<group>/liv/spool/`, created on first use. Beside the box's own
-    /// `liv/` folder, not inside `liv.log`'s business.
+    /// `<group>/liv/spool/`, created on first use. Beside the box in the
+    /// same `liv/` folder, not inside it.
     static var dir: URL? {
         guard let base = LivGroup.container else { return nil }
         let dir = base.appendingPathComponent("liv/spool", isDirectory: true)

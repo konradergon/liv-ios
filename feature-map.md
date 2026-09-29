@@ -34,6 +34,14 @@ mentions proposers, sweep-behind-write, duplicate drop), recurrence (rule text, 
 occurrences, exceptions, no-debt), persisted proposal queue + refusals sidecar,
 provenance, starter library (note/task/event/person/project; due/status/related).
 
+> **2026-09-29, stage 5.** `core/` and `services/` are deleted; the app runs on
+> the engine and `surface/`. Of the list above, three did not come across:
+> recurrence (rule text, virtual occurrences, exceptions — never ported; the
+> calendar has shown no repeats since slice 5b), the duplicate drop (blocked on
+> a redirect property, `surface/src/clerk.rs`), and the queue + sidecar (the
+> clerk's queue is recomputed, and a refusal is an op). All of it is in git at
+> `fd7acd8^`.
+
 Sizes: **S** = small (days), **M** = a real chunk, **L** = milestone-scale.
 
 ---

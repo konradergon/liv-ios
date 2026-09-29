@@ -7,6 +7,14 @@
 >
 > Whenever implementation and this document disagree, this document takes precedence.
 >
+> **Implementation note, 2026-09-29.** The layer this document calls Services
+> is `surface/` over the engine since stage 5 of
+> `design/rust-owns-the-mechanisms.md`; the core-era `services/` and `core/`
+> are deleted. The disk truth is still an append-only log — of op groups, in
+> SQLite. Recurrence expansion, which this document places in Services, is not
+> implemented there: it was never ported to the engine, and the calendar has
+> shown no repeats since slice 5b. The code is in git at `fd7acd8^`.
+>
 > 1.0 folds in the pressure test of the core model and its amendments
 > (merge, dates, projections, the promotion pattern),
 > and adds the chapters the draft lacked:

@@ -1,5 +1,30 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-29 — core/ is deleted (stage 5)
+
+Owner: *"update the docs, then work on deleting core/"*. The app has run on
+the engine since slice 5b; stage 5 of `design/rust-owns-the-mechanisms.md`
+removes what only the old core needed. The workspace is four crates —
+engine, surface, ffi, cli — and 30,847 lines are gone.
+
+What a person can see: Settings' Engine card is gone (owner approved; its
+Rebuild button could wipe the live box). Nothing else on screen changes.
+
+What else: the CLI now checks the app's own `liv.db` through the app's own
+verbs and seeds test boxes (`liv --box … new task … --area Work`); the box is
+named `liv.db` directly (the same file as before — verified, no box moved);
+the ABI lost its 58 core-era verbs plus `liv_view_convert` and `liv_views`
+(`ffi/liv.h`, 973 lines to 608 — the owner is told: a removal, not an
+addition). Found on the way: a reopened box re-minted its previous session's
+ids, which kept `cargo test` red; and search let a note named "task" shadow
+the task kind, and missed `area:work` for "Work". Both fixed, test first.
+
+Left with core, none of it reachable from the app: recurrence expansion,
+markdown import/export, the vault projection, habits, time tracking, message
+import, pins, layers, daily notes, widgets, the clerk's dedupe, file-content
+search, and the phone→desk satellite outbox. All in git at `fd7acd8^`.
+`cargo test`: 350 passed. suites.sh 13/13; drive.sh tour and settings green.
+
 ## 2026-09-27 — the clearer boards
 
 Owner: implement the approved "clearer" canvas (claude.ai artifact
