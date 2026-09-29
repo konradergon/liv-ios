@@ -128,7 +128,7 @@ struct EverythingView: View {
     }
 
     /// A scrap carries no name cell — its display name is its first content
-    /// line, the same rule the desk and the outbox ledger use. Markdown
+    /// line, the same rule the desk uses. Markdown
     /// markers come off for display (livDisplayTitle): a note that starts
     /// "# Trip planning" is titled "Trip planning", never "# Trip planning".
     private func display(_ row: EntityRow) -> String { livRowTitle(row) }

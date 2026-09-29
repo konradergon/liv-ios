@@ -10,7 +10,6 @@ import UserNotifications
 struct LivApp: App {
     @StateObject private var box = BoxModel(path: BoxPath.resolve())
     @StateObject private var desk = DeskModel()
-    @StateObject private var outbox = Outbox.shared
     @StateObject private var workspaces = WorkspaceModel()
 
     init() {
@@ -126,7 +125,6 @@ struct LivApp: App {
                 RootView()
                     .environmentObject(box)
                     .environmentObject(desk)
-                    .environmentObject(outbox)
                     .environmentObject(workspaces)
                     // THE CARET IS OURS TOO. There was no tint on the
                     // root until 2026-09-07, so every text caret,
@@ -317,17 +315,13 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 box.refresh()
-                Outbox.shared.scanAcks()
                 drainSpool()
-            } else if phase == .background {
-                Outbox.shared.closeBatch(snapshot: box.snap)
             }
         }
         // THE `liv://` DOOR. Warm and cold launch both, for a
         // single-scene app; no UIApplicationDelegate needed.
         .onOpenURL { Routes.shared.handle($0) }
         .onAppear {
-            bindOutboxTitles()
             // A cold launch may never report a phase CHANGE to .active,
             // so the spool is read here as well; `draining` keeps the
             // two from overlapping.
@@ -372,11 +366,6 @@ struct RootView: View {
             }
         }
         .onReceive(box.$snap) { snap in
-            // Rebind on every snapshot: assigning the resolver republishes the
-            // ledger, and at .onAppear there is no snapshot to resolve against
-            // yet (titles would freeze as "#id"). Rebinding also keeps entry
-            // titles current when an entity is renamed after capture.
-            bindOutboxTitles()
             workspaces.apply(snap)
             // The lens is answered by the core, so it has to be re-asked
             // whenever the box moves — a note created a moment ago must
@@ -462,16 +451,6 @@ struct RootView: View {
             }
         }
         next(0)
-    }
-
-    /// The outbox resolves ledger titles through the live box. A scrap
-    /// carries no name cell (capture writes content only), so fall back to
-    /// its first content line — the display name the rest of the shell shows.
-    private func bindOutboxTitles() {
-        Outbox.shared.titleResolver = { [weak box] id in
-            guard let row = box?.entity(id) else { return nil }
-            return livRowTitle(row)
-        }
     }
 
     /// Rehearsal hook (headless screenshots, the LIV_BOX_PATH spirit):

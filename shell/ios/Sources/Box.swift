@@ -725,8 +725,8 @@ final class BoxModel: ObservableObject {
     /// wrong one. The same disagreement about what a number means as
     /// `EntityRow.due`, one layer up.
     ///
-    /// `Civil.epochDay` already counted it correctly and `EngineCheck`
-    /// already called it — the right answer was in the tree, beside a
+    /// `Civil.epochDay` already counted it correctly and the Engine card
+    /// (since deleted) already called it — the right answer was in the tree, beside a
     /// second spelling that was not (standing rule 4).
     static var todayDay: Int32 { Civil.epochDay(Civil.todayDay()) }
 
@@ -750,7 +750,7 @@ final class BoxModel: ObservableObject {
     /// blocking notice; a healthy box = the verb was refused on its merits
     /// (log only — mutations must never replay themselves). Box-queue only.
     private func verbFailed(_ verb: String) {
-        let (code, message) = Self.health(of: enginePath)
+        let (code, message) = Self.health(of: path)
         guard code != "ok" else {
             // The box is fine, so the verb was refused ON ITS MERITS — a
             // value that would not read, a link to nothing. Log it and
@@ -876,10 +876,9 @@ final class BoxModel: ObservableObject {
     /// proposer can only offer to make it a task because nothing here
     /// decided first.
     func capture(_ text: String, done: ((LivEntityID) -> Void)? = nil) {
-        let tracked = Outbox.tracking(.idea, done)
         engineCapture(text) { [weak self] id, fault in
             if fault != nil { self?.verbFailed("capture") }
-            tracked(id ?? .absent)
+            done?(id ?? .absent)
         }
     }
 
@@ -887,11 +886,11 @@ final class BoxModel: ObservableObject {
     /// `capture`, which refuses empty text, this births the entity so the
     /// caret has somewhere to land.
     func createNote(done: ((LivEntityID) -> Void)? = nil) {
-        make(kindWord: "note", .idea, done)
+        make(kindWord: "note", done)
     }
 
     func createTask(done: ((LivEntityID) -> Void)? = nil) {
-        make(kindWord: "task", .task, done)
+        make(kindWord: "task", done)
     }
 
     /// An event, and its date, as two writes rather than one verb.
@@ -901,7 +900,7 @@ final class BoxModel: ObservableObject {
     /// and treating one as the other is how a thing lands on the wrong
     /// side of midnight.
     func createEvent(dueCivil: Int64, dateOnly: Bool, done: ((LivEntityID) -> Void)? = nil) {
-        make(kindWord: "event", .event) { [weak self] id in
+        make(kindWord: "event") { [weak self] id in
             guard let self, !id.isAbsent else {
                 done?(id)
                 return
@@ -911,20 +910,17 @@ final class BoxModel: ObservableObject {
     }
 
     /// One of the kinds the box offers, by its word.
-    private func make(
-        kindWord: String, _ sort: OutboxKind, _ done: ((LivEntityID) -> Void)?
-    ) {
-        let tracked = Outbox.tracking(sort, done)
+    private func make(kindWord: String, _ done: ((LivEntityID) -> Void)?) {
         engineKinds { [weak self] kinds in
             guard let self else { return }
             guard let k = kinds.first(where: { ($0.name ?? "").lowercased() == kindWord }) else {
                 self.verbFailed("make \(kindWord)")
-                tracked(.absent)
+                done?(.absent)
                 return
             }
             self.engineMake(kind: k.id) { id, fault in
                 if fault != nil { self.verbFailed("make \(kindWord)") }
-                tracked(id ?? .absent)
+                done?(id ?? .absent)
             }
         }
     }
@@ -1005,10 +1001,9 @@ final class BoxModel: ObservableObject {
 
     /// The librarian: by reference, never moves the file.
     func addFile(_ path: String, done: ((LivEntityID) -> Void)? = nil) {
-        let tracked = Outbox.tracking(.photo, done)
         engineAddFile(path) { [weak self] id, fault in
             if fault != nil { self?.verbFailed("addFile") }
-            tracked(id ?? .absent)
+            done?(id ?? .absent)
         }
     }
 
@@ -1616,109 +1611,14 @@ extension EntityRow {
     }
 }
 
-/// Today, already split. The shell does not decide which pile a row is in.
-struct LivTodayView: Decodable {
-    var late: [EntityRow]?
-    var passed: [EntityRow]?
-    var ahead: [EntityRow]?
-    var allDay: [EntityRow]?
-    var done: [EntityRow]?
-    var next: LivID?
-    var captured: Int?
-
-    /// Everything the day itself holds, in the order the screen draws it.
-    var onTheDay: [EntityRow] {
-        (passed ?? []) + (ahead ?? []) + (allDay ?? [])
-    }
-}
-
-/// What a conversion carried, and what it could not.
-struct LivConvertReport: Decodable {
-    var entities: Int?
-    var cells: Int?
-    var resolved: Int?
-    var mintedVocabulary: Int?
-    var filesDropped: Int?
-    var undeclared: Int?
-    var clean: Bool?
-    var unknownKinds: [String]?
-}
-
 extension BoxModel {
-    /// Where the engine's box sits: beside the log, same directory.
-    ///
-    /// A separate FILE, not a separate place. The core box stays exactly
-    /// where it is and stays the truth until stage 5; this one is built
-    /// from it and can be deleted at any time without losing anything.
-    var enginePath: String {
-        (path as NSString).deletingLastPathComponent + "/liv.db"
-    }
-
-    var engineBoxExists: Bool {
-        FileManager.default.fileExists(atPath: enginePath)
-    }
-
-    /// Build the engine box from the core box. Refuses if it is already
-    /// there — `rebuildEngineBox` is the way to start over.
-    ///
-    /// **The value, then the fault**, which is how `query` and `search`
-    /// already answer. `Result` was the first shape here and it does not
-    /// compile: `Result` requires `Failure: Error` and `String` is not
-    /// one. Rather than mint an error type the shell has never needed —
-    /// there is no `: Error` conformance anywhere in it — this matches
-    /// the house style. Exactly one of the two is non-nil.
-    func convertToEngine(_ done: @escaping (LivConvertReport?, String?) -> Void) {
-        let from = path
-        let to = enginePath
-        boxQueue.async {
-            var out: UnsafeMutablePointer<CChar>?
-            let code = liv_view_convert(from, to, &out)
-            let (value, fault) = Self.decodeView(LivConvertReport.self, code: code, out: out)
-            DispatchQueue.main.async { done(value, fault) }
-        }
-    }
-
-    /// Throw the conversion away and build it again. The core box is
-    /// never touched, so this is always safe.
-    func rebuildEngineBox(_ done: @escaping (LivConvertReport?, String?) -> Void) {
-        let to = enginePath
-        boxQueue.async {
-            liv_view_close_all()
-            // -wal and -shm are SQLite's, and a stale one beside a deleted
-            // database is how a "fresh" box comes back with old rows in it.
-            for suffix in ["", "-wal", "-shm"] {
-                try? FileManager.default.removeItem(atPath: to + suffix)
-            }
-            DispatchQueue.main.async { self.convertToEngine(done) }
-        }
-    }
-
-    /// Today, from the engine.
-    ///
-    /// `day` and `today` are DAYS SINCE THE EPOCH, not the packed civil
-    /// the old ABI uses — the engine counts days and `Civil` packs
-    /// YYYYMMDD, and pretending they are the same number is the kind of
-    /// thing that puts a task on the wrong side of midnight.
-    func engineToday(
-        day: Int32, today: Int32, nowMs: Int64,
-        _ done: @escaping (LivTodayView?, String?) -> Void
-    ) {
-        let to = enginePath
-        boxQueue.async {
-            var out: UnsafeMutablePointer<CChar>?
-            let code = liv_view_today(to, day, today, nowMs, nil, &out)
-            let (value, fault) = Self.decodeView(LivTodayView.self, code: code, out: out)
-            DispatchQueue.main.async { done(value, fault) }
-        }
-    }
-
     /// Everything, from the engine. `slice` is 0 all, 1 notes, 2 upcoming,
     /// 3 unfiled.
     func engineEverything(
         slice: Int32, today: Int32,
         _ done: @escaping ([EntityRow]?, String?) -> Void
     ) {
-        let to = enginePath
+        let to = path
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = liv_view_everything(to, slice, today, nil, &out)
@@ -1737,7 +1637,7 @@ extension BoxModel {
         switch code {
         case 0: return ""
         case -1: return "bad path"
-        case -2: return "no engine box yet — convert first"
+        case -2: return "the box would not open"
         case -3: return "bad argument"
         case -4: return "the box refused the read"
         case -5: return "the answer would not encode"
@@ -2058,7 +1958,7 @@ enum Civil {
 
 // MARK: - the engine lane, complete
 //
-// **This is 5b's Swift half.** Everything above the `enginePath` extension
+// **This is 5b's Swift half.** Everything above the `path` extension
 // is the core lane: one `liv_snapshot` holding the whole box, decoded into
 // `Snapshot`, which every screen reads. The engine answers questions
 // instead — one verb per surface, already filtered, already sorted — and
@@ -2076,42 +1976,6 @@ enum Civil {
 //  3. **Ids are 32 hex characters and are never shown to anyone**
 //     (owner, 2026-09-13). `LivID` decodes them; `LivIDText.written` is
 //     the only way to write one down.
-
-/// One band of the Tasks view: a status, and the rows under it.
-///
-/// **`late` is the GROUP's count, not a flag per row.** On a real box
-/// every task is overdue, and a colour on every row distinguishes
-/// nothing. An empty group is not returned at all.
-struct LivTaskGroup: Decodable, Identifiable {
-    var status: LivID?
-    var name: String?
-    var completes: Bool?
-    var late: Int?
-    var rows: [EntityRow]?
-    var id: String { engineId(status ?? .absent) + (name ?? "") }
-}
-
-/// One block on the day's timeline, with its overlap already resolved.
-///
-/// **`column`/`columns` are a CLUSTER's, not a pair's**: two blocks that
-/// miss each other can both hit a third, and all three share the width.
-/// The engine works that out, because getting it wrong is a layout bug
-/// that only shows up on a busy day.
-struct LivBlock: Decodable, Identifiable {
-    var row: EntityRow?
-    var startMin: Int?
-    /// Never zero, so a thing with no duration stays tappable.
-    var minutes: Int?
-    var column: Int?
-    var columns: Int?
-    var id: String { engineId(row?.id ?? .absent) }
-}
-
-/// One day: the all-day band, and the timeline under it.
-struct LivDayView: Decodable {
-    var allDay: [EntityRow]?
-    var blocks: [LivBlock]?
-}
 
 /// One row of the inspector, as `liv_cells` reports it.
 struct LivCell: Decodable, Identifiable {
@@ -2222,12 +2086,6 @@ struct LivLinks: Decodable {
     static let empty = LivLinks(out: [], inbound: [])
 }
 
-/// What undo and redo would take, without taking it.
-struct LivUndoState: Decodable {
-    var undo: Bool?
-    var redo: Bool?
-}
-
 /// A search: ranked hits, and the facet rows beside them.
 struct LivFound: Decodable {
     var hits: [LivHit]?
@@ -2313,7 +2171,7 @@ struct LivResync: Decodable {
 /// **The same sixteen bytes as `LivIDText.written` since slice 5b**, and
 /// still two names on purpose: this one is a CONTRACT with C, that one is
 /// a format this app owns for its own storage — notification
-/// identifiers, `UserDefaults` keys, the outbox ledger, a `[[…]]` token.
+/// identifiers, `UserDefaults` keys, a `[[…]]` token.
 /// Two things that agree today can be changed for different reasons
 /// tomorrow, and the ABI is the one that may not move.
 ///
@@ -2353,7 +2211,7 @@ extension BoxModel {
         _ work: @escaping (String) -> Int32,
         _ done: ((String?) -> Void)? = nil
     ) {
-        let to = enginePath
+        let to = path
         boxQueue.async {
             let code = work(to)
             DispatchQueue.main.async {
@@ -2370,7 +2228,7 @@ extension BoxModel {
         _ work: @escaping (String, LivOut) -> Int32,
         _ done: @escaping (T?, String?) -> Void
     ) {
-        let to = enginePath
+        let to = path
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = withUnsafeMutablePointer(to: &out) { work(to, $0) }
@@ -2388,7 +2246,7 @@ extension BoxModel {
         _ work: @escaping (String, LivOut) -> Int32,
         _ done: @escaping (T?, String?) -> Void
     ) {
-        let to = enginePath
+        let to = path
         boxQueue.async {
             var out: UnsafeMutablePointer<CChar>?
             let code = withUnsafeMutablePointer(to: &out) { work(to, $0) }
@@ -2542,21 +2400,11 @@ extension BoxModel {
 
     // MARK: undo
 
-    func engineUndoState(_ done: @escaping (LivUndoState) -> Void) {
-        engineRead(LivUndoState.self, { to, out in liv_undo_state(to, out) }) { v, _ in
-            done(v ?? LivUndoState(undo: false, redo: false))
-        }
-    }
-
     /// Take back this device's last action. **Undo is what YOU did here**
     /// — a box holding both ends of a sync must not let either end take
     /// back the other's last write.
     func engineUndo(_ done: ((String?) -> Void)? = nil) {
         engineWrite({ to in liv_undo(to, Self.nowMs) }, done)
-    }
-
-    func engineRedo(_ done: ((String?) -> Void)? = nil) {
-        engineWrite({ to in liv_redo(to, Self.nowMs) }, done)
     }
 
     // MARK: vocabulary
@@ -2747,27 +2595,6 @@ extension BoxModel {
 
     // MARK: the box itself
 
-    /// The day view, from the engine. `day` is DAYS SINCE THE EPOCH, not
-    /// a packed civil.
-    func engineDay(day: Int32, _ done: @escaping (LivDayView?, String?) -> Void) {
-        engineRead(LivDayView.self, { to, out in liv_view_day(to, day, nil, out) }, done)
-    }
-
-    /// Tasks by band. `filter` is 0 all, 1 status, 2 project.
-    func engineTasks(filter: Int32 = 0, filterId: LivID? = nil, today: Int32,
-                     _ done: @escaping ([LivTaskGroup]?, String?) -> Void) {
-        // `engineId`, NOT `written`: this id crosses to C, where
-        // `parse_id` takes 32 hex characters or nothing. It was the
-        // shell's storage form, so `named()` never resolved and the
-        // status and project filters quietly returned every task (slice
-        // 5b, 2026-09-19). The two forms agree today; the reason they
-        // are two names is that this one may not move.
-        let f = filterId.map(engineId)
-        engineRead([LivTaskGroup].self, { to, out in
-            liv_view_tasks(to, filter, f, today, nil, out)
-        }, done)
-    }
-
     func engineWorkspaces(_ done: @escaping ([LivSpace]) -> Void) {
         engineRead([LivSpace].self, { to, out in liv_workspaces(to, out) }) { v, _ in
             done(v ?? [])
@@ -2868,10 +2695,4 @@ extension BoxModel {
         }
     }
 
-    /// Turn the clerk on or off. **The box owns where the switch lives**,
-    /// so this is one call rather than the shell knowing which thing to
-    /// write a no onto.
-    func setAssist(_ on: Bool, _ done: ((Bool) -> Void)? = nil) {
-        engineWrite({ to in liv_set_assist(to, on, Self.nowMs) }) { done?($0 == nil) }
-    }
 }

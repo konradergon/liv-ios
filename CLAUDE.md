@@ -2,8 +2,7 @@
 
 > **Naming:** the product and the code are both **Liv** — crates (`liv-core`,
 > `liv-ffi`, …), the `liv_*` FFI symbol prefix, `ffi/liv.h`, and the
-> box file (`…/Application Support/liv/liv.db`, the engine's; the core-era
-> `liv.log` beside it is history — nothing reads it at launch). The old codename **`lotus`**
+> box file (`…/Application Support/liv/liv.db`, the engine's). The old codename **`lotus`**
 > was renamed away (2026-07-22); it survives in exactly two frozen places, on
 > purpose: (1) codename-era boxes carry the on-disk header key `lotus_log` and
 > legacy box paths — the core reads both and preserves the key on in-place
@@ -153,8 +152,7 @@ The CLI answers with the same verbs, and the same JSON, the app decodes
 (`liv help`). A test box is seeded with it —
 `liv --box <dir>/liv.db new task Pay rent --due 2026-09-30 --area Home` — and
 the app opens it through `LIV_BOX_PATH`
-(`SIMCTL_CHILD_LIV_BOX_PATH=<dir>/liv.log`: the app still names the old log
-and opens the `liv.db` beside it, until stage 5's next step).
+(`SIMCTL_CHILD_LIV_BOX_PATH=<dir>/liv.db`).
 
 **The iOS shell has three of its own, and `cargo test` runs none of them.**
 

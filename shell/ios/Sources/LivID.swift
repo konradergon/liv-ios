@@ -3,11 +3,11 @@
 // The engine names a thing with a UUID. The shell has always named one
 // with a `UInt64`, because that is what `core/`'s ids are, and it appears
 // 236 times across 22 files — the navigation chain, the editor, the tab
-// plane, the outbox. That type is the whole of what stands between the
+// plane. That type is the whole of what stands between the
 // app and the engine (`design/rust-owns-the-mechanisms.md` §5, stage 4b).
 //
 // **Slice 4 flipped it.** `LivEntityID` IS this type now, everywhere —
-// the navigation chain, the editor, the plane, the outbox. The four
+// the navigation chain, the editor, the plane. The four
 // slices behind that, and the one still ahead:
 //
 //   1. The type itself, used only by the new seam's own rows, so its
@@ -61,7 +61,6 @@ typealias LivEntityID = LivID
 /// * a `related` cell's `#123`, **inside the box**;
 /// * five `UserDefaults` keys (`desk.v3.123`), which hold every saved
 ///   plane and desk position;
-/// * the outbox ledger's JSON dictionary keys;
 /// * a shared note's filename;
 /// * a saved plane's tab token, which is an id or an opaque position;
 /// * a scheduled reminder's notification identifier AND its `userInfo`;
@@ -96,8 +95,8 @@ enum LivIDText {
     ///    relaunch restored ids pointing at nothing;
     ///  - a reminder's identifier and payload (`Notify`), so tapping one
     ///    opened nothing;
-    ///  - the outbox ledger's keys (`Outbox`);
-    ///  - the tasks view's filter id (`engineTasks`), which the ABI
+    ///  - the outbox ledger's keys (`Outbox`, since deleted);
+    ///  - the tasks view's filter id (`engineTasks`, since deleted), which the ABI
     ///    parses with `parse_id` — 32 hex characters or nothing — so
     ///    filtering by status or project quietly did no filtering;
     ///  - a link added from the properties card (`Links`), which crosses
