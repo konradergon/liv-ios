@@ -44,7 +44,11 @@ impl Engine {
 
     fn wrap(conn: Connection, device: DeviceId) -> Result<Engine, LogError> {
         conn.execute_batch(view::SCHEMA)?;
-        Ok(Engine { conn, hold: Hold::default(), ids: IdGen::new(device) })
+        let mut ids = IdGen::new(device);
+        if let Some(newest) = log::newest_stamp(&conn)? {
+            ids.resume(newest);
+        }
+        Ok(Engine { conn, hold: Hold::default(), ids })
     }
 
     pub fn device(&self) -> DeviceId {

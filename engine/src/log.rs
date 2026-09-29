@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::id::{DeviceId, Dot};
+use crate::id::{DeviceId, Dot, Hlc};
 use crate::op::{self, DecodeError, Group};
 
 /// The box format this build writes and will open.
@@ -251,6 +251,19 @@ pub fn next_seq(conn: &rusqlite::Connection, device: DeviceId) -> Result<u64, Lo
         )
         .ok();
     Ok(high.map(|(seq, n)| (seq + n) as u64).unwrap_or(0))
+}
+
+/// The newest stamp this box holds, from any device — where a reopened
+/// clock resumes (`IdGen::resume`). One descending seek on `ops_in_time`.
+pub fn newest_stamp(conn: &rusqlite::Connection) -> Result<Option<Hlc>, LogError> {
+    let high: Option<(i64, i64)> = conn
+        .query_row(
+            "SELECT hlc_wall, hlc_ctr FROM ops ORDER BY hlc_wall DESC, hlc_ctr DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok();
+    Ok(high.map(|(wall, ctr)| Hlc { wall_ms: wall as u64, ctr: ctr as u32 }))
 }
 
     /// What this box holds, per device.
