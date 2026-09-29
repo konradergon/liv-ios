@@ -38,7 +38,8 @@ The owner's words, in order (2026-09-24 → 29):
 - "go with A" (the panel as a list, with the workspaces moved into it)
 - "i thing the old open tabs "[n]" style was better. and the gear icon
   shouldn't have a circle in the middle and be less coggy"
-- "improve the settings icon... should still look like a cogwheel"
+- "improve the settings icon... should still look like a cogwheel" · then
+  "revert to the old gear icon but with less "bumps""
 
 ## The rules
 
@@ -188,15 +189,16 @@ case .trash:
     pen.line(4.5, 6.5, 19.5, 6.5)
     pen.shape([(9.5, 6.5, 0), (9.5, 4.5, 0), (14.5, 4.5, 0), (14.5, 6.5, 0)], closed: false)
     pen.shape([(6.5, 6.5, 0), (7.4, 20.2, 2), (16.6, 20.2, 2), (17.5, 6.5, 0)], closed: false)
-case .settings:                   // a plain cog, and NO hub (owner, 2026-09-29: "shouldn't
-                                  // have a circle in the middle and be less coggy", then
-                                  // "should still look like a cogwheel")
-    pen.gear(12, 12, root: 7.8, tip: 9.8, teeth: 8, rootHalf: 0.22, tipHalf: 0.15, round: 0.6)
-    // Eight SQUARE teeth, narrower than today's (0.33 / 0.21 of the pitch)
-    // so the gaps stay open at 22pt, with softer corners (0.45 today).
-    // `Pen.gear` gains `rootHalf:`, `tipHalf:` and `round:`, defaulting to
-    // today's values. The `pen.circle(12, 12, 3.1)` hub goes. Six round
-    // teeth were tried first and read as a flower.
+case .settings:                   // TODAY'S cog with SIX teeth, not eight (owner, 2026-09-29:
+                                  // "revert to the old gear icon but with less bumps")
+    pen.gear(12, 12, root: 7, tip: 9.2, teeth: 6)
+    pen.circle(12, 12, 3.1)       // the hub stays: it is part of the old icon
+    // Same radii, taper and corners as today. One change in `Pen.gear`: the
+    // first tooth points UP (`mid = Double(i) * pitch - .pi / 2`). With
+    // eight teeth that draws exactly what it draws now; with six, starting
+    // at 0 puts teeth at the sides and a gap on top, which reads lopsided.
+    // Tried and dropped the same day: no hub (six round teeth read as a
+    // flower; eight square teeth were still too many bumps).
 case .link:                       // UNCHANGED
     pen.link()
 ```
