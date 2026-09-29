@@ -76,12 +76,9 @@ final class EditorBridge: ObservableObject {
 // MARK: - fonts
 
 private enum EditorFont {
-    // THE SIZES LIVE IN `LivType.Editor` (Theme.swift), not here. They
-    // were six literals in this file, dated 2026-07-31 — they predate
-    // `LivType` entirely — and standing rule 3 says a size lives in a
-    // type. Moved unchanged on 2026-09-07, values bit-identical, so the
-    // drift they carry is now visible where the rest of the scale is:
-    // this body is 16 while every list row that opens a note is 18.
+    // THE SIZES LIVE IN `LivType.Editor` (Theme.swift), not here —
+    // standing rule 3. The body is the app's own 18 on a 27pt line since
+    // the clearer boards (2026-09-24); the 16-vs-18 drift is closed.
     //
     // One of the six is gone (2026-09-12): a 12pt monospace whose only
     // reader had been removed on 2026-08-11 and which therefore drew
@@ -97,9 +94,26 @@ private enum EditorFont {
 
     /// The list GUTTER: every list line's words start this far in, and a
     /// line that wraps carries on under its words rather than under its
-    /// marker. Wide enough for the widest thing that hangs there — a
-    /// checkbox, which is drawn at 15pt — with a space after it.
-    static let listGutter: CGFloat = 23
+    /// marker. Wide enough for the widest thing that hangs there — the
+    /// 20pt checkbox — and ten of air after it.
+    static let listGutter: CGFloat = LivType.Editor.listGutter
+
+    /// The body's 27pt pitch, as the `lineSpacing` TextKit adds under the
+    /// font's own line height.
+    static let bodySpacing = max(0, LivType.Editor.line - body.lineHeight)
+
+    /// A heading's own paragraph: its pitch, and air under it. The air
+    /// ABOVE is set per line (none on the note's first line).
+    static func headingStyle(_ level: Int, first: Bool) -> NSParagraphStyle {
+        let pitch: CGFloat =
+            level == 1 ? LivType.Editor.h1Line
+            : level == 2 ? LivType.Editor.h2Line : LivType.Editor.h3Line
+        let p = NSMutableParagraphStyle()
+        p.lineSpacing = max(0, pitch - heading(level).lineHeight)
+        p.paragraphSpacing = LivType.Editor.headingBelow
+        p.paragraphSpacingBefore = first ? 0 : LivType.Editor.headingAbove
+        return p
+    }
     /// One level of nesting is one gutter: a nested item's marker hangs
     /// exactly where its parent's words start. The buffer nests with two
     /// spaces per level (Editor's codec); those spaces carry no width of
@@ -154,6 +168,15 @@ private enum EditorFont {
 // MARK: - the styler: text in, attributes over paragraph ranges out
 
 enum MarkStyler {
+    /// THE BODY'S ATTRIBUTES, once: the font, the ink, the 27pt pitch.
+    /// The styler lays them under every paragraph, and the editor types
+    /// with them on an empty line (see `textViewDidChangeSelection`).
+    static let baseAttributes: [NSAttributedString.Key: Any] = {
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = EditorFont.bodySpacing
+        return [.font: EditorFont.body, .foregroundColor: LivInk.text, .paragraphStyle: para]
+    }()
+
     /// Restyle `charRange` (expanded to whole paragraphs) in place. Pure
     /// function of the text plus ONE piece of caret state: `revealing`,
     /// the paragraph the caret sits in. A divider on that line shows its
@@ -188,11 +211,7 @@ enum MarkStyler {
             }
         }
 
-        let para = NSMutableParagraphStyle()
-        para.lineSpacing = 2
-        storage.setAttributes(
-            [.font: EditorFont.body, .foregroundColor: LivInk.text, .paragraphStyle: para],
-            range: range)
+        storage.setAttributes(baseAttributes, range: range)
 
         n.enumerateSubstrings(in: range, options: [.byLines, .substringNotRequired]) {
             _, lineRange, _, _ in
@@ -345,19 +364,21 @@ enum MarkStyler {
         /// two source spaces that carry a level are collapsed, or every
         /// level would be indented twice — once by the style and once by
         /// its own spaces.
-        func gutter(_ visible: NSRange, font: UIFont = EditorFont.body) {
+        func gutter(_ visible: NSRange, font: UIFont = EditorFont.body, extra: CGFloat = 0) {
             guard visible.length > 0 else { return }
             let level = shape.indent / EditorFont.indentUnit
             let base = CGFloat(level) * EditorFont.listGutter
             let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = 2
+            paragraph.lineSpacing = EditorFont.bodySpacing
             paragraph.firstLineHeadIndent = base
             paragraph.headIndent = base + EditorFont.listGutter
             storage.addAttribute(
                 .paragraphStyle, value: paragraph,
                 range: abs(NSRange(location: 0, length: lineLen)))
             collapse(NSRange(location: 0, length: shape.indent), font: font)
-            let pad = EditorFont.listGutter - width(visible, font)
+            // `width` cannot see a kern, so a kern already laid on the
+            // run (the task box's) is passed in and counted here.
+            let pad = EditorFont.listGutter - width(visible, font) - extra
             guard pad > 0.5 else { return }
             storage.addAttribute(
                 .kern, value: NSNumber(value: Double(pad)),
@@ -399,8 +420,13 @@ enum MarkStyler {
         switch shape.block {
         case .heading(let level):
             contentFont = EditorFont.heading(level)
-            storage.addAttribute(
-                .font, value: contentFont,
+            storage.addAttributes(
+                [
+                    .font: contentFont,
+                    // No air above the note's first line: the title's own
+                    // gap already stands there.
+                    .paragraphStyle: EditorFont.headingStyle(level, first: base == 0),
+                ],
                 range: abs(NSRange(location: 0, length: lineLen)))
             // The hash wears the heading's own font, so it sits on the
             // same baseline at the same size as the words beside it.
@@ -429,11 +455,21 @@ enum MarkStyler {
                     collapse(lead)
                 }
                 dim(NSRange(location: box.location, length: shape.marker.length - box.location))
+                // THE BRACKETS ARE AS WIDE AS THE BOX DRAWN OVER THEM. "[ ]"
+                // at 18pt is narrower than the 20pt box, so its "]" is
+                // kerned out to 20 — the tap that toggles lands where the
+                // box is drawn, and the words never touch it.
+                let boxWide = max(0, LivCheck.size - width(box, EditorFont.body))
+                if boxWide > 0.5 {
+                    storage.addAttribute(
+                        .kern, value: NSNumber(value: Double(boxWide)),
+                        range: abs(NSRange(location: NSMaxRange(box) - 1, length: 1)))
+                }
                 // Only what is still VISIBLE counts toward the gutter:
                 // on the caret's line the leading "- " is showing and
                 // takes part of it, off the line it is collapsed away.
                 let from = revealed ? shape.indent : box.location
-                gutter(NSRange(location: from, length: shape.marker.length - from))
+                gutter(NSRange(location: from, length: shape.marker.length - from), extra: boxWide)
             } else {
                 dim(NSRange(location: 0, length: shape.marker.length))
             }
@@ -487,7 +523,7 @@ enum MarkStyler {
                     range: abs(NSRange(location: 0, length: lineLen)))
             } else {
                 let ruleStyle = NSMutableParagraphStyle()
-                ruleStyle.lineSpacing = 2
+                ruleStyle.lineSpacing = EditorFont.bodySpacing
                 ruleStyle.lineBreakMode = .byClipping
                 let whole = NSRange(location: 0, length: lineLen)
                 storage.addAttributes(
@@ -638,11 +674,11 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             // a divider divides the page.
             //
             // Anchored to the TOP of the line, not its middle. Every
-            // styled paragraph carries lineSpacing 2, and TextKit adds
-            // that 2pt to the bottom of a line only when another line
-            // follows it — so the moment you pressed Return after a
-            // hand-typed `---` the box grew and the rule dropped 1pt
-            // (owner, 2026-08-06). The top of the line does not move.
+            // styled paragraph carries the body's `bodySpacing`, and
+            // TextKit adds it to the bottom of a line only when another
+            // line follows it — so the moment you pressed Return after a
+            // hand-typed `---` the box grew and the rule dropped (owner,
+            // 2026-08-06). The top of the line does not move.
             // x and width must measure from the same edge. They did not:
             // x started at the container edge while the width subtracted
             // the text's own side padding, so the rule poked 3pt past the
@@ -664,12 +700,12 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             rect.origin.x += origin.x
             rect.origin.y += origin.y
             // Centred on the line's own height, exactly as the box is —
-            // markers carry the body font now, so the two agree. Its X
-            // is the dash's own, and the dash starts at the gutter's
-            // left edge because the paragraph's indent put it there.
-            let side: CGFloat = 5
+            // markers carry the body font, so the two agree. Its X is the
+            // centre of the box's column, measured from the dash's own
+            // left edge (the gutter's), so a bullet and a box share a spine.
+            let side = LivType.Editor.dot
             let dot = CGRect(
-                x: rect.midX - side / 2,
+                x: rect.minX + LivCheck.size / 2 - side / 2,
                 y: rect.minY + EditorFont.body.lineHeight / 2 - side / 2,
                 width: side, height: side)
             LivInk.text2.setFill()
@@ -681,30 +717,32 @@ final class LivLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             var rect = boundingRect(forGlyphRange: glyphs, in: container)
             rect.origin.x += origin.x
             rect.origin.y += origin.y
-            // A 15pt box, centred on the line's own height rather than
-            // on the glyph box — same lineSpacing trap as the rule
-            // above. Its X is the brackets' own; the collapsed "- "
-            // before them leaves them at the gutter's left edge.
-            let side: CGFloat = 15
+            // THE APP'S ONE CHECKBOX (`LivCheck`, the recipe `LivCheckbox`
+            // draws in SwiftUI): 20pt, radius 6, a 1.7 stroke inside the
+            // box when open; filled green with the drawn white tick when
+            // done. Centred on the line's own height rather than on the
+            // glyph box — same lineSpacing trap as the rule above. Its X
+            // is the brackets' own left edge, which the gutter placed.
+            let side = LivCheck.size
             let box = CGRect(
-                x: rect.midX - side / 2,
+                x: rect.minX,
                 y: rect.minY + EditorFont.body.lineHeight / 2 - side / 2,
                 width: side, height: side)
-            let path = UIBezierPath(roundedRect: box, cornerRadius: 4.5)
             if checked {
-                LivInk.accent.setFill()
-                path.fill()
-                let check = UIBezierPath()
-                check.move(to: CGPoint(x: box.minX + 3.6, y: box.midY + 0.4))
-                check.addLine(to: CGPoint(x: box.minX + 6.2, y: box.maxY - 3.6))
-                check.addLine(to: CGPoint(x: box.maxX - 3.4, y: box.minY + 4.2))
-                check.lineWidth = 1.8
-                check.lineCapStyle = .round
-                check.lineJoinStyle = .round
+                LivInk.green.setFill()
+                UIBezierPath(roundedRect: box, cornerRadius: LivCheck.radius).fill()
+                let tick = UIBezierPath(cgPath: LivCheck.tickPath(in: box))
+                tick.lineWidth = LivCheck.tickStroke
+                tick.lineCapStyle = .round
+                tick.lineJoinStyle = .round
                 LivInk.onAccent.setStroke()
-                check.stroke()
+                tick.stroke()
             } else {
-                path.lineWidth = 1.5
+                let inset = LivCheck.stroke / 2
+                let path = UIBezierPath(
+                    roundedRect: box.insetBy(dx: inset, dy: inset),
+                    cornerRadius: LivCheck.radius - inset)
+                path.lineWidth = LivCheck.stroke
                 LivInk.text2.setStroke()
                 path.stroke()
             }
@@ -742,13 +780,16 @@ final class MarkdownTextView: UITextView {
     /// ABOVE the title and that is the gap below it. One pair, one place,
     /// read together.
     private static let titleDrop: CGFloat = 4
-    private static let gutter: CGFloat = 15
+    /// Where the page's words start (the board's 20).
+    private static let gutter: CGFloat = LivType.Editor.margin
     /// Between the title and the first line of the note. At 6 the note
     /// began almost against its own name.
     private static let titleGap: CGFloat = 20
     /// Embedded in a record card there is no floating bottom bar to
     /// clear and no title to reserve room for — the card supplies both.
     private static let embeddedTop: CGFloat = 4
+    /// TextKit's own padding inside the container, part of every margin.
+    private static let fragmentPad: CGFloat = 5
     private static let embeddedBottom: CGFloat = 8
 
     /// A NOTE shows its title inside this scroll view. A record's notes
@@ -769,7 +810,7 @@ final class MarkdownTextView: UITextView {
     /// the same expression written twice, which is the shape standing
     /// rule 4 names — and the two have to agree or the prompt jumps to a
     /// different size the moment you type over it.
-    static let titleFont = UIFont.systemFont(ofSize: LivType.hero, weight: .bold)
+    static let titleFont = UIFont.systemFont(ofSize: LivType.Editor.title, weight: .bold)
 
     let titleView: UITextView = {
         let v = UITextView()
@@ -799,6 +840,23 @@ final class MarkdownTextView: UITextView {
         l.numberOfLines = 3
         l.lineBreakMode = .byTruncatingTail
         l.isUserInteractionEnabled = false
+        return l
+    }()
+
+    /// THE TITLE'S FULL STOP, in the accent — the clearer boards' mark on
+    /// every name at the top of a page. It is a LABEL beside the title,
+    /// never a character in it: the name cell, the title binding and what
+    /// search reads stay exactly the words. Hidden while the title is
+    /// being edited, when there is no name (the grey prompt shows), and
+    /// after a title that already ends in punctuation (`LivStop`).
+    let titleStop: UILabel = {
+        let l = UILabel()
+        l.text = LivStop.mark
+        l.font = MarkdownTextView.titleFont
+        l.textColor = LivInk.accent
+        l.isUserInteractionEnabled = false
+        l.isAccessibilityElement = false
+        l.sizeToFit()
         return l
     }()
 
@@ -844,19 +902,19 @@ final class MarkdownTextView: UITextView {
         // "---" rule (and any -- ) as it is typed. Smart quotes stay on;
         // nothing parses quote characters.
         smartDashesType = .no
-        // Full-bleed: the text IS the screen. 15pt gutters (10 + the 5pt
-        // lineFragmentPadding); the deep bottom inset lets the last lines
-        // scroll clear of the floating bottom bar hovering over the text.
-        // The TOP inset is recomputed per layout to hold the title.
+        // Full-bleed: the text IS the screen. 20pt margins (the inset plus
+        // the 5pt lineFragmentPadding); the deep bottom inset lets the last
+        // lines scroll clear of the floating bottom bar hovering over the
+        // text. The TOP inset is recomputed per layout to hold the title.
         textContainerInset = UIEdgeInsets(
             top: showsTitle ? Self.titleTop + Self.titleFloor + Self.titleGap : Self.embeddedTop,
             // Embedded, the text must line up with the card's name field
             // and every inspector row, which sit at 16. The container
             // adds its own 5pt lineFragmentPadding, so 11 + 5 = 16.
-            left: showsTitle ? 10 : 11,
+            left: showsTitle ? Self.gutter - Self.fragmentPad : LivRow.margin - Self.fragmentPad,
             bottom: showsTitle ? 110 : Self.embeddedBottom,
-            right: showsTitle ? 10 : 11)
-        self.textContainer.lineFragmentPadding = 5
+            right: showsTitle ? Self.gutter - Self.fragmentPad : LivRow.margin - Self.fragmentPad)
+        self.textContainer.lineFragmentPadding = Self.fragmentPad
         // A record card is presented OVER a live note tab, so both text
         // views exist at once. One identifier for two live elements
         // makes every scripted check of the editor a coin flip.
@@ -865,6 +923,7 @@ final class MarkdownTextView: UITextView {
         if showsTitle {
             addSubview(titleView)
             addSubview(titlePrompt)
+            addSubview(titleStop)
         }
     }
 
@@ -886,7 +945,7 @@ final class MarkdownTextView: UITextView {
     /// the title has been measured once, which is the initial top inset
     /// and one frame of it. Derived now, so it cannot fall behind `hero`
     /// a second time.
-    static let titleFloor: CGFloat = LivType.hero
+    static let titleFloor: CGFloat = LivType.Editor.title
     private var titleHeight: CGFloat = MarkdownTextView.titleFloor
 
     func refreshTitleLayout() {
@@ -910,6 +969,26 @@ final class MarkdownTextView: UITextView {
             titleView.frame = frame
             titlePrompt.frame = frame
         }
+        // EVERY TIME, outside the guard: the words change without the
+        // frame changing.
+        placeStop()
+    }
+
+    /// The stop sits right after the title's last glyph, measured through
+    /// UITextInput (never the title's layout manager, which would drop its
+    /// TextKit 2 into compatibility mode).
+    private func placeStop() {
+        let words = (titleView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        titleStop.isHidden =
+            words.isEmpty || titleView.isFirstResponder || !LivStop.wanted(after: words)
+        guard !titleStop.isHidden,
+            let end = titleView.position(
+                from: titleView.beginningOfDocument, offset: (words as NSString).length)
+        else { return }
+        let caret = titleView.caretRect(for: end)
+        titleStop.frame.origin = CGPoint(
+            x: titleView.frame.minX + caret.minX,
+            y: titleView.frame.minY + caret.midY - titleStop.bounds.height / 2)
     }
 
     // MARK: the keyboard's own height, as scrollable room
@@ -1173,7 +1252,13 @@ struct MarkdownEditor: UIViewRepresentable {
                 view?.titlePrompt.isHidden = !text.isEmpty
                 view?.refreshTitleLayout()
             }
-            title.onCommit = { [weak self] in self?.parent.onTitleCommit() }
+            // The title's stop hides while it is being edited and comes
+            // back when the edit ends.
+            title.onBegin = { [weak view] in view?.refreshTitleLayout() }
+            title.onCommit = { [weak self, weak view] in
+                self?.parent.onTitleCommit()
+                view?.refreshTitleLayout()
+            }
             // Return in the title commits and drops into the body — the
             // title is one line of intent, not a place to live.
             title.onReturn = { [weak self] in
@@ -1299,6 +1384,19 @@ struct MarkdownEditor: UIViewRepresentable {
         func textViewDidChangeSelection(_ textView: UITextView) {
             trackLink(in: textView)
             updateRuleReveal(textView)
+            // AN EMPTY LINE TYPES AS BODY. Return at the end of a heading
+            // leaves an empty line whose typing attributes come from the
+            // heading's newline — its air above and its pitch — so the
+            // caret sat about 12pt below where the first letter then
+            // landed. List continuation is unaffected: Return writes the
+            // marker itself (EditOps.returnKey).
+            let text = textView.text as NSString? ?? ""
+            let para = text.paragraphRange(for: NSRange(location: min(textView.selectedRange.location, text.length), length: 0))
+            if textView.selectedRange.length == 0,
+                text.substring(with: para).trimmingCharacters(in: .newlines).isEmpty
+            {
+                textView.typingAttributes = MarkStyler.baseAttributes
+            }
             // Where you were, for when this editor is rebuilt. Only after
             // the restore has run, or the programmatic set that precedes
             // it would record a caret of 0 over the real one.
@@ -1727,10 +1825,13 @@ struct MarkdownEditor: UIViewRepresentable {
 /// text with no markdown, no links and no outline.
 final class TitleDelegate: NSObject, UITextViewDelegate {
     var onChange: (String) -> Void = { _ in }
+    var onBegin: () -> Void = {}
     var onCommit: () -> Void = {}
     var onReturn: () -> Void = {}
 
     func textViewDidChange(_ textView: UITextView) { onChange(textView.text) }
+
+    func textViewDidBeginEditing(_ textView: UITextView) { onBegin() }
 
     func textViewDidEndEditing(_ textView: UITextView) { onCommit() }
 

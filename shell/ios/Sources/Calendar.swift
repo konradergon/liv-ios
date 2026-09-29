@@ -223,9 +223,18 @@ struct CalendarView: View {
             // screen would name the day being shown — so the title
             // carries it, and the chevron says the title is a way in.
             // Notion's own title works exactly this way.
+            //
+            // The screen face (34, and its accent stop) like every other
+            // screen's name, on ONE line. The HStack split what was left
+            // between this and the Spacer, so "Thu 24 Sep." broke in two;
+            // with the priority it is measured first, and where the row
+            // cannot hold it at 34 (it runs a few points over on a 420
+            // phone) it shrinks rather than pushing "Today" to "To…".
             Button { pickingDay = true } label: {
                 HStack(spacing: 5) {
                     LivScreenTitle(Civil.dayLabel(selectedDay))
+                        .lineLimit(1)
+                        .minimumScaleFactor(LivTitle.shrink)
                     Image(systemName: "chevron.down")
                         .font(.system(size: LivType.caption, weight: .semibold))
                         .foregroundStyle(LivTheme.text3)
@@ -233,6 +242,7 @@ struct CalendarView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .layoutPriority(1)
             .accessibilityLabel("\(Civil.dayLabel(selectedDay)). Pick a day")
             if box.busyRetrying { LivBusy() }
             Spacer()
@@ -273,6 +283,8 @@ struct CalendarView: View {
                     // the app — Search's "Cancel", the card's "Done".
                     .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(onToday ? LivTheme.text3 : LivTheme.accent)
+                    // A verb never truncates; the title beside it yields.
+                    .fixedSize()
                     .padding(.horizontal, 8)
                     .frame(height: 40)
                     .contentShape(Rectangle())
@@ -1600,6 +1612,69 @@ func livCalendarSelfCheck() -> [String] {
     check(
         "a timed stamp does", Civil.timeString(202_608_040_905) == "09:05",
         Civil.timeString(202_608_040_905))
+
+    // THE WORDS A ROW SAYS ABOUT A DAY (the clearer boards), pinned on
+    // the boards' own Thursday 24 September 2026. A weekday name means
+    // this Monday-to-Sunday week; the locale is pinned English, so these
+    // are literal words, not the phone's.
+    let thursday: Int64 = 2_026_09_24
+    func word(_ day: Int64, _ want: String, on today: Int64 = thursday) {
+        let got = Civil.dayWord(day, today: today)
+        check("dayWord \(day) on \(today) is \(want)", got == want, got)
+    }
+    word(2_026_09_24, "Today")
+    word(2_026_09_23, "Yesterday")
+    word(2_026_09_22, "Tuesday")
+    word(2_026_09_21, "Monday")
+    word(2_026_09_25, "Friday")
+    word(2_026_09_27, "Sunday")
+    word(2_026_09_28, "28 Sep")
+    word(2_026_09_20, "20 Sep")
+    word(2_026_09_18, "18 Sep")
+    word(2_025_09_18, "18 Sep 2025")
+    // A Monday's yesterday is last week's Sunday, and still "Yesterday";
+    // the Saturday before it is a date.
+    word(2_026_09_20, "Yesterday", on: 2_026_09_21)
+    word(2_026_09_19, "19 Sep", on: 2_026_09_21)
+    check(
+        "a fact today with a time is the clock",
+        Civil.fact(202_609_240_941, today: thursday) == "09:41",
+        Civil.fact(202_609_240_941, today: thursday))
+    check(
+        "a fact today with no time is Today",
+        Civil.fact(202_609_240_000, today: thursday) == "Today",
+        Civil.fact(202_609_240_000, today: thursday))
+    check(
+        "a fact on another day is its word, not its clock",
+        Civil.fact(202_609_220_941, today: thursday) == "Tuesday",
+        Civil.fact(202_609_220_941, today: thursday))
+    check(
+        "the title's weekday", Civil.weekdayName(thursday) == "Thursday",
+        Civil.weekdayName(thursday))
+    check(
+        "the subtitle's date", Civil.dateLong(thursday, today: thursday) == "24 September",
+        Civil.dateLong(thursday, today: thursday))
+    check(
+        "a long date in another year carries it",
+        Civil.dateLong(2_025_09_18, today: thursday) == "18 September 2025",
+        Civil.dateLong(2_025_09_18, today: thursday))
+    check(
+        "dayLong this week is the weekday",
+        Civil.dayLong(2_026_09_21, today: thursday) == "Monday",
+        Civil.dayLong(2_026_09_21, today: thursday))
+    check(
+        "dayLong before this week is weekday and date",
+        Civil.dayLong(2_026_09_14, today: thursday) == "Monday 14 September",
+        Civil.dayLong(2_026_09_14, today: thursday))
+    check(
+        "the footnote this week",
+        Civil.dayLong(stamp: 202_609_212_104, today: thursday) == "Monday at 21:04",
+        Civil.dayLong(stamp: 202_609_212_104, today: thursday))
+    check(
+        "the footnote before it",
+        Civil.dayLong(stamp: 202_609_142_104, today: thursday)
+            == "Monday 14 September at 21:04",
+        Civil.dayLong(stamp: 202_609_142_104, today: thursday))
 
     // The month grid's DATA, which is what keeps a sideways drag cheap:
     // the cells are decided before they are drawn, so the grid can be

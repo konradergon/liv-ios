@@ -1772,13 +1772,27 @@ extension BoxModel {
 enum Civil {
     private static let gregorian = Calendar(identifier: .gregorian)
 
-    /// Thread-safe since iOS 7; display format, current locale.
-    private static let labelFormatter: DateFormatter = {
+    /// ONE LOCALE FOR EVERY DATE WORD: English, day before month (the
+    /// clearer boards, 2026-09-24). The whole UI is English, and a
+    /// formatter left on the phone's locale printed "torsdag" beside
+    /// "Due" on a Swedish phone. The clock is ours (`clock`), 24-hour.
+    private static let english = Locale(identifier: "en_GB")
+
+    /// Thread-safe since iOS 7; a fixed format in `english`.
+    private static func formatter(_ format: String) -> DateFormatter {
         let f = DateFormatter()
         f.calendar = gregorian
-        f.dateFormat = "EEE d MMM"
+        f.locale = english
+        f.dateFormat = format
         return f
-    }()
+    }
+
+    private static let labelFormatter = formatter("EEE d MMM")
+    private static let weekdayFormatter = formatter("EEEE")
+    private static let shortFormatter = formatter("d MMM")
+    private static let shortYearFormatter = formatter("d MMM yyyy")
+    private static let longFormatter = formatter("d MMMM")
+    private static let longYearFormatter = formatter("d MMMM yyyy")
 
     static func todayDay() -> Int64 {
         let c = gregorian.dateComponents([.year, .month, .day], from: Date())
@@ -1869,16 +1883,87 @@ enum Civil {
             : String(repeating: "0", count: width - digits.count) + digits
     }
 
-    /// "Tue 21 Jul"
+    /// "Tue 21 Jul" — an ABSOLUTE date, for the places where the date
+    /// itself is the point (the calendar's title, spoken sentences).
     static func dayLabel(_ day: Int64) -> String {
         guard let date = date(ofDay: day) else { return "\(day)" }
         return labelFormatter.string(from: date)
     }
 
+    // MARK: the words a row says about a day (the clearer boards)
+    //
+    // A WEEKDAY NAME MEANS THIS CALENDAR WEEK, Monday to Sunday: "Today"
+    // (or "09:41" when it has a time), "Yesterday", then "Monday" …
+    // "Sunday" for the rest of the week — "Friday" for tomorrow, as the
+    // board prints it; there is no "Tomorrow". Anything else is "18
+    // Sep", with the year when it is not this year. Of the rules tried
+    // it is the only one that never gives two dates one name: a −6…+6
+    // window says "Tuesday" twice.
+
+    /// "Today", "Yesterday", "Monday", "18 Sep", "18 Sep 2025".
+    static func dayWord(_ day: Int64, today: Int64 = todayDay()) -> String {
+        if day == today { return "Today" }
+        if day == addDays(today, -1) { return "Yesterday" }
+        if inWeek(day, of: today) { return weekdayName(day) }
+        return format(day, today: today, short: true)
+    }
+
+    /// A row's right-hand FACT for a stamp: the clock when it is today
+    /// and has a time ("09:41"), else its `dayWord`.
+    static func fact(_ stamp: Int64, today: Int64 = todayDay()) -> String {
+        let on = day(of: stamp)
+        let hm = stamp % 10_000
+        if on == today, hm != 0 { return clock(hm) }
+        return dayWord(on, today: today)
+    }
+
+    /// "Thursday".
+    static func weekdayName(_ day: Int64) -> String {
+        guard let date = date(ofDay: day) else { return "" }
+        return weekdayFormatter.string(from: date)
+    }
+
+    /// "24 September"; "18 September 2025" in another year.
+    static func dateLong(_ day: Int64, today: Int64 = todayDay()) -> String {
+        format(day, today: today, short: false)
+    }
+
+    /// "Monday" this week; "Monday 14 September" outside it, with the
+    /// year when it is not this year.
+    static func dayLong(_ day: Int64, today: Int64 = todayDay()) -> String {
+        if inWeek(day, of: today) { return weekdayName(day) }
+        return "\(weekdayName(day)) \(dateLong(day, today: today))"
+    }
+
+    /// A moment in full: "Monday at 21:04", "Monday 14 September at
+    /// 21:04" — the footnote's "Created …". A stamp with no time is the
+    /// day alone.
+    static func dayLong(stamp: Int64, today: Int64 = todayDay()) -> String {
+        let long = dayLong(day(of: stamp), today: today)
+        let hm = stamp % 10_000
+        return hm == 0 ? long : "\(long) at \(clock(hm))"
+    }
+
+    /// Is `day` in the Monday-to-Sunday week that holds `today`?
+    private static func inWeek(_ day: Int64, of today: Int64) -> Bool {
+        let monday = addDays(today, -((weekday(today) + 5) % 7))
+        return day >= monday && day <= addDays(monday, 6)
+    }
+
+    private static func format(_ day: Int64, today: Int64, short: Bool) -> String {
+        guard let date = date(ofDay: day) else { return "\(day)" }
+        let sameYear = day / 10_000 == today / 10_000
+        let f =
+            short
+            ? (sameYear ? shortFormatter : shortYearFormatter)
+            : (sameYear ? longFormatter : longYearFormatter)
+        return f.string(from: date)
+    }
+
     static func weekdayLetter(_ day: Int64) -> String {
         guard let date = date(ofDay: day) else { return "" }
         let i = gregorian.component(.weekday, from: date) - 1
-        let symbols = gregorian.veryShortWeekdaySymbols
+        let symbols = weekdayFormatter.veryShortWeekdaySymbols ?? []
         return symbols.indices.contains(i) ? symbols[i] : ""
     }
 

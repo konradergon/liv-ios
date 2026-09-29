@@ -823,8 +823,11 @@ cmd_goto() {
   # THE ROW'S WORD, which for one view is not its name: `everything` is
   # drawn as "Notes" since 2026-09-16 (Navigate.swift), and keeps its raw
   # value in every stored position and route.
+  # `inbox` is drawn as "Unsorted" since de7033f — the tour's inbox hop
+  # tapped a row that no longer existed and failed on a healthy build.
   local title
   if [[ "$want" == everything ]]; then title="Notes"
+  elif [[ "$want" == inbox ]]; then title="Unsorted"
   else title="$(python3 -c "print('$want'.capitalize())")"; fi
   # NORMALISE FIRST. Every hop must start from the same screen or a hop
   # is testing whatever the hop before it left behind — the second way
@@ -1611,6 +1614,16 @@ cmd_routes() {
 # nothing else in the band, and the other four are callable by hand and
 # will name their own chrome as an outlier. A check that is honest about
 # where it bites beats one that cries wolf on four screens.
+#
+# ON CARDS SINCE THE CLEARER BOARDS (2026-09-26), and two heights, not
+# one: 52 with a title alone, 64 with a second line (LivCards.row /
+# twoLine). A card row is still a full-width List CELL in the tree — the
+# card's 16pt inset is drawn by the row's background, which the tree does
+# not see — so a row is read the old way, as a screen-wide node in the
+# row band, with two pieces of chrome taken out by what they ARE rather
+# than by size: a node holding a Heading is a header (the group headers
+# are 60, inside the band), and the band now starts at 48, over the
+# segmented control's 40.
 row_heights() {
   axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
 import json, sys
@@ -1618,22 +1631,29 @@ from collections import Counter
 # BY POSITION, NOT BY NODE. A row is five or six nested groups sharing
 # one frame, so counting nodes counts the nesting; a (y, height) pair
 # counts the row.
-seen = set()
-def walk(n):
+seen, headed = set(), set()
+def walk(n, screen):
+    # Returns whether this subtree holds a Heading, so a header's cell
+    # can be told from a row's. BY FRAME, not by node: a cell is several
+    # sibling groups on one frame and only one of them holds the heading,
+    # so a frame any heading sits in is a header's frame.
+    heading = n.get('type') == 'Heading'
+    for c in n.get('children') or []:
+        heading = walk(c, screen) or heading
     f = n.get('frame') or {}
     h, w = f.get('height', 0), f.get('width', 0)
-    # LivRow.height is 56 and LivRow.band is 44, so 52 is the gap
-    # between a row and the tallest chrome. The ceiling keeps a card
-    # (150) and a whole section group out.
-    if w > 250 and 52 <= h <= 100:
-        seen.add((round(f.get('y', 0), 1), round(h, 1)))
-    for c in n.get('children') or []: walk(c)
+    # 48 is over the segmented control's row (40) and under the shortest
+    # card row (52); 100 keeps a whole card or a section group out.
+    if abs(w - screen) < 1.5 and 48 <= h <= 100:
+        (headed if heading else seen).add((round(f.get('y', 0), 1), round(h, 1)))
+    return heading
 try:
     d = json.load(sys.stdin)
-    walk(d if isinstance(d, dict) else d[0])
+    root = d if isinstance(d, dict) else d[0]
+    walk(root, (root.get('frame') or {}).get('width', 0))
 except Exception:
     pass
-hs = Counter(h for _, h in seen)
+hs = Counter(h for _, h in seen - headed)
 print(json.dumps(sorted(hs.items(), key=lambda kv: -kv[1])))"
 }
 
@@ -1654,24 +1674,22 @@ rows = json.load(sys.stdin)
 # height seen once, to skip headers — and that is the exact shape of the
 # bug it was written for: ONE task carried a chip and drew 58 while ten
 # drew 56.
+# TWO BEATS NOW, and nothing between them: a row is 52 or 64, and a 58
+# is still exactly the bug this was written for.
 if not rows:
     print('NONE'); raise SystemExit
-if len(rows) > 1:
+odd = [(h, n) for h, n in rows if float(h) not in (52.0, 64.0)]
+if odd:
     print('SPLIT ' + ', '.join('%spt x%d' % (h, n) for h, n in rows)); raise SystemExit
-h, n = rows[0]
-if float(h) != 56:
-    print('WRONG %spt x%d' % (h, n)); raise SystemExit
-print('OK %spt x%d' % (h, n))")
+print('OK ' + ', '.join('%spt x%d' % (h, n) for h, n in rows))")
   case "$verdict" in
     NONE)   die "no rows on '$view' to measure. Is the list empty?"; return 1 ;;
-    WRONG*) die "'$view' draws its rows at ${verdict#WRONG }, not LivRow.height (56).
-      Every content list shares one row height."
-            return 1 ;;
-    SPLIT*) die "'$view' draws its rows at more than one height: ${verdict#SPLIT }.
-      One list, one beat (owner, 2026-09-05: 'make row height more consistent').
+    SPLIT*) die "'$view' draws a row at a height that is not a card row's: ${verdict#SPLIT }.
+      A card row is 52 (title) or 64 (title and a second line), nothing
+      between (owner, 2026-09-05: 'make row height more consistent').
       If one is a few points TALLER, look for a padding applied OUTSIDE the
-      frame that sets LivRow.height: it wraps the content first, so the 56
-      floor never binds."
+      frame that sets the row's minHeight: it wraps the content first, so
+      the floor never binds."
             return 1 ;;
     OK*)    ;;
     *)      die "could not read '$view' rows: $verdict"; return 1 ;;
@@ -2256,24 +2274,37 @@ raise SystemExit(1 if bad else 0)' || {
   # first was visible and the screen never said what you could narrow by
   # (owner: "it isn't obvious how"). One row per property now, the name at
   # the margin — so at least two names must be fully inside the screen.
+  #
+  # A NAME IS ONE WITH CHIPS BESIDE IT (2026-09-26). This read "a
+  # capitalised word at the margin between y 100 and 460" — a window that
+  # assumed the keyboard was up. `axe type` is a HARDWARE keyboard to iOS,
+  # which then hides the software one, so the band sits at the foot of the
+  # sheet (y ~700) and the window held none of it; the check passed on
+  # the Today screen BEHIND the sheet, whose "Late" and day letters it
+  # counted as property names. A property name is now a margin word that
+  # shares its row with a facet chip, wherever the band happens to be.
   local named
   named=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
-import json, sys
+import json, re, sys
 w = 0
-names = []
+names, chips = [], []
 def walk(n):
     global w
     f = n.get('frame') or {}
     if n.get('type') == 'Application':
         w = max(w, f.get('width', 0))
     l = n.get('AXLabel') or ''
+    mid = f.get('y', 0) + f.get('height', 0) / 2
     if (n.get('type') == 'StaticText' and l and l[:1].isupper() and ' ' not in l
-            and 100 < f.get('y', 0) < 460 and f.get('x', 0) < 40):
-        names.append((l, f.get('x', 0) + f.get('width', 0)))
+            and f.get('x', 0) < 40):
+        names.append((l, mid, f.get('x', 0) + f.get('width', 0)))
+    if n.get('type') == 'Button' and re.match(r'^[a-z][a-z ]* .+, [0-9]+', l):
+        chips.append(mid)
     for c in n.get('children') or []: walk(c)
 d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
 if not w: w = 440
-print(len([1 for _, right in names if right <= w]))")
+print(len([1 for _, mid, right in names
+           if right <= w and any(abs(mid - c) < 12 for c in chips)]))")
   (( named >= 2 )) || {
     die "only ${named:-0} property name(s) are fully on screen in the facet band.
       Every property gets its own row with its name at the margin; if they
@@ -2644,39 +2675,49 @@ cmd_workspace() {
   # the panel, so the card comes from the bottom — it fell from the top
   # for nine days after the button moved and the direction stayed behind
   # (owner, 2026-08-31: "some menus are popping up top down when the
-  # button is not at the top"). Its title is the highest thing in it, so
-  # the title's own y is where the card begins.
-  local top
+  # button is not at the top").
+  #
+  # BY ITS LAST ROW, not its title (2026-09-26). The title's y was held
+  # to "below 400", which a box with six workspaces fails on a card that
+  # is rising correctly. A card from the bottom ends near the bottom
+  # whatever it holds, so the gap under its last row — "New workspace" —
+  # is the count-independent reading; the title must still be there.
+  local top gap
   top=$(scan 'def walk(n):
-    if (n.get("AXLabel") or "") == "Workspace":
+    if (n.get("AXLabel") or "") == "Workspaces":
         f = n.get("frame") or {}
         print(int(f.get("y", 0)))
     for c in n.get("children") or []: walk(c)' | head -1)
   [[ -n "$top" ]] || {
-    die "the card is up but draws no 'Workspace' title, so nothing on it
+    die "the card is up but draws no 'Workspaces' title, so nothing on it
       says what it is."
     return 1
   }
-  (( top > 400 )) || {
-    die "the workspace card begins at y=${top} — it is falling from the
-      TOP. It hangs from the panel's foot and must rise from the bottom."
-    return 1
-  }
-
-  # AND IT OFFERS THE ONE VERB THAT IS ONLY HERE.
-  #
-  # `grep -q`, not `grep -c`: a count always prints a number, so a `-n`
-  # test on it is true even at zero — an assertion that cannot fail.
-  # Written that way first, and caught by reading it rather than by
-  # running it.
-  tree | grep -q "New workspace" || {
+  gap=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin); root = d if isinstance(d, dict) else d[0]
+H = (root.get("frame") or {}).get("height", 0)
+def walk(n):
+    if (n.get("AXLabel") or "").startswith("New workspace"):
+        f = n.get("frame") or {}
+        print(int(H - f.get("y", 0) - f.get("height", 0))); raise SystemExit
+    for c in n.get("children") or []: walk(c)
+walk(root)')
+  [[ -n "$gap" ]] || {
     die "the card is up but offers no 'New workspace' row."
     return 1
   }
+  (( gap < 160 )) || {
+    die "the workspace card's last row ends ${gap}pt above the screen's
+      bottom — it is hanging from the TOP. It hangs from the panel's foot
+      and must rise from the bottom."
+    return 1
+  }
 
-  say "ok    workspace: the card rises from the panel's foot (title at y=${top}),"
-  say "      and carries its own New workspace row. WHICH IS ON TOP — it or the"
-  say "      bar — is paint, and no check here can see it: look with your eyes."
+  say "ok    workspace: the card rises from the panel's foot (title at y=${top},"
+  say "      last row ${gap}pt off the bottom), with its own New workspace row."
+  say "      WHICH IS ON TOP — it or the bar — is paint, and no check here can"
+  say "      see it: look with your eyes."
 }
 
 # THE HISTORY CARD. Every version of a note, from its ••• menu, as a card.

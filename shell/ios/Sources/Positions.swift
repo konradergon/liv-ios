@@ -40,7 +40,7 @@ import SwiftUI
 /// rules the moment a status is called "To do: later". One `Codable` is
 /// one grammar with one parser (standing rule 4) and no escaping at all.
 struct TasksPosition: Codable, Equatable {
-    enum Filter: Codable, Equatable {
+    enum Filter: Codable, Hashable {
         case all
         case status(String)
         case project(String)

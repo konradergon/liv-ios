@@ -35,24 +35,24 @@ struct EverythingView: View {
         let slice = rows
         List {
             Group {
-                // THE SCREEN'S NAME. Notes, Everything and Tasks were the
-                // three surfaces with nothing at the top saying where you
-                // are — Today, Inbox and the Calendar all lead with one,
-                // and a list that starts at its first row reads as a
-                // fragment of a screen rather than a screen.
-                LivScreenTitle("Notes")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 10)
-                    .padding(.bottom, 6)
+                // THE SCREEN'S NAME, with how many notes it holds (the
+                // clearer board: "Notes." over "134 notes").
+                LivTitleBlock(
+                    "Notes",
+                    subtitle: slice.isEmpty
+                        ? nil : "\(slice.count) note\(slice.count == 1 ? "" : "s")"
+                )
+                .listRowInsets(EdgeInsets())
                 if slice.isEmpty {
                     EmptyHint("Nothing written")
                 } else {
+                    // ONE CARD of every note, most recently touched first.
                     ForEach(Array(slice.enumerated()), id: \.element.id) { i, row in
-                        line(row, prev: i == 0 ? nil : slice[i - 1])
+                        line(row, prev: i == 0 ? nil : slice[i - 1], position: .of(i, in: slice.count))
                     }
                 }
             }
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .listRowInsets(EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
         }
@@ -93,59 +93,38 @@ struct EverythingView: View {
 
     // MARK: one row
 
-    private func line(_ row: EntityRow, prev: EntityRow?) -> some View {
-        // A BUTTON, not a tap gesture (owner's clips, 2026-08-20). A
-        // gesture opens the row and says nothing while it does it;
-        // every app in the reference set lights the row under the
-        // finger first. Eight rows in this app were gestures.
+    private func line(_ row: EntityRow, prev: EntityRow?, position: LivCardPosition) -> some View {
+        // A BUTTON, not a tap gesture (owner's clips, 2026-08-20): every
+        // app in the reference set lights the row under the finger first.
         Button { desk.open(row.id) } label: {
-            row_(row, prev: prev)
-        }
-        .livRowPress()
-    }
-
-    private func row_(_ row: EntityRow, prev: EntityRow?) -> some View {
-        LivListRow(
-            glyph: LivKind.glyph(of: row),
-            // Notes and files share this list, so the kind's colour is
-            // still doing work (owner, 2026-08-18: "colour only in mixed
-            // lists").
-            tint: LivKind.color(of: row),
-            title: display(row),
-            untitled: livRowIsUntitled(row)
-        ) {
-            // ONE anchor chip, then when — the blueprint's row budget
-            // (BP-3: "type icon · title · anchor chip · status dot ·
-            // modified", and "empty fields do not render"). It answers
-            // the question a list actually raises: what is this attached
-            // to.
-            if let chip = livAnchorChip(of: row) {
-                chip.transition(.scale(scale: 0.85).combined(with: .opacity))
-            }
-            // Only when it changes — see `livNewFact`. Fourteen rows
-            // reading "Mon 31 Aug" said nothing about any of them.
-            if let trailing = livNewFact(
-                trailing(row), after: prev.flatMap { trailing($0) })
-            {
-                LivRowFact(text: trailing, emphasis: false)
+            // ICONS ARE INK (the clearer boards): the kind's glyph in text2,
+            // where it wore the kind's colour. Where the note lives is the
+            // second line; when it was last touched is the fact — the same
+            // key the list is sorted on.
+            LivCardRow(
+                glyph: LivKind.glyph(of: row), title: display(row),
+                detail: livPlace(of: row), muted: livRowIsUntitled(row),
+                divided: position.divided
+            ) {
+                // Only when it changes — see `livNewFact`. Fourteen rows
+                // reading the same day said nothing about any of them.
+                if let fact = livNewFact(touched(row), after: prev.flatMap { touched($0) }) {
+                    LivRowFact(text: fact)
+                }
             }
         }
-        .contentShape(Rectangle())
+        .livRowPress(position)
+        .livCardRow(position: position)
         .swipeActions(edge: .trailing) {
             livTrashAction { box.trash(row.id) }
         }
     }
 
-    /// When you caught it. Today reads as a time — a column of identical
-    /// dates tells you nothing.
-    private func trailing(_ row: EntityRow) -> String? {
-        guard let stamp = row.created, stamp > 0 else { return nil }
-        let day = Civil.day(of: stamp)
-        if day == Civil.todayDay() {
-            let time = Civil.timeString(stamp)
-            return time.isEmpty ? "today" : time
-        }
-        return Civil.dayLabel(day)
+    /// When you last touched it, in Apple's words: "21:04" today, then
+    /// "Yesterday", the weekday, "18 Sep" (`Civil.fact`).
+    private func touched(_ row: EntityRow) -> String? {
+        guard let ms = row.touchedMs, ms > 0 else { return nil }
+        return Civil.fact(Civil.civil(ofInstantMs: ms))
     }
 
     /// A scrap carries no name cell — its display name is its first content

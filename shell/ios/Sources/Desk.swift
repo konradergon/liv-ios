@@ -697,7 +697,9 @@ struct DeskHost: View {
             endEditing()
             withAnimation(LivMotion.nav) { desk.inspectorShown = true }
         } label: {
-            FloatCircleLabel(symbol: "slider.horizontal.3")
+            // The DRAWN properties card (the clearer icon set), the same
+            // mark the library and the properties sheet use.
+            FloatCircleLabel(glyph: .properties)
         }
         .livTopButton()
         .accessibilityLabel("Properties")
@@ -906,8 +908,10 @@ struct DeskHost: View {
             from: .bottom,
             title: "New",
             items: [
-                LivMenuItem(label: "Note", glyph: .note) { createNote() },
-                LivMenuItem(label: "Task", glyph: .task) { createRecord(event: false) },
+                LivMenuItem(label: "Note", detail: "Tap + for this one", glyph: .note) { createNote() },
+                // The TICKED box — a verb, the panel's Tasks mark. The
+                // kind glyph `.task` in lists is a thing, not this.
+                LivMenuItem(label: "Task", glyph: .tasks) { createRecord(event: false) },
                 LivMenuItem(label: "Event", glyph: .event) { createRecord(event: true) },
                 LivMenuItem(label: "File", glyph: .file(.other)) { picking = true },
                 // The camera's way in. It had none: nothing has set
@@ -917,7 +921,7 @@ struct DeskHost: View {
                 // for — "i don't see usage for camera except ocr
                 // scanning" — and the shutter still takes plain photos
                 // once you are in there.
-                LivMenuItem(label: "Scan text", symbol: "text.viewfinder") {
+                LivMenuItem(label: "Scan text", glyph: .scan) {
                     desk.cameraShown = true
                 },
             ])
@@ -1122,9 +1126,20 @@ extension View {
 /// The glyph inside a top-row button. The SHAPE is the system's
 /// (`livTopButton`); this is only what goes in it.
 struct FloatCircleLabel: View {
-    let symbol: String
+    var symbol = ""
+    /// A drawn mark from the app's own set, when it has one.
+    var glyph: LivGlyph? = nil
 
     var body: some View {
+        if let glyph {
+            LivIcon(glyph: glyph, color: LivTheme.text, size: LivBar.glyph)
+                .frame(width: LivBar.topGlyphBox, height: LivBar.topGlyphBox)
+        } else {
+            symbolBody
+        }
+    }
+
+    private var symbolBody: some View {
         Image(systemName: symbol)
             // LIGHT, not regular (owner, 2026-08-18: "even more plain
             // looking… i like a minimalist look"). A thinner stroke is
@@ -1139,7 +1154,7 @@ struct FloatCircleLabel: View {
             .foregroundStyle(LivTheme.text)
             // A FIXED square, so a wide glyph and a narrow one come out
             // the same button.
-            .frame(width: 24, height: 24)
+            .frame(width: LivBar.topGlyphBox, height: LivBar.topGlyphBox)
     }
 }
 

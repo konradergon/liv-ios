@@ -38,6 +38,8 @@ struct WorkspaceSwitcher: View {
     @State private var draftQuery = ""
     /// Which picker row is open, and whose draft it edits.
     @State private var picking: WorkspacePick?
+    /// Items per workspace, as the lens reads when the card opens.
+    @State private var counts: [LivEntityID: Int] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -52,23 +54,25 @@ struct WorkspaceSwitcher: View {
                 // borrowing the word "Workspace" from the list it
                 // replaces.
                 if composing {
-                    LivMenuTitle(text: editing == nil ? "New workspace" : "Edit workspace")
+                    LivCardTitle(text: editing == nil ? "New workspace" : "Edit workspace")
                     newWorkspaceForm
                 } else {
-                    // The SAME title and rows the `+` menu wears (owner,
-                    // 2026-08-17: bigger text, simpler). This card used
-                    // to draw its own smaller, denser list.
-                    LivMenuTitle(text: "Workspace")
-                    choice(
-                        name: "All", active: workspaces.activeId.isAbsent,
-                        glyph: .workspaces, divided: false
+                    // THE CHOOSER (the clearer board): "Workspaces." over
+                    // 64pt rows — a mark, the name, how many things it
+                    // holds — with the chosen one lit and ticked.
+                    LivCardTitle(text: "Workspaces")
+                    LivMenuRow(
+                        label: "All workspaces", detail: "Everything, unfiltered",
+                        style: .chooser, selected: workspaces.activeId.isAbsent,
+                        lead: { LivWorkspaceMark(workspace: nil, size: LivChooserCard.lead) }
                     ) {
                         choose(.absent)
                     }
-                    ForEach(Array(workspaces.workspaces.enumerated()), id: \.element.id) { _, ws in
-                        choice(
-                            name: ws.display, active: workspaces.activeId == ws.id,
-                            glyph: .workspace, emoji: ws.emoji, divided: true
+                    ForEach(workspaces.workspaces) { ws in
+                        LivMenuRow(
+                            label: ws.display, detail: counts[ws.id].map(itemsWord),
+                            style: .chooser, selected: workspaces.activeId == ws.id,
+                            lead: { LivWorkspaceMark(workspace: ws, size: LivChooserCard.lead) }
                         ) {
                             choose(ws.id)
                         }
@@ -90,7 +94,10 @@ struct WorkspaceSwitcher: View {
                             }
                         }
                     }
-                    addRow("New workspace…") {
+                    LivCardRule(inset: 0)
+                        .padding(.horizontal, LivCards.padX)
+                        .padding(.vertical, LivAir.tight)
+                    addRow("New workspace") {
                         editing = nil
                         draftName = ""
                         draftQuery = ""
@@ -99,9 +106,10 @@ struct WorkspaceSwitcher: View {
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // The ROWS carry their own 16pt inset, like the menu's; only the
-        // forms below need the card's.
-        .padding(.vertical, 4)
+        // HOW MANY THINGS EACH WORKSPACE HOLDS — one lens read per
+        // workspace when the card opens (a read, not the snapshot path).
+        // Nothing is drawn until a count arrives, so no "0 items" flashes.
+        .task { loadCounts() }
         // No .presentationDetents: it is not a sheet any more. It hangs
         // from the workspace button at the top (LivTopSheetHost), which
         // sizes itself to this content and scrolls only when it must.
@@ -134,25 +142,34 @@ struct WorkspaceSwitcher: View {
         if close { onClose() }
     }
 
-    /// One workspace to switch to. The row is the app's ONE row — the
-    /// same one the `+` menu draws (LivMenuRow) — because a list of
-    /// things to choose from should not look different depending on
-    /// which card it is in (owner, 2026-08-17).
-    ///
-    /// The lens chips that used to sit under each name are gone with the
-    /// smaller type they belonged to. A workspace's lens is still on
-    /// screen where it acts: the lens chip in every view's header.
-    private func choice(
-        name: String, active: Bool, glyph: LivGlyph,
-        emoji: String? = nil, divided: Bool, action: @escaping () -> Void
-    ) -> some View {
-        LivMenuRow(
-            label: name, glyph: glyph, emoji: emoji, selected: active, divided: divided,
-            action: action)
+    private func itemsWord(_ n: Int) -> String { "\(n) item\(n == 1 ? "" : "s")" }
+
+    private func loadCounts() {
+        let live = box.entities.values.filter { $0.trashed != true }
+        for ws in workspaces.workspaces {
+            let q = workspaces.query(of: ws.id) ?? ""
+            if q.isEmpty {
+                counts[ws.id] = live.count
+                continue
+            }
+            box.query(q) { ids, _ in
+                counts[ws.id] = live.filter { ids.contains($0.id) }.count
+            }
+        }
     }
 
     private func addRow(_ label: String, action: @escaping () -> Void) -> some View {
-        LivMenuRow(label: label, symbol: "plus", divided: true, action: action)
+        LivMenuRow(
+            label: label, style: .chooser,
+            lead: {
+                Image(systemName: "plus")
+                    .font(.system(size: LivType.label, weight: .semibold))
+                    .foregroundStyle(LivTheme.text)
+                    .frame(width: LivChooserCard.lead, height: LivChooserCard.lead)
+                    .background(
+                        RoundedRectangle(cornerRadius: LivChooserCard.tileRadius, style: .continuous)
+                            .fill(LivTheme.panel2))
+            }, action: action)
     }
 
     // MARK: the new-workspace form — name + query + the stamp hint
@@ -363,5 +380,31 @@ struct WorkspaceSwitcher: View {
         composing = false
         editing = nil
         choose(id)
+    }
+}
+
+/// A WORKSPACE'S MARK — one recipe for the panel's foot and the
+/// Workspaces card (the clearer board: no box, no colour). "All" is the
+/// two stacked squares; a workspace's emoji wins; otherwise its letter,
+/// set like an icon through `.letter`, which skips leading whitespace.
+/// Hidden from VoiceOver: the name beside it says the same thing.
+struct LivWorkspaceMark: View {
+    let workspace: WorkspaceRow?
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let ws = workspace {
+                if let emoji = ws.emoji, !emoji.isEmpty {
+                    Text(emoji).font(.system(size: (size * LivPen.letter).rounded()))
+                } else {
+                    LivIcon(glyph: .letter(ws.display), color: LivTheme.text, size: size)
+                }
+            } else {
+                LivIcon(glyph: .workspaces, color: LivTheme.text, size: size)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }

@@ -1,10 +1,12 @@
-// liv iOS — the icon language: what a thing IS, in one colour and one
-// drawing (blueprints, design/mockups/blueprints/icon-style.html, decided
-// by the owner 2026-08-12; the view icons come from home-views.html).
+// liv iOS — the icon language: what a thing IS, drawn by one hand.
+// The hand is the Icons board's (the "clearer" canvas, approved
+// 2026-09-24): a 24 grid, a constant 1.75pt stroke (`LivPen`), round
+// ends, corners at 3, and one signature — the filled dot — where an
+// icon's meaning is.
 //
-// Two rules govern everything in this file.
+// Three rules govern everything in this file.
 //
-//   1. ONE classifier. A row's colour and its glyph must come from the
+//   1. ONE classifier. A row's kind and its glyph must come from the
 //      same answer to "what is this?". They did not: the colour read
 //      `kinds.first` and the glyph read `kinds.contains(…)` in priority
 //      order, so a task filed as ["note","task"] drew a blue chip with a
@@ -13,13 +15,17 @@
 //      different language — filled, heavier, and shaped to their own
 //      grid — so the app looked nothing like the approved blueprints
 //      (owner, 2026-08-13: "i don't see the blueprint's custom icons in
-//      the app"). Every glyph below is transcribed from the blueprint's
-//      own 24×24 drawing.
+//      the app"). Every glyph below is the board's own SVG path data,
+//      pasted, and drawn by one parser (`GlyphPath`).
+//   3. ICONS ARE INK. One colour per icon — the ink of the place it sits
+//      in: `text` on the bar, the top keys, the library and the workspace
+//      marks; `text2` in lists, menus and chips. A dot is filled in that
+//      same ink. Kind colour survives only on marks that are NOT icons:
+//      Today's event bars, the calendar's blocks, the tab card's dot.
 //
-// Where the icon language does NOT go, both rejected on sight
-// (owner, 2026-08-12): the create menu's verbs, and property field rows.
-// Kind colour marks what a THING is, in lists — never what a button
-// would make, never a field's name.
+// The create menu's verbs wear the family's drawings (the Create board
+// draws them; 2026-08-12 had rejected that). Property field rows still
+// wear none.
 
 import SwiftUI
 
@@ -40,7 +46,7 @@ import SwiftUI
 // and it is a picker and a cell, not a switch over six strings.
 
 /// The seven kinds the app draws. A kind carries its colour and its
-/// glyph together, because a thing that is purple in one list and blue
+/// glyph together, because a thing that is purple in one place and blue
 /// in the next is the exact defect this type exists to prevent.
 enum LivKind: CaseIterable {
     case note, task, event, file, link, person, capture
@@ -93,9 +99,11 @@ enum LivKind: CaseIterable {
         }
     }
 
-    /// One kind, one colour, everywhere it appears: a task is purple in
-    /// a list, in the calendar, and on a chip. Nothing else may hardcode
-    /// a kind's colour.
+    /// One kind, one colour, wherever a kind is COLOURED — and since the
+    /// Icons board (2026-09-24) that is only on marks that are not icons:
+    /// Today's event bars, the calendar's blocks, the tab card's dot.
+    /// An icon is ink (rule 3 above). Nothing else may hardcode a kind's
+    /// colour.
     var color: Color {
         switch self {
         case .note: return LivTheme.noteViolet
@@ -109,7 +117,7 @@ enum LivKind: CaseIterable {
 
     /// The kind's own drawing. A file's glyph narrows by format, so a
     /// spreadsheet and a contract do not look identical (review,
-    /// 2026-08-08) — the colour stays the one file orange.
+    /// 2026-08-08).
     func glyph(_ row: EntityRow? = nil) -> LivGlyph {
         switch self {
         case .note: return .note
@@ -128,9 +136,11 @@ enum LivKind: CaseIterable {
 
 // MARK: - the drawings
 
-/// Every icon the app draws for itself. Chrome that is not about a thing
-/// — chevrons, the close cross, the repeat mark — stays on Apple's
-/// symbols; those are arrows and punctuation, not part of this language.
+/// Every icon the app draws for itself — the bar's back and forward
+/// included, because the boards draw them in this hand. Disclosure
+/// chevrons are drawn too, by `LivChevron` (Kit.swift); the close cross
+/// and the repeat mark stay on Apple's symbols — punctuation, not part of
+/// this language.
 enum LivGlyph: Equatable {
     // Things.
     case note, task, event, person, link, capture
@@ -143,7 +153,26 @@ enum LivGlyph: Equatable {
     // for any area a person mints later.
     case work, health, money, home, learning
     // Furniture.
-    case filter, settings, workspace, workspaces, plus, trash
+    case filter, settings, workspaces, trash
+    /// THE PROPERTIES DOOR: a card with two label-and-value rows. It was
+    /// Apple's sliders, which read as "adjust" (the Icons board).
+    case properties
+    // The bar's keys, and the camera's verb in the create menu.
+    case back, forward, search, scan
+    /// A PAGE WITH A PLUS — the bar's `+`, which makes a note. Its
+    /// hold-for-more tick is `HoldTick`, beside it, not part of it.
+    case new
+    /// A WORKSPACE IS ITS LETTER: the first grapheme of its name,
+    /// uppercased, set like an icon (`LivGlyph.initial`). It was a bare
+    /// circle, identical for every workspace. Drawn as TEXT, so it has
+    /// no path — the self-check knows. An emoji still wins, at the call
+    /// site; "All" is never a letter, it is `.workspaces`.
+    case letter(String)
+    /// THE BOARD'S TICK — the chosen workspace, "File N by their
+    /// guesses". A mark, not a thing: it says "yes, this one".
+    case check
+    /// A PLUS, bare — the door that adds a row to a card ("Add link").
+    case plus
     /// FIELDS — one per property family, for the properties panel.
     ///
     /// Icons here were tried on 2026-08-12 and rejected the same day
@@ -167,7 +196,7 @@ enum LivGlyph: Equatable {
     /// Settings Fields card, which was the last thing that could show
     /// one. Their only route to a screen had been `LivGlyph.field(_:)`,
     /// the name-to-mark lookup that card called, and the inspector is
-    /// closed to them by a dated ruling: `DetailRowLabel` says "NO DOT,
+    /// closed to them by a dated ruling: the properties card's label said "NO DOT,
     /// AND NO GLYPH" (owner, 2026-08-29), recording that field icons
     /// were tried on 2026-08-12 and rejected the same day because "a
     /// clock for 'due' and a tag for 'tags' are pictures of the word
@@ -178,407 +207,409 @@ enum LivGlyph: Equatable {
     /// desktop shell ever wants the vocabulary back.
     case area, people
 
-    /// A NUMBER IN A BOX — the bar's tab key (owner, 2026-08-23: "just
-    /// have tabs as they appeared before when you clicked the numbered
-    /// box"). Obsidian's fifth key is this shape with today's date in
-    /// it; Liv puts the count of open tabs there, which is what a
-    /// numbered box means in every browser on this phone.
-    ///
-    /// Its own drawing rather than `.calendar`'s: the reference is a
-    /// plain rounded outline, and the calendar glyph's hanger lines and
-    /// header rule would run straight through the numerals. Two glyphs,
-    /// two things — not two drawings of one (standing rule 4).
-    case day(Int)
+    /// NOTES STACKED, THE COUNT ON THE FRONT ONE — the bar's tab key.
+    /// It was a plain numbered box (owner, 2026-08-23: "just have tabs as
+    /// they appeared before when you clicked the numbered box"), and on
+    /// the Icons board that box "read as a date". Two sheets say "open
+    /// documents"; the count still rides on the front one, as Text
+    /// (`LivIcon`), so the path does not depend on it.
+    case tabs(Int)
+
+    /// A workspace's letter: the first grapheme of its name, leading
+    /// whitespace skipped, uppercased. "" for a blank name.
+    static func initial(of name: String) -> String {
+        name.drop(while: \.isWhitespace).first.map { String($0).uppercased() } ?? ""
+    }
 }
 
-/// The blueprint's 24×24 drawing space. Every glyph is STROKED, never
-/// filled: that is what makes the carve read as punched out of the chip.
-struct GlyphShape: Shape {
-    let glyph: LivGlyph
+/// ONE DRAWING, AS DATA: the board's own numbers, pasted rather than
+/// transcribed, so a redrawn icon is a new string and not new code.
+///
+/// Three layers, all in the icon's one ink:
+/// - `ink`, stroked — the drawing;
+/// - `faint`, stroked at `LivPen.faint` — a second voice (Unsorted's
+///   falling stroke, the back square of All workspaces);
+/// - `fill`, filled — the dot, and the odd solid block (a PDF's label
+///   bar, the hold tick).
+struct GlyphDrawing: Equatable {
+    enum Mark: Equatable {
+        /// SVG path data, in the strict grammar `GlyphPath` reads.
+        case d(String)
+        /// x, y, width, height, corner radius — a circular corner, as SVG's `rx`.
+        case rect(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)
+        /// cx, cy, r.
+        case circle(CGFloat, CGFloat, CGFloat)
+    }
+    enum Layer: CaseIterable { case ink, faint, fill }
 
-    /// A 24-space stroke of 2 at this size, so weight scales with the icon.
-    static func lineWidth(_ size: CGFloat) -> CGFloat { size / 12 }
+    /// The side of the square the numbers live in: 24 for every glyph,
+    /// 7 for the hold tick.
+    var grid: CGFloat = 24
+    var ink: [Mark] = []
+    var faint: [Mark] = []
+    var fill: [Mark] = []
 
-    func path(in rect: CGRect) -> Path {
-        var pen = Pen(rect)
-        draw(&pen)
-        return pen.path
+    func marks(_ layer: Layer) -> [Mark] {
+        switch layer {
+        case .ink: return ink
+        case .faint: return faint
+        case .fill: return fill
+        }
     }
 
-    private func draw(_ pen: inout Pen) {
-        switch glyph {
-        case .note:
-            pen.box(5, 3.75, 14, 16.5, 3)
-            pen.line(8.5, 9, 15.5, 9)
-            pen.line(8.5, 13, 13.5, 13)
-        // A PLACE AND A THING ARE NOT THE SAME MARK.
-        //
-        // These shared one drawing — a box with a TICK in it — and that
-        // tick made the mark say something false. `StatusRing` draws a
-        // ticked box to mean DONE, so every open task in a mixed list
-        // wore the done mark: `everything.png` showed four open tasks
-        // with ticks while `tasks.png` drew the same rows as empty
-        // rings, in the same app, at the same moment.
-        //
-        // The library ROW keeps the tick — "Tasks" is a place, and a
-        // ticked box is what the word looks like. A task ITSELF gets a
-        // rule, deliberately shorter than a note's 7 units so the two do
-        // not blur at the 19pt a list draws them at.
-        case .tasks:
-            pen.box(4.5, 4.5, 15, 15, 4.5)
-            pen.shape([(8.5, 12.3, 0), (11.1, 14.9, 0), (15.7, 9.5, 0)], closed: false)
-        case .task:
-            pen.box(4.5, 4.5, 15, 15, 4.5)
-            pen.line(9.5, 12, 14.5, 12)
-        case .day:
-            // CENTRED, and a size up. It was box(3.5, 4.5, 17, 16): the
-            // centre sat at y 12.5 on a canvas whose centre is 12, so the
-            // digit drawn at the centre was half a unit high in it —
-            // visible, and the owner saw it (2026-08-28). 18x17 centred
-            // on (12, 12); the digit needs no offset to sit in it.
-            pen.box(3, 3.5, 18, 17, 3.5)
-        // ---- areas of life, and the two marks that name them ----
-        case .area:
-            // Four quarters: the areas of a life, which is what this
-            // field divides. Deliberately not a folder — that is
-            // `project`, one level down.
-            pen.box(4, 4, 7, 7, 1.8)
-            pen.box(13, 4, 7, 7, 1.8)
-            pen.box(4, 13, 7, 7, 1.8)
-            pen.box(13, 13, 7, 7, 1.8)
-        case .work:
-            // A case with a handle: the day's work carried in.
-            pen.box(3, 7.5, 18, 12.5, 2.5)
-            pen.shape([(9, 7.5, 0), (9, 5.5, 1.5), (15, 5.5, 1.5), (15, 7.5, 0)], closed: false)
-            pen.line(3, 12.5, 21, 12.5)
-        case .health:
-            // A pulse: one beat across the line.
-            pen.shape(
-                [(3, 12.5, 0), (8, 12.5, 0), (10.2, 6.5, 0), (13.6, 18, 0), (15.8, 12.5, 0), (21, 12.5, 0)],
-                closed: false)
-        case .money:
-            // A note with its coin.
-            pen.box(3, 6.5, 18, 11.5, 2)
-            pen.circle(12, 12.25, 2.9)
-        case .home:
-            // A roof over a room.
-            pen.shape([(3.5, 11.5, 0), (12, 4.5, 0), (20.5, 11.5, 0)], closed: false)
-            pen.shape([(5.5, 10, 0), (5.5, 19.5, 1.5), (18.5, 19.5, 1.5), (18.5, 10, 0)], closed: false)
-        case .learning:
-            // An open book: two leaves from one spine.
-            pen.shape([(12, 6.5, 0), (12, 19.5, 0)], closed: false)
-            pen.shape([(12, 6.5, 0), (9.5, 5, 0), (3.5, 5.5, 1.5), (3.5, 18.5, 1.5), (9.5, 18, 0), (12, 19.5, 0)], closed: false)
-            pen.shape([(12, 6.5, 0), (14.5, 5, 0), (20.5, 5.5, 1.5), (20.5, 18.5, 1.5), (14.5, 18, 0), (12, 19.5, 0)], closed: false)
-        case .people:
-            // Two, because the field is plural: `.person`'s own drawing
-            // shifted left, and a second head with one shoulder behind
-            // it. The first attempt drew the second figure as two open
-            // strokes and they read as a chevron floating beside a head.
-            pen.circle(9.2, 8.6, 3.4)
-            pen.shape(
-                [(15.4, 20.3, 0), (15.4, 15.3, 4.0), (3.0, 15.3, 4.0), (3.0, 20.3, 0)],
-                closed: false)
-            pen.circle(17.3, 7.4, 2.5)
-            pen.shape([(21.2, 15.6, 0), (21.2, 13.4, 3.0), (17.6, 13.4, 0)], closed: false)
-        case .event, .calendar:
-            pen.box(3, 5, 18, 16, 2.5)
-            pen.line(8, 3, 8, 7)
-            pen.line(16, 3, 16, 7)
-            pen.line(3, 11, 21, 11)
-        case .person:
-            pen.circle(12, 8.2, 3.9)
-            pen.shape(
-                [(19.4, 20.5, 0), (19.4, 14.8, 4.5), (4.6, 14.8, 4.5), (4.6, 20.5, 0)],
-                closed: false)
-        case .link:
-            pen.link()
-        case .capture, .inbox:
-            // The tray: caught, not yet shaped.
-            pen.shape(
-                [
-                    (6, 4, 2), (18, 4, 2), (22, 12, 0), (22, 20, 2),
-                    (2, 20, 2), (2, 12, 0),
-                ], closed: true)
-            pen.shape(
-                [
-                    (22, 12, 0), (16, 12, 0), (14, 15, 0), (10, 15, 0),
-                    (8, 12, 0), (2, 12, 0),
-                ], closed: false)
-        case .file(let fileClass):
-            pen.file(fileClass)
+    /// One layer in grid units, or nil when a `d` breaks the grammar.
+    func path(_ layer: Layer) -> Path? {
+        var path = Path()
+        for mark in marks(layer) {
+            switch mark {
+            case .d(let d):
+                guard let part = GlyphPath.parse(d) else { return nil }
+                path.addPath(part)
+            case .rect(let x, let y, let w, let h, let r):
+                path.addRoundedRect(
+                    in: CGRect(x: x, y: y, width: w, height: h),
+                    cornerSize: CGSize(width: r, height: r), style: .circular)
+            case .circle(let cx, let cy, let r):
+                path.addEllipse(in: CGRect(x: cx - r, y: cy - r, width: 2 * r, height: 2 * r))
+            }
+        }
+        return path
+    }
+
+    /// HOLD FOR MORE: a filled quarter-round in the corner of a key whose
+    /// hold opens a menu (the five bar boards). Its own 7 grid.
+    static let holdTick = GlyphDrawing(grid: 7, fill: [.d("M6 1V4.5A1.5 1.5 0 0 1 4.5 6H1Z")])
+}
+
+/// THE ONE PARSER for every drawing (standing rule 4): the glyphs, the
+/// hold tick and the PDF bar all go through it.
+///
+/// STRICT ON PURPOSE. Every board draws with absolute M L H V A Z only,
+/// never an implicit repeat, and every arc is circular (rx == ry, no
+/// rotation) — so anything else is a typo, and it fails (nil) rather than
+/// drawing something nearby. The self-check parses every string.
+enum GlyphPath {
+    private static let arity: [Character: Int] = ["M": 2, "L": 2, "H": 1, "V": 1, "A": 7, "Z": 0]
+
+    static func parse(_ d: String) -> Path? {
+        // Commands, each with the numbers after it.
+        var ops: [(Character, [CGFloat])] = []
+        var number = ""
+        func flush() -> Bool {
+            guard !number.isEmpty else { return true }
+            guard let v = Double(number), !ops.isEmpty else { return false }
+            ops[ops.count - 1].1.append(CGFloat(v))
+            number = ""
+            return true
+        }
+        for ch in d {
+            if arity[ch] != nil {
+                guard flush() else { return nil }
+                ops.append((ch, []))
+            } else if ch == " " || ch == "," {
+                guard flush() else { return nil }
+            } else if "0123456789.-".contains(ch) {
+                number.append(ch)
+            } else {
+                return nil
+            }
+        }
+        guard flush(), ops.first?.0 == "M" else { return nil }
+
+        var path = Path()
+        var at = CGPoint.zero
+        var start = CGPoint.zero
+        for (command, n) in ops {
+            guard n.count == arity[command] else { return nil }
+            switch command {
+            case "M":
+                at = CGPoint(x: n[0], y: n[1])
+                start = at
+                path.move(to: at)
+            case "L":
+                at = CGPoint(x: n[0], y: n[1])
+                path.addLine(to: at)
+            case "H":
+                at.x = n[0]
+                path.addLine(to: at)
+            case "V":
+                at.y = n[0]
+                path.addLine(to: at)
+            case "A":
+                guard n[0] == n[1], n[2] == 0, [0, 1].contains(n[3]), [0, 1].contains(n[4])
+                else { return nil }
+                let end = CGPoint(x: n[5], y: n[6])
+                arc(&path, from: at, to: end, radius: n[0], large: n[3] == 1, sweep: n[4] == 1)
+                at = end
+            default:  // Z
+                path.closeSubpath()
+                at = start
+            }
+        }
+        return path
+    }
+
+    /// SVG's endpoint arc as a centre arc (SVG 1.1, F.6.5, for circles).
+    ///
+    /// A radius shorter than half the chord GROWS to it, as a browser
+    /// draws it: the link's arcs ask for 3.8 across a 4.6 half-chord and
+    /// are semicircles. SVG's sweep 1 turns the angle up, which in this
+    /// y-down space Core Graphics calls counter-clockwise — hence
+    /// `clockwise: !sweep`.
+    private static func arc(
+        _ path: inout Path, from p: CGPoint, to q: CGPoint,
+        radius: CGFloat, large: Bool, sweep: Bool
+    ) {
+        let hx = (q.x - p.x) / 2, hy = (q.y - p.y) / 2
+        let half = (hx * hx + hy * hy).squareRoot()
+        guard half > 0, radius > 0 else {
+            path.addLine(to: q)
+            return
+        }
+        let r = max(radius, half)
+        let k = (large == sweep ? -1 : 1) * max(0, r * r - half * half).squareRoot() / half
+        let c = CGPoint(x: p.x + hx - k * hy, y: p.y + hy + k * hx)
+        path.addArc(
+            center: c, radius: r,
+            startAngle: .radians(atan2(p.y - c.y, p.x - c.x)),
+            endAngle: .radians(atan2(q.y - c.y, q.x - c.x)),
+            clockwise: !sweep)
+    }
+}
+
+extension LivGlyph {
+    /// THE TABLE: every glyph's drawing, in the board's own numbers (the
+    /// Icons, Create, Note and Panel boards). Cases the boards do not
+    /// draw are drawn in the same hand: the file formats, the area marks,
+    /// the funnel and the archive box.
+    var drawing: GlyphDrawing {
+        switch self {
+        // ---- the family ----
         case .today:
-            // THE RAYS NEED AIR. Strokes are round-capped, so at
-            // `from: 5.8` each ray's inner cap reached r 4.8 — exactly
-            // where the disc's own stroke ends — and the sun read as a
-            // single asterisk. A 1.2-unit gap makes it a sun.
-            pen.circle(12, 12, 3.8)
-            pen.rays(12, 12, from: 7, to: 9.4, count: 8)
+            return GlyphDrawing(
+                ink: [
+                    .circle(12, 12, 4),
+                    .d(
+                        "M12 2.8V4.8M12 19.2V21.2M2.8 12H4.8M19.2 12H21.2M5.5 5.5L6.9 6.9"
+                            + "M17.1 17.1L18.5 18.5M5.5 18.5L6.9 17.1M17.1 6.9L18.5 5.5"),
+                ],
+                fill: [.circle(12, 12, 1.5)])
+        case .inbox, .capture:
+            // Something dropping into a tray: caught, not yet shaped.
+            return GlyphDrawing(
+                ink: [
+                    .d("M3.5 12.5V17A3 3 0 0 0 6.5 20H17.5A3 3 0 0 0 20.5 17V12.5"),
+                    .d("M3.5 12.5H8.3L9.8 15H14.2L15.7 12.5H20.5"),
+                ],
+                faint: [.d("M12 3.5V7")],
+                fill: [.circle(12, 9.3, 1.7)])
+        case .note:
+            return GlyphDrawing(
+                ink: [.rect(5, 3.5, 14, 17, 3), .d("M8.5 8.5H15.5M8.5 12H15.5M8.5 15.5H11.5")],
+                fill: [.circle(14.3, 15.5, 1.25)])
+        // A TASK AND THE TASKS PLACE SHARE THE TICKED BOX, as every board
+        // draws it (Create's Task verb, Unsorted's task rows, the library
+        // row). They were split when a tick was `StatusRing`'s DONE mark
+        // and every open task in a mixed list wore it; on the clearer
+        // boards done is a FILLED green box, so an outlined tick no longer
+        // says done. Two cases still, so each kind keeps its own glyph.
+        case .task, .tasks:
+            return GlyphDrawing(ink: [.rect(4.5, 4.5, 15, 15, 3.5), .d("M8.6 12.3L11 14.7L15.5 9.6")])
+        case .event, .calendar:
+            return GlyphDrawing(
+                ink: [.rect(3.5, 5, 17, 15.5, 3), .d("M8 3V6.5M16 3V6.5M3.5 10H20.5")],
+                fill: [.circle(15.5, 15.2, 1.7)])
+        case .search:
+            return GlyphDrawing(ink: [.circle(10.5, 10.5, 6.3), .d("M15.2 15.2L20 20")])
+        case .back:
+            return GlyphDrawing(ink: [.d("M14.5 5.5L8 12L14.5 18.5")])
+        case .forward:
+            return GlyphDrawing(ink: [.d("M9.5 5.5L16 12L9.5 18.5")])
+        case .person:
+            return GlyphDrawing(ink: [
+                .circle(12, 8.3, 3.8),
+                .d("M4.8 20V19A4.5 4.5 0 0 1 9.3 14.5H14.7A4.5 4.5 0 0 1 19.2 19V20"),
+            ])
+        case .link:
+            return GlyphDrawing(ink: [
+                .d("M10 14L14 10"),
+                .d("M11 6.5L12.8 4.7A3.8 3.8 0 0 1 19.3 11.2L17.5 13"),
+                .d("M13 17.5L11.2 19.3A3.8 3.8 0 0 1 4.7 12.8L6.5 11"),
+            ])
+        case .file(let fileClass):
+            return Self.file(fileClass)
+        case .scan:
+            return GlyphDrawing(ink: [
+                .d(
+                    "M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4H8.5M15.5 4H17.5A2.5 2.5 0 0 1 20 6.5V8.5"
+                        + "M20 15.5V17.5A2.5 2.5 0 0 1 17.5 20H15.5M8.5 20H6.5A2.5 2.5 0 0 1 4 17.5V15.5"),
+                .d("M8 10H16M8 14H13"),
+            ])
+        case .trash:
+            return GlyphDrawing(ink: [
+                .d(
+                    "M4.5 6.5H19.5M9.5 6.5V4.5H14.5V6.5M6.5 6.5L7.4 18.3A2 2 0 0 0 9.4 20.2"
+                        + "H14.6A2 2 0 0 0 16.6 18.3L17.5 6.5")
+            ])
+        case .settings:
+            // A PLAIN COGWHEEL (owner, 2026-09-15: the drawing before this
+            // was "a pirate ship steering wheel" — spokes out of a rim are
+            // handles, not teeth). Eight tapered teeth as one closed
+            // outline, straight-cornered, round a large bore.
+            return GlyphDrawing(ink: [
+                .d(
+                    "M18.63 9.46L21.19 10.05L21.19 13.95L18.63 14.54L18.49 14.89L19.88 17.12"
+                        + "L17.12 19.88L14.89 18.49L14.54 18.63L13.95 21.19L10.05 21.19L9.46 18.63"
+                        + "L9.11 18.49L6.88 19.88L4.12 17.12L5.51 14.89L5.37 14.54L2.81 13.95"
+                        + "L2.81 10.05L5.37 9.46L5.51 9.11L4.12 6.88L6.88 4.12L9.11 5.51L9.46 5.37"
+                        + "L10.05 2.81L13.95 2.81L14.54 5.37L14.89 5.51L17.12 4.12L19.88 6.88"
+                        + "L18.49 9.11Z"),
+                .circle(12, 12, 2.9),
+            ])
+        // ---- the cards ----
+        case .letter:
+            return GlyphDrawing()  // Text, drawn by `LivIcon`
+        case .check:
+            return GlyphDrawing(ink: [.d("M5 12.5L9.8 17.2L19 7.2")])
+        case .plus:
+            return GlyphDrawing(ink: [.d("M12 5V19M5 12H19")])
+        case .workspaces:
+            // TWO SQUARES, STACKED. The back one is a fixed OPEN path that
+            // stops at the front one's outer edge, so the front needs no
+            // fill to hide it and there is no boolean op: where the ends
+            // land inside the front's ink band, that ink covers them.
+            return GlyphDrawing(
+                ink: [.rect(0.62, 4.85, 18.53, 18.53, 4.32)],
+                faint: [
+                    .d(
+                        "M4.91 4.23A4.32 4.32 0 0 1 9.17 0.62H19.06A4.32 4.32 0 0 1 23.38 4.94"
+                            + "V14.83A4.32 4.32 0 0 1 19.77 19.09")
+                ])
+        case .tabs:
+            return GlyphDrawing(ink: [
+                .rect(Self.frontSheet.minX, Self.frontSheet.minY, Self.frontSheet.width, Self.frontSheet.height, 3),
+                .d("M8 7V6A3 3 0 0 1 11 3H17A3 3 0 0 1 20 6V14A3 3 0 0 1 17 17"),
+            ])
+        case .new:
+            return GlyphDrawing(ink: [
+                .d("M11.5 4H7A3 3 0 0 0 4 7V17A3 3 0 0 0 7 20H17A3 3 0 0 0 20 17V12.5"),
+                .d("M18 2.8V9.2M14.8 6H21.2"),
+                .d("M8 12.5H13M8 16H11"),
+            ])
+        case .area:
+            // A life, quartered, with a dot in yours.
+            return GlyphDrawing(
+                ink: [.circle(12, 12, 8.2), .d("M12 3.8V20.2M3.8 12H20.2")],
+                fill: [.circle(15.8, 8.2, 1.6)])
+        case .properties:
+            return GlyphDrawing(
+                ink: [.rect(3.5, 4.5, 17, 15, 3), .d("M7 9.5H11M7 14.5H11")],
+                fill: [.circle(15.5, 9.5, 1.4), .circle(15.5, 14.5, 1.4)])
+        // ---- not on the boards; the same hand ----
+        case .filter:
+            // A V and a stem: two open strokes, no enclosed wedge to fill
+            // in at row size (owner, 2026-09-11: the closed funnel was "a
+            // bit ugly").
+            return GlyphDrawing(ink: [.d("M4 5.5L12 13.5L20 5.5M12 13.5V19.5")])
         case .everything:
             // The archive box: a lid, a body, one label line.
-            pen.box(2.5, 4, 19, 5, 1.5)
-            pen.shape(
-                [(4.5, 9, 0), (4.5, 18, 2), (6.5, 20, 0), (17.5, 20, 2), (19.5, 18, 0), (19.5, 9, 0)],
-                closed: false)
-            pen.line(10, 13.5, 14, 13.5)
-        case .filter:
-            // THE FUNNEL, DRAWN OPEN (owner, 2026-09-11: "the filter icon
-            // is correct but a bit ugly").
-            //
-            // It was one closed six-point shape, and the ugliness was
-            // arithmetic rather than taste. Its stem measured 3.2 units
-            // across (10.4 to 13.6) while the pen is `lineWidth` — size
-            // / 12, which is 2.0 in these coordinates at the panel's
-            // 21pt. That left 1.2 units of daylight inside the stem, so
-            // it filled in and the mark read as a solid wedge.
-            //
-            // A V and a stem instead: two open strokes with no enclosed
-            // area left to fill. Same funnel, same word, all the
-            // daylight back — and it is the only wedge in the column, so
-            // it still tells itself apart from the ring, the tray, the
-            // three rules and the grid above it.
-            //
-            // THE RULE THIS IS AN INSTANCE OF: an enclosed shape in this
-            // pen needs its narrowest inside gap to stay well clear of
-            // 2.0 units, or the drawing closes up at row size. Check a
-            // new glyph's tightest passage before trusting it at 21pt.
-            pen.shape([(4, 5.5, 0), (12, 13.5, 0), (20, 5.5, 0)], closed: false)
-            pen.line(12, 13.5, 12, 19.5)
-        case .trash:
-            // A bin: lid, body, and two staves. Drawn rather than an SF
-            // Symbol so it sits on the same optical weight as its
-            // neighbours in the library rows.
-            pen.line(5, 6.5, 19, 6.5)
-            pen.line(9.5, 6.5, 9.5, 4.5)
-            pen.line(9.5, 4.5, 14.5, 4.5)
-            pen.line(14.5, 4.5, 14.5, 6.5)
-            pen.line(6.8, 6.5, 7.8, 19.5)
-            pen.line(17.2, 6.5, 16.2, 19.5)
-            pen.line(7.8, 19.5, 16.2, 19.5)
-        case .settings:
-            // A COGWHEEL, and it was a SHIP'S WHEEL (owner, 2026-09-15:
-            // "it's not a cogwheel but a pirate ship steering wheel").
-            //
-            // It was a rim at r6.8, a hub at r2, and eight rays from 6.3
-            // to 9 — spokes that cross the rim and poke out past it,
-            // which is a helm: rim, handles, hub. A gear has no rim and
-            // no handles. Its OUTLINE is the toothed profile, its teeth
-            // are wide tapered blocks rather than spikes, and its bore
-            // is large — a gear is mostly a ring.
-            //
-            // `rays` is still the sun's (`.today`), which is what it was
-            // always right for.
-            pen.gear(12, 12, root: 7, tip: 9.2, teeth: 8)
-            pen.circle(12, 12, 3.1)
-        case .workspace:
-            // r8, not the sheet's 5.6: bare in a row it has to hold the
-            // same optical weight as its neighbours, which fill ~80% of
-            // the box. At 5.6 it read as a bullet next to them.
-            pen.circle(12, 12, 8)
-        case .workspaces:
-            // All of them: the four-square grid.
-            pen.box(4, 4, 7, 7, 1.6)
-            pen.box(13, 4, 7, 7, 1.6)
-            pen.box(4, 13, 7, 7, 1.6)
-            pen.box(13, 13, 7, 7, 1.6)
-        case .plus:
-            pen.line(12, 5.5, 12, 18.5)
-            pen.line(5.5, 12, 18.5, 12)
-        }
-    }
-}
-
-/// The pen draws in the blueprint's 24×24 space and scales to whatever
-/// box it is handed, so one transcription serves every size.
-private struct Pen {
-    let scale: CGFloat
-    let origin: CGPoint
-    var path = Path()
-
-    init(_ rect: CGRect) {
-        let side = min(rect.width, rect.height)
-        scale = side / 24
-        origin = CGPoint(x: rect.midX - side / 2, y: rect.midY - side / 2)
-    }
-
-    func at(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        CGPoint(x: origin.x + x * scale, y: origin.y + y * scale)
-    }
-
-    mutating func line(_ x1: CGFloat, _ y1: CGFloat, _ x2: CGFloat, _ y2: CGFloat) {
-        path.move(to: at(x1, y1))
-        path.addLine(to: at(x2, y2))
-    }
-
-    mutating func circle(_ cx: CGFloat, _ cy: CGFloat, _ r: CGFloat) {
-        path.addEllipse(
-            in: CGRect(
-                x: origin.x + (cx - r) * scale, y: origin.y + (cy - r) * scale,
-                width: 2 * r * scale, height: 2 * r * scale))
-    }
-
-    mutating func box(
-        _ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ r: CGFloat
-    ) {
-        path.addRoundedRect(
-            in: CGRect(
-                x: origin.x + x * scale, y: origin.y + y * scale,
-                width: w * scale, height: h * scale),
-            cornerSize: CGSize(width: r * scale, height: r * scale))
-    }
-
-    /// A polyline or polygon with a radius per corner (0 = sharp). This
-    /// is how the blueprint's rounded joins are drawn without an SVG arc
-    /// parser: every arc in the set is a corner between two straight runs.
-    mutating func shape(_ pts: [(CGFloat, CGFloat, CGFloat)], closed: Bool) {
-        guard pts.count > 1 else { return }
-        if closed {
-            let a = pts[pts.count - 1], b = pts[0]
-            path.move(to: at((a.0 + b.0) / 2, (a.1 + b.1) / 2))
-            for i in 0..<pts.count { corner(pts[i], pts[(i + 1) % pts.count]) }
-            path.closeSubpath()
-        } else {
-            path.move(to: at(pts[0].0, pts[0].1))
-            for i in 1..<(pts.count - 1) { corner(pts[i], pts[i + 1]) }
-            let last = pts[pts.count - 1]
-            path.addLine(to: at(last.0, last.1))
+            return GlyphDrawing(ink: [
+                .rect(3.5, 4, 17, 5, 2),
+                .d("M5 9V17A3 3 0 0 0 8 20H16A3 3 0 0 0 19 17V9"),
+                .d("M10 13H14"),
+            ])
+        case .work:
+            // A case with a handle: the day's work carried in.
+            return GlyphDrawing(ink: [
+                .rect(3.5, 7.5, 17, 12.5, 3),
+                .d("M9 7.5V6A1.5 1.5 0 0 1 10.5 4.5H13.5A1.5 1.5 0 0 1 15 6V7.5"),
+                .d("M3.5 12.5H20.5"),
+            ])
+        case .health:
+            // A pulse: one beat across the line.
+            return GlyphDrawing(ink: [.d("M3 12.5H8L10.2 6.5L13.6 18L15.8 12.5H21")])
+        case .money:
+            // A note with its coin.
+            return GlyphDrawing(ink: [.rect(3, 6.5, 18, 11, 3), .circle(12, 12, 2.8)])
+        case .home:
+            // A roof over a room.
+            return GlyphDrawing(ink: [
+                .d("M3.5 11.5L12 4.5L20.5 11.5"),
+                .d("M5.5 10V16.5A3 3 0 0 0 8.5 19.5H15.5A3 3 0 0 0 18.5 16.5V10"),
+            ])
+        case .learning:
+            // An open book: two leaves from one spine.
+            return GlyphDrawing(ink: [
+                .d("M12 7V20.5"),
+                .d("M12 7A3 3 0 0 0 9 4H5.5A2 2 0 0 0 3.5 6V15.5A2 2 0 0 0 5.5 17.5H9A3 3 0 0 1 12 20.5"),
+                .d("M12 7A3 3 0 0 1 15 4H18.5A2 2 0 0 1 20.5 6V15.5A2 2 0 0 1 18.5 17.5H15A3 3 0 0 0 12 20.5"),
+            ])
+        case .people:
+            // Two, because the field is plural: a head and shoulders, and
+            // a second head with one shoulder behind it.
+            return GlyphDrawing(ink: [
+                .circle(9, 8.8, 3.2),
+                .d("M3 20V19.3A4 4 0 0 1 7 15.3H11A4 4 0 0 1 15 19.3V20"),
+                .circle(17.2, 7.2, 2.4),
+                .d("M17.5 13.2H18A3.5 3.5 0 0 1 21.5 16.7V18"),
+            ])
         }
     }
 
-    private mutating func corner(
-        _ v: (CGFloat, CGFloat, CGFloat), _ next: (CGFloat, CGFloat, CGFloat)
-    ) {
-        if v.2 <= 0 {
-            path.addLine(to: at(v.0, v.1))
-        } else {
-            path.addArc(
-                tangent1End: at(v.0, v.1), tangent2End: at(next.0, next.1),
-                radius: v.2 * scale)
-        }
-    }
+    /// The tab key's front sheet, in grid units. The count is centred on
+    /// it, so the drawing and the overlay read the same numbers.
+    static let frontSheet = CGRect(x: 4, y: 7, width: 13, height: 14)
 
-    /// A TOOTHED RING — the gear's whole outline in one closed path.
-    ///
-    /// Four points per tooth, walked once around: out of the valley at
-    /// the root radius, up the flank to the tip, across the tip, and
-    /// back down. The tooth is NARROWER at the tip than at the root,
-    /// which is the taper that makes it read as a cog rather than as a
-    /// square peg — and the valley between two teeth is a real gap, not
-    /// a line crossing a rim.
-    ///
-    /// `shape` rounds every corner, so the tips and valleys come out
-    /// soft at the weight this app's line art is drawn at. The radius is
-    /// small enough that no corner eats its own segment: the shortest
-    /// run here is the valley floor, and it is over three times 0.45.
-    mutating func gear(
-        _ cx: CGFloat, _ cy: CGFloat, root: CGFloat, tip: CGFloat, teeth: Int
-    ) {
-        guard teeth > 2 else { return }
-        let pitch = 2 * Double.pi / Double(teeth)
-        // Two thirds of the half-pitch at the root, and under half of it
-        // at the tip. Wider and the valleys close up; narrower and the
-        // teeth read as the spikes this is replacing.
-        let rootHalf = pitch * 0.33
-        let tipHalf = pitch * 0.21
-        var pts: [(CGFloat, CGFloat, CGFloat)] = []
-        for i in 0..<teeth {
-            let mid = Double(i) * pitch
-            for (r, offset) in [
-                (root, -rootHalf), (tip, -tipHalf), (tip, tipHalf), (root, rootHalf),
-            ] {
-                let a = mid + offset
-                pts.append((cx + r * CGFloat(cos(a)), cy + r * CGFloat(sin(a)), 0.45))
-            }
-        }
-        shape(pts, closed: true)
-    }
-
-    /// Spokes around a centre — the SUN's. It drew the settings gear too
-    /// until 2026-09-15, which is how that glyph ended up a ship's wheel:
-    /// spokes out of a rim are handles, not teeth.
-    mutating func rays(
-        _ cx: CGFloat, _ cy: CGFloat, from: CGFloat, to: CGFloat, count: Int
-    ) {
-        for i in 0..<count {
-            let a = Double(i) / Double(count) * 2 * .pi
-            let dx = CGFloat(cos(a)), dy = CGFloat(sin(a))
-            line(cx + from * dx, cy + from * dy, cx + to * dx, cy + to * dy)
-        }
-    }
-
-    /// Two stadium outlines on the diagonal — the chain link, drawn as
-    /// the shape it is rather than as two SVG arcs.
-    mutating func link() {
-        var loops = Path()
-        for x in [CGFloat(2.6), CGFloat(9.4)] {
-            loops.addRoundedRect(
-                in: CGRect(
-                    x: origin.x + x * scale, y: origin.y + 9.25 * scale,
-                    width: 12 * scale, height: 5.5 * scale),
-                cornerSize: CGSize(width: 2.75 * scale, height: 2.75 * scale))
-        }
-        let c = at(12, 12)
-        path.addPath(
-            loops,
-            transform: CGAffineTransform(translationX: c.x, y: c.y)
-                .rotated(by: -.pi / 4)
-                .translatedBy(x: -c.x, y: -c.y))
-    }
-
-    /// The file glyph: the blueprint's page with a folded corner, and one
-    /// mark inside that says which kind of file it is.
-    mutating func file(_ fileClass: FileFacts.Class) {
+    /// The page with its folded corner (the board's File), and one mark
+    /// inside that says which kind of file it is. Sheets, slides and
+    /// pictures are not paper, so they draw their own outline.
+    private static func file(_ fileClass: FileFacts.Class) -> GlyphDrawing {
+        let page: [GlyphDrawing.Mark] = [
+            .d("M13.5 3.5H8A3 3 0 0 0 5 6.5V17.5A3 3 0 0 0 8 20.5H16A3 3 0 0 0 19 17.5V9Z"),
+            .d("M13.5 3.5V9H19"),
+        ]
         switch fileClass {
+        case .other:
+            return GlyphDrawing(ink: page)
+        case .document:
+            return GlyphDrawing(ink: page + [.d("M8.5 13H15.5M8.5 16.5H12.5")])
+        case .text:
+            return GlyphDrawing(ink: page + [.d("M8.5 12H15.5M8.5 14.75H15.5M8.5 17.5H12")])
+        case .pdf:
+            // The label block a PDF wears in every reader.
+            return GlyphDrawing(ink: page, fill: [.rect(8, 14, 8, 3.5, 1.75)])
         case .sheet:
-            box(4.5, 3.75, 15, 16.5, 2.5)
-            line(4.5, 9.25, 19.5, 9.25)
-            line(4.5, 14.75, 19.5, 14.75)
-            line(12, 3.75, 12, 20.25)
+            return GlyphDrawing(ink: [
+                .rect(4.5, 3.5, 15, 17, 3), .d("M4.5 9H19.5M4.5 14.5H19.5M12 3.5V20.5"),
+            ])
         case .slides:
-            box(3.5, 4.5, 17, 11.5, 2.5)
-            line(12, 16, 12, 19)
-            line(8.5, 19.5, 15.5, 19.5)
+            return GlyphDrawing(ink: [.rect(3.5, 4.5, 17, 11.5, 3), .d("M12 16V19.5M8.5 19.5H15.5")])
         case .image:
-            box(3.5, 4.5, 17, 15, 2.5)
-            circle(9, 10, 1.7)
-            shape(
-                [(4.5, 17.5, 0), (10.5, 11.5, 0), (13.5, 14.5, 0), (16, 12, 0), (19.5, 15.5, 0)],
-                closed: false)
-        default:
-            page()
-            switch fileClass {
-            case .document:
-                line(8.5, 13, 15.5, 13)
-                line(8.5, 16.5, 13, 16.5)
-            case .text:
-                line(8.5, 11.5, 15.5, 11.5)
-                line(8.5, 14.5, 15.5, 14.5)
-                line(8.5, 17.5, 12, 17.5)
-            case .pdf:
-                // The label block a PDF wears in every reader.
-                box(8, 14.5, 8, 3.5, 1)
-            default:
-                break  // .other: the bare page
-            }
+            return GlyphDrawing(
+                ink: [.rect(3.5, 4.5, 17, 15, 3), .d("M4.5 17.5L10.5 11.5L13.5 14.5L16 12L19.5 15.5")],
+                fill: [.circle(8.8, 9.5, 1.6)])
         }
-    }
-
-    /// The page with the folded corner, shared by every paper format.
-    private mutating func page() {
-        shape(
-            [
-                (7.5, 3.75, 0), (13.5, 3.75, 0), (18.5, 8.75, 0),
-                (18.5, 17.75, 2.5), (16, 20.25, 0), (8, 20.25, 2.5),
-                (5.5, 17.75, 0), (5.5, 6.25, 2.5),
-            ], closed: true)
-        shape([(13.5, 3.75, 0), (13.5, 8.75, 0), (18.5, 8.75, 0)], closed: false)
     }
 }
 
-// MARK: - the two ways an icon appears
+/// One layer of a drawing, its grid scaled onto the square in the middle
+/// of whatever frame it is handed — so one set of numbers serves every
+/// size.
+struct GlyphShape: Shape {
+    let drawing: GlyphDrawing
+    let layer: GlyphDrawing.Layer
 
-/// A bare glyph, stroked in its own colour. This is how an icon appears
-/// when it sits in a row that already has a chip, or where a solid block
-/// of colour would shout.
+    func path(in rect: CGRect) -> Path {
+        let side = min(rect.width, rect.height)
+        let scale = side / drawing.grid
+        let place = CGAffineTransform(translationX: rect.midX - side / 2, y: rect.midY - side / 2)
+            .scaledBy(x: scale, y: scale)
+        return (drawing.path(layer) ?? Path()).applying(place)
+    }
+}
+
+// MARK: - the ways an icon appears
+
 /// THE PANEL DOOR, drawn here rather than borrowed from SF Symbols
 /// (owner, 2026-08-18: "a bit rounder. it looks like a desktop icon").
 ///
@@ -627,35 +658,78 @@ struct PanelMark: View {
     }
 }
 
+/// A glyph, in ONE ink. Three layers — faint, ink, fill — stroked with
+/// `LivPen.stroke(size)`, the same drawn weight at every size, and
+/// composited as one, so an ancestor's opacity (a dead bar key) dims the
+/// icon without the layers showing through each other.
 struct LivIcon: View {
     let glyph: LivGlyph
     let color: Color
-    /// NO DEFAULT. It was `= 19`, a hand-typed second copy of
-    /// `LivRow.glyph`, and all seventeen call sites pass `size:`
-    /// anyway — so the number was never read and only stood there
-    /// waiting to disagree with the token (standing rules 3 and 6).
+    /// NO DEFAULT. It was `= 19`, a hand-typed second copy of a row
+    /// token, and every call site passes `size:` anyway — so the number
+    /// was never read and only stood there waiting to disagree with the
+    /// token (standing rules 3 and 6).
     let size: CGFloat
 
     var body: some View {
-        let stroke = StrokeStyle(
-            lineWidth: GlyphShape.lineWidth(size), lineCap: .round, lineJoin: .round)
-        GlyphShape(glyph: glyph)
-            .stroke(color, style: stroke)
-            .frame(width: size, height: size)
-            // The numbered box carries a NUMBER inside it. Sized off the
-            // glyph so it scales with it, monospaced so the bar does not
-            // twitch between 9 tabs and 10.
-            .overlay {
-                if case .day(let n) = glyph {
-                    Text("\(n)")
-                        .font(.system(size: size * 0.46, weight: .bold).monospacedDigit())
-                        .foregroundStyle(color)
-                        .minimumScaleFactor(0.7)
-                        .lineLimit(1)
-                        .frame(width: size * 0.62)
-                }
+        let drawing = glyph.drawing
+        let pen = StrokeStyle(lineWidth: LivPen.stroke(size), lineCap: .round, lineJoin: .round)
+        ZStack {
+            if !drawing.faint.isEmpty {
+                GlyphShape(drawing: drawing, layer: .faint)
+                    .stroke(color.opacity(LivPen.faint), style: pen)
             }
-            .accessibilityHidden(true)  // the row's text carries the name
+            GlyphShape(drawing: drawing, layer: .ink).stroke(color, style: pen)
+            if !drawing.fill.isEmpty {
+                GlyphShape(drawing: drawing, layer: .fill).fill(color)
+            }
+        }
+        .frame(width: size, height: size)
+        .overlay { words }
+        .compositingGroup()
+        .accessibilityHidden(true)  // the row's text carries the name
+    }
+
+    /// The two glyphs that carry TEXT: the tab count on the front sheet,
+    /// and a workspace's letter. Sized off the glyph so they scale with it.
+    @ViewBuilder private var words: some View {
+        switch glyph {
+        case .tabs(let n):
+            // Monospaced so the bar does not twitch between 9 tabs and
+            // 10. The box is the WHOLE front sheet, as the board draws
+            // it: narrower, "128" clipped to "1…" even at `countFloor`
+            // (measured at 11 and 12 units); a digit's own side bearings
+            // keep a shrunken count off the stroke.
+            let sheet = LivGlyph.frontSheet
+            let unit = size / 24
+            Text("\(n)")
+                .font(.system(size: size * LivPen.count, weight: .bold).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(LivPen.countFloor)
+                .frame(width: sheet.width * unit)
+                .offset(x: (sheet.midX - 12) * unit, y: (sheet.midY - 12) * unit)
+        case .letter(let name):
+            Text(LivGlyph.initial(of: name))
+                .font(.system(size: (size * LivPen.letter).rounded(), weight: .semibold))
+                .foregroundStyle(color)
+                .lineLimit(1)
+        default:
+            EmptyView()
+        }
+    }
+}
+
+/// HOLD FOR MORE — the corner tick on a key whose hold opens a menu
+/// (the bar's `+`). Always `text2`, whatever the key's ink: it is a hint
+/// beside the glyph, not part of it. The caller places it: bottom
+/// trailing of the glyph, `LivPen.tickOffset` out.
+struct HoldTick: View {
+    var body: some View {
+        GlyphShape(drawing: .holdTick, layer: .fill)
+            .fill(LivTheme.text2)
+            .frame(width: LivPen.tick, height: LivPen.tick)
+            .accessibilityHidden(true)
     }
 }
 
@@ -663,10 +737,10 @@ struct LivIcon: View {
 // kind's colour and carved the glyph out of it as a stencil — one per
 // row in Files, Search and the minimised record pill, so a mixed list
 // drew a column of saturated blocks. The references draw the glyph
-// itself in the kind's colour on no fill at all, which says the same
-// thing with a fraction of the ink; that is exactly `LivIcon`, which
-// this app already had. Two recipes for one mark is standing rule 4, and
-// the three call sites pass `LivIcon` now.
+// itself on no fill at all, which says the same thing with a fraction
+// of the ink; that is exactly `LivIcon`, which this app already had.
+// Two recipes for one mark is standing rule 4, and the three call sites
+// pass `LivIcon` now.
 
 // `PropertiesMark` IS GONE with it — three overlapping coloured rings,
 // and `grep` finds no caller anywhere in the shell. Dead when the
@@ -757,9 +831,9 @@ func livPaletteSelfCheck() -> [String] {
     // 2026-09-12, 16 of its Text sites are none of those: whole sentences
     // ("Showing N of M — narrow the search"; "The saved version is shown.
     // Your edit is kept."), file paths, and — the loudest one —
-    // `DetailRowLabel`, which draws EVERY property name in the panel at
-    // strong(20) in this tier, at the same triple as the value beside it,
-    // so that pair has no hierarchy in either direction.
+    // the properties card's labels, which drew EVERY property name at
+    // strong(20) in this tier until the clearer boards (2026-09-24) moved
+    // them to full ink at 18 with the value in text2.
     //
     // Nothing is changed here, because the fix is a visible one and it is
     // not a blanket swap: moving both halves of a label/value pair to
@@ -822,19 +896,37 @@ func livPaletteSelfCheck() -> [String] {
     return fail
 }
 
+
 // MARK: - the sheet (`simctl launch … -glyph.sheet 1`)
 
-/// EVERY GLYPH, DRAWN, at the size the app uses them.
+/// EVERY GLYPH, DRAWN, at the sizes the app uses them.
 ///
 /// Mockup-first is the house rule for visible UI, and a glyph is the one
 /// thing you cannot review in prose — "a folder with a lid" describes a
-/// hundred drawings. This renders the set so a change can be looked at
-/// before it is wired into anything.
+/// hundred drawings. This renders the set so a change can be looked at,
+/// beside the Icons board, before it is wired into anything.
 struct GlyphSheet: View {
-    /// The two marks that name an area. Four field marks stood here
-    /// until 2026-09-12 — see `LivGlyph`'s own note on where they went.
-    private static let named: [(String, LivGlyph)] = [
-        ("area", .area), ("people", .people),
+    /// The Icons board's family row, in its order.
+    private static let family: [(String, LivGlyph)] = [
+        ("Today", .today), ("Unsorted", .inbox), ("Note", .note), ("Task", .task),
+        ("Event", .event), ("Search", .search), ("Back", .back), ("Forward", .forward),
+        ("Person", .person), ("Link", .link), ("File", .file(.other)), ("Scan", .scan),
+        ("Trash", .trash), ("Settings", .settings),
+    ]
+    /// The board's cards: the marks it redrew with a reason.
+    private static let cards: [(String, LivGlyph)] = [
+        ("Personal", .letter("Personal")), ("All", .workspaces), ("Tabs", .tabs(4)),
+        ("New", .new), ("Area", .area), ("Properties", .properties),
+    ]
+    private static let files: [(String, LivGlyph)] = [
+        ("doc", .file(.document)), ("text", .file(.text)), ("pdf", .file(.pdf)),
+        ("sheet", .file(.sheet)), ("slides", .file(.slides)), ("image", .file(.image)),
+    ]
+    /// Not on the board, drawn in its hand — and the two counts the tab
+    /// key has to survive.
+    private static let more: [(String, LivGlyph)] = [
+        ("archive", .everything), ("filter", .filter), ("people", .people),
+        ("18 tabs", .tabs(18)), ("128 tabs", .tabs(128)),
     ]
     /// THE MARKS AN AREA COULD WEAR, by what each one DRAWS.
     ///
@@ -847,53 +939,64 @@ struct GlyphSheet: View {
         ("briefcase", .work), ("heart", .health), ("coin", .money),
         ("house", .home), ("book", .learning),
     ]
-    private static let existing: [(String, LivGlyph)] = [
-        ("note", .note), ("task", .task), ("event", .event),
-        ("person", .person), ("link", .link), ("calendar", .calendar),
-        ("today", .today), ("inbox", .inbox), ("everything", .everything),
-        ("filter", .filter), ("settings", .settings), ("trash", .trash),
-    ]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 22) {
+                block("The family", Self.family)
+                block("Cards", Self.cards)
+                block("Files", Self.files)
+                block("In the same hand", Self.more)
                 block("Marks an area could wear", Self.areas)
-                block("Area marks", Self.named)
-                block("Existing, for comparison", Self.existing)
             }
             .padding(.horizontal, 20)
             .padding(.top, LivRow.topInset)
             .padding(.bottom, 40)
         }
         .background(LivTheme.canvas.ignoresSafeArea())
+        // In the app's own scheme (dark unless set), which `RootView`
+        // applies and this sheet, standing in for it, never reached.
+        .onAppear { LivAppearance.current.applyToWindows() }
     }
 
     private func block(_ title: String, _ items: [(String, LivGlyph)]) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             SectionLabel(title)
-            // At 22 (the properties row) and at 40, because a stroke that
-            // reads at one size can close up at the other.
-            ForEach(items, id: \.0) { name, glyph in
-                HStack(spacing: 22) {
-                    LivIcon(glyph: glyph, color: LivTheme.text2, size: 22)
-                        .frame(width: 30)
-                    LivIcon(glyph: glyph, color: LivTheme.text, size: 40)
-                        .frame(width: 48)
-                    Text(name)
-                        .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.text3)
-                    Spacer(minLength: 0)
-                }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 6), spacing: 16) {
+                ForEach(items, id: \.0) { name, glyph in cell(name, glyph) }
             }
+        }
+    }
+
+    /// One glyph at the board's sizes: 28 in `text` (its specimens), 22
+    /// in `text2` (a list row, a menu) and 15 in `text2` (a chip, at the
+    /// fine line) — a stroke that reads at one can close up at another.
+    private func cell(_ name: String, _ glyph: LivGlyph) -> some View {
+        VStack(spacing: 6) {
+            LivIcon(glyph: glyph, color: LivTheme.text, size: 28)
+                .overlay(alignment: .bottomTrailing) {
+                    if glyph == .new {
+                        HoldTick().offset(x: LivPen.tickOffset, y: LivPen.tickOffset)
+                    }
+                }
+            HStack(spacing: 6) {
+                LivIcon(glyph: glyph, color: LivTheme.text2, size: 22)
+                LivIcon(glyph: glyph, color: LivTheme.text2, size: LivPen.chip)
+            }
+            Text(name)
+                .font(.system(size: LivType.micro))
+                .foregroundStyle(LivTheme.text3)
+                .lineLimit(1)
         }
     }
 }
 
 // MARK: - self-check (`simctl launch … -glyph.selfcheck 1`)
 
-/// The icon language has no test target to live in. This asserts the two
-/// properties that actually matter: one answer per row, and a drawing
-/// that lands inside its box.
+/// The icon language has no test target to live in. This asserts what
+/// actually matters: one answer per row, a drawing that parses and lands
+/// inside its box, dots and faint strokes exactly where the board puts
+/// them, and a parser that is as strict as it claims.
 func livGlyphSelfCheck() -> [String] {
     var fail: [String] = []
 
@@ -955,10 +1058,10 @@ func livGlyphSelfCheck() -> [String] {
         if LivKind.named(kind.wire) != kind { fail.append("\(kind.wire): name round trip") }
     }
 
-    // 3. Every drawing lands inside its box and is not empty. A glyph
-    //    that overflows would be clipped by the chip; one that is empty
-    //    is a case someone forgot to draw.
-    let box = CGRect(x: 0, y: 0, width: 24, height: 24)
+    // 3. Every drawing parses, has ink, and lands inside its box — all
+    //    three layers of it. A glyph that overflows would be clipped by
+    //    its chip; one that is empty is a case someone forgot to draw.
+    //    `.letter` is Text and has no path, so it is checked in 4.
     let fileClasses: [FileFacts.Class] = [
         .document, .sheet, .slides, .pdf, .image, .text, .other,
     ]
@@ -966,23 +1069,78 @@ func livGlyphSelfCheck() -> [String] {
         [
             .note, .task, .event, .person, .link, .capture,
             .today, .inbox, .calendar, .tasks, .everything,
-            .filter, .settings, .workspace, .workspaces, .plus,
-            // Both digit widths: the numerals ride INSIDE the box, and a
-            // two-digit count that overflows it would be invisible in
-            // review and obvious on the day you open ten tabs.
-            .work, .health, .money, .home, .learning,
-            .day(0), .day(9), .day(18), .day(31),
+            .work, .health, .money, .home, .learning, .area, .people,
+            .filter, .settings, .workspaces, .trash, .properties,
+            .back, .forward, .search, .new, .scan, .check, .plus,
+            // The count is Text on the front sheet, not part of the path,
+            // so one count stands for all of them.
+            .tabs(0),
         ] + fileClasses.map { LivGlyph.file($0) }
+    // THE DOT, where the board puts one (and the PDF's label bar) — and
+    // the faint second voice. Asserted both ways: a dot that goes missing
+    // and a dot that turns up where none is drawn both fail.
+    let dotted: [LivGlyph] = [
+        .note, .event, .calendar, .inbox, .capture, .today, .area, .properties,
+        .file(.image), .file(.pdf),
+    ]
+    let faint: [LivGlyph] = [.inbox, .capture, .workspaces]
     for glyph in drawn {
-        let path = GlyphShape(glyph: glyph).path(in: box)
-        if path.isEmpty { fail.append("\(glyph): draws nothing") }
-        if !path.isEmpty {
-            // 1pt of slack: a stroke sits half outside its own path.
-            let b = path.boundingRect
-            if b.minX < -1 || b.minY < -1 || b.maxX > 25 || b.maxY > 25 {
-                fail.append("\(glyph): \(b) leaves the box")
+        let drawing = glyph.drawing
+        var all = Path()
+        for layer in GlyphDrawing.Layer.allCases {
+            guard let path = drawing.path(layer) else {
+                fail.append("\(glyph): its \(layer) layer breaks the path grammar")
+                continue
             }
+            all.addPath(path)
         }
+        if drawing.ink.isEmpty { fail.append("\(glyph): draws nothing") }
+        if drawing.fill.isEmpty == dotted.contains(glyph) {
+            fail.append("\(glyph): \(drawing.fill.isEmpty ? "lost its dot" : "has a dot the board does not")")
+        }
+        if drawing.faint.isEmpty == faint.contains(glyph) {
+            fail.append("\(glyph): \(drawing.faint.isEmpty ? "lost its faint stroke" : "has a faint stroke")")
+        }
+        // 1pt of slack: a stroke sits half outside its own path.
+        let b = all.cgPath.boundingBoxOfPath
+        if !all.isEmpty, b.minX < -1 || b.minY < -1 || b.maxX > 25 || b.maxY > 25 {
+            fail.append("\(glyph): \(b) leaves the box")
+        }
+    }
+    if GlyphDrawing.holdTick.path(.fill)?.isEmpty != false {
+        fail.append("hold tick: does not parse, or draws nothing")
+    }
+
+    // 4. A workspace's letter: Text, never a path, from the name's first
+    //    grapheme past any leading space.
+    let letter = LivGlyph.letter("Personal").drawing
+    if !(letter.ink.isEmpty && letter.faint.isEmpty && letter.fill.isEmpty) {
+        fail.append("letter: draws a path; it is Text")
+    }
+    for (name, want) in [("personal", "P"), ("  work", "W"), ("", "")] {
+        let got = LivGlyph.initial(of: name)
+        if got != want { fail.append("letter of \"\(name)\": \(got) ≠ \(want)") }
+    }
+
+    // 5. The parser: an arc lands where a browser draws it, and anything
+    //    outside the grammar fails rather than drawing something nearby.
+    //    The link's upper arc asks for r 3.8 across a 4.6 half-chord, so
+    //    it must GROW to a semicircle about (16.05, 7.95) and bulge up and
+    //    right (sweep 1). A flipped sweep bulges down-left; an ungrown
+    //    radius misses both edges.
+    if let arc = GlyphPath.parse("M12.8 4.7A3.8 3.8 0 0 1 19.3 11.2") {
+        let b = arc.cgPath.boundingBoxOfPath
+        if abs(b.maxX - 20.646) > 0.05 || abs(b.minY - 3.354) > 0.05 {
+            fail.append("arc: the link's semicircle lands at \(b)")
+        }
+    } else {
+        fail.append("arc: the link's semicircle does not parse")
+    }
+    for bad in [
+        "L1 2", "M1 2L3", "M1 2l3 4", "M1 2L3 4 5 6", "M1 2Q3 4 5 6",
+        "M1 2A3 4 0 0 1 5 6", "M1 2A3 3 30 0 1 5 6", "M1 2A3 3 0 2 1 5 6",
+    ] where GlyphPath.parse(bad) != nil {
+        fail.append("parser accepts \"\(bad)\"")
     }
 
     return fail

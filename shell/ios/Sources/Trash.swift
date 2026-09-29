@@ -42,23 +42,25 @@ struct TrashView: View {
                     EmptyHint("Empty")
                     .padding(.top, 40)
                 } else {
+                    // ONE CARD, the clearer boards' row: the thing's glyph
+                    // and name, and the one verb this screen has.
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
-                                HStack(spacing: 0) {
-                                    LivListRow(
+                        LivCard {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(rows.enumerated()), id: \.element.id) { i, row in
+                                    LivCardRow(
                                         glyph: LivKind.glyph(of: row),
                                         title: livRowTitle(row),
-                                        untitled: livRowIsUntitled(row),
-                                        divided: i < rows.count - 1)
-                                    ConfirmPill("Put back", compact: true) {
-                                        box.restore(row.id)
+                                        muted: livRowIsUntitled(row),
+                                        divided: i < rows.count - 1
+                                    ) {
+                                        ConfirmPill("Put back", compact: true) {
+                                            box.restore(row.id)
+                                        }
                                     }
-                                    .padding(.leading, 8)
                                 }
                             }
                         }
-                        .padding(.horizontal, LivRow.margin)
                     }
                 }
             }

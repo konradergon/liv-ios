@@ -167,7 +167,17 @@ final class DeskModel: ObservableObject {
     /// With the desk holding its own answer, the view underneath a
     /// document is the view you opened it from, and laying the document
     /// down uncovers it. `state` never changes when a document opens.
-    @Published private(set) var shown = false
+    ///
+    /// THE CHROME COMES HOME whenever this flips. A list's scroll sends
+    /// the doors and the bar away, and the list is what brings them back
+    /// — its `onDisappear` — but a document RISES OVER the list, which
+    /// stays mounted underneath, so that never fired: scroll Notes, open
+    /// a note, and the note had no doors and no bar (owner, 2026-09-27).
+    /// The hidden state belongs to the surface that was scrolled, so a
+    /// change of surface resets it.
+    @Published private(set) var shown = false {
+        didSet { if shown != oldValue { chromeHomeAgain() } }
+    }
 
     /// One plane per view (`DeskPlanes`, Plane.swift). The strip you see
     /// is the current view's, so every caller of `tabs` and `activeTabId`

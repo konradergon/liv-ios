@@ -133,6 +133,8 @@ struct EntityInspector: View {
     /// The panel scrolls; embedded as a record's body (Record.swift) it
     /// must NOT — a scroll view inside a scroll view eats the gesture.
     var scrolls: Bool = true
+    /// A thing created a moment ago: open with the caret in the name.
+    var autoFocus: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -144,13 +146,20 @@ struct EntityInspector: View {
     /// field would make merely opening the card able to write it.
     @State private var draftName = ""
     @State private var nameSeeded = false
+    /// The name already handed to the box and not yet visible in the
+    /// snapshot. Return commits, then the blur commits again a beat
+    /// later — without this the box logged the same rename twice
+    /// (found live, 2026-08-06).
+    @State private var pendingName: String?
+    @State private var focusClaimed = false
     @FocusState private var nameFocused: Bool
     /// The field whose sheet is open. One sheet serves every property.
     @State private var editing: InspectorField?
 
-    init(id: LivEntityID, scrolls: Bool = true) {
+    init(id: LivEntityID, scrolls: Bool = true, autoFocus: Bool = false) {
         self.id = id
         self.scrolls = scrolls
+        self.autoFocus = autoFocus
     }
 
     var body: some View {
@@ -179,11 +188,18 @@ struct EntityInspector: View {
         .tint(LivTheme.accent)
         .onAppear {
             seedName()
+            claimFocus()
             box.statusOptions(kind: box.entity(id)?.kinds?.first ?? "") {
                 options = $0
             }
         }
+        // The record card sets `autoFocus` in ITS onAppear, which runs
+        // AFTER this one — the same ordering the note editor works around.
+        .onChange(of: autoFocus) { _, now in
+            if now { claimFocus() }
+        }
         .onChange(of: LivName.stored(box.entity(id))) { old, fresh in
+            if pendingName == fresh { pendingName = nil }
             // The snapshot moved under us — an undo, or the desk's own
             // title field, which edits the same cell. Compared against
             // the OLD stored name; `LivName.reseed` carries the reason.
@@ -202,9 +218,19 @@ struct EntityInspector: View {
         nameSeeded = true
     }
 
+    /// @FocusState set during a view update is dropped; one runloop hop
+    /// later it takes.
+    private func claimFocus() {
+        guard autoFocus, !focusClaimed else { return }
+        focusClaimed = true
+        DispatchQueue.main.async { nameFocused = true }
+    }
+
     private func commitName() {
-        switch LivName.commit(typed: draftName, row: box.entity(id)) {
-        case .write(let typed): box.set(id, "name", typed)
+        switch LivName.commit(typed: draftName, row: box.entity(id), pending: pendingName) {
+        case .write(let typed):
+            pendingName = typed
+            box.set(id, "name", typed)
         case .revert(let stored): draftName = stored
         case .ignore: break
         }
@@ -218,133 +244,81 @@ struct EntityInspector: View {
         }
     }
 
+    /// THE ITEM'S NAME, as a field — a note's can be renamed here as a
+    /// record's can (owner, todo.org). Nothing under it: the board's
+    /// "Note · edited today 21:04" line came off on the owner's word
+    /// (2026-09-29).
+    ///
+    /// ONE HEADER FOR EVERY THING (owner, 2026-09-28): the record
+    /// card drew its own name field — 32 semibold, its own commit —
+    /// above this one switched off, and the two drifted apart.
+    /// "name" stays in `skipSet`: this line IS the name row.
+    private func header(_ row: EntityRow) -> some View {
+        TextField(livRowTitle(row), text: $draftName, axis: .vertical)
+            .font(.system(size: LivType.display, weight: .bold))
+            .foregroundStyle(LivTheme.text)
+            .lineLimit(1...3)
+            .focused($nameFocused)
+            .submitLabel(.done)
+            .onSubmit(commitName)
+            // See `livNameReturn`: a vertical-axis field never calls
+            // `.onSubmit`.
+            .livNameReturn($draftName, $nameFocused)
+            .onChange(of: nameFocused) { _, now in
+                if !now { commitName() }
+            }
+            .accessibilityLabel("Name")
+            .padding(.top, LivHeader.sheetTop)
+            .padding(.horizontal, LivTitle.side)
+            .padding(.bottom, LivDetail.headerBottom)
+    }
+
     private func rows(_ row: EntityRow) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-                // The top line names the ITEM, with its type as a chip
-                // beside it. It used to be the chip alone, which meant a
-                // panel swiped over a note announced "note" and never
-                // said WHICH note; and the same type then appeared again
-                // as a row further down (owner, 2026-08-06).
-                //
-                // Suppressed when embedded in a record, whose own name
-                // field is directly above this — one card never shows
-                // two name fields.
-                //
-                // IT IS A FIELD NOW, not a label (owner, todo.org: *"the
-                // note property interface seems different from say task
-                // properties; you can't rename it in properties"*). A
-                // record card got an editable name and a note did not,
-                // so the same card said two different things about what
-                // a name is, and a note's could only be changed from the
-                // desk's own title.
-                //
-                // "name" stays in `skipSet`: this line IS the name row,
-                // and a second one further down would be the two-fields
-                // problem again. The seed/commit rules are
-                // `LivName`'s (Kit.swift) — the same ones the desk title
-                // and the record card use.
-                if scrolls {
-                    TextField(livRowTitle(row), text: $draftName, axis: .vertical)
-                        .font(.system(size: LivType.display, weight: .semibold))
-                        .foregroundStyle(LivTheme.text)
-                        .lineLimit(1...3)
-                        .focused($nameFocused)
-                        .submitLabel(.done)
-                        .onSubmit(commitName)
-                        // See `livNameReturn`: a vertical-axis field
-                        // never calls `.onSubmit`.
-                        .livNameReturn($draftName, $nameFocused)
-                        .onChange(of: nameFocused) { _, now in
-                            if !now { commitName() }
-                        }
-                        .accessibilityLabel("Name")
-                        .padding(.top, 10)
-                        .padding(.bottom, 8)
+            header(row)
+            // SETTINGS-STYLE CARDS, no headings over properties: rows inside
+            // a card are divided by a hairline and cards by air, which is
+            // the grouping the headings never carried (owner, 2026-09-15).
+            LivCard(fill: LivTheme.panel2) {
+                dueRow(row, divided: showsStatus(row))
+                if showsStatus(row) { statusRow(row) }
+            }
+            .padding(.top, LivDetail.firstCard)
+            // Zero fill pressure: the core fields are always here, even
+            // empty ("None"); everything else appears only once it holds a
+            // value (design/editor-study.md §8).
+            LivCard(fill: LivTheme.panel2) {
+                ForEach(Array(InspectorField.core.enumerated()), id: \.element) { i, property in
+                    fieldRow(property, row, divided: i < InspectorField.core.count - 1)
                 }
-                // NO KIND CHIP. It sat directly under the title as a
-                // pill of 11pt lowercase with a dot in it — "• note" —
-                // which is micro-text (owner, 2026-08-18: "eliminate
-                // unnecessary small text and labels") saying what the
-                // surface around it already says. You opened this panel
-                // from a note; it is a note.
-                //
-                // The kind is not lost: it is the card's own label in the
-                // switcher, the colour of a calendar block, and the hue
-                // of a chip that links to another entity — every place
-                // where two kinds sit side by side and the difference is
-                // worth a word (2026-08-29).
-                // NO HEADING OVER A GROUP OF PROPERTIES.
-                //
-                // "Schedule", "Filing" and "Other" stood above the rows
-                // they named in the same ink at a similar size, and the
-                // rows they named are also single left-aligned words —
-                // so the card read as eleven rows of grey words, four of
-                // which did nothing when tapped (owner, 2026-09-15: "it
-                // is rather hard to see what is a section header and
-                // what is a property").
-                //
-                // The grouping is not lost, because the headings were
-                // never what carried it: rows INSIDE a group are divided
-                // by a hairline and groups are divided by air. Taking
-                // the words out leaves the geometry doing the job on its
-                // own — which is the library panel's answer to the same
-                // question (owner, 2026-08-18: "eliminate unnecessary
-                // small text and labels"), and what Anytype's property
-                // list — already this card's model for its ROWS, see
-                // `DetailRowLabel` — does on the same screen size.
-                //
-                // "Links" and "Suggested" below KEEP their headings.
-                // They do not name a group of properties; they name
-                // content of a different shape, and "Suggested" is the
-                // word that says those rows are the clerk's proposals
-                // rather than your data. Two such words at the foot of
-                // the card, after every property row, are findable
-                // rather than confusable — eleven interleaved were not.
-                //
-                // The first group takes its air here, since the heading
-                // that used to reserve it is gone and the name field
-                // above only clears itself.
-                SectionGap()
-                dueRow(row)
-                if showsStatus(row) {
-                    DetailHairline()
-                    statusRow(row)
-                }
-                SectionGap()
-                // Zero fill pressure: the core fields are always here, even
-                // empty; everything else appears only once it holds a value
-                // (design/editor-study.md §8). Two filled fields is a
-                // finished object — the rows must never nag.
-                ForEach(
-                    Array(InspectorField.core.enumerated()), id: \.element
-                ) { i, property in
-                    if i > 0 { DetailHairline() }
-                    fieldRow(property, row)
-                }
-                let extras = DetailCellGroup.groups(row, skipping: skipSet(row))
-                if !extras.isEmpty {
-                    SectionGap()
+            }
+            .padding(.top, LivCards.gap)
+            let extras = DetailCellGroup.groups(row, skipping: skipSet(row))
+            if !extras.isEmpty {
+                LivCard(fill: LivTheme.panel2) {
                     ForEach(Array(extras.enumerated()), id: \.element.id) { i, group in
-                        if i > 0 { DetailHairline() }
-                        cellRow(group)
+                        cellRow(group, divided: i < extras.count - 1)
                     }
                 }
+                .padding(.top, LivCards.gap)
+            }
             LinksSection(id: id)
             suggestions
-            // Facts you cannot change are not rows. A row that looks like
-            // every other row and does nothing when tapped is a lie about
-            // what this list is for (owner, 2026-08-06).
+            // Facts you cannot change are not rows (owner, 2026-08-06): the
+            // birthday is a footnote under the cards.
             if let made = createdLine(row) {
                 Text(made)
-                    .font(.system(size: LivType.body).monospacedDigit())
+                    .font(.system(size: LivType.caption))
                     .foregroundStyle(LivTheme.text3)
-                    .padding(.top, 22)
+                    .padding(.top, LivHeader.bottom)
+                    .padding(.horizontal, LivHeader.sheetInset)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, scrolls ? 14 : 0)
-        .padding(.bottom, scrolls ? 24 : 0)
+        .padding(.bottom, scrolls ? LivDetail.sheetBottom : 0)
     }
+
+    /// "Note · edited today 21:04" — the kind, then when it was last
+    /// touched, mid-sentence. No clause at all when the box never said.
 
     // MARK: suggestions — the clerk proposes, the user decides (rev 6)
 
@@ -355,67 +329,52 @@ struct EntityInspector: View {
     @ViewBuilder private var suggestions: some View {
         let pending = box.proposals(for: id)
         if !pending.isEmpty {
-            SectionLabel("Suggested")
-            ForEach(Array(pending.enumerated()), id: \.element.id) { i, proposal in
-                if i > 0 { DetailHairline() }
-                suggestionRow(proposal)
+            // The label ON the card, so it takes the card's inset (36).
+            LivCard(label: "Suggested", labelStyle: .sheet, fill: LivTheme.panel2) {
+                ForEach(Array(pending.enumerated()), id: \.element.id) { i, proposal in
+                    suggestionRow(proposal, divided: i < pending.count - 1)
+                }
             }
         }
     }
 
-    private func suggestionRow(_ proposal: ProposalRow) -> some View {
+    private func suggestionRow(_ proposal: ProposalRow, divided: Bool) -> some View {
         // One short summary names THIS proposal on both buttons, so two
         // suggestions never read identically to VoiceOver (audit,
         // 2026-08-04).
         let summary = proposal.reason?.isEmpty == false
             ? proposal.reason!
             : (proposal.proposed ?? "")
-        return HStack(alignment: .center, spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                // WHAT IT WOULD WRITE, as one chip. It was up to three
-                // +/− chips off a command list the engine has never
-                // sent, so this row has drawn its reason and nothing
-                // else since 2026-09-14 (found 2026-09-18). One word is
-                // what the wire carries and what a person needs beside
-                // the sentence: the answer, then why.
-                if let word = proposal.proposed, !word.isEmpty {
-                    ValueChip(word)
-                }
-                if let reason = proposal.reason, !reason.isEmpty {
-                    Text(reason)
-                        .font(.system(size: LivType.body))
+        // WHAT IT WOULD WRITE, then why: the answer as the title, the
+        // reason as the second line.
+        return LivCardRow(
+            (proposal.proposed ?? "").isEmpty ? summary : (proposal.proposed ?? ""),
+            detail: (proposal.proposed ?? "").isEmpty ? nil : proposal.reason,
+            divided: divided, rule: LivCards.ruleBare,
+            lead: { EmptyView() },
+            trailing: {
+                // A mis-tap here WRITES cells — so full 44pt targets.
+                Button {
+                    box.reject(proposal)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: LivType.body, weight: .semibold))
                         .foregroundStyle(LivTheme.text3)
-                        .lineLimit(2)
+                        .livRowControl(width: LivRow.touch)
                 }
-            }
-            Spacer(minLength: 4)
-            // A mis-tap here WRITES cells — so full 44pt targets, the
-            // platform's minimum and the app's own top-key size
-            // (`livTopKeyShape`). Audit, 2026-08-04.
-            Button {
-                box.reject(proposal)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss suggestion: \(summary)")
-            Button {
-                box.accept(proposal)
-            } label: {
-                Image(systemName: "checkmark")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Apply suggestion: \(summary)")
-        }
-        .frame(minHeight: LivRow.tall)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss suggestion: \(summary)")
+                Button {
+                    box.accept(proposal)
+                } label: {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: LivType.body, weight: .semibold))
+                        .foregroundStyle(LivTheme.accent)
+                        .livRowControl(width: LivRow.touch)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Apply suggestion: \(summary)")
+            })
     }
 
     // MARK: due — a row even when absent
@@ -427,25 +386,49 @@ struct EntityInspector: View {
         return name.isEmpty ? "due" : name
     }
 
-    private func dueRow(_ row: EntityRow) -> some View {
-        Button {
+    private func dueRow(_ row: EntityRow, divided: Bool) -> some View {
+        let label = dueProperty(row).prefix(1).uppercased() + dueProperty(row).dropFirst()
+        return Button {
             showDueSheet = true
         } label: {
-            HStack {
-                DetailRowLabel(dueProperty(row))
-                Spacer(minLength: 12)
+            DetailCardRow(label, divided: divided) {
                 if let due = row.due {
-                    Text(DetailFmt.due(due, end: row.dueEnd, dateOnly: row.dueDateOnly ?? false))
-                        .font(.system(size: LivType.strong).monospacedDigit())
-                        .foregroundStyle(LivTheme.text)
+                    // RED WHEN LATE — a TASK overdue and not done — which is
+                    // what red means everywhere on the clearer boards. A
+                    // past event is not late; it happened (Today's own
+                    // ruling, `lateRows`).
+                    DetailValue(
+                        dueWords(due, end: row.dueEnd, dateOnly: row.dueDateOnly ?? false),
+                        late: row.kinds?.contains("task") == true
+                            && Civil.day(of: due) < Civil.todayDay()
+                            && !livIsDone(row, doneNames))
                 } else {
-                    DetailEmptyValue()
+                    DetailValue(nil)
                 }
             }
-            .frame(minHeight: LivRow.height)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var doneNames: Set<String> {
+        Set(options.filter { $0.completes == true }.compactMap(\.name))
+    }
+
+    /// The due in the app's words: "Tuesday 11:00", "Today", "18 Sep 09:00",
+    /// a span's end after an arrow (its time alone on the same day).
+    private func dueWords(_ due: Int64, end: Int64?, dateOnly: Bool) -> String {
+        let day = Civil.day(of: due)
+        var out = Civil.dayWord(day)
+        if !dateOnly, !Civil.timeString(due).isEmpty { out += " " + Civil.timeString(due) }
+        if let end, end > 0 {
+            let endDay = Civil.day(of: end)
+            let tail =
+                endDay == day
+                ? Civil.timeString(end)
+                : Civil.dayWord(endDay) + (dateOnly ? "" : " " + Civil.timeString(end))
+            if !tail.isEmpty { out += " → " + tail }
+        }
+        return out
     }
 
     // MARK: status
@@ -468,43 +451,21 @@ struct EntityInspector: View {
     /// not open. With a vocabulary, the whole row is the menu (full-width
     /// target, like the due row).
     @ViewBuilder private func statusRow(_ row: EntityRow) -> some View {
-        Group {
-            if options.isEmpty {
-                HStack {
-                    DetailRowLabel("status")
-                    Spacer(minLength: 12)
-                    // PLAIN TEXT. This row's own comment has said
-                    // "display-only; nothing to change it to" since it
-                    // was written, and it drew the value in the capsule
-                    // this app uses for values you CAN act on — a
-                    // control's clothes on a fact. Every other read-only
-                    // value in this panel is text.
-                    Text(row.status ?? "")
-                        // The value column's own size, like every other
-                        // read-only value on this card (2026-09-05).
-                        .font(.system(size: LivType.strong))
-                        .foregroundStyle(LivTheme.text2)
+        if options.isEmpty {
+            // Display-only: nothing to change it to, so no chevron.
+            DetailCardRow("Status", divided: false, chevron: false) {
+                DetailValue(row.status)
+            }
+        } else {
+            Menu {
+                ForEach(options) { option in
+                    Button(option.name ?? "") {
+                        box.set(id, "status", option.name ?? "")
+                    }
                 }
-                .frame(minHeight: LivRow.height)
-            } else {
-                Menu {
-                    ForEach(options) { option in
-                        Button(option.name ?? "") {
-                            box.set(id, "status", option.name ?? "")
-                        }
-                    }
-                } label: {
-                    HStack {
-                        DetailRowLabel("status")
-                        Spacer(minLength: 12)
-                        if let status = row.status, !status.isEmpty {
-                            ValueChip(status, big: true)
-                        } else {
-                            DetailEmptyValue()
-                        }
-                    }
-                    .frame(minHeight: LivRow.height)
-                    .contentShape(Rectangle())
+            } label: {
+                DetailCardRow("Status", divided: false) {
+                    DetailValue(row.status)
                 }
             }
         }
@@ -548,12 +509,11 @@ struct EntityInspector: View {
             ] + InspectorField.core)
     }
 
-    /// "Created Tue 4 Aug 18:52", or nothing if the box never said.
+    /// "Created Monday at 21:04" this week, "Created Monday 14 September
+    /// at 21:04" before it — or nothing, if the box never said.
     private func createdLine(_ row: EntityRow) -> String? {
-        let raw = (row.cells ?? [])
-            .first { $0.property == "created" }?.value ?? ""
-        guard !raw.isEmpty else { return nil }
-        return "Created " + DetailFmt.datetime(raw)
+        guard let made = row.created, made > 0 else { return nil }
+        return "Created " + Civil.dayLong(stamp: made)
     }
 
     /// The values this entity holds for a property, in wire order.
@@ -565,89 +525,59 @@ struct EntityInspector: View {
     }
 
     /// A core field's row: tap anywhere on it to open the one editing
-    /// sheet. Empty reads as "—", never as a prompt to fill it in.
-    private func fieldRow(_ property: String, _ row: EntityRow) -> some View {
+    /// sheet. Empty reads "None" — a value, never a prompt to fill it in.
+    private func fieldRow(_ property: String, _ row: EntityRow, divided: Bool) -> some View {
         let held = values(of: property, in: row)
         // THE BOX'S WORD, not the token. `property` is what this writes
         // with; what it DRAWS comes off the snapshot, so a renamed field
         // shows its new name and `tags` reads "Subject".
         let field = InspectorField.describe(property, in: box.snap)
+        let label = field.shown.prefix(1).uppercased() + field.shown.dropFirst()
+        // TWO NAMES AND A COUNT beats three shortened ones.
+        let shown = held.isEmpty
+            ? nil : held.prefix(2).joined(separator: ", ") + (held.count > 2 ? " +\(held.count - 2)" : "")
         return Button {
             editing = field
         } label: {
-            HStack {
-                DetailRowLabel(field.shown)
-                Spacer(minLength: 12)
-                if held.isEmpty {
-                    DetailEmptyValue()
-                } else {
-                    // TWO, NOT THREE. The values are the column's own
-                    // size now, and three 20pt capsules after a 20pt
-                    // label do not fit the ~299pt left on the row — the
-                    // label carries `layoutPriority(1)`, so the CHIPS
-                    // are what gets squeezed, and a squeezed chip
-                    // truncates a project's name to nothing (each is
-                    // `lineLimit(1)`). Two whole names and a count beats
-                    // three shortened ones.
-                    HStack(spacing: 5) {
-                        ForEach(held.prefix(2), id: \.self) { ValueChip($0, big: true) }
-                        if held.count > 2 {
-                            Text("+\(held.count - 2)")
-                                .font(.system(size: LivType.body).monospacedDigit())
-                                .foregroundStyle(LivTheme.text3)
-                        }
-                    }
+            DetailCardRow(label, divided: divided) {
+                if property == "people", shown != nil {
+                    LivIcon(glyph: .person, color: LivTheme.text2, size: LivDetail.valueGlyph)
                 }
+                DetailValue(shown)
             }
-            .frame(minHeight: LivRow.height)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private func cellRow(_ group: DetailCellGroup) -> some View {
-        HStack(alignment: .center) {
-            DetailRowLabel(group.shown)
-            Spacer(minLength: 12)
-            HStack(spacing: 5) {
-                ForEach(Array(group.values.enumerated()), id: \.offset) { _, value in
-                    cellValue(value, kind: group.kind)
+    /// Anything else the entity holds. A reference opens what it names;
+    /// every other kind just reads.
+    @ViewBuilder private func cellRow(_ group: DetailCellGroup, divided: Bool) -> some View {
+        let label = group.shown.prefix(1).uppercased() + group.shown.dropFirst()
+        let targets = group.values.filter { $0.refTarget != nil }
+        if group.kind == "reference", targets.count == 1, let target = targets[0].refTarget {
+            Button {
+                desk.open(target)
+            } label: {
+                DetailCardRow(label, divided: divided) { DetailValue(targets[0].value) }
+            }
+            .buttonStyle(.plain)
+        } else if group.kind == "reference", targets.count > 1 {
+            Menu {
+                ForEach(Array(targets.enumerated()), id: \.offset) { _, v in
+                    Button("Open \(v.value)") { if let t = v.refTarget { desk.open(t) } }
+                }
+            } label: {
+                DetailCardRow(label, divided: divided) {
+                    DetailValue(targets.map(\.value).joined(separator: ", "))
                 }
             }
-            .lineLimit(2)
-        }
-        .frame(minHeight: LivRow.height)
-    }
-
-    /// A reference chip navigates — open the target as a Desk tab, the
-    /// Ref-span gesture grammar. Everything else just displays.
-    @ViewBuilder private func cellValue(_ v: DetailCellValue, kind: String) -> some View {
-        switch kind {
-        case "reference":
-            // A reference IS another thing in the box, so its dot is that
-            // thing's kind color — a linked task reads purple here and
-            // purple in every list.
-            if let target = v.refTarget {
-                Button {
-                    desk.open(target)
-                } label: {
-                    ValueChip(v.value)
-                }
-                .buttonStyle(.plain)
-            } else {
-                ValueChip(v.value)
+        } else {
+            DetailCardRow(label, divided: divided, chevron: false) {
+                DetailValue(
+                    group.values.map { group.kind == "datetime" ? DetailFmt.datetime($0.value) : $0.value }
+                        .joined(separator: ", "),
+                    lines: 2)
             }
-        case "select":
-            ValueChip(v.value)
-        case "datetime":
-            Text(DetailFmt.datetime(v.value))
-                .font(.system(size: LivType.strong).monospacedDigit())
-                .foregroundStyle(LivTheme.text)
-        default:
-            Text(v.value)
-                .font(.system(size: LivType.strong))
-                .foregroundStyle(LivTheme.text)
-                .multilineTextAlignment(.trailing)
         }
     }
 
@@ -945,123 +875,72 @@ struct InspectorValueSheet: View {
 
 // MARK: - shared row pieces
 
-/// THE EMPTY VALUE — the em-dash a field shows when it holds nothing.
+/// ONE ROW OF A PROPERTIES CARD, Settings-style (the clearer board): the
+/// property's name on the left in full ink, then its value in text2 and a
+/// chevron. 52 tall; the hairline runs from 16 in the card to its edge,
+/// under every row but the last.
 ///
-/// One view, because it was three copies (due, status, and every core
-/// filing field), each spelling out the same dash, the same size and the
-/// same ink. It is the TARGET the filled values were brought up to meet
-/// on 2026-09-05, not a thing to shrink: an empty field read 20pt while
-/// a filled one read 14, so the card said least about the fields that
-/// held most.
-/// **Internal, not file-private** (2026-09-18), for the same reason
-/// `DetailRowLabel` below is: the Links group draws its rows as
-/// properties, an empty one has to say "—" in the same face as every
-/// other empty one, and a second transcription of a one-glyph view is
-/// still a second recipe (standing rule 4).
-struct DetailEmptyValue: View {
-    var body: some View {
-        Text("—")
-            .font(.system(size: LivType.strong))
-            .foregroundStyle(LivTheme.text2)
-    }
-}
+/// Its own recipe, not `LivCardRow`, for one reason: the LABEL is what
+/// must never truncate. Names are short words and values can be long, so
+/// a long project turns into "Long proj…", never "Pr…".
+struct DetailCardRow<Value: View>: View {
+    let label: String
+    var divided = true
+    var chevron = true
+    @ViewBuilder var value: Value
 
-/// **Internal, not file-private** (2026-09-15). The Links group draws
-/// its rows as properties now, and a second transcription of this face
-/// would be a second recipe for one thing (standing rule 4).
-struct DetailRowLabel: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    /// NO DOT, AND NO GLYPH (owner, 2026-08-29: "the dots are a bit
-    /// ugly, as well as colors in general").
-    ///
-    /// This reverses 2026-08-12, and the earlier decision is worth
-    /// keeping visible because it was not arbitrary. Icons were tried
-    /// that day and rejected the same day — a clock for "due" and a tag
-    /// for "tags" are pictures of the word beside them — and a
-    /// hand-picked colour per family went in instead, on the owner's
-    /// "icons for properties are confusing, but color indication of some
-    /// sort is ok".
-    ///
-    /// What changed is the company they kept. Six fully-saturated system
-    /// hues at 8pt were the loudest thing on a screen that is otherwise
-    /// greys, and they sat beside a hash-coloured dot that meant nothing
-    /// at all, so the whole device read as decoration. The family a field
-    /// belongs to is already said by the section it sits under —
-    /// Schedule, Filing, Links — which is a word rather than a code.
-    ///
-    /// Kind chips elsewhere (a note, a task, an event) keep their colour:
-    /// there it says what a THING is, and two kinds do sit side by side.
-    /// NO GLYPH ON A VALUE ROW.
-    ///
-    /// One was added on 2026-08-29, following the desktop's
-    /// `PropertyIcon`, and taken off the same day. Anytype for iOS —
-    /// which does the same job on the same screen size — draws its
-    /// property rows as label and value with nothing between, and shows
-    /// a glyph only in the SCHEMA view, where you are picking among
-    /// properties rather than reading one object's values. Its rows read
-    /// cleaner, and the reason generalises: an icon beside "due" is a
-    /// picture of the word next to it (the 2026-08-12 finding), whereas
-    /// an icon beside a property in a list of forty is how you find the
-    /// one you want.
-    ///
-    /// The glyphs moved to `Settings → Fields`, which is this app's
-    /// schema view.
-    /// SENTENCE CASE, DECIDED HERE AND NOWHERE ELSE (owner, 2026-09-18:
-    /// "make all metadata names ('area', 'links') start with capital
-    /// letter").
-    ///
-    /// The FIRST letter only, not `.capitalized`: that would make
-    /// "linked from" into "Linked From", which is a title, not a name.
-    ///
-    /// It is done on the way to the screen rather than in the strings,
-    /// because a property's shown word arrives from the engine
-    /// (`PropDef.reads`, drawn from the wire's `name`) and a shell must
-    /// not edit the box's vocabulary to style it. The seven call sites
-    /// pass what they were given and this decides how it is worn —
-    /// including the two the shell names itself, "links" and "linked
-    /// from", which now cannot drift from the rest.
-    private var shown: String {
-        guard let first = text.first else { return text }
-        return first.uppercased() + text.dropFirst()
+    init(
+        _ label: String, divided: Bool = true, chevron: Bool = true,
+        @ViewBuilder value: () -> Value
+    ) {
+        self.label = label
+        self.divided = divided
+        self.chevron = chevron
+        self.value = value()
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(shown)
-                // 15pt + 46pt rows: the library panel's density (rev 6 —
-                // "make the grouping UI akin to how the left panel looks").
-                .font(.system(size: LivType.strong))
-                // text2, NOT text3 (owner, 2026-09-12: in this panel the
-                // value is the half that should stand out).
-                //
-                // It already did. A bare value — a date, a plain cell —
-                // draws at full ink, and a `ValueChip` carries its own
-                // fill, which is what makes a chip the foreground object
-                // rather than its ink. So the pair had its hierarchy; the
-                // defect was underneath it. Every property name in this
-                // panel was drawn at strong(20) in text3, the tier
-                // `livPaletteSelfCheck` exempts from the app's 7:1 read
-                // floor on the stated grounds that it holds "a
-                // placeholder, a timestamp, the ✕ on a chip". Forty rows
-                // of 20pt words are none of those, and at 4.53:1 they
-                // were the dimmest readable thing in the app.
-                //
-                // text2 is 7.07:1 and still a clear step under a value at
-                // full ink. Nothing else moves: `ValueChip` is shared
-                // with 24 sites across the app and is not this panel's to
-                // change.
-                .foregroundStyle(LivTheme.text2)
+        HStack(spacing: LivCards.markGap) {
+            Text(label)
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text)
                 .lineLimit(1)
+                .layoutPriority(1)
+            Spacer(minLength: LivCards.trailingGap)
+            HStack(spacing: LivDetail.valueGap) { value }
+            if chevron { LivChevron() }
         }
-        .layoutPriority(1)
+        .padding(.horizontal, LivCards.padX)
+        .padding(.vertical, LivCards.padY)
+        .frame(minHeight: LivCards.row)
+        .contentShape(Rectangle())
+        .overlay(alignment: .bottom) {
+            if divided { LivCardRule(inset: LivCards.ruleBare) }
+        }
     }
 }
 
-struct DetailHairline: View {
+/// A property's value: text2, or "None" in text3 when there is nothing;
+/// red when it is a late date.
+struct DetailValue: View {
+    let text: String?
+    var late = false
+    var lines = 1
+
+    init(_ text: String?, late: Bool = false, lines: Int = 1) {
+        self.text = text
+        self.late = late
+        self.lines = lines
+    }
+
     var body: some View {
-        Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        let empty = (text ?? "").isEmpty
+        Text(empty ? "None" : text ?? "")
+            .font(.system(size: LivType.body))
+            .foregroundStyle(empty ? LivTheme.text3 : late ? LivTheme.red : LivTheme.text2)
+            .lineLimit(lines)
+            .multilineTextAlignment(.trailing)
+            .truncationMode(.tail)
     }
 }
 
@@ -1153,7 +1032,11 @@ struct DetailDueSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SectionLabel("Date")
+                // The SHEET face, but no card under it: these rows sit
+                // flush, so the label takes back the step a card would add
+                // and lines up with them.
+                SectionLabel("Date", style: .sheet)
+                    .padding(.horizontal, LivRow.cardInset - LivHeader.sheetInset)
                 // Neither shortcut closes the sheet: setting a day and
                 // THEN a time is the common pair, and being thrown out
                 // after the day meant reopening to finish (owner,
@@ -1181,7 +1064,8 @@ struct DetailDueSheet: View {
                     withAnimation(LivMotion.nav) { calendarShown.toggle() }
                 }
                 if calendarShown { monthPicker }
-                SectionLabel("Time")
+                SectionLabel("Time", style: .sheet)
+                    .padding(.horizontal, LivRow.cardInset - LivHeader.sheetInset)
                 timeRow
                 // ALWAYS rendered, disabled when there is nothing to
                 // clear. It used to appear only once a due existed —
@@ -1229,7 +1113,7 @@ struct DetailDueSheet: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .top) {
-            if divided { DetailHairline() }
+            if divided { LivCardRule(inset: 0) }
         }
     }
 
@@ -1455,7 +1339,8 @@ private enum DetailFmt {
     private static let gregorian = Calendar(identifier: .gregorian)
 
     /// The wire's datetime display ("YYYY-MM-DD[ HH:MM][ -> …]") redrawn
-    /// through Civil — "Tue 21 Jul 14:00", spans joined with an arrow.
+    /// in the row's day words — "Tuesday 14:00", "18 Sep" — the same
+    /// voice as the Due row above it; spans joined with an arrow.
     static func datetime(_ raw: String) -> String {
         raw.components(separatedBy: " -> ").map(side).joined(separator: " → ")
     }
@@ -1467,26 +1352,8 @@ private enum DetailFmt {
             let day = Int64(first.replacingOccurrences(of: "-", with: "")),
             first.count == 10
         else { return text }
-        var out = Civil.dayLabel(day)
+        var out = Civil.dayWord(day)
         if parts.count > 1 { out += " " + parts[1] }
-        return out
-    }
-
-    /// The entity row's packed due span, same voice as datetime().
-    static func due(_ start: Int64, end: Int64?, dateOnly: Bool) -> String {
-        var out = stamp(start, dateOnly: dateOnly)
-        if let end, end > 0 {
-            out += " → " + stamp(end, dateOnly: dateOnly)
-        }
-        return out
-    }
-
-    private static func stamp(_ civil: Int64, dateOnly: Bool) -> String {
-        var out = Civil.dayLabel(Civil.day(of: civil))
-        if !dateOnly {
-            let time = Civil.timeString(civil)
-            if !time.isEmpty { out += " " + time }
-        }
         return out
     }
 

@@ -218,7 +218,7 @@ struct SearchView: View {
                             // 2026-08-30).
                             SectionLabel(
                                 group.kind == .capture ? "captures" : group.kind.wire,
-                                trailing: "\(group.ids.count)"
+                                count: group.ids.count
                             )
                             .textCase(nil)
                             .padding(.horizontal, 16)
@@ -696,8 +696,10 @@ private struct SearchHitRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            // What the hit IS, before what it says.
-            LivIcon(glyph: LivKind.glyph(of: row), color: LivKind.color(of: row), size: 22)
+            // What the hit IS, before what it says — in ink (the clearer
+            // boards: kind colour lives only on Today's bars and the
+            // calendar's blocks).
+            LivIcon(glyph: LivKind.glyph(of: row), color: LivTheme.text2, size: 22)
             Text(livRowTitle(row))
                 .font(.system(size: LivType.strong))
                 .foregroundStyle(LivTheme.text)

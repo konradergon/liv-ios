@@ -221,6 +221,8 @@ struct RootView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(LivTheme.surface)
+                    // The Properties board's two top corners.
+                    .presentationCornerRadius(LivTheme.radiusSheet)
                     .environmentObject(box)
                     .environmentObject(desk)
                     .environmentObject(workspaces)

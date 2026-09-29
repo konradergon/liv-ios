@@ -44,29 +44,34 @@ struct SettingsSheet: View {
         // stand on — the elevation ramp already says this is what the
         // two steps are for; nothing here used them.
         ScrollView {
-            // 4 UNTIL 2026-09-18. This is the ONLY number on the sheet
-            // that separates one card from the next, and at 4 the five
-            // slabs touched. It composes with each card's own
-            // `LivRow.sectionTop`, so card-to-card reads as
-            // `LivAir.open` — one literal, every group boundary on the
-            // screen, and no row anywhere gets fatter.
-            VStack(alignment: .leading, spacing: LivAir.snug) {
+            // NO SPACING OF ITS OWN (the clearer boards, 2026-09-24). Each
+            // card's SHEET label brings its own room above it, so the
+            // label alone sets the rhythm from one card to the next; a
+            // stack spacing on top of that was a second number for the
+            // same gap (it was `LivAir.snug`, over a 20 label top).
+            VStack(alignment: .leading, spacing: 0) {
                 LivSheetTitle("Settings")
                 // What a person actually came here to change, first.
-                LivCard(label: "Appearance") { appearanceRow.padding(12) }
-                if box.snap?.assist != nil {
-                    LivCard(label: "Suggestions") { assistRow.padding(12) }
+                LivCard(label: "Appearance", labelStyle: .sheet) {
+                    appearanceRow.padding(12)
                 }
-                LivCard(label: "Reminders") { notifyRows.padding(12) }
+                if box.snap?.assist != nil {
+                    LivCard(label: "Suggestions", labelStyle: .sheet) {
+                        assistRow.padding(12)
+                    }
+                }
+                LivCard(label: "Reminders", labelStyle: .sheet) { notifyRows.padding(12) }
                 // ONLY WHEN SOMETHING IS WRONG WITH THE LOG.
                 if !alerts.isEmpty {
-                    LivCard(label: "The log") { logRows.padding(12) }
+                    LivCard(label: "The log", labelStyle: .sheet) { logRows.padding(12) }
                 }
                 // A DIAGNOSTIC WITH A DELETION DATE, not a feature. It
                 // answers the one question no test in the repo can —
                 // does the new engine chain run on a device — and it goes
                 // when the surfaces move (rust-owns-the-mechanisms.md §5).
-                LivCard(label: "Engine") { EngineCheckCard().padding(12) }
+                LivCard(label: "Engine", labelStyle: .sheet) {
+                    EngineCheckCard().padding(12)
+                }
                 // No Advanced drawer. It held the phone→desk handoff
                 // (status, ledger, Ship now, the satellite path) and the
                 // store's own facts, and it went with every other

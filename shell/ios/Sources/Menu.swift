@@ -22,6 +22,8 @@ import SwiftUI
 /// the same split the toolbar makes.
 struct LivMenuItem: Identifiable {
     let label: String
+    /// A second line under the label ("Tap + for this one").
+    var detail: String? = nil
     var glyph: LivGlyph?
     var symbol: String?
     /// THE ONE YOU ARE ON. `LivMenuRow` has drawn a checkmark for this
@@ -89,129 +91,149 @@ struct LivMenu: Identifiable {
 /// The one-row half of the ruling is untouched, and it is why this moves
 /// the create menu too: a list of things to choose from still must not
 /// look different depending on which card it is in.
-struct LivMenuRow: View {
+/// The two shapes a menu row takes: `.menu`, the Create card's (52, a 22
+/// glyph slot, the detail at 14 text3), and `.chooser`, the Workspaces
+/// card's (64, a 34 mark, the chosen row lit at radius 16).
+enum LivMenuRowStyle { case menu, chooser }
+
+struct LivMenuRow<Lead: View>: View {
     let label: String
-    var glyph: LivGlyph?
-    var symbol: String?
-    /// A workspace may wear an emoji instead of a glyph.
-    var emoji: String?
-    /// The one you are on: a checkmark, the way a list marks a choice.
+    var detail: String? = nil
+    var style: LivMenuRowStyle = .menu
     var selected = false
     var chevron = false
     var destructive = false
-    // NO `accent` FLAG (owner, 2026-09-15: "especially with the 'New
-    // workspace...' clickable text. Only clickable text in the app
-    // should be links inside notes… otherwise it should look like a
-    // button and be consistent").
-    //
-    // It tinted the door row — "New workspace…" — and that blue word at
-    // the foot of a list of black ones was the whole of what made it
-    // read as a hyperlink. The row shape is already the button: full
-    // width, 44pt, a glyph, a press state. The library panel's own "New
-    // filter" door has always been a plain row with a `+` in front of
-    // it, so two doors to the same kind of thing were dressed two ways.
-    //
-    // Deleted rather than left unread (standing rule 6): the one caller
-    // stopped passing it in the same change.
-    /// A hairline above, inset past the icon: rows after the first.
     var divided = false
+    @ViewBuilder var lead: Lead
     let action: () -> Void
 
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                // THE LIBRARY PANEL'S DENSITY, not a size of its own
-                // (owner, 2026-09-15: "the workspaces card has larger
-                // text and looks rough").
-                //
-                // It was `title` (22) while the panel's rows are `body`
-                // (18) — and the workspace card HANGS OVER that panel,
-                // so the two sat on screen together, four points apart,
-                // in the same moment. `body` is the app's ordinary text
-                // and the density this card's own comment already claims
-                // to share ("the same one the + menu draws… a list of
-                // things to choose from should not look different
-                // depending on which card it is in", owner 2026-08-17).
-                // Moving the one recipe moves both, which is the point.
-                Group {
-                    if let emoji, !emoji.isEmpty {
-                        Text(emoji).font(.system(size: LivType.body))
-                    } else if let glyph {
-                        LivIcon(glyph: glyph, color: tint(icon: true), size: 22)
-                    } else if let symbol {
-                        Image(systemName: symbol)
-                            .font(.system(size: LivType.body))
-                            .foregroundStyle(tint(icon: true))
-                    }
-                }
-                .frame(width: 26)
-                Text(label)
-                    .font(.system(size: LivType.body, weight: selected ? .semibold : .medium))
-                    .foregroundStyle(tint(icon: false))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                // NO TICK. The comment below already argued that a fill
-                // is found without reading and a tick is not — and then
-                // kept the tick anyway, so a chosen row carried three
-                // marks for one fact: a fill, a semibold word, and an
-                // accent checkmark. The fill is the one that works.
-                if chevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                }
-            }
-            .padding(.horizontal, 16)
-            .frame(height: LivRow.height)
-            // THE ONE YOU ARE ON, as a fill and nothing else (owner's
-            // clips, 2026-08-20). ChatGPT's drawer marks the current
-            // destination with a soft rounded fill and no tick at all.
-            // The weight stays — it costs no ink — and the tick is gone.
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
-                    .fill(selected ? LivTheme.panel2 : .clear)
-                    .padding(.horizontal, 8))
-            .contentShape(Rectangle())
-        }
-        .livRowPress()
-        // A ROW IS A DOOR TOO. A menu raised from a menu row — the trash
-        // confirm, "Not a note…" — grows out of the row you touched
-        // rather than sliding up from an edge 400pt away, which is the
-        // case the owner's diagnosis explains best.
-        .livDoor()
-        .overlay(alignment: .top) {
-            if divided {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                    .padding(.leading, LivRow.hairline + 18)
-            }
-        }
+    init(
+        label: String, detail: String? = nil, style: LivMenuRowStyle = .menu,
+        selected: Bool = false, chevron: Bool = false, destructive: Bool = false,
+        divided: Bool = false, @ViewBuilder lead: () -> Lead, action: @escaping () -> Void
+    ) {
+        self.label = label
+        self.detail = detail
+        self.style = style
+        self.selected = selected
+        self.chevron = chevron
+        self.destructive = destructive
+        self.divided = divided
+        self.lead = lead()
+        self.action = action
     }
 
-    private func tint(icon: Bool) -> Color {
-        if destructive { return LivTheme.red }
-        return icon ? LivTheme.text2 : LivTheme.text
+    var body: some View {
+        let chooser = style == .chooser
+        Button(action: action) {
+            HStack(spacing: LivMenuCard.leadGap) {
+                lead
+                    .frame(width: chooser ? LivChooserCard.lead : LivMenuCard.lead)
+                VStack(alignment: .leading, spacing: LivChooserCard.lineGap) {
+                    Text(label)
+                        .font(.system(size: LivType.body, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(destructive ? LivTheme.red : LivTheme.text)
+                        .lineLimit(1)
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: chooser ? LivType.detail : LivType.caption))
+                            .foregroundStyle(chooser ? LivTheme.text2 : LivTheme.text3)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: LivCards.trailingGap)
+                // THE CHOSEN ONE IS TICKED (the clearer boards), which
+                // reverses 2026-09-15's "no tick — the fill is the one that
+                // works": the board puts both on the chosen workspace.
+                if selected {
+                    LivIcon(glyph: .check, color: LivTheme.accent, size: LivChooserCard.check)
+                }
+                if chevron { LivChevron() }
+            }
+            .padding(.horizontal, LivCards.padX)
+            .padding(.vertical, chooser ? LivChooserCard.rowPad : LivMenuCard.rowPad)
+            .frame(minHeight: chooser ? LivChooserCard.row : LivMenuCard.row)
+            .background {
+                if chooser && selected {
+                    RoundedRectangle(cornerRadius: LivChooserCard.rowRadius, style: .continuous)
+                        .fill(LivTheme.selection)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        // The card is raised (panel2), so the ordinary press — which IS
+        // panel2 — would not show.
+        .buttonStyle(
+            LivPress(radius: chooser ? LivChooserCard.rowRadius : 0, fill: LivTheme.pressedRaised))
+        .livDoor()
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .overlay(alignment: .top) {
+            if divided && !chooser { LivCardRule(inset: LivMenuCard.rule) }
+        }
     }
 }
 
-/// The title both cards wear: the one word for what the card is.
-struct LivMenuTitle: View {
+extension LivMenuRow where Lead == LivMenuMark {
+    /// A row led by a drawn glyph or an SF symbol.
+    init(
+        label: String, detail: String? = nil, glyph: LivGlyph? = nil, symbol: String? = nil,
+        selected: Bool = false, chevron: Bool = false,
+        destructive: Bool = false, divided: Bool = false, action: @escaping () -> Void
+    ) {
+        self.init(
+            label: label, detail: detail, selected: selected, chevron: chevron,
+            destructive: destructive, divided: divided,
+            lead: {
+                LivMenuMark(glyph: glyph, symbol: symbol, destructive: destructive)
+            }, action: action)
+    }
+}
+
+/// A menu row's lead: a drawn glyph in ink, or an SF symbol.
+struct LivMenuMark: View {
+    var glyph: LivGlyph?
+    var symbol: String?
+    var destructive = false
+
+    var body: some View {
+        let ink = destructive ? LivTheme.red : LivTheme.text2
+        if let glyph {
+            LivIcon(glyph: glyph, color: ink, size: LivMenuCard.lead)
+        } else if let symbol {
+            Image(systemName: symbol)
+                .font(.system(size: LivType.body))
+                .foregroundStyle(ink)
+        }
+    }
+}
+
+/// A MENU'S LEGEND ("New", "Insert"): the small sheet-label face, not a
+/// title — the rows under it are the menu's content.
+struct LivMenuLegend: View {
     let text: String
 
     var body: some View {
         Text(text)
-            // BOLD, matching `LivSheetTitle` (owner, 2026-09-12). A title
-            // on a card was two weights depending on which kind of card
-            // it was: bold in Settings, Trash and History, semibold here.
-            // The argument against bold is that it is also the SCREEN
-            // title's weight, so reusing it blurs the rank between the
-            // screen and the sheet over it — but the rank is already
-            // carried by ten points of size (32 against 22), and the
-            // owner has called this app's text too small three times.
-            .font(.system(size: LivType.title, weight: .bold))
-            .foregroundStyle(LivTheme.text)
+            .font(.system(size: LivType.detail, weight: .semibold))
+            .foregroundStyle(LivTheme.text2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.horizontal, LivCards.padX)
+            .padding(.top, LivMenuCard.legendTop)
+            .padding(.bottom, LivMenuCard.legendBottom)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// A CHOOSER CARD'S TITLE ("Workspaces."): 22 bold with the accent stop.
+struct LivCardTitle: View {
+    let text: String
+
+    var body: some View {
+        LivScreenTitle(text, size: LivType.title)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, LivCards.padX)
+            .padding(.top, LivChooserCard.titleTop)
+            .padding(.bottom, LivChooserCard.titleBottom)
     }
 }
 
@@ -304,7 +326,7 @@ enum LivDoors {
 /// this: it reads `configuration.isPressed`, SwiftUI's own press
 /// tracking, and adds no recogniser at all. But a button has ONE style,
 /// and this app's doors already spend theirs — `LivMenuRow` wears
-/// `livRowPress`, which is where a menu row's touch feedback comes from,
+/// `LivPress`, which is where a menu row's touch feedback comes from,
 /// and `LivTheme.pressed` exists because eight row sites once had none
 /// and the owner noticed. A door would have had to choose between its
 /// press feedback and its origin. One modifier that composes with
@@ -407,7 +429,7 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
             if drawn {
                 ZStack(alignment: from == .top ? .top : .bottom) {
                     Rectangle()
-                        .fill(Color.black.opacity(shown ? 0.4 : 0))
+                        .fill(Color.black.opacity(shown ? LivEdgeCard.scrim : 0))
                         .ignoresSafeArea()
                         .contentShape(Rectangle())
                         .onTapGesture { isPresented = false }
@@ -443,9 +465,10 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
     /// inside its own `GeometryReader`, whose `onAppear` and the async
     /// below run in an order SwiftUI does not promise.
     private func cardBox() -> CGRect {
-        CGRect(
-            x: 0, y: from == .top ? 0 : LivScreen.height - height,
-            width: LivScreen.width, height: height)
+        let inset = LivEdgeCard.inset
+        return CGRect(
+            x: inset, y: from == .top ? inset : LivScreen.height - height - inset,
+            width: LivScreen.width - 2 * inset, height: height)
     }
 
     /// Mount first, THEN slide — the menu's own rule.
@@ -465,9 +488,9 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
         }
     }
 
-    /// The same card the menu wears, hanging from the top: square against
-    /// the edge it is attached to, rounded on the side facing the content,
-    /// the grabber on the bottom, and the safe area kept as space inside.
+    /// THE BOARD'S CARD (Workspaces): floating 8 off its edge and both
+    /// sides, rounded all round, the grabber on the side away from the
+    /// edge, and the safe area kept as space inside.
     private var card: some View {
         let up = from == .bottom
         return VStack(spacing: 0) {
@@ -489,24 +512,28 @@ struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
             .onPreferenceChange(LivSheetHeight.self) { content = $0 }
             if !up { LivGrabber() }
         }
+        .padding(.horizontal, LivEdgeCard.pad)
         // The safe area is SPACE INSIDE the card, on whichever edge it is
         // attached to — a top card whose first row sits under the clock
         // reads as broken, and so does a bottom one running into the home
-        // indicator.
-        .padding(.top, up ? 0 : LivSafeArea.top)
-        .padding(.bottom, up ? LivSafeArea.bottom : 0)
+        // indicator. The card already stands `inset` off that edge.
+        .padding(.top, up ? LivEdgeCard.far : nearPad(LivSafeArea.top))
+        .padding(.bottom, up ? nearPad(LivSafeArea.bottom) : LivEdgeCard.far)
         .background(
-            // Square against the edge it hangs from, rounded on the side
-            // facing the content.
-            UnevenRoundedRectangle(
-                topLeadingRadius: up ? LivTheme.radiusLg : 0,
-                bottomLeadingRadius: up ? 0 : LivTheme.radiusLg,
-                bottomTrailingRadius: up ? 0 : LivTheme.radiusLg,
-                topTrailingRadius: up ? LivTheme.radiusLg : 0,
-                style: .continuous
-            )
-            .fill(LivTheme.surface)
+            RoundedRectangle(cornerRadius: LivTheme.radiusWorkspaces, style: .continuous)
+                .fill(LivTheme.surface)
+                .shadow(
+                    color: .black.opacity(LivEdgeCard.shadow),
+                    radius: LivEdgeCard.shadowRadius, y: LivEdgeCard.shadowY)
         )
+        .padding(.horizontal, LivEdgeCard.inset)
+        .padding(up ? .bottom : .top, LivEdgeCard.inset)
+    }
+
+    /// The padding on the card's EDGE side: the safe area it must clear,
+    /// less the `inset` it already stands off, plus the board's 10.
+    private func nearPad(_ safe: CGFloat) -> CGFloat {
+        max(LivEdgeCard.far, safe - LivEdgeCard.inset + LivEdgeCard.near)
     }
 }
 
@@ -568,6 +595,13 @@ struct LivMenuHost: ViewModifier {
     /// card slides from its edge the way it always did. Named `origin`
     /// rather than `from`, which on a `LivMenu` means the EDGE.
     @State private var origin: UnitPoint?
+    /// THE DOOR THIS CARD OPENED FROM, captured once, when it opens. The
+    /// card is placed from it for its whole life — never from
+    /// `LivDoors.lastPressed`, which the card's own rows overwrite: every
+    /// menu row is a door (so "Not a note…" opens at its row), so tapping
+    /// "New area…" moved the closing card under that row, where it
+    /// flashed half-drawn before it shrank away (owner, 2026-09-27).
+    @State private var door: CGRect?
 
     func body(content: Content) -> some View {
         content.overlay {
@@ -682,7 +716,7 @@ struct LivMenuHost: ViewModifier {
     private func cardX() -> CGFloat {
         let w = LivMenuCard.width
         let m = LivMenuCard.margin
-        let centre = LivDoors.lastPressed?.midX ?? LivScreen.width / 2
+        let centre = door?.midX ?? LivScreen.width / 2
         return min(max(m, centre - w / 2), LivScreen.width - w - m)
     }
 
@@ -704,7 +738,7 @@ struct LivMenuHost: ViewModifier {
     /// door when it fits, over it when it does not, and never off
     /// screen. Nil for an edge card, or when no door was recorded.
     private func doorTop(_ menu: LivMenu) -> CGFloat? {
-        guard menu.atDoor, let door = LivDoors.lastPressed else { return nil }
+        guard menu.atDoor, let door else { return nil }
         let m = LivMenuCard.margin
         let gap: CGFloat = 4
         let floor = LivScreen.height - LivSafeArea.bottom - m
@@ -726,6 +760,7 @@ struct LivMenuHost: ViewModifier {
             // screen and the last measured height, which is exact for
             // every card after the first and close for the first.
             drawn = menu
+            door = LivDoors.lastPressed
             origin = LivDoors.anchor(in: cardBox(menu))
             shown = false
             // The motion is asked for EXPLICITLY, here, rather than left
@@ -754,9 +789,8 @@ struct LivMenuHost: ViewModifier {
     /// a top sheet whose first row sits under the clock reads as broken.
     private func panel(_ menu: LivMenu) -> some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 0).frame(height: 6)
             if let title = menu.title {
-                LivMenuTitle(text: title)
+                LivMenuLegend(text: title)
             }
             if let subject = menu.subject {
                 LivMenuSubject(name: subject, detail: menu.subjectDetail)
@@ -764,16 +798,13 @@ struct LivMenuHost: ViewModifier {
             ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
                 row(item, divided: i > 0)
             }
-            Spacer(minLength: 0).frame(height: 6)
         }
         .frame(maxWidth: .infinity)
-        .background(
-            // ROUNDED ON EVERY CORNER now, because there is no edge for
-            // it to be square against. `UnevenRoundedRectangle` and its
-            // four conditional radii went with the sheet shape.
-            RoundedRectangle(cornerRadius: LivTheme.radiusLg, style: .continuous)
-                .fill(LivTheme.surface)
-        )
+        // A RAISED CARD (the clearer boards' Create menu): panel2, radius
+        // 24 on every corner, CLIPPED so a pressed first or last row keeps
+        // them.
+        .background(LivTheme.panel2)
+        .clipShape(RoundedRectangle(cornerRadius: LivMenuCard.radius, style: .continuous))
         .shadow(
             color: .black.opacity(LivMenuCard.shadowInk),
             radius: LivMenuCard.shadowRadius, y: LivMenuCard.shadowY)
@@ -783,7 +814,7 @@ struct LivMenuHost: ViewModifier {
 
     private func row(_ item: LivMenuItem, divided: Bool) -> some View {
         LivMenuRow(
-            label: item.label, glyph: item.glyph, symbol: item.symbol,
+            label: item.label, detail: item.detail, glyph: item.glyph, symbol: item.symbol,
             selected: item.selected,
             chevron: item.chevron, destructive: item.destructive, divided: divided
         ) {

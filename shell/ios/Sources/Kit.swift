@@ -7,204 +7,281 @@ import SwiftUI
 
 // MARK: - SectionLabel
 
-struct SectionLabel: View {
+/// The two header tiers. SCREEN is a group's name over a card on the
+/// canvas; SHEET is the quieter label over a card on a sheet (Properties,
+/// Settings, the record card, the Insert menu).
+enum LivHeaderStyle {
+    case screen, sheet
+}
+
+/// A GROUP'S NAME, over the card that holds it.
+///
+/// THE CLEARER BOARDS (owner-approved, 2026-09-24) made it a real header:
+/// 20 semibold in full ink, where it was 16 medium text2 (owner,
+/// 2026-08-06: "headings and UI text are too subtle" — this is that
+/// sentence taken all the way). Beside the name, its COUNT in text2;
+/// at the right, a red NOTE ("2 late") or Today's red late COUNT, then an
+/// optional accessory and an optional fold chevron.
+///
+/// The note is a short WARNING drawn once for the group, so individual
+/// rows do not have to shout; the boards also colour a late row's own
+/// date, and that is the row's business, not this.
+///
+/// NO ACCENT VERB. A tappable count drew as a blue word once (removed
+/// 2026-09-15: the only clickable text is a link in a note). A header
+/// that folds is tapped as a whole by its caller; a header with a verb
+/// ("Accept all") passes a real Button as the accessory.
+///
+/// ONLY THE NAME IS THE HEADER, for VoiceOver — never
+/// `.accessibilityElement(children: .combine)` here: one wide node the
+/// height of a header lands inside `drive.sh rows`' band and reads as a
+/// row.
+struct SectionLabel<Accessory: View>: View {
     let text: String
-    var trailing: String? = nil
-    /// A short WARNING about the group, drawn once beside its name — "12
-    /// late". It is the only place this app raises its voice in a list,
-    /// and it exists so that individual rows do not have to: colouring
-    /// every overdue date turned a column of forty-seven dates red and
-    /// told you nothing you could act on.
+    var count: String? = nil
     var note: String? = nil
+    var late: Int? = nil
+    /// nil draws no chevron; true is open (down), false is closed (right).
+    var fold: Bool? = nil
+    var style: LivHeaderStyle = .screen
+    /// The first header under a control strip takes 16 above, not 26.
+    var first: Bool = false
+    @ViewBuilder var accessory: Accessory
 
     init(
-        _ text: String, trailing: String? = nil, note: String? = nil
+        _ text: String, count: Int? = nil, note: String? = nil, late: Int? = nil,
+        fold: Bool? = nil, style: LivHeaderStyle = .screen, first: Bool = false,
+        @ViewBuilder accessory: () -> Accessory
     ) {
         self.text = text
-        self.trailing = trailing
+        self.count = count.map(String.init)
         self.note = note
+        self.late = late
+        self.fold = fold
+        self.style = style
+        self.first = first
+        self.accessory = accessory()
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            // NO DOT. A heading that named a kind used to wear that
-            // kind's colour as a 7pt circle. Nothing passed one — the
-            // parameter had zero callers on 2026-08-30 — and the device
-            // itself is the kind the polish pass is removing: a coloured
-            // dot beside a word that already says the thing (rule 6).
-            // 13pt semibold text2, not 11pt bold text3 (owner,
-            // 2026-08-06: "headings and UI text are too subtle"). One
-            // recipe, 28 call sites — the whole app's section hierarchy
-            // moves together, and the old grey was 6.5:1 against the
-            // canvas where this is 11:1.
-            // Sentence case, secondary ink, ordinary weight (surface
-            // pass, owner 2026-08-18: "eliminate unnecessary small text
-            // and labels"). UPPERCASE + semibold + kerning made every
-            // heading shout; a heading's whole job is to be findable
-            // when you look for it and invisible when you do not.
+        HStack(alignment: .firstTextBaseline, spacing: LivHeader.gap) {
             Text(text)
-                .font(.system(size: LivType.label, weight: .medium))
-                .foregroundStyle(LivTheme.text2)
-            if let note {
-                Text(note)
-                    .font(.system(size: LivType.label))
-                    .foregroundStyle(LivTheme.red)
-            }
-            Spacer()
-            // NO ACCENT VERB HERE (2026-09-15). A `trailingAction` drew
-            // this count as a blue button, and its ONE caller — the Done
-            // group in Tasks — already makes the whole heading tappable
-            // with `.onTapGesture`. So a fold that has one door had two,
-            // and the second was a blue word (rules 4 and 6, and the
-            // owner's: the only clickable text is a link in a note).
-            if let trailing {
-                Text(trailing)
-                    .font(.system(size: LivType.label))
+                .font(
+                    style == .screen
+                        ? .system(size: LivType.strong, weight: .semibold)
+                        : .system(size: LivType.detail, weight: .semibold))
+                .foregroundStyle(style == .screen ? LivTheme.text : LivTheme.text2)
+                .accessibilityAddTraits(.isHeader)
+            if let count {
+                Text(count)
+                    .font(.system(size: LivType.body).monospacedDigit())
                     .foregroundStyle(LivTheme.text2)
             }
+            Spacer(minLength: 0)
+            if let note {
+                Text(note)
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(LivTheme.red)
+            }
+            if let late {
+                Text("\(late)")
+                    .font(.system(size: LivType.body, weight: .medium).monospacedDigit())
+                    .foregroundStyle(LivTheme.red)
+            }
+            accessory
+            if let fold {
+                LivChevron(fold ? .down : .right)
+            }
         }
-        // THE HEADING OWNS ITS OWN ROOM (2026-08-21). Leaving it to the
-        // caller is exactly the drift standing rule 3 predicts: colours
-        // are tokenised and have never moved; this was prose and moved
-        // five ways across sixteen sites. A caller may still add
-        // HORIZONTAL inset — that belongs to the surface, not the
-        // heading.
-        .padding(.top, LivRow.sectionTop)
-        .padding(.bottom, LivRow.sectionBottom)
+        // THE HEADING OWNS ITS OWN ROOM (2026-08-21) — vertical AND,
+        // since the clearer boards, horizontal: its words sit a fixed
+        // step in from the CARD's edge (4 on a screen, landing at 20;
+        // 20 on a sheet, landing at 36), so the caller places the card
+        // edge and nothing else. Five sites once supplied their own
+        // numbers and disagreed five ways (standing rule 3).
+        .padding(
+            .horizontal,
+            (style == .screen ? LivTitle.side : LivHeader.sheetInset) - LivRow.cardInset)
+        .padding(
+            .top,
+            first ? LivHeader.firstTop : (style == .screen ? LivHeader.top : LivHeader.sheetTop))
+        .padding(.bottom, style == .screen ? LivHeader.bottom : LivHeader.sheetBottom)
     }
 }
 
-/// A GROUP STARTS HERE, AND IT HAS NO NAME.
-///
-/// The heading's own air without the word — the library panel's device
-/// ("NO SECTION LABELS", owner 2026-08-18: *"eliminate unnecessary small
-/// text and labels"*; one empty row-slot does the separating), as a type
-/// rather than as a literal repeated per surface.
-///
-/// **Derived from the heading's two tokens**, so a change to the app's
-/// section rhythm moves the named groups and the unnamed ones together.
-/// A number of its own here would drift apart from `SectionLabel` on the
-/// first day either was touched, which is standing rule 3 exactly.
-struct SectionGap: View {
-    var body: some View {
-        Color.clear
-            .frame(height: LivRow.sectionTop + LivRow.sectionBottom)
+extension SectionLabel where Accessory == EmptyView {
+    init(
+        _ text: String, count: Int? = nil, note: String? = nil, late: Int? = nil,
+        fold: Bool? = nil, style: LivHeaderStyle = .screen, first: Bool = false
+    ) {
+        self.init(
+            text, count: count, note: note, late: late, fold: fold, style: style,
+            first: first, accessory: { EmptyView() })
     }
 }
 
-// MARK: - the filter chip
+// MARK: - the one chevron
 
-/// WHICH SLICE OF THE LIST YOU ARE LOOKING AT — one chip, now shared.
-///
-/// Owner, 2026-09-12: *"make everything buttons (All, Notes…) match
-/// style of equivalents in Tasks."*
-///
-/// This was `TasksFilterChip`, private to `Tasks.swift`, and its own
-/// comment has claimed since 2026-08-30 that it is "the same mark the
-/// lens row and the day strip use — the app has one way of saying 'this
-/// one'". Measured, the app had three ways, and this row was the one
-/// that had been polished:
-///
-/// - **Tasks** — a filled capsule when chosen, and a bare word when not.
-/// - **Everything** — the same, PLUS a hairline border around every
-///   unchosen chip, semibold rather than medium when chosen, and 14pt of
-///   side padding rather than 12. The border is the whole visual gap: it
-///   made four outlined pills where Tasks has four words.
-/// - **Inbox** — no capsule at all; a 2pt rule under the chosen lens.
-///
-/// The 2026-08-30 pass took four devices down to one in Tasks (an accent
-/// fill, an accent border, accent ink and a heavier weight, with a
-/// coloured dot repeating the status the chip already spells) and wrote
-/// the sentence about consistency above the one row it had fixed. The
-/// same shape as the Inbox heading that claimed to match `SectionLabel`
-/// while sitting at its own numbers: a rule asserted in prose next to
-/// the site that obeys it.
-///
-/// INBOX IS DELIBERATELY NOT SWEPT IN. Its underline is a different
-/// device with its own dated reasoning — it is the mark the day strip
-/// uses, and it carries a count beside each lens that a capsule has
-/// nowhere to put. Making it a capsule is a visible change the owner did
-/// not ask for; it is named here so the third recipe is on the record
-/// rather than rediscovered.
-struct LivFilterChip: View {
-    let text: String
-    let selected: Bool
-    let action: () -> Void
+/// THE ONE CHEVRON: drawn, 14pt, a 2pt stroke, text3 — the boards' own
+/// paths on their 24 grid. It replaces SF's `chevron.*` on the surfaces
+/// that have boards: SF draws a heavier, taller mark at every weight.
+struct LivChevron: View {
+    enum Direction { case right, down, up }
 
-    init(_ text: String, selected: Bool, action: @escaping () -> Void) {
-        self.text = text
-        self.selected = selected
-        self.action = action
+    let direction: Direction
+    var ink: Color = LivTheme.text3
+
+    init(_ direction: Direction = .right, ink: Color = LivTheme.text3) {
+        self.direction = direction
+        self.ink = ink
     }
 
     var body: some View {
-        Button(action: action) {
-            Text(text)
-                // `body`, not `label` (2026-09-05). This row decides
-                // which slice of the list you are looking at, and it sat
-                // at the same size as the group heading below it — a
-                // control reading as quietly as a caption.
-                .font(.system(size: LivType.body, weight: selected ? .medium : .regular))
-                .lineLimit(1)
-                .foregroundStyle(selected ? LivTheme.text : LivTheme.text2)
-                .padding(.horizontal, 12)
-                .frame(height: LivChip.tall)
-                .background(Capsule().fill(selected ? LivTheme.panel2 : .clear))
-                .contentShape(Capsule())
+        ChevronShape(direction: direction)
+            .stroke(
+                ink,
+                style: StrokeStyle(
+                    lineWidth: LivCards.chevronStroke, lineCap: .round, lineJoin: .round))
+            .frame(width: LivCards.chevron, height: LivCards.chevron)
+            .accessibilityHidden(true)
+    }
+
+    private struct ChevronShape: Shape {
+        let direction: Direction
+
+        func path(in rect: CGRect) -> Path {
+            // The boards' points on a 24 grid. Down and up are wider and
+            // shallower than right (11 by 5.5 against 6 by 12), so each is
+            // drawn as drawn rather than rotated.
+            let points: [CGPoint]
+            switch direction {
+            case .right: points = [.init(x: 10, y: 6), .init(x: 16, y: 12), .init(x: 10, y: 18)]
+            case .down: points = [.init(x: 6.5, y: 9.5), .init(x: 12, y: 15), .init(x: 17.5, y: 9.5)]
+            case .up: points = [.init(x: 6.5, y: 14.5), .init(x: 12, y: 9), .init(x: 17.5, y: 14.5)]
+            }
+            let scale = rect.width / 24
+            var path = Path()
+            path.addLines(points.map {
+                CGPoint(x: rect.minX + $0.x * scale, y: rect.minY + $0.y * scale)
+            })
+            return path
         }
-        .buttonStyle(.plain)
     }
 }
 
 // MARK: - the two titles
 
-/// A SCREEN'S OWN NAME — hero(32), bold, full ink.
+/// A SCREEN'S OWN NAME — screen(34), bold, full ink, and an ACCENT full
+/// stop after it ("Tasks.", "Thursday."), the clearer boards' signature
+/// (owner-approved, 2026-09-24). The stop is the one accent a title
+/// carries, and it is skipped after a title that already ends in
+/// punctuation (`LivStop`). VoiceOver hears the bare name, as a header.
 ///
-/// WHY THIS IS A TYPE NOW, and why it is only two of the six jobs the
-/// weight-and-ink census measured (2026-09-12).
+/// `size` is for the other titles that wear the stop — the Workspaces
+/// card's 22 — so the stop is one recipe (standing rule 4). Sheet titles
+/// (Properties, Settings, Trash, History) and menu headers do not.
 ///
-/// That census found 149 pieces of text drawn in 64 different
-/// combinations of size, weight and ink, and named six jobs a reader
-/// would recognise. Four of them already live in types — `SectionLabel`
-/// (17 callers), `LivRowFact`, `LivMenuTitle`, and a list row's title
-/// inside `LivListRow` — so standing rule 3 is already satisfied for
-/// those, whatever else is true of them.
+/// WHY THIS IS A TYPE (2026-09-12). A weight-and-ink census found 149
+/// pieces of text drawn in 64 combinations of size, weight and ink, and
+/// named six jobs a reader would recognise. A screen's name was copied
+/// identically at five sites and a sheet's at three, with no type.
 ///
-/// The two that had NO type are the two that were hand-rolled: a
-/// screen's name, copied identically at five sites, and a sheet's,
-/// copied identically at three. Those eight copies are the whole of what
-/// this change fixes, and because every copy was byte-identical it moves
-/// no pixels.
+/// A ROW'S TITLE had no canonical triple then — seven across 21 sites,
+/// and nobody had picked one. The clearer boards picked it (18 regular,
+/// full ink; text2 when muted), and it lives in `LivCardRow` now.
 ///
-/// WHAT IS DELIBERATELY NOT HERE. A row's primary title is drawn with
-/// seven different triples across 21 sites, and a bare tappable word
-/// with three across thirteen. There is no canonical triple to put in a
-/// type, because nobody has picked one — and a name holding an answer
-/// nobody chose is prose with extra steps, which is the failure standing
-/// rule 3 exists to name rather than an instance of obeying it. Those
-/// two are visible decisions and they are the owner's.
+/// NO WEIGHT RAMP. `Theme.swift` declares sizes and no weights, and the
+/// tempting fix is a weight scale beside the type scale. But a weight is
+/// never chosen on its own: it is chosen WITH a size and an ink, for a
+/// job, so it lives inside the job's own type.
 ///
-/// NO WEIGHT RAMP EITHER, for the same reason. `Theme.swift` declares
-/// eight sizes and zero weights, and the tempting fix is a weight scale
-/// beside the type scale. But a weight is never chosen on its own: it is
-/// chosen WITH a size and an ink, for a job. The place it belongs is
-/// inside the job's own type, which is where it already sits for every
-/// job that has one.
-///
-/// THE LAYOUT STAYS WITH THE CALLER. Three of the five screens wrap this
-/// in a full-width frame and 10pt of top padding; the Calendar and Today
-/// put it in an `HStack` beside a chevron or a busy mark. Unlike
-/// `SectionLabel`, whose room was the thing that had drifted, these five
-/// agreed on the type and disagreed on the frame — so the type takes the
-/// half they agreed on.
+/// THE FACE STAYS USABLE ON ITS OWN — the Calendar's title sits inside a
+/// Button beside its chevron. A screen that has a title BLOCK (the name,
+/// a subtitle, the room around them) uses `LivTitleBlock`, which owns the
+/// frame the five callers used to disagree about.
 struct LivScreenTitle: View {
     let text: String
-    init(_ text: String) { self.text = text }
+    var size: CGFloat = LivType.screen
+
+    init(_ text: String, size: CGFloat = LivType.screen) {
+        self.text = text
+        self.size = size
+    }
 
     var body: some View {
-        Text(text)
-            .font(.system(size: LivType.hero, weight: .bold))
-            .foregroundStyle(LivTheme.text)
+        Group {
+            if LivStop.wanted(after: text) {
+                Text(text) + Text(LivStop.mark).foregroundStyle(LivTheme.accent)
+            } else {
+                Text(text)
+            }
+        }
+        .font(.system(size: size, weight: .bold))
+        .foregroundStyle(LivTheme.text)
+        .accessibilityLabel(text)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// THE ACCENT FULL STOP, as a rule rather than a character someone types.
+/// One predicate for the SwiftUI titles and the editor's TextKit title.
+enum LivStop {
+    static let mark = "."
+
+    /// Not after an empty title, and not after one that already ends in
+    /// . ? ! … or : — "Lisbon?." is the stop arguing with the title.
+    static func wanted(after text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else {
+            return false
+        }
+        return !".?!…:".contains(last)
+    }
+}
+
+/// A SCREEN'S TITLE BLOCK — the name, a subtitle 2 under it, and a slot
+/// beside the name for `LivBusy` — with the room the boards give it: 6
+/// above, 20 either side, 14 below. What comes next (a control, the
+/// first card) sits straight on those 14.
+///
+/// Title and subtitle stay SEPARATE accessibility elements — never
+/// `.combine`: the harness reads the subtitle on its own (Today's
+/// "unfiled"), and one combined node would sit in `drive.sh rows`' band.
+struct LivTitleBlock<Subtitle: View, Accessory: View>: View {
+    let title: String
+    @ViewBuilder var subtitle: Subtitle
+    @ViewBuilder var accessory: Accessory
+
+    init(
+        _ title: String, @ViewBuilder subtitle: () -> Subtitle,
+        @ViewBuilder accessory: () -> Accessory
+    ) {
+        self.title = title
+        self.subtitle = subtitle()
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: LivTitle.subtitleGap) {
+            HStack(spacing: LivHeader.gap) {
+                LivScreenTitle(title)
+                accessory
+            }
+            subtitle
+                .font(.system(size: LivType.label).monospacedDigit())
+                .foregroundStyle(LivTheme.text2)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, LivTitle.top)
+        .padding(.horizontal, LivTitle.side)
+        .padding(.bottom, LivTitle.bottom)
+    }
+}
+
+extension LivTitleBlock where Subtitle == Text?, Accessory == EmptyView {
+    /// A plain subtitle; nil draws none.
+    init(_ title: String, subtitle: String?) {
+        self.init(title, subtitle: { subtitle.map { Text($0) } }, accessory: { EmptyView() })
     }
 }
 
@@ -214,16 +291,6 @@ struct LivScreenTitle: View {
 /// Here the room DOES belong to the type: History, Settings and Trash
 /// wrote the same `LivRow.cardInset + 4` and the same top 16 as well as
 /// the same font and ink, so all four lines were the copy.
-///
-/// ONE THING THIS DOES NOT SETTLE. `LivMenuTitle` draws the same size in
-/// SEMIBOLD, so a title on a card is still two weights depending on
-/// which kind of card it is. Converging them is a visible change in one
-/// direction or the other — bold is also the screen title's weight, so
-/// reusing it here blurs the rank between the screen you are in and the
-/// sheet on top of it, which argues for semibold; and semibold at 22
-/// against an owner who has called this app's text too small three times
-/// argues for bold. That is a judgement, so it is left alone and the two
-/// weights are written down here rather than discovered again later.
 struct LivSheetTitle: View {
     let text: String
     init(_ text: String) { self.text = text }
@@ -254,51 +321,29 @@ struct LivSheetTitle: View {
 /// coloured dot next to a word that says the same thing is decoration.
 struct ValueChip: View {
     let text: String
-    var big: Bool = false
-    /// A leading GLYPH. Used by the Fields list, which is this app's
-    /// schema view: there a row of forty names needs finding, which is
-    /// what an icon is for.
-    var glyph: LivGlyph? = nil
 
-    init(_ text: String, big: Bool = false, glyph: LivGlyph? = nil) {
+    init(_ text: String) {
         self.text = text
-        self.big = big
-        self.glyph = glyph
     }
 
     var body: some View {
-        HStack(spacing: big ? 5 : 4) {
-            if let glyph {
-                LivIcon(
-                    glyph: glyph, color: LivTheme.text3,
-                    size: big ? LivChip.valueGlyph : LivChip.glyph)
-            }
-            // NEVER 11pt. The small chip's text was `micro`, which is the
-            // size reserved for a badge — a thing you glance at, not a
-            // word you read — and these chips carry area names, project
-            // names and dates.
-            //
-            // THE TWO VARIANTS ARE TWO VOICES (owner, 2026-09-05: "tasks
-            // fields are especially small"). They differed in padding
-            // alone, both at `caption`, which was right for a chip
-            // trailing a row and wrong for the properties card: there the
-            // chip IS the value, and it sat at 14 in a column where an
-            // EMPTY field's em-dash reads 20. One column, one thing, two
-            // sizes — and the filled field was the smaller of the two.
-            Text(text)
-                .font(.system(size: big ? LivType.strong : LivType.caption))
-                .lineLimit(1)
-        }
+        // NEVER 11pt. The chip's text was `micro`, which is the size
+        // reserved for a badge — a thing you glance at, not a word you
+        // read — and these chips carry area names, project names and
+        // dates. The properties card's larger chip went with the card's
+        // chips (the clearer boards draw its values as plain words).
+        Text(text)
+            .font(.system(size: LivType.caption))
+            .lineLimit(1)
         .foregroundStyle(LivTheme.text2)
-        .padding(.horizontal, big ? 12 : 8)
-        .frame(height: big ? LivChip.value : LivChip.height)
-        // GLASS, LIKE THE BAR (owner, 2026-09-06: "animations and glossy
-        // ui stuff is welcome"). A chip is a thing you can act on, and the
-        // app's one material for things you can act on is the bar's
-        // glass; a flat #2C2C2C fill was a second answer to the same
-        // question. Where glass is unavailable the modifier falls back
-        // to the thin material with the same hairline.
-        .livGlass(in: Capsule())
+        .padding(.horizontal, LivChip.pad)
+        .frame(height: LivChip.height)
+        // FLAT, NOT GLASS (the clearer boards, 2026-09-24: "glass is for
+        // chrome only"). It wore the bar's glass from 2026-09-06 on the
+        // argument that a chip is a thing you act on; but a chip sits in
+        // CONTENT — a row, a card — and the boards' one content chip
+        // (Unsorted's area guess) is a flat panel2 capsule.
+        .background(Capsule().fill(LivTheme.panel2))
     }
 }
 
@@ -310,38 +355,81 @@ struct ValueChip: View {
 /// most off-key object in the app, and the only place a control still
 /// arrived with a colour nobody here chose.
 ///
-/// The mark is the one this app uses everywhere else for "this is the
-/// one you are on": a quiet fill and full ink, no accent, no inversion.
-/// 44pt tall, because a control is a touch target before it is a shape.
-struct LivSegment<Value: Hashable>: View {
+/// THE TASKS BOARD'S SHAPE (2026-09-24): a panel2 track with rounded
+/// ends, 32pt segments inside it, and the chosen one on a `thumb` plate
+/// in full ink at semibold; the rest medium, text2. No accent, no
+/// inversion — the plate is the mark. The track is 38 tall; the touch
+/// target is the whole segment, which the track's own 3 of padding
+/// surrounds.
+///
+/// Every option is a Button whose label is EXACTLY its word — the harness
+/// taps "All" on Tasks. `trailing` is the slot for a control that is not
+/// one of the options (Tasks' "Project" menu); draw it with
+/// `LivSegmentFace` so it wears the same face.
+struct LivSegment<Value: Hashable, Trailing: View>: View {
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
+    @ViewBuilder var trailing: Trailing
+
+    init(
+        options: [(value: Value, label: String)], selection: Binding<Value>,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.options = options
+        self._selection = selection
+        self.trailing = trailing()
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 0) {
             ForEach(options, id: \.value) { option in
                 let on = option.value == selection
                 Button {
                     withAnimation(LivMotion.pick) { selection = option.value }
                 } label: {
-                    Text(option.label)
-                        .font(.system(size: LivType.label, weight: on ? .medium : .regular))
-                        .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 40)
-                        .background(
-                            RoundedRectangle(
-                                cornerRadius: LivTheme.radiusSm, style: .continuous
-                            )
-                            .fill(on ? LivTheme.panel2 : .clear)
-                        )
-                        .contentShape(Rectangle())
+                    LivSegmentFace(option.label, on: on)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(option.label)
                 .accessibilityAddTraits(on ? [.isSelected] : [])
             }
+            trailing
         }
-        .frame(height: 44)
+        .padding(LivSegmented.pad)
+        .background(
+            RoundedRectangle(cornerRadius: LivSegmented.trackRadius, style: .continuous)
+                .fill(LivTheme.panel2))
+    }
+}
+
+extension LivSegment where Trailing == EmptyView {
+    init(options: [(value: Value, label: String)], selection: Binding<Value>) {
+        self.init(options: options, selection: selection, trailing: { EmptyView() })
+    }
+}
+
+/// ONE SEGMENT'S FACE — the word, and the plate when it is chosen. Shared
+/// so a segment that is a Menu rather than a Button looks like the rest.
+struct LivSegmentFace: View {
+    let label: String
+    let on: Bool
+
+    init(_ label: String, on: Bool) {
+        self.label = label
+        self.on = on
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: LivType.detail, weight: on ? .semibold : .medium))
+            .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .frame(height: LivSegmented.height)
+            .background(
+                RoundedRectangle(cornerRadius: LivSegmented.radius, style: .continuous)
+                    .fill(on ? LivTheme.thumb : .clear))
+            .contentShape(Rectangle())
     }
 }
 
@@ -501,13 +589,15 @@ extension View {
 /// A DAY'S NUMBER, AND THE DISC THAT SAYS IT IS THE ONE YOU ARE ON.
 ///
 /// One mark, three readings, no collision possible:
-///   selected            — ink disc, number knocked out
-///   today, selected     — ACCENT disc, number knocked out
+///   selected            — ink disc, number in the ground
+///   today, selected     — ACCENT disc, number in `onAccent` (white)
 ///   today, not selected — accent number, no disc
 ///
-/// The knock-out is drawn in the GROUND, which reads on both discs and
-/// in both schemes: near-black on the ink disc and on the accent one in
-/// dark, white on both in light.
+/// The ink disc's number is the GROUND, which reads in both schemes. The
+/// accent disc's is `onAccent`, as the Today board draws it and as every
+/// other thing on the accent wears — the ground was near-black on the
+/// denim in dark, a knock-out that read as a hole. A resting day is full
+/// ink (the board's 18/400 text), not text2.
 ///
 /// This is the correction rev 47 made standing (owner: *"today's date is
 /// marked by a tiny dot that is completely hidden by a horizontal bar
@@ -522,15 +612,15 @@ extension View {
 /// out-of-month dimming, three busy dots, a long press and its own
 /// accessibility label. Each caller keeps its tile; this is the mark
 /// they share. The diameter comes in because a month cell cannot carry
-/// the strip's 36 — see `LivDay` for the arithmetic.
+/// the strip's 38 — see `LivDay` for the arithmetic.
 struct LivDayMark: View {
     let number: Int
     let selected: Bool
     let today: Bool
-    let diameter: CGFloat
+    var diameter: CGFloat = LivDay.disc
     /// The ink when the day is neither selected nor today — the caller's
     /// own, so the month grid can dim a day outside its month.
-    var rest: Color = LivTheme.text2
+    var rest: Color = LivTheme.text
 
     var body: some View {
         Text("\(number)")
@@ -542,7 +632,9 @@ struct LivDayMark: View {
                 .monospacedDigit()
             )
             .foregroundStyle(
-                selected ? LivTheme.canvas : (today ? LivTheme.accent : rest))
+                selected
+                    ? (today ? LivTheme.onAccent : LivTheme.canvas)
+                    : (today ? LivTheme.accent : rest))
             .frame(width: diameter, height: diameter)
             .background(
                 Circle()
@@ -568,7 +660,7 @@ struct LivDayMark: View {
 /// circular `ProgressView` on iOS, so swapping it silently restores the
 /// spinner to full size. The 0.7 stays in here rather than in
 /// `Theme.swift` because a recipe holds its own geometry, the way
-/// `LivSwitch` holds 46x28 and `LivSegment` holds 44.
+/// `LivSwitch` holds 46x28.
 struct LivBusy: View {
     var body: some View {
         ProgressView()
@@ -672,10 +764,7 @@ struct AddChip: View {
     let label: String
     var big: Bool = false
     /// The mark it wears. `plus` because adding is what it nearly always
-    /// does; the Links group's "Show all 12" is the same chip with a
-    /// chevron, because it is the same KIND of control — a quiet button
-    /// that must not read as a link (owner, 2026-09-15: "only clickable
-    /// text in the app should be links inside notes").
+    /// does.
     var symbol: String = "plus"
     let action: () -> Void
 
@@ -712,67 +801,131 @@ struct AddChip: View {
     }
 }
 
+// MARK: - the one checkbox
+
+/// THE ONE CHECKBOX (the clearer boards, 2026-09-24): a 20pt rounded
+/// square, radius 6, stroked 1.7 in text2 while open (text3 when dim — a
+/// passed row); DONE is filled in the option's own hue, else green, with
+/// a drawn white tick. The same numbers draw the editor's TextKit box
+/// (`LivCheck`, and `LivCheck.tickPath` for the tick), so a task line in
+/// a note and a task row in a list are one object (standing rule 4).
+///
+/// AN OPEN BOX IS INK, NOT COLOUR. The ring once wore the status
+/// option's hue whether it was ticked or not, so forty-seven open tasks
+/// drew forty-seven coloured outlines down the list's left edge — every
+/// reference draws that column grey. The hue is what TICKING it means,
+/// so it is kept for the filled state and only there.
+///
+/// The tick is white on green at 2.47:1, under the 3:1 `onAccent` is
+/// held to — accepted as drawn (DECISIONS), and not in the palette check.
+///
+/// Only the drawing: it has no action and no label. `StatusRing` is the
+/// toggle; a mark that is not a button (the Tasks "Done" fold) draws this.
+struct LivCheckbox: View {
+    let done: Bool
+    var dim: Bool = false
+    var hue: Color? = nil
+    var side: CGFloat = LivCheck.size
+
+    var body: some View {
+        let shape = RoundedRectangle(
+            cornerRadius: LivCheck.radius * side / LivCheck.size, style: .continuous)
+        Group {
+            if done {
+                shape
+                    .fill(hue ?? LivTheme.green)
+                    .overlay {
+                        TickShape()
+                            .stroke(
+                                LivTheme.onAccent,
+                                style: StrokeStyle(
+                                    lineWidth: LivCheck.tickStroke * side / LivCheck.size,
+                                    lineCap: .round, lineJoin: .round))
+                    }
+            } else {
+                shape.strokeBorder(
+                    dim ? LivTheme.text3 : LivTheme.text2, lineWidth: LivCheck.stroke)
+            }
+        }
+        .frame(width: side, height: side)
+        .accessibilityHidden(true)
+    }
+
+    private struct TickShape: Shape {
+        func path(in rect: CGRect) -> Path { Path(LivCheck.tickPath(in: rect)) }
+    }
+}
+
+extension LivCheck {
+    /// The tick, fitted to a box — for SwiftUI (`Path(_:)`) and for the
+    /// editor's UIKit drawing (`UIBezierPath(cgPath:)`) alike.
+    static func tickPath(in rect: CGRect) -> CGPath {
+        let scale = rect.width / size
+        let path = CGMutablePath()
+        path.addLines(between: tick.map {
+            CGPoint(x: rect.minX + $0.x * scale, y: rect.minY + $0.y * scale)
+        })
+        return path
+    }
+}
+
 // MARK: - StatusRing
 
-/// The task toggle: 15pt rounded-square RING while open, FILLED + check
-/// when the status completes. Hue = the option's own color; nil = neutral
-/// open / accent done. Visual stays 15pt; the hit target is padded.
+/// THE TASK TOGGLE: `LivCheckbox` as a Button. Hue = the status option's
+/// own colour, used only once it is ticked; nil = green.
+///
+/// `name` is the thing it ticks, so VoiceOver says "Complete Pay rent"
+/// rather than a column of identical "Complete"s — the label Tasks'
+/// note-line box has always carried.
 struct StatusRing: View {
     let done: Bool
     var hue: Color? = nil
-    /// Tight variant for inline places that carry their own padding (a
-    /// calendar block, an all-day pill): the glyph and its target shrink
-    /// together, so the ring never dwarfs the pill it sits in.
+    /// Tight variant for a calendar block, which carries its own padding:
+    /// the box and its target shrink together, so it never dwarfs the
+    /// block it sits in.
     var compact: Bool = false
+    /// A passed row's box: text3 rather than text2.
+    var dim: Bool = false
+    var name: String? = nil
     let action: () -> Void
 
     init(
-        done: Bool, hue: Color? = nil, compact: Bool = false,
-        action: @escaping () -> Void
+        done: Bool, hue: Color? = nil, compact: Bool = false, dim: Bool = false,
+        name: String? = nil, action: @escaping () -> Void
     ) {
         self.done = done
         self.hue = hue
         self.compact = compact
+        self.dim = dim
+        self.name = name
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if done {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(hue ?? LivTheme.accent)
-                        .overlay(
-                            Image(systemName: "checkmark")
-                                .font(.system(size: LivType.micro, weight: .bold))
-                                .foregroundStyle(LivTheme.onAccent)
-                        )
-                } else {
-                    // AN OPEN BOX IS INK, NOT COLOUR.
-                    //
-                    // The ring wore the status option's own hue whether
-                    // it was ticked or not, so a list of forty-seven
-                    // open tasks drew forty-seven coloured outlines down
-                    // its left edge — every reference draws that column
-                    // grey. The hue is what TICKING it means, so it is
-                    // kept for the filled state and only there: the
-                    // colour then marks the few rows that carry it
-                    // rather than the many that do not.
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(LivTheme.text3, lineWidth: 1.5)
-                }
-            }
-            .frame(width: compact ? 13 : 15, height: compact ? 13 : 15)
-            .padding(compact ? 2 : 8)
-            // THE FINGER, NOT THE INK. The padding gives 31; the rows
-            // around this grew to 56 and the checkbox three lines away
-            // in the same list is `LivRow.touch`, so this was the one
-            // control in a Tasks row still under the minimum. Compact
-            // rings live inside a 26pt capsule and must not grow.
-            .frame(height: compact ? 17 : LivRow.touch)
-            .contentShape(Rectangle())
+            LivCheckbox(
+                done: done, dim: dim, hue: hue,
+                side: compact ? LivCheck.compact : LivCheck.size)
+                // THE FINGER, NOT THE INK — and not the LAYOUT either. The
+                // box sits in the row's 28 mark column and lays out at 28,
+                // so a 52 row stays 52; its hit shape reaches out into the
+                // row's padding to the 44 touch floor. (Laid out at 44, it
+                // made every title-only row 62.) Compact boxes live inside
+                // a 26pt capsule and must not grow at all.
+                .frame(
+                    width: compact ? LivCheck.compactTarget : LivCards.mark,
+                    height: compact ? LivCheck.compactTarget : LivCards.mark)
+                .contentShape(
+                    Rectangle().inset(by: compact ? 0 : (LivCards.mark - LivRow.touch) / 2))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        let verb = done ? "Reopen" : "Complete"
+        guard let name, !name.isEmpty else { return verb }
+        return "\(verb) \(name)"
     }
 }
 
@@ -905,12 +1058,13 @@ func livAnchor(of row: EntityRow) -> (property: String, value: String)? {
     return nil
 }
 
-/// The anchor as a chip: an area leads with its own mark.
-func livAnchorChip(of row: EntityRow) -> ValueChip? {
-    guard let anchor = livAnchor(of: row) else { return nil }
-    return ValueChip(
-        anchor.value,
-        glyph: anchor.property == "area" ? .area : nil)
+/// WHERE A ROW LIVES, for its second line: its area, which rides the wire
+/// with the row (`areaWord`) so the line never arrives a beat late and a
+/// row never jumps from 52 to 64; else what it is attached to, which
+/// needs the row's cells (`BoxModel.entity` fetches them).
+func livPlace(of row: EntityRow) -> String? {
+    if let area = row.areaWord, !area.isEmpty { return area }
+    return livAnchor(of: row)?.value
 }
 
 /// Whether that name was MADE rather than given — asked of the core,

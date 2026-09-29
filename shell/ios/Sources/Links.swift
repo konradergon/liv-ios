@@ -35,39 +35,32 @@ struct LinksSection: View {
     private static let shown = 8
 
     var body: some View {
+        let outRows = visible(links.outRows, all: showAllOut)
+        let inRows = visible(links.inRows, all: showAllIn)
         VStack(alignment: .leading, spacing: 0) {
-            // A PROPERTY, LIKE EVERY OTHER ROW ON THIS CARD (owner,
-            // 2026-09-15: "should we make the link appear like any
-            // property? the '+ Link…' clickable text looks bad").
-            //
-            // It was a `SectionLabel` over a run of blue words. The card
-            // no longer carries headings over its properties at all
-            // (Detail.swift), and this is a property: `links` on the
-            // left in the same face every field name wears, the door on
-            // the VALUE side as the app's own hollow add chip — the one
-            // the capture sheet's +Tag row already uses.
-            SectionGap()
-            linkRow
-            ForEach(Array(visible(links.outRows, all: showAllOut).enumerated()), id: \.element.id) {
-                i, link in
-                DetailHairline()
-                LinkRowView(
-                    link: link, row: box.entity(link.id ?? .absent),
-                    onOpen: { open(link) }, onRemove: removal(for: link))
-            }
-            moreButton(links.outRows, expanded: $showAllOut)
-            if !links.inRows.isEmpty {
-                SectionGap()
-                DetailRowLabel("linked from")
-                    .frame(height: LivRow.height, alignment: .leading)
-                ForEach(Array(visible(links.inRows, all: showAllIn).enumerated()), id: \.element.id) {
-                    i, link in
-                    DetailHairline()
+            // A GROUP OF ITS OWN (the clearer board): a small sheet label
+            // and a card — the links are content of a different shape
+            // from the property rows above, so they get a word. The label
+            // is the CARD's, so it takes the card's inset (36).
+            LivCard(label: "Links", labelStyle: .sheet, fill: LivTheme.panel2) {
+                ForEach(outRows) { link in
                     LinkRowView(
                         link: link, row: box.entity(link.id ?? .absent),
-                        onOpen: { open(link) }, onRemove: nil)
+                        onOpen: { open(link) }, onRemove: removal(for: link))
                 }
-                moreButton(links.inRows, expanded: $showAllIn)
+                moreRow(links.outRows, expanded: $showAllOut)
+                addRow
+            }
+            if !links.inRows.isEmpty {
+                LivCard(label: "Linked from", labelStyle: .sheet, fill: LivTheme.panel2) {
+                    ForEach(Array(inRows.enumerated()), id: \.element.id) { i, link in
+                        LinkRowView(
+                            link: link, row: box.entity(link.id ?? .absent),
+                            onOpen: { open(link) }, onRemove: nil, backlink: true,
+                            divided: i < inRows.count - 1 || moreShows(links.inRows, showAllIn))
+                    }
+                    moreRow(links.inRows, expanded: $showAllIn, last: true)
+                }
             }
         }
         .onAppear(perform: load)
@@ -89,47 +82,22 @@ struct LinksSection: View {
 
     @EnvironmentObject private var workspaces: WorkspaceModel
 
-    /// THE `links` PROPERTY ROW — a name on the left, the door on the
-    /// right, the geometry every other field on this card has.
-    ///
-    /// The door is always present: a create key that comes and goes is a
-    /// key you cannot learn (owner, 2026-08-17). What changed twice is
-    /// its dress.
-    ///
-    /// It was `+ Link…` in accent ink with no shape around it, which
-    /// reads as a hyperlink, and the rule is that the only clickable
-    /// TEXT in this app is a link inside a note (owner, 2026-09-15). It
-    /// became an `AddChip` — right about the shape, wrong about the
-    /// grammar: it left a small hollow pill sitting where every other
-    /// row on this card has its VALUE (owner, 2026-09-18: "links
-    /// metadata has a strange '(+link)' blip. make it same as other
-    /// metadata").
-    ///
-    /// SO IT IS A PROPERTY ROW, EXACTLY (Detail.swift, `row`): the whole
-    /// row is the button, the name is on the left, and the right-hand
-    /// column holds the value — a dash when there is none, the count
-    /// when there is. The door did not go away; the row IS the door,
-    /// which is how every other field on this card opens its own editor.
-    private var linkRow: some View {
+    /// THE DOOR THAT MAKES ONE — always the card's last row, always there:
+    /// a create key that comes and goes is a key you cannot learn (owner,
+    /// 2026-08-17). A full-width row whose words are the accent — a door,
+    /// which is one of the three shapes a tappable thing may wear.
+    private var addRow: some View {
         Button {
             picking = true
         } label: {
-            HStack {
-                DetailRowLabel("links")
-                Spacer(minLength: 12)
-                if links.outRows.isEmpty {
-                    DetailEmptyValue()
-                } else {
-                    // The face the standard row's overflow count wears,
-                    // and it counts what the list below holds — including
-                    // the ones folded behind "Show all".
-                    Text("\(links.outRows.count)")
-                        .font(.system(size: LivType.body).monospacedDigit())
-                        .foregroundStyle(LivTheme.text3)
-                }
-            }
-            .frame(minHeight: LivRow.height)
-            .contentShape(Rectangle())
+            // The accent is set ON the words: the row paints its own title
+            // ink, and an outer style never reaches past it.
+            LivCardRow(
+                divided: false,
+                lead: { LivCardMark(glyph: .plus) },
+                title: { Text("Add link").foregroundStyle(LivTheme.accent) },
+                trailing: { EmptyView() }
+            )
         }
         .buttonStyle(.plain)
     }
@@ -138,19 +106,26 @@ struct LinksSection: View {
         all ? rows : Array(rows.prefix(Self.shown))
     }
 
-    @ViewBuilder private func moreButton(
-        _ rows: [LinkRow], expanded: Binding<Bool>
+    private func moreShows(_ rows: [LinkRow], _ expanded: Bool) -> Bool {
+        rows.count > Self.shown && !expanded
+    }
+
+    /// "Show all 12" — a row of the card, words in the accent, no chevron.
+    @ViewBuilder private func moreRow(
+        _ rows: [LinkRow], expanded: Binding<Bool>, last: Bool = false
     ) -> some View {
-        if rows.count > Self.shown && !expanded.wrappedValue {
-            // A CHIP, not a blue word — the same rule as the add door
-            // above it, and the same recipe with a different mark.
-            HStack {
-                AddChip("Show all \(rows.count)", symbol: "chevron.down") {
-                    expanded.wrappedValue = true
-                }
-                Spacer(minLength: 0)
+        if moreShows(rows, expanded.wrappedValue) {
+            Button {
+                expanded.wrappedValue = true
+            } label: {
+                LivCardRow(
+                    divided: !last, rule: LivCards.ruleBare,
+                    lead: { EmptyView() },
+                    title: { Text("Show all \(rows.count)").foregroundStyle(LivTheme.accent) },
+                    trailing: { EmptyView() }
+                )
             }
-            .frame(height: LivRow.height)
+            .buttonStyle(.plain)
         }
     }
 
@@ -186,8 +161,15 @@ struct LinksSection: View {
 
 // MARK: - one row
 
-/// A link row is the thing it points at: its kind chip, its name, and —
-/// only when this list is where the link lives — the way to remove it.
+/// A link row is the thing it points at: its glyph, its name, where the
+/// link lives ("Linked here" — a link made in this card — or "In the
+/// text"), and a chevron: it opens.
+///
+/// UNLINKING MOVED OFF THE ROW. The board's row ends in a chevron, so the
+/// ✕ that stood there is now the row's context menu and an accessibility
+/// action, "Unlink <name>" — the same verb, a press-and-hold away. A body
+/// link has neither: the brackets ARE the link, so the words are where it
+/// is removed.
 private struct LinkRowView: View {
     let link: LinkRow
     /// The snapshot's own row for the target, when the shell holds it —
@@ -195,36 +177,29 @@ private struct LinkRowView: View {
     let row: EntityRow?
     let onOpen: () -> Void
     let onRemove: (() -> Void)?
+    var backlink = false
+    var divided = true
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: onOpen) {
-                LivListRow(
-                    glyph: glyph, tint: color, title: name, untitled: untitled,
-                    divided: false)
+        Button(action: onOpen) {
+            LivCardRow(
+                glyph: glyph, title: name,
+                detail: backlink ? nil : (link.fromBody == true ? "In the text" : "Linked here"),
+                muted: untitled, divided: divided
+            ) {
+                LivChevron()
             }
-            .buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
             if let onRemove {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                        .frame(width: 40, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Unlink \(name)")
+                Button("Unlink \(name)", role: .destructive, action: onRemove)
             }
-            // A LINK TYPED IN THE BODY USED TO GET A GLYPH HERE — a
-            // 40x44 `text.quote` you could not press, standing in the
-            // column where every other row has its ✕. It said "this one
-            // is different" by occupying the space of a control and
-            // doing nothing, which is the worst of both: it read as a
-            // broken button and it explained nothing. The row already
-            // reads differently — it has no ✕ — and that IS the
-            // statement (the link lives in the words, so the words are
-            // where it is removed). Its meaning moves to the row's
-            // accessibility hint, where it can be a sentence.
+        }
+        .accessibilityActions {
+            if let onRemove {
+                Button("Unlink \(name)", action: onRemove)
+            }
         }
     }
 
@@ -249,10 +224,6 @@ private struct LinkRowView: View {
 
     private var glyph: LivGlyph {
         row.map { LivKind.glyph(of: $0) } ?? LivKind.named(link.kinds?.first ?? "").glyph()
-    }
-
-    private var color: Color {
-        row.map { LivKind.color(of: $0) } ?? LivKind.named(link.kinds?.first ?? "").color
     }
 }
 

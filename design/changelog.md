@@ -1,5 +1,67 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-27 — the clearer boards
+
+Owner: implement the approved "clearer" canvas (claude.ai artifact
+UqAN168J2vxR5MQ1BZwkaN; its "— now" boards are the UI before this). Every
+surface moved onto one system, all of it in `Theme.swift` tokens: 34pt
+screen titles with an accent stop over a 16pt subtitle; rows in rounded
+cards (`LivCard`, `.livCardRow`) under 20pt headers; one card row
+(`LivCardRow`: 18pt title, one 15pt line, 52 or 64 tall, the fact at 16 in
+text2, red only when late); Apple's day words (`Civil.dayWord` / `fact`,
+Monday-start weeks, en_GB); Today's schedule as a time column with bars
+and a zero-height now-line; Tasks' filter as a segmented control;
+Properties as Settings-style cards with "None"; the editor at 20pt margins,
+18/27 body, 32 title, H1 24 / H2 20; a new monochrome icon set on a 24 grid
+at 1.75 (`LivPen`); the panel foot, the Workspaces card (floating, radius
+34) and the create menu restyled. Old row types went with their last
+callers (`LivListRow`, `LivFilterChip`, `SectionGap`, `DetailRowLabel`…).
+
+Where the build departs from the boards, on purpose:
+- Icon dots are ink, not accent (the brief said monochrome). Kind colour
+  survives only on Today's bars and the calendar's blocks.
+- Late rows' "Today" is an accent word as drawn, which collides with the
+  house rule that only a link in a note is tappable text; it is a real
+  Button labelled "Move to today". Owner to rule.
+- Tasks keeps every status as a segment (the board draws three) and gains
+  a trailing Project menu segment for the filter the chips carried.
+- Unlink moved from a ✕ on the link row to its context menu.
+- The Workspaces card rises from the BOTTOM (its door is at the panel's
+  foot); the board hangs it from the top. Bar labels stay "New" and
+  "N documents open" — the harness reads them.
+- Notes' fact is when a note was last touched (what the list sorts on).
+- Light mode is not drawn by the boards; it renders, faintly.
+
+`drive.sh`: `rows` accepts the two card heights (52/64) and tells a
+header from a row by its Heading; `workspace` reads the title
+"Workspaces" and tests the edge by the gap under the last row; `facets`
+counts a name only when a facet chip shares its row (it had been passing
+on the Today screen behind the search sheet). Verified on a clone of the
+test simulator: `suites.sh` 13/13; `drive.sh` tour, rows, workspace,
+facets, library, bar, areas, spool pass. Ten other checks fail identically
+on HEAD (a feature view stays in the tree under an open document) — not
+this batch.
+
+Two fixes from the owner's first look: a fold (Tasks' Done, Today's done
+today) has two states and nothing between — the List redraws a row that is
+already on screen a few frames after the rows it inserts, so the header was
+a notch late; now it is a different row per state (`.id(open)`) and the
+switch is instant (`livFoldRow`, `livToggleFold`); and
+the doors and bar come back when a document opens over a scrolled list
+(`DeskModel.shown` resets the chrome — the list stays mounted under the
+document, so its `onDisappear` never fired). And a menu card no longer
+jumps as it closes: it placed itself from `LivDoors.lastPressed` on every
+draw, which its own rows overwrite (each is a door), so "New area…" moved
+the closing card under that row. `LivMenuHost` now keeps the door it
+opened from. And a task's or event's card wears the Properties sheet's own
+header (the name, 26 bold, and nothing under it: the board's "Note ·
+edited today 21:04" line came off on the owner's word, 2026-09-29, with
+`livEditedLine` and `dayWord`'s mid-sentence form) — the record card had drawn its own
+name field, 32 semibold with a second commit, which had drifted; its
+double-commit guard and caret-on-create moved into the one header, and the
+caret request is now taken into state on appear (read in `body`, it was
+true for one render only, so a new task opened unfocused).
+
 ## 2026-09-09 — rev 61: the panel lands on the view it names
 
 Owner: *"sometimes when selecting Notes from the panel it gets you to an

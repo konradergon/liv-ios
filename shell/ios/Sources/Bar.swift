@@ -30,12 +30,17 @@ import SwiftUI
 /// everywhere. Its word now repeats its glyph, and five captions across
 /// 294pt were carrying one key's worth of doubt.
 ///
-/// THE ONE WORD THAT WAS STILL WORKING is the numbered box's. A box with
-/// a digit in it is a browser idiom and "Open" was the owner's word for
-/// it. It is dropped here as a BET that the digit reads alone; if it does
-/// not, that one key gets its caption back and the other four stay bare.
-/// The accessibility label is unchanged either way — nothing about this
-/// is a change for VoiceOver, which never read the captions.
+/// THE ONE WORD THAT WAS STILL WORKING was the tab key's. "Open" was the
+/// owner's word for it. It is dropped here as a BET that the drawing
+/// reads alone — since the Icons board (2026-09-24) stacked notes with
+/// the count on the front one, not a numbered box that "read as a date";
+/// if it does not, that one key gets its caption back and the other four
+/// stay bare. The accessibility label is unchanged either way — nothing
+/// about this is a change for VoiceOver, which never read the captions.
+///
+/// THE KEYS ARE DRAWN in the icon hand (`LivGlyph`), not SF Symbols: the
+/// boards draw the chevrons, the lens and `+` at the family's 1.75pt, and
+/// Apple's at `.medium` stood heavier than everything around them.
 ///
 /// WHY THREE AND NOT FIVE-IN-A-ROW. The grouping is the only thing on
 /// this bar that says anything now the captions are gone: where you have
@@ -89,27 +94,35 @@ enum LivBarFrame {
 
 struct BottomBar: View {
     @EnvironmentObject var desk: DeskModel
+    /// A finger is down on the key that holds a menu (`+`, the only one),
+    /// so it wears the held plate — until the finger lifts, or the hold
+    /// fires and the bar steps aside for the menu (`Desk.surfaceFoot`
+    /// drops it while any menu is up, so the plate is never seen under
+    /// the menu itself).
+    @GestureState private var holding = false
 
     var body: some View {
         HStack(spacing: 0) {
             // MOVE.
             piece {
-                key("chevron.left", "Back", on: desk.back != nil) { desk.goBack() }
-                key("chevron.right", "Forward", on: desk.forward != nil) { desk.goForward() }
+                key(.back, "Back", on: desk.back != nil) { desk.goBack() }
+                key(.forward, "Forward", on: desk.forward != nil) { desk.goForward() }
             }
             Spacer(minLength: LivBar.pieceGap)
             // FIND. Alone, and in the middle, because it is the only key
             // here that is not about notes.
             piece {
-                key("magnifyingglass", "Search") { desk.searchShown = true }
+                key(.search, "Search") { desk.searchShown = true }
             }
             Spacer(minLength: LivBar.pieceGap)
             // MAKE, AND REACH. TAP MAKES, HOLD ASKS — the 2026-08-28
             // ruling, untouched: the common thing is one tap and every
-            // exception is a tap and a hold. Spoken it is still "New",
-            // which is also what the harness taps.
+            // exception is a tap and a hold. The glyph is a page with a
+            // plus, and the hold now SHOWS, as the corner tick. Spoken it
+            // is still "New", which is also what the harness taps; the
+            // hold is its hint.
             piece {
-                key("plus", "New", hold: { desk.createSomething() }) { desk.newNote?() }
+                key(.new, "New", hold: { desk.createSomething() }) { desk.newNote?() }
                 tabKey
             }
         }
@@ -142,13 +155,15 @@ struct BottomBar: View {
             .livGlass(in: Capsule())
     }
 
-    /// THE NUMBERED BOX — the tab key, and the only door to the tabs.
+    /// THE TAB KEY — notes stacked, the count on the front one — and
+    /// the only door to the tabs.
     ///
     /// Owner, 2026-08-23: *"Not a tab 'bar', remove it. We're on the
     /// phone, not desktop. Just have tabs as they appeared before when
     /// you clicked the numbered box."* So there is no strip along the
     /// top; tapping this opens the GRID of cards, which is what a phone
-    /// browser does and what this app already had.
+    /// browser does and what this app already had. It was a numbered box
+    /// until the Icons board, where it "read as a date".
     ///
     /// The count is of LIVE tabs, not all of them: a tab on the Inactive
     /// shelf is open but out of the way, and a key that counted them
@@ -158,7 +173,7 @@ struct BottomBar: View {
         return Button {
             desk.switcherShown = true
         } label: {
-            LivIcon(glyph: .day(n), color: LivTheme.text, size: LivBar.glyphSlot)
+            LivIcon(glyph: .tabs(n), color: LivTheme.text, size: LivBar.glyphSlot)
                 .frame(width: LivBar.slot, height: LivRow.touch)
                 .contentShape(Rectangle())
         }
@@ -169,34 +184,55 @@ struct BottomBar: View {
         .accessibilityLabel(n == 1 ? "1 document open" : "\(n) documents open")
     }
 
-    /// One key: a glyph in a `slot` × `LivRow.touch` target, and nothing
-    /// else. `spoken` is the accessibility label and, since the captions
-    /// went, the only place the key's name survives — which is why it is
-    /// no longer optional.
+    /// One key: a drawn glyph in a `slot` × `LivRow.touch` target, and
+    /// nothing else. `spoken` is the accessibility label and, since the
+    /// captions went, the only place the key's name survives — which is
+    /// why it is no longer optional. A key with a `hold` wears the corner
+    /// tick, and the held plate while a finger is on it.
     private func key(
-        _ icon: String, _ spoken: String, on: Bool = true,
+        _ glyph: LivGlyph, _ spoken: String, on: Bool = true,
         hold: (() -> Void)? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: LivBar.glyph, weight: .medium))
+            LivIcon(glyph: glyph, color: LivTheme.text, size: LivBar.glyph)
                 // DISABLED IS INK, and nothing else: same glyph, same
                 // size, same place. A key that vanished when it could
-                // not fire would move every key beside it.
-                .foregroundStyle(LivTheme.text.opacity(on ? 1 : LivBar.disabledInk))
+                // not fire would move every key beside it. The WHOLE
+                // icon dims, so its layers never compound.
+                .opacity(on ? 1 : LivBar.disabledInk)
+                // HOLD FOR MORE: the tick's corner stands `tickOffset`
+                // right of and below the glyph's. An overlay, so the
+                // key's frame — which drive.sh measures — does not move.
+                .overlay(alignment: .bottomTrailing) {
+                    if hold != nil {
+                        HoldTick().offset(x: LivPen.tickOffset, y: LivPen.tickOffset)
+                    }
+                }
                 .frame(width: LivBar.slot, height: LivRow.touch)
+                // HELD: the full height of the piece, concentric with its
+                // capsule. A background, so it changes no frame either.
+                .background {
+                    if hold != nil && holding {
+                        RoundedRectangle(cornerRadius: LivBar.height / 2 - LivBar.piecePad)
+                            .fill(LivTheme.text.opacity(LivPen.held))
+                            .frame(width: LivBar.slot, height: LivBar.height)
+                    }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .livDoor()
         .disabled(!on)
         .accessibilityLabel(spoken)
+        .accessibilityHint(hold == nil ? "" : "Hold for more")
         // The hold is a SIMULTANEOUS gesture so it cannot eat the tap:
         // attached with `.onLongPressGesture`, the button stops firing
         // on a quick press and every key would have to be held.
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.45).onEnded { _ in hold?() },
+            LongPressGesture(minimumDuration: 0.45)
+                .updating($holding) { pressing, held, _ in held = pressing }
+                .onEnded { _ in hold?() },
             including: hold == nil ? .subviews : .all
         )
         // VoiceOver and Voice Control cannot press-and-hold, so the

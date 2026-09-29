@@ -2,13 +2,11 @@
 // flat list over every task in the box. Groups come from the vocabulary
 // (liv_status_options_at, board order); `completes` groups collapse by
 // default. Filters are client-side state only — the snapshot is never
-// re-queried to filter. Status chips/rings wear the OPTION's hue (quantized
-// to the semantic set); project chips wear no dot — a project has no colour
-// in the box, and hashing its name into one was a code with nothing to
-// decode (2026-08-29). Full snapshot on
-// appear — undated tasks must not drop. Tapping a row opens the entity as a
-// Desk tab (desk.open) — the rail→center gesture grammar; the chrome owns
-// the frame, so this body keeps only a SectionLabel-scale header.
+// re-queried to filter: a segmented control of statuses, and a Project
+// segment that is a menu. Done boxes wear the OPTION's hue (quantized to
+// the semantic set). Full snapshot on appear — undated tasks must not
+// drop. Tapping a row opens the entity as a Desk tab (desk.open). Rows
+// sit on cards under headers (the clearer boards, 2026-09-24).
 
 import SwiftUI
 import UIKit
@@ -35,7 +33,7 @@ struct TasksView: View {
     /// a haptic alone is a message to a thumb, not to a reader.
     @State private var addFailed = false
 
-    /// WHERE YOU ARE in this view: the chip that is on, and the
+    /// WHERE YOU ARE in this view: the segment that is on, and the
     /// completes-groups you have unfolded. Not `@State` since 2026-08-22
     /// — it is what a Tasks tab HOLDS (design/tabs.md, Reading B), so it
     /// lives in the plane and comes back with it.
@@ -69,42 +67,36 @@ struct TasksView: View {
     var body: some View {
         let groups = visibleGroups()
         List {
-            // THE SCREEN'S NAME — see the same addition in Notes and
-            // Everything. This one sits above the filter chips, which
-            // are a control, not a heading.
-            LivScreenTitle("Tasks")
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, LivAir.snug)
-                // 2 UNTIL 2026-09-18, and the tightest seam in the app:
-                // a 32pt bold hero given less air under it than a 16pt
-                // section label gets. Everything.swift gives 6 for the
-                // identical title-over-a-control pairing; this gives the
-                // scale's own number for it.
-                .padding(.bottom, LivAir.snug)
-                .listRowInsets(
-                    EdgeInsets(top: 0, leading: LivRow.margin, bottom: 0, trailing: 16))
+            // THE CLEARER BOARD (2026-09-24): the name with its stop and a
+            // line saying how much is open, then the filter, then cards.
+            LivTitleBlock("Tasks", subtitle: subtitle)
+                .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-            chipRow
+            segmentRow
+            gap(LivCards.gap)
             addRow
             if groups.allSatisfy({ $0.rows.isEmpty }) {
                 emptyRow
             }
             ForEach(groups) { group in
-                groupHeader(group)
-                if !group.completes || expanded.contains(group.name) {
+                if group.completes {
+                    foldCard(group)
+                } else {
+                    groupHeader(group)
                     ForEach(Array(group.rows.enumerated()), id: \.element.id) { i, row in
-                        taskRow(row, prev: i == 0 ? nil : group.rows[i - 1])
+                        taskRow(
+                            row, prev: i == 0 ? nil : group.rows[i - 1],
+                            position: .of(i, in: group.rows.count))
                     }
                 }
             }
             inNotesSection
         }
         .listStyle(.plain)
-        // 10, like Today, Inbox and Everything: every openable row now
-        // states `LivRow.height` itself, so the List's floor only has to
-        // stay out of the way, and one number across the four lists
-        // beats four.
+        // 10, like Today, Inbox and Everything: every row states its own
+        // height (`LivCards.row` / `twoLine`), so the List's floor only
+        // has to stay out of the way — and must stay under the 16 gaps.
         .environment(\.defaultMinListRowHeight, 10)
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
@@ -127,41 +119,68 @@ struct TasksView: View {
         }
     }
 
-    // MARK: header + filter chips
+    /// "6 open · 2 late": every open task in the lens plus the open lines
+    /// in notes, whatever the filter shows — the screen's size, not the
+    /// slice's. Late is grey here; the group heading carries the red.
+    private var subtitle: String {
+        let open = lensTasks.filter { !isDone($0) }
+        let late = open.filter(isLate).count
+        let count = open.count + noteLines.count
+        if count == 0 { return "Nothing open" }
+        return late > 0 ? "\(count) open · \(late) late" : "\(count) open"
+    }
 
-    private var chipRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                LivFilterChip("All", selected: filter == .all) {
-                    withAnimation(LivMotion.pick) { park(filter: .all) }
-                }
-                ForEach(options) { option in
-                    let name = option.name ?? ""
-                    LivFilterChip(name, selected: filter == .status(name)) {
-                        withAnimation(LivMotion.pick) {
-                            park(filter: filter == .status(name) ? .all : .status(name))
-                        }
-                    }
-                }
-                ForEach(projects, id: \.self) { project in
-                    LivFilterChip(
-                        project,
-                        selected: filter == .project(project)
-                    ) {
-                        withAnimation(LivMotion.pick) {
-                            park(
-                                filter: filter == .project(project)
-                                    ? .all : .project(project))
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
+    /// Clear air between two cards, as its own List row — never a top
+    /// inset on the card's first row, which would bleed the card's fill
+    /// into the gap.
+    private func gap(_ height: CGFloat) -> some View {
+        Color.clear
+            .frame(height: height)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+    }
+
+    // MARK: the filter
+
+    /// A SEGMENTED CONTROL (the clearer board): All, then every status in
+    /// the vocabulary. The board draws three segments; the app's own
+    /// vocabulary decides how many, so Doing stays. Projects filtered as
+    /// chips before, and the board has no room for them — they stay
+    /// reachable as one trailing segment that is a menu, shown only when
+    /// there are projects to pick.
+    private var segmentRow: some View {
+        let choices: [(value: TasksPosition.Filter, label: String)] =
+            [(.all, "All")] + options.compactMap { o in o.name.map { (.status($0), $0) } }
+        return LivSegment(
+            options: choices,
+            selection: Binding(get: { filter }, set: { park(filter: $0) })
+        ) {
+            if !projects.isEmpty { projectSegment }
         }
-        .padding(.vertical, 8)
+        .padding(.horizontal, LivRow.cardInset)
+        .padding(.bottom, LivSegmented.under)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
+    }
+
+    private var projectSegment: some View {
+        let picked: String? = {
+            if case .project(let p) = filter { return p }
+            return nil
+        }()
+        return Menu {
+            Button("All projects") { withAnimation(LivMotion.pick) { park(filter: .all) } }
+            ForEach(projects, id: \.self) { project in
+                Button(project) {
+                    withAnimation(LivMotion.pick) { park(filter: .project(project)) }
+                }
+            }
+        } label: {
+            LivSegmentFace(picked ?? "Project", on: picked != nil)
+        }
+        .accessibilityLabel(picked.map { "Project, \($0)" } ?? "Project")
     }
 
     private var emptyRow: some View {
@@ -184,15 +203,15 @@ struct TasksView: View {
     /// calendar lets you add their objects directly"*).
     ///
     /// The bar's `+` makes a note in every view now, so this is the door
-    /// it used to be here. It is the same spine as `taskRow` — a 15pt
-    /// mark in a 31pt column, the name at `LivType.strong`, the hairline
-    /// at 31 — because it becomes one of those rows the moment you hit
-    /// return.
+    /// it used to be here. It is its own card on the same spine as
+    /// `taskRow` — a 22 mark in the 28 column, the name where every
+    /// task's name starts — because it becomes one of those rows the
+    /// moment you hit return.
     ///
     /// **IT NEVER MAKES A TASK THAT VANISHES.** A typed task carries
-    /// whatever the filter you are looking at demands: the chip's status,
-    /// or the vocabulary's first status that does not complete; and the
-    /// chip's project when a project chip is on. Without that, the row
+    /// whatever the filter you are looking at demands: the segment's
+    /// status, or the vocabulary's first status that does not complete;
+    /// and the project when the Project segment has one picked. Without that, the row
     /// you just typed would be filtered straight out of the list you
     /// typed it into.
     ///
@@ -204,27 +223,25 @@ struct TasksView: View {
     /// which takes the time from where your finger lands and nothing
     /// else.
     private var addRow: some View {
-        HStack(spacing: 0) {
-            // THE MARK COLUMN, matching `StatusRing`'s geometry (15pt of
-            // ink in 8pt of padding = 31) so the field starts exactly
-            // where every task name does. Ink, never colour: an open box
-            // is ink here (see `StatusRing`), and a `+` that is the only
-            // accent on the screen would shout.
-            //
-            // IT GOES RED WHEN THE BOX REFUSED THE LAST ONE — the mark,
-            // not a word. It is where the eye already is, it costs the
-            // row no width, and (the reason it is not a label) it does
-            // not change this row's STRUCTURE, which is the fault this
-            // row was just fixed for.
-            Image(systemName: "plus")
-                .font(.system(size: LivType.caption, weight: .semibold))
-                .foregroundStyle(addFailed ? LivTheme.red : LivTheme.text3)
-                .frame(width: 15, height: 15)
-                .padding(8)
-                .frame(height: LivRow.touch)
-            TextField("New task", text: $adding)
-                .font(.system(size: LivType.strong))
-                .foregroundStyle(LivTheme.text)
+        // ITS OWN CARD, one row, on the card row's spine: the new-note mark
+        // in the 28 column, the field where every task's name starts.
+        LivCardRow(
+            divided: false,
+            lead: {
+                // IT GOES RED WHEN THE BOX REFUSED THE LAST ONE — the mark,
+                // not a word: it is where the eye already is, and it does
+                // not change this row's STRUCTURE.
+                LivIcon(
+                    glyph: .new, color: addFailed ? LivTheme.red : LivTheme.text2,
+                    size: LivCards.glyph
+                )
+                .frame(width: LivCards.mark)
+            },
+            title: {
+                TextField(
+                    "New task", text: $adding,
+                    prompt: Text("New task").foregroundStyle(LivTheme.text3)
+                )
                 .tint(LivTheme.accent)
                 .focused($addFocused)
                 .submitLabel(.return)
@@ -234,40 +251,26 @@ struct TasksView: View {
                 .onChange(of: adding) { _, _ in
                     if addFailed { addFailed = false }
                 }
-            // ALWAYS IN THE TREE, dimmed when there is nothing to add —
-            // the bar's own rule for a key that cannot fire (Bar.swift's
-            // `disabledInk`), and not merely a style choice here.
-            //
-            // It was wrapped in `if !adding.isEmpty`, so the FIRST
-            // keystroke inserted a sibling into this row while the field
-            // beside it held first responder. A row whose structure
-            // changes under an editing field is the one shape SwiftUI
-            // handles badly: it re-identifies the row, and the text can
-            // go with it — which looks exactly like typing doing nothing
-            // (owner, 2026-09-11: "adding a task from the add row does
-            // nothing visible"). Nothing is worth that; the row's width
-            // is not short of eight points.
-            // A PILL, not a blue word — see ConfirmPill.compact. The
-            // disabled dress stays exactly what it was: same shape, same
-            // place, dimmer ink.
-            ConfirmPill("Add", compact: true, action: commitAdd)
-                .opacity(typed.isEmpty ? LivBar.disabledInk : 1)
-                .padding(.leading, 8)
-                .disabled(typed.isEmpty)
-        }
-        .frame(minHeight: LivRow.height)
-        // THE WHOLE ROW TAKES THE TAP, like `taskRow` beneath it — a
-        // 31pt mark and a short field left most of the row inert, so a
-        // thumb aimed at "the empty row" landed on nothing.
+            },
+            trailing: {
+                // ALWAYS IN THE TREE, invisible while there is nothing to
+                // add. It was once inserted on the first keystroke, and a
+                // sibling appearing beside a field that holds first
+                // responder re-identified the row and could take the text
+                // with it (owner, 2026-09-11: "adding a task from the add
+                // row does nothing visible"). The board draws no pill on an
+                // empty field; this is how it gets that without the bug.
+                ConfirmPill("Add", compact: true, action: commitAdd)
+                    .opacity(typed.isEmpty ? 0 : 1)
+                    .disabled(typed.isEmpty)
+                    .accessibilityHidden(typed.isEmpty)
+            }
+        )
+        // THE WHOLE ROW TAKES THE TAP: a thumb aimed at "the empty row"
+        // must land in the field.
         .contentShape(Rectangle())
         .onTapGesture { addFocused = true }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.leading, 31)
-        }
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .livCardRow(position: .only)
     }
 
     /// What is in the field, trimmed — read by the verb and by whether
@@ -277,7 +280,7 @@ struct TasksView: View {
         adding.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The status a typed task takes: the chip you are filtered to, or
+    /// The status a typed task takes: the segment you are filtered to, or
     /// the first status in the vocabulary that does not complete — so a
     /// name typed with no thought lands in To do and not in Done.
     private var addStatus: String? {
@@ -285,7 +288,7 @@ struct TasksView: View {
         return options.first { $0.completes != true }?.name
     }
 
-    /// The project a typed task takes — only when a project chip is on,
+    /// The project a typed task takes — only when one is picked,
     /// and only so the row does not vanish (see `addRow`).
     private var addProject: String? {
         if case .project(let p) = filter { return p }
@@ -300,7 +303,7 @@ struct TasksView: View {
     private func commitAdd() {
         let name = typed
         guard !name.isEmpty, !addingBusy else { return }
-        // READ THE FILTER NOW, not when the box answers. The chip you
+        // READ THE FILTER NOW, not when the box answers. The segment you
         // were looking at when you typed is the one that decides where
         // this lands; a beat later it could be another.
         let status = addStatus
@@ -320,8 +323,8 @@ struct TasksView: View {
                 // nothing a person could see, which is the worst of both
                 // (a verb only ever reaches the log: `BoxModel.verbFailed`
                 // raises `boxFault` for a real fault and stays silent for
-                // a plain refusal). Put the name back and let the chip
-                // say so, so a failure is never mistaken for nothing.
+                // a plain refusal). Put the name back and let the row's
+                // mark say so, so a failure is never mistaken for nothing.
                 adding = name
                 addFocused = true
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -342,13 +345,9 @@ struct TasksView: View {
     /// The vocabulary's groups in board order + a final "No status" catch-all
     /// (also holds statuses no longer in the vocabulary — every task shows).
     private func visibleGroups() -> [TasksGroup] {
-        // The lens (M4) runs BEFORE the chip filter: the workspace scopes
-        // the surface, the chips narrow inside it.
-        let tasks = (model.snap?.entities ?? []).filter {
-            ($0.kinds ?? []).contains("task") && $0.trashed != true
-                && $0.archived != true && workspaces.admits($0)
-        }
-        let filtered = tasks.filter(matchesFilter)
+        // The lens (M4) runs BEFORE the segment filter: the workspace
+        // scopes the surface, the segments narrow inside it.
+        let filtered = lensTasks.filter(matchesFilter)
 
         var used = Set<LivEntityID>()
         var groups: [TasksGroup] = []
@@ -400,37 +399,50 @@ struct TasksView: View {
     }
 
     private func groupHeader(_ group: TasksGroup) -> some View {
-        let isExpanded = expanded.contains(group.name)
-        let trailing =
-            group.completes
-            ? "\(group.rows.count) \(isExpanded ? "▾" : "▸")"
-            : "\(group.rows.count)"
-        // THE LATENESS IS THE GROUP'S FACT, NOT EACH ROW'S. Measured
-        // 2026-08-30: this screen was 1.85% saturated pixels against
-        // Todoist's 0.58%, and 21,000 of those pixels were a column of
-        // red dates — one per row, because in this box every task is
-        // overdue. A colour that appears on every row distinguishes
-        // nothing; it just makes the list shout. Todoist says it once,
-        // in the heading, and leaves the rows grey.
-        let late = group.rows.filter { row in
-            guard let due = row.due, due > 0 else { return false }
-            return Civil.day(of: due) < Civil.todayDay()
-        }.count
-        // The heading is the fold's door (`.onTapGesture` below). It
-        // used to ALSO pass `trailingAction`, which drew the count as a
-        // second, blue door to the same place — one fold, two doors, one
-        // of them clickable text.
+        // THE LATENESS IS SAID TWICE NOW: once here, "2 late" in red, and
+        // once on each late row's date (the clearer board, 2026-09-24,
+        // which reverses the 2026-08-30 rule of saying it once, here).
+        let late = group.rows.filter(isLate).count
         return SectionLabel(
-            group.name, trailing: trailing,
-            note: late > 0 && !group.completes ? "\(late) late" : nil
+            group.name, count: group.rows.count,
+            note: late > 0 ? "\(late) late" : nil
         )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if group.completes { toggleExpanded(group.name) }
-        }
-        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+        .listRowInsets(EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
+    }
+
+    /// A COMPLETES GROUP IS A FOLD, and the fold is a card row: the done
+    /// box, the group's name, its count and a chevron (the clearer board's
+    /// "Done ›"). Opened, its rows follow in the same card and the chevron
+    /// turns down. It sits 16 under the card above it, with no heading.
+    @ViewBuilder private func foldCard(_ group: TasksGroup) -> some View {
+        let open = expanded.contains(group.name) && !group.rows.isEmpty
+        gap(LivCards.gap)
+        Button {
+            livToggleFold { toggleExpanded(group.name) }
+        } label: {
+            LivCardRow(
+                group.name, divided: open,
+                lead: {
+                    LivCheckbox(done: true, hue: group.hue)
+                        .frame(width: LivCards.mark)
+                        .accessibilityHidden(true)
+                },
+                trailing: {
+                    LivRowFact(text: "\(group.rows.count)")
+                    LivChevron(open ? .down : .right)
+                })
+        }
+        .accessibilityValue(open ? "Open" : "Closed")
+        .livFoldRow(open: open)
+        if open {
+            ForEach(Array(group.rows.enumerated()), id: \.element.id) { i, row in
+                taskRow(
+                    row, prev: i == 0 ? nil : group.rows[i - 1],
+                    position: i == group.rows.count - 1 ? .last : .middle)
+            }
+        }
     }
 
     // MARK: - "In notes": the checkbox lines (phase 3, owner 2026-08-05)
@@ -453,71 +465,52 @@ struct TasksView: View {
     @ViewBuilder private var inNotesSection: some View {
         let lines = noteLines
         if !lines.isEmpty {
-            SectionLabel("In notes", trailing: "\(lines.count)")
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            SectionLabel("In notes", count: lines.count)
+                .listRowInsets(EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-            ForEach(lines) { line in
-                noteLineRow(line)
+            ForEach(Array(lines.enumerated()), id: \.element.id) { i, line in
+                noteLineRow(line, position: .of(i, in: lines.count))
             }
         }
     }
 
-    private func noteLineRow(_ line: NoteTaskRow) -> some View {
+    private func noteLineRow(_ line: NoteTaskRow, position: LivCardPosition) -> some View {
         let owner = line.entity ?? .absent
         // The wire computes this where the content is — EntityRow.title
         // would read "Roof project - [ ] call the surveyor - [x] paid…".
         let source = line.source ?? ""
-        return HStack(spacing: 0) {
-            Button {
-                toggleNoteLine(line)
-            } label: {
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(LivTheme.text3, lineWidth: 1.5)
-                    .frame(width: 16, height: 16)
-                    .frame(width: 31, height: LivRow.touch)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Complete \(line.text ?? "")")
-            // Sub-lines ride along, inset — the note's own shape, kept.
-            if (line.indent ?? 0) > 0 {
-                Spacer().frame(width: 14)
-            }
-            Text((line.text ?? "").isEmpty ? "empty line" : (line.text ?? ""))
-                .font(.system(size: LivType.strong))
-                .foregroundStyle((line.text ?? "").isEmpty ? LivTheme.text2 : LivTheme.text)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Button {
-                desk.open(owner)
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up.forward")
-                        .font(.system(size: LivChip.glyph, weight: .semibold))
-                    Text(source.isEmpty ? "note" : source)
-                        .font(.system(size: LivType.caption, weight: .medium))
-                        .lineLimit(1)
+        let text = line.text ?? ""
+        // THE SOURCE IS THE SECOND LINE ("In Climbing log"), not a chip:
+        // the whole row opens the note now, which is what the chip did.
+        return LivCardRow(
+            detail: "In \(source.isEmpty ? "a note" : source)",
+            muted: text.isEmpty, divided: position.divided,
+            lead: {
+                Button {
+                    toggleNoteLine(line)
+                } label: {
+                    LivCheckbox(done: false)
+                        .frame(width: LivCards.mark, height: LivRow.touch)
+                        .contentShape(Rectangle())
                 }
-                .foregroundStyle(LivTheme.text3)
-                .padding(.horizontal, 8)
-                // The app's chip height, not a raw 20 under it.
-                .frame(height: LivChip.height)
-                .background(Capsule().fill(LivTheme.panel2))
-                .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open \(source.isEmpty ? "the note" : source)")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Complete \(text)")
+            },
+            title: {
+                HStack(spacing: 0) {
+                    // Sub-lines ride along, inset — the note's own shape.
+                    if (line.indent ?? 0) > 0 { Spacer().frame(width: LivCards.indent) }
+                    Text(text.isEmpty ? "empty line" : text)
+                }
+            },
+            trailing: { EmptyView() }
+        )
+        .onTapGesture { desk.open(owner) }
+        .accessibilityAction(named: "Open \(source.isEmpty ? "the note" : source)") {
+            desk.open(owner)
         }
-        .frame(minHeight: LivRow.height)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.leading, 31)
-        }
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .livCardRow(position: position)
     }
 
     /// Check the line: edit THAT NOTE's text — the same write the editor's
@@ -572,71 +565,39 @@ struct TasksView: View {
 
     // MARK: rows
 
-    private func taskRow(_ row: EntityRow, prev: EntityRow?) -> some View {
+    private func taskRow(_ row: EntityRow, prev: EntityRow?, position: LivCardPosition) -> some View {
         let option = options.first { $0.name == row.status }
         let done = option?.completes == true
         let due = livNewFact(tasksDue(row), after: prev.flatMap { tasksDue($0) })
-        let chips = refChips(row)
-        return HStack(spacing: 0) {
-            StatusRing(done: done, hue: tasksOptionColor(option?.hue)) {
-                toggleStatus(row, done: done)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(
-                    (row.title ?? "").isEmpty ? "untitled task" : (row.title ?? "")
-                )
-                .font(.system(size: LivType.strong))
-                .foregroundStyle(
-                    (row.title ?? "").isEmpty ? LivTheme.text2 : LivTheme.text
-                )
-                .lineLimit(1)
-                if !chips.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(Array(chips.enumerated()), id: \.offset) { $0.element }
-                    }
+        let title = (row.title ?? "").isEmpty ? "untitled task" : (row.title ?? "")
+        // ONE SECOND LINE, not a chip: where the task lives. The list's rows
+        // come off the snapshot, which carries no cells, so the anchor is
+        // read from the model's own row — asking for it is what fetches
+        // them — and the area, on the wire, shows at once.
+        return LivCardRow(
+            title, detail: livPlace(of: model.entity(row.id) ?? row),
+            muted: (row.title ?? "").isEmpty,
+            divided: position.divided,
+            lead: {
+                StatusRing(done: done, hue: tasksOptionColor(option?.hue), name: title) {
+                    toggleStatus(row, done: done)
                 }
+            },
+            trailing: {
+                // Only when it CHANGES, so five rows due the same day say
+                // it once (`livNewFact`); red when late and still open.
+                if let due { LivRowFact(text: due, late: !done && isLate(row)) }
             }
-            Spacer(minLength: 8)
-            if let due {
-                // Always text3 — see `groupHeader` for where the
-                // lateness went — and only when it CHANGES, so five
-                // rows due "Sun 16 Aug" say it once (`livNewFact`).
-                LivRowFact(text: due)
-            }
-        }
-        // NO VERTICAL PADDING. It was here from when the row was 40,
-        // and it sits OUTSIDE the frame below — so it padded the content
-        // first and the 56 floor then never bound: a row carrying a chip
-        // drew 58 while its neighbours drew 56 (found 2026-09-05 by
-        // `drive.sh rows`, which was written to catch exactly this).
-        // Today draws the same title-over-chips stack with no padding.
-        // THE APP'S ROW HEIGHT, not this list's own. It was a raw 40,
-        // then a raw 44, while Notes, Everything and Inbox drew the same
-        // kind of row at `LivRow.height` — so Tasks read shorter than
-        // every list beside it and 40 was under Apple's touch minimum
-        // besides, with the whole row as the target.
-        .frame(minHeight: LivRow.height)
-        .contentShape(Rectangle())
+        )
         .onTapGesture { desk.open(row.id) }  // rows open as Desk tabs
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.leading, 31)
-        }
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .livCardRow(position: position)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             // The spec's full verb set (§6): Tonight / Tomorrow / Weekend /
             // Pick. Tonight matches the due sheet's 20:00; on a Friday,
             // Weekend IS tomorrow and drops out (eval §5.11).
-            // ONE TINT FOR ONE FAMILY OF VERBS. These are four ways of
-            // saying the same thing — move this to a different day — and
-            // they wore four different saturated colours, so the tray
-            // read as four unrelated buttons and the colours carried no
-            // information the WORDS did not already carry. iOS tints a
-            // tray by what an action IS, not by which one it is: one
-            // colour for scheduling, red for the destructive tray on the
-            // other edge.
+            // ONE TINT FOR ONE FAMILY OF VERBS: four ways of saying "move
+            // this to another day" wear the scheduling colour; red is for
+            // the destructive tray on the other edge.
             Button("Tonight") {
                 model.setSpan(
                     row.id, "due",
@@ -685,32 +646,30 @@ struct TasksView: View {
             start: Civil.stamp(day: day, hhmm: hhmm), end: 0, dateOnly: false)
     }
 
-    /// Trailing due: today shows the time (or "Today"), everything else the
-    /// day label. Danger strictly past — due today is not overdue.
-    /// A row's date, as words. It used to return a `danger` flag with it
-    /// and nothing reads that any more — the lateness moved to the group
-    /// heading, so the flag went with it rather than sitting here unused
-    /// (standing rule 6).
+    /// A row's date in Apple's words: "09:41" or "Today" today, then
+    /// "Yesterday", a weekday this week, else "18 Sep" (`Civil.fact`).
     private func tasksDue(_ row: EntityRow) -> String? {
         guard let due = row.due, due > 0 else { return nil }
-        let day = Civil.day(of: due)
-        if day == Civil.todayDay() {
-            let time = Civil.timeString(due)
-            return time.isEmpty ? "Today" : time
-        }
-        return Civil.dayLabel(day)
+        return Civil.fact(due)
     }
 
-    /// Ref cells become chips: the cell's own display value, else the
-    /// target's title from the snapshot index. Three at most — density law.
-    /// ONE chip, not three (BP-6: the tile's line 2 is "people, then
-    /// exactly ONE date chip, then tier — and NEVER a status chip,
-    /// because the column already carries status"; empty fields do not
-    /// render at all). The date is the row's right-hand fact already, so
-    /// what is left to say here is what the task is attached to.
-    private func refChips(_ row: EntityRow) -> [ValueChip] {
-        // One helper, one order (`livAnchor`); an area leads with its mark.
-        livAnchorChip(of: row).map { [$0] } ?? []
+    /// Every task the workspace lens admits, before the filter — the
+    /// subtitle counts these, the groups narrow them.
+    private var lensTasks: [EntityRow] {
+        (model.snap?.entities ?? []).filter {
+            ($0.kinds ?? []).contains("task") && $0.trashed != true
+                && $0.archived != true && workspaces.admits($0)
+        }
+    }
+
+    private func isDone(_ row: EntityRow) -> Bool {
+        options.first { $0.name == row.status }?.completes == true
+    }
+
+    /// Late is strictly past: due today is not overdue.
+    private func isLate(_ row: EntityRow) -> Bool {
+        guard let due = row.due, due > 0 else { return false }
+        return Civil.day(of: due) < Civil.todayDay()
     }
 }
 

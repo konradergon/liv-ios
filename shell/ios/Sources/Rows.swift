@@ -2,85 +2,6 @@ import SwiftUI
 
 // MARK: - the one list row (surface pass, owner 2026-08-18)
 
-/// Every list in the app draws its rows through here.
-///
-/// The brief was "quiet, effortless, obvious", with ClickUp, Linear and
-/// Notion as the level to match. What those have in common in a list is
-/// restraint that is easy to name: ONE line of text at ordinary size, a
-/// small icon that is not shouting, a fact on the right in the quietest
-/// ink, a hairline that starts where the text starts, and nothing else —
-/// no chevrons, no counts, no second row of chips.
-///
-/// **Colour only where it tells things apart** (owner, 2026-08-18). A
-/// list of documents is all one kind, so its glyph is monochrome; Today,
-/// Everything and the calendar mix tasks with events with notes, and
-/// there the kind's colour is doing work. `tint: nil` is the quiet one.
-struct LivListRow<Trailing: View>: View {
-    let glyph: LivGlyph
-    /// The kind's colour, or nil for the quiet monochrome glyph.
-    var tint: Color? = nil
-    let title: String
-    /// A nameless thing reads in the muted ink, never in full strength.
-    var untitled = false
-    /// The hairline under the row. The LAST row in a group passes false —
-    /// a line with nothing under it is a line that ends the screen.
-    var divided = true
-    @ViewBuilder var trailing: Trailing
-
-    var body: some View {
-        // ON THE ROW GRID, like every other row in the app.
-        //
-        // This drew its own numbers — a 22pt glyph slot, 12pt of air, and
-        // 2pt of padding around the whole thing — inside containers that
-        // pad 18. So its words began at 54 by coincidence while its
-        // hairline, which asks for `LivRow.hairline` (54, measured from
-        // the SCREEN), was applied INSIDE that inset frame and landed at
-        // 72. Measured off notes.png: the line missed the words it
-        // divides by eighteen points, down every list in the app.
-        //
-        // The tokens are the same ones the Inbox row uses, so there is
-        // one spine now: mark 24, gap 14, words and hairline at 54.
-        HStack(spacing: LivRow.markGap) {
-            // A STEP DOWN from the title. The glyph was `text2`, the
-            // same ink as the title beside it, so a row had no first and
-            // second voice at all — and with most titles being the
-            // placeholder "Untitled" (also text2) three things on the
-            // row read at one strength.
-            LivIcon(glyph: glyph, color: tint ?? LivTheme.text3, size: LivRow.glyph)
-                .frame(width: LivRow.mark)
-            Text(title)
-                .font(.system(size: LivType.strong))
-                .foregroundStyle(untitled ? LivTheme.text2 : LivTheme.text)
-                .lineLimit(1)
-            Spacer(minLength: 10)
-            trailing
-        }
-        .frame(minHeight: LivRow.height)
-        .contentShape(Rectangle())
-        .overlay(alignment: .bottom) {
-            if divided {
-                Rectangle()
-                    .fill(LivTheme.border)
-                    .frame(height: 0.5)
-                    // Starts where the TEXT starts: an inset hairline
-                    // groups the rows, a full-width one cuts the screen
-                    // into slabs. Measured from the ROW's own leading
-                    // edge, which is already inside the margin — hence
-                    // the subtraction, exactly as the Inbox does it.
-                    .padding(.leading, LivRow.hairline - LivRow.margin)
-            }
-        }
-    }
-}
-
-extension LivListRow where Trailing == EmptyView {
-    init(glyph: LivGlyph, tint: Color? = nil, title: String, untitled: Bool = false, divided: Bool = true) {
-        self.init(
-            glyph: glyph, tint: tint, title: title, untitled: untitled, divided: divided,
-            trailing: { EmptyView() })
-    }
-}
-
 /// The quietest fact on a row: a date, a time, a count. One ink, one
 /// size, monospaced digits so a column of them lines up.
 /// A FACT IS DRAWN ONLY WHEN IT CHANGES.
@@ -117,35 +38,24 @@ func livIsDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
 
 struct LivRowFact: View {
     let text: String
-    var emphasis: Bool = false
+    /// Past due and not done: the one fact on a row that turns RED (the
+    /// clearer boards — "red only for late").
+    var late: Bool = false
 
     var body: some View {
-        // THE ROW'S SECOND VOICE, and it has to sound like one. It was
-        // `label` (16) in `text2` once — one step under an 18pt title in
-        // the SAME ink, which on a list of placeholder titles meant
-        // twelve identical-looking pairs down the screen. The fix was
-        // read as "make it smaller" and it went to caption (14) in
-        // text3, moving BOTH axes when only one had to.
+        // THE ROW'S SECOND VOICE, at `label` (16) with monospaced digits.
         //
-        // Back to `label` (2026-09-05), text3 kept. The ink is what
-        // separates the two voices — and the number this comment used to
-        // give for that was the wrong one. 4.5:1 is text3 against the
-        // CANVAS, which is the figure `Palette` declares; against the
-        // title's full ink, which is what "separates the two voices"
-        // means, text3 measures 3.52:1 (text2 would be 2.26:1). The
-        // ruling is unaffected — 3.52 is still a real separation and
-        // still more than text2 gives — but a comment carrying a
-        // borrowed number is how a later pass talks itself into the
-        // wrong swap. Measured 2026-09-12 with `livPaletteSelfCheck`'s
-        // own luminance formula.
-        //
-        // At 14 the date was 0.70 of the title beside it,
-        // where the reference the owner points at (Todoist: a 13pt date
-        // under a 17pt title) is 0.76. It was starved on both axes at
-        // once. Only an emphasised fact comes forward in ink.
+        // text2 SINCE THE CLEARER BOARDS (2026-09-24). It was text3 from
+        // 2026-09-05, on the argument that ink separates the voices — at
+        // 3.52:1 against the title's full ink where text2 gives 2.26:1.
+        // The boards draw every fact in text2 at 16 beside an 18 title and
+        // rule "never text3 on a content row's fact": the size step and
+        // the tier step together do the separating, and text3 on the
+        // surface card (4.09:1) sat under the 4.5 floor text holds itself
+        // to.
         Text(text)
             .font(.system(size: LivType.label).monospacedDigit())
-            .foregroundStyle(emphasis ? LivTheme.text : LivTheme.text3)
+            .foregroundStyle(late ? LivTheme.red : LivTheme.text2)
             .lineLimit(1)
     }
 }
@@ -167,29 +77,52 @@ struct LivRowFact: View {
 /// arriving and leaving. A press is not navigation and does not move:
 /// it is a fill that is either there or not.
 struct LivPress: ButtonStyle {
-    /// Rows inside a card are already clipped by the card, so they take
-    /// the square fill; a standalone row rounds its own corners.
+    /// A standalone row rounds its own corners; 0 is a square fill.
     var radius: CGFloat = 0
+    /// A ROW ON A CARD fills the card's own shape for where it sits, so
+    /// a pressed first or last row keeps the card's rounded corners
+    /// instead of squaring them off.
+    var position: LivCardPosition? = nil
+    var fill: Color = LivTheme.pressed
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(configuration.isPressed ? LivTheme.pressed : .clear))
+            .background {
+                if configuration.isPressed {
+                    if let position {
+                        position.shape.fill(fill)
+                    } else {
+                        RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill)
+                    }
+                }
+            }
             .contentShape(Rectangle())
     }
 }
 
 extension View {
-    /// The whole app's row press. Written as a modifier so a row that is
-    /// NOT a button (a `.onTapGesture` row, a swipe row) can still be
-    /// converted without changing its shape.
-    func livRowPress(radius: CGFloat = 0) -> some View {
-        buttonStyle(LivPress(radius: radius))
+    /// A CONTROL ON A CARD ROW — an accept circle, a ✕, a ✓ — laid out at
+    /// the mark's height, so a 52 row stays 52 (laid out at the 44 touch
+    /// floor, a title-only row came out 62), and hit-tested out to 44 in
+    /// the row's own vertical padding. The width is the control's own and
+    /// does not grow, so two side by side never share a finger.
+    func livRowControl(width: CGFloat) -> some View {
+        frame(width: width, height: LivCards.mark)
+            .contentShape(
+                Rectangle()
+                    .size(width: width, height: LivRow.touch)
+                    .offset(y: (LivCards.mark - LivRow.touch) / 2))
+    }
+
+    /// The press for a row on a card, in the card's own shape for where
+    /// the row sits. Written as a modifier so a row that is NOT a button
+    /// (a swipe row) can still be converted without changing its shape.
+    func livRowPress(_ position: LivCardPosition) -> some View {
+        buttonStyle(LivPress(position: position))
     }
 }
 
-// MARK: - the card (surface pass 2)
+// MARK: - the card (surface pass 2; the clearer boards, 2026-09-24)
 
 /// Related rows on a raised panel, inset from the screen's edges.
 ///
@@ -202,22 +135,30 @@ extension View {
 ///
 /// Liv ran every list edge to edge with hairlines, which reads as one
 /// undifferentiated column no matter how the rows inside are grouped.
+///
+/// THIS IS THE STACK FORM, for a card that is not in a `List` (Settings,
+/// a sheet). A card whose rows swipe is built of List rows instead, each
+/// wearing its piece of the card (`.livCardRow`) — the same fill, radius
+/// and inset, so the two cannot be told apart.
 struct LivCard<Content: View>: View {
-    /// A quiet heading above the card. Outside it, like the references:
-    /// a label inside a card is a row that cannot be tapped.
+    /// A heading above the card. Outside it, like the references: a
+    /// label inside a card is a row that cannot be tapped.
     var label: String? = nil
+    var labelStyle: LivHeaderStyle = .screen
     var inset: CGFloat = LivRow.cardInset
+    /// `surface` on the canvas; `panel2` on a sheet or in a menu.
+    var fill: Color = LivTheme.surface
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let label {
-                SectionLabel(label)
-                    .padding(.horizontal, inset + 4)
+                SectionLabel(label, style: labelStyle)
+                    .padding(.horizontal, inset)
             }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(LivTheme.surface)
+                .background(fill)
                 .clipShape(
                     RoundedRectangle(cornerRadius: LivTheme.radiusLg, style: .continuous))
                 .padding(.horizontal, inset)
@@ -225,16 +166,195 @@ struct LivCard<Content: View>: View {
     }
 }
 
-/// The hairline BETWEEN two rows of a card. Inside a card the line never
-/// runs to the edge — it starts where the text starts and stops short of
-/// the card's own rounded corner, or it draws a chord across it.
+/// WHERE A ROW SITS IN ITS CARD — which of the card's corners it owns,
+/// and whether a hairline runs under it (every row but the last).
+enum LivCardPosition {
+    case first, middle, last, only
+
+    /// Row `index` of a card holding `count` rows.
+    static func of(_ index: Int, in count: Int) -> LivCardPosition {
+        if count <= 1 { return .only }
+        if index == 0 { return .first }
+        return index == count - 1 ? .last : .middle
+    }
+
+    var divided: Bool { self == .first || self == .middle }
+
+    /// This row's piece of the card: `radiusLg` on the corners it owns.
+    var shape: UnevenRoundedRectangle {
+        let top = self == .first || self == .only ? LivTheme.radiusLg : 0
+        let bottom = self == .last || self == .only ? LivTheme.radiusLg : 0
+        return UnevenRoundedRectangle(
+            topLeadingRadius: top, bottomLeadingRadius: bottom,
+            bottomTrailingRadius: bottom, topTrailingRadius: top, style: .continuous)
+    }
+}
+
+extension View {
+    /// A `List` row as its piece of a card. The row keeps being a List
+    /// row — so `.swipeActions` keeps working — and its background draws
+    /// the card: inset `cardInset` from the screen, rounded on the
+    /// corners its position owns. The content spans the card, so a
+    /// `LivCardRow` inside lays out in card coordinates.
+    func livCardRow(position: LivCardPosition, fill: Color = LivTheme.surface) -> some View {
+        listRowInsets(
+            EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
+            .listRowSeparator(.hidden)
+            .listRowBackground(
+                position.shape.fill(fill).padding(.horizontal, LivRow.cardInset))
+    }
+}
+
+/// A FOLD HAS TWO STATES, collapsed and expanded, and nothing between
+/// (owner, 2026-09-27).
+///
+/// The List redraws a row that is already on screen — content and
+/// background — a few frames AFTER the rows it inserts or removes. A fold
+/// header that stayed one row across the change therefore lagged its own
+/// rows: open, it kept its rounded bottom over the rows arriving under it
+/// (a notch at the join); shut, it stayed square with nothing below. So
+/// the header is a DIFFERENT row in each state (`.id(open)`): the List
+/// swaps it in the same update as the rows, with no redraw to wait for.
+/// And the switch is instant — `livToggleFold` — because a crossfade
+/// between the two headers would be a third state of its own.
+extension View {
+    /// A fold's header: the card's only row while collapsed, its first
+    /// while expanded.
+    func livFoldRow(open: Bool) -> some View {
+        let position: LivCardPosition = open ? .first : .only
+        return livRowPress(position)
+            .livCardRow(position: position)
+            .id(open)
+    }
+}
+
+/// Collapse or expand a fold: one update, no animation (see `livFoldRow`).
+func livToggleFold(_ toggle: () -> Void) {
+    var instant = Transaction()
+    instant.disablesAnimations = true
+    withTransaction(instant, toggle)
+}
+
+/// The hairline BETWEEN two rows of a card: 0.5 in `border`, from where
+/// the words start (`LivCards.rule`, 56 in card coordinates) to the
+/// card's right edge, which the card's own clip ends. None under the last
+/// row. A row with no mark passes `LivCards.ruleBare`; the schedule,
+/// `LivSchedule.rule`.
 struct LivCardRule: View {
-    var inset: CGFloat = LivRow.hairline
+    var inset: CGFloat = LivCards.rule
 
     var body: some View {
         Rectangle()
             .fill(LivTheme.border)
             .frame(height: 0.5)
             .padding(.leading, inset)
+    }
+}
+
+// MARK: - the card row (the clearer boards, 2026-09-24)
+
+/// ONE ROW ON A CARD: a lead (a 28 mark by default), the title with an
+/// optional second line under it, and a trailing cluster (a fact, then a
+/// chevron or a control, 10 apart). 52 tall with a title alone, 64 with
+/// a second line; padded 16 across and 9 above and below; a hairline
+/// from `rule` unless it is the card's last row.
+///
+/// The row draws no background and no press — the card (`LivCard`, or
+/// `.livCardRow` in a List) does the one and `livRowPress` the other.
+/// It is NOT one accessibility element: a Button row gets its combined
+/// label from the Button, as every row always has.
+struct LivCardRow<Lead: View, Title: View, Trailing: View>: View {
+    /// The second line: 15 text2, one line, parts joined with " · ".
+    var detail: String? = nil
+    /// A nameless thing's title reads text2, never full strength.
+    var muted = false
+    var divided = true
+    /// 1, or 2 where a title may wrap (Unsorted).
+    var titleLines = 1
+    /// Where the hairline starts: `LivCards.rule` behind a 28 mark.
+    var rule: CGFloat = LivCards.rule
+    let lead: Lead
+    let title: Title
+    let trailing: Trailing
+
+    init(
+        detail: String? = nil, muted: Bool = false, divided: Bool = true,
+        titleLines: Int = 1, rule: CGFloat = LivCards.rule,
+        @ViewBuilder lead: () -> Lead, @ViewBuilder title: () -> Title,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.detail = detail
+        self.muted = muted
+        self.divided = divided
+        self.titleLines = titleLines
+        self.rule = rule
+        self.lead = lead()
+        self.title = title()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: LivCards.markGap) {
+            lead
+            VStack(alignment: .leading, spacing: LivCards.lineGap) {
+                title
+                    .font(.system(size: LivType.body))
+                    .foregroundStyle(muted ? LivTheme.text2 : LivTheme.text)
+                    .lineLimit(titleLines)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: LivType.detail))
+                        .foregroundStyle(LivTheme.text2)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: LivCards.trailingGap) { trailing }
+        }
+        .padding(.horizontal, LivCards.padX)
+        .padding(.vertical, LivCards.padY)
+        .frame(minHeight: detail == nil ? LivCards.row : LivCards.twoLine)
+        .contentShape(Rectangle())
+        .overlay(alignment: .bottom) {
+            if divided { LivCardRule(inset: rule) }
+        }
+    }
+}
+
+/// The default lead: a kind glyph at 22 in text2, centred in the 28 mark
+/// column. ICONS ARE INK — kind colour survives only on Today's event
+/// bars and the calendar's blocks.
+struct LivCardMark: View {
+    let glyph: LivGlyph
+
+    var body: some View {
+        LivIcon(glyph: glyph, color: LivTheme.text2, size: LivCards.glyph)
+            .frame(width: LivCards.mark)
+    }
+}
+
+extension LivCardRow where Title == Text {
+    /// A plain title, with any lead.
+    init(
+        _ title: String, detail: String? = nil, muted: Bool = false, divided: Bool = true,
+        titleLines: Int = 1, rule: CGFloat = LivCards.rule,
+        @ViewBuilder lead: () -> Lead, @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.init(
+            detail: detail, muted: muted, divided: divided, titleLines: titleLines,
+            rule: rule, lead: lead, title: { Text(title) }, trailing: trailing)
+    }
+}
+
+extension LivCardRow where Lead == LivCardMark, Title == Text {
+    /// The common row: a kind glyph, a title, a trailing cluster.
+    init(
+        glyph: LivGlyph, title: String, detail: String? = nil, muted: Bool = false,
+        divided: Bool = true, titleLines: Int = 1,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.init(
+            detail: detail, muted: muted, divided: divided, titleLines: titleLines,
+            lead: { LivCardMark(glyph: glyph) }, title: { Text(title) }, trailing: trailing)
     }
 }

@@ -283,24 +283,27 @@ struct LibraryPanel: View {
     /// global bar was one fixed layer too many. The bar now slides away
     /// on scroll, so the objection is gone.
     private func foot(_ counts: ViewCounts) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: LivPanelFoot.gap) {
             Button {
                 onWorkspace()
             } label: {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(workspaces.activeName)
-                            .font(.system(size: LivType.body, weight: .semibold))
-                            .foregroundStyle(LivTheme.text)
+                HStack(spacing: LivPanelFoot.gap) {
+                    // THE WORKSPACE'S LETTER, set like an icon (the clearer
+                    // board) — the same mark the Workspaces card draws.
+                    LivWorkspaceMark(workspace: workspaces.active, size: LivPanelFoot.mark)
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: LivDetail.valueGap) {
+                            Text(workspaces.activeName)
+                                .font(.system(size: LivType.body, weight: .semibold))
+                                .foregroundStyle(LivTheme.text)
+                                .lineLimit(1)
+                            LivChevron(.down, ink: LivTheme.text2)
+                        }
+                        Text(counts.foot)
+                            .font(.system(size: LivType.detail).monospacedDigit())
+                            .foregroundStyle(LivTheme.text3)
                             .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: LivType.caption, weight: .semibold))
-                            .foregroundStyle(LivTheme.text2)
                     }
-                    Text(counts.foot)
-                        .font(.system(size: LivType.label))
-                        .foregroundStyle(LivTheme.text3)
-                        .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -320,15 +323,15 @@ struct LibraryPanel: View {
             // shape both references use for the settings key, and the
             // reason a same-coloured control still reads as a control.
             Button(action: onSettings) {
-                LivIcon(glyph: .settings, color: LivTheme.text2, size: 22)
-                    .frame(width: 46, height: 46)
+                LivIcon(glyph: .settings, color: LivTheme.text2, size: LivCards.glyph)
+                    .frame(width: LivPanelFoot.circle, height: LivPanelFoot.circle)
                     .background(Circle().fill(LivTheme.panel2))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
         }
-        .padding(.leading, LivPanel.inset)
+        .padding(.leading, LivPanelFoot.inset)
         .padding(.trailing, LivPanel.litInset)
         .padding(.bottom, 4)
         // NO HAIRLINE. The reference panel has no divider anywhere in it
@@ -337,8 +340,8 @@ struct LibraryPanel: View {
     }
 
     /// One list row. NO hairline: a line between rows is what a FORM
-    /// does — it is what DetailHairline means one screen to the right —
-    /// and this is a list of places to go, held apart by its section
+    /// does — it is what the properties card's rules mean one screen to
+    /// the right — and this is a list of places to go, held apart by its section
     /// labels. The inset lines it used to draw also broke the
     /// constitution's own rule (interface.md: "Dividers are full-width
     /// or absent").
@@ -358,14 +361,13 @@ struct LibraryPanel: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            // ONE COLUMN AT 28pt for the whole panel: the glyph box
-            // starts there, and a 24pt box plus a 16pt gap puts every
-            // label at 68. Section text, when there is any, aligns to
+            // ONE COLUMN AT 28pt for the whole panel: the glyph starts
+            // there, and a 22pt glyph (no frame) plus a 16pt gap puts
+            // every label at 66. Section text, when there is any, aligns to
             // the GLYPH and not to the label — that is what makes two
             // different lists read as one column.
             HStack(spacing: 16) {
-                LivIcon(glyph: glyph, color: LivTheme.text, size: 21)
-                    .frame(width: 24)
+                LivIcon(glyph: glyph, color: LivTheme.text, size: LivCards.glyph)
                 Text(label)
                     .font(.system(size: LivType.body, weight: .medium))
                     .foregroundStyle(LivTheme.text)
@@ -376,7 +378,7 @@ struct LibraryPanel: View {
                     // growing the row — the reference's own note about
                     // trailing elements.
                     Text(detail)
-                        .font(.system(size: LivType.body))
+                        .font(.system(size: LivType.body).monospacedDigit())
                         .foregroundStyle(LivTheme.text3)
                 }
             }
@@ -418,8 +420,6 @@ struct ViewCounts {
     /// workspace is, and that is every item in it.
     private var notes = 0
     private var today = 0
-    /// Rows with no area cell — the pile that is not yet sorted.
-    private var unfiled = 0
 
     init(box: BoxModel, lens: WorkspaceModel) {
         let now = Civil.todayDay()
@@ -441,12 +441,6 @@ struct ViewCounts {
             everything += 1
             // THE SAME TEST THE LIST USES: a page, not a record.
             if TabShape.of(row) != .record { notes += 1 }
-            // THE ROW'S OWN FIELD, not its cells. `cells` is nil until
-            // something asks the box for that row, so on a fresh launch
-            // this counted EVERY item as unfiled — "312 items · 312
-            // unfiled" — and then drifted down as other screens fetched.
-            // `area` is on the row the moment the row exists.
-            if row.area == nil { unfiled += 1 }
             switch LivKind.of(row) {
             case .task: tasks += 1
             case .event: events += 1
@@ -480,8 +474,10 @@ struct ViewCounts {
     /// What the workspace holds, and HOW MUCH OF IT IS SORTED. Obsidian's
     /// foot says how big the vault is; Liv's says how much is unfiled,
     /// which is the product page's second success test (2026-09-06).
+    /// "142 items · 6 unsorted" — the unsorted number IS the Unsorted
+    /// row's own (the clearer board shows 6 on both), in that view's word.
     var foot: String {
         let items = "\(everything) item\(everything == 1 ? "" : "s")"
-        return unfiled > 0 ? items + " · \(unfiled) unfiled" : items
+        return inbox > 0 ? items + " · \(inbox) unsorted" : items
     }
 }
