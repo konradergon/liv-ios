@@ -38,8 +38,9 @@ ffi/        Rust — the ONE C ABI; staticlib + cdylib + rlib. `Box.swift` names
             the old log through `convert/` (only Settings' Engine card calls
             it). The 58 old core verbs are exported, called by nothing in the
             app, and go in stage 5 with the card.
-cli/        Rust — a headless CLI; the VERIFICATION tool. STILL ON core/: it
-            reads and writes `.log` boxes, not the app's `liv.db` (stage 5 moves it)
+cli/        Rust — a headless CLI; the VERIFICATION tool. It calls the app's
+            own verbs through the ffi rlib, on the app's `liv.db` (since
+            2026-09-29), and seeds test boxes (`liv new task … --area Work`)
 shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
 shell/ios/ShareExtension/   the share-sheet extension: UIKit + Foundation only, no Rust;
                             it spools text into the App Group and the app captures it
@@ -145,13 +146,15 @@ architecturally clean and product-wrong is still wrong.
 ```
 cargo test                        # the whole Rust workspace (run before every PR)
 cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
-./target/release/liv --log <box> list --all   # inspect a box from the CLI
+./target/release/liv --box <dir>/liv.db list --all   # inspect a box from the CLI
 ```
 
-The CLI still reads only core-era `.log` boxes, not the app's `liv.db`. Until
-stage 5 moves it onto the engine, a test box is made by writing a `.log` with it
-and running `liv --log <box.log> convert <out.db>`; the app opens that `liv.db`
-through `LIV_BOX_PATH` (`SIMCTL_CHILD_LIV_BOX_PATH=<dir>/liv.log`).
+The CLI answers with the same verbs, and the same JSON, the app decodes
+(`liv help`). A test box is seeded with it —
+`liv --box <dir>/liv.db new task Pay rent --due 2026-09-30 --area Home` — and
+the app opens it through `LIV_BOX_PATH`
+(`SIMCTL_CHILD_LIV_BOX_PATH=<dir>/liv.log`: the app still names the old log
+and opens the `liv.db` beside it, until stage 5's next step).
 
 **The iOS shell has three of its own, and `cargo test` runs none of them.**
 
@@ -275,5 +278,5 @@ old codebase.
   how the area picker broke on 2026-09-14, and it is why `InspectorField`
   carries `property` and `shown` separately.
 - Verify on the simulator before claiming something works; cross-check writes
-  against the box with the CLI (once it reads `liv.db` — stage 5). A builder's
+  against the box with the CLI (`liv --box … cells ID`, `history`). A builder's
   own report is not evidence.

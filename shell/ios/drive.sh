@@ -2054,7 +2054,7 @@ cmd_create() {
       (was ${before}). Either it was not written, or it does not match
       the filter you typed it into — the add row is meant to carry
       whatever that filter demands. A very long list can also push the
-      new row under the fold; check with 'liv --log <box> list --all'."
+      new row under the fold; check with 'liv --box <box>/liv.db list --all'."
     return 1
   }
   tree | grep -q "$stamp" || {

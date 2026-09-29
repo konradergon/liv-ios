@@ -8,17 +8,11 @@ name = "liv"
 path = "src/main.rs"
 
 [dependencies]
-liv-core = { path = "../core" }
-liv-engine = { path = "../engine" }
-liv-convert = { path = "../convert" }
-liv-services = { path = "../services" }
-liv-views = { path = "../views" }
-# The satellite export renders the same snapshot JSON the FFI serves every
-# shell — the builder is private to liv-ffi, so the CLI links the rlib and
-# calls the C-ABI fn through a safe wrapper (cli/src/satellite.rs).
+# The app's own verbs, through the C ABI's rlib: the CLI checks the box
+# through the same code the app reads it with (src/main.rs).
 liv-ffi = { path = "../ffi" }
+# `history` reads the raw log, which no app verb exposes; and the civil
+# arithmetic.
+liv-engine = { path = "../engine" }
 chrono = "0.4"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# gzip for snapshot/desk.json.gz (the satellite wire format).
-flate2 = "1"
