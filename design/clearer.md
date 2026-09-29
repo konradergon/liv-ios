@@ -36,6 +36,8 @@ The owner's words, in order (2026-09-24 → 29):
   panel looks like an incomplete list of items since the bottom half is
   empty"
 - "go with A" (the panel as a list, with the workspaces moved into it)
+- "i thing the old open tabs "[n]" style was better. and the gear icon
+  shouldn't have a circle in the middle and be less coggy"
 
 ## The rules
 
@@ -185,21 +187,26 @@ case .trash:
     pen.line(4.5, 6.5, 19.5, 6.5)
     pen.shape([(9.5, 6.5, 0), (9.5, 4.5, 0), (14.5, 4.5, 0), (14.5, 6.5, 0)], closed: false)
     pen.shape([(6.5, 6.5, 0), (7.4, 20.2, 2), (16.6, 20.2, 2), (17.5, 6.5, 0)], closed: false)
-case .settings:                   // UNCHANGED — the owner's own cog of 2026-09-15
-    pen.gear(12, 12, root: 7, tip: 9.2, teeth: 8)
-    pen.circle(12, 12, 3.1)
+case .settings:                   // a plain cog: six round teeth, and NO hub (owner,
+                                  // 2026-09-29: "shouldn't have a circle in the middle
+                                  // and be less coggy")
+    pen.gear(12, 12, root: 7, tip: 9.3, teeth: 6, round: 1.1)
+    // `Pen.gear` gains `round:`, the corner radius it hard-codes as 0.45
+    // today. Its tooth proportions (0.33 / 0.21 of the pitch) stay. The
+    // `pen.circle(12, 12, 3.1)` hub goes.
 case .link:                       // UNCHANGED
     pen.link()
 ```
 
-New cases. The bar's keys, the properties door and Scan text come off
-SF Symbols:
+The tab key keeps `.day(n)`, the numbered box (owner, 2026-09-29: "the
+old open tabs [n] style was better"). It keeps its drawing, `pen.box(3,
+3.5, 18, 17, 3.5)`, and its count: centred, bold, 0.46 × size. The only
+change is the pen weight every glyph takes.
+
+New cases. The bar's other keys, the properties door and Scan text come
+off SF Symbols:
 
 ```swift
-case tabs(Int)                    // replaces .day(n) on the bar: open notes, stacked
-    pen.box(4, 7, 13, 14, 3)                                        // the front note
-    pen.shape([(8, 7, 0), (8, 3, 3), (20, 3, 3), (20, 17, 3), (17, 17, 0)], closed: false)
-    // the count is drawn on the FRONT note: centred on (10.5, 14), bold, ~0.44 × size
 case compose                      // the bar's +: a note with a plus. Tap makes a note.
     pen.shape([(11.5, 4, 0), (4, 4, 3), (4, 20, 3), (20, 20, 3), (20, 12.5, 0)], closed: false)
     pen.line(18, 2.8, 18, 9.2)
@@ -404,7 +411,8 @@ panel.
 ### The bar and the doors — `Bar.swift`, `Desk.swift`
 
 - The three glass pieces stay. The keys draw with the app's pen:
-  `.back`, `.forward`, `.search`, `.compose` and `.tabs(n)`.
+  `.back`, `.forward`, `.search` and `.compose`. The tab key keeps
+  `.day(n)`, the numbered box.
 - `+`: a tap makes a note and a hold opens the create menu, both as now.
   The key wears the hold tick.
 - The tab key's accessibility label is "N open notes".
@@ -429,8 +437,7 @@ panel.
     it `WorkspaceForm` would say what it is.
   - `DeskModel.workspaceShown` then means "the form is up".
 - The panel foot's workspace block, and `ViewCounts.foot`.
-- `LivGlyph.workspace` (the r8 circle) and `.day(n)`, once `.tabs(n)`
-  replaces it on the bar, if nothing else still draws them.
+- `LivGlyph.workspace` (the r8 circle), if nothing else still draws it.
 - `LivFilterChip`, whose only caller is Tasks.
 - The timeline's anchor `ValueChip`s, Today's all-day pill band, and
   Tasks' ↗ source chip.
