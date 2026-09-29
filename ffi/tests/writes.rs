@@ -2,9 +2,10 @@
 //! them.
 //!
 //! **The span shapes here are the shell's, verbatim.** They are copied
-//! from what `Editor.swift`'s `SpanJSON` encoder produces — which is
-//! itself pinned against the JSON in `core/src/value.rs`'s own tests — so
-//! if this file and that encoder ever disagree, the editor stops being
+//! from what `Editor.swift`'s `SpanJSON` encoder produces — which the
+//! editor's `spans` self-check pins in turn; `core/`'s serde first set the
+//! shape, until `core/` went in stage 5 (2026-09-29) — so if this file and
+//! that encoder ever disagree, the editor stops being
 //! able to save. That is the whole reason these are literal strings
 //! rather than something generated from the Rust types.
 

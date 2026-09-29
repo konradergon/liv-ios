@@ -3,9 +3,10 @@
 //! **The shell's span JSON does not change, and that is the point.**
 //! `Editor.swift`'s `SpanJSON` encodes and decodes serde's external
 //! tagging of `core/`'s `Span` enum — `{"Text":"words"}`,
-//! `{"Break":"Body"}`, `{"Break":{"Heading":3}}` — and it has a comment
-//! saying it is pinned against the JSON strings in `core/src/value.rs`'s
-//! own tests. Standing rule 4 says one grammar for one user-facing shape;
+//! `{"Break":"Body"}`, `{"Break":{"Heading":3}}`. `core/`'s serde first set
+//! that shape; with `core/` gone (stage 5, 2026-09-29) it is pinned by the
+//! literal strings in `ffi/tests/writes.rs` and by the editor's `spans`
+//! self-check. Standing rule 4 says one grammar for one user-facing shape;
 //! a second span encoding would be two.
 //!
 //! So this layer writes exactly that, by hand. The engine has no serde

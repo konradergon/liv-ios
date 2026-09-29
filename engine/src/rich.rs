@@ -1,9 +1,9 @@
 //! Rich text: what a note's body IS.
 //!
-//! **The same grammar as `core/src/value.rs`, deliberately** — standing
-//! rule 4 says one grammar and one parser for a user-facing shape, and a
-//! note written on the engine has to read as the same document `core/`
-//! wrote. The types are re-declared rather than imported because the
+//! **The same grammar `core/` had, deliberately** (its `value.rs`, deleted
+//! with it in stage 5, 2026-09-29) — standing rule 4 says one grammar and
+//! one parser for a user-facing shape, and a note `core/` wrote had to read
+//! here as the same document. The types are re-declared rather than imported because the
 //! engine depends on nothing above it (`lib.rs`), and because these get
 //! a hand-written encoding: `core/`'s are `#[derive(Serialize)]`, which
 //! is exactly the arrangement `op-format.md` §1 records as the first of

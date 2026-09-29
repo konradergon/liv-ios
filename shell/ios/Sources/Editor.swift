@@ -27,7 +27,7 @@ import os
 
 // MARK: - spans (the log's own serde encoding; decoding is TOTAL)
 
-/// The core's block vocabulary (core/src/value.rs `Block`), at FULL
+/// The box's block vocabulary (the engine's `rich.rs` `Block`), at FULL
 /// fidelity. Until 2026-08-11 this was two cases — body and "other" —
 /// because the codec flattened everything anyway (the recorded
 /// deviation). Now the phone writes what the core stores. Code fences
@@ -132,9 +132,9 @@ extension SpanJSON: Codable {
         }
     }
 
-    /// Encodes exactly what the core's serde parses — pinned by the
-    /// self-check against the JSON strings in core/src/value.rs's own
-    /// tests. An unmarked run stays the bare string so no fingerprint
+    /// Encodes exactly what the engine's span codec parses
+    /// (`ffi/src/spans.rs`) — pinned by the `spans` self-check and by the
+    /// literal strings in `ffi/tests/writes.rs`. An unmarked run stays the bare string so no fingerprint
     /// moves on untouched text; `.other` encodes as Body, which is only
     /// reachable when saving a doc the banner already said would flatten.
     func encode(to encoder: Encoder) throws {
