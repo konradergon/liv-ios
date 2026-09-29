@@ -223,14 +223,40 @@ fn value_for(e: &Engine, property: EntityId, raw: &str) -> Result<Option<Value>,
             _ => None,
         },
         model::Holds::Date => iso_day(raw).map(|d| Value::Date(DateSpec::Day(d))),
-        model::Holds::Ref | model::Holds::RefTo(_) => named_thing(e, raw)?.map(Value::Ref),
+        model::Holds::RefTo(_) => in_vocabulary(e, property, raw)?.map(Value::Ref),
+        model::Holds::Ref => named_thing(e, raw)?.map(Value::Ref),
         model::Holds::Blob | model::Holds::Rich => None,
     })
 }
 
+/// The one thing a typed name means FOR A PROPERTY THAT HOLDS ONE KIND OF
+/// THING — read off that property's own vocabulary, which is what its
+/// picker offers (`Engine::options_for`), and never off the whole box.
+///
+/// Two defects the box-wide reading had, both caught by tests moved over
+/// from the core-era search before it was deleted (2026-09-29):
+/// * **a note someone called "task" shadowed the task kind**, so
+///   `kind:task` resolved to nothing and found nothing;
+/// * **a value typed in another case did not resolve** — `area:work`
+///   missed the Work area — which the owner ruled on 2026-08-27: a lens
+///   that misses its own value because someone capitalised it is a trap.
+///
+/// The exact spelling wins over another case. Two things that differ only
+/// in case, or share one name, are a question the box cannot answer.
+fn in_vocabulary(e: &Engine, property: EntityId, raw: &str) -> Result<Option<EntityId>, LogError> {
+    let words = e.options_for(property)?;
+    let one = |matches: Vec<EntityId>| if matches.len() == 1 { Some(matches[0]) } else { None };
+    let exact: Vec<EntityId> = words.iter().filter(|(_, n)| n == raw).map(|(id, _)| *id).collect();
+    if !exact.is_empty() {
+        return Ok(one(exact));
+    }
+    Ok(one(words.iter().filter(|(_, n)| n.eq_ignore_ascii_case(raw)).map(|(id, _)| *id).collect()))
+}
+
 /// The one thing in the box with that name, compiled-in furniture
-/// included. `None` when nothing has it — and when more than one does,
-/// which is a question the box cannot answer.
+/// included — for a property that may hold ANY thing. `None` when nothing
+/// has it, and when more than one does, which is a question the box
+/// cannot answer.
 fn named_thing(e: &Engine, raw: &str) -> Result<Option<EntityId>, LogError> {
     let mut found = None;
     // NO AREAS IN THIS CHAIN any more (2026-09-21). There is no

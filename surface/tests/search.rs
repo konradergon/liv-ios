@@ -328,3 +328,90 @@ fn only_properties_the_result_actually_carries_get_a_chip_row() {
     assert!(props.contains(&prop::AREA));
     assert!(!props.contains(&prop::PROJECT), "nothing is in a project, so do not offer one");
 }
+
+// ---- moved from services/tests/search.rs (2026-09-29) --------------------
+//
+// Behaviours only the core-era search specified, carried across before
+// `services/` goes (stage 5, `design/rust-owns-the-mechanisms.md` §5).
+
+/// A workspace's reading of a query — what `liv_lens` runs.
+fn lens_hits(e: &Engine, raw: &str) -> Vec<EntityId> {
+    let s = parse_mode(e, raw, Mode::Lens).unwrap();
+    search(e, &s, usize::MAX).unwrap().into_iter().map(|h| h.id).collect()
+}
+
+/// `-key:value` EXCLUDES — and keeps everything that never had the cell.
+#[test]
+fn a_leading_minus_excludes_a_qualifier() {
+    let mut e = engine();
+    let laundry = e.create(kind::TASK, Some("laundry"), T0).unwrap();
+    let grocery = e.create(kind::NOTE, Some("grocery list"), T0 + 1).unwrap();
+    let anna = e.create(kind::PERSON, Some("Anna"), T0 + 2).unwrap();
+
+    let found = hits(&e, "-kind:task");
+    assert!(!found.contains(&laundry), "kind:task is excluded");
+    assert!(found.contains(&grocery), "a note survives");
+    assert!(found.contains(&anna), "and so does a person");
+}
+
+/// An include and an exclude AND together.
+#[test]
+fn include_and_exclude_coexist() {
+    let mut e = engine();
+    let open = e.create(kind::NOTE, Some("open note"), T0).unwrap();
+    let closed = e.create(kind::NOTE, Some("closed note"), T0 + 1).unwrap();
+    let task = e.create(kind::TASK, Some("a task"), T0 + 2).unwrap();
+    e.set(closed, prop::STATUS, Value::Ref(status::DONE), T0 + 3).unwrap();
+
+    let found = hits(&e, "kind:note -status:done");
+    assert!(found.contains(&open), "a note without a done status survives");
+    assert!(!found.contains(&closed), "a done note is excluded");
+    assert!(!found.contains(&task), "and a task was never included");
+}
+
+/// `Area:Work` silently found nothing once: the property's name is matched
+/// whatever its case, or the token demotes to free text and the screen
+/// goes empty with no error anywhere.
+#[test]
+fn a_property_name_resolves_whatever_its_case() {
+    let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let roof = e.create(kind::TASK, Some("roof"), T0).unwrap();
+    e.set(roof, prop::AREA, Value::Ref(work), T0 + 1).unwrap();
+    // A thing the qualifier must NOT let through, so an unresolved token
+    // (which filters nothing) cannot pass by accident.
+    e.create(kind::TASK, Some("shed"), T0 + 2).unwrap();
+
+    for raw in ["area:Work", "Area:Work", "AREA:Work"] {
+        assert_eq!(lens_hits(&e, raw), vec![roof], "{raw} should resolve");
+    }
+}
+
+/// A value typed in another case still finds its thing — a lens that
+/// misses its own value because someone capitalised it is a trap — and the
+/// stored name is untouched by any of it.
+#[test]
+fn a_value_matches_whatever_its_case() {
+    let mut e = engine();
+    let work = e.declare(kind::AREA, "Work", T0).unwrap();
+    let roof = e.create(kind::TASK, Some("roof"), T0).unwrap();
+    e.set(roof, prop::AREA, Value::Ref(work), T0 + 1).unwrap();
+    e.create(kind::TASK, Some("shed"), T0 + 2).unwrap();
+
+    for raw in ["area:Work", "area:work", "area:WORK"] {
+        assert_eq!(lens_hits(&e, raw), vec![roof], "{raw} should match");
+    }
+    assert_eq!(e.name(work).unwrap().as_deref(), Some("Work"), "the name stays as typed");
+}
+
+/// "task" names both the kind and a note someone called "task". The
+/// qualifier must always mean the kind — never flip with map order.
+#[test]
+fn reference_resolution_is_deterministic_on_a_name_collision() {
+    let mut e = engine();
+    let chore = e.create(kind::TASK, Some("chore"), T0).unwrap();
+    e.create(kind::NOTE, Some("task"), T0 + 1).unwrap();
+    for _ in 0..8 {
+        assert_eq!(hits(&e, "kind:task"), vec![chore], "kind:task means the kind");
+    }
+}
