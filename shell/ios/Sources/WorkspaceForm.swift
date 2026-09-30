@@ -1,4 +1,5 @@
-// liv iOS — the WORKSPACE SWITCHER and its form.
+// liv iOS — the WORKSPACE FORM (the switcher's list moved into the
+// library panel on 2026-09-29).
 //
 // Lifted out of Chrome.swift on 2026-08-23, which was 1,870 lines:
 // standing rule 9 calls ~600 the signal to look for the seam, and this
@@ -15,104 +16,47 @@ struct WorkspacePick: Identifiable {
     var id: String { property }
 }
 
-// MARK: - the workspace switcher (M4)
+// MARK: - the workspace form (M4)
 
-/// The hub's sheet: All (no lens), every workspace, and
-/// the new-workspace form. Switching swaps the desk's open tabs — one tab
-/// plane, remembered per workspace.
-struct WorkspaceSwitcher: View {
+/// NAME A WORKSPACE, AND SAY WHAT IT HOLDS — new, or an edit of one.
+///
+/// THE FORM IS ALL THAT IS LEFT (clearer spec, 2026-09-29, "option A").
+/// This was the Workspaces card: All, a row per workspace, and a "New
+/// workspace…" row, rising from a button at the panel's foot. The panel
+/// lists the workspaces itself now — so switching is a row there, and New
+/// workspace and Edit workspace open this, and nothing else.
+struct WorkspaceForm: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var workspaces: WorkspaceModel
-    @EnvironmentObject var desk: DeskModel
-    /// How this closes. It hangs from the workspace button now (a top
-    /// sheet in the hierarchy), so there is no sheet environment to
-    /// dismiss — the presenter hands it the way out.
+    /// nil makes a new workspace; an id edits that one. Editing exists
+    /// because a box can arrive with a workspace in it: with a create-only
+    /// form it could never be changed.
+    let editing: LivEntityID?
+    /// How this closes: it hangs from the panel, so there is no sheet
+    /// environment to dismiss — the presenter hands it the way out.
     var onClose: () -> Void
 
-    @State private var composing = false
-    /// nil while composing a NEW workspace; the id being edited otherwise.
-    /// Editing exists because the box ships a seeded "Home" workspace: with
-    /// a create-only form it could never become a workspace at all.
-    @State private var editing: LivEntityID?
     @State private var draftName = ""
     @State private var draftQuery = ""
     /// Which picker row is open, and whose draft it edits.
     @State private var picking: WorkspacePick?
-    /// Items per workspace, as the lens reads when the card opens.
-    @State private var counts: [LivEntityID: Int] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-                // A FORM SHOWS THE FORM AND NOTHING ELSE.
-                //
-                // The rule is the owner's, from 2026-08-13: a list of
-                // workspaces above a thing you are naming is the wrong
-                // screen.
-                //
-                // The title says which form it is, so the card is never
-                // unlabelled, and editing gets an honest one instead of
-                // borrowing the word "Workspace" from the list it
-                // replaces.
-                if composing {
-                    LivCardTitle(text: editing == nil ? "New workspace" : "Edit workspace")
-                    newWorkspaceForm
-                } else {
-                    // THE CHOOSER (the clearer board): "Workspaces." over
-                    // 64pt rows — a mark, the name, how many things it
-                    // holds — with the chosen one lit and ticked.
-                    LivCardTitle(text: "Workspaces")
-                    LivMenuRow(
-                        label: "All workspaces", detail: "Everything, unfiltered",
-                        style: .chooser, selected: workspaces.activeId.isAbsent,
-                        lead: { LivWorkspaceMark(workspace: nil, size: LivChooserCard.lead) }
-                    ) {
-                        choose(.absent)
-                    }
-                    ForEach(workspaces.workspaces) { ws in
-                        LivMenuRow(
-                            label: ws.display, detail: counts[ws.id].map(itemsWord),
-                            style: .chooser, selected: workspaces.activeId == ws.id,
-                            lead: { LivWorkspaceMark(workspace: ws, size: LivChooserCard.lead) }
-                        ) {
-                            choose(ws.id)
-                        }
-                        .contextMenu {
-                            Button {
-                                editing = ws.id
-                                draftName = ws.display
-                                draftQuery = workspaces.query(of: ws.id) ?? ""
-                                composing = true
-                            } label: {
-                                Label("Edit workspace", systemImage: "slider.horizontal.3")
-                            }
-                            Button(role: .destructive) {
-                                workspaces.forgetQuery(ws.id)
-                                if workspaces.activeId == ws.id { choose(.absent, close: false) }
-                                box.trashWorkspace(ws.id)
-                            } label: {
-                                Label("Trash workspace", systemImage: "trash")
-                            }
-                        }
-                    }
-                    LivCardRule(inset: 0)
-                        .padding(.horizontal, LivCards.padX)
-                        .padding(.vertical, LivAir.tight)
-                    addRow("New workspace") {
-                        editing = nil
-                        draftName = ""
-                        draftQuery = ""
-                        composing = true
-                    }
-                }
+            // The title says which form it is, so the card is never
+            // unlabelled.
+            LivCardTitle(text: editing == nil ? "New workspace" : "Edit workspace")
+            form
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // HOW MANY THINGS EACH WORKSPACE HOLDS — one lens read per
-        // workspace when the card opens (a read, not the snapshot path).
-        // Nothing is drawn until a count arrives, so no "0 items" flashes.
-        .task { loadCounts() }
-        // No .presentationDetents: it is not a sheet any more. It hangs
-        // from the workspace button at the top (LivTopSheetHost), which
-        // sizes itself to this content and scrolls only when it must.
+        .onAppear {
+            guard let id = editing, let ws = workspaces.workspaces.first(where: { $0.id == id })
+            else { return }
+            draftName = ws.display
+            draftQuery = workspaces.query(of: id) ?? ""
+        }
+        // No .presentationDetents: it is not a sheet. It hangs from the
+        // panel (LivTopSheetHost), which sizes itself to this content.
         // The SAME picker the properties panel uses, told to report the
         // choice instead of writing a cell.
         .sheet(item: $picking) { pick in
@@ -137,53 +81,15 @@ struct WorkspaceSwitcher: View {
         draftQuery = LivTerms.setting(pick.property, to: value, in: terms)
     }
 
-    private func choose(_ id: LivEntityID, close: Bool = true) {
-        workspaces.setActive(id)
-        if close { onClose() }
-    }
+    // MARK: the form — name + query
 
-    private func itemsWord(_ n: Int) -> String { "\(n) item\(n == 1 ? "" : "s")" }
-
-    private func loadCounts() {
-        let live = box.entities.values.filter { $0.trashed != true }
-        for ws in workspaces.workspaces {
-            let q = workspaces.query(of: ws.id) ?? ""
-            if q.isEmpty {
-                counts[ws.id] = live.count
-                continue
-            }
-            box.query(q) { ids, _ in
-                counts[ws.id] = live.filter { ids.contains($0.id) }.count
-            }
-        }
-    }
-
-    private func addRow(_ label: String, action: @escaping () -> Void) -> some View {
-        LivMenuRow(
-            label: label, style: .chooser,
-            lead: {
-                Image(systemName: "plus")
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .foregroundStyle(LivTheme.text)
-                    .frame(width: LivChooserCard.lead, height: LivChooserCard.lead)
-                    .background(
-                        RoundedRectangle(cornerRadius: LivChooserCard.tileRadius, style: .continuous)
-                            .fill(LivTheme.panel2))
-            }, action: action)
-    }
-
-    // MARK: the new-workspace form — name + query + the stamp hint
-
-    private var newWorkspaceForm: some View {
+    private var form: some View {
         VStack(alignment: .leading, spacing: 8) {
             field("Name", text: $draftName)
             lensRows($draftQuery)
             HStack(spacing: 10) {
                 Spacer()
-                Button("Cancel") {
-                    composing = false
-                    editing = nil
-                }
+                Button("Cancel", action: onClose)
                 // text2, not text3. A control is not a placeholder, and
                 // text3 is the tier the palette check exempts from the
                 // read floor on the grounds that it holds placeholders
@@ -259,7 +165,7 @@ struct WorkspaceSwitcher: View {
             .buttonStyle(.plain)
             .overlay(alignment: .top) {
                 if property != "area" {
-                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                    LivHairline()
                 }
             }
         }
@@ -374,19 +280,16 @@ struct WorkspaceSwitcher: View {
         workspaces.rememberQuery(id, query)
     }
 
+    /// Saved: the workspace it made or changed is the one you are in.
     private func finish(_ id: LivEntityID) {
-        draftName = ""
-        draftQuery = ""
-        composing = false
-        editing = nil
-        choose(id)
+        workspaces.setActive(id)
+        onClose()
     }
 }
 
-/// A WORKSPACE'S MARK — one recipe for the panel's foot and the
-/// Workspaces card (the clearer board: no box, no colour). "All" is the
-/// two stacked squares; a workspace's emoji wins; otherwise its letter,
-/// set like an icon through `.letter`, which skips leading whitespace.
+/// A WORKSPACE'S MARK, for the panel's rows (the clearer board: no box,
+/// no colour). "All" is four dots; a workspace is its first letter, or its
+/// first character when its name has no letter (`LivGlyph.initial`).
 /// Hidden from VoiceOver: the name beside it says the same thing.
 struct LivWorkspaceMark: View {
     let workspace: WorkspaceRow?
@@ -395,11 +298,7 @@ struct LivWorkspaceMark: View {
     var body: some View {
         Group {
             if let ws = workspace {
-                if let emoji = ws.emoji, !emoji.isEmpty {
-                    Text(emoji).font(.system(size: (size * LivPen.letter).rounded()))
-                } else {
-                    LivIcon(glyph: .letter(ws.display), color: LivTheme.text, size: size)
-                }
+                LivIcon(glyph: .letter(ws.display), color: LivTheme.text, size: size)
             } else {
                 LivIcon(glyph: .workspaces, color: LivTheme.text, size: size)
             }

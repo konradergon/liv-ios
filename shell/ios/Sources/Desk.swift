@@ -289,6 +289,8 @@ struct DeskHost: View {
                     .accessibilityHidden(true)
             }
             .offset(x: desk.deskShift)
+            // A desk on the move is not a row being swiped (`livSwipesLive`).
+            .environment(\.livSwipesLive, !desk.libraryDrawn && desk.panelDrag == nil)
             .accessibilityHidden(anyPanel)
 
             // The doors (design/ios.md §6 rev 6): top-left opens the
@@ -368,7 +370,7 @@ struct DeskHost: View {
             if desk.libraryDrawn || desk.panelDrag != nil {
                 LibraryPanel(
                     onDismiss: { desk.setLibrary(false) },
-                    onWorkspace: { desk.workspaceShown = true },
+                    onWorkspaceForm: { desk.showWorkspaceForm(editing: $0) },
                     onSettings: { desk.settingsShown = true },
                     onTrash: { desk.trashShown = true }
                 )
@@ -466,12 +468,9 @@ struct DeskHost: View {
                 }
             }
         })
-        // FROM THE BOTTOM: the workspace button and "New filter" both
-        // live at the FOOT of the library panel (team, 2026-08-22), and
-        // this card was still falling from the top of the screen because
-        // that is where the button used to be.
+        // FROM THE BOTTOM, where the panel's New workspace row is.
         .livSheet(from: .bottom, isPresented: $desk.workspaceShown) {
-            WorkspaceSwitcher(onClose: { desk.workspaceShown = false })
+            WorkspaceForm(editing: desk.workspaceEditing, onClose: { desk.workspaceShown = false })
                 .livOverlay(LivOverlay.workspace)
                 .environmentObject(box)
                 .environmentObject(workspaces)
@@ -484,7 +483,17 @@ struct DeskHost: View {
         .sheet(item: $share) { payload in
             ShareSheet(items: payload.items)
         }
+        // WHAT IS ON SCREEN, told to the box once, here: a screen's answer
+        // is read while you can see it and when it comes back, not after
+        // every write wherever you are (owner, 2026-09-30). A note laid
+        // over the view covers it; a record's card, which rises over it,
+        // does not.
+        .onAppear { box.screenChanged(to: onScreen) }
+        .onChange(of: onScreen) { _, now in box.screenChanged(to: now) }
     }
+
+    /// The view you are looking at, or nil while a note lies over it.
+    private var onScreen: Feature? { desk.openDoc == nil ? desk.state : nil }
 
     /// THE SURFACE'S OWN FOOT: the bar, and the pill that stands on it.
     ///
@@ -779,7 +788,6 @@ struct DeskHost: View {
                     id: "trash-\(LivIDText.written(id))",
                     from: .bottom,
                     subject: name,
-                    subjectDetail: "Moved to Trash, and undoable",
                     items: [
                         LivMenuItem(
                             label: "Move to Trash", symbol: "trash",
@@ -908,7 +916,7 @@ struct DeskHost: View {
             from: .bottom,
             title: "New",
             items: [
-                LivMenuItem(label: "Note", detail: "Tap + for this one", glyph: .note) { createNote() },
+                LivMenuItem(label: "Note", glyph: .note) { createNote() },
                 // The TICKED box — a verb, the panel's Tasks mark. The
                 // kind glyph `.task` in lists is a thing, not this.
                 LivMenuItem(label: "Task", glyph: .tasks) { createRecord(event: false) },

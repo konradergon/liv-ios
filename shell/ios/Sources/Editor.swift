@@ -1180,9 +1180,7 @@ struct NoteEditor: View {
             VStack(alignment: .leading, spacing: 6) {
                 if model.conflicted { banner }
                 if flattens {
-                    notice(
-                        "This note carries desk formatting this editor can't keep. "
-                            + "Saving replaces it with what you see here.")
+                    notice("Some formatting here can't be kept")
                 }
                 if failed { notice("Could not save. It will try again.") }
             }
@@ -1289,7 +1287,7 @@ struct NoteEditor: View {
                     }
                     .buttonStyle(.plain)
                     .overlay(alignment: .bottom) {
-                        Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                        LivHairline()
                     }
                 }
             }
@@ -1308,9 +1306,6 @@ struct NoteEditor: View {
             Text("This changed elsewhere")
                 .font(.system(size: LivType.strong, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
-            Text("The saved version is shown. Your edit is kept.")
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text3)
             HStack(spacing: 8) {
                 Button("Re-apply my edit") { model.reapplyDraft() }
                     .font(.system(size: LivType.body, weight: .semibold))

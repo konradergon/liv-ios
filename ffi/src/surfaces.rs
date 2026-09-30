@@ -38,11 +38,11 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 use liv_engine::{Engine, EntityId};
-use liv_surface::day::Block;
-use liv_surface::everything::{everything, Slice};
-use liv_surface::tasks::{tasks, Filter};
+use liv_surface::calendar::calendar;
+use liv_surface::library::library;
+use liv_surface::tasks::tasks;
 use liv_surface::today::today;
-use liv_surface::{day as day_surface, Lens, Row};
+use liv_surface::{Lens, Row};
 use serde::Serialize;
 
 // ---- the error channel -------------------------------------------------
@@ -53,7 +53,7 @@ pub const LIV_ERR_PATH: i32 = -1;
 /// The box would not open — missing directory, permissions, or a box
 /// written by a newer build.
 pub const LIV_ERR_OPEN: i32 = -2;
-/// A parameter did not parse: an unknown slice, a malformed id, a lens
+/// A parameter did not parse: a malformed id, a lens
 /// that was not a JSON array of hex ids.
 pub const LIV_ERR_ARG: i32 = -3;
 /// The box opened and then refused the read.
@@ -135,17 +135,20 @@ pub(crate) fn parse_id(hex: &str) -> Option<EntityId> {
 /// nothing admits nothing, and that is a real, showable state; passing
 /// null to mean it would silently turn a filtered-to-empty screen into an
 /// unfiltered one, which is the more alarming of the two failures.
-fn parse_lens(lens: *const c_char) -> Result<Lens, i32> {
+pub(crate) fn parse_lens(lens: *const c_char) -> Result<Lens, i32> {
     if lens.is_null() {
         return Ok(Lens::Everything);
     }
     let raw = unsafe { CStr::from_ptr(lens) }.to_str().map_err(|_| LIV_ERR_ARG)?;
+    Ok(Lens::Only(id_list(raw)?.into_iter().collect()))
+}
+
+/// A JSON array of hex ids — the one way a list of things crosses in. Any
+/// entry that is not an id refuses the whole list: acting on the part
+/// that parsed would be acting on something nobody asked for.
+pub(crate) fn id_list(raw: &str) -> Result<Vec<EntityId>, i32> {
     let ids: Vec<String> = serde_json::from_str(raw).map_err(|_| LIV_ERR_ARG)?;
-    let mut out = std::collections::HashSet::with_capacity(ids.len());
-    for hex in ids {
-        out.insert(parse_id(&hex).ok_or(LIV_ERR_ARG)?);
-    }
-    Ok(Lens::Only(out))
+    ids.iter().map(|hex| parse_id(hex).ok_or(LIV_ERR_ARG)).collect()
 }
 
 // ---- the wire shapes ---------------------------------------------------
@@ -172,6 +175,10 @@ struct WireRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<String>,
     done: bool,
+    /// Open, a task, and its day has passed. Only the surfaces told the
+    /// day set it — Today, Tasks and the library — and it is false on the
+    /// rest.
+    late: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     area: Option<String>,
     created_ms: i64,
@@ -222,6 +229,7 @@ impl From<&Row> for WireRow {
             all_day: r.all_day,
             status: r.status.map(hex),
             done: r.done,
+            late: r.late,
             area: r.area.map(hex),
             created_ms: r.created_ms,
             touched_ms: r.touched_ms,
@@ -247,14 +255,27 @@ fn wire(rows: &[Row]) -> Vec<WireRow> {
 
 #[derive(Serialize)]
 struct WireToday {
+    days: Vec<WireTodayDay>,
     late: Vec<WireRow>,
+    what_next: Vec<WireRow>,
+    captured: usize,
+}
+
+#[derive(Serialize)]
+struct WireTodayDay {
+    day: i32,
+    all_day: Vec<WireRow>,
     passed: Vec<WireRow>,
     ahead: Vec<WireRow>,
-    all_day: Vec<WireRow>,
     done: Vec<WireRow>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    next: Option<String>,
-    captured: usize,
+    areas: Vec<WireCount>,
+    unfiled: usize,
+}
+
+#[derive(Serialize)]
+struct WireCount {
+    name: String,
+    count: usize,
 }
 
 #[derive(Serialize)]
@@ -263,44 +284,68 @@ struct WireGroup {
     status: Option<String>,
     name: String,
     completes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hue: Option<i64>,
     late: usize,
     rows: Vec<WireRow>,
 }
 
 #[derive(Serialize)]
-struct WireBlock {
-    row: WireRow,
-    start_min: i32,
-    minutes: i32,
-    column: usize,
-    columns: usize,
-}
-
-impl From<&Block> for WireBlock {
-    fn from(b: &Block) -> WireBlock {
-        WireBlock {
-            row: WireRow::from(&b.row),
-            start_min: b.start_min,
-            minutes: b.minutes,
-            column: b.column,
-            columns: b.columns,
-        }
-    }
+struct WireNoteLine {
+    note: String,
+    source: String,
+    line: usize,
+    text: String,
+    depth: u8,
 }
 
 #[derive(Serialize)]
-struct WireDay {
+struct WireNamed {
+    id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct WireTasks {
+    groups: Vec<WireGroup>,
+    open: usize,
+    late: usize,
+    in_notes: Vec<WireNoteLine>,
+    projects: Vec<WireNamed>,
+}
+
+#[derive(Serialize)]
+struct WireLibrary {
+    all: Vec<WireRow>,
+    notes: Vec<String>,
+    unsorted: Vec<String>,
+    counts: WireCounts,
+}
+
+#[derive(Serialize)]
+struct WireCounts {
+    today: usize,
+    unsorted: usize,
+    notes: usize,
+    tasks: usize,
+    events: usize,
+}
+
+#[derive(Serialize)]
+struct WireCalendarDay {
+    day: i32,
     all_day: Vec<WireRow>,
-    blocks: Vec<WireBlock>,
+    timed: Vec<WireRow>,
 }
 
 // ---- the verbs ---------------------------------------------------------
 
-/// Today: the agenda for `day`, split into its five piles, plus what is
-/// late and what was caught.
+/// The Today screen: the seven days of the strip, each split into its
+/// piles and counted by area, plus what is late, what is next and what was
+/// caught today.
 ///
-/// `day` and `today` are days since the epoch and differ whenever the date
-/// strip has been moved — several rules turn on whether they are the same.
+/// `now_ms` is the real instant and `offset_min` the phone's distance from
+/// UTC in minutes; "today" is the day on the phone's clock.
 ///
 /// # Safety
 /// `path` and `lens` must be null or valid C strings; `out` must be a
@@ -309,9 +354,8 @@ struct WireDay {
 #[no_mangle]
 pub unsafe extern "C" fn liv_view_today(
     path: *const c_char,
-    day: i32,
-    today_day: i32,
     now_ms: i64,
+    offset_min: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
@@ -320,14 +364,27 @@ pub unsafe extern "C" fn liv_view_today(
         Err(e) => return e,
     };
     match with_engine(path, |e| {
-        let t = today(e, day, today_day, now_ms, &lens).map_err(|_| LIV_ERR_READ)?;
+        let t = today(e, now_ms, offset_min, &lens).map_err(|_| LIV_ERR_READ)?;
         Ok(WireToday {
+            days: t
+                .days
+                .iter()
+                .map(|d| WireTodayDay {
+                    day: d.day,
+                    all_day: wire(&d.all_day),
+                    passed: wire(&d.passed),
+                    ahead: wire(&d.ahead),
+                    done: wire(&d.done),
+                    areas: d
+                        .areas
+                        .iter()
+                        .map(|(name, count)| WireCount { name: name.clone(), count: *count })
+                        .collect(),
+                    unfiled: d.unfiled,
+                })
+                .collect(),
             late: wire(&t.late),
-            passed: wire(&t.passed),
-            ahead: wire(&t.ahead),
-            all_day: wire(&t.all_day),
-            done: wire(&t.done),
-            next: t.next.map(hex),
+            what_next: wire(&t.what_next),
             captured: t.captured,
         })
     }) {
@@ -336,16 +393,16 @@ pub unsafe extern "C" fn liv_view_today(
     }
 }
 
-/// Tasks, grouped by status. `filter` is 0 all, 1 status, 2 project;
-/// `filter_id` is the hex id it names and is ignored when `filter` is 0.
+/// The Tasks screen: every task grouped by status, the screen's counts,
+/// the open lines in notes, and the projects its menu offers. `project`
+/// is a hex id or null; it narrows the groups and nothing else.
 ///
 /// # Safety
 /// As `liv_view_today`.
 #[no_mangle]
 pub unsafe extern "C" fn liv_view_tasks(
     path: *const c_char,
-    filter: i32,
-    filter_id: *const c_char,
+    project: *const c_char,
     today_day: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
@@ -354,51 +411,68 @@ pub unsafe extern "C" fn liv_view_tasks(
         Ok(l) => l,
         Err(e) => return e,
     };
-    let named = || -> Option<EntityId> {
-        if filter_id.is_null() {
-            return None;
+    let project = if project.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(project) }.to_str().ok().and_then(parse_id) {
+            Some(id) => Some(id),
+            None => return LIV_ERR_ARG,
         }
-        parse_id(unsafe { CStr::from_ptr(filter_id) }.to_str().ok()?)
-    };
-    let filter = match filter {
-        0 => Filter::All,
-        1 => match named() {
-            Some(id) => Filter::Status(id),
-            None => return LIV_ERR_ARG,
-        },
-        2 => match named() {
-            Some(id) => Filter::Project(id),
-            None => return LIV_ERR_ARG,
-        },
-        _ => return LIV_ERR_ARG,
     };
     match with_engine(path, |e| {
-        let groups = tasks(e, filter, &lens, today_day).map_err(|_| LIV_ERR_READ)?;
-        Ok(groups
-            .iter()
-            .map(|g| WireGroup {
-                status: g.status.map(hex),
-                name: g.name.clone(),
-                completes: g.completes,
-                late: g.late,
-                rows: wire(&g.rows),
-            })
-            .collect::<Vec<_>>())
+        let t = tasks(e, project, &lens, today_day).map_err(|_| LIV_ERR_READ)?;
+        Ok(WireTasks {
+            groups: t
+                .groups
+                .iter()
+                .map(|g| WireGroup {
+                    status: g.status.map(hex),
+                    name: g.name.clone(),
+                    completes: g.completes,
+                    hue: g.hue,
+                    late: g.late,
+                    rows: wire(&g.rows),
+                })
+                .collect(),
+            open: t.open,
+            late: t.late,
+            in_notes: t
+                .in_notes
+                .into_iter()
+                .map(|l| WireNoteLine {
+                    note: hex(l.note),
+                    source: l.source,
+                    line: l.line,
+                    text: l.text,
+                    depth: l.depth,
+                })
+                .collect(),
+            projects: t
+                .projects
+                .into_iter()
+                .map(|(id, name)| WireNamed { id: hex(id), name })
+                .collect(),
+        })
     }) {
-        Ok(g) => deliver(out, &g),
+        Ok(t) => deliver(out, &t),
         Err(e) => e,
     }
 }
 
-/// Everything, in one slice: 0 all, 1 notes, 2 upcoming, 3 unfiled.
+/// The library: every live row (what a shell looks a thing up in), the
+/// Notes and Unsorted lists as ids into it, and the count beside each view
+/// in the library panel — one pass over the box.
+///
+/// `now_ms` and `offset_min` as `liv_view_today`. The lens narrows Notes
+/// and the counts; it never narrows `all` or Unsorted.
 ///
 /// # Safety
 /// As `liv_view_today`.
 #[no_mangle]
-pub unsafe extern "C" fn liv_view_everything(
+pub unsafe extern "C" fn liv_view_library(
     path: *const c_char,
-    slice: i32,
-    today_day: i32,
+    now_ms: i64,
+    offset_min: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
@@ -406,31 +480,37 @@ pub unsafe extern "C" fn liv_view_everything(
         Ok(l) => l,
         Err(e) => return e,
     };
-    let slice = match slice {
-        0 => Slice::All,
-        1 => Slice::Notes,
-        2 => Slice::Upcoming,
-        3 => Slice::Unfiled,
-        _ => return LIV_ERR_ARG,
-    };
     match with_engine(path, |e| {
-        let rows = everything(e, slice, &lens, today_day).map_err(|_| LIV_ERR_READ)?;
-        Ok(wire(&rows))
+        let l = library(e, now_ms, offset_min, &lens).map_err(|_| LIV_ERR_READ)?;
+        Ok(WireLibrary {
+            all: wire(&l.all),
+            notes: l.notes.into_iter().map(hex).collect(),
+            unsorted: l.unsorted.into_iter().map(hex).collect(),
+            counts: WireCounts {
+                today: l.counts.today,
+                unsorted: l.counts.unsorted,
+                notes: l.counts.notes,
+                tasks: l.counts.tasks,
+                events: l.counts.events,
+            },
+        })
     }) {
-        Ok(r) => deliver(out, &r),
+        Ok(l) => deliver(out, &l),
         Err(e) => e,
     }
 }
 
-/// The calendar's day: the all-day strip, and the timeline's blocks with
-/// their columns already worked out.
+/// The calendar: every day from `from_day` to `to_day` (days since the
+/// epoch, both included) that has anything on it, its all-day things apart
+/// from its timed ones, each in time order.
 ///
 /// # Safety
 /// As `liv_view_today`.
 #[no_mangle]
 pub unsafe extern "C" fn liv_view_day(
     path: *const c_char,
-    day: i32,
+    from_day: i32,
+    to_day: i32,
     lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
@@ -439,11 +519,15 @@ pub unsafe extern "C" fn liv_view_day(
         Err(e) => return e,
     };
     match with_engine(path, |e| {
-        let d = day_surface::day(e, day, &lens).map_err(|_| LIV_ERR_READ)?;
-        Ok(WireDay {
-            all_day: wire(&d.all_day),
-            blocks: d.blocks.iter().map(WireBlock::from).collect(),
-        })
+        let days = calendar(e, from_day, to_day, &lens).map_err(|_| LIV_ERR_READ)?;
+        Ok(days
+            .iter()
+            .map(|d| WireCalendarDay {
+                day: d.day,
+                all_day: wire(&d.all_day),
+                timed: wire(&d.timed),
+            })
+            .collect::<Vec<_>>())
     }) {
         Ok(d) => deliver(out, &d),
         Err(e) => e,

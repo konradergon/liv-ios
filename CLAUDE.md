@@ -1,5 +1,8 @@
 # Liv — project guide
 
+> **New session? Read `HANDOUT.md` first** — the current state, the owner's
+> standing decisions and what is open, in one page (30 Sep 2026).
+
 > **Naming:** the product and the code are both **Liv** — crates (`liv-engine`,
 > `liv-ffi`, …), the `liv_*` FFI symbol prefix, `ffi/liv.h`, and the
 > box file (`…/Application Support/liv/liv.db`). The old codename **`lotus`**
@@ -120,8 +123,9 @@ architecturally clean and product-wrong is still wrong.
   `with_engine`. Mutations (`liv_set`, `liv_add`, `liv_make`, `liv_trash`, …)
   run one transaction each. Never hold the box lock across long IO.
 - **Reads are per screen**, already filtered and sorted: `liv_view_today`,
-  `liv_view_tasks`, `liv_view_everything`, `liv_view_day`, `liv_view_trash`,
-  `liv_cells`, `liv_search`, `liv_links`, … — JSON, decoded into native models.
+  `liv_view_tasks`, `liv_view_day`, `liv_view_library` (every row, Notes,
+  Unsorted, the panel's counts), `liv_view_search`, `liv_view_trash`,
+  `liv_cells`, `liv_links`, … — JSON, decoded into native models.
   Every wire field must be **optional** in the decoder, or one missing key drops
   the whole answer (a real, recurring bug). A verb answers the value OR a fault,
   exactly one. Ids are 32 hex characters and are never shown to anyone.
@@ -200,8 +204,8 @@ keeps it avoided — each one exists because its absence is visible in the
 old codebase.
 
 1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
-   second file calling the C ABI is a defect. (Measured 2026-09-29: 42
-   calls to 39 distinct verbs plus `liv_string_free`, one file; other Swift
+   second file calling the C ABI is a defect. (Measured 2026-09-30: 46
+   calls to 43 distinct verbs plus `liv_string_free`, one file; other Swift
    files mention a verb NAME in a comment, and none call one.) The share extension is a
    second BINARY and calls none either: it writes a file into the App
    Group spool and the app captures it (`Catch.swift`).

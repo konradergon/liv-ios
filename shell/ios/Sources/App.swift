@@ -394,6 +394,9 @@ struct RootView: View {
             desk.adopt(workspace: id)
             workspaces.refreshLens(box)
         }
+        // Notes and the library panel's counts wear the workspace, so the
+        // library is read through it whenever it answers something new.
+        .onChange(of: workspaces.lensIds) { _, ids in box.watchLens(ids) }
         // Below the doors' band, like every other thing that speaks:
         // centred at the very top it printed itself over the workspace
         // name (owner, 2026-08-15).
@@ -470,6 +473,7 @@ struct RootView: View {
         case "grid", "library": desk.setLibrary(true)
         case "search": desk.searchShown = true
         case "switcher": desk.switcherShown = true
+        case "trash": desk.trashShown = true
         case "inactive":
             desk.backdateTabsForRehearsal(days: LivTabs.defaultDays + 1)
             desk.switcherShown = true

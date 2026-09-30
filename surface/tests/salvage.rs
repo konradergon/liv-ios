@@ -41,20 +41,26 @@ fn the_trash_is_the_one_surface_that_wants_what_the_rest_throw_away() {
     assert!(trash(&e).unwrap().is_empty());
 }
 
-/// Newest first: the thing you just deleted is the thing you are most
-/// likely to be looking for.
+/// Newest first BY WHEN IT WAS THROWN AWAY: the thing you just deleted is
+/// the thing you are most likely to be looking for.
+///
+/// Made in one order and thrown away in the other, so an order by id —
+/// when each was MADE, which is what this sorted by until 2026-09-29 —
+/// gives the answer backwards. Each row's `touched_ms` is the moment it
+/// went, which is what the screen groups by day.
 #[test]
-fn the_trash_is_newest_first() {
+fn the_trash_is_newest_thrown_away_first() {
     let mut e = engine();
-    let mut ids = Vec::new();
-    for i in 0..3u64 {
-        let id = e.create(kind::NOTE, Some(&format!("note {i}")), T0 + i).unwrap();
-        e.trash(id, T0 + 10 + i).unwrap();
-        ids.push(id);
-    }
-    let rows: Vec<EntityId> = trash(&e).unwrap().iter().map(|r| r.id).collect();
-    ids.reverse();
-    assert_eq!(rows, ids);
+    let old = e.create(kind::NOTE, Some("made first"), T0).unwrap();
+    let new = e.create(kind::NOTE, Some("made second"), T0 + 1).unwrap();
+    e.trash(new, T0 + 10).unwrap();
+    e.trash(old, T0 + 20).unwrap();
+
+    let rows = trash(&e).unwrap();
+    let ids: Vec<EntityId> = rows.iter().map(|r| r.id).collect();
+    assert_eq!(ids, vec![old, new], "the one thrown away last comes first");
+    assert_eq!(rows[0].touched_ms, (T0 + 20) as i64, "a row says when it went");
+    assert_eq!(rows[1].touched_ms, (T0 + 10) as i64);
 }
 
 /// **A projection: nothing is stored.** No entity is created and no cell

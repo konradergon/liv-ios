@@ -17,7 +17,7 @@
 //! - **A lens RESTRICTS.** The same `is:archived` in a workspace filter
 //!   means "only archived things", because a filter is a boundary.
 //!
-//! One parser either way (standing rule 4). `liv_search` is the first,
+//! One parser either way (standing rule 4). `liv_view_search` is the first,
 //! `liv_lens` the second, and they are separate verbs rather than a
 //! flag because the two answers are shaped differently: a search is
 //! ranked hits with facets, a lens is a flat set of ids.
@@ -33,97 +33,92 @@
 use std::ffi::c_char;
 
 use liv_engine::{prop, EntityId, Value};
-use liv_surface::search::{self, Field, Mode};
+use liv_surface::search::{self, Mode};
 use serde_json::json;
 
-use crate::surfaces::{deliver, with_engine, LIV_ERR_ARG, LIV_ERR_READ};
+use crate::surfaces::{deliver, parse_lens, rows_json, with_engine, LIV_ERR_ARG, LIV_ERR_READ};
 use crate::writes::{id_arg, text};
 
 fn text_of<'a>(p: *const c_char) -> Result<&'a str, i32> {
     text(p, LIV_ERR_ARG)
 }
 
-/// Ranked hits and the facet rows beside them.
+/// The Search screen: the hits the workspace admits, as rows, in rank
+/// order, cut to `limit` (0 is no limit); how many it admits in all; the
+/// facet rows; and whether a hit is titled exactly like the typed words.
 ///
-/// `{"hits":[{"id":hex,"score":N,"field":…}],
+/// `{"hits":[row…],"total":N,"exact":bool,
 ///   "facets":[{"property":hex,"label":…,
 ///              "values":[{"label","count","active","excluded"}]}]}`
 ///
-/// `field` says WHERE the best match was — `name`, `cell`, `filed`,
-/// `content`, or `structured` for a pure-qualifier hit — so a row can
-/// hint why it is in the list rather than leaving the user to guess.
-///
-/// **`limit` bounds the hits, never the facets.** A facet count is over
+/// **The limit bounds the hits, never the facets.** A facet count is over
 /// everything the query matches: a row saying "Work 12" when the list
-/// shows 10 is telling the truth about the box, and a count that changed
-/// with how far the user had scrolled would be useless for pivoting.
+/// shows 10 is telling the truth about the box.
+///
+/// **The lens is applied before counting and cutting**, so "Showing 200 of
+/// 1,800" is about the rows on screen. `lens` is a JSON array of hex ids,
+/// or null for everything — the same as every `liv_view_*` verb.
 ///
 /// # Safety
-/// `path` and `query` must be valid C strings; `out` must be a valid
-/// pointer to a `char *` freed with `liv_string_free`.
+/// `path` and `query` must be valid C strings, `lens` null or one; `out`
+/// must be a valid pointer to a `char *` freed with `liv_string_free`.
 #[no_mangle]
-pub unsafe extern "C" fn liv_search(
+pub unsafe extern "C" fn liv_view_search(
     path: *const c_char,
     query: *const c_char,
     limit: u32,
+    lens: *const c_char,
     out: *mut *mut c_char,
 ) -> i32 {
     let raw = match text_of(query) {
         Ok(s) => s,
         Err(e) => return e,
     };
+    let lens = match parse_lens(lens) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
     match with_engine(path, |e| {
-        let s = search::parse(e, raw).map_err(|_| LIV_ERR_READ)?;
-        // Zero means "no ceiling" rather than "no results": a caller that
-        // did not think about paging wants the answer, not an empty list.
-        let cap = if limit == 0 { usize::MAX } else { limit as usize };
-        let hits: Vec<serde_json::Value> = search::search(e, &s, cap)
-            .map_err(|_| LIV_ERR_READ)?
-            .into_iter()
-            .map(|h| {
-                json!({ "id": h.id.hex(), "score": h.score, "field": field_word(h.field) })
-            })
-            .collect();
-
-        let mut facets = Vec::new();
-        for property in search::facet_properties(e, &s).map_err(|_| LIV_ERR_READ)? {
-            let f = search::facet(e, &s, property).map_err(|_| LIV_ERR_READ)?;
-            if f.values.is_empty() {
-                continue;
-            }
-            facets.push(json!({
-                "property": f.property.hex(),
-                "label": f.label,
-                "values": f.values.iter().map(|v| json!({
-                    "label": v.label,
-                    "count": v.count,
-                    // Include → exclude → off is a three-state cycle, so
-                    // the chip needs both flags rather than one.
-                    "active": v.active,
-                    "excluded": v.excluded,
-                })).collect::<Vec<_>>(),
-            }));
-        }
-        Ok(json!({ "hits": hits, "facets": facets }))
+        let s = search::search_screen(e, raw, &lens, limit as usize).map_err(|_| LIV_ERR_READ)?;
+        Ok(json!({
+            "hits": rows_json(&s.hits),
+            "total": s.total,
+            "facets": facets_json(&s.facets),
+            "exact": s.exact,
+        }))
     }) {
         Ok(v) => deliver(out, &v),
         Err(e) => e,
     }
 }
 
-fn field_word(f: Field) -> &'static str {
-    match f {
-        Field::Name => "name",
-        Field::Cell => "cell",
-        Field::Filed => "filed",
-        Field::Content => "content",
-        Field::Structured => "structured",
-    }
+/// The facet rows, one shape for both search verbs.
+fn facets_json(facets: &[search::Facet]) -> serde_json::Value {
+    serde_json::Value::Array(
+        facets
+            .iter()
+            .map(|f| {
+                json!({
+                    "property": f.property.hex(),
+                    "label": f.label,
+                    "values": f.values.iter().map(|v| json!({
+                        "label": v.label,
+                        "count": v.count,
+                        // Include → exclude → off is a three-state cycle,
+                        // so the chip needs both flags rather than one.
+                        "active": v.active,
+                        "excluded": v.excluded,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
 }
+
 
 /// The ids a LENS admits: `{"ids":[hex],"terms":[…]}`.
 ///
-/// The same grammar as `liv_search` read the other way round —
+/// The same grammar as `liv_view_search` read the other way round —
 /// `is:archived` RESTRICTS here where it widens there — because a
 /// workspace filter is a boundary and a search is a hunt.
 ///
@@ -132,7 +127,7 @@ fn field_word(f: Field) -> &'static str {
 /// itself (standing rule 4).
 ///
 /// # Safety
-/// As `liv_search`.
+/// As `liv_view_search`.
 #[no_mangle]
 pub unsafe extern "C" fn liv_lens(
     path: *const c_char,
@@ -395,41 +390,3 @@ pub unsafe extern "C" fn liv_view_trash(path: *const c_char, out: *mut *mut c_ch
     }
 }
 
-/// Open `- [ ]` lines written inside notes:
-/// `[{"note":hex,"source":…,"line":N,"text":…,"depth":N}]`.
-///
-/// **A projection: nothing here is stored.** No entity is created and no
-/// cell is written — a line in a note is a thought, not a task someone
-/// has to file. `line` is the block's index from the top of the body,
-/// which is the toggle's address, so a shell can tick it without a second
-/// scan.
-///
-/// Notes only: something already typed as a task or an event is listed as
-/// itself, and its body lines would be the same work counted twice.
-///
-/// # Safety
-/// As `liv_view_trash`.
-#[no_mangle]
-pub unsafe extern "C" fn liv_note_tasks(path: *const c_char, out: *mut *mut c_char) -> i32 {
-    match with_engine(path, |e| {
-        let found = liv_surface::salvage::note_tasks(e, &liv_surface::Lens::Everything)
-            .map_err(|_| LIV_ERR_READ)?;
-        Ok(serde_json::Value::Array(
-            found
-                .into_iter()
-                .map(|t| {
-                    json!({
-                        "note": t.note.hex(),
-                        "source": t.source,
-                        "line": t.line,
-                        "text": t.text,
-                        "depth": t.depth,
-                    })
-                })
-                .collect(),
-        ))
-    }) {
-        Ok(v) => deliver(out, &v),
-        Err(e) => e,
-    }
-}

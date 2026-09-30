@@ -65,22 +65,29 @@ fn a_screen_asks_for_itself_and_gets_itself() {
 
     let c = CString::new(path.to_str().unwrap()).unwrap();
     let v = call(|out| unsafe {
-        liv_view_today(c.as_ptr(), DAY, DAY, at(DAY, 9, 0), std::ptr::null(), out)
+        liv_view_today(c.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out)
     })
     .unwrap();
 
-    assert_eq!(titles(&v["ahead"]), vec!["Dentist"]);
+    let day = &v["days"][0];
+    assert_eq!(day["day"], DAY);
+    assert_eq!(v["days"].as_array().unwrap().len(), 7, "the whole strip");
+    assert_eq!(titles(&day["ahead"]), vec!["Dentist"]);
     assert_eq!(titles(&v["late"]), vec!["Overdue"]);
-    assert!(v["passed"].as_array().unwrap().is_empty());
+    assert_eq!(v["late"][0]["late"], true);
+    assert!(day["passed"].as_array().unwrap().is_empty());
+    assert_eq!(day["areas"][0]["name"], "Health");
+    assert_eq!(day["areas"][0]["count"], 1);
+    assert_eq!(day["unfiled"], 1, "the late one has no area");
 
     // AN ID SURVIVES THE ROUND TRIP as 32 hex characters — 16 bytes, which
     // a JSON number is not. The whole retrofit cost core-decisions.md
     // prices is avoided by the ABI being built for them from the start.
-    let id = v["ahead"][0]["id"].as_str().unwrap();
+    let id = day["ahead"][0]["id"].as_str().unwrap();
     assert_eq!(id.len(), 32);
     assert_eq!(id, task_id.hex());
-    assert_eq!(v["ahead"][0]["area"].as_str().unwrap(), area_id.hex());
-    assert_eq!(v["next"].as_str().unwrap(), task_id.hex(), "the next thing up is named");
+    assert_eq!(day["ahead"][0]["area"].as_str().unwrap(), area_id.hex());
+    assert!(v["what_next"].as_array().unwrap().is_empty(), "both tasks have dates");
 
     // The payload is the SCREEN, not the box: nothing about the late task
     // appears twice, and no entity the day does not show is in it.
@@ -96,46 +103,35 @@ fn the_error_channel_says_which_thing_went_wrong() {
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
     assert_eq!(
-        call(|out| unsafe { liv_view_today(std::ptr::null(), DAY, DAY, 0, std::ptr::null(), out) }),
+        call(|out| unsafe { liv_view_today(std::ptr::null(), 0, 0, std::ptr::null(), out) }),
         Err(LIV_ERR_PATH)
     );
 
     let nowhere = CString::new("/does/not/exist/at/all/liv.db").unwrap();
     assert_eq!(
-        call(|out| unsafe { liv_view_today(nowhere.as_ptr(), DAY, DAY, 0, std::ptr::null(), out) }),
+        call(|out| unsafe { liv_view_today(nowhere.as_ptr(), 0, 0, std::ptr::null(), out) }),
         Err(LIV_ERR_OPEN)
     );
 
-    assert_eq!(
-        call(|out| unsafe { liv_view_everything(c.as_ptr(), 9, DAY, std::ptr::null(), out) }),
-        Err(LIV_ERR_ARG),
-        "an unknown slice is an argument error, not an empty list"
-    );
-    assert_eq!(
-        call(|out| unsafe {
-            liv_view_tasks(c.as_ptr(), 1, std::ptr::null(), DAY, std::ptr::null(), out)
-        }),
-        Err(LIV_ERR_ARG),
-        "filtering by status without saying which"
-    );
     let bad_id = CString::new("not-hex").unwrap();
     assert_eq!(
         call(|out| unsafe {
-            liv_view_tasks(c.as_ptr(), 2, bad_id.as_ptr(), DAY, std::ptr::null(), out)
+            liv_view_tasks(c.as_ptr(), bad_id.as_ptr(), DAY, std::ptr::null(), out)
         }),
-        Err(LIV_ERR_ARG)
+        Err(LIV_ERR_ARG),
+        "a project that is not an id is an argument error, not an unfiltered list"
     );
     let bad_lens = CString::new("{\"not\":\"an array\"}").unwrap();
     assert_eq!(
         call(|out| unsafe {
-            liv_view_today(c.as_ptr(), DAY, DAY, 0, bad_lens.as_ptr(), out)
+            liv_view_today(c.as_ptr(), 0, 0, bad_lens.as_ptr(), out)
         }),
         Err(LIV_ERR_ARG)
     );
 
     // And a null out-pointer is refused rather than written through.
     assert_eq!(
-        unsafe { liv_view_today(c.as_ptr(), DAY, DAY, 0, std::ptr::null(), std::ptr::null_mut()) },
+        unsafe { liv_view_today(c.as_ptr(), 0, 0, std::ptr::null(), std::ptr::null_mut()) },
         LIV_ERR_ARG
     );
     unsafe { liv_view_close_all() };
@@ -147,10 +143,12 @@ fn an_empty_box_is_an_empty_answer_and_not_an_error() {
     let path = box_path("empty");
     let c = CString::new(path.to_str().unwrap()).unwrap();
     let v = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, DAY, std::ptr::null(), out)
+        liv_view_library(c.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out)
     })
     .unwrap();
-    assert!(v.as_array().unwrap().is_empty());
+    assert!(v["all"].as_array().unwrap().is_empty());
+    assert!(v["notes"].as_array().unwrap().is_empty());
+    assert_eq!(v["counts"]["unsorted"], 0);
     unsafe { liv_view_close_all() };
 }
 
@@ -170,25 +168,19 @@ fn a_null_lens_means_everything_and_an_empty_one_means_nothing() {
     unsafe { liv_view_close_all() };
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
-    let all = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, DAY, std::ptr::null(), out)
-    })
-    .unwrap();
-    assert_eq!(titles(&all).len(), 2);
+    // Every task the Tasks screen would list, whatever group it is in.
+    let listed = |lens: *const std::ffi::c_char| -> Vec<String> {
+        let v = call(|out| unsafe { liv_view_tasks(c.as_ptr(), std::ptr::null(), DAY, lens, out) })
+            .unwrap();
+        v["groups"].as_array().unwrap().iter().flat_map(|g| titles(&g["rows"])).collect()
+    };
+    assert_eq!(listed(std::ptr::null()).len(), 2);
 
     let none = CString::new("[]").unwrap();
-    let v = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, DAY, none.as_ptr(), out)
-    })
-    .unwrap();
-    assert!(v.as_array().unwrap().is_empty(), "an empty lens admits nothing");
+    assert!(listed(none.as_ptr()).is_empty(), "an empty lens admits nothing");
 
     let one = CString::new(format!("[\"{}\"]", keep.hex())).unwrap();
-    let v = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, DAY, one.as_ptr(), out)
-    })
-    .unwrap();
-    assert_eq!(titles(&v), vec!["Mine"]);
+    assert_eq!(listed(one.as_ptr()), vec!["Mine"]);
     unsafe { liv_view_close_all() };
 }
 
@@ -217,10 +209,10 @@ fn tasks_come_back_grouped_with_the_groups_own_facts() {
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
     let v = call(|out| unsafe {
-        liv_view_tasks(c.as_ptr(), 0, std::ptr::null(), DAY, std::ptr::null(), out)
+        liv_view_tasks(c.as_ptr(), std::ptr::null(), DAY, std::ptr::null(), out)
     })
     .unwrap();
-    let groups = v.as_array().unwrap();
+    let groups = v["groups"].as_array().unwrap();
     assert_eq!(groups.len(), 2, "To do and Done; the empty ones are not groups");
     assert_eq!(groups[0]["name"], "To do");
     assert_eq!(groups[0]["late"], 1, "the lateness is the group's fact, said once");
@@ -230,18 +222,32 @@ fn tasks_come_back_grouped_with_the_groups_own_facts() {
     assert_eq!(groups[1]["late"], 0);
     assert_eq!(titles(&groups[0]["rows"]), vec!["Order slates", "Call the roofer"]);
 
+    // The screen's counts, and what the Project menu offers.
+    assert_eq!(v["open"], 2);
+    assert_eq!(v["late"], 1);
+    assert_eq!(v["in_notes"].as_array().unwrap().len(), 0);
+    assert_eq!(v["projects"][0]["id"], roof.hex());
+    assert_eq!(v["projects"][0]["name"], "Roof");
+    let late: Vec<bool> = groups[0]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["late"].as_bool().unwrap())
+        .collect();
+    assert_eq!(late.iter().filter(|l| **l).count(), 1, "each row says whether it is late");
+
     // Filtering by project, by id.
     let id = CString::new(roof.hex()).unwrap();
     let v = call(|out| unsafe {
-        liv_view_tasks(c.as_ptr(), 2, id.as_ptr(), DAY, std::ptr::null(), out)
+        liv_view_tasks(c.as_ptr(), id.as_ptr(), DAY, std::ptr::null(), out)
     })
     .unwrap();
-    assert_eq!(v.as_array().unwrap().len(), 2);
+    assert_eq!(v["groups"].as_array().unwrap().len(), 2);
     unsafe { liv_view_close_all() };
 }
 
 #[test]
-fn the_day_comes_back_laid_out() {
+fn the_calendar_comes_back_by_day() {
     let path = box_path("day");
     {
         let mut e = Engine::open_local(&path).unwrap();
@@ -261,17 +267,13 @@ fn the_day_comes_back_laid_out() {
     unsafe { liv_view_close_all() };
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
-    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), DAY, std::ptr::null(), out) }).unwrap();
-    assert_eq!(titles(&v["all_day"]), vec!["Renew the passport"]);
-    let blocks = v["blocks"].as_array().unwrap();
-    assert_eq!(blocks.len(), 2);
-    assert_eq!(blocks[0]["start_min"], 9 * 60);
-    assert_eq!(blocks[1]["start_min"], 9 * 60 + 20);
-    // THE SHELL IS TOLD THE COLUMNS, not left to work out the overlap.
-    assert_eq!(blocks[0]["columns"], 2);
-    assert_eq!(blocks[0]["column"], 0);
-    assert_eq!(blocks[1]["column"], 1);
-    assert!(blocks[0]["minutes"].as_i64().unwrap() > 0, "never zero — it stays tappable");
+    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), DAY - 3, DAY + 3, std::ptr::null(), out) })
+        .unwrap();
+    let days = v.as_array().unwrap();
+    assert_eq!(days.len(), 1, "only a day with something on it");
+    assert_eq!(days[0]["day"], DAY);
+    assert_eq!(titles(&days[0]["all_day"]), vec!["Renew the passport"]);
+    assert_eq!(titles(&days[0]["timed"]), vec!["clash 0", "clash 1"], "in time order");
     unsafe { liv_view_close_all() };
 }
 
@@ -287,11 +289,14 @@ fn the_box_stays_open_between_calls_and_sees_writes_made_since() {
     }
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
-    let v = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, DAY, std::ptr::null(), out)
-    })
-    .unwrap();
-    assert_eq!(titles(&v), vec!["First"]);
+    let all = || {
+        let v = call(|out| unsafe {
+            liv_view_library(c.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out)
+        })
+        .unwrap();
+        titles(&v["all"])
+    };
+    assert_eq!(all(), vec!["First"]);
 
     // A write through a second handle on the same file, then the same
     // held connection is asked again.
@@ -299,11 +304,7 @@ fn the_box_stays_open_between_calls_and_sees_writes_made_since() {
         let mut e = Engine::open_local(&path).unwrap();
         e.create(kind::NOTE, Some("Second"), 2_000).unwrap();
     }
-    let v = call(|out| unsafe {
-        liv_view_everything(c.as_ptr(), 0, DAY, std::ptr::null(), out)
-    })
-    .unwrap();
-    assert_eq!(titles(&v), vec!["Second", "First"], "a held connection is not a stale one");
+    assert_eq!(all(), vec!["Second", "First"], "a held connection is not a stale one");
     unsafe { liv_view_close_all() };
 }
 
@@ -331,13 +332,13 @@ fn the_payload_is_the_screen_rather_than_the_box() {
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
     let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, std::ptr::null(), &mut out) }, LIV_OK);
+    assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, DAY, std::ptr::null(), &mut out) }, LIV_OK);
     let day_bytes = unsafe { CStr::from_ptr(out) }.to_bytes().len();
     unsafe { liv_ffi::liv_string_free(out) };
 
     let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
     assert_eq!(
-        unsafe { liv_view_everything(c.as_ptr(), 0, DAY, std::ptr::null(), &mut out) },
+        unsafe { liv_view_library(c.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), &mut out) },
         LIV_OK
     );
     let all_bytes = unsafe { CStr::from_ptr(out) }.to_bytes().len();
@@ -405,16 +406,16 @@ fn one_days_view_stays_flat_as_the_box_grows() {
     // Same answer in both, which is what makes the ratio mean anything.
     for c in [&small, &large] {
         let cc = CString::new(c.to_str().unwrap()).unwrap();
-        let v = call(|out| unsafe { liv_view_day(cc.as_ptr(), DAY, std::ptr::null(), out) })
+        let v = call(|out| unsafe { liv_view_day(cc.as_ptr(), DAY, DAY, std::ptr::null(), out) })
             .unwrap();
-        assert_eq!(v["blocks"].as_array().unwrap().len(), 10);
+        assert_eq!(v[0]["timed"].as_array().unwrap().len(), 10);
     }
     unsafe { liv_view_close_all() };
 
     let once = |c: &CString| {
         let start = Instant::now();
         let mut out: *mut std::ffi::c_char = std::ptr::null_mut();
-        assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, std::ptr::null(), &mut out) }, LIV_OK);
+        assert_eq!(unsafe { liv_view_day(c.as_ptr(), DAY, DAY, std::ptr::null(), &mut out) }, LIV_OK);
         unsafe { liv_ffi::liv_string_free(out) };
         start.elapsed().as_secs_f64()
     };
@@ -460,25 +461,100 @@ fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
     unsafe { liv_view_close_all() };
     let c = CString::new(path.to_str().unwrap()).unwrap();
 
-    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), day, std::ptr::null(), out) }).unwrap();
-    let blocks = v["blocks"].as_array().unwrap();
-    assert_eq!(blocks.len(), 2, "both are on the day");
+    let v = call(|out| unsafe { liv_view_day(c.as_ptr(), day, day, std::ptr::null(), out) })
+        .unwrap();
+    let timed = v[0]["timed"].as_array().unwrap();
+    assert_eq!(timed.len(), 2, "both are on the day");
 
-    assert_eq!(blocks[0]["row"]["title"], "call the roofer about the slates");
-    assert_eq!(blocks[0]["row"]["untitled"], false);
-    assert_eq!(blocks[1]["row"]["untitled"], true, "still flagged, so it can draw quietly");
-    assert_eq!(blocks[1]["row"]["title"], "Task · 13 Sep 10:30");
+    assert_eq!(timed[0]["title"], "call the roofer about the slates");
+    assert_eq!(timed[0]["untitled"], false);
+    assert_eq!(timed[1]["untitled"], true, "still flagged, so it can draw quietly");
+    assert_eq!(timed[1]["title"], "Task · 13 Sep 10:30");
 
+    unsafe { liv_view_close_all() };
+}
+
+#[test]
+fn the_library_answers_the_panel_and_its_two_lists() {
+    let path = box_path("library");
+    let (note, scrap, t) = {
+        let mut e = Engine::open_local(&path).unwrap();
+        let note = e.create(kind::NOTE, Some("A note"), 1_000).unwrap();
+        let scrap = e.capture("a scrap", 1_001).unwrap();
+        let t = e.create(kind::TASK, Some("A task"), 1_002).unwrap();
+        e.set(t, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_003).unwrap();
+        (note, scrap, t)
+    };
+    unsafe { liv_view_close_all() };
+    let c = CString::new(path.to_str().unwrap()).unwrap();
+
+    let v = call(|out| unsafe { liv_view_library(c.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out) })
+        .unwrap();
+    assert_eq!(titles(&v["all"]), vec!["A task", "a scrap", "A note"], "newest first");
+    let ids = |key: &str| -> Vec<String> {
+        v[key].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_owned()).collect()
+    };
+    assert_eq!(ids("notes"), vec![scrap.hex(), note.hex()], "pages only, last touched first");
+    assert_eq!(ids("unsorted"), vec![t.hex(), scrap.hex(), note.hex()]);
+    assert_eq!(v["counts"]["today"], 1);
+    assert_eq!(v["counts"]["tasks"], 1);
+    assert_eq!(v["counts"]["notes"], 2);
+    assert_eq!(v["counts"]["unsorted"], 3);
+
+    // A lens narrows Notes and the counts, never `all` or Unsorted.
+    let lens = CString::new(format!("[\"{}\"]", note.hex())).unwrap();
+    let v = call(|out| unsafe { liv_view_library(c.as_ptr(), at(DAY, 9, 0), 0, lens.as_ptr(), out) })
+        .unwrap();
+    assert_eq!(v["all"].as_array().unwrap().len(), 3);
+    assert_eq!(v["notes"].as_array().unwrap().len(), 1);
+    assert_eq!(v["unsorted"].as_array().unwrap().len(), 3);
+    assert_eq!(v["counts"]["tasks"], 0);
+    unsafe { liv_view_close_all() };
+}
+
+#[test]
+fn the_search_screen_comes_back_as_rows_inside_the_lens() {
+    use liv_ffi::finding::liv_view_search;
+    let path = box_path("search_screen");
+    let mine = {
+        let mut e = Engine::open_local(&path).unwrap();
+        let mine = e.create(kind::NOTE, Some("Roof"), 1_000).unwrap();
+        e.create(kind::NOTE, Some("Roof tiles"), 1_001).unwrap();
+        mine
+    };
+    unsafe { liv_view_close_all() };
+    let c = CString::new(path.to_str().unwrap()).unwrap();
+    let q = CString::new("roof").unwrap();
+
+    let v = call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, std::ptr::null(), out) })
+        .unwrap();
+    assert_eq!(titles(&v["hits"]), vec!["Roof", "Roof tiles"]);
+    assert_eq!(v["total"], 2);
+    assert_eq!(v["exact"], true, "one is called exactly that");
+
+    let lens = CString::new(format!("[\"{}\"]", mine.hex())).unwrap();
+    let v = call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, lens.as_ptr(), out) })
+        .unwrap();
+    assert_eq!(titles(&v["hits"]), vec!["Roof"]);
+    assert_eq!(v["total"], 1);
+
+    let bad = CString::new("not a list").unwrap();
+    assert_eq!(
+        call(|out| unsafe { liv_view_search(c.as_ptr(), q.as_ptr(), 0, bad.as_ptr(), out) }),
+        Err(LIV_ERR_ARG)
+    );
     unsafe { liv_view_close_all() };
 }
 
 /// **ONE REFRESH STAYS LINEAR IN THE BOX** (standing rule 2; 2026-09-29).
 ///
-/// What the app pays after every action is not one read but EIGHT —
-/// exactly the ones `BoxModel.loadEverything` makes: the notes list, the
-/// trash, the clerk's sweep, the workspaces, the checkbox lines in notes,
-/// the assist switch, the property list and the kinds. Six of the eight had
-/// no cost test. It replaces `ffi/src/tests.rs
+/// What the app pays after every action is not one read but TEN — exactly
+/// the ones `BoxModel.loadEverything` makes once every screen has been
+/// opened: the library (every row, Notes, Unsorted and the panel's
+/// counts), the trash, the clerk's sweep, the workspaces, the assist
+/// switch, the property list, the kinds, and the three screens that ask
+/// for themselves — Tasks (which carries the checkbox lines in notes),
+/// Today, and the Calendar's three months. It replaces `ffi/src/tests.rs
 /// the_snapshot_stays_linear_in_box_size`, which timed the core
 /// `liv_snapshot` those eight replaced, and goes with `core/` in stage 5.
 ///
@@ -487,17 +563,26 @@ fn a_scrap_made_on_the_engine_keeps_its_first_line_as_its_title() {
 #[test]
 fn one_refresh_stays_linear_in_the_box() {
     use liv_ffi::basics::{liv_kinds, liv_properties};
-    use liv_ffi::finding::{liv_assist, liv_note_tasks, liv_view_trash, liv_workspaces};
+    use liv_ffi::finding::{liv_assist, liv_view_trash, liv_workspaces};
     use liv_ffi::writes::liv_sweep;
 
     fn boxed(name: &str, notes: u64) -> std::path::PathBuf {
         let path = box_path(name);
         let mut e = Engine::open_local(&path).unwrap();
         e.create(kind::PERSON, Some("Anna"), 1_000).unwrap();
+        let roof = e.create(kind::PROJECT, Some("Roof"), 1_001).unwrap();
         for i in 0..notes {
             let id = e.create(kind::NOTE, Some(&format!("note number {i}")), 2_000 + i).unwrap();
             let words = format!("Call Anna about part {i} of the rebuild, due friday.");
             e.set_content(id, vec![Span::Text(TextSpan::plain(words))], 0, 2_000 + i).unwrap();
+            // And a task beside every other note, dated and filed, so
+            // the Tasks screen has groups, lateness and projects to count.
+            if i % 2 == 0 {
+                let t = e.create(kind::TASK, Some(&format!("task {i}")), 3_000 + i).unwrap();
+                let due = DAY - 5 + (i % 10) as i32;
+                e.set(t, prop::DUE, Value::Date(DateSpec::Day(due)), 3_000 + i).unwrap();
+                e.set(t, prop::PROJECT, Value::Ref(roof), 3_000 + i).unwrap();
+            }
         }
         path
     }
@@ -508,11 +593,19 @@ fn one_refresh_stays_linear_in_the_box() {
     let refresh = |path: &std::path::Path| {
         let p = CString::new(path.to_str().unwrap()).unwrap();
         let start = std::time::Instant::now();
-        call(|out| unsafe { liv_view_everything(p.as_ptr(), 0, DAY, std::ptr::null(), out) }).unwrap();
+        call(|out| unsafe { liv_view_library(p.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out) })
+            .unwrap();
         call(|out| unsafe { liv_view_trash(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_sweep(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_workspaces(p.as_ptr(), out) }).unwrap();
-        call(|out| unsafe { liv_note_tasks(p.as_ptr(), out) }).unwrap();
+        call(|out| unsafe {
+            liv_view_tasks(p.as_ptr(), std::ptr::null(), DAY, std::ptr::null(), out)
+        })
+        .unwrap();
+        call(|out| unsafe { liv_view_today(p.as_ptr(), at(DAY, 9, 0), 0, std::ptr::null(), out) })
+            .unwrap();
+        call(|out| unsafe { liv_view_day(p.as_ptr(), DAY - 40, DAY + 60, std::ptr::null(), out) })
+            .unwrap();
         call(|out| unsafe { liv_assist(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_properties(p.as_ptr(), out) }).unwrap();
         call(|out| unsafe { liv_kinds(p.as_ptr(), out) }).unwrap();

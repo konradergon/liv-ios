@@ -14,22 +14,21 @@
 // NOTE, and this is that view. The lenses went with the mixed list they
 // narrowed (standing rule 6).
 //
-// Rules:
-//   1. It WEARS the workspace lens like every workspace view (owner, rev
-//      6, 2026-08-03: "workspaces define context consistently via
-//      property filtering"). The always-complete surface is the All
-//      workspace, one switch away.
-//   2. NOTES, and only notes: a task is a record and opens as a card, so
-//      a list of things that open as a PAGE is the honest content of the
-//      word. Files count; a file is a document you work on.
+// The list is Rust's (`surface/src/library.rs`, `BoxModel.lists.notes`),
+// and so are its rules: it wears the workspace lens like every workspace
+// view (owner, rev 6, 2026-08-03); it holds what opens as a PAGE — notes,
+// scraps and files, never a task or an event, which open as cards; and it
+// is ordered by what you touched last, so the note you were editing ten
+// minutes ago is the first row. This file draws it.
 
 import SwiftUI
 
 struct EverythingView: View {
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
-    @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
+    /// The row a swipe has lifted out of the card (`livSwipeLift`).
+    @State private var lifted: AnyHashable?
 
     var body: some View {
         let slice = rows
@@ -42,21 +41,22 @@ struct EverythingView: View {
                     subtitle: slice.isEmpty
                         ? nil : "\(slice.count) note\(slice.count == 1 ? "" : "s")"
                 )
-                .listRowInsets(EdgeInsets())
+                .listRowInsets(LivRow.fullWidth)
                 if slice.isEmpty {
                     EmptyHint("Nothing written")
                 } else {
                     // ONE CARD of every note, most recently touched first.
-                    ForEach(Array(slice.enumerated()), id: \.element.id) { i, row in
-                        line(row, prev: i == 0 ? nil : slice[i - 1], position: .of(i, in: slice.count))
+                    ForEach(livCardSlots(slice)) { s in
+                        line(s.item, prev: s.index == 0 ? nil : slice[s.index - 1], position: s.position)
                     }
                 }
             }
-            .listRowInsets(EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
+            .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
+            LivCardListEnd()
         }
-        .listStyle(.plain)
+        .livCardList()
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
         .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
@@ -68,27 +68,9 @@ struct EverythingView: View {
         }
     }
 
-    /// `everything` is the curated front-of-house list — backstage entities
-    /// (properties, options, types, workspaces) are already excluded by the
-    /// core, so this screen never shows engine plumbing.
-    ///
-    /// ORDERED BY WHAT YOU TOUCHED LAST, not by when you made it, which is
-    /// why this can beat the tab switcher: the note you were editing ten
-    /// minutes ago is the first row, and unlike the switcher it also
-    /// reaches the note you did NOT leave open. The key is the log's own
-    /// `recency` — the seq of the last transaction that touched the
-    /// entity, which is what search tiebreaks with, so the two can never
-    /// disagree. Reading a note without changing it does not bump it: no
-    /// verb writes a visit, and a device-side one would disagree with
-    /// search on every other surface.
+    /// Rust's Notes list, in its order, as rows of the model's index.
     private var rows: [EntityRow] {
-        (box.snap?.everything ?? [])
-            .compactMap { box.entity($0) }
-            .filter {
-                $0.trashed != true && $0.archived != true && workspaces.admits($0)
-                    && TabShape.of($0) != .record
-            }
-            .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
+        box.lists.notes.compactMap { box.entity($0) }
     }
 
     // MARK: one row
@@ -114,7 +96,8 @@ struct EverythingView: View {
             }
         }
         .livRowPress(position)
-        .livCardRow(position: position)
+        .livSwipeLift(row.id, $lifted)
+        .livCardRow(position: position, lifted: livIsLifted(row.id, lifted))
         .swipeActions(edge: .trailing) {
             livTrashAction { box.trash(row.id) }
         }

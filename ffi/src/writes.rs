@@ -418,26 +418,64 @@ fn proposed_word(e: &liv_engine::Engine, op: &liv_engine::Op) -> serde_json::Val
 pub unsafe extern "C" fn liv_sweep(path: *const c_char, out: *mut *mut c_char) -> i32 {
     match with_engine(path, |e| {
         let found = liv_surface::clerk::sweep(e).map_err(|_| LIV_ERR_READ)?;
-        Ok(serde_json::Value::Array(
-            found
-                .iter()
-                .filter_map(|p| {
-                    let first = p.ops.first()?;
-                    let entity = first.entity().hex();
-                    Some(json!({
-                        "entity": entity,
-                        "print": p.fingerprint(),
-                        "proposer": p.proposer,
-                        "reason": p.reason,
-                        "value": proposed_word(e, first),
-                    }))
-                })
-                .collect(),
-        ))
+        Ok(suggestion_rows(e, &found))
     }) {
         Ok(v) => deliver(out, &v),
         Err(e) => e,
     }
+}
+
+/// What the clerk would suggest about ONE thing — `liv_sweep`'s rows for
+/// it, the same JSON (2026-09-30, purely additive).
+///
+/// **The whole-box sweep is Unsorted's, and runs only while Unsorted is
+/// open** (owner, 2026-09-30). It is the costliest read a refresh made —
+/// 332 ms at 5,000 things, in the one lane every read and write waits
+/// in — and only two places show its answer. The other is the card on a
+/// thing's properties, which is about that thing alone; this is its door,
+/// and it costs the thing (`sweep_one`: every name in the box against one
+/// text, 3.7 ms at 5,000), not the box.
+///
+/// # Safety
+/// `path` and `entity` valid C strings; `out` as for `liv_sweep`.
+#[no_mangle]
+pub unsafe extern "C" fn liv_sweep_one(
+    path: *const c_char,
+    entity: *const c_char,
+    out: *mut *mut c_char,
+) -> i32 {
+    let entity = match id_arg(entity) {
+        Ok(i) => i,
+        Err(e) => return e,
+    };
+    match with_engine(path, |e| {
+        let found = liv_surface::clerk::sweep_one(e, entity).map_err(|_| LIV_ERR_READ)?;
+        Ok(suggestion_rows(e, &found))
+    }) {
+        Ok(v) => deliver(out, &v),
+        Err(e) => e,
+    }
+}
+
+/// Proposals as the wire carries them — ONE shape for both doors, so the
+/// card and Unsorted cannot drift apart.
+fn suggestion_rows(e: &liv_engine::Engine, found: &[Proposal]) -> serde_json::Value {
+    serde_json::Value::Array(
+        found
+            .iter()
+            .filter_map(|p| {
+                let first = p.ops.first()?;
+                let entity = first.entity().hex();
+                Some(json!({
+                    "entity": entity,
+                    "print": p.fingerprint(),
+                    "proposer": p.proposer,
+                    "reason": p.reason,
+                    "value": proposed_word(e, first),
+                }))
+            })
+            .collect(),
+    )
 }
 
 /// Say yes to one suggestion, named by the thing it is about and its

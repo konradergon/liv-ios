@@ -182,12 +182,6 @@ struct FileBody: View {
                 .foregroundStyle(LivTheme.text3)
                 .lineLimit(2)
                 .truncationMode(.head)
-            // Format-neutral: an image has no "words", and a spreadsheet's
-            // owner is not an editor. The bytes stay where they are.
-            Text("Liv holds the reference and the filing. The file itself opens in the app that owns it: ••• → Open in…")
-                .font(.system(size: LivType.label))
-                .foregroundStyle(LivTheme.text2)
-                .padding(.top, 4)
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)

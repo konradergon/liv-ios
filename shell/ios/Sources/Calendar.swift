@@ -2,12 +2,11 @@
 // the month grid behind the title as a JUMP card (Mon-first, six fixed
 // weeks, ≤3 neutral ink dots per day — never a colour rainbow, and the
 // chosen day marked by `LivDayMark`, the same disc the Today strip
-// draws). `dated` is the full set (bucketed by civil day client-side);
-// only `occurrences` ride the snapshot window, so the grid re-windows
-// over the VISIBLE six-week span on every month change. Occurrence rows
-// project their SERIES entity — repeat glyph, read-only, tap opens the
-// series. A row tap opens a Desk tab (desk.open dismisses this window by
-// the chrome's own rule).
+// draws). Which things fall on which day is Rust's answer
+// (`liv_view_day`, `BoxModel.calendar`), asked for the shown month and
+// the month either side; where each block sits on the hour grid is
+// worked out here, because it moves with the finger. A row tap opens a
+// Desk tab (desk.open dismisses this window by the chrome's own rule).
 //
 // TAPPING AN EMPTY HOUR WRITES THE EVENT, there and then, and raises its
 // card with the caret in the name (owner, 2026-08-13: "naming of items
@@ -22,17 +21,14 @@ import UIKit
 
 // MARK: - day items
 
-/// One calendar line: a dated entity, or an occurrence projecting its
-/// series row. All-day is the core's own date-only flag; a stamp of 0000
-/// is only consulted when the core did not say, so an event deliberately
-/// set to midnight stays an event at midnight (review, 2026-08-06).
+/// One thing on a day, and when (a packed civil stamp). All-day is the
+/// core's own date-only flag, so an event deliberately set to midnight
+/// stays an event at midnight (review, 2026-08-06).
 private struct CalendarDayItem: Identifiable {
-    let key: String
     let row: EntityRow
-    let stamp: Int64
-    let occurrence: Bool
-    var id: String { key }
-    var allDay: Bool { row.dueDateOnly ?? (stamp % 10_000 == 0) }
+    var id: LivEntityID { row.id }
+    var stamp: Int64 { row.due ?? 0 }
+    var allDay: Bool { row.allDay == true }
 }
 
 // MARK: - the month grid's data, decided before it is drawn
@@ -119,8 +115,6 @@ struct CalendarView: View {
         let today = Civil.todayDay()
         let byDay = itemsByDay()
         let items = byDay[selectedDay] ?? []
-        let doneNames = Set(
-            taskOptions.filter { $0.completes == true }.compactMap(\.name))
 
         // THE TIMELINE IS THE SCREEN (owner, 2026-08-31: "maybe
         // replacing the current layout with the notion layout would be
@@ -154,7 +148,7 @@ struct CalendarView: View {
                 // into slabs rather than grouping rows. Air does the
                 // same job without drawing anything.
                 .padding(.bottom, 14)
-            dayPanel(items: items, today: today, doneNames: doneNames)
+            dayPanel(items: items, today: today)
         }
         .background(LivTheme.canvas)
         // THE PICKER, WHEN YOU ASK FOR IT. The same grid, the same
@@ -200,9 +194,10 @@ struct CalendarView: View {
             loadWindow()
             box.statusOptions(kind: "task") { taskOptions = $0 }
         }
-        // The landed block lets go the moment the box agrees with it.
-        .onReceive(box.$snap) { _ in settle() }
+        // The landed block lets go the moment the calendar agrees with it.
+        .onReceive(box.$calendar) { _ in settle() }
         .onChange(of: monthFirst) { _, _ in loadWindow() }
+        .onChange(of: workspaces.lensIds) { _, _ in loadWindow() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
@@ -455,9 +450,7 @@ struct CalendarView: View {
     /// The day, Apple Calendar's shape (phase 4): an all-day band, then an
     /// hour grid where a timed item is a positioned block. Tap an empty
     /// hour to create there; drag a block to move its time.
-    private func dayPanel(
-        items: [CalendarDayItem], today: Int64, doneNames: Set<String>
-    ) -> some View {
+    private func dayPanel(items: [CalendarDayItem], today: Int64) -> some View {
         let timed = items.filter { !$0.allDay }
         return VStack(spacing: 0) {
             // NOTHING between the month grid and the timeline — no date
@@ -470,7 +463,7 @@ struct CalendarView: View {
             // the month grid, and it is still in Today, in Tasks and in
             // search. The band that carried them is deleted, ring and
             // all.
-            hourGrid(timed: timed, today: today, doneNames: doneNames)
+            hourGrid(timed: timed, today: today)
         }
         // The bin rides OVER the foot of the timeline while something is
         // in the air, and takes no space when nothing is.
@@ -490,16 +483,13 @@ struct CalendarView: View {
         let start: Int
         let length: Int
         let rect: CGRect
-        var id: String { item.key }
-        /// An occurrence projects a series — moving one instance is a
-        /// recurrence edit, not a drag.
-        var movable: Bool { !item.occurrence }
+        var id: LivEntityID { item.id }
     }
 
     /// WHERE A BLOCK IS RIGHT NOW, which is not always what the box says:
     /// the one under your finger is wherever you have dragged it to.
     private func liveStart(_ item: CalendarDayItem) -> Int {
-        if let held = lifted, held.id == item.row.id, !item.occurrence {
+        if let held = lifted, held.id == item.row.id {
             return held.minutes
         }
         return CalClock.minutes(of: item.stamp)
@@ -546,9 +536,7 @@ struct CalendarView: View {
         }
     }
 
-    @ViewBuilder private func hourGrid(
-        timed: [CalendarDayItem], today: Int64, doneNames: Set<String>
-    ) -> some View {
+    @ViewBuilder private func hourGrid(timed: [CalendarDayItem], today: Int64) -> some View {
         let nowMinutes = CalClock.minutes(of: Civil.nowStamp())
         GeometryReader { geo in
             let frames = frames(timed, width: geo.size.width)
@@ -557,7 +545,7 @@ struct CalendarView: View {
                     ZStack(alignment: .topLeading) {
                         hourLines
                         ForEach(frames) { frame in
-                            block(frame, doneNames: doneNames)
+                            block(frame)
                         }
                         // The box being placed, drawn exactly like the
                         // block it is about to become — no text: it has
@@ -573,7 +561,7 @@ struct CalendarView: View {
                         // long-press on the enclosing UIScrollView — the
                         // only place a gesture can out-argue the scroll.
                         HourGridDrag(
-                            targets: frames.filter(\.movable).map {
+                            targets: frames.map {
                                 HourGridDrag.Target(id: $0.item.row.id, rect: $0.rect)
                             },
                             onLift: { id in
@@ -614,7 +602,7 @@ struct CalendarView: View {
                                 }
                                 // THE BLOCK STAYS WHERE THE FINGER LEFT
                                 // IT. Cleared by `settle` when the
-                                // snapshot agrees, or by `commitMove` if
+                                // calendar agrees, or by `commitMove` if
                                 // the write is refused.
                                 lifted = LiftedBlock(
                                     id: id, minutes: landed, airborne: false)
@@ -724,7 +712,7 @@ struct CalendarView: View {
         HStack(spacing: 8) {
             Image(systemName: trashArmed ? "trash.fill" : "trash")
                 .font(.system(size: LivType.title, weight: .medium))
-            Text("Drop to trash")
+            Text("Trash")
                 .font(.system(size: LivType.body, weight: .medium))
         }
         .foregroundStyle(trashArmed ? LivTheme.onAccent : LivTheme.red)
@@ -811,7 +799,10 @@ struct CalendarView: View {
     /// this day at all, which is the same answer for a different reason.
     private func settle() {
         guard let held = lifted, !held.airborne else { return }
-        guard let row = box.entity(held.id), let due = row.due else {
+        let row = (box.calendar ?? []).lazy
+            .flatMap { $0.timed ?? [] }
+            .first { $0.id == held.id }
+        guard let row, let due = row.due else {
             lifted = nil
             return
         }
@@ -835,7 +826,7 @@ struct CalendarView: View {
                 ZStack(alignment: .topLeading) {
                     // The rule starts AFTER the time column. Drawn from
                     // x=0 it crossed out the hour it was labelling.
-                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                    LivHairline()
                         .padding(.leading, CalClock.gutter)
                     Text(String(format: "%02d:00", hour))
                         .font(.system(size: LivType.caption).monospacedDigit())
@@ -876,7 +867,7 @@ struct CalendarView: View {
     /// While it is in the air it draws at the LIVE minute, brighter, with
     /// its moving time — the finger is showing you the answer before it
     /// commits.
-    private func block(_ frame: HourFrame, doneNames: Set<String>) -> some View {
+    private func block(_ frame: HourFrame) -> some View {
         let item = frame.item
         let held = lifted?.id == item.row.id ? lifted : nil
         // WHERE IT DRAWS: the hold wins over the snapshot, in the air and
@@ -892,12 +883,10 @@ struct CalendarView: View {
         let unit = CalClock.hourHeight / 60
         let span = CalClock.range(frame.start, frame.length)
         let name = livRowTitle(item.row)
-        let voice: String =
-            item.occurrence ? "\(name), \(span), repeating" : "\(name), \(span)"
 
         return blockFace(
             item, name: name, span: span, length: frame.length, live: live,
-            moving: moving, voice: voice, task: task, doneNames: doneNames
+            moving: moving, voice: "\(name), \(span)", task: task
         )
         .frame(width: frame.rect.width, height: frame.rect.height, alignment: .topLeading)
         // A TINTED BODY AND A COLOURED EDGE — the reference's shape.
@@ -944,17 +933,13 @@ struct CalendarView: View {
 
     @ViewBuilder private func blockFace(
         _ item: CalendarDayItem, name: String, span: String, length: Int,
-        live: Int, moving: Bool, voice: String, task: Bool, doneNames: Set<String>
+        live: Int, moving: Bool, voice: String, task: Bool
     ) -> some View {
-        let done = livIsDone(item.row, doneNames)
+        let done = item.row.done == true
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
-                if item.occurrence {
-                    Image(systemName: "repeat")
-                        .font(.system(size: LivType.micro, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                } else if task {
-                    StatusRing(done: done, compact: true) { toggleStatus(item.row.id) }
+                if task {
+                    StatusRing(done: done, compact: true) { toggleStatus(item.row) }
                 }
                 Text(name)
                     .font(.system(size: LivType.body, weight: .medium))
@@ -977,76 +962,43 @@ struct CalendarView: View {
         .padding(.vertical, 5)
     }
 
-    // MARK: snapshot slices
+    // MARK: the days
 
-    /// One pass over `dated` + `occurrences`, lens-filtered (M4), bucketed
-    /// by civil day, each bucket time-sorted. An occurrence whose series is
-    /// itself dated on the day dedupes away (Today's rule). The lens applies
-    /// to occurrence SERIES rows too — a filtered surface filters whole.
+    /// Rust's days, keyed by packed civil day for the grid and the
+    /// timeline. All-day first, then timed, each in time order as sent.
     private func itemsByDay() -> [Int64: [CalendarDayItem]] {
         var out: [Int64: [CalendarDayItem]] = [:]
-        var datedIds: [Int64: Set<LivEntityID>] = [:]
-        for id in box.snap?.dated ?? [] {
-            guard let row = box.entity(id), row.trashed != true,
-                let due = row.due, workspaces.admits(row)
-            else { continue }
-            let day = Civil.day(of: due)
-            out[day, default: []].append(
-                CalendarDayItem(
-                    key: "e\(LivIDText.written(id))", row: row, stamp: due,
-                    occurrence: false))
-            datedIds[day, default: []].insert(id)
-        }
-        for occ in box.snap?.occurrences ?? [] {
-            guard let series = occ.series, let civil = occ.civil,
-                let row = box.entity(series), row.trashed != true,
-                workspaces.admits(row)
-            else { continue }
-            let day = Civil.day(of: civil)
-            guard datedIds[day]?.contains(series) != true else { continue }
-            out[day, default: []].append(
-                CalendarDayItem(
-                    key: "o\(LivIDText.written(series))-\(civil)", row: row, stamp: civil,
-                    occurrence: true))
-        }
-        for (day, items) in out {
-            out[day] = items.sorted {
-                $0.stamp != $1.stamp ? $0.stamp < $1.stamp : $0.row.id < $1.row.id
-            }
+        for day in box.calendar ?? [] {
+            guard let epoch = day.day else { continue }
+            let rows = (day.allDay ?? []) + (day.timed ?? [])
+            out[Civil.day(ofEpoch: epoch)] = rows.map { CalendarDayItem(row: $0) }
         }
         return out
     }
 
-    // MARK: predicates + acts (Today's, file-private there — local copies)
-
-
-
+    // MARK: acts
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
-    private func toggleStatus(_ id: LivEntityID) {
-        guard let row = box.entity(id) else { return }
-        let doneNames = Set(
-            taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let target = livIsDone(row, doneNames)
+    private func toggleStatus(_ row: EntityRow) {
+        let target = row.done == true
             ? taskOptions.first { $0.completes != true }
             : taskOptions.first { $0.completes == true }
         guard let name = target?.name, !name.isEmpty else { return }
-        box.set(id, "status", name)
+        box.set(row.id, "status", name)
     }
 
-    /// Window the snapshot over the VISIBLE six-week span (the shown month
-    /// plus its spill days — their dots must be as honest as the month's).
-    /// The window steers recurrence expansion; `dated` is full regardless.
-    /// The visible six weeks PLUS the month either side, because the
-    /// pager draws both neighbours: without them a month slid in blank
-    /// and grew its dots a beat later.
+    /// Ask for the shown month's six weeks PLUS the month either side,
+    /// because the pager draws both neighbours: without them a month slid
+    /// in blank and grew its dots a beat later. The answer on screen stays
+    /// until the next one lands, so a page never draws empty.
     private func loadWindow() {
         let start = CalGrid.gridStart(CalGrid.addMonths(monthFirst, -1))
         let end = Civil.addDays(CalGrid.gridStart(CalGrid.addMonths(monthFirst, 1)), 41)
-        box.refreshWindow(
-            from: Civil.stamp(day: start, hhmm: 0),
-            to: Civil.stamp(day: end, hhmm: 2359))
+        box.watchCalendar(
+            CalendarAsk(
+                from: Civil.epochDay(start), to: Civil.epochDay(end),
+                lens: workspaces.lensIds))
     }
 }
 

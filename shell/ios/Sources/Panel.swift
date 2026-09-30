@@ -130,17 +130,22 @@ struct SidePanel<Content: View>: View {
 // MARK: - the library (left)
 
 /// The application, in one place (rev 6, Notesnook's sidebar as the
-/// model): the GLOBAL views that ignore the workspace lens, then the
-/// active WORKSPACE's own views — the ones its query filters — then,
-/// pinned at the bottom, the workspace switcher and Settings. Nothing in
-/// here is about the currently open note.
+/// model): the views, then the WORKSPACES — every one, the one you are in
+/// lit — then, pinned at the bottom, Trash and Settings. Nothing in here is
+/// about the currently open note.
+///
+/// OPTION A (clearer spec, 2026-09-29; the owner: the panel "looks like an
+/// incomplete list of items since the bottom half is empty", then "go with
+/// A"). The workspaces were a card that rose from a button at the foot;
+/// they are rows in the list now, the list fills the panel, and the foot
+/// holds the two house-keeping doors.
 struct LibraryPanel: View {
     let onDismiss: () -> Void
-    /// BOTH presented by DESKHOST, not here: anything that closes this
+    /// ALL presented by DESKHOST, not here: anything that closes this
     /// panel mid-use (workspace adopt(), a notification tap routing
     /// desk.open) would tear down a sheet hung on it (audits 2026-08-01,
-    /// 2026-08-04).
-    let onWorkspace: () -> Void
+    /// 2026-08-04). The form is new with nil, an edit with an id.
+    let onWorkspaceForm: (LivEntityID?) -> Void
     let onSettings: () -> Void
     let onTrash: () -> Void
 
@@ -164,11 +169,7 @@ struct LibraryPanel: View {
     }
 
     private var list: some View {
-        // ONE walk of the box per render. `counts` used to be a computed
-        // property, so every row that read it built a fresh ViewCounts —
-        // seven walks per render, which is the exact thing its own doc
-        // says it avoids (found 2026-08-27).
-        let counts = ViewCounts(box: box, lens: workspaces)
+        let counts = ViewCounts(box.lists.counts)
         // NO bottom inset and no divider: the rows run all the way down
         // and are occluded by the floating foot, fading over the last
         // stretch. That is the reference's own arrangement, and it is
@@ -217,25 +218,14 @@ struct LibraryPanel: View {
                     // the same separator Trash uses
                     // below, and no label — a heading over two rows
                     // costs more than the rows do.
-                    // TWO KINDS OF BOUNDARY, TWO NUMBERS (2026-09-18).
-                    // This one splits the views from each other — the
-                    // same kind of row on both sides — so it gets the
-                    // group step. Half a row (28.5) said the same thing
-                    // by accident; `open` says it on purpose.
-                    .padding(.top, Feature.startsGroup(feature) ? LivAir.open : 0)
+                    // 12 between the two groups (clearer spec): the same
+                    // kind of row on both sides, so a small step.
+                    .padding(.top, Feature.startsGroup(feature) ? LivPanel.groupGap : 0)
                 }
 
-                // Trash stays in the list — it is house-keeping, not a
-                // place you work. Settings moved to the foot with the
-                // workspace (team, 2026-08-22).
-                row("Trash", glyph: .trash) { onTrash() }
-                    // Trash is house-keeping, not a place you work — the
-                    // different kind of row from the places above, so it
-                    // gets the gap that says so. (Filters sat between
-                    // until 2026-09-22 and had the same gap.)
-                    .padding(.top, LivAir.apart)
+                workspaceList
                 // The last row must be able to clear the foot.
-                Color.clear.frame(height: LivPanel.row)
+                Color.clear.frame(height: LivPanelFoot.circle + LivBar.gap + LivSafeArea.bottom)
             }
         }
         // THE CLOCK'S ROOM, and only the clock's.
@@ -267,76 +257,103 @@ struct LibraryPanel: View {
                 ],
                 startPoint: .top, endPoint: .bottom)
         )
-        .overlay(alignment: .bottom) { foot(counts) }
+        .overlay(alignment: .bottom) { foot }
         .livOverlay(LivOverlay.library)
     }
 
-    /// THE FOOT: the workspace, what it holds, and the way to settings.
+    /// THE WORKSPACES, as rows (option A): each one its mark and its name,
+    /// the one you are in lit — the panel's second lit row, one per list —
+    /// then All workspaces and New workspace. Holding a workspace offers
+    /// Edit and Trash, as the rows of the old card did.
     ///
-    /// Obsidian's shape, which the owner pointed at: the name, a quiet
-    /// line under it saying what is inside, and a gear beside it. It is
-    /// pinned rather than scrolling with the list, because it is not a
-    /// place in the list — it says which box you are in.
-    ///
-    /// This reverses 2026-08-17's "Settings is the last row, not a
-    /// pinned foot", whose argument was that a pinned row plus the
-    /// global bar was one fixed layer too many. The bar now slides away
-    /// on scroll, so the objection is gone.
-    private func foot(_ counts: ViewCounts) -> some View {
-        HStack(spacing: LivPanelFoot.gap) {
-            Button {
-                onWorkspace()
-            } label: {
-                HStack(spacing: LivPanelFoot.gap) {
-                    // THE WORKSPACE'S LETTER, set like an icon (the clearer
-                    // board) — the same mark the Workspaces card draws.
-                    LivWorkspaceMark(workspace: workspaces.active, size: LivPanelFoot.mark)
-                    VStack(alignment: .leading, spacing: 0) {
-                        HStack(spacing: LivDetail.valueGap) {
-                            Text(workspaces.activeName)
-                                .font(.system(size: LivType.body, weight: .semibold))
-                                .foregroundStyle(LivTheme.text)
-                                .lineLimit(1)
-                            LivChevron(.down, ink: LivTheme.text2)
-                        }
-                        Text(counts.foot)
-                            .font(.system(size: LivType.detail).monospacedDigit())
-                            .foregroundStyle(LivTheme.text3)
-                            .lineLimit(1)
-                    }
+    /// NO COUNTS HERE. A count per workspace needs that workspace's lens
+    /// read from the core — a query per workspace per render (standing
+    /// rule 2). The views keep theirs.
+    @ViewBuilder private var workspaceList: some View {
+        Text("Workspaces")
+            .font(.system(size: LivType.label, weight: .medium))
+            .foregroundStyle(LivTheme.text2)
+            .accessibilityAddTraits(.isHeader)
+            .padding(.leading, LivPanel.inset)
+            .padding(.top, LivPanel.labelTop)
+            .padding(.bottom, LivPanel.labelBottom)
+        ForEach(workspaces.workspaces) { ws in
+            row(ws.display, on: workspaces.activeId == ws.id) {
+                LivWorkspaceMark(workspace: ws, size: LivCards.glyph)
+            } action: {
+                workspaces.setActive(ws.id)
+                onDismiss()
+            }
+            .contextMenu {
+                Button {
+                    onWorkspaceForm(ws.id)
+                } label: {
+                    Label("Edit workspace", systemImage: "slider.horizontal.3")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                Button(role: .destructive) {
+                    workspaces.forgetQuery(ws.id)
+                    if workspaces.activeId == ws.id { workspaces.setActive(.absent) }
+                    box.trashWorkspace(ws.id)
+                } label: {
+                    Label("Trash workspace", systemImage: "trash")
+                }
             }
-            .buttonStyle(.plain)
-            .livDoor()
-            // NAMED, because its label was DERIVED — the workspace's own
-            // name plus the line under it, so it changed with the box and
-            // could not be tapped by a driver. "Switch workspace" and not
-            // "Workspace": the card this opens draws that word as its
-            // title, and a label matching two elements is refused by
-            // `axe tap` (the third such collision in two days,
-            // 2026-09-05).
-            .accessibilityLabel("Switch workspace")
-
-            // A CIRCLE, one step of tone off the panel it sits on — the
-            // shape both references use for the settings key, and the
-            // reason a same-coloured control still reads as a control.
-            Button(action: onSettings) {
-                LivIcon(glyph: .settings, color: LivTheme.text2, size: LivCards.glyph)
-                    .frame(width: LivPanelFoot.circle, height: LivPanelFoot.circle)
-                    .background(Circle().fill(LivTheme.panel2))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
         }
-        .padding(.leading, LivPanelFoot.inset)
-        .padding(.trailing, LivPanel.litInset)
-        .padding(.bottom, 4)
+        row("All workspaces", on: workspaces.activeId.isAbsent) {
+            LivWorkspaceMark(workspace: nil, size: LivCards.glyph)
+        } action: {
+            workspaces.setActive(.absent)
+            onDismiss()
+        }
+        // A PLUS SET LIKE A LETTER, and the words a step quieter: this row
+        // makes a workspace rather than going to one.
+        row("New workspace", ink: LivTheme.text2) {
+            Text("+")
+                .font(.system(size: (LivCards.glyph * LivPen.letter).rounded(), weight: .medium))
+                .foregroundStyle(LivTheme.text2)
+                .frame(width: LivCards.glyph, height: LivCards.glyph)
+        } action: {
+            onWorkspaceForm(nil)
+        }
+    }
+
+    /// THE FOOT: two circles, Trash on the left and Settings on the right —
+    /// the two doors that are house-keeping rather than places you work.
+    /// Pinned rather than scrolling with the list. Trash was its glyph and
+    /// its word for an hour (owner, 2026-09-29: "trash should have a button
+    /// like settings").
+    ///
+    /// It held the workspace — its mark, its name and what it held, a
+    /// button that raised the Workspaces card — until the panel listed the
+    /// workspaces itself (option A, 2026-09-29).
+    private var foot: some View {
+        HStack(spacing: LivPanelFoot.gap) {
+            footKey(.trash, "Trash", onTrash)
+            Spacer(minLength: 0)
+
+            footKey(.settings, "Settings", onSettings)
+        }
+        .padding(.horizontal, LivPanelFoot.inset)
+        .padding(.bottom, LivSafeArea.bottom + LivBar.gap)
         // NO HAIRLINE. The reference panel has no divider anywhere in it
         // — a full-width scan of every row found none — and the fade
         // above already says the list continues underneath.
+    }
+
+    /// A CIRCLE, one step of tone off the panel it sits on — the shape
+    /// both references use for the settings key, and the reason a
+    /// same-coloured control still reads as a control.
+    private func footKey(
+        _ glyph: LivGlyph, _ label: String, _ action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            LivIcon(glyph: glyph, color: LivTheme.text2, size: LivPanelFoot.glyph)
+                .frame(width: LivPanelFoot.circle, height: LivPanelFoot.circle)
+                .background(Circle().fill(LivTheme.panel2))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     /// One list row. NO hairline: a line between rows is what a FORM
@@ -352,25 +369,37 @@ struct LibraryPanel: View {
     /// colour still marks what a THING is, out in the lists — a view is
     /// a place, not a thing.
     private func row(
-        _ label: String, glyph: LivGlyph, detail: String? = nil,
+        _ label: String, glyph: LivGlyph, detail: String? = nil, on: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        row(label, detail: detail, on: on) {
+            LivIcon(glyph: glyph, color: LivTheme.text, size: LivCards.glyph)
+        } action: {
+            action()
+        }
+    }
+
+    private func row(
+        _ label: String, detail: String? = nil,
         /// The row you are in. The reference marks it with a FILL and
         /// nothing else — same ink, same weight, no accent, no dot, no
         /// border — and the fill is the row plus its padding rather than
         /// a box drawn around the words.
         on: Bool = false,
+        ink: Color = LivTheme.text,
+        @ViewBuilder lead: () -> some View,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            // ONE COLUMN AT 28pt for the whole panel: the glyph starts
-            // there, and a 22pt glyph (no frame) plus a 16pt gap puts
-            // every label at 66. Section text, when there is any, aligns to
-            // the GLYPH and not to the label — that is what makes two
-            // different lists read as one column.
+            // ONE COLUMN AT 28pt for the whole panel: the mark starts
+            // there, and a 22pt mark plus a 16pt gap puts every label at
+            // 66. Section text aligns to the MARK and not to the label —
+            // that is what makes two lists read as one column.
             HStack(spacing: 16) {
-                LivIcon(glyph: glyph, color: LivTheme.text, size: LivCards.glyph)
+                lead()
                 Text(label)
                     .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.text)
+                    .foregroundStyle(ink)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 if let detail {
@@ -400,84 +429,38 @@ struct LibraryPanel: View {
 
 // MARK: - what each view holds
 
-/// The counts beside the view rows, and the line under the workspace.
+/// The counts beside the view rows: Rust's (`liv_view_library`,
+/// `surface/src/library.rs`), read in the same pass as the lists they
+/// count, so the number beside a view is the number of rows that view
+/// shows. Unsorted's ignores the workspace, as its list does; every other
+/// count wears it.
 ///
-/// Counted THROUGH THE LENS. With a lens on, the panel used to say
-/// "Everything 246" over a screen showing nothing (found 2026-08-27) —
-/// the count answered a question nobody had asked.
-///
-/// **One pass over the box, not one per row.** Six rows each asking the
-/// box a question would be the same shape as the four defects
-/// `design/core.md` §10 records — rebuild on read, once per render. This
-/// walks the entities once and answers from what it found.
+/// This was a walk of the box in Swift with its own copy of each screen's
+/// rule, and the panel said 8 while Unsorted said nothing — twice, in two
+/// different shapes (2026-09-15, again 2026-09-18).
 struct ViewCounts {
-    private var tasks = 0
-    private var inbox = 0
-    private var events = 0
-    private var everything = 0
-    /// Documents — what the Notes row lists (2026-09-16). `everything`
-    /// still counts every item, because the foot says how big the
-    /// workspace is, and that is every item in it.
-    private var notes = 0
-    private var today = 0
+    let counts: LivCounts
 
-    init(box: BoxModel, lens: WorkspaceModel) {
-        let now = Civil.todayDay()
-        for row in box.entities.values where row.trashed != true {
-            // THE INBOX IS COUNTED BEFORE THE LENS, because the Inbox
-            // LIST ignores the workspace and always has (design/ios.md
-            // M4: an unfiled thing must be reachable from every
-            // workspace, or a capture made under the wrong lens appears
-            // to vanish). Counting it after the gate is how the panel
-            // came to say 8 while the screen said nothing — twice, in
-            // two different shapes (2026-09-15, again 2026-09-18). A
-            // count beside a row is a promise about the list that row
-            // opens, so it obeys that list's rule, not this loop's.
-            if livIsUnfiled(row) { inbox += 1 }
-
-            // The same gate every surface uses, so the number beside a
-            // view is the number of rows that view will show.
-            guard lens.admits(row) else { continue }
-            everything += 1
-            // THE SAME TEST THE LIST USES: a page, not a record.
-            if TabShape.of(row) != .record { notes += 1 }
-            switch LivKind.of(row) {
-            case .task: tasks += 1
-            case .event: events += 1
-            default: break
-            }
-            // Today counts what is DUE today or earlier and still open —
-            // the same question the Today surface asks.
-            if livCanTick(row), let due = row.due, due > 0, Civil.day(of: due) <= now {
-                today += 1
-            }
-        }
+    init(_ counts: LivCounts) {
+        self.counts = counts
     }
 
     /// A zero is not worth drawing. Notesnook shows one; this app's own
     /// rule is that a count which is always there stops being read
     /// (owner, 2026-08-18: "eliminate unnecessary small text").
-    private func shown(_ n: Int) -> String? {
-        n > 0 ? "\(n)" : nil
+    private func shown(_ n: Int?) -> String? {
+        guard let n, n > 0 else { return nil }
+        return "\(n)"
     }
 
     func of(_ feature: Feature) -> String? {
         switch feature {
-        case .tasks: return shown(tasks)
-        case .inbox: return shown(inbox)
-        case .calendar: return shown(events)
-        case .everything: return shown(notes)
-        case .today: return shown(today)
+        case .tasks: return shown(counts.tasks)
+        case .inbox: return shown(counts.unsorted)
+        case .calendar: return shown(counts.events)
+        case .everything: return shown(counts.notes)
+        case .today: return shown(counts.today)
         }
     }
 
-    /// What the workspace holds, and HOW MUCH OF IT IS SORTED. Obsidian's
-    /// foot says how big the vault is; Liv's says how much is unfiled,
-    /// which is the product page's second success test (2026-09-06).
-    /// "142 items · 6 unsorted" — the unsorted number IS the Unsorted
-    /// row's own (the clearer board shows 6 on both), in that view's word.
-    var foot: String {
-        let items = "\(everything) item\(everything == 1 ? "" : "s")"
-        return inbox > 0 ? items + " · \(inbox) unsorted" : items
-    }
 }

@@ -42,8 +42,8 @@ pub mod search;
 pub mod words;
 
 
-pub mod day;
-pub mod everything;
+pub mod calendar;
+pub mod library;
 pub mod tasks;
 pub mod today;
 
@@ -119,14 +119,11 @@ pub fn agenda(e: &Engine, day: i32, lens: &Lens) -> Result<Vec<Row>, LogError> {
     Ok(rows)
 }
 
-/// Every status there is, in the order a screen groups by: the three Liv
-/// ships with, then whatever the box has minted, oldest first.
-pub fn statuses(e: &Engine) -> Result<Vec<EntityId>, LogError> {
-    let mut out: Vec<EntityId> = liv_engine::STATUSES.to_vec();
-    let mut minted = e.of_kind(kind::STATUS)?;
-    minted.sort();
-    out.extend(minted.into_iter().filter(|s| !model::is_furniture(*s)));
-    Ok(out)
+/// Every status there is, in the order a screen groups by — the order the
+/// status picker offers them (`options_for`), so the segments above a list
+/// and the groups in it can never disagree.
+pub fn statuses(e: &Engine) -> Result<Vec<(EntityId, String)>, LogError> {
+    e.options_for(prop::STATUS)
 }
 
 /// What a thing opens as. A FILE is checked first, because having a file
@@ -217,6 +214,10 @@ pub struct Row {
     /// Whitespace is not words: a note holding one space has nothing in
     /// it to go looking for.
     pub has_body: bool,
+    /// Open, a task, and its day has passed (`is_late`). Filled in by the
+    /// surfaces that are told what day it is — Today, Tasks and the
+    /// library — and false on the rest (search, the trash, the calendar).
+    pub late: bool,
     /// **Plumbing on the shelf.** Real, addressable, and on no
     /// front-of-house list: workspaces, saved views, declared fields,
     /// minted areas and status options. `core/` excluded these inside the
@@ -321,6 +322,7 @@ pub fn row(e: &Engine, id: EntityId) -> Result<Row, LogError> {
             _ => false,
         },
         working: matches!(one(prop::WORKING), Some(Value::Bool(true))),
+        late: false,
     })
 }
 
@@ -416,6 +418,46 @@ pub fn completes(e: &Engine, st: EntityId) -> Result<bool, LogError> {
 /// merely happens? Only a task is late; an event is not.
 pub fn is_task(row: &Row) -> bool {
     row.kind == Some(kind::TASK)
+}
+
+/// Can it be ticked? A task, or anything given a status — a status is
+/// what makes a thing a task, with or without the word.
+pub fn can_tick(row: &Row) -> bool {
+    is_task(row) || row.status.is_some()
+}
+
+/// **UNSORTED**: a thing of a kind a person files, with no area.
+///
+/// The kinds are the ones a person files — a scrap with no kind yet, a
+/// note, task, event, link, photo or file. A person, a project or a list is
+/// furniture the areas are FOR, not a thing waiting to be put in one. A
+/// name is not needed, and neither is a body (owner, 2026-09-29: "unsorted
+/// doesn't show empty notes with no title").
+///
+/// **An area with no name is no area.** The six built-in areas were deleted
+/// on 2026-09-21, and a thing filed under one still points at it — so it
+/// counted as filed while every screen showed it with no area at all.
+pub fn is_unsorted(row: &Row) -> bool {
+    let no_area = row.area.is_none() || row.area_word.as_deref().is_none_or(str::is_empty);
+    let filed_kind = match row.kind {
+        None => true,
+        Some(k) => [kind::NOTE, kind::TASK, kind::EVENT, kind::LINK, kind::PHOTO, kind::FILE]
+            .contains(&k),
+    };
+    no_area && filed_kind
+}
+
+/// **LATE**: a task, not finished, whose day has passed (owner ruling).
+/// Due today is not late, a finished task is not late however old its
+/// date, and an event is never late — it happened.
+pub fn is_late(row: &Row, today_day: i32) -> bool {
+    is_task(row) && !row.done && row.due_ms.is_some_and(|ms| day_of(ms) < today_day)
+}
+
+/// The row with its `late` flag set for `today_day`.
+pub fn dated(mut row: Row, today_day: i32) -> Row {
+    row.late = is_late(&row, today_day);
+    row
 }
 
 /// Days since the epoch, from a millisecond reading. Floors, so a negative

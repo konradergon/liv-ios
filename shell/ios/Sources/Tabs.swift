@@ -256,7 +256,7 @@ struct TabSwitcher: View {
         // (the safe area already handles that).
         .padding(.bottom, 4)
         .overlay(alignment: .top) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            LivHairline()
         }
     }
 
@@ -375,7 +375,7 @@ struct InactiveTabs: View {
             // HOLLOW, not filled: this is the shelf's secondary verb and
             // the screen's primary one is Done. Same rule either way —
             // a shape, never a blue word.
-            AddChip("Close all", big: true, symbol: "xmark") {
+            AddChip("Close all", symbol: "xmark") {
                 desk.closeInactive()
                 close()
             }
@@ -682,10 +682,6 @@ struct TabCard: View {
             else { continue }
             lines.append("\(p) · \(v)")
             if lines.count == 4 { break }
-        }
-        if lines.isEmpty {
-            return row.hasBody == true
-                ? "Content lives on this entity." : "No details yet."
         }
         return lines.joined(separator: "\n")
     }

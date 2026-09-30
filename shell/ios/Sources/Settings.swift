@@ -193,7 +193,7 @@ struct SettingsSheet: View {
     private var notifyProblem: String? {
         if notify.denied { return "Turned off for Liv in iOS Settings." }
         if notify.droppedCount > 0 {
-            return "\(notify.droppedCount) beyond iOS's 64-reminder limit won't ring."
+            return "\(notify.droppedCount) reminder\(notify.droppedCount == 1 ? "" : "s") won't ring"
         }
         return nil
     }

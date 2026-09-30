@@ -201,33 +201,38 @@ enum LivPosition {
         }
     }
 
-    /// One line about what this position shows, for the card's preview.
-    /// A position has no cells to list, so without this the card would be
-    /// a title over dead space.
+    /// What this position is set to, for the card's preview — the state a
+    /// person left it in, and nothing that describes the view itself.
+    ///
+    /// It used to open with a sentence per view ("What you have written, by
+    /// what you touched last.", "Every task in the box."), written so the
+    /// card was not a title over dead space. The owner, 2026-09-29: "remove
+    /// all stupid explanatory text from the app. the interface should
+    /// explain itself." A view left at its default says nothing.
     static func detail(_ feature: Feature, _ token: String) -> String {
         switch feature {
-        case .everything:
-            return "What you have written, by what you touched last."
-        case .inbox:
-            return "Everything without an area, and what the clerk suggests."
+        case .everything, .inbox:
+            return ""
         case .tasks:
             let pos = TasksPosition(token: token)
-            let groups = pos.expanded.isEmpty
-                ? "" : "\n\(pos.expanded.count) group\(pos.expanded.count == 1 ? "" : "s") open."
+            var lines: [String] = []
             switch pos.filter {
-            case .all: return "Every task in the box.\(groups)"
-            case .status(let s): return "Tasks whose status is \(s).\(groups)"
-            case .project(let p): return "Tasks on \(p).\(groups)"
+            case .all: break
+            case .status(let s): lines.append(s)
+            case .project(let p): lines.append(p)
             }
+            if !pos.expanded.isEmpty {
+                lines.append("\(pos.expanded.count) group\(pos.expanded.count == 1 ? "" : "s") open")
+            }
+            return lines.joined(separator: "\n")
         case .today:
             let pos = TodayPosition(token: token)
-            return pos.day == Civil.todayDay()
-                ? "The plan for today." : "The plan for \(Civil.dayLabel(pos.day))."
+            return pos.day == Civil.todayDay() ? "" : Civil.dayLabel(pos.day)
         case .calendar:
             let pos = CalendarPosition(token: token)
             return pos.day == Civil.todayDay()
-                ? "\(CalGrid.title(pos.month)), on today."
-                : "\(CalGrid.title(pos.month)), on \(Civil.dayLabel(pos.day))."
+                ? CalGrid.title(pos.month)
+                : "\(CalGrid.title(pos.month))\n\(Civil.dayLabel(pos.day))"
         }
     }
 

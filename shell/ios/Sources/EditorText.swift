@@ -784,7 +784,7 @@ final class MarkdownTextView: UITextView {
     private static let gutter: CGFloat = LivType.Editor.margin
     /// Between the title and the first line of the note. At 6 the note
     /// began almost against its own name.
-    private static let titleGap: CGFloat = 20
+    private static let titleGap: CGFloat = 18
     /// Embedded in a record card there is no floating bottom bar to
     /// clear and no title to reserve room for — the card supplies both.
     private static let embeddedTop: CGFloat = 4

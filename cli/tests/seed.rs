@@ -39,6 +39,12 @@ fn row<'a>(snap: &'a serde_json::Value, list: &str, id: &str) -> Option<&'a serd
     snap[list].as_array().unwrap().iter().find(|r| r["id"] == id)
 }
 
+/// A row of the app's index — every live thing, as `liv_view_library`
+/// sends it — by id.
+fn listed<'a>(snap: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+    snap["library"]["all"].as_array().unwrap().iter().find(|r| r["id"] == id)
+}
+
 #[test]
 fn a_seeded_box_reads_back_as_the_app_draws_it() {
     let db = box_at("seed");
@@ -61,7 +67,7 @@ fn a_seeded_box_reads_back_as_the_app_draws_it() {
     liv(&db, &["undo"]);
 
     let snap = json(&db, &["snapshot"]);
-    let t = row(&snap, "everything", &task).expect("the task is listed");
+    let t = listed(&snap, &task).expect("the task is listed");
     assert_eq!(t["title"], "Send the invoice");
     assert_eq!(t["kind_word"], "task");
     assert_eq!(t["status_word"], "Doing");
@@ -70,12 +76,12 @@ fn a_seeded_box_reads_back_as_the_app_draws_it() {
     let day: i64 = 20_726;
     assert_eq!(t["due_ms"].as_i64(), Some(day * 86_400_000 + 14 * 3_600_000 + 30 * 60_000));
 
-    let n = row(&snap, "everything", &note).expect("the note is listed");
+    let n = listed(&snap, &note).expect("the note is listed");
     assert_eq!(n["has_body"], true, "the body the CLI wrote is the body the app reads");
     // An unmarked span crosses in its short form, `{"Text": "…"}`.
     assert_eq!(json(&db, &["content", &note])["spans"][0]["Text"], "Three nights, flying out Thursday.");
 
-    assert!(row(&snap, "everything", &scrap).is_some(), "undo put the scrap back");
+    assert!(listed(&snap, &scrap).is_some(), "undo put the scrap back");
     assert!(row(&snap, "trash", &scrap).is_none(), "and it is no longer in the trash");
 
     // One user action, one transaction, counted from the log rather than
@@ -100,7 +106,7 @@ fn a_part_of_an_id_finds_the_one_thing_it_names() {
     liv(&db, &["trash", part]);
     let snap = json(&db, &["snapshot"]);
     assert!(row(&snap, "trash", &b).is_some());
-    assert!(row(&snap, "everything", &a).is_some());
+    assert!(listed(&snap, &a).is_some());
 
     let out = Command::new(env!("CARGO_BIN_EXE_liv"))
         .arg("--box")
@@ -109,5 +115,40 @@ fn a_part_of_an_id_finds_the_one_thing_it_names() {
         .output()
         .unwrap();
     assert!(!out.status.success(), "four characters is not an id");
+    let _ = std::fs::remove_dir_all(db.parent().unwrap());
+}
+
+#[test]
+fn several_come_back_in_one_line_and_one_undo() {
+    let db = box_at("restore_many");
+    let ids: Vec<String> = ["a", "b", "c"].iter().map(|n| liv(&db, &["new", "note", n])).collect();
+    for id in &ids {
+        liv(&db, &["trash", id]);
+    }
+    let mut args = vec!["restore"];
+    args.extend(ids.iter().map(String::as_str));
+    assert_eq!(json(&db, &args)["restored"], 3);
+    assert!(json(&db, &["trash"]).as_array().unwrap().is_empty());
+    liv(&db, &["undo"]);
+    assert_eq!(json(&db, &["trash"]).as_array().unwrap().len(), 3, "one undo, all three");
+    let _ = std::fs::remove_dir_all(db.parent().unwrap());
+}
+
+/// `inbox ID` answers what the app's properties card asks
+/// (`liv_sweep_one`): the whole-box `inbox`'s rows for that one thing.
+#[test]
+fn the_inbox_of_one_thing_is_the_inbox_narrowed() {
+    let db = box_at("inbox_one");
+    liv(&db, &["new", "person", "Anna"]);
+    let scrap = liv(&db, &["capture", "call", "anna", "tomorrow"]);
+    let scrap: serde_json::Value = serde_json::from_str(&scrap).unwrap();
+    let scrap = scrap["id"].as_str().unwrap().to_owned();
+
+    let all = json(&db, &["inbox"]);
+    let theirs: Vec<&serde_json::Value> =
+        all.as_array().unwrap().iter().filter(|r| r["entity"] == scrap.as_str()).collect();
+    assert!(theirs.len() >= 2, "a date and a mention: {all}");
+    let one = json(&db, &["inbox", &scrap]);
+    assert_eq!(one.as_array().unwrap().iter().collect::<Vec<_>>(), theirs);
     let _ = std::fs::remove_dir_all(db.parent().unwrap());
 }

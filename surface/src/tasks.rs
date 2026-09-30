@@ -1,22 +1,37 @@
-//! Tasks: every task, grouped by status.
+//! Tasks: every task, grouped by status, and what the screen says about
+//! them.
 //!
 //! From `Tasks.swift`, which held nine collection operations and the rules
 //! under them.
 
 use liv_engine::{kind, model, prop, Engine, EntityId, LogError, Value};
 
-use crate::{completes, day_of, row, statuses, visible, Lens, Row};
+use crate::salvage::{note_tasks, NoteTask};
+use crate::{completes, dated, row, statuses, visible, Lens, Row};
 
-/// Which tasks — the chips above the list.
+/// How many projects the Project segment offers: a menu, not a directory.
+pub const PROJECTS_OFFERED: usize = 6;
+
+/// The Tasks screen.
 ///
-/// **The lens runs BEFORE this** (M4): the workspace scopes the surface,
-/// the chips narrow inside it.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum Filter {
-    #[default]
-    All,
-    Status(EntityId),
-    Project(EntityId),
+/// **Everything its controls can pick is already in here.** A status
+/// segment picks one of `groups` by name, so switching segments redraws
+/// in the same frame without asking again. Only the project, which
+/// changes who is on the screen, is a parameter.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Tasks {
+    pub groups: Vec<Group>,
+    /// Open tasks the lens admits, plus the open lines in its notes —
+    /// the size of the SCREEN, whatever the project filter shows.
+    pub open: usize,
+    /// Open tasks the lens admits whose day has passed, whatever the
+    /// project filter shows.
+    pub late: usize,
+    /// Every open `- [ ]` line inside a note the lens admits.
+    pub in_notes: Vec<NoteTask>,
+    /// What the Project segment offers: the projects in use, commonest
+    /// first, then by name.
+    pub projects: Vec<(EntityId, String)>,
 }
 
 /// One status band.
@@ -27,83 +42,90 @@ pub struct Group {
     pub status: Option<EntityId>,
     pub name: String,
     pub completes: bool,
+    /// The status option's colour, in degrees, when it has one.
+    pub hue: Option<i64>,
     pub rows: Vec<Row>,
-    /// **The lateness is the GROUP's fact, not each row's.** Measured
-    /// 2026-08-30: this screen was 1.85% saturated pixels against
-    /// Todoist's 0.58%, and 21,000 of those were a column of red dates —
-    /// one per row, because in a real box every task is overdue. A colour
-    /// on every row distinguishes nothing. Todoist says it once, in the
-    /// heading, and leaves the rows grey; so the count is here and not on
-    /// the row.
+    /// How many rows in the band are late. A finished band has none.
     pub late: usize,
 }
 
 pub fn tasks(
     e: &Engine,
-    filter: Filter,
+    project: Option<EntityId>,
     lens: &Lens,
     today_day: i32,
-) -> Result<Vec<Group>, LogError> {
-    // Every task, by index seek. The shell scanned `snap.entities` and
-    // tested `kinds.contains("task")` — a string compare per entity per
-    // refresh.
-    let mut rows = Vec::new();
+) -> Result<Tasks, LogError> {
+    // Every task the lens admits, by index seek.
+    let mut all = Vec::new();
     for id in e.of_kind(kind::TASK)? {
         let r = row(e, id)?;
-        if !visible(&r, lens) || !matches(e, &r, filter)? {
-            continue;
+        if visible(&r, lens) {
+            all.push(dated(r, today_day));
         }
-        rows.push(r);
+    }
+    let in_notes = note_tasks(e, lens)?;
+    let open = all.iter().filter(|r| !r.done).count() + in_notes.len();
+    let late = all.iter().filter(|r| r.late).count();
+
+    // The project narrows inside the lens; the counts above do not move.
+    let mut rows = Vec::new();
+    for r in all {
+        let keep = match project {
+            None => true,
+            Some(p) => matches!(e.one(r.id, prop::PROJECT)?, Some(Value::Ref(x)) if x == p),
+        };
+        if keep {
+            rows.push(r);
+        }
     }
 
     let mut groups = Vec::new();
     let mut used: Vec<EntityId> = Vec::new();
-    for st in statuses(e)? {
+    for (st, name) in statuses(e)? {
         let mine: Vec<Row> = rows.iter().filter(|r| r.status == Some(st)).cloned().collect();
         used.extend(mine.iter().map(|r| r.id));
-        groups.push(band(e, Some(st), mine, today_day)?);
+        groups.push(band(e, Some(st), name, mine)?);
     }
     // Everything the vocabulary did not claim — including a status that
     // has since been retired, so no task can fall off the screen.
     let rest: Vec<Row> = rows.into_iter().filter(|r| !used.contains(&r.id)).collect();
-    groups.push(band(e, None, rest, today_day)?);
+    groups.push(band(e, None, "No status".to_owned(), rest)?);
 
-    // An empty group is not a group. Quick-add used to hold one open to
-    // host itself; the add button is outside the list now.
+    // An empty group is not a group.
     groups.retain(|g| !g.rows.is_empty());
-    Ok(groups)
+
+    let projects = e
+        .values_in_use(prop::PROJECT)?
+        .into_iter()
+        .filter_map(|v| v.target.map(|id| (id, v.label)))
+        .take(PROJECTS_OFFERED)
+        .collect();
+
+    Ok(Tasks { groups, open, late, in_notes, projects })
 }
 
 fn band(
     e: &Engine,
     st: Option<EntityId>,
+    name: String,
     mut rows: Vec<Row>,
-    today_day: i32,
 ) -> Result<Group, LogError> {
     sort(&mut rows);
     let completes = match st {
         Some(s) => completes(e, s)?,
         None => false,
     };
-    let late = if completes {
-        // A finished band has nothing late in it by definition, and
-        // saying "3 late" over a list of done things is noise.
-        0
-    } else {
-        rows.iter()
-            .filter(|r| r.due_ms.map(|ms| day_of(ms) < today_day).unwrap_or(false))
-            .count()
-    };
-    Ok(Group {
-        status: st,
-        name: match st {
-            Some(s) => name_of(e, s)?,
-            None => "No status".to_owned(),
+    let hue = match st {
+        Some(s) => match e.one(s, prop::HUE)? {
+            Some(Value::Number(n)) => Some(n as i64),
+            _ => None,
         },
-        completes,
-        rows,
-        late,
-    })
+        None => None,
+    };
+    // A finished band has nothing late in it by definition — its rows are
+    // done — so this is 0 there without saying so.
+    let late = rows.iter().filter(|r| r.late).count();
+    Ok(Group { status: st, name, completes, hue, rows, late })
 }
 
 /// Due ascending with undated last, then title, then id — stable across
@@ -114,14 +136,6 @@ fn sort(rows: &mut [Row]) {
         let db = b.due_ms.unwrap_or(i64::MAX);
         (da, a.title.to_lowercase(), a.id).cmp(&(db, b.title.to_lowercase(), b.id))
     });
-}
-
-fn matches(e: &Engine, r: &Row, filter: Filter) -> Result<bool, LogError> {
-    Ok(match filter {
-        Filter::All => true,
-        Filter::Status(s) => r.status == Some(s),
-        Filter::Project(p) => matches!(e.one(r.id, prop::PROJECT)?, Some(Value::Ref(x)) if x == p),
-    })
 }
 
 /// The word for a status — from the model for one of ours, from its name

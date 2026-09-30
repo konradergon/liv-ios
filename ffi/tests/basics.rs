@@ -9,8 +9,8 @@ use std::ffi::{CStr, CString};
 
 use liv_engine::{kind, prop, Engine};
 use liv_ffi::basics::*;
-use liv_ffi::finding::liv_search;
-use liv_ffi::surfaces::{liv_view_close_all, liv_view_day, liv_view_everything, LIV_ERR_ARG, LIV_OK};
+use liv_ffi::finding::liv_view_search;
+use liv_ffi::surfaces::{liv_view_close_all, liv_view_day, LIV_ERR_ARG, LIV_OK};
 use liv_ffi::writes::{LIV_ERR_NOTHING, LIV_ERR_REFUSED, LIV_ERR_STALE};
 use serde_json::Value as J;
 
@@ -345,6 +345,48 @@ fn trashing_is_a_cell_so_restoring_is_a_write() {
 
     assert_eq!(unsafe { liv_restore(path.as_ptr(), id.as_ptr(), T0 + 2) }, LIV_OK);
 
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// **Putting back several is one call and one undo** — the trash screen's
+/// "Put back all" (owner, 2026-09-29). One that is not in the trash is
+/// passed over, and the answer counts only what came back.
+#[test]
+fn several_come_back_as_one_undo() {
+    let (d, path) = box_at("restore_many");
+    let mut ids = Vec::new();
+    for (i, name) in ["Roof", "Gutter", "Porch"].iter().enumerate() {
+        let mut out = std::ptr::null_mut();
+        unsafe {
+            liv_make(path.as_ptr(), c(&kind::NOTE.hex()).as_ptr(), c(name).as_ptr(), T0 + i as u64, &mut out)
+        };
+        ids.push(took(out)["id"].as_str().unwrap().to_owned());
+    }
+    for (i, id) in ids[..2].iter().enumerate() {
+        assert_eq!(unsafe { liv_trash(path.as_ptr(), c(id).as_ptr(), T0 + 10 + i as u64) }, LIV_OK);
+    }
+    let in_trash = || {
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { liv_ffi::finding::liv_view_trash(path.as_ptr(), &mut out) }, LIV_OK);
+        took(out).as_array().unwrap().len()
+    };
+    assert_eq!(in_trash(), 2);
+
+    // All three asked for; the third was never thrown away.
+    let asked = c(&serde_json::to_string(&ids).unwrap());
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_restore_many(path.as_ptr(), asked.as_ptr(), T0 + 20, &mut out) }, LIV_OK);
+    assert_eq!(took(out)["restored"], 2);
+    assert_eq!(in_trash(), 0);
+
+    assert_eq!(unsafe { liv_ffi::writes::liv_undo(path.as_ptr(), T0 + 21) }, LIV_OK);
+    assert_eq!(in_trash(), 2, "one undo throws both out again");
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { liv_restore_many(path.as_ptr(), c("not a list").as_ptr(), T0 + 22, &mut out) },
+        LIV_ERR_ARG
+    );
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -1180,7 +1222,9 @@ fn a_minted_option_is_backstage_and_never_a_search_hit() {
 
     let mut out = std::ptr::null_mut();
     assert_eq!(
-        unsafe { liv_search(path.as_ptr(), c("woodworking").as_ptr(), 0, &mut out) },
+        unsafe {
+            liv_view_search(path.as_ptr(), c("woodworking").as_ptr(), 0, std::ptr::null(), &mut out)
+        },
         LIV_OK
     );
     let found = took(out);
@@ -1383,8 +1427,8 @@ fn a_proposal_carries_the_word_it_would_write() {
 ///
 /// The shell's path (`BoxModel.createEvent`): the kind by its word, one
 /// `liv_make`, then `liv_set` of `due` as the text `Box.dateText` writes.
-/// The calendar draws what `liv_view_everything` says an event's `due_ms`
-/// is, and the day timeline places it from `liv_view_day`. Every step is
+/// The calendar draws an event where `liv_view_day` says its `due_ms` is,
+/// on the day that answer puts it. Every step is
 /// asserted, because a break anywhere looks identical on a device: an
 /// event that was made and cannot be seen. Moved here from the core-era
 /// `an_event_made_at_an_hour_lands_in_dated` (2026-09-29), which ran the
@@ -1416,13 +1460,13 @@ fn an_event_made_at_an_hour_is_timed_and_on_its_day() {
     // THE CALENDAR'S READING: a TIMED due at the minute the tap computed.
     let mut out = std::ptr::null_mut();
     assert_eq!(
-        unsafe { liv_view_everything(path.as_ptr(), 0, day, std::ptr::null(), &mut out) },
+        unsafe { liv_view_day(path.as_ptr(), day, day, std::ptr::null(), &mut out) },
         LIV_OK
     );
-    let rows = took(out);
-    let row = rows
+    let days = took(out);
+    let row = days[0]["timed"]
         .as_array()
-        .expect("a list of rows")
+        .expect("the day's timed rows")
         .iter()
         .find(|r| r["id"] == made)
         .expect("the event is in the list the calendar reads")
@@ -1431,13 +1475,16 @@ fn an_event_made_at_an_hour_is_timed_and_on_its_day() {
     assert_eq!(row["due_ms"].as_i64(), Some(at), "the minute the tap computed is the minute stored");
     assert_eq!(row["all_day"], false, "a tap on an hour makes a TIMED event");
 
-    // AND THE DAY TIMELINE PLACES IT.
+    // AND THE CALENDAR PUTS IT ON ITS DAY, AT AN HOUR.
     let mut out = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_view_day(path.as_ptr(), day, std::ptr::null(), &mut out) }, LIV_OK);
+    assert_eq!(
+        unsafe { liv_view_day(path.as_ptr(), day, day, std::ptr::null(), &mut out) },
+        LIV_OK
+    );
     let v = took(out);
     let ids: Vec<&str> =
-        v["blocks"].as_array().unwrap().iter().filter_map(|b| b["row"]["id"].as_str()).collect();
-    assert_eq!(ids, vec![made.as_str()], "the event is a block on its own day");
+        v[0]["timed"].as_array().unwrap().iter().filter_map(|r| r["id"].as_str()).collect();
+    assert_eq!(ids, vec![made.as_str()], "the event is timed, on its own day");
 
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -1,5 +1,257 @@
 # Liv iOS — changelog (batch summaries; details in design/ios.md revs)
 
+## 2026-09-30 — a refresh reads only the screen you are looking at
+
+Owner's word, after the sweep was made linear (the entry below). Every
+write re-read Today, Tasks and the Calendar once each had been opened,
+and swept the whole box for Unsorted, wherever you were: four screen
+answers where one is on screen, all in the one lane every read and write
+waits in. The sweep was the costliest read of all (332 ms at 5,000
+things, against 120 ms for the whole library).
+
+**Now** `DeskHost` tells `BoxModel` which view is on screen
+(`screenChanged`), nil while a note lies over it; a record's card, which
+rises over the view, does not hide it. A refresh reads the library and
+the rest as before, plus the one answer for that view, second in the lane
+after the rows. A view is read at once as it comes back, since it missed
+the writes made while it was away; its last answer stays drawn until the
+new one lands. `watchTasks`, `watchToday` and `watchCalendar` record the
+question and read only when it changed and the view is on screen, so
+arriving reads once, and Today's and the Calendar's own re-ask on coming
+to the front no longer doubles the app's refresh. Unsorted lost the
+whole refresh it asked for on appearing, which existed to fetch fresh
+suggestions.
+
+A thing's properties card asks for its own suggestions through
+`liv_sweep_one` (new, purely additive: `liv_sweep`'s rows for that thing,
+one shared JSON builder, 3.7 ms at 5,000 things), while it is open.
+
+Checked on the simulator with `lldb` counting calls to each read. A tick on
+Today: the library and Today, nothing else. To Tasks and back: one read
+each. A write on Today with Tasks visited: Tasks not read. A note over
+Tasks and a suggestion accepted on its card: the library and the card, not
+Tasks; closing the note: Tasks once. Calendar and Unsorted: one read each
+on arrival. Back from the background: the library and the view on screen.
+Filmed the switch to Tasks after a write made on Today: at this box's size
+every frame of Tasks draws the new answer. On a big box the old one shows
+until the read lands (Tasks: 180 ms at 5,000 things, release, on a Mac).
+Tests: `one_things_suggestions_are_the_sweeps_rows_for_it`,
+`one_things_suggestions_cost_the_thing_and_not_the_box` (ffi) and
+`the_inbox_of_one_thing_is_the_inbox_narrowed` (cli; `liv inbox ID`).
+`cargo test` 375. `suites.sh` 13/13. `drive.sh tour`, `facets`, `settings`,
+`workspace` pass.
+
+## 2026-09-30 — the clerk's sweep stops going quadratic
+
+`liv_sweep` runs on every refresh, and on a box of 5,000 things named
+"thing {i}" with "thing" in every body it took 5,052 ms (release). The
+mentions proposer filed each name under its FIRST word, and "Meeting …",
+"Call …", "Buy …" share their first word with each other and with the
+prose — so every body was checked against every name. The cost tests
+missed it because their names ("Person Number {i}", "Anna") share no word
+with any body.
+
+**Now** each name is filed under its RAREST word, and a name many things
+wear ("Standup notes") is looked for once. Any word of a name works as a
+filter, because a name can only be in a text that holds all of its words,
+so the proposals are unchanged. They were compared with the old code over
+40 generated boxes (90,854 proposals, all identical). `sweep_one`, which
+reads one thing on accept, builds no index at all.
+
+Measured on the same 5,000-thing box through the ABI: `liv_sweep` went from
+4,971 to 332 ms. In memory it grows 2× per doubling (55, 114, 235, 485 ms for
+1,250 to 10,000 things) where it used to grow 4× (326 ms to 19.3 s). New
+tests: `surface/tests/sweep_cost.rs` (two, which fail at 9.4x and 9.9x on
+the old code) and `the_word_index_finds_exactly_what_a_walk_over_every_name_finds`
+in `surface/tests/clerk.rs`. `cargo test` 376.
+
+## 2026-09-30 — Notes, Unsorted, Search and the panel's counts read Rust's answers
+
+Owner: "finish step 1 with Notes, Unsorted and Search." With this, no
+screen picks its own rows in Swift any more.
+
+**One pass, not four.** Notes, Unsorted and the library panel's counts
+all need every row in the box, and the app already read every row after
+each write (it looks things up by id). Measured at 5,000 things in
+release, one whole-box read is about 120 ms, so asking the three as
+separate questions would have added three of them to every write. They
+are one answer instead — `liv_view_library` (new, additive), which
+replaces the `liv_view_everything` read in the refresh: every row, the
+Notes list, the Unsorted list, and the count beside each view.
+
+**The counts were a third copy of every rule.** `ViewCounts` in
+`Panel.swift` walked the box with its own idea of Today, Unsorted, Notes,
+Tasks and Calendar, and its comments record the panel disagreeing with
+Unsorted twice. Each count is now the length of the list it opens, from
+the same answer. Two numbers change: Today counts only what is still open
+(it counted done tasks due today, against its own comment), and Tasks
+counts every task the Tasks screen lists (it counted things with a
+status as tasks).
+
+**Unsorted's rule** (`livIsUnfiled`, 66 lines with its history) is
+`is_unsorted` in Rust, with the safety rule that the workspace never
+applies to it. `liv_view_everything`'s Unfiled slice uses the same rule,
+so there is one.
+
+**Search** asks `liv_view_search` (new, additive): the workspace is
+applied BEFORE the list is counted and cut, so "Showing 200 of 1,800" is
+about the rows on screen (it cut to 200 first, then filtered, and counted
+only what it received). Hits arrive as rows, so Search no longer needs the
+whole-box read, and Rust says whether a hit is named exactly like the
+words, which decides the Create row. Grouping by kind stays in Swift: it
+follows the classifier that picks each row's icon.
+
+**Fixed on the way — filing a scrap from Unsorted wrote nothing.** Giving
+a thing its kind (`setType`) sent the kind's hex id, which the box
+refuses; it sends the kind's name now, as status and area do. So tapping
+an area on a scrap, and "Not a note… → Task / Event / Link", did nothing
+at all. Found on the simulator, confirmed with the CLI.
+
+**Removed (owner's word):** `liv_view_everything`, `liv_search` and
+`liv_note_tasks`, which nothing called any more, and with them
+`surface/src/everything.rs` (its Notes and Unfiled rules live in
+`library.rs`; Upcoming and the slice chips had no screen). Their tests
+moved to the verbs that replaced them. The CLI's `list`, `search` and
+`snapshot` read the same verbs the app does. The ABI is 47 verbs.
+
+Checks: `cargo test` 373. `suites.sh` 13/13. `drive.sh tour`, `facets`,
+`settings`, `workspace` pass; `panel` and `routes` fail as before. On the
+simulator: Notes (3, last touched first), Unsorted (filing a task and a
+scrap, each leaving the list, the box agreeing), the panel's five counts
+against the CLI, and Search (groups, Create shown for "roof", gone for
+"roof notes").
+
+## 2026-09-30 — Today, Tasks and Calendar read Rust's answers
+
+Owner: step 1 of the clean-up in `design/how-its-built.md`, so that each
+rule lives once. The plan since 13 Sep said "Rust decides, Swift draws",
+and Rust already had `today`, `tasks` and `day`, with tests — but the app
+never called them. It loaded every item in the box after each write and
+filtered it again in `Today.swift`, `Tasks.swift` and `Calendar.swift`, so
+"late", "done", the lens and the sort orders each existed twice, and only
+the untested copy ran. The Rust side had also fallen two weeks behind the
+screens.
+
+**What moved.** Rust now answers each screen whole, including everything
+its controls can pick, so a segment or a strip day still switches in one
+frame without asking again. Tasks (`liv_view_tasks`): the groups in the
+status picker's order, each with its hue and late count; "N open · N late"
+for the whole lens whatever the project filter; the open lines in notes;
+the six most-used projects. A status segment picks its group by name; only
+the project filter asks again. Today (`liv_view_today`): all seven strip
+days, each split into all-day, passed, ahead and done and counted by area;
+Late; What next (five open undated tasks, last touched first); captured
+today. Calendar (`liv_view_day`): which things fall on which day over three
+months. Rows carry `late` (open task, day passed) on Today, Tasks and
+Everything, so the properties card's red due reads it too.
+
+**Owner's word, on two choices.** The three verbs were changed in place
+rather than added beside: nothing but the CLI called them. The calendar's
+block layout stays in Swift, because it moves with the finger on every frame
+of a drag, and Rust's copy (`lay_out`, `MIN_MINUTES`) is deleted.
+
+**Fixed on the way.** "Captured today" counted the day in UTC, so half past
+midnight in Stockholm was yesterday; Today now takes the phone's offset.
+The header's area counts no longer depend on cells having been fetched (they
+read the row's area word). The Calendar hides archived things like every
+other surface.
+
+**Deleted:** the Swift filters and sorts on the three screens,
+`livAreaCounts`, `livIsDone`, the occurrence scaffolding (nothing expands a
+recurrence), `refreshWindow`, `NoteTaskRow`, and the snapshot's `today`,
+`unstructured`, `dated` and `occurrences`. The app no longer calls
+`liv_note_tasks` (Tasks carries the lines); the verb stays for now.
+
+Checks: `cargo test` 363. `suites.sh` 13/13. `drive.sh tour`, `facets`,
+`settings`, `workspace` pass; `panel` and `routes` fail as before. On the
+simulator: segments, the Project menu, ticking (Tasks and Today, one write
+each in `liv history`), picking a strip day, and a drag on the Calendar,
+filmed — the block holds its new place through the release.
+
+## 2026-09-29 — swipes, separators, and clearer steps 1–3
+
+**A swiped row** (owner: "only that row should get rounded… slowly… it
+should deround itself when you release it… the row should disappear at the
+edges of the rows card"). The four card lists — Notes, Tasks, Today,
+Unsorted — are inset-grouped now (`livCardList`), so each cell is the card's
+width and clips its row: a swipe slides the row out under the card's edge.
+Each screen is one section framed by clear rows, so the system never rounds
+a card row with its own radius; rows still draw their own pieces at 22. The
+swiped row alone eases into a card of its own (`LivCardPiece`, 0.45s) and
+eases back as it is let go. Card rows are keyed by id AND place
+(`LivCardKey`), because the list redrew a row whose place changed two frames
+late (tick the last task: the new last row stayed square).
+
+Then, on the owner's screenshots of Apple Notes: a swipe's actions draw as
+Notes' do, the icon in the bubble and the word under it. iOS does that only
+on a row at least 60 tall (56 put the word inside), so every row that swipes
+is 64 (`LivCards.swipeRow`, owner's choice), and Tasks' Tonight / Tomorrow /
+Weekend / Pick and Today's Move to today got icons. A row lifted whenever
+the library panel was out: inside a List's cells a named coordinate space
+reads as the screen's, so rows now measure against the List's own x
+(`LivCardListFrame`). Trash in the panel's foot is a circle like Settings.
+
+Then: the swipe bubbles draw the app's own glyphs, rendered once to an
+image (`livSwipeLabel`), with three new ones in the same pen — tonight,
+tomorrow, weekend. A row no longer reads the desk's slide as a swipe while
+the library is drawn or dragged (`livSwipesLive`), which had flashed the top
+row round as the panel opened and closed. Today's area line changes in one
+frame instead of blurring " · Home 5" in. The panel foot's circles are the
+bar's size and stand where its keys stand.
+
+**Separators**: one hairline — in every list in the app since 30 Sep (seven
+places still drew the old half-point line), and faded out on a swiped row — `LivHairline` — exactly one pixel, in the new
+`rule` (#383838), where 0.5pt of #2E2E2E landed on 1.5 pixels and drew
+unevenly.
+
+**Clearer** (`design/clearer.md`, from `claude/happy-hopper-rwkenj`; most of
+it shipped on 09-27). Step 1: the six-tooth gear, a task as a box with a
+rule, Unsorted's dot without its faint stroke (the faint layer is gone), All
+workspaces as four dots, the area as a box, the numbered tab box, bigger
+workspace letters, `titleGap` 18, panel rows 52 / lit 46. Step 2: no more
+15pt — second lines are 16; `AddChip` 32 tall, 16 in text2, a 1pt outline;
+the segment thumb a 34 capsule in #3A3A3A. Step 3: option A — the panel
+lists the workspaces (a letter, or the first character when a name has none
+— the owner's rule; the emoji field went), All workspaces and New workspace;
+Trash and Settings share the foot. The switcher card is only its form now
+(`WorkspaceForm`), and `drive.sh workspace` asserts the new flow.
+
+## 2026-09-29 — the trash, the panel, and no explaining
+
+Owner, before sync: the trash is "very dumb" ("who scrolls through a huge
+list and adds back one item at a time?"); an add-note glyph beside "New
+task"; "remove all stupid explanatory text from the app"; a half-empty
+panel; and notes missing from Unsorted.
+
+**Trash** (as drawn, approved): newest THROWN AWAY first — it sorted by when
+each thing was made — in Today, Yesterday and Earlier (folded while anything
+newer is above it); a search; "Put back all" per section; Select for any
+several. Several come back as ONE write, so one undo throws them all out
+again: `Engine::restore_many` and `liv_restore_many` (additive; the owner is
+told), and `liv restore ID ID…` in the CLI. The CLI also takes `LIV_NOW_MS`,
+to seed a box as it looks after a week.
+
+**Panel**: an Areas + Recent layout was built and REVERTED the same day
+(owner: "not at all what i wanted"). What the half-empty panel should become
+is still open. Search keeps one fix found on the way: a picked chip with no
+words typed lists its matches, where it drew a blank page.
+
+**Text**: the explaining lines are gone — "Tap + for this one", "Moved to
+Trash, and undoable", the route and kind menus' subtitles, "Everything,
+unfiltered" (now the item count), Files' "Liv holds the reference…", Search's
+"Everything you have" and "— narrow the search", the tab cards' sentence per
+view, "Type to create", the rename alert's message, "Drop to trash" (now
+"Trash"), the reminder cap and editor notices cut to a line. `LivMenuItem`
+lost its `detail`. Tasks' add row wears a plain +.
+
+**Unsorted**: now lists empty, untitled notes too (owner: "unsorted
+doesn't show empty notes with no title"). It left out anything with no name
+and no words, while Notes listed the same thing as "Note · 29 Sep 17:26".
+
+`cargo test`: 353 passed. suites.sh 13/13; drive.sh tour, facets, settings
+green; `panel` and `routes` fail the same way on the previous Swift (the
+known one-surface failures).
+
 ## 2026-09-29 — core/ is deleted (stage 5)
 
 Owner: *"update the docs, then work on deleting core/"*. The app has run on

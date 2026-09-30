@@ -1,9 +1,11 @@
 // liv iOS — Search (design/ios.md §6): the global full-screen overlay the
-// chrome presents while desk.searchShown. A pill bar over liv_search —
-// the DSL parses in Rust, never here; the shell sends the raw query (150ms
-// debounce) and renders the ranked ids from the snapshot index, grouped by
-// first kind — task → event → note → file, then the rest alphabetical,
-// untyped scraps last. Rank order survives inside each group. A result
+// chrome presents while desk.searchShown. A pill bar over
+// liv_view_search — the DSL parses in Rust, never here; the shell sends the
+// raw query and the workspace lens (150ms debounce) and gets back the hit
+// rows in rank order, already inside the lens, with whether one is named
+// exactly like the words. It draws them grouped by the kind each row's
+// glyph shows — task → event → note → file, then the rest, untyped scraps
+// last — keeping rank order inside each group. A result
 // opens as a Desk tab and the overlay closes itself; Cancel is the
 // overlay's own close affordance (self-contained — the chrome only flips
 // the flag). Find-or-create (eval §4.3, Obsidian's quick switcher): a
@@ -52,11 +54,14 @@ struct SearchView: View {
     /// The facet menu. Search is a `fullScreenCover`, and the desk's menu
     /// host lives under it at the root — so this surface hosts its own.
     @State private var menu: LivMenu?
-    /// Raw ranked ids from the core, before the workspace lens.
-    @State private var rawHits: [LivEntityID] = []
-    /// How many matched in total. The core sends the first 200; without
+    /// The hits Rust ranked, inside the workspace lens, first 200.
+    @State private var hits: [EntityRow] = []
+    /// How many the lens admits in all. Rust sends the first 200; without
     /// this a query matching 1,800 things looked like it matched 200.
     @State private var totalHits = 0
+    /// A hit is named exactly like the typed words, so there is nothing
+    /// to offer to create.
+    @State private var exact = false
     @State private var facets: [LivFacet] = []
     /// Monotonic ticket: a stale debounce or a stale result must drop.
     @State private var seq = 0
@@ -80,48 +85,27 @@ struct SearchView: View {
         words.trimmingCharacters(in: .whitespaces)
     }
 
-    /// The lens, applied to the CORE's ranked ids — rank order is
-    /// preserved, the workspace only removes. Search is filtered; the
-    /// Inbox never is.
-    ///
-    /// TWO SETS MEETING, not a second opinion. Until 2026-08-27 this
-    /// re-filtered the core's own ranked answer through a parser written in
-    /// Swift, so one list was decided by two grammars that disagreed
-    /// sixteen ways. Both sides are the core's now: `rawHits` is what
-    /// `liv_search` ranked for the typed query, `lensIds` is what
-    /// `liv_lens` admits for the workspace, and this is their
-    /// intersection.
-    private var hits: [LivEntityID] {
-        guard let lens = workspaces.lensIds else { return rawHits }
-        return rawHits.filter { lens.contains($0) }
-    }
-
-    /// Find-or-create offers only when no row we actually render is
-    /// titled exactly like the query (case-insensitive).
+    /// Find-or-create offers only when no hit is titled exactly like the
+    /// words (Rust's `exact`, any case).
     private var offersCreate: Bool {
-        guard !trimmed.isEmpty else { return false }
-        return !hits.contains { id in
-            guard let title = box.entity(id)?.title else { return false }
-            return title.caseInsensitiveCompare(trimmed) == .orderedSame
-        }
+        !trimmed.isEmpty && !exact
     }
 
-    /// Grouped by KIND — the app's one classifier, so a row's group, its
-    /// colour and its glyph can never disagree. This used to read
-    /// `kinds.first` on its own, which put a task filed under "note" in
-    /// the wrong group.
-    private var groups: [(kind: LivKind, ids: [LivEntityID])] {
+    /// Grouped by the kind each row's GLYPH shows — `LivKind`, the app's
+    /// one classifier for how a thing looks — so a row's group, its colour
+    /// and its glyph can never disagree. Rank order survives inside each
+    /// group.
+    private var groups: [(kind: LivKind, rows: [EntityRow])] {
         var order: [LivKind] = []
-        var byKind: [LivKind: [LivEntityID]] = [:]
-        for id in hits {
-            guard let row = box.entity(id) else { continue }
+        var byKind: [LivKind: [EntityRow]] = [:]
+        for row in hits {
             let kind = LivKind.of(row)
             if byKind[kind] == nil { order.append(kind) }
-            byKind[kind, default: []].append(id)
+            byKind[kind, default: []].append(row)
         }
         return order
             .sorted { SearchView.rank($0) < SearchView.rank($1) }
-            .map { (kind: $0, ids: byKind[$0] ?? []) }
+            .map { (kind: $0, rows: byKind[$0] ?? []) }
     }
 
     private static func rank(_ kind: LivKind) -> Int {
@@ -158,7 +142,11 @@ struct SearchView: View {
     /// down.
     var body: some View {
         VStack(spacing: 0) {
-            if trimmed.isEmpty {
+            // NOTHING TYPED AND NOTHING PICKED. A chip on its own is a
+            // question too — "everything in Work", left when the words
+            // that found it are cleared — and until 2026-09-29 it answered
+            // with a blank page, because this asked only about words.
+            if trimmed.isEmpty && terms.isEmpty {
                 // CENTRED, the way the reference centres its own — not
                 // pinned 40pt under a header that is no longer there.
                 //
@@ -168,21 +156,25 @@ struct SearchView: View {
                 // TYPE lost them so they could not come back one surface
                 // at a time (standing rule 3). Adding one here would
                 // reverse that on a screenshot rather than on his word.
-                Spacer(minLength: 0)
-                EmptyHint("Everything you have")
+                // AND NO SENTENCE (owner, 2026-09-29: "the interface should
+                // explain itself") — a focused field over nothing is the
+                // whole invitation.
                 Spacer(minLength: 0)
             } else if hits.isEmpty {
                 // Zero results: the Create row IS the empty state, at the
                 // head of the results area — which is now the TOP of the
                 // screen rather than just under a header, since the field
                 // moved to the foot.
+                // A chip alone has no words to make a thing from.
                 ScrollView {
-                    createButton
-                        .padding(.horizontal, 16)
+                    if !trimmed.isEmpty {
+                        createButton
+                            .padding(.horizontal, 16)
+                    }
                 }
             } else {
-                if totalHits > rawHits.count {
-                    Text("Showing \(rawHits.count) of \(totalHits) — narrow the search")
+                if totalHits > hits.count {
+                    Text("Showing \(hits.count) of \(totalHits)")
                         .font(.system(size: LivType.body).monospacedDigit())
                         .foregroundStyle(LivTheme.text3)
                         .padding(.horizontal, 16)
@@ -191,24 +183,22 @@ struct SearchView: View {
                 List {
                     ForEach(groups, id: \.kind) { group in
                         Section {
-                            ForEach(group.ids, id: \.self) { id in
-                                if let row = box.entity(id) {
-                                    Button {
-                                        open(id)
-                                    } label: {
-                                        SearchHitRow(row: row)
-                                            .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .listRowBackground(Color.clear)
-                                    .listRowSeparatorTint(LivTheme.border)
-                                    .listRowInsets(
-                                        EdgeInsets(
-                                            top: 0, leading: 16, bottom: 0,
-                                            trailing: 16
-                                        )
-                                    )
+                            ForEach(group.rows) { row in
+                                Button {
+                                    open(row)
+                                } label: {
+                                    SearchHitRow(row: row)
+                                        .contentShape(Rectangle())
                                 }
+                                .buttonStyle(.plain)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparatorTint(LivTheme.rule)
+                                .listRowInsets(
+                                    EdgeInsets(
+                                        top: 0, leading: 16, bottom: 0,
+                                        trailing: 16
+                                    )
+                                )
                             }
                         } header: {
                             // NO KIND DOT. The heading names the kind
@@ -218,7 +208,7 @@ struct SearchView: View {
                             // 2026-08-30).
                             SectionLabel(
                                 group.kind == .capture ? "captures" : group.kind.wire,
-                                count: group.ids.count
+                                count: group.rows.count
                             )
                             .textCase(nil)
                             .padding(.horizontal, 16)
@@ -235,7 +225,7 @@ struct SearchView: View {
                         Section {
                             createButton
                                 .listRowBackground(Color.clear)
-                                .listRowSeparatorTint(LivTheme.border)
+                                .listRowSeparatorTint(LivTheme.rule)
                                 .listRowInsets(
                                     EdgeInsets(
                                         top: 0, leading: 16, bottom: 0,
@@ -254,7 +244,6 @@ struct SearchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(LivTheme.canvas.ignoresSafeArea())
         .onAppear {
-            box.refresh()  // hits render off the entity index
             if words.isEmpty, !seed.isEmpty {
                 words = seed
                 kick(debounce: false)
@@ -262,18 +251,19 @@ struct SearchView: View {
             DispatchQueue.main.async { focused = true }
         }
         .onChange(of: words) { _, _ in kick(debounce: true) }
+        .onChange(of: workspaces.lensIds) { _, _ in kick(debounce: false) }
         .livMenu($menu)
     }
 
     /// The one exit that carries a result. Picking REPORTS it; searching
     /// lands at the desk. Both then drop the veil.
-    private func open(_ id: LivEntityID) {
+    private func open(_ row: EntityRow) {
         if let onPick {
-            onPick(id, box.entity(id).map(livRowTitle) ?? "")
+            onPick(row.id, livRowTitle(row))
             close()
             return
         }
-        desk.open(id)
+        desk.open(row.id)
         close()
     }
 
@@ -363,38 +353,7 @@ struct SearchView: View {
     }
 
     private var pill: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text3)
-            TextField("Search", text: $words)
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text)
-                .focused($focused)
-                .submitLabel(.search)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .onSubmit { kick(debounce: false) }
-            if !words.isEmpty {
-                Button {
-                    words = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: LivType.body))
-                        .foregroundStyle(LivTheme.text2)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        // AS TALL AS THE ✕ BESIDE IT. It was 34 against a 44pt touch
-        // floor — under Apple's minimum, and visibly shorter than every
-        // other control the app puts at the foot.
-        .frame(height: LivRow.touch)
-        // NO BORDER. Rev 83 took the hairline off the filter chips on the
-        // owner's word; a field is the same shape making the same
-        // promise, and a fill either reads as a well or it does not.
-        .background(Capsule().fill(LivTheme.panel2))
+        LivSearchField(text: $words, focused: $focused) { kick(debounce: false) }
     }
 
     /// NARROW BY WHAT IS THERE, not by what you can spell.
@@ -630,8 +589,9 @@ struct SearchView: View {
         let ticket = seq
         let q = raw
         guard !q.isEmpty else {
-            rawHits = []
+            hits = []
             facets = []
+            exact = false
             return
         }
         if debounce {
@@ -648,11 +608,12 @@ struct SearchView: View {
     /// results both drop.
     private func fire(_ ticket: Int, _ q: String) {
         guard ticket == seq else { return }
-        box.search(q) { ids, total, found in
+        box.search(q, lens: workspaces.lensIds) { found, total, facets, exact in
             guard ticket == seq else { return }
-            rawHits = ids
+            hits = found
             totalHits = total
-            facets = found
+            self.facets = facets
+            self.exact = exact
         }
     }
 }

@@ -1,12 +1,11 @@
-// liv iOS — Tasks (design/ios.md §6): a Feature-view lens — status-grouped
-// flat list over every task in the box. Groups come from the vocabulary
-// (liv_options, board order); `completes` groups collapse by
-// default. Filters are client-side state only — the snapshot is never
-// re-queried to filter: a segmented control of statuses, and a Project
-// segment that is a menu. Done boxes wear the OPTION's hue (quantized to
-// the semantic set). Full snapshot on appear — undated tasks must not
-// drop. Tapping a row opens the entity as a Desk tab (desk.open). Rows
-// sit on cards under headers (the clearer boards, 2026-09-24).
+// liv iOS — Tasks (design/ios.md §6): every task, grouped by status. The
+// screen is `liv_view_tasks`'s answer (`BoxModel.tasks`): the groups, the
+// counts, the lines in notes and the projects all come from Rust, and the
+// rules behind them live in `surface/src/tasks.rs`. What is left here is
+// drawing: a status segment picks one of the groups by name (so it
+// switches in one frame), the Project menu asks again, `completes` groups
+// fold, and done boxes wear the option's hue. Rows sit on cards under
+// headers (the clearer boards, 2026-09-24).
 
 import SwiftUI
 import UIKit
@@ -17,9 +16,10 @@ struct TasksView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
 
     @State private var options: [StatusOption] = []
-    @State private var projects: [String] = []
     /// The row whose "Pick" swipe verb is choosing a date (sheet item).
     @State private var duePick: TasksDuePick?
+    /// The row a swipe has lifted out of its card (`livSwipeLift`).
+    @State private var lifted: AnyHashable?
 
     /// WHAT IS IN THE ADD ROW. Not a position: a half-typed name is not
     /// a place you can come back to, and parking it would write to
@@ -53,47 +53,40 @@ struct TasksView: View {
         var id: LivEntityID { entity }
     }
 
-    private struct TasksGroup: Identifiable {
-        var id: String { name }
-        let name: String
-        let completes: Bool
-        let hue: Color?
-        let isNoStatus: Bool
-        var rows: [EntityRow]
-    }
-
     // MARK: body
 
     var body: some View {
-        let groups = visibleGroups()
+        let groups = shownGroups()
         List {
             // THE CLEARER BOARD (2026-09-24): the name with its stop and a
             // line saying how much is open, then the filter, then cards.
             LivTitleBlock("Tasks", subtitle: subtitle)
-                .listRowInsets(EdgeInsets())
+                .listRowInsets(LivRow.fullWidth)
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
             segmentRow
             gap(LivCards.gap)
             addRow
-            if groups.allSatisfy({ $0.rows.isEmpty }) {
+            if groups.allSatisfy({ ($0.rows ?? []).isEmpty }) {
                 emptyRow
             }
             ForEach(groups) { group in
-                if group.completes {
+                let rows = group.rows ?? []
+                if group.completes == true {
                     foldCard(group)
                 } else {
                     groupHeader(group)
-                    ForEach(Array(group.rows.enumerated()), id: \.element.id) { i, row in
+                    ForEach(livCardSlots(rows)) { s in
                         taskRow(
-                            row, prev: i == 0 ? nil : group.rows[i - 1],
-                            position: .of(i, in: group.rows.count))
+                            s.item, prev: s.index == 0 ? nil : rows[s.index - 1],
+                            hue: group.hue, position: s.position)
                     }
                 }
             }
             inNotesSection
+            LivCardListEnd()
         }
-        .listStyle(.plain)
+        .livCardList()
         // 10, like Today, Inbox and Everything: every row states its own
         // height (`LivCards.row` / `twoLine`), so the List's floor only
         // has to stay out of the way — and must stay under the 16 gaps.
@@ -109,23 +102,34 @@ struct TasksView: View {
                 .presentationDetents([.medium])
         }
         .onAppear {
-            model.refresh()  // full snapshot — undated tasks must not drop
+            model.watchTasks(ask)
             model.statusOptions(kind: "task") { fetched in
                 options = fetched.filter { !($0.name ?? "").isEmpty }
             }
-            model.distinctValues(property: "project") { values in
-                projects = Array(values.prefix(6))  // count-desc; top few only
-            }
         }
+        .onChange(of: ask) { _, next in model.watchTasks(next) }
     }
 
-    /// "6 open · 2 late": every open task in the lens plus the open lines
-    /// in notes, whatever the filter shows — the screen's size, not the
-    /// slice's. Late is grey here; the group heading carries the red.
+    /// What this screen asks Rust for: the project it is narrowed to and
+    /// the workspace lens. A status segment is not in it — it picks a
+    /// group out of the answer.
+    private var ask: TasksAsk {
+        TasksAsk(project: pickedProject?.id, lens: workspaces.lensIds)
+    }
+
+    /// The project the filter names, if the menu still offers it. A
+    /// parked name the menu no longer has reads as no filter, rather than
+    /// a label over a list it is not filtering.
+    private var pickedProject: LivNamed? {
+        guard case .project(let name) = filter else { return nil }
+        return model.tasks?.projects?.first { $0.name == name }
+    }
+
+    /// "6 open · 2 late": the screen's size, not the slice's (Rust's
+    /// counts). Late is grey here; the group heading carries the red.
     private var subtitle: String {
-        let open = lensTasks.filter { !isDone($0) }
-        let late = open.filter(isLate).count
-        let count = open.count + noteLines.count
+        let count = model.tasks?.open ?? 0
+        let late = model.tasks?.late ?? 0
         if count == 0 { return "Nothing open" }
         return late > 0 ? "\(count) open · \(late) late" : "\(count) open"
     }
@@ -156,26 +160,22 @@ struct TasksView: View {
             options: choices,
             selection: Binding(get: { filter }, set: { park(filter: $0) })
         ) {
-            if !projects.isEmpty { projectSegment }
+            if !(model.tasks?.projects ?? []).isEmpty { projectSegment }
         }
         .padding(.horizontal, LivRow.cardInset)
         .padding(.bottom, LivSegmented.under)
-        .listRowInsets(EdgeInsets())
+        .listRowInsets(LivRow.fullWidth)
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
 
     private var projectSegment: some View {
-        let picked: String? = {
-            if case .project(let p) = filter { return p }
-            return nil
-        }()
+        let picked = pickedProject?.name
         return Menu {
-            Button("All projects") { withAnimation(LivMotion.pick) { park(filter: .all) } }
-            ForEach(projects, id: \.self) { project in
-                Button(project) {
-                    withAnimation(LivMotion.pick) { park(filter: .project(project)) }
-                }
+            // Instant, as the segments beside it are (2026-09-29).
+            Button("All projects") { park(filter: .all) }
+            ForEach(model.tasks?.projects ?? []) { project in
+                Button(project.display) { park(filter: .project(project.name ?? "")) }
             }
         } label: {
             LivSegmentFace(picked ?? "Project", on: picked != nil)
@@ -223,8 +223,10 @@ struct TasksView: View {
     /// which takes the time from where your finger lands and nothing
     /// else.
     private var addRow: some View {
-        // ITS OWN CARD, one row, on the card row's spine: the new-note mark
-        // in the 28 column, the field where every task's name starts.
+        // ITS OWN CARD, one row, on the card row's spine: a plus in the 28
+        // column — the same mark as "Add link" — and the field where every
+        // task's name starts. It was `.new`, the bar's make-a-NOTE page,
+        // on the one row that makes a task (owner, 2026-09-29).
         LivCardRow(
             divided: false,
             lead: {
@@ -232,7 +234,7 @@ struct TasksView: View {
                 // not a word: it is where the eye already is, and it does
                 // not change this row's STRUCTURE.
                 LivIcon(
-                    glyph: .new, color: addFailed ? LivTheme.red : LivTheme.text2,
+                    glyph: .plus, color: addFailed ? LivTheme.red : LivTheme.text2,
                     size: LivCards.glyph
                 )
                 .frame(width: LivCards.mark)
@@ -291,8 +293,7 @@ struct TasksView: View {
     /// The project a typed task takes — only when one is picked,
     /// and only so the row does not vanish (see `addRow`).
     private var addProject: String? {
-        if case .project(let p) = filter { return p }
-        return nil
+        pickedProject?.name
     }
 
     /// Create it, and keep the caret for the next one.
@@ -342,72 +343,24 @@ struct TasksView: View {
 
     // MARK: groups
 
-    /// The vocabulary's groups in board order + a final "No status" catch-all
-    /// (also holds statuses no longer in the vocabulary — every task shows).
-    private func visibleGroups() -> [TasksGroup] {
-        // The lens (M4) runs BEFORE the segment filter: the workspace
-        // scopes the surface, the segments narrow inside it.
-        let filtered = lensTasks.filter(matchesFilter)
-
-        var used = Set<LivEntityID>()
-        var groups: [TasksGroup] = []
-        for option in options {
-            guard let name = option.name, !name.isEmpty else { continue }
-            let rows = filtered.filter { $0.status == name }
-            rows.forEach { used.insert($0.id) }
-            groups.append(
-                TasksGroup(
-                    name: name, completes: option.completes == true,
-                    hue: tasksOptionColor(option.hue), isNoStatus: false,
-                    rows: sortRows(rows)))
-        }
-        let rest = filtered.filter { !used.contains($0.id) }
-        groups.append(
-            TasksGroup(
-                name: "No status", completes: false, hue: nil, isNoStatus: true,
-                rows: sortRows(rest)))
-
-        // An empty group is not a group. Quick-add used to hold one
-        // open to host itself; the add button is outside the list now.
-        return groups.filter { !$0.rows.isEmpty }
+    /// The groups to draw: all of them, or the one a status segment
+    /// names. Rust built them; this only picks.
+    private func shownGroups() -> [LivTaskGroup] {
+        let groups = model.tasks?.groups ?? []
+        if case .status(let name) = filter { return groups.filter { $0.name == name } }
+        return groups
     }
 
-    private func matchesFilter(_ row: EntityRow) -> Bool {
-        switch filter {
-        case .all:
-            return true
-        case .status(let s):
-            return row.status == s
-        case .project(let p):
-            return (row.cells ?? []).contains {
-                $0.property == "project" && $0.value == p
-            }
-        }
-    }
-
-    /// Due ascending (undated last), then title — stable across refreshes.
-    private func sortRows(_ rows: [EntityRow]) -> [EntityRow] {
-        rows.sorted { a, b in
-            let da = a.due ?? .max
-            let db = b.due ?? .max
-            if da != db { return da < db }
-            let ta = (a.title ?? "").lowercased()
-            let tb = (b.title ?? "").lowercased()
-            if ta != tb { return ta < tb }
-            return a.id < b.id
-        }
-    }
-
-    private func groupHeader(_ group: TasksGroup) -> some View {
+    private func groupHeader(_ group: LivTaskGroup) -> some View {
         // THE LATENESS IS SAID TWICE NOW: once here, "2 late" in red, and
         // once on each late row's date (the clearer board, 2026-09-24,
         // which reverses the 2026-08-30 rule of saying it once, here).
-        let late = group.rows.filter(isLate).count
+        let late = group.late ?? 0
         return SectionLabel(
-            group.name, count: group.rows.count,
+            group.name ?? "", count: group.rows?.count ?? 0,
             note: late > 0 ? "\(late) late" : nil
         )
-        .listRowInsets(EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
+        .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
     }
@@ -416,67 +369,64 @@ struct TasksView: View {
     /// box, the group's name, its count and a chevron (the clearer board's
     /// "Done ›"). Opened, its rows follow in the same card and the chevron
     /// turns down. It sits 16 under the card above it, with no heading.
-    @ViewBuilder private func foldCard(_ group: TasksGroup) -> some View {
-        let open = expanded.contains(group.name) && !group.rows.isEmpty
+    @ViewBuilder private func foldCard(_ group: LivTaskGroup) -> some View {
+        let name = group.name ?? ""
+        let rows = group.rows ?? []
+        let open = expanded.contains(name) && !rows.isEmpty
         gap(LivCards.gap)
         Button {
-            livToggleFold { toggleExpanded(group.name) }
+            livToggleFold { toggleExpanded(name) }
         } label: {
             LivCardRow(
-                group.name, divided: open,
+                name, divided: open,
                 lead: {
-                    LivCheckbox(done: true, hue: group.hue)
+                    LivCheckbox(done: true, hue: tasksOptionColor(group.hue))
                         .frame(width: LivCards.mark)
                         .accessibilityHidden(true)
                 },
                 trailing: {
-                    LivRowFact(text: "\(group.rows.count)")
+                    LivRowFact(text: "\(rows.count)")
                     LivChevron(open ? .down : .right)
                 })
         }
         .accessibilityValue(open ? "Open" : "Closed")
         .livFoldRow(open: open)
         if open {
-            ForEach(Array(group.rows.enumerated()), id: \.element.id) { i, row in
+            // `above: 1` — the header is this card's first row.
+            ForEach(livCardSlots(rows, above: 1)) { s in
                 taskRow(
-                    row, prev: i == 0 ? nil : group.rows[i - 1],
-                    position: i == group.rows.count - 1 ? .last : .middle)
+                    s.item, prev: s.index == 0 ? nil : rows[s.index - 1],
+                    hue: group.hue, position: s.position)
             }
         }
     }
 
     // MARK: - "In notes": the checkbox lines (phase 3, owner 2026-08-05)
 
-    /// Every open `- [ ]` line in a live note, straight off the wire's
-    /// projection (services/src/tasks.rs). Deliberately its OWN section,
-    /// not folded into "To do": these lines have no status, and calling
-    /// them To do would muddy what a status means. They wear a square box
-    /// instead of the status ring, so the shape says what they are.
-    ///
-    /// The workspace lens applies to the SOURCE NOTE — a filtered surface
-    /// filters whole (rev 6's consistency rule).
-    private var noteLines: [NoteTaskRow] {
-        return (model.snap?.noteTasks ?? []).filter { row in
-            guard let owner = row.entity, let note = model.entity(owner) else { return false }
-            return workspaces.admits(note)
-        }
+    /// Every open `- [ ]` line in a note the lens admits (Rust's
+    /// `note_tasks`). Deliberately its OWN section, not folded into "To
+    /// do": these lines have no status, and calling them To do would muddy
+    /// what a status means. They wear a square box instead of the status
+    /// ring, so the shape says what they are.
+    private var noteLines: [LivNoteTask] {
+        model.tasks?.inNotes ?? []
     }
 
     @ViewBuilder private var inNotesSection: some View {
         let lines = noteLines
         if !lines.isEmpty {
             SectionLabel("In notes", count: lines.count)
-                .listRowInsets(EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
+                .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-            ForEach(Array(lines.enumerated()), id: \.element.id) { i, line in
-                noteLineRow(line, position: .of(i, in: lines.count))
+            ForEach(livCardSlots(lines)) { s in
+                noteLineRow(s.item, position: s.position)
             }
         }
     }
 
-    private func noteLineRow(_ line: NoteTaskRow, position: LivCardPosition) -> some View {
-        let owner = line.entity ?? .absent
+    private func noteLineRow(_ line: LivNoteTask, position: LivCardPosition) -> some View {
+        let owner = line.note ?? .absent
         // The wire computes this where the content is — EntityRow.title
         // would read "Roof project - [ ] call the surveyor - [x] paid…".
         let source = line.source ?? ""
@@ -500,7 +450,7 @@ struct TasksView: View {
             title: {
                 HStack(spacing: 0) {
                     // Sub-lines ride along, inset — the note's own shape.
-                    if (line.indent ?? 0) > 0 { Spacer().frame(width: LivCards.indent) }
+                    if (line.depth ?? 0) > 0 { Spacer().frame(width: LivCards.indent) }
                     Text(text.isEmpty ? "empty line" : text)
                 }
             },
@@ -517,8 +467,8 @@ struct TasksView: View {
     /// own checkbox makes, through the same pure op (EditOps.toggleTask).
     /// The save presents the fingerprint the content was read at, so a
     /// stale view is REFUSED, never mis-landed; a refusal just refreshes.
-    private func toggleNoteLine(_ line: NoteTaskRow) {
-        guard let owner = line.entity, let index = line.line else { return }
+    private func toggleNoteLine(_ line: LivNoteTask) {
+        guard let owner = line.note, let index = line.line else { return }
         model.content(owner) { doc in
             guard let doc, doc.missing != true else { return }
             // This path re-encodes the WHOLE note through the buffer with
@@ -535,7 +485,7 @@ struct TasksView: View {
             guard let at = EditOps.lineStart(text, line: index),
                 let edit = EditOps.toggleTask(text, at: at)
             else {
-                // The note moved under us — the snapshot will catch up.
+                // The note moved under us — the next refresh will catch up.
                 model.refresh()
                 return
             }
@@ -565,13 +515,14 @@ struct TasksView: View {
 
     // MARK: rows
 
-    private func taskRow(_ row: EntityRow, prev: EntityRow?, position: LivCardPosition) -> some View {
-        let option = options.first { $0.name == row.status }
-        let done = option?.completes == true
+    private func taskRow(
+        _ row: EntityRow, prev: EntityRow?, hue: Int?, position: LivCardPosition
+    ) -> some View {
+        let done = row.done == true
         let due = livNewFact(tasksDue(row), after: prev.flatMap { tasksDue($0) })
         let title = (row.title ?? "").isEmpty ? "untitled task" : (row.title ?? "")
-        // ONE SECOND LINE, not a chip: where the task lives. The list's rows
-        // come off the snapshot, which carries no cells, so the anchor is
+        // ONE SECOND LINE, not a chip: where the task lives. The answer's
+        // rows carry no cells, so the anchor is
         // read from the model's own row — asking for it is what fetches
         // them — and the area, on the wire, shows at once.
         return LivCardRow(
@@ -579,18 +530,19 @@ struct TasksView: View {
             muted: (row.title ?? "").isEmpty,
             divided: position.divided,
             lead: {
-                StatusRing(done: done, hue: tasksOptionColor(option?.hue), name: title) {
+                StatusRing(done: done, hue: tasksOptionColor(hue), name: title) {
                     toggleStatus(row, done: done)
                 }
             },
             trailing: {
                 // Only when it CHANGES, so five rows due the same day say
                 // it once (`livNewFact`); red when late and still open.
-                if let due { LivRowFact(text: due, late: !done && isLate(row)) }
+                if let due { LivRowFact(text: due, late: row.late == true) }
             }
         )
         .onTapGesture { desk.open(row.id) }  // rows open as Desk tabs
-        .livCardRow(position: position)
+        .livSwipeLift(row.id, $lifted)
+        .livCardRow(position: position, lifted: livIsLifted(row.id, lifted))
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             // The spec's full verb set (§6): Tonight / Tomorrow / Weekend /
             // Pick. Tonight matches the due sheet's 20:00; on a Friday,
@@ -598,21 +550,37 @@ struct TasksView: View {
             // ONE TINT FOR ONE FAMILY OF VERBS: four ways of saying "move
             // this to another day" wear the scheduling colour; red is for
             // the destructive tray on the other edge.
-            Button("Tonight") {
+            // AN ICON EACH, so they draw as every other swipe does: the
+            // icon in the bubble and the word under it (2026-09-29).
+            Button {
                 model.setSpan(
                     row.id, "due",
                     start: Civil.stamp(day: Civil.todayDay(), hhmm: 2000),
                     end: 0, dateOnly: false)
+            } label: {
+                livSwipeLabel("Tonight", .tonight)
             }
             .tint(LivTheme.accent)
-            Button("Tomorrow") { reschedule(row, to: TasksDates.tomorrow()) }
-                .tint(LivTheme.accent)
-            if TasksDates.weekend() != TasksDates.tomorrow() {
-                Button("Weekend") { reschedule(row, to: TasksDates.weekend()) }
-                    .tint(LivTheme.accent)
+            Button {
+                reschedule(row, to: TasksDates.tomorrow())
+            } label: {
+                livSwipeLabel("Tomorrow", .tomorrow)
             }
-            Button("Pick") { duePick = TasksDuePick(entity: row.id) }
+            .tint(LivTheme.accent)
+            if TasksDates.weekend() != TasksDates.tomorrow() {
+                Button {
+                    reschedule(row, to: TasksDates.weekend())
+                } label: {
+                    livSwipeLabel("Weekend", .weekend)
+                }
                 .tint(LivTheme.accent)
+            }
+            Button {
+                duePick = TasksDuePick(entity: row.id)
+            } label: {
+                livSwipeLabel("Pick", .calendar)
+            }
+            .tint(LivTheme.accent)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             livTrashAction { model.trash(row.id) }
@@ -651,25 +619,6 @@ struct TasksView: View {
     private func tasksDue(_ row: EntityRow) -> String? {
         guard let due = row.due, due > 0 else { return nil }
         return Civil.fact(due)
-    }
-
-    /// Every task the workspace lens admits, before the filter — the
-    /// subtitle counts these, the groups narrow them.
-    private var lensTasks: [EntityRow] {
-        (model.snap?.entities ?? []).filter {
-            ($0.kinds ?? []).contains("task") && $0.trashed != true
-                && $0.archived != true && workspaces.admits($0)
-        }
-    }
-
-    private func isDone(_ row: EntityRow) -> Bool {
-        options.first { $0.name == row.status }?.completes == true
-    }
-
-    /// Late is strictly past: due today is not overdue.
-    private func isLate(_ row: EntityRow) -> Bool {
-        guard let due = row.due, due > 0 else { return false }
-        return Civil.day(of: due) < Civil.todayDay()
     }
 }
 

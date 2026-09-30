@@ -92,6 +92,81 @@ fn the_sweep_does_not_go_quadratic_in_the_number_of_names() {
     assert!(ratio < 14.0, "the sweep went superlinear in the box: {ratio:.1}x");
 }
 
+/// `n` notes named the way people name things — "Meeting 12", "Call 13",
+/// "Buy 14" — whose bodies use those same everyday words.
+///
+/// `box_of` cannot see what this sees: its names open with "Person",
+/// which no body says, so the word index threw every name away. A real
+/// box names things "Meeting …" and then writes "meeting" in a body.
+/// Measured 2026-09-30 in release, 5,000 things named "thing {i}" with
+/// "thing" in every body: 5,052 ms a sweep, run on every refresh.
+///
+/// Nobody is mentioned — each body names a part, never a whole name — so
+/// the answer is empty in both boxes and only the searching differs.
+fn crowded_box(n: u64) -> Engine {
+    const OPENERS: [&str; 4] = ["Meeting", "Call", "Buy", "Thing"];
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+    for i in 0..n {
+        let name = format!("{} {i}", OPENERS[i as usize % OPENERS.len()]);
+        let id = e.create(kind::NOTE, Some(&name), T0 + i).unwrap();
+        let words = format!("the meeting moved, so call back and buy one thing for part {i}");
+        e.set_content(id, vec![Span::text(words)], 0, T0 + i).unwrap();
+    }
+    e
+}
+
+/// `n` notes that all share ONE name, and bodies that say its first word.
+///
+/// Recurring notes are named alike — "Standup notes" every weekday for a
+/// year. No word of that name is rarer than another, so no choice of word
+/// narrows it; what narrows it is looking for the SPELLING once rather
+/// than once per thing that wears it. The bodies say "standup" and never
+/// "standup notes", so again nobody is mentioned.
+fn alike_box(n: u64) -> Engine {
+    let mut e = Engine::open_in_memory(dev(1)).unwrap();
+    for i in 0..n {
+        let id = e.create(kind::NOTE, Some("Standup notes"), T0 + i).unwrap();
+        let words = format!("the standup ran long, see part {i}");
+        e.set_content(id, vec![Span::text(words)], 0, T0 + i).unwrap();
+    }
+    e
+}
+
+/// **Four times the box is four times the work, not sixteen — when the
+/// names share words with the prose.**
+///
+/// Four times rather than twice because the gap has to survive the other
+/// tests running beside this one: at twice the box a quadratic sweep
+/// measured 3.6x and a noisy round let it through under 2.8.
+///
+/// **The ceiling is measured** (2026-09-30, debug): the first-word index
+/// took 9.4x here and 9.9x in the test below; the rarest-word index takes
+/// 3.0–3.7x in both. Six sits between them.
+#[test]
+fn names_that_open_with_everyday_words_do_not_make_the_sweep_quadratic() {
+    let small = crowded_box(250);
+    let large = crowded_box(1_000);
+    let ratio = best_ratio(
+        4,
+        || time(|| assert!(sweep(&small).unwrap().is_empty())),
+        || time(|| assert!(sweep(&large).unwrap().is_empty())),
+    );
+    assert!(ratio < 6.0, "four times the box multiplied the sweep by {ratio:.1}x");
+}
+
+/// And when a thousand things wear one name.
+#[test]
+fn a_name_many_things_share_is_looked_for_once() {
+    let small = alike_box(250);
+    let large = alike_box(1_000);
+    let ratio = best_ratio(
+        4,
+        || time(|| assert!(sweep(&small).unwrap().is_empty())),
+        || time(|| assert!(sweep(&large).unwrap().is_empty())),
+    );
+    assert!(ratio < 6.0, "four times the box multiplied the sweep by {ratio:.1}x");
+}
+
 /// And a box the clerk is switched off in costs nothing at all.
 #[test]
 fn a_silenced_clerk_does_not_read_the_box() {

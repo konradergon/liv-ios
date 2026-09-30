@@ -285,7 +285,17 @@ final class DeskModel: ObservableObject {
     @Published var settingsShown = false
     /// The trash list — the only door to `liv_restore`.
     @Published var trashShown = false
+    /// The workspace FORM is up (`WorkspaceForm`) — new, or editing
+    /// `workspaceEditing`. The panel lists the workspaces themselves.
     @Published var workspaceShown = false
+    /// Which workspace the form edits; nil makes a new one.
+    var workspaceEditing: LivEntityID?
+
+    /// Open the workspace form: a new workspace, or an edit of `id`.
+    func showWorkspaceForm(editing id: LivEntityID?) {
+        workspaceEditing = id
+        workspaceShown = true
+    }
     /// ANY OTHER CARD A SURFACE PUTS UP over itself — the calendar's day
     /// picker is the first, and the reason this exists.
     ///

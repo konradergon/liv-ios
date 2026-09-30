@@ -24,17 +24,6 @@ func livNewFact(_ s: String?, after prev: String?) -> String? {
     s == prev ? nil : s
 }
 
-/// IS THIS ROW DONE? One predicate, because it was written twice —
-/// byte-identical bodies in `Calendar.swift` and `Today.swift`, which is
-/// standing rule 4 in its smallest form. `design/one-core.md` wants the
-/// tick predicate in Rust eventually, once entry status and cardinality
-/// go with it; until that batch is scheduled it lives here, once.
-///
-/// `doneNames` is the set of status options whose `completes` is true —
-/// the vocabulary decides what "done" means, never a hardcoded string.
-func livIsDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
-    row.status.map { doneNames.contains($0) } ?? false
-}
 
 struct LivRowFact: View {
     let text: String
@@ -190,18 +179,47 @@ enum LivCardPosition {
     }
 }
 
+extension LivCardPosition {
+    /// The piece of the card this row draws: its position's corners, or
+    /// all four while it is swiped out of the card (`livSwipeLift`).
+    func shape(lifted: Bool) -> UnevenRoundedRectangle {
+        lifted ? LivCardPosition.only.shape : shape
+    }
+}
+
 extension View {
     /// A `List` row as its piece of a card. The row keeps being a List
     /// row — so `.swipeActions` keeps working — and its background draws
-    /// the card: inset `cardInset` from the screen, rounded on the
-    /// corners its position owns. The content spans the card, so a
-    /// `LivCardRow` inside lays out in card coordinates.
-    func livCardRow(position: LivCardPosition, fill: Color = LivTheme.surface) -> some View {
-        listRowInsets(
-            EdgeInsets(top: 0, leading: LivRow.cardInset, bottom: 0, trailing: LivRow.cardInset))
+    /// the card, rounded on the corners its position owns.
+    ///
+    /// THE CELL IS THE CARD'S WIDTH (2026-09-29). The list is inset-grouped
+    /// (`livCardList`), so a cell stands `cardInset` in from each edge and
+    /// clips what it holds: a swiped row slides out under the card's own
+    /// edge instead of across the screen (owner: "the row should disappear
+    /// at the edges of the rows card"). The insets are therefore zero, and
+    /// the background needs no padding of its own.
+    func livCardRow(
+        position: LivCardPosition, lifted: Bool = false, fill: Color = LivTheme.surface
+    ) -> some View {
+        listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
-            .listRowBackground(
-                position.shape.fill(fill).padding(.horizontal, LivRow.cardInset))
+            .listRowBackground(LivCardPiece(position: position, lifted: lifted, fill: fill))
+            .environment(\.livCardRowLifted, lifted)
+    }
+}
+
+/// A row's piece of the card, easing into a card of its own while it is
+/// swiped and back when it is let go — slowly (owner, 2026-09-29: "the
+/// rounding and derounding should happen slowly").
+private struct LivCardPiece: View {
+    let position: LivCardPosition
+    let lifted: Bool
+    let fill: Color
+
+    var body: some View {
+        position.shape(lifted: lifted)
+            .fill(fill)
+            .animation(LivMotion.lift, value: lifted)
     }
 }
 
@@ -228,6 +246,54 @@ extension View {
     }
 }
 
+// MARK: - a row that changes place is a new row (2026-09-29)
+
+/// THE FOLD'S RULE FOR EVERY CARD ROW (owner, 2026-09-29: the Done-card gap
+/// "seems to be present throughout where lists with rounded corners
+/// change… apply same solution to them").
+///
+/// The List redraws a row that is already on screen a few frames AFTER a
+/// snapshot inserts or removes rows around it. Measured the same day: tick
+/// the last task of a card and the one above it — now the last — kept its
+/// square bottom for two frames before rounding. The same happens to a row
+/// that becomes first, stops being first or last, or moves when a date
+/// write re-sorts the card. A fold header had exactly this, and was fixed by
+/// being a different row in each state (`livFoldRow`).
+///
+/// So a card row's identity is WHAT it is and WHERE it sits at rest
+/// (`LivCardKey`). A row whose place changes is, to the List, a new row,
+/// swapped in by the same update that moved it, with its right corners from
+/// its first frame. Rows whose place did not change keep their identity and
+/// are not redrawn.
+///
+/// A swipe (`livSwipeLift`) changes the corners a row DRAWS but not where
+/// it sits, so it stays out of the key: a row re-made mid-swipe would drop
+/// the swipe.
+struct LivCardKey<ID: Hashable>: Hashable {
+    let id: ID
+    let rest: LivCardPosition
+}
+
+/// One row of a card, ready for a `ForEach`.
+struct LivCardSlot<Item: Identifiable>: Identifiable {
+    let item: Item
+    /// Its index among the card's ITEMS (not counting a fold header).
+    let index: Int
+    /// Where it sits — half its identity, and the corners it draws.
+    let position: LivCardPosition
+    var id: LivCardKey<Item.ID> { LivCardKey(id: item.id, rest: position) }
+}
+
+/// A card's rows as slots. `above` counts rows of the same card drawn before
+/// these (a fold's header), so the positions are the card's and not the
+/// list's.
+func livCardSlots<Item: Identifiable>(_ items: [Item], above: Int = 0) -> [LivCardSlot<Item>] {
+    let count = above + items.count
+    return items.enumerated().map { i, item in
+        LivCardSlot(item: item, index: i, position: .of(above + i, in: count))
+    }
+}
+
 /// Collapse or expand a fold: one update, no animation (see `livFoldRow`).
 func livToggleFold(_ toggle: () -> Void) {
     var instant = Transaction()
@@ -235,19 +301,211 @@ func livToggleFold(_ toggle: () -> Void) {
     withTransaction(instant, toggle)
 }
 
-/// The hairline BETWEEN two rows of a card: 0.5 in `border`, from where
-/// the words start (`LivCards.rule`, 56 in card coordinates) to the
-/// card's right edge, which the card's own clip ends. None under the last
-/// row. A row with no mark passes `LivCards.ruleBare`; the schedule,
-/// `LivSchedule.rule`.
+// MARK: - a swiped row is a card of its own (2026-09-29)
+
+/// A SWIPED ROW ROUNDS, AND ONLY IT (owner, 2026-09-29: "when you slide a
+/// row, only that row should get rounded. the rounding and derounding should
+/// happen slowly. it should deround itself when you release it").
+///
+/// A List swipe slides the row's background with its content, and that
+/// background is the row's piece of the card — so a swiped row dragged a
+/// square-edged strip of card out with it (the owner's screenshot: "what a
+/// mess"). Now, the moment it moves, its piece eases into a card of its own
+/// (`LivCardPiece`), and eases back as it returns. The rows around it keep
+/// their corners: a first attempt re-rounded them too, split the card into
+/// three, and was not what he wanted.
+///
+/// The card's own edge clips the slide (`livCardRow`).
+/// WHERE THE LIST STANDS ON THE SCREEN, handed to its rows, so a row can
+/// tell a swipe (the row moved in the list) from the list moving with it —
+/// the whole desk sliding aside under the library panel.
+///
+/// A named coordinate space cannot do this: inside a List's cells every
+/// space, named or `.scrollView`, comes back as the screen's (measured
+/// 2026-09-29: a row read 16, 57, then 219 in all three as the panel
+/// opened), so the first attempt lifted a row whenever the panel was out
+/// (owner: "with the panel open the top row get rounded corners as if it
+/// was held"). The List itself is not in a cell, so its own screen x is
+/// exact; the row compares against it.
+private struct LivCardListX: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    fileprivate var livCardListX: CGFloat {
+        get { self[LivCardListX.self] }
+        set { self[LivCardListX.self] = newValue }
+    }
+}
+
+/// WHETHER A ROW MAY READ ITS OWN MOVEMENT AS A SWIPE: not while the desk
+/// itself is travelling (owner, 2026-09-29: "when panel opens/closes the
+/// top row gets pressed somehow"). The List and its rows report their new
+/// screen positions a frame apart while the desk slides, so for that frame
+/// a row stands off the list's edge and reads as swiped. `DeskHost` sets
+/// this false while the library is drawn or dragged.
+private struct LivSwipesLive: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var livSwipesLive: Bool {
+        get { self[LivSwipesLive.self] }
+        set { self[LivSwipesLive.self] = newValue }
+    }
+}
+
+/// Whether this row is swiped out of its card (`livCardRow`): its line
+/// goes with its square corners, since a card of its own has no row under it.
+private struct LivCardRowLifted: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    fileprivate var livCardRowLifted: Bool {
+        get { self[LivCardRowLifted.self] }
+        set { self[LivCardRowLifted.self] = newValue }
+    }
+}
+
+/// The least a card row may be tall — set by `livSwipeLift`.
+private struct LivCardRowFloor: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    fileprivate var livCardRowFloor: CGFloat {
+        get { self[LivCardRowFloor.self] }
+        set { self[LivCardRowFloor.self] = newValue }
+    }
+}
+
+private struct LivCardListFrame: ViewModifier {
+    @State private var x: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.livCardListX, x)
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { x = $0 }
+    }
+}
+
+/// Whether `id` is the lifted row — for a fold header, asking about the row
+/// under it.
+func livIsLifted(_ id: (some Hashable)?, _ lifted: AnyHashable?) -> Bool {
+    guard let id, let lifted else { return false }
+    return AnyHashable(id) == lifted
+}
+
+extension View {
+    /// A List of cards: inset-grouped, so each cell is the card's width and
+    /// clips its row (`livCardRow`), with the system's own card look turned
+    /// off — the margins are the app's `cardInset`, there are no section
+    /// gaps or headers, and every row draws its own piece of card. It is
+    /// also the space its rows measure a swipe in.
+    ///
+    /// ONE SECTION PER SCREEN, framed by clear rows. The system rounds the
+    /// first and last cell of a section with ITS radius, not the app's; a
+    /// screen's title is its first cell and `livCardListEnd` its last, so
+    /// no card row is ever either.
+    func livCardList() -> some View {
+        listStyle(.insetGrouped)
+            .listSectionSpacing(0)
+            .environment(\.defaultMinListHeaderHeight, 0)
+            .contentMargins(.horizontal, LivRow.cardInset, for: .scrollContent)
+            .contentMargins(.top, 0, for: .scrollContent)
+            .modifier(LivCardListFrame())
+    }
+
+    /// Say while THIS row is swiped: `lifted` holds its id while the row
+    /// is off its rest place, and goes back to nil when it returns.
+    ///
+    /// SwiftUI has no "this row is swiped" — but a swipe moves the row, and
+    /// where it stands against its LIST is the one thing the swipe cannot
+    /// hide. At rest a card row starts `cardInset` in from the list's edge;
+    /// a swipe either way moves it off that (`LivCardListFrame`).
+    ///
+    /// AND A ROW THAT SWIPES IS `LivCards.swipeRow` TALL, one line or two,
+    /// so iOS draws its actions with the word under the icon.
+    func livSwipeLift(_ id: some Hashable, _ lifted: Binding<AnyHashable?>) -> some View {
+        modifier(LivSwipeLift(id: AnyHashable(id), lifted: lifted))
+            .environment(\.livCardRowFloor, LivCards.swipeRow)
+    }
+}
+
+private struct LivSwipeLift: ViewModifier {
+    let id: AnyHashable
+    @Binding var lifted: AnyHashable?
+    @Environment(\.livCardListX) private var listX
+    @Environment(\.livSwipesLive) private var live
+    /// Until when a movement is the desk's settling, not a swipe: the
+    /// desk's own spring outlasts the flag that says it is moving.
+    @State private var quietUntil = Date.distantPast
+
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: Bool.self) { proxy in
+            // At rest a row starts at the card's edge: the list's own x
+            // plus the inset its cells stand in by.
+            abs(proxy.frame(in: .global).minX - listX - LivRow.cardInset) > 1
+        } action: { moved in
+            // Let go, the frame reports the rest place at once while the
+            // row still slides home — which is exactly when it should start
+            // to square off again.
+            if !live {
+                quietUntil = Date().addingTimeInterval(LivMotion.navSeconds)
+                if lifted == id { lifted = nil }
+                return
+            }
+            if moved, Date() < quietUntil { return }
+            if moved, lifted != id {
+                lifted = id
+            } else if !moved, lifted == id {
+                lifted = nil
+            }
+        }
+    }
+}
+
+/// The last cell of a card list: clear, and there so that no card row is
+/// the section's last (see `livCardList`).
+struct LivCardListEnd: View {
+    var body: some View {
+        Color.clear
+            .frame(height: 1)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The hairline BETWEEN two rows of a card, from where the words start
+/// (`LivCards.rule`, 56 in card coordinates) to the card's right edge. None
+/// under the last row. A row with no mark passes `LivCards.ruleBare`; the
+/// schedule, `LivSchedule.rule`.
 struct LivCardRule: View {
     var inset: CGFloat = LivCards.rule
 
     var body: some View {
+        LivHairline().padding(.leading, inset)
+    }
+}
+
+/// THE ONE HAIRLINE: exactly one device pixel, in `LivTheme.rule` (owner,
+/// 2026-09-29: "separators between rows should be dim but visible and
+/// consistent").
+///
+/// It was 0.5pt of `border` (#2E2E2E on a #232323 card). Half a point is a
+/// pixel and a half at 3x, so every line landed on the pixel grid
+/// differently and drew as one or two antialiased pixels — some rows
+/// ruled, some nearly not — and the colour was a whisper to begin with.
+struct LivHairline: View {
+    @Environment(\.displayScale) private var scale
+
+    var body: some View {
         Rectangle()
-            .fill(LivTheme.border)
-            .frame(height: 0.5)
-            .padding(.leading, inset)
+            .fill(LivTheme.rule)
+            .frame(height: 1 / scale)
     }
 }
 
@@ -273,6 +531,10 @@ struct LivCardRow<Lead: View, Title: View, Trailing: View>: View {
     var titleLines = 1
     /// Where the hairline starts: `LivCards.rule` behind a 28 mark.
     var rule: CGFloat = LivCards.rule
+    /// The least a row may be: `LivCards.swipeRow` on a row that swipes
+    /// (`livSwipeLift`), so its actions draw as Apple Notes' do.
+    @Environment(\.livCardRowFloor) private var floor
+    @Environment(\.livCardRowLifted) private var lifted
     let lead: Lead
     let title: Title
     let trailing: Trailing
@@ -303,7 +565,7 @@ struct LivCardRow<Lead: View, Title: View, Trailing: View>: View {
                     .lineLimit(titleLines)
                 if let detail {
                     Text(detail)
-                        .font(.system(size: LivType.detail))
+                        .font(.system(size: LivType.label))
                         .foregroundStyle(LivTheme.text2)
                         .lineLimit(1)
                 }
@@ -313,10 +575,14 @@ struct LivCardRow<Lead: View, Title: View, Trailing: View>: View {
         }
         .padding(.horizontal, LivCards.padX)
         .padding(.vertical, LivCards.padY)
-        .frame(minHeight: detail == nil ? LivCards.row : LivCards.twoLine)
+        .frame(minHeight: max(floor, detail == nil ? LivCards.row : LivCards.twoLine))
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
-            if divided { LivCardRule(inset: rule) }
+            if divided {
+                LivCardRule(inset: rule)
+                    .opacity(lifted ? 0 : 1)
+                    .animation(LivMotion.lift, value: lifted)
+            }
         }
     }
 }

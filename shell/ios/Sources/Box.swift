@@ -33,20 +33,6 @@ struct CellRow: Decodable {
     var refTarget: LivEntityID? = nil
 }
 
-struct NoteTaskRow: Decodable, Identifiable {
-    /// Stable per line, so SwiftUI keeps rows in place across refreshes.
-    var id: String { "\(engineId(entity ?? .absent)).\(line ?? 0)" }
-    /// The note that holds the line.
-    var entity: LivEntityID? = nil
-    /// What to call that note — computed in Rust, where the content is
-    /// (never EntityRow.title, which flattens the whole body).
-    var source: String? = nil
-    /// Line index in the buffer — the toggle's address.
-    var line: Int? = nil
-    var text: String? = nil
-    var indent: Int? = nil
-}
-
 /// One clerk proposal (mirrors the archived macOS shell's shape). The
 /// fingerprint rides back on accept/reject — a consent is to a PROPOSAL,
 /// never a position, so a stale click is refused, not misapplied.
@@ -78,11 +64,6 @@ struct AssistRow: Decodable {
     var id: LivEntityID? = nil
     var on: Bool? = nil
     var prop: String? = nil
-}
-
-struct Occurrence: Decodable {
-    var series: LivEntityID?
-    var civil: Int64?
 }
 
 struct PropertyRow: Decodable {
@@ -281,21 +262,13 @@ struct LivFacetValue: Identifiable {
 /// engine answers questions instead (§3), and `BoxModel` assembles this
 /// from those answers.
 ///
-/// Keeping the shape is deliberate and temporary. Fifteen view files read
-/// it; moving each one onto the verb for its own surface is the next
-/// step, and doing it here in one go would be fifteen files of risk for
-/// no behaviour. What is already true is the part that mattered: the data
-/// comes from per-surface verbs, and no screen is handed the box.
+/// No screen picks its rows from it any more: each has its own answer
+/// (`today`, `tasks`, `calendar`, `lists` below, and Search its own). What
+/// is left here is the box's furniture — properties, kinds, workspaces,
+/// the clerk's suggestions, the assist switch — and the whole list, which
+/// reminders (`Notify`) still read.
 struct Snapshot {
-    var today: [LivEntityID]?
-    var unstructured: [LivEntityID]?
     var everything: [LivEntityID]?
-    var dated: [LivEntityID]?
-    /// **Always empty.** Nothing expands a recurrence yet: `prop::RECURRENCE`
-    /// is declared and unread, so a repeating event has no engine answer
-    /// and the calendar shows one-off things only. A real gap, named here
-    /// rather than hidden (`design/rust-owns-the-mechanisms.md` §5).
-    var occurrences: [Occurrence]?
     var entities: [EntityRow]?
     var trashed: [LivEntityID]?
     var properties: [PropertyRow]?
@@ -303,7 +276,6 @@ struct Snapshot {
     var workspaces: [WorkspaceRow]?
     var inbox: [ProposalRow]?
     var assist: AssistRow?
-    var noteTasks: [NoteTaskRow]?
 }
 
 // MARK: - the model: refresh-after-every-act, never hold the box
@@ -325,9 +297,49 @@ final class BoxModel: ObservableObject {
 
     @Published private(set) var rows: [EntityRow] = []
     @Published private(set) var trashRows: [EntityRow] = []
+    /// **The clerk's suggestions for the whole box** (`liv_sweep`), read
+    /// only while Unsorted is on screen — the one screen that lists them.
     @Published private(set) var suggestions: [LivSuggestion] = []
+    /// **One thing's suggestions** (`liv_sweep_one`), for its card, while
+    /// the card is open. Kept after it closes, so reopening draws the last
+    /// answer at once; `reindex` drops a thing that is gone.
+    private var suggestionsOf: [LivEntityID: [LivSuggestion]] = [:]
+    /// How many open cards show each thing. Two can at once — a record's
+    /// card and its properties sheet — and one closing must not stop the
+    /// other asking.
+    private var suggestionCards: [LivEntityID: Int] = [:]
     @Published private(set) var spaces: [LivSpace] = []
-    @Published private(set) var noteTasks: [LivNoteTask] = []
+    /// **The screen you are looking at** — the one whose answer a refresh
+    /// reads again (owner, 2026-09-30). nil while a note is laid over it.
+    ///
+    /// A screen's answer is read while it is on screen, and when it comes
+    /// back. Until then every write re-read Tasks, Today and Calendar once
+    /// each had been visited, and swept the whole box for Unsorted (332 ms
+    /// at 5,000 things), wherever you were — all of it in the one lane
+    /// every read and write waits in.
+    private var onScreen: Feature?
+    /// **The Tasks screen, as Rust answers it** (`liv_view_tasks`), once
+    /// the screen has asked (`watchTasks`), and again after every write
+    /// while it is on screen.
+    @Published private(set) var tasks: LivTasks?
+    /// **Notes, Unsorted and the library panel's counts, as Rust answers
+    /// them** (`liv_view_library`), in the same read that brings `rows`.
+    @Published private(set) var lists = LivLists()
+    /// The workspace lens the library was last read through. Notes and the
+    /// counts wear it; `rows` and Unsorted never do.
+    private var libraryLens: Set<LivEntityID>?
+    /// What the Tasks screen last asked for. nil until it has.
+    private var tasksAsk: TasksAsk?
+    /// **The Today screen, as Rust answers it** (`liv_view_today`), once
+    /// the screen has asked (`watchToday`), and again after every write
+    /// while it is on screen.
+    @Published private(set) var today: LivToday?
+    private var todayAsk: TodayAsk?
+    /// **The Calendar's days, as Rust answers them** (`liv_view_day`), once
+    /// the screen has asked (`watchCalendar`), and again after every write
+    /// while it is on screen.
+    @Published private(set) var calendar: [LivCalendarDay]?
+    private var calendarAsk: CalendarAsk?
     /// **Absent or true is ON.** Only an explicit no silences the clerk,
     /// so a box that never said anything is not a box that said no.
     @Published private(set) var assistOn: Bool = true
@@ -372,10 +384,6 @@ final class BoxModel: ObservableObject {
     private let boxQueue = DispatchQueue(label: "liv.box", qos: .userInitiated)
     private var retryScheduled = false
     private var retryDelay = 0.2
-    /// The last-used occurrence window. Held here so act-then-refresh
-    /// reloads the window the calendar is showing instead of snapping its
-    /// occurrences back to the current month. Main-thread only.
-    private var window: (from: Int64, to: Int64)?
 
     private static let log = Logger(subsystem: "app.liv.ios", category: "box")
 
@@ -421,8 +429,6 @@ final class BoxModel: ObservableObject {
 
     // MARK: reads
 
-    /// Re-snapshot, keeping the last-used occurrence window (default:
-    /// liv_snapshot's current month).
     /// A read is in the air; and one more was asked for while it was.
     ///
     /// One typed task fires createTask, set(name), setSpan(due) and
@@ -464,20 +470,6 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    /// Point the calendar at a window and reload.
-    ///
-    /// **The window no longer changes what comes back**, and saying so
-    /// here is better than the call quietly doing nothing. It existed to
-    /// re-expand RECURRENCES over a chosen range; nothing expands a
-    /// recurrence yet, so every dated thing is a one-off and the whole
-    /// set arrives either way. The signature stays because the calendar
-    /// calls it and because the window will matter again the day
-    /// recurrence lands (`design/rust-owns-the-mechanisms.md` §5).
-    func refreshWindow(from: Int64, to: Int64) {
-        window = (from, to)
-        refresh()
-    }
-
     /// One refresh: the surfaces the screens read, from the engine.
     ///
     /// **Each one is its own verb**, so a screen costs what it shows
@@ -485,7 +477,6 @@ final class BoxModel: ObservableObject {
     /// because a refresh follows a write and the whole app has to agree
     /// about what just happened — not because any of them needs another.
     private func loadEverything() {
-        let today = Self.todayDay
         // **The rows are the refresh; the rest catch up.**
         //
         // This waited for all nine fetches before calling the refresh
@@ -497,37 +488,30 @@ final class BoxModel: ObservableObject {
         // it created the event and nothing renders".
         //
         // Each answer republishes as it arrives (`assemble`), so there is
-        // nothing to wait for. The rows decide when the refresh is done
-        // because they are what every surface is made of; a slow or
-        // broken side fetch now costs its own list and nothing else.
+        // nothing to wait for. The library's rows decide when the refresh
+        // is done because they are what the app looks everything up in; a
+        // slow or broken side fetch now costs its own list and nothing else.
 
-        engineEverything(slice: 0, today: today) { [weak self] rows, fault in
+        loadLibrary { [weak self] fault in
             guard let self else { return }
-            if let fault, rows == nil {
+            if let fault {
                 self.readFailed(fault)
             } else {
-                self.rows = rows ?? []
-                self.reindex()
                 self.boxFault = nil
                 self.busyRetrying = false
                 self.retryDelay = 0.2
             }
             self.refreshLanded()
         }
+        // Second in the lane, after the rows: it is what you are looking at.
+        readOnScreen()
         engineTrashRows { [weak self] in
             self?.trashRows = $0
             self?.reindex()
         }
-        engineSuggestions { [weak self] in
-            self?.suggestions = $0
-            self?.assemble()
-        }
+        for id in suggestionCards.keys { loadSuggestions(of: id) }
         engineWorkspaces { [weak self] in
             self?.spaces = $0
-            self?.assemble()
-        }
-        engineNoteTasks { [weak self] in
-            self?.noteTasks = $0
             self?.assemble()
         }
         engineAssist { [weak self] on, property in
@@ -556,6 +540,27 @@ final class BoxModel: ObservableObject {
         }
     }
 
+    /// The desk says what is on screen (`DeskHost`). A screen coming into
+    /// view is read at once, since it missed every write while it was
+    /// away; the last answer stays drawn until the new one lands.
+    func screenChanged(to screen: Feature?) {
+        guard screen != onScreen else { return }
+        onScreen = screen
+        readOnScreen()
+    }
+
+    /// The one screen answer a refresh reads. Notes has none of its own:
+    /// it is drawn from the library, which every refresh reads.
+    private func readOnScreen() {
+        switch onScreen {
+        case .today: if let ask = todayAsk { loadToday(ask) }
+        case .tasks: if let ask = tasksAsk { loadTasks(ask) }
+        case .calendar: if let ask = calendarAsk { loadCalendar(ask) }
+        case .inbox: loadSuggestions()
+        case .everything, nil: break
+        }
+    }
+
     /// Put the screens' view together from the answers that landed.
     ///
     /// One struct rather than fifteen view files each learning a new
@@ -564,14 +569,7 @@ final class BoxModel: ObservableObject {
     private func assemble() {
         let live = rows
         snap = Snapshot(
-            // The day's dated things. `liv_view_today` answers this
-            // properly, with the piles already sorted; this keeps the old
-            // shape until Today.swift moves onto it.
-            today: live.filter { $0.dueMs != nil }.map(\.id),
-            unstructured: live.filter { $0.kindWord == nil }.map(\.id),
             everything: live.map(\.id),
-            dated: live.filter { $0.dueMs != nil }.map(\.id),
-            occurrences: [],
             entities: live + trashRows.map { r in
                 var row = r
                 row.trashed = true
@@ -582,39 +580,15 @@ final class BoxModel: ObservableObject {
             kinds: kindRows,
             workspaces: spaces.map {
                 WorkspaceRow(
-                    wsId: $0.id, name: $0.name, emoji: $0.emoji,
+                    wsId: $0.id, name: $0.name,
                     favorite: $0.favorite, archived: $0.archived,
                     builtin: $0.builtin, parent: $0.parent,
                     order: $0.order, query: $0.query)
             },
-            inbox: suggestions.map {
-                ProposalRow(
-                    entity: $0.entity,
-                    // **The engine names a suggestion by its
-                    // fingerprint**, never a position, so there is no
-                    // ordinal any more — the sweep is recomputed in every
-                    // process and an index would mean something else by
-                    // the time the user tapped it.
-                    ordinal: 0,
-                    fingerprint: $0.print,
-                    reason: $0.reason,
-                    author: $0.proposer,
-                    // THE ENGINE SHIPS NO COMMAND LIST, and the shell
-                    // stopped pretending otherwise on 2026-09-19. A
-                    // proposal crosses as what it is about, why, and the
-                    // one word it would write; the +/− diff the command
-                    // list existed for was never drawn on this shell.
-                    // The Inbox filtered on `commands.first.kind ==
-                    // "add"` for five days and so showed nothing at all.
-                    proposed: $0.value)
-            },
+            inbox: suggestions.map(Self.proposalRow),
             assist: AssistRow(
                 id: nil, on: assistOn,
-                prop: assistProperty.map(engineId)),
-            noteTasks: noteTasks.map {
-                NoteTaskRow(entity: $0.note, source: $0.source, line: $0.line,
-                            text: $0.text, indent: $0.depth)
-            })
+                prop: assistProperty.map(engineId)))
     }
 
     /// Both lists into one index, the trash carrying its flag.
@@ -643,6 +617,7 @@ final class BoxModel: ObservableObject {
         // thing was emptied out of the trash. Cells kept for something
         // that is gone would be answered from memory forever.
         cellCache = cellCache.filter { entities[$0.key] != nil }
+        suggestionsOf = suggestionsOf.filter { entities[$0.key] != nil }
     }
 
     /// A read said no. **Locked means retry and mean it**; anything else
@@ -984,7 +959,12 @@ final class BoxModel: ObservableObject {
                     return
                 }
                 self.forgetCells(of: id)
-                self.engineSet(id, p, engineId(k.id)) { fault in
+                // BY NAME, like a status or an area: a value crosses as
+                // the text a person would type, and the box reads it by
+                // the property. It sent the kind's hex id, which the box
+                // refuses — so filing a scrap from Unsorted, and "Not a
+                // note…", wrote nothing at all (found 2026-09-30).
+                self.engineSet(id, p, k.name ?? type) { fault in
                     done?(fault == nil)
                 }
             }
@@ -1028,6 +1008,12 @@ final class BoxModel: ObservableObject {
     /// which is what makes this a write rather than a resurrection.
     func restore(_ id: LivEntityID, done: ((Bool) -> Void)? = nil) {
         engineRestore(id) { done?($0 == nil) }
+    }
+
+    /// Put several back as ONE action, so one undo throws them all out
+    /// again (`liv_restore_many`). Answers how many came back.
+    func restore(_ ids: [LivEntityID], done: ((Int) -> Void)? = nil) {
+        engineRestoreMany(ids) { n, _ in done?(n ?? 0) }
     }
 
     /// Soft, reversible, never cascades.
@@ -1144,14 +1130,63 @@ final class BoxModel: ObservableObject {
 
     // MARK: the clerk's proposals (rev 6 — suggest, never act)
 
-    /// The suggestions aimed at one thing.
+    private func loadSuggestions() {
+        engineSuggestions { [weak self] in
+            self?.suggestions = $0
+            self?.assemble()
+        }
+    }
+
+    /// A card showing one thing's suggestions opened: ask now, and after
+    /// every write while it is open.
+    func watchSuggestions(of id: LivEntityID) {
+        suggestionCards[id, default: 0] += 1
+        loadSuggestions(of: id)
+    }
+
+    func unwatchSuggestions(of id: LivEntityID) {
+        guard let open = suggestionCards[id] else { return }
+        suggestionCards[id] = open > 1 ? open - 1 : nil
+    }
+
+    private func loadSuggestions(of id: LivEntityID) {
+        engineSuggestions(of: id) { [weak self] found in
+            self?.suggestionsOf[id] = found
+            self?.objectWillChange.send()
+        }
+    }
+
+    /// The suggestions aimed at one thing, as its card asked for them
+    /// (`watchSuggestions(of:)`) — NOT Unsorted's sweep, which is read
+    /// only while Unsorted is on screen.
     ///
     /// **Named by the thing AND the fingerprint**, never a position: the
     /// sweep is recomputed in every process, so an index would mean
     /// something else by the time the user tapped it. `ordinal` is gone
     /// for that reason and reads 0.
     func proposals(for entity: LivEntityID) -> [ProposalRow] {
-        (snap?.inbox ?? []).filter { $0.entity == entity }
+        (suggestionsOf[entity] ?? []).map(Self.proposalRow)
+    }
+
+    /// A suggestion as the views hold it.
+    static func proposalRow(_ s: LivSuggestion) -> ProposalRow {
+        ProposalRow(
+            entity: s.entity,
+            // **The engine names a suggestion by its fingerprint**, never
+            // a position, so there is no ordinal any more — the sweep is
+            // recomputed in every process and an index would mean
+            // something else by the time the user tapped it.
+            ordinal: 0,
+            fingerprint: s.print,
+            reason: s.reason,
+            author: s.proposer,
+            // THE ENGINE SHIPS NO COMMAND LIST, and the shell stopped
+            // pretending otherwise on 2026-09-19. A proposal crosses as
+            // what it is about, why, and the one word it would write; the
+            // +/− diff the command list existed for was never drawn on
+            // this shell. The Inbox filtered on `commands.first.kind ==
+            // "add"` for five days and so showed nothing at all.
+            proposed: s.value)
     }
 
     /// The engine's name for a row the views hold.
@@ -1408,16 +1443,20 @@ final class BoxModel: ObservableObject {
         }
     }
 
-    /// Ranked hits, how many matched, and the facets beside them.
+    /// The Search screen for one query inside the workspace lens: the hit
+    /// rows in rank order (the first 200), how many the lens admits in
+    /// all, the facets, and whether a hit is titled exactly like the words.
     ///
     /// **A search box WIDENS**: `is:archived` means look in the archive
     /// too, because someone hunting for a thing wants it found.
     func search(
-        _ query: String,
-        done: @escaping ([LivEntityID], Int, [LivFacet]) -> Void
+        _ query: String, lens: Set<LivEntityID>?,
+        done: @escaping (_ hits: [EntityRow], _ total: Int, _ facets: [LivFacet], _ exact: Bool) -> Void
     ) {
-        engineSearch(query) { found, _ in
-            let hits = found?.hits ?? []
+        let lensText = Self.lensJSON(lens)
+        engineRead(LivSearchScreen.self, { to, out in
+            livCString(lensText) { l in liv_view_search(to, query, 200, l, out) }
+        }) { found, _ in
             let facets: [LivFacet] = (found?.facets ?? []).map { f in
                 LivFacet(
                     label: f.label ?? "",
@@ -1429,10 +1468,7 @@ final class BoxModel: ObservableObject {
                             excluded: $0.excluded ?? false)
                     })
             }
-            // The engine ranks everything the query matches and the limit
-            // only cuts the list, so the total is the hit count when the
-            // list is short of the ceiling.
-            done(hits.map(\.id), hits.count, facets)
+            done(found?.hits ?? [], found?.total ?? 0, facets, found?.exact ?? false)
         }
     }
 }
@@ -1452,6 +1488,10 @@ struct EntityRow: Decodable, Identifiable {
     var allDay: Bool?
     var statusId: LivID?
     var done: Bool?
+    /// Open, a task, and its day has passed — Rust's rule, set on the rows
+    /// of Today, Tasks and the library (so every row in the model's index)
+    /// and false on search and the trash.
+    var late: Bool?
     var area: LivID?
     var createdMs: Int64?
     var touchedMs: Int64?
@@ -1484,7 +1524,7 @@ struct EntityRow: Decodable, Identifiable {
     var cells: [CellRow]? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, untitled, kind, dueMs, allDay, done, area
+        case id, title, untitled, kind, dueMs, allDay, done, late, area
         case createdMs, touchedMs, hasFile, hasBody, archived, trashed
         case kindWord, statusWord, areaWord
         case statusId = "status"
@@ -1612,19 +1652,40 @@ extension EntityRow {
 }
 
 extension BoxModel {
-    /// Everything, from the engine. `slice` is 0 all, 1 notes, 2 upcoming,
-    /// 3 unfiled.
-    func engineEverything(
-        slice: Int32, today: Int32,
-        _ done: @escaping ([EntityRow]?, String?) -> Void
-    ) {
-        let to = path
-        boxQueue.async {
-            var out: UnsafeMutablePointer<CChar>?
-            let code = liv_view_everything(to, slice, today, nil, &out)
-            let (value, fault) = Self.decodeView([EntityRow].self, code: code, out: out)
-            DispatchQueue.main.async { done(value, fault) }
+    /// Read the library through the lens it was last given: every row
+    /// (the index), Notes, Unsorted and the panel's counts. `done` gets
+    /// the fault, or nil when the rows landed.
+    fileprivate func loadLibrary(_ done: ((String?) -> Void)? = nil) {
+        let lens = Self.lensJSON(libraryLens)
+        let asked = libraryLens
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let offset = Int32(TimeZone.current.secondsFromGMT() / 60)
+        engineRead(LivLibrary.self, { to, out in
+            livCString(lens) { l in liv_view_library(to, now, offset, l, out) }
+        }) { [weak self] library, fault in
+            guard let self else { return }
+            guard let library else {
+                done?(fault ?? "no answer")
+                return
+            }
+            // A read through a lens nobody is using any more still brings
+            // good rows; only its lists are about the wrong workspace.
+            self.rows = library.all ?? []
+            if asked == self.libraryLens {
+                self.lists = LivLists(
+                    notes: library.notes ?? [], unsorted: library.unsorted ?? [],
+                    counts: library.counts ?? LivCounts())
+            }
+            self.reindex()
+            done?(nil)
         }
+    }
+
+    /// The workspace lens changed: read the library through it.
+    func watchLens(_ ids: Set<LivEntityID>?) {
+        guard ids != libraryLens else { return }
+        libraryLens = ids
+        loadLibrary()
     }
 
     /// The error channel, in words.
@@ -1937,6 +1998,11 @@ enum Civil {
     ///
     /// Both ends are anchored at noon, the same trick `date(ofDay:)` uses,
     /// so a daylight-saving boundary between them cannot lose a day.
+    /// The other way: a packed civil day from days since the epoch.
+    static func day(ofEpoch epoch: Int32) -> Int64 {
+        day(of: civil(ofFloatingMs: Int64(epoch) * 86_400_000))
+    }
+
     static func epochDay(_ day: Int64) -> Int32 {
         var epoch = DateComponents()
         epoch.year = 1970
@@ -2043,7 +2109,6 @@ struct LivSpace: Decodable, Identifiable {
     var id: LivID
     var name: String?
     var query: String?
-    var emoji: String?
     var favorite: Bool?
     var archived: Bool?
     var builtin: String?
@@ -2086,19 +2151,6 @@ struct LivLinks: Decodable {
 }
 
 /// A search: ranked hits, and the facet rows beside them.
-struct LivFound: Decodable {
-    var hits: [LivHit]?
-    var facets: [LivEngineFacet]?
-}
-
-struct LivHit: Decodable, Identifiable {
-    var id: LivID
-    var score: Double?
-    /// name | cell | filed | content | structured — where the best match
-    /// was, so a row can hint why it is here.
-    var field: String?
-}
-
 struct LivEngineFacet: Decodable, Identifiable {
     var property: LivID?
     var label: String?
@@ -2361,6 +2413,13 @@ extension BoxModel {
         engineWrite({ to in liv_restore(to, i, Self.nowMs) }, done)
     }
 
+    func engineRestoreMany(_ ids: [LivID], _ done: @escaping (Int?, String?) -> Void) {
+        let list = "[" + ids.map { "\"\(engineId($0))\"" }.joined(separator: ",") + "]"
+        engineWriteValue(LivRestored.self, { to, out in
+            liv_restore_many(to, list, Self.nowMs, out)
+        }) { v, fault in done(v?.restored, fault) }
+    }
+
     // MARK: the editor
 
     func engineBody(_ id: LivID, _ done: @escaping (LivBody?, String?) -> Void) {
@@ -2502,6 +2561,15 @@ extension BoxModel {
         }
     }
 
+    /// One thing's suggestions — `liv_sweep`'s rows for it, costing the
+    /// thing rather than the box.
+    func engineSuggestions(of id: LivEntityID, _ done: @escaping ([LivSuggestion]) -> Void) {
+        let i = engineId(id)
+        engineRead([LivSuggestion].self, { to, out in liv_sweep_one(to, i, out) }) { v, _ in
+            done(v ?? [])
+        }
+    }
+
     /// Say yes to one. Passing the entity back is what makes the check
     /// cost one thing rather than the whole box.
     func engineAccept(_ s: LivSuggestion, _ done: ((String?) -> Void)? = nil) {
@@ -2568,15 +2636,6 @@ extension BoxModel {
 
     // MARK: finding
 
-    /// Ranked hits and the facets beside them. `limit` 0 is no ceiling.
-    ///
-    /// **A search box WIDENS**: `is:archived` here means "look in the
-    /// archive too", because someone hunting for a thing wants it found.
-    func engineSearch(_ query: String, limit: UInt32 = 200,
-                      _ done: @escaping (LivFound?, String?) -> Void) {
-        engineRead(LivFound.self, { to, out in liv_search(to, query, limit, out) }, done)
-    }
-
     /// **A lens RESTRICTS**: the same `is:archived` means "only archived
     /// things", because a filter is a boundary and a search is a hunt.
     func engineLens(_ query: String, _ done: @escaping (LivLens?, String?) -> Void) {
@@ -2619,6 +2678,11 @@ struct LivCarriers: Decodable {
     var carriers: Int?
 }
 
+/// `{"restored":N}` — how many came out of the trash.
+struct LivRestored: Decodable {
+    var restored: Int?
+}
+
 /// `{"taken":N}` — how many of a batch actually landed.
 struct LivTaken: Decodable {
     var taken: Int?
@@ -2657,13 +2721,228 @@ extension BoxModel {
             done(v ?? [])
         }
     }
+}
 
-    /// Open checkbox lines inside notes — the Tasks view's "In notes".
-    func engineNoteTasks(_ done: @escaping ([LivNoteTask]) -> Void) {
-        engineRead([LivNoteTask].self, { to, out in liv_note_tasks(to, out) }) { v, _ in
-            done(v ?? [])
+// MARK: - the engine lane: one answer per screen
+
+/// The Tasks screen, as `liv_view_tasks` answers it. Every rule — who is
+/// on it, in which group, what is late, what the counts are — is Rust's;
+/// the screen picks a group by name and draws.
+struct LivTasks: Decodable {
+    var groups: [LivTaskGroup]?
+    /// Open tasks in the lens plus the open lines in its notes: the
+    /// screen's size, whatever the project filter shows.
+    var open: Int?
+    var late: Int?
+    var inNotes: [LivNoteTask]?
+    /// What the Project menu offers, commonest first.
+    var projects: [LivNamed]?
+}
+
+/// One status band on the Tasks screen.
+struct LivTaskGroup: Decodable, Identifiable {
+    var status: LivID?
+    var name: String?
+    var completes: Bool?
+    /// The status option's colour, in degrees.
+    var hue: Int?
+    var late: Int?
+    var rows: [EntityRow]?
+    var id: String { name ?? "" }
+}
+
+/// What the Tasks screen asks for: the project it is narrowed to, and the
+/// workspace lens.
+struct TasksAsk: Equatable {
+    var project: LivID?
+    var lens: Set<LivEntityID>?
+}
+
+extension BoxModel {
+    /// What the Tasks screen asks. Read now if it is a new question and
+    /// Tasks is on screen; `screenChanged` reads it when Tasks comes back.
+    func watchTasks(_ ask: TasksAsk) {
+        guard ask != tasksAsk else { return }
+        tasksAsk = ask
+        if onScreen == .tasks { loadTasks(ask) }
+    }
+
+    fileprivate func loadTasks(_ ask: TasksAsk) {
+        let project = ask.project.map(engineId)
+        let lens = Self.lensJSON(ask.lens)
+        let today = Self.todayDay
+        engineRead(LivTasks.self, { to, out in
+            livCString(project) { p in
+                livCString(lens) { l in liv_view_tasks(to, p, today, l, out) }
+            }
+        }) { [weak self] answer, _ in
+            // An answer to a question nobody is asking any more is dropped.
+            guard let self, self.tasksAsk == ask, let answer else { return }
+            self.tasks = answer
         }
     }
+
+    /// A lens as the door takes it: a JSON array of hex ids, or nil for
+    /// everything. **Nil is not the empty set**: a workspace that admits
+    /// nothing is a real, showable state.
+    static func lensJSON(_ ids: Set<LivEntityID>?) -> String? {
+        guard let ids else { return nil }
+        let hex = ids.map(engineId).sorted()
+        return (try? JSONEncoder().encode(hex)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+}
+
+/// The Today screen, as `liv_view_today` answers it: the seven days of the
+/// strip, what is late, what is next, and what was caught today. Every
+/// rule is Rust's (`surface/src/today.rs`); the screen picks a day and
+/// draws.
+struct LivToday: Decodable {
+    var days: [LivTodayDay]?
+    var late: [EntityRow]?
+    var whatNext: [EntityRow]?
+    var captured: Int?
+
+    /// One day of the strip, by its packed civil day (`Civil.todayDay`).
+    func day(_ civil: Int64) -> LivTodayDay? {
+        let epoch = Civil.epochDay(civil)
+        return days?.first { $0.day == epoch }
+    }
+}
+
+/// One day of Today's strip.
+struct LivTodayDay: Decodable {
+    /// Days since the epoch.
+    var day: Int32?
+    var allDay: [EntityRow]?
+    /// Only today has any: timed, open, and already gone.
+    var passed: [EntityRow]?
+    var ahead: [EntityRow]?
+    var done: [EntityRow]?
+    /// The line under the title, by area and alphabetical.
+    var areas: [LivAreaCount]?
+    var unfiled: Int?
+
+    /// Nothing on the day at all — the strip draws no dot under it.
+    var isEmpty: Bool {
+        [allDay, passed, ahead, done].allSatisfy { ($0 ?? []).isEmpty }
+    }
+}
+
+struct LivAreaCount: Decodable {
+    var name: String?
+    var count: Int?
+}
+
+/// What the Today screen asks for: only the lens. The day and the clock
+/// are read when the question is asked.
+struct TodayAsk: Equatable {
+    var lens: Set<LivEntityID>?
+}
+
+extension BoxModel {
+    /// What the Today screen asks, as `watchTasks`. The clock is read when
+    /// the question is, so a new day needs no new question: the refresh
+    /// the app makes as it comes to the front asks again.
+    func watchToday(_ ask: TodayAsk) {
+        guard ask != todayAsk else { return }
+        todayAsk = ask
+        if onScreen == .today { loadToday(ask) }
+    }
+
+    fileprivate func loadToday(_ ask: TodayAsk) {
+        let lens = Self.lensJSON(ask.lens)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let offset = Int32(TimeZone.current.secondsFromGMT() / 60)
+        engineRead(LivToday.self, { to, out in
+            livCString(lens) { l in liv_view_today(to, now, offset, l, out) }
+        }) { [weak self] answer, _ in
+            guard let self, self.todayAsk == ask, let answer else { return }
+            self.today = answer
+        }
+    }
+}
+
+/// One day of the calendar that has anything on it (`liv_view_day`).
+struct LivCalendarDay: Decodable {
+    /// Days since the epoch.
+    var day: Int32?
+    var allDay: [EntityRow]?
+    /// In time order.
+    var timed: [EntityRow]?
+}
+
+/// What the Calendar asks for: a range of days (since the epoch, both
+/// included) and the lens.
+struct CalendarAsk: Equatable {
+    var from: Int32
+    var to: Int32
+    var lens: Set<LivEntityID>?
+}
+
+extension BoxModel {
+    /// What the Calendar asks, as `watchTasks`.
+    func watchCalendar(_ ask: CalendarAsk) {
+        guard ask != calendarAsk else { return }
+        calendarAsk = ask
+        if onScreen == .calendar { loadCalendar(ask) }
+    }
+
+    fileprivate func loadCalendar(_ ask: CalendarAsk) {
+        let lens = Self.lensJSON(ask.lens)
+        engineRead([LivCalendarDay].self, { to, out in
+            livCString(lens) { l in liv_view_day(to, ask.from, ask.to, l, out) }
+        }) { [weak self] answer, _ in
+            guard let self, self.calendarAsk == ask, let answer else { return }
+            self.calendar = answer
+        }
+    }
+}
+
+/// The library, as `liv_view_library` answers it: every live row, the
+/// Notes and Unsorted lists as ids into them, and the library panel's
+/// counts. Every rule — what is a note, what is unsorted, what each count
+/// counts — is Rust's (`surface/src/library.rs`).
+struct LivLibrary: Decodable {
+    var all: [EntityRow]?
+    var notes: [LivID]?
+    var unsorted: [LivID]?
+    var counts: LivCounts?
+}
+
+/// The number beside each view in the library panel: the number of rows
+/// that view shows.
+struct LivCounts: Decodable, Equatable {
+    var today: Int?
+    var unsorted: Int?
+    var notes: Int?
+    var tasks: Int?
+    var events: Int?
+}
+
+/// The library without its rows, which live in `BoxModel.rows`.
+struct LivLists: Equatable {
+    /// What opens as a page, in the lens, last touched first.
+    var notes: [LivID] = []
+    /// What a person files with no area, newest first — never lensed.
+    var unsorted: [LivID] = []
+    var counts = LivCounts()
+}
+
+/// The Search screen, as `liv_view_search` answers it: the hits inside the
+/// workspace, in rank order, and whether one is titled exactly like the
+/// typed words.
+struct LivSearchScreen: Decodable {
+    var hits: [EntityRow]?
+    /// How many the workspace admits before the cut.
+    var total: Int?
+    var facets: [LivEngineFacet]?
+    var exact: Bool?
+}
+
+/// An optional string as a C string: nil crosses as NULL.
+func livCString<R>(_ s: String?, _ body: (UnsafePointer<CChar>?) -> R) -> R {
+    guard let s else { return body(nil) }
+    return s.withCString { body($0) }
 }
 
 // MARK: - the engine lane: the vocabulary a picker offers

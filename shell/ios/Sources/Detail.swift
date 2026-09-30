@@ -192,6 +192,12 @@ struct EntityInspector: View {
             box.statusOptions(kind: box.entity(id)?.kinds?.first ?? "") {
                 options = $0
             }
+            box.watchSuggestions(of: id)
+        }
+        .onDisappear { box.unwatchSuggestions(of: id) }
+        .onChange(of: id) { was, now in
+            box.unwatchSuggestions(of: was)
+            box.watchSuggestions(of: now)
         }
         // The record card sets `autoFocus` in ITS onAppear, which runs
         // AFTER this one — the same ordering the note editor works around.
@@ -326,6 +332,9 @@ struct EntityInspector: View {
     /// no model, and NOTHING automatic: the sweep only fills a queue;
     /// the sole write path is the Accept button below. A decline is
     /// remembered — the clerk never asks the same thing twice.
+    ///
+    /// Asked about this one thing (`watchSuggestions(of:)`), not read out
+    /// of Unsorted's sweep, which runs only while Unsorted is on screen.
     @ViewBuilder private var suggestions: some View {
         let pending = box.proposals(for: id)
         if !pending.isEmpty {
@@ -394,24 +403,17 @@ struct EntityInspector: View {
             DetailCardRow(label, divided: divided) {
                 if let due = row.due {
                     // RED WHEN LATE — a TASK overdue and not done — which is
-                    // what red means everywhere on the clearer boards. A
-                    // past event is not late; it happened (Today's own
-                    // ruling, `lateRows`).
+                    // what red means everywhere on the clearer boards. The
+                    // rule is Rust's (`is_late`); the row carries it.
                     DetailValue(
                         dueWords(due, end: row.dueEnd, dateOnly: row.dueDateOnly ?? false),
-                        late: row.kinds?.contains("task") == true
-                            && Civil.day(of: due) < Civil.todayDay()
-                            && !livIsDone(row, doneNames))
+                        late: row.late == true)
                 } else {
                     DetailValue(nil)
                 }
             }
         }
         .buttonStyle(.plain)
-    }
-
-    private var doneNames: Set<String> {
-        Set(options.filter { $0.completes == true }.compactMap(\.name))
     }
 
     /// The due in the app's words: "Tuesday 11:00", "Today", "18 Sep 09:00",
@@ -662,7 +664,7 @@ struct InspectorValueSheet: View {
                 .font(.system(size: LivType.title, weight: .semibold))
                 .foregroundStyle(LivTheme.text)
             if !field.closed {
-                TextField("Search or create…", text: $typed)
+                TextField("Search", text: $typed)
                     .font(.system(size: LivType.title))
                     .foregroundStyle(LivTheme.text)
                     .submitLabel(.done)
@@ -700,9 +702,6 @@ struct InspectorValueSheet: View {
                     if creatable {
                         row("Create \u{201C}\(trimmed)\u{201D}", accent: true) { add(trimmed) }
                     }
-                    if all.isEmpty && trimmed.isEmpty {
-                        EmptyHint("Type to create")
-                    }
                 }
             }
         }
@@ -732,13 +731,6 @@ struct InspectorValueSheet: View {
                 .autocorrectionDisabled(true)
             Button("Cancel", role: .cancel) { renaming = nil }
             Button("Rename") { commitRename() }
-        } message: {
-            if let renaming {
-                let what = field.shown.lowercased()
-                Text(verbatim:
-                    "Every \(what) reading \u{201C}\(renaming)\u{201D} changes. "
-                        + "One step, so one undo.")
-            }
         }
         .overlay(alignment: .bottom) {
             if let renameSaid {
@@ -868,7 +860,7 @@ struct InspectorValueSheet: View {
         }
         .buttonStyle(.plain)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            LivHairline()
         }
     }
 }

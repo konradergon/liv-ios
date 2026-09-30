@@ -95,7 +95,6 @@ enum LivTerms {
 struct WorkspaceRow: Decodable, Identifiable {
     var wsId: LivEntityID?
     var name: String?
-    var emoji: String?
     var favorite: Bool?
     var archived: Bool?
     var builtin: String?
@@ -111,7 +110,7 @@ struct WorkspaceRow: Decodable, Identifiable {
     var display: String { (name ?? "").isEmpty ? "Workspace" : (name ?? "") }
 
     private enum CodingKeys: String, CodingKey {
-        case wsId = "id", name, emoji, favorite, archived, builtin, parent, order,
+        case wsId = "id", name, favorite, archived, builtin, parent, order,
             query
     }
 }
@@ -180,11 +179,6 @@ final class WorkspaceModel: ObservableObject {
 
     var active: WorkspaceRow? {
         workspaces.first { $0.id == activeId }
-    }
-
-    /// The chip's text and the switcher's label.
-    var activeName: String {
-        active?.display ?? "All"
     }
 
     /// The name the lens chip shows.

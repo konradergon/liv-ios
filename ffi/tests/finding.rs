@@ -86,30 +86,31 @@ fn hits(v: &J) -> Vec<String> {
     v["hits"].as_array().unwrap().iter().map(|h| h["id"].as_str().unwrap().to_owned()).collect()
 }
 
+/// The Search screen, with no workspace lens.
 fn search(path: &CString, q: &str, limit: u32) -> J {
     let mut out = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_search(path.as_ptr(), c(q).as_ptr(), limit, &mut out) }, LIV_OK, "{q}");
+    assert_eq!(
+        unsafe { liv_view_search(path.as_ptr(), c(q).as_ptr(), limit, std::ptr::null(), &mut out) },
+        LIV_OK,
+        "{q}"
+    );
     took(out)
 }
 
 // ---- search ------------------------------------------------------------
 
 #[test]
-fn a_search_ranks_its_hits_and_says_where_each_matched() {
+fn a_search_comes_back_ranked_as_rows() {
     let (d, path, _) = stocked("rank");
     let found = search(&path, "roof", 0);
 
-    let rows = found["hits"].as_array().unwrap();
-    assert!(rows.len() >= 2, "the name and the body: {found}");
-
-    // A name match outranks a body match, and each says which it was, so
-    // a row can hint why it is in the list.
-    assert_eq!(rows[0]["field"].as_str().unwrap(), "name");
-    assert!(rows.iter().any(|h| h["field"] == "content"), "the body hit is there too");
-    let scores: Vec<f64> = rows.iter().map(|h| h["score"].as_f64().unwrap()).collect();
-    let mut sorted = scores.clone();
-    sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
-    assert_eq!(scores, sorted, "hits come back ranked");
+    // A name match outranks a body match, and a hit is a whole row — the
+    // screen draws it without asking anything else.
+    let titles: Vec<&str> =
+        found["hits"].as_array().unwrap().iter().map(|h| h["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, vec!["Fix the roof", "Saturday"], "the name, then the body: {found}");
+    assert_eq!(found["total"], 2);
+    assert_eq!(found["exact"], false, "nothing is called just \"roof\"");
 
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -586,9 +587,16 @@ fn open_lines_inside_notes_are_listed_without_becoming_things() {
     unsafe { liv_view_close_all() };
     let p = c(path.to_str().unwrap());
 
+    // They arrive with the Tasks screen, which lists them under "In notes".
     let mut out = std::ptr::null_mut();
-    assert_eq!(unsafe { liv_note_tasks(p.as_ptr(), &mut out) }, LIV_OK);
-    let rows = took(out);
+    assert_eq!(
+        unsafe {
+            liv_ffi::surfaces::liv_view_tasks(
+                p.as_ptr(), std::ptr::null(), 20_726, std::ptr::null(), &mut out)
+        },
+        LIV_OK
+    );
+    let rows = took(out)["in_notes"].clone();
     assert_eq!(rows.as_array().unwrap().len(), 1, "the open one only: {rows}");
     assert_eq!(rows[0]["text"], "book the ferry");
     assert_eq!(rows[0]["note"].as_str().unwrap(), note.hex());

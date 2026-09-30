@@ -36,30 +36,24 @@ struct InboxView: View {
     /// (the clerk never re-asks), so it costs one ask.
     /// The transient acknowledgment: what routed, and how many
     /// transactions its Undo must take back.
+    /// The row a swipe has lifted out of its card (`livSwipeLift`).
+    @State private var lifted: AnyHashable?
     @State private var chipText: String?
     @State private var chipUndo = 0
 
-    /// WHAT IS UNSORTED is `livIsUnfiled` — the same predicate the
-    /// library panel counts with, so the number beside the door and the
-    /// rows behind it cannot disagree (they did, twice, in September).
-    ///
-    /// THE WORKSPACE LENS IS NOT APPLIED HERE, EVER (design/ios.md M4). An
-    /// unfiled thing must be reachable from every workspace, or a capture
-    /// made under the wrong lens appears to vanish. This is a stated
-    /// safety rule, not an oversight; do not "fix" it.
+    /// WHAT IS UNSORTED is Rust's answer (`is_unsorted`, in
+    /// `surface/src/library.rs`), newest first — the same list the library
+    /// panel counts, so the number beside the door and the rows behind it
+    /// cannot disagree (they did, twice, in September). Rust also keeps
+    /// the safety rule: the workspace lens is never applied here
+    /// (design/ios.md M4), or a capture made under the wrong lens would
+    /// appear to vanish.
     private var scraps: [EntityRow] {
         // THE INDEX, NOT A CELL FETCH. `box.entity(id)` asks the box for
-        // one row's cells, so mapping it over every live id kicked off a
-        // `liv_cells` call for the whole box on this screen's first
-        // render — for rows it does not draw — and republished once per
-        // answer. `area` and `hasBody` are on the row already.
-        box.rows
-            .filter(livIsUnfiled)
-            .sorted {
-                let a = $0.created ?? 0
-                let b = $1.created ?? 0
-                return a == b ? $0.id > $1.id : a > b
-            }
+        // one row's cells, so mapping it over every id kicked off a
+        // `liv_cells` call for the whole list on this screen's first
+        // render and republished once per answer. `live` only looks.
+        box.lists.unsorted.compactMap { box.live($0) }
     }
 
     /// The clerk's pending queue, minus the shapes the accept seam cannot
@@ -89,7 +83,10 @@ struct InboxView: View {
     /// The clerk reads it off what the capture mentions — a thought
     /// about Sam belongs where Sam is filed (`clerk.rs`, `propose_area`).
     private func suggestedArea(_ row: EntityRow) -> (p: ProposalRow, area: String)? {
-        guard let p = box.proposals(for: row.id).first(where: { $0.author == "area" }),
+        guard
+            let p = (box.snap?.inbox ?? []).first(where: {
+                $0.entity == row.id && $0.author == "area"
+            }),
             let area = p.proposed, !area.isEmpty
         else { return nil }
         return (p, area)
@@ -131,7 +128,7 @@ struct InboxView: View {
                 // workspace (owner, 2026-08-06), so a thing made under the
                 // wrong workspace cannot vanish.
                 LivTitleBlock("Unsorted", subtitle: subtitle(scraps.count))
-                    .listRowInsets(EdgeInsets())
+                    .listRowInsets(LivRow.fullWidth)
 
                 if scraps.isEmpty {
                     EmptyHint("Nothing unsorted")
@@ -139,8 +136,8 @@ struct InboxView: View {
                     if guessed.count > 1 && !assistOff {
                         fileAllByGuess(guessed)
                     }
-                    ForEach(Array(scraps.enumerated()), id: \.element.id) { i, row in
-                        routeCard(row, position: .of(i, in: scraps.count))
+                    ForEach(livCardSlots(scraps)) { s in
+                        routeCard(s.item, position: s.position)
                     }
                 }
 
@@ -152,12 +149,13 @@ struct InboxView: View {
                 }
             }
             .listRowInsets(
-                EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
+                EdgeInsets()
             )
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
+            LivCardListEnd()
         }
-        .listStyle(.plain)
+        .livCardList()
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
         // THE LIST CLOSES ITS OWN GAPS.
@@ -201,20 +199,23 @@ struct InboxView: View {
             for _ in 0..<max(1, chipUndo) { box.undo() }
             withAnimation(LivMotion.nav) { chipText = nil }
         }
+        // No refresh here. This `onAppear` asked for a whole one back when
+        // the sweep was part of every refresh; the sweep is read while
+        // Unsorted is on screen now (`BoxModel.screenChanged`), and when
+        // it comes back.
         .onAppear {
-            box.refresh()
             box.statusOptions(kind: "task") { taskOptions = $0 }
         }
     }
 
     // MARK: the pile — a card per unsorted thing
 
-    /// "6 things without an area", "1 thing …"; with the lens on, it
-    /// says the list ignores it. Nothing to count and no lens: no line.
+    /// "6 things", "1 thing" — a count, never an explanation (owner,
+    /// 2026-09-29: "the interface should explain itself"). The list still
+    /// ignores the workspace lens (M4); it no longer says so. Nothing to
+    /// count: no line.
     private func subtitle(_ count: Int) -> String? {
-        let things = count == 0 ? nil : "\(count) thing\(count == 1 ? "" : "s") without an area"
-        guard workspaces.lensOn else { return things }
-        return things.map { $0 + " · all workspaces" } ?? "All workspaces"
+        count == 0 ? nil : "\(count) thing\(count == 1 ? "" : "s")"
     }
 
     /// SAY YES TO EVERY GUESS AT ONCE — when the clerk has guessed for two
@@ -231,7 +232,7 @@ struct InboxView: View {
             } label: {
                 HStack(spacing: LivChip.verbGap) {
                     LivIcon(glyph: .check, color: LivTheme.text, size: LivPen.chip)
-                    Text("File \(guessed.count) by their guesses")
+                    Text("File all \(guessed.count)")
                         .font(.system(size: LivType.label, weight: .semibold))
                         .foregroundStyle(LivTheme.text)
                 }
@@ -269,7 +270,8 @@ struct InboxView: View {
         }
         .livRowPress(position)
         .livDoor()
-        .livCardRow(position: position)
+        .livSwipeLift(row.id, $lifted)
+        .livCardRow(position: position, lifted: livIsLifted(row.id, lifted))
         // `allowsFullSwipe: false` on purpose: an unrouted capture must
         // not be thrown away by a thumb that kept going.
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -299,7 +301,7 @@ struct InboxView: View {
                     HStack(spacing: LivChip.guessGap) {
                         LivIcon(glyph: .area, color: LivTheme.text2, size: LivPen.chip)
                         Text("\(guess.area)?")
-                            .font(.system(size: LivType.detail, weight: .medium))
+                            .font(.system(size: LivType.label, weight: .medium))
                             .foregroundStyle(LivTheme.text)
                             .lineLimit(1)
                     }
@@ -332,7 +334,6 @@ struct InboxView: View {
             id: "reject-\(p.id)",
             from: .bottom,
             subject: title(of: p),
-            subjectDetail: "The clerk never asks this again",
             items: [
                 LivMenuItem(
                     label: "Dismiss forever", glyph: .trash, destructive: true
@@ -393,9 +394,6 @@ struct InboxView: View {
             id: "route-\(LivIDText.written(row.id))",
             from: .bottom,
             subject: displayTitle(row),
-            subjectDetail: untyped
-                ? "Unsorted capture — where does it go?"
-                : "Unsorted \(LivKind.of(row).word) — where does it go?",
             items: items,
             atDoor: true)
     }
@@ -407,7 +405,6 @@ struct InboxView: View {
             id: "route-kind-\(LivIDText.written(row.id))",
             from: .bottom,
             subject: displayTitle(row),
-            subjectDetail: "What is it, then?",
             items: [
                 LivMenuItem(label: "Task", glyph: .task) { routeTask(row) },
                 LivMenuItem(label: "Event", glyph: .event) { routeEvent(row) },
@@ -500,7 +497,7 @@ struct InboxView: View {
     /// and the card it opens has one question left. Saying "routed"
     /// would promise a departure that does not happen (2026-09-19).
     private func stillUnfiled(_ kind: String, undo: Int) {
-        flash("Now a \(kind) — still unfiled", undo: undo)
+        flash("Now a \(kind)", undo: undo)
     }
 
     /// Event = type + the date editor, because an event without a date
@@ -544,8 +541,8 @@ struct InboxView: View {
         } else {
             ForEach(groups, id: \.author) { group in
                 groupHeader(group)
-                ForEach(Array(group.rows.enumerated()), id: \.element.id) { i, p in
-                    suggestionRow(p, position: .of(i, in: group.rows.count))
+                ForEach(livCardSlots(group.rows)) { s in
+                    suggestionRow(s.item, position: s.position)
                 }
             }
         }
@@ -565,7 +562,7 @@ struct InboxView: View {
                     }
                 } label: {
                     Text("Accept all")
-                        .font(.system(size: LivType.detail, weight: .medium))
+                        .font(.system(size: LivType.label, weight: .medium))
                         .foregroundStyle(LivTheme.text)
                         .padding(.horizontal, LivChip.guessPad)
                         .frame(height: LivChip.guess)

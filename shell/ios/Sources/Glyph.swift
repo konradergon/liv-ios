@@ -165,7 +165,7 @@ enum LivGlyph: Equatable {
     /// A WORKSPACE IS ITS LETTER: the first grapheme of its name,
     /// uppercased, set like an icon (`LivGlyph.initial`). It was a bare
     /// circle, identical for every workspace. Drawn as TEXT, so it has
-    /// no path — the self-check knows. An emoji still wins, at the call
+    /// no path — the self-check knows. A name with no letter shows its
     /// site; "All" is never a letter, it is `.workspaces`.
     case letter(String)
     /// THE BOARD'S TICK — the chosen workspace, "File N by their
@@ -207,30 +207,43 @@ enum LivGlyph: Equatable {
     /// desktop shell ever wants the vocabulary back.
     case area, people
 
-    /// NOTES STACKED, THE COUNT ON THE FRONT ONE — the bar's tab key.
-    /// It was a plain numbered box (owner, 2026-08-23: "just have tabs as
-    /// they appeared before when you clicked the numbered box"), and on
-    /// the Icons board that box "read as a date". Two sheets say "open
-    /// documents"; the count still rides on the front one, as Text
-    /// (`LivIcon`), so the path does not depend on it.
+    /// THE SWIPE VERBS that move a task to another day (2026-09-29): the
+    /// buttons behind a swiped row draw these, not SF Symbols, so a row's
+    /// trash is the panel's trash (owner: "the icons in bubbles in rows
+    /// should be consistent"). "Move to today" wears `.today` and "Pick" the
+    /// calendar; these are the three the family did not have.
+    case tonight, tomorrow, weekend
+
+    /// THE NUMBERED BOX — the bar's tab key, the count inside as Text
+    /// (`LivIcon`), so the path does not depend on it. The Icons board of
+    /// 2026-09-24 made it two stacked sheets, because the box "read as a
+    /// date"; the owner took the box back on 2026-09-29 ("the old open tabs
+    /// [n] style was better").
     case tabs(Int)
 
     /// A workspace's letter: the first grapheme of its name, leading
     /// whitespace skipped, uppercased. "" for a blank name.
+    ///
+    /// THE FIRST LETTER, or failing that the first character (owner,
+    /// 2026-09-29: "first letter if there are any, otherwise first unicode
+    /// character (like an emoji)"). So "🏠 Home" is H, and "🏠" is 🏠.
     static func initial(of name: String) -> String {
-        name.drop(while: \.isWhitespace).first.map { String($0).uppercased() } ?? ""
+        if let letter = name.first(where: \.isLetter) { return String(letter).uppercased() }
+        return name.drop(while: \.isWhitespace).first.map(String.init) ?? ""
     }
 }
 
 /// ONE DRAWING, AS DATA: the board's own numbers, pasted rather than
 /// transcribed, so a redrawn icon is a new string and not new code.
 ///
-/// Three layers, all in the icon's one ink:
+/// Two layers, both in the icon's one ink:
 /// - `ink`, stroked — the drawing;
-/// - `faint`, stroked at `LivPen.faint` — a second voice (Unsorted's
-///   falling stroke, the back square of All workspaces);
 /// - `fill`, filled — the dot, and the odd solid block (a PDF's label
-///   bar, the hold tick).
+///   bar, the hold tick, All workspaces' four dots).
+///
+/// A third, `faint` — a stroke at 55% for a "second voice" — went on
+/// 2026-09-29 with its last two users, Unsorted's falling stroke and the
+/// back square of All workspaces.
 struct GlyphDrawing: Equatable {
     enum Mark: Equatable {
         /// SVG path data, in the strict grammar `GlyphPath` reads.
@@ -240,19 +253,17 @@ struct GlyphDrawing: Equatable {
         /// cx, cy, r.
         case circle(CGFloat, CGFloat, CGFloat)
     }
-    enum Layer: CaseIterable { case ink, faint, fill }
+    enum Layer: CaseIterable { case ink, fill }
 
     /// The side of the square the numbers live in: 24 for every glyph,
     /// 7 for the hold tick.
     var grid: CGFloat = 24
     var ink: [Mark] = []
-    var faint: [Mark] = []
     var fill: [Mark] = []
 
     func marks(_ layer: Layer) -> [Mark] {
         switch layer {
         case .ink: return ink
-        case .faint: return faint
         case .fill: return fill
         }
     }
@@ -396,24 +407,24 @@ extension LivGlyph {
                 fill: [.circle(12, 12, 1.5)])
         case .inbox, .capture:
             // Something dropping into a tray: caught, not yet shaped.
+            // The dot alone says "falling in" (clearer spec, 2026-09-29);
+            // the faint stroke above it went.
             return GlyphDrawing(
                 ink: [
                     .d("M3.5 12.5V17A3 3 0 0 0 6.5 20H17.5A3 3 0 0 0 20.5 17V12.5"),
                     .d("M3.5 12.5H8.3L9.8 15H14.2L15.7 12.5H20.5"),
                 ],
-                faint: [.d("M12 3.5V7")],
-                fill: [.circle(12, 9.3, 1.7)])
+                fill: [.circle(12, 8.3, 1.7)])
         case .note:
             return GlyphDrawing(
                 ink: [.rect(5, 3.5, 14, 17, 3), .d("M8.5 8.5H15.5M8.5 12H15.5M8.5 15.5H11.5")],
                 fill: [.circle(14.3, 15.5, 1.25)])
-        // A TASK AND THE TASKS PLACE SHARE THE TICKED BOX, as every board
-        // draws it (Create's Task verb, Unsorted's task rows, the library
-        // row). They were split when a tick was `StatusRing`'s DONE mark
-        // and every open task in a mixed list wore it; on the clearer
-        // boards done is a FILLED green box, so an outlined tick no longer
-        // says done. Two cases still, so each kind keeps its own glyph.
-        case .task, .tasks:
+        // A TASK IS A BOX WITH A RULE; THE TASKS PLACE IS THE TICKED BOX
+        // (the clearer spec, 2026-09-29, which splits what the boards of
+        // 2026-09-24 had shared: a thing to do is not yet done).
+        case .task:
+            return GlyphDrawing(ink: [.rect(4.5, 4.5, 15, 15, 3.5), .d("M9.5 12H14.5")])
+        case .tasks:
             return GlyphDrawing(ink: [.rect(4.5, 4.5, 15, 15, 3.5), .d("M8.6 12.3L11 14.7L15.5 9.6")])
         case .event, .calendar:
             return GlyphDrawing(
@@ -452,19 +463,26 @@ extension LivGlyph {
                         + "H14.6A2 2 0 0 0 16.6 18.3L17.5 6.5")
             ])
         case .settings:
-            // A PLAIN COGWHEEL (owner, 2026-09-15: the drawing before this
-            // was "a pirate ship steering wheel" — spokes out of a rim are
-            // handles, not teeth). Eight tapered teeth as one closed
-            // outline, straight-cornered, round a large bore.
+            // A PLAIN COGWHEEL (owner, 2026-09-15: an earlier drawing was
+            // "a pirate ship steering wheel"). SIX teeth, the first
+            // pointing up, round a 3.1 hub (owner, 2026-09-29: "revert to
+            // the old gear icon but with less bumps"): the eight-tooth cog
+            // read as too many. The approved mockup's own path.
             return GlyphDrawing(ink: [
                 .d(
-                    "M18.63 9.46L21.19 10.05L21.19 13.95L18.63 14.54L18.49 14.89L19.88 17.12"
-                        + "L17.12 19.88L14.89 18.49L14.54 18.63L13.95 21.19L10.05 21.19L9.46 18.63"
-                        + "L9.11 18.49L6.88 19.88L4.12 17.12L5.51 14.89L5.37 14.54L2.81 13.95"
-                        + "L2.81 10.05L5.37 9.46L5.51 9.11L4.12 6.88L6.88 4.12L9.11 5.51L9.46 5.37"
-                        + "L10.05 2.81L13.95 2.81L14.54 5.37L14.89 5.51L17.12 4.12L19.88 6.88"
-                        + "L18.49 9.11Z"),
-                .circle(12, 12, 2.9),
+                    "M8.56 6.03L9.44 5.52A0.45 0.45 0 0 0 9.66 5.2L9.93 3.4A0.45 0.45 0 0 1 10.38 3.02"
+                        + "L13.62 3.02A0.45 0.45 0 0 1 14.07 3.4L14.34 5.2A0.45 0.45 0 0 0 14.56 5.52"
+                        + "L16.33 6.55A0.45 0.45 0 0 0 16.72 6.57L18.41 5.91A0.45 0.45 0 0 1 18.97 6.11"
+                        + "L20.59 8.91A0.45 0.45 0 0 1 20.48 9.49L19.06 10.63A0.45 0.45 0 0 0 18.89 10.98"
+                        + "L18.89 13.02A0.45 0.45 0 0 0 19.06 13.37L20.48 14.51A0.45 0.45 0 0 1 20.59 15.09"
+                        + "L18.97 17.89A0.45 0.45 0 0 1 18.41 18.09L16.72 17.43A0.45 0.45 0 0 0 16.33 17.45"
+                        + "L14.56 18.48A0.45 0.45 0 0 0 14.34 18.8L14.07 20.6A0.45 0.45 0 0 1 13.62 20.98"
+                        + "L10.38 20.98A0.45 0.45 0 0 1 9.93 20.6L9.66 18.8A0.45 0.45 0 0 0 9.44 18.48"
+                        + "L7.67 17.45A0.45 0.45 0 0 0 7.28 17.43L5.59 18.09A0.45 0.45 0 0 1 5.03 17.89"
+                        + "L3.41 15.09A0.45 0.45 0 0 1 3.52 14.51L4.94 13.37A0.45 0.45 0 0 0 5.11 13.02"
+                        + "L5.11 10.98A0.45 0.45 0 0 0 4.94 10.63L3.52 9.49A0.45 0.45 0 0 1 3.41 8.91"
+                        + "L5.03 6.11A0.45 0.45 0 0 1 5.59 5.91L7.28 6.57A0.45 0.45 0 0 0 7.67 6.55Z"),
+                .circle(12, 12, 3.1),
             ])
         // ---- the cards ----
         case .letter:
@@ -474,22 +492,17 @@ extension LivGlyph {
         case .plus:
             return GlyphDrawing(ink: [.d("M12 5V19M5 12H19")])
         case .workspaces:
-            // TWO SQUARES, STACKED. The back one is a fixed OPEN path that
-            // stops at the front one's outer edge, so the front needs no
-            // fill to hide it and there is no boolean op: where the ends
-            // land inside the front's ink band, that ink covers them.
-            return GlyphDrawing(
-                ink: [.rect(0.62, 4.85, 18.53, 18.53, 4.32)],
-                faint: [
-                    .d(
-                        "M4.91 4.23A4.32 4.32 0 0 1 9.17 0.62H19.06A4.32 4.32 0 0 1 23.38 4.94"
-                            + "V14.83A4.32 4.32 0 0 1 19.77 19.09")
-                ])
-        case .tabs:
-            return GlyphDrawing(ink: [
-                .rect(Self.frontSheet.minX, Self.frontSheet.minY, Self.frontSheet.width, Self.frontSheet.height, 3),
-                .d("M8 7V6A3 3 0 0 1 11 3H17A3 3 0 0 1 20 6V14A3 3 0 0 1 17 17"),
+            // ALL WORKSPACES IS FOUR DOTS, and no strokes (clearer spec,
+            // 2026-09-29, the owner: the "All" icon "doesn't fit in"). It
+            // was two stacked squares — the drawing the area mark had.
+            return GlyphDrawing(fill: [
+                .circle(7.5, 7.5, 3), .circle(16.5, 7.5, 3),
+                .circle(7.5, 16.5, 3), .circle(16.5, 16.5, 3),
             ])
+        case .tabs:
+            // THE NUMBERED BOX (owner, 2026-09-29: "the old open tabs [n]
+            // style was better"), where two stacked sheets stood.
+            return GlyphDrawing(ink: [.rect(3, 3.5, 18, 17, 3.5)])
         case .new:
             return GlyphDrawing(ink: [
                 .d("M11.5 4H7A3 3 0 0 0 4 7V17A3 3 0 0 0 7 20H17A3 3 0 0 0 20 17V12.5"),
@@ -497,10 +510,31 @@ extension LivGlyph {
                 .d("M8 12.5H13M8 16H11"),
             ])
         case .area:
-            // A life, quartered, with a dot in yours.
+            // A BOX YOUR THINGS ARE FILED INTO (clearer spec, 2026-09-29;
+            // the owner: "'Areas' icon is ugly"). It was a quartered circle.
+            return GlyphDrawing(ink: [
+                .d(
+                    "M8.1 5.25L11.2 3.46A1.6 1.6 0 0 1 12.8 3.46L19 7.04A1.6 1.6 0 0 1 19.8 8.42"
+                        + "L19.8 15.58A1.6 1.6 0 0 1 19 16.96L12.8 20.54A1.6 1.6 0 0 1 11.2 20.54"
+                        + "L5 16.96A1.6 1.6 0 0 1 4.2 15.58L4.2 8.42A1.6 1.6 0 0 1 5 7.04Z"),
+                .d("M4.46 7.65L12 12L19.54 7.65M12 12V20.7"),
+            ])
+        case .tonight:
+            // A crescent: the moon bitten out of by a smaller circle.
+            return GlyphDrawing(ink: [
+                .d("M11.46 4.32A8.2 8.2 0 1 0 20.07 13.93A6.6 6.6 0 0 1 11.46 4.32Z")
+            ])
+        case .tomorrow:
+            // The sun on the horizon, rising.
+            return GlyphDrawing(ink: [
+                .d("M3 18.5H21M7.5 18.5A4.5 4.5 0 0 1 16.5 18.5"),
+                .d("M12 12V10M16.6 13.9L18 12.5M7.4 13.9L6 12.5"),
+            ])
+        case .weekend:
+            // The calendar with its last two days marked.
             return GlyphDrawing(
-                ink: [.circle(12, 12, 8.2), .d("M12 3.8V20.2M3.8 12H20.2")],
-                fill: [.circle(15.8, 8.2, 1.6)])
+                ink: [.rect(3.5, 5, 17, 15.5, 3), .d("M8 3V6.5M16 3V6.5M3.5 10H20.5")],
+                fill: [.circle(12.3, 15.2, 1.5), .circle(16.2, 15.2, 1.5)])
         case .properties:
             return GlyphDrawing(
                 ink: [.rect(3.5, 4.5, 17, 15, 3), .d("M7 9.5H11M7 14.5H11")],
@@ -555,10 +589,6 @@ extension LivGlyph {
             ])
         }
     }
-
-    /// The tab key's front sheet, in grid units. The count is centred on
-    /// it, so the drawing and the overlay read the same numbers.
-    static let frontSheet = CGRect(x: 4, y: 7, width: 13, height: 14)
 
     /// The page with its folded corner (the board's File), and one mark
     /// inside that says which kind of file it is. Sheets, slides and
@@ -658,7 +688,7 @@ struct PanelMark: View {
     }
 }
 
-/// A glyph, in ONE ink. Three layers — faint, ink, fill — stroked with
+/// A glyph, in ONE ink. Two layers — ink, fill — the ink stroked with
 /// `LivPen.stroke(size)`, the same drawn weight at every size, and
 /// composited as one, so an ancestor's opacity (a dead bar key) dims the
 /// icon without the layers showing through each other.
@@ -675,10 +705,6 @@ struct LivIcon: View {
         let drawing = glyph.drawing
         let pen = StrokeStyle(lineWidth: LivPen.stroke(size), lineCap: .round, lineJoin: .round)
         ZStack {
-            if !drawing.faint.isEmpty {
-                GlyphShape(drawing: drawing, layer: .faint)
-                    .stroke(color.opacity(LivPen.faint), style: pen)
-            }
             GlyphShape(drawing: drawing, layer: .ink).stroke(color, style: pen)
             if !drawing.fill.isEmpty {
                 GlyphShape(drawing: drawing, layer: .fill).fill(color)
@@ -696,19 +722,13 @@ struct LivIcon: View {
         switch glyph {
         case .tabs(let n):
             // Monospaced so the bar does not twitch between 9 tabs and
-            // 10. The box is the WHOLE front sheet, as the board draws
-            // it: narrower, "128" clipped to "1…" even at `countFloor`
-            // (measured at 11 and 12 units); a digit's own side bearings
-            // keep a shrunken count off the stroke.
-            let sheet = LivGlyph.frontSheet
-            let unit = size / 24
+            // 10; centred in the box, and shrinking to stay inside it.
             Text("\(n)")
                 .font(.system(size: size * LivPen.count, weight: .bold).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(LivPen.countFloor)
-                .frame(width: sheet.width * unit)
-                .offset(x: (sheet.midX - 12) * unit, y: (sheet.midY - 12) * unit)
+                .frame(width: size * LivPen.countBox)
         case .letter(let name):
             Text(LivGlyph.initial(of: name))
                 .font(.system(size: (size * LivPen.letter).rounded(), weight: .semibold))
@@ -917,6 +937,7 @@ struct GlyphSheet: View {
     private static let cards: [(String, LivGlyph)] = [
         ("Personal", .letter("Personal")), ("All", .workspaces), ("Tabs", .tabs(4)),
         ("New", .new), ("Area", .area), ("Properties", .properties),
+        ("Tonight", .tonight), ("Tomorrow", .tomorrow), ("Weekend", .weekend),
     ]
     private static let files: [(String, LivGlyph)] = [
         ("doc", .file(.document)), ("text", .file(.text)), ("pdf", .file(.pdf)),
@@ -995,7 +1016,7 @@ struct GlyphSheet: View {
 
 /// The icon language has no test target to live in. This asserts what
 /// actually matters: one answer per row, a drawing that parses and lands
-/// inside its box, dots and faint strokes exactly where the board puts
+/// inside its box, dots exactly where the board puts
 /// them, and a parser that is as strict as it claims.
 func livGlyphSelfCheck() -> [String] {
     var fail: [String] = []
@@ -1072,18 +1093,20 @@ func livGlyphSelfCheck() -> [String] {
             .work, .health, .money, .home, .learning, .area, .people,
             .filter, .settings, .workspaces, .trash, .properties,
             .back, .forward, .search, .new, .scan, .check, .plus,
-            // The count is Text on the front sheet, not part of the path,
-            // so one count stands for all of them.
+            .tonight, .tomorrow, .weekend,
+            // The count is Text in the box, not part of the path, so one
+            // count stands for all of them.
             .tabs(0),
         ] + fileClasses.map { LivGlyph.file($0) }
-    // THE DOT, where the board puts one (and the PDF's label bar) — and
-    // the faint second voice. Asserted both ways: a dot that goes missing
-    // and a dot that turns up where none is drawn both fail.
+    // THE DOT, where the board puts one (and the PDF's label bar).
+    // Asserted both ways: a dot that goes missing and a dot that turns up
+    // where none is drawn both fail. All workspaces is dots and nothing
+    // else.
     let dotted: [LivGlyph] = [
-        .note, .event, .calendar, .inbox, .capture, .today, .area, .properties,
+        .note, .event, .calendar, .inbox, .capture, .today, .properties, .workspaces, .weekend,
         .file(.image), .file(.pdf),
     ]
-    let faint: [LivGlyph] = [.inbox, .capture, .workspaces]
+    let dotsOnly: [LivGlyph] = [.workspaces]
     for glyph in drawn {
         let drawing = glyph.drawing
         var all = Path()
@@ -1094,12 +1117,11 @@ func livGlyphSelfCheck() -> [String] {
             }
             all.addPath(path)
         }
-        if drawing.ink.isEmpty { fail.append("\(glyph): draws nothing") }
+        if drawing.ink.isEmpty != dotsOnly.contains(glyph) {
+            fail.append("\(glyph): \(drawing.ink.isEmpty ? "draws nothing" : "draws strokes the board does not")")
+        }
         if drawing.fill.isEmpty == dotted.contains(glyph) {
             fail.append("\(glyph): \(drawing.fill.isEmpty ? "lost its dot" : "has a dot the board does not")")
-        }
-        if drawing.faint.isEmpty == faint.contains(glyph) {
-            fail.append("\(glyph): \(drawing.faint.isEmpty ? "lost its faint stroke" : "has a faint stroke")")
         }
         // 1pt of slack: a stroke sits half outside its own path.
         let b = all.cgPath.boundingBoxOfPath
@@ -1114,7 +1136,7 @@ func livGlyphSelfCheck() -> [String] {
     // 4. A workspace's letter: Text, never a path, from the name's first
     //    grapheme past any leading space.
     let letter = LivGlyph.letter("Personal").drawing
-    if !(letter.ink.isEmpty && letter.faint.isEmpty && letter.fill.isEmpty) {
+    if !(letter.ink.isEmpty && letter.fill.isEmpty) {
         fail.append("letter: draws a path; it is Text")
     }
     for (name, want) in [("personal", "P"), ("  work", "W"), ("", "")] {

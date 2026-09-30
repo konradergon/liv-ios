@@ -25,7 +25,7 @@ use std::ffi::c_char;
 use liv_engine::{value::ValueError, EntityId, Value, WriteError};
 use serde_json::json;
 
-use crate::surfaces::{deliver, with_engine, LIV_ERR_ARG, LIV_ERR_READ, LIV_OK};
+use crate::surfaces::{deliver, id_list, with_engine, LIV_ERR_ARG, LIV_ERR_READ, LIV_OK};
 use crate::writes::{id_arg, text, LIV_ERR_REFUSED};
 
 /// Refused, and never a read failure: a value that will not parse is the
@@ -251,6 +251,31 @@ pub unsafe extern "C" fn liv_restore(
     now_ms: u64,
 ) -> i32 {
     bin(path, entity, now_ms, false)
+}
+
+/// Put several back as ONE action: `ids` is a JSON array of hex ids, and
+/// the answer is `{"restored":N}`. One undo throws them all out again —
+/// the trash screen's "Put back all" is this (owner, 2026-09-29). Any that
+/// is not in the trash is passed over and not counted.
+///
+/// # Safety
+/// `path` and `ids` must be valid C strings; `out` must be a valid pointer
+/// to a `char *` freed with `liv_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn liv_restore_many(
+    path: *const c_char,
+    ids: *const c_char,
+    now_ms: u64,
+    out: *mut *mut c_char,
+) -> i32 {
+    let ids = match text(ids, LIV_ERR_ARG).and_then(id_list) {
+        Ok(ids) => ids,
+        Err(e) => return e,
+    };
+    match with_engine(path, |e| e.restore_many(&ids, now_ms).map_err(wrote)) {
+        Ok(n) => deliver(out, &json!({ "restored": n })),
+        Err(e) => e,
+    }
 }
 
 fn bin(path: *const c_char, entity: *const c_char, now_ms: u64, away: bool) -> i32 {

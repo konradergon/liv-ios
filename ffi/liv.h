@@ -65,15 +65,26 @@ void liv_string_free(char *s);
    admits nothing, and that is a real state — passing NULL to mean it
    would turn a filtered-to-empty screen into an unfiltered one. */
 
-/* Today, for the day `day` (days since the epoch), knowing the real
-   `today` and the clock. They differ whenever the date strip has moved,
-   and several rules turn on whether they are the same.
+/* The Today screen. `now_ms` is the real instant and `offset_min` the
+   phone's distance from UTC; "today" is the day on the phone's clock,
+   and a due, which is a wall-clock time, is compared with now on that
+   clock.
 
-   {"late":[row…], "passed":[…], "ahead":[…], "all_day":[…], "done":[…],
-    "next":"<hex id>"?, "captured":N}
+   {"days":[{"day":N, "all_day":[row…], "passed":[…], "ahead":[…],
+             "done":[…], "areas":[{"name","count"}…], "unfiled":N}…],
+    "late":[row…], "what_next":[row…], "captured":N}
+
+   `days` is the date strip: today and the six days after it, so picking
+   a day redraws without asking again. Only today has `passed`. `areas`
+   and `unfiled` count what is late, open or all-day on that day, by
+   area. `what_next` is up to five open tasks with no date, last touched
+   first. `captured` counts the scraps (no kind yet) caught today.
+
+   CHANGED IN PLACE 2026-09-30 (owner's word), like liv_view_tasks: the
+   app had never called it, and it had fallen behind the screen.
 
    A row is
-   {"id","title","untitled","kind"?,"due_ms"?,"all_day","status"?,"done",
+   {"id","title","untitled","kind"?,"due_ms"?,"all_day","status"?,"done","late",
     "area"?,"created_ms","touched_ms","has_file","has_body",
     "kind_word"?,"status_word"?,"area_word"?,"archived","trashed"}
    — already titled, already sorted, and `done` already resolved against
@@ -86,40 +97,64 @@ void liv_string_free(char *s);
    not per row, so all four quietly answered "no" and the Inbox listed
    nothing to route while the panel counted eight captures. It is NOT a
    fingerprint: "did MY base move" is a different question. */
-int32_t liv_view_today(const char *path, int32_t day, int32_t today,
-                       int64_t now_ms, const char *lens, char **out);
-
-/* Tasks, grouped by status. filter: 0 all, 1 status, 2 project;
-   filter_id is the hex id it names and is ignored when filter is 0.
-
-   [{"status":"<hex>"?, "name", "completes", "late":N, "rows":[row…]}…]
-
-   `late` is the GROUP's count, not a flag per row: on a real box every
-   task is overdue, and a colour on every row distinguishes nothing.
-   An empty group is not returned. */
-int32_t liv_view_tasks(const char *path, int32_t filter,
-                       const char *filter_id, int32_t today,
+int32_t liv_view_today(const char *path, int64_t now_ms, int32_t offset_min,
                        const char *lens, char **out);
 
-/* Everything, in one slice: 0 all, 1 notes, 2 upcoming, 3 unfiled.
-   Returns [row…], already ordered — newest first, except notes, which is
-   most-recently-touched first, and upcoming, which reads forward. */
-int32_t liv_view_everything(const char *path, int32_t slice, int32_t today,
-                            const char *lens, char **out);
+/* The Tasks screen. `project` is a hex id or NULL; it narrows the groups
+   and nothing else.
 
-/* The calendar's day: the all-day strip, and the timeline's blocks with
-   their overlap already resolved.
+   {"groups":[{"status":"<hex>"?, "name", "completes", "hue":N?,
+               "late":N, "rows":[row…]}…],
+    "open":N, "late":N,
+    "in_notes":[{"note":"<hex>","source","line","text","depth"}…],
+    "projects":[{"id":"<hex>","name"}…]}
 
-   {"all_day":[row…],
-    "blocks":[{"row":row,"start_min","minutes","column","columns"}…]}
+   Groups come in the status picker's order (liv_options on `status`), so
+   a status segment picks its group by name without asking again. An
+   empty group is not returned. `open` and `late` are the whole screen's
+   counts inside the lens — the project filter does not move them — and
+   `open` includes the open lines in notes. `projects` is what the
+   Project menu offers: the six most used, commonest first.
 
-   `start_min` is minutes from midnight — the shell multiplies by its own
-   points-per-hour. `minutes` is never zero, so a thing with no duration
-   stays tappable. `column`/`columns` are a CLUSTER's, not a pair's: two
-   blocks that miss each other can both hit a third, and all three share
-   the width. */
-int32_t liv_view_day(const char *path, int32_t day, const char *lens,
-                     char **out);
+   CHANGED IN PLACE 2026-09-30 (owner's word): the app had never called
+   this verb, and it had fallen behind the screen. Rows gained "late"
+   (open task, day passed) on every surface; it is set by the three told
+   what day it is — Today, Tasks and the library — and false on the rest. */
+int32_t liv_view_tasks(const char *path, const char *project,
+                       int32_t today, const char *lens, char **out);
+
+/* The library, in one pass over the box: every live row, the Notes and
+   Unsorted lists as ids into it, and the count beside each view in the
+   library panel. ADDED 2026-09-30, replacing liv_view_everything as the
+   read a shell makes after every write.
+
+   {"all":[row…], "notes":["<hex>"…], "unsorted":["<hex>"…],
+    "counts":{"today","unsorted","notes","tasks","events"}}
+
+   `all` is newest first and never lensed: it is what a shell looks a
+   thing up in by id. `notes` is what opens as a page, in the lens, last
+   touched first. `unsorted` is what a person files with no area, newest
+   first, and NEVER lensed — a thing made under the wrong workspace must
+   not vanish. Each count is the number of rows its view shows; `today`
+   is open things that can be ticked, due today or earlier. `now_ms` and
+   `offset_min` as liv_view_today. */
+int32_t liv_view_library(const char *path, int64_t now_ms, int32_t offset_min,
+                         const char *lens, char **out);
+
+/* The calendar: every day from `from_day` to `to_day` (days since the
+   epoch, both included) that has anything on it, in order.
+
+   [{"day":N, "all_day":[row…], "timed":[row…]}…]
+
+   Which things fall on which day, and nothing about where they are
+   drawn: the shell lays out the hour grid itself, because it must do so
+   again on every frame of a drag.
+
+   CHANGED IN PLACE 2026-09-30 (owner's word): it answered one day with
+   its blocks already laid out, the app had never called it, and the
+   calendar needs a range — the month card's dots — more than a layout. */
+int32_t liv_view_day(const char *path, int32_t from_day, int32_t to_day,
+                     const char *lens, char **out);
 
 /* Drop every held connection. Call before moving or replacing a box file.
    Not thread-safe against a liv_view_* call in flight. */
@@ -235,6 +270,12 @@ int32_t liv_resync_file(const char *path, const char *id, uint64_t now_ms,
    always there: a row the shell is shown must be a row it can act on. */
 int32_t liv_sweep(const char *path, char **out);
 
+/* What the clerk would suggest about ONE thing: liv_sweep's rows for it,
+   the same JSON. The whole-box sweep is Unsorted's and runs only while
+   Unsorted is open; a thing's own card asks this instead, and it costs the
+   thing rather than the box (2026-09-30, additive). */
+int32_t liv_sweep_one(const char *path, const char *entity, char **out);
+
 /* Say yes / say no, passing back the two things the row named. The
    proposal is RE-DERIVED from the box rather than taken on trust: one the
    box no longer makes is one the user already acted on, and
@@ -319,6 +360,13 @@ int32_t liv_unset(const char *path, const char *entity, const char *property,
    the Trash, where a person goes to get it back. */
 int32_t liv_trash(const char *path, const char *entity, uint64_t now_ms);
 int32_t liv_restore(const char *path, const char *entity, uint64_t now_ms);
+
+/* Put several back as ONE action, so one undo throws them all out again.
+   `ids` is a JSON array of hex ids; {"restored":N} counts what came back.
+   One not in the trash is passed over. A list that does not parse, or
+   holds anything that is not an id, is LIV_ERR_ARG and writes nothing. */
+int32_t liv_restore_many(const char *path, const char *ids, uint64_t now_ms,
+                         char **out);
 
 /* Everything a reference property may point at, named and in the order a
    picker should show them:
@@ -405,7 +453,7 @@ int32_t liv_kind_named(const char *path, const char *name, char **out);
      - a LENS RESTRICTS. The same `is:archived` in a workspace filter
        means "only archived things", because a filter is a boundary.
 
-   liv_search is the first, liv_lens the second. Separate verbs rather
+   liv_view_search is the first, liv_lens the second. Separate verbs rather
    than a flag, because the answers are shaped differently: a search is
    ranked hits with facets, a lens is a flat set of ids.
 
@@ -414,25 +462,26 @@ int32_t liv_kind_named(const char *path, const char *name, char **out);
    stored filter becomes chips a person edits by tapping.
    ==================================================================== */
 
-/* Ranked hits and the facet rows beside them.
-   {"hits":[{"id":"<hex>","score":N,"field":…}…],
+/* The Search screen. ADDED 2026-09-30, replacing liv_search.
+
+   {"hits":[row…], "total":N, "exact":bool,
     "facets":[{"property":"<hex>","label",
                "values":[{"label","count","active","excluded"}…]}…]}
 
-   `field` says WHERE the best match was — name | cell | filed | content,
-   or "structured" for a pure-qualifier hit — so a row can hint why it is
-   in the list rather than leaving the user to guess.
+   The hits the workspace `lens` admits, as rows in rank order, cut to
+   `limit` (0 is no limit) — the lens applied BEFORE counting and cutting,
+   so `total` is about the same list. `exact` is true when a hit is
+   titled like the query's free words, whatever the case; a query of
+   only qualifiers is never exact.
 
    `limit` BOUNDS THE HITS AND NEVER THE FACETS. A facet count is over
    everything the query matches: a row saying "Work 12" when the list
    shows 10 is telling the truth about the box, and a count that changed
-   with how far the user had scrolled would be useless for pivoting,
-   which is the one thing a facet row is for. 0 means no ceiling.
-
-   A facet count also excludes its OWN property's constraints, or a facet
+   with how far the user had scrolled would be useless for pivoting. A
+   facet count also excludes its OWN property's constraints, or a facet
    you have already picked shows its own count and nothing else. */
-int32_t liv_search(const char *path, const char *query, uint32_t limit,
-                   char **out);
+int32_t liv_view_search(const char *path, const char *query, uint32_t limit,
+                        const char *lens, char **out);
 
 /* The ids a LENS admits: {"ids":["<hex>"…], "terms":[…]}
 
@@ -551,18 +600,6 @@ int32_t liv_probe_box(const char *path, char **out);
    filter hiding some of it would leave someone unable to find the thing
    they are trying to get back. Archived is NOT trashed and is not here. */
 int32_t liv_view_trash(const char *path, char **out);
-
-/* Open `- [ ]` lines written inside notes:
-   [{"note":"<hex>","source","line":N,"text","depth":N}…]
-
-   A PROJECTION: nothing here is stored. No entity is created and no cell
-   is written — a line in a note is a thought, not a task someone has to
-   file. `line` is the block's index from the top of the body, which is
-   the toggle's address, so a shell can tick it without a second scan.
-
-   Notes only: something already typed as a task or an event is listed as
-   itself, and its body lines would be the same work counted twice. */
-int32_t liv_note_tasks(const char *path, char **out);
 
 /* The properties a person can put on something:
    [{"id":"<hex>","name","holds","many"}…]

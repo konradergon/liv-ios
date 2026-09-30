@@ -5,9 +5,9 @@
 //! where the Swift carried the rule as a comment, the comment came too.
 
 use liv_engine::*;
-use liv_surface::day::{day, MIN_MINUTES};
-use liv_surface::everything::{everything, slices, Slice};
-use liv_surface::tasks::{tasks, Filter};
+use liv_surface::calendar::calendar;
+use liv_surface::tasks::{tasks, PROJECTS_OFFERED};
+use liv_surface::salvage::note_tasks;
 use liv_surface::*;
 
 fn dev(n: u8) -> DeviceId {
@@ -43,7 +43,7 @@ fn tasks_are_grouped_by_status_with_ours_first_and_no_status_last() {
     e.set(a, prop::STATUS, Value::Ref(status::TODO), 1_010).unwrap();
     e.set(b, prop::STATUS, Value::Ref(status::DOING), 1_011).unwrap();
 
-    let g = tasks(&e, Filter::All, &Lens::Everything, DAY).unwrap();
+    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
     let names: Vec<&str> = g.iter().map(|x| x.name.as_str()).collect();
     assert_eq!(names, vec!["To do", "Doing", "No status"]);
     assert_eq!(titles(&g[2].rows), vec!["Loose"]);
@@ -66,7 +66,7 @@ fn a_task_whose_status_was_retired_still_shows() {
     e.set(t, prop::STATUS, Value::Ref(ghost), 1_002).unwrap();
     e.trash(ghost, 1_003).unwrap();
 
-    let g = tasks(&e, Filter::All, &Lens::Everything, DAY).unwrap();
+    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
     let found: Vec<&str> = g.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["Waiting on legal"], "it is on the screen somewhere");
 }
@@ -81,7 +81,7 @@ fn tasks_sort_by_due_then_title_then_id_with_undated_last() {
     e.set(far, prop::DUE, Value::Date(DateSpec::Day(DAY + 5)), 1_010).unwrap();
     e.set(near, prop::DUE, Value::Date(DateSpec::Day(DAY + 1)), 1_011).unwrap();
 
-    let g = tasks(&e, Filter::All, &Lens::Everything, DAY).unwrap();
+    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
     assert_eq!(
         titles(&g[0].rows),
         vec!["Apple", "Zebra", "Undated apple", "Undated banana"],
@@ -105,7 +105,7 @@ fn lateness_is_the_groups_fact_and_a_finished_band_has_none() {
     e.set(old, prop::DUE, Value::Date(DateSpec::Day(DAY - 30)), 2_001).unwrap();
     e.set(old, prop::STATUS, Value::Ref(status::DONE), 2_002).unwrap();
 
-    let g = tasks(&e, Filter::All, &Lens::Everything, DAY).unwrap();
+    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
     let todo = g.iter().find(|x| x.name == "To do").unwrap();
     assert_eq!(todo.late, 2, "two of the three are overdue");
     let done = g.iter().find(|x| x.name == "Done").unwrap();
@@ -113,21 +113,162 @@ fn lateness_is_the_groups_fact_and_a_finished_band_has_none() {
 }
 
 #[test]
-fn the_chips_narrow_inside_the_lens_rather_than_replacing_it() {
+fn the_project_filter_narrows_inside_the_lens_rather_than_replacing_it() {
     // "The lens (M4) runs BEFORE the chip filter: the workspace scopes the
     // surface, the chips narrow inside it."
     let mut e = engine();
-    let seen = task(&mut e, "In the workspace", 1_000);
-    let hidden = task(&mut e, "Outside it", 1_001);
-    e.set(seen, prop::STATUS, Value::Ref(status::TODO), 1_010).unwrap();
-    e.set(hidden, prop::STATUS, Value::Ref(status::TODO), 1_011).unwrap();
+    let roof = e.create(kind::PROJECT, Some("Roof"), 1_000).unwrap();
+    let seen = task(&mut e, "In the workspace", 1_001);
+    let hidden = task(&mut e, "Outside it", 1_002);
+    e.set(seen, prop::PROJECT, Value::Ref(roof), 1_010).unwrap();
+    e.set(hidden, prop::PROJECT, Value::Ref(roof), 1_011).unwrap();
 
     let lens: Lens = [seen].into_iter().collect();
-    let g = tasks(&e, Filter::Status(status::TODO), &lens, DAY).unwrap();
+    let g = tasks(&e, Some(roof), &lens, DAY).unwrap().groups;
     let found: Vec<&str> = g.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["In the workspace"]);
     assert!(lens.on());
     assert!(!Lens::Everything.on());
+}
+
+#[test]
+fn the_groups_come_in_the_order_the_status_picker_offers() {
+    // The segments above the list are the picker's options, and the
+    // groups under them must come in the same order, or the screen
+    // disagrees with itself. One list, `options_for`, feeds both.
+    let mut e = engine();
+    let blocked = e.declare(kind::STATUS, "Blocked", 1_000).unwrap();
+    e.set(blocked, prop::HUE, Value::Number(5.0), 1_001).unwrap();
+    for (n, st) in [status::DONE, blocked, status::TODO, status::DOING].into_iter().enumerate() {
+        let t = task(&mut e, &format!("t{n}"), 1_010 + n as u64);
+        e.set(t, prop::STATUS, Value::Ref(st), 1_020 + n as u64).unwrap();
+    }
+
+    let offered: Vec<EntityId> =
+        e.options_for(prop::STATUS).unwrap().into_iter().map(|(id, _)| id).collect();
+    let g = tasks(&e, None, &Lens::Everything, DAY).unwrap().groups;
+    let shown: Vec<EntityId> = g.iter().filter_map(|x| x.status).collect();
+    assert_eq!(shown, offered);
+
+    // The group carries its option's hue, which is what colours its box.
+    let b = g.iter().find(|x| x.status == Some(blocked)).unwrap();
+    assert_eq!(b.hue, Some(5));
+    assert_eq!(g.iter().find(|x| x.status == Some(status::TODO)).unwrap().hue, None);
+}
+
+#[test]
+fn a_row_is_late_only_while_it_can_still_be_done() {
+    // "Late is strictly past: due today is not overdue." And a finished
+    // task is not late, however old its date.
+    let mut e = engine();
+    let overdue = task(&mut e, "Overdue", 1_000);
+    let today = task(&mut e, "Due today", 1_001);
+    let finished = task(&mut e, "Finished", 1_002);
+    e.set(overdue, prop::DUE, Value::Date(DateSpec::Day(DAY - 1)), 1_010).unwrap();
+    e.set(today, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_011).unwrap();
+    e.set(finished, prop::DUE, Value::Date(DateSpec::Day(DAY - 9)), 1_012).unwrap();
+    e.set(finished, prop::STATUS, Value::Ref(status::DONE), 1_013).unwrap();
+
+    let rows: Vec<Row> = tasks(&e, None, &Lens::Everything, DAY)
+        .unwrap()
+        .groups
+        .into_iter()
+        .flat_map(|g| g.rows)
+        .collect();
+    let late = |id: EntityId| rows.iter().find(|r| r.id == id).unwrap().late;
+    assert!(late(overdue));
+    assert!(!late(today));
+    assert!(!late(finished));
+
+    // An event is never late: it happened. The rule is one function.
+    let meeting = e.create(kind::EVENT, Some("Meeting"), 1_020).unwrap();
+    e.set(meeting, prop::DUE, Value::Date(DateSpec::Day(DAY - 1)), 1_021).unwrap();
+    assert!(!is_late(&row(&e, meeting).unwrap(), DAY));
+    assert!(is_late(&row(&e, overdue).unwrap(), DAY));
+}
+
+#[test]
+fn the_screens_counts_ignore_the_project_filter() {
+    // "6 open · 2 late" is the size of the SCREEN, not of the slice you
+    // are looking at: every open task the lens admits, plus the open
+    // lines inside its notes.
+    let mut e = engine();
+    let roof = e.create(kind::PROJECT, Some("Roof"), 1_000).unwrap();
+    let a = task(&mut e, "Order slates", 1_001);
+    let b = task(&mut e, "Prune", 1_002);
+    let c = task(&mut e, "Already done", 1_003);
+    e.set(a, prop::PROJECT, Value::Ref(roof), 1_010).unwrap();
+    e.set(b, prop::DUE, Value::Date(DateSpec::Day(DAY - 2)), 1_011).unwrap();
+    e.set(c, prop::STATUS, Value::Ref(status::DONE), 1_012).unwrap();
+    let note = e.create(kind::NOTE, Some("Weekend"), 1_020).unwrap();
+    e.set_content(
+        note,
+        vec![Span::Break(rich::Block::Task { depth: 0, done: false }), Span::text("buy rope")],
+        0,
+        1_021,
+    )
+    .unwrap();
+
+    for project in [None, Some(roof)] {
+        let t = tasks(&e, project, &Lens::Everything, DAY).unwrap();
+        assert_eq!(t.open, 3, "two open tasks and one open line, whatever the filter");
+        assert_eq!(t.late, 1);
+    }
+    let narrowed = tasks(&e, Some(roof), &Lens::Everything, DAY).unwrap();
+    let found: Vec<&str> = narrowed.groups.iter().flat_map(|x| titles(&x.rows)).collect();
+    assert_eq!(found, vec!["Order slates"], "while the list itself narrows");
+}
+
+#[test]
+fn the_lines_in_notes_come_with_the_answer_and_wear_the_lens() {
+    let mut e = engine();
+    let mine = e.create(kind::NOTE, Some("Mine"), 1_000).unwrap();
+    let theirs = e.create(kind::NOTE, Some("Theirs"), 1_001).unwrap();
+    for (n, note) in [mine, theirs].into_iter().enumerate() {
+        e.set_content(
+            note,
+            vec![Span::Break(rich::Block::Task { depth: 0, done: false }), Span::text("a line")],
+            0,
+            1_010 + n as u64,
+        )
+        .unwrap();
+    }
+    let lens: Lens = [mine].into_iter().collect();
+    let t = tasks(&e, None, &lens, DAY).unwrap();
+    let from: Vec<EntityId> = t.in_notes.iter().map(|l| l.note).collect();
+    assert_eq!(from, vec![mine]);
+    assert_eq!(t.in_notes.len(), note_tasks(&e, &lens).unwrap().len(), "the same projection");
+    assert_eq!(t.open, 1);
+}
+
+#[test]
+fn the_project_segment_offers_the_most_used_projects() {
+    // A menu, not a directory: the few you actually file under, the
+    // commonest first, so it does not reshuffle between two equals.
+    let mut e = engine();
+    let mut projects = Vec::new();
+    for n in 0..(PROJECTS_OFFERED + 2) {
+        projects.push(e.create(kind::PROJECT, Some(&format!("P{n}")), 1_000 + n as u64).unwrap());
+    }
+    // P0 is used three times, P1 twice, the rest once each.
+    let mut at = 2_000;
+    for (n, p) in projects.iter().enumerate() {
+        let uses = match n {
+            0 => 3,
+            1 => 2,
+            _ => 1,
+        };
+        for _ in 0..uses {
+            let t = task(&mut e, "t", at);
+            e.set(t, prop::PROJECT, Value::Ref(*p), at + 1).unwrap();
+            at += 2;
+        }
+    }
+    let offered = tasks(&e, None, &Lens::Everything, DAY).unwrap().projects;
+    assert_eq!(offered.len(), PROJECTS_OFFERED);
+    let names: Vec<&str> = offered.iter().map(|(_, n)| n.as_str()).collect();
+    assert_eq!(&names[..3], &["P0", "P1", "P2"], "commonest first, then by name");
+    assert_eq!(offered[0].0, projects[0], "and each carries its id, which is what filters");
 }
 
 #[test]
@@ -140,228 +281,71 @@ fn filtering_by_project_reads_the_cell_not_a_name() {
     e.set(a, prop::PROJECT, Value::Ref(roof), 1_010).unwrap();
     e.set(b, prop::PROJECT, Value::Ref(other), 1_011).unwrap();
 
-    let g = tasks(&e, Filter::Project(roof), &Lens::Everything, DAY).unwrap();
+    let g = tasks(&e, Some(roof), &Lens::Everything, DAY).unwrap().groups;
     let found: Vec<&str> = g.iter().flat_map(|x| titles(&x.rows)).collect();
     assert_eq!(found, vec!["Order slates"]);
 
     // Renaming the project does not move a task, because the cell holds
     // the id — the claim core.md §2 makes, on this surface.
     e.set(roof, prop::NAME, Value::Text("The roof".into()), 2_000).unwrap();
-    let g = tasks(&e, Filter::Project(roof), &Lens::Everything, DAY).unwrap();
+    let g = tasks(&e, Some(roof), &Lens::Everything, DAY).unwrap().groups;
     assert_eq!(g.iter().flat_map(|x| titles(&x.rows)).count(), 1);
 }
 
-// ---- Everything --------------------------------------------------------
+// ---- the calendar -------------------------------------------------------
+//
+// Rust answers WHICH things are on WHICH day. Where a block sits and how
+// wide it is stays with the shell, because it has to move every frame of
+// a drag (owner, 2026-09-30).
 
-#[test]
-fn everything_is_newest_first_and_notes_is_most_recently_touched() {
-    let mut e = engine();
-    let first = e.create(kind::NOTE, Some("First"), 1_000).unwrap();
-    let second = e.create(kind::NOTE, Some("Second"), 2_000).unwrap();
-    let t = task(&mut e, "A task", 3_000);
-
-    let all = everything(&e, Slice::All, &Lens::Everything, DAY).unwrap();
-    assert_eq!(titles(&all), vec!["A task", "Second", "First"], "newest first");
-
-    // NOTES IS DOCUMENTS ONLY: a task is a record and opens as a card.
-    let notes = everything(&e, Slice::Notes, &Lens::Everything, DAY).unwrap();
-    assert_eq!(titles(&notes), vec!["Second", "First"]);
-    let _ = t;
-
-    // ORDERED BY WHAT YOU TOUCHED LAST. Editing the older one moves it to
-    // the top, which is why this beats the tab switcher.
-    e.set(first, prop::BODY, Value::Rich(vec![Span::text("edited")]), 4_000).unwrap();
-    let notes = everything(&e, Slice::Notes, &Lens::Everything, DAY).unwrap();
-    assert_eq!(titles(&notes), vec!["First", "Second"]);
-    let _ = second;
-}
-
-#[test]
-fn unfiled_means_no_area_and_not_no_type() {
-    // The Inbox's rule keys on TYPE, which is why a task you hesitated
-    // over was missing from every area AND from the Inbox. This one keys
-    // on area, so it catches exactly that task.
-    let mut e = engine();
-    let work = e.declare(kind::AREA, "Work", 1_000).unwrap();
-    let filed = task(&mut e, "Filed task", 1_000);
-    let loose = task(&mut e, "Hesitated-over task", 1_001);
-    let note = e.create(kind::NOTE, Some("Loose note"), 1_002).unwrap();
-    e.set(filed, prop::AREA, Value::Ref(work), 1_010).unwrap();
-
-    let unfiled = everything(&e, Slice::Unfiled, &Lens::Everything, DAY).unwrap();
-    assert_eq!(titles(&unfiled), vec!["Loose note", "Hesitated-over task"]);
-    let _ = (loose, note);
-
-    // A second area files a thing just as well as the first — every area
-    // is minted, and filing reads the cell, not which area it points at.
-    let mine = e.declare(kind::AREA, "Woodworking", 2_000).unwrap();
-    e.set(loose, prop::AREA, Value::Ref(mine), 2_001).unwrap();
-    let unfiled = everything(&e, Slice::Unfiled, &Lens::Everything, DAY).unwrap();
-    assert_eq!(titles(&unfiled), vec!["Loose note"]);
-}
-
-#[test]
-fn upcoming_is_the_next_seven_days_forward_with_today_included() {
-    // "The one slice sorted FORWARD, because what is coming reads in the
-    // order it will arrive. Today included: a thing due in an hour is
-    // upcoming."
-    let mut e = engine();
-    for (n, d) in [(0, DAY - 1), (1, DAY), (2, DAY + 3), (3, DAY + 7), (4, DAY + 8)] {
-        let t = task(&mut e, &format!("day {d}"), 1_000 + n);
-        e.set(t, prop::DUE, Value::Date(DateSpec::Day(d)), 1_010 + n).unwrap();
-    }
-    let up = everything(&e, Slice::Upcoming, &Lens::Everything, DAY).unwrap();
-    assert_eq!(
-        titles(&up),
-        vec![
-            format!("day {}", DAY),
-            format!("day {}", DAY + 3),
-            format!("day {}", DAY + 7)
-        ],
-        "yesterday is not upcoming, and the horizon is inclusive at seven days"
-    );
-}
-
-#[test]
-fn unfiled_hides_inside_a_workspace_that_stamps_an_area() {
-    // Structurally impossible there, so the chip goes rather than
-    // promising an always-empty list (audit, 2026-08-04).
-    assert_eq!(slices(false).len(), 4);
-    assert_eq!(slices(true), vec![Slice::All, Slice::Notes, Slice::Upcoming]);
-    assert_eq!(Slice::Unfiled.empty_word(), "All filed");
-}
-
-#[test]
-fn a_thing_carrying_a_file_opens_as_a_file_whatever_its_kind_says() {
-    // A FILE is checked first, because having a file crosscuts the six
-    // kinds — a scanned contract is a file and can also be a task, and
-    // what you want to see is the contract. Before this it fell through
-    // to `.document` and opened as an empty markdown editor over a real
-    // file (shipped bug, found 2026-08-08).
-    let mut e = engine();
-    let scan = task(&mut e, "Signed contract", 1_000);
-    e.set(scan, prop::FILE, Value::Blob([7u8; 32]), 1_001).unwrap();
-    let plain = task(&mut e, "Ordinary task", 1_002);
-    let note = e.create(kind::NOTE, Some("A note"), 1_003).unwrap();
-    let capture = e.mint(1_004);
-    e.commit(vec![Op::CreateEntity { entity: capture }], action::CREATE, Author::User, 1_004)
+fn event_at(e: &mut Engine, name: &str, day: i32, hour: i64, minute: i64) -> EntityId {
+    let id = e.create(kind::EVENT, Some(name), 1_000).unwrap();
+    e.set(id, prop::DUE, Value::Date(DateSpec::Instant { ms: at(day, hour, minute), tz: 0 }), 1_001)
         .unwrap();
-
-    let all = everything(&e, Slice::All, &Lens::Everything, DAY).unwrap();
-    let of = |id: EntityId| shape_of(all.iter().find(|r| r.id == id).unwrap());
-    assert_eq!(of(scan), Shape::File, "a task carrying a file is a file");
-    assert_eq!(of(plain), Shape::Record);
-    assert_eq!(of(note), Shape::Document);
-    assert_eq!(of(capture), Shape::Document, "an untyped capture is a document");
-
-    // And Notes, being documents only, holds the file and not the task.
-    let notes = everything(&e, Slice::Notes, &Lens::Everything, DAY).unwrap();
-    let ids: Vec<EntityId> = notes.iter().map(|r| r.id).collect();
-    assert!(ids.contains(&scan) && ids.contains(&note) && ids.contains(&capture));
-    assert!(!ids.contains(&plain));
+    id
 }
 
-// ---- the day timeline ---------------------------------------------------
-
 #[test]
-fn the_timeline_puts_a_block_where_its_clock_time_is() {
+fn the_calendar_puts_each_thing_on_its_day_with_all_day_apart() {
     let mut e = engine();
-    let a = e.create(kind::EVENT, Some("Standup"), 1_000).unwrap();
-    e.set(a, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, 9, 30), tz: 0 }), 1_001)
-        .unwrap();
+    event_at(&mut e, "Standup", DAY, 9, 30);
     let b = task(&mut e, "All day thing", 1_002);
     e.set(b, prop::DUE, Value::Date(DateSpec::Day(DAY)), 1_003).unwrap();
+    event_at(&mut e, "Dentist", DAY + 2, 14, 0);
+    let filed = event_at(&mut e, "Archived", DAY, 11, 0);
+    e.set(filed, prop::ARCHIVED, Value::Bool(true), 1_004).unwrap();
 
-    let d = day(&e, DAY, &Lens::Everything).unwrap();
-    assert_eq!(titles(&d.all_day), vec!["All day thing"]);
-    assert_eq!(d.blocks.len(), 1);
-    assert_eq!(d.blocks[0].start_min, 9 * 60 + 30);
-    assert_eq!(d.blocks[0].minutes, MIN_MINUTES, "never zero — it has to stay tappable");
-    assert_eq!((d.blocks[0].column, d.blocks[0].columns), (0, 1));
+    let days = calendar(&e, DAY, DAY + 3, &Lens::Everything).unwrap();
+    let which: Vec<i32> = days.iter().map(|d| d.day).collect();
+    assert_eq!(which, vec![DAY, DAY + 2], "a day with nothing on it is not sent");
+    assert_eq!(titles(&days[0].all_day), vec!["All day thing"]);
+    assert_eq!(titles(&days[0].timed), vec!["Standup"], "and archived is on no surface");
+    assert_eq!(titles(&days[1].timed), vec!["Dentist"]);
 }
 
 #[test]
-fn overlapping_blocks_share_the_width_as_a_cluster_not_as_pairs() {
-    // Two blocks that do not touch each other can still both touch a
-    // third, and all three have to share the width or the middle one is
-    // drawn over.
+fn the_calendar_runs_in_time_order_and_stops_at_its_edges() {
     let mut e = engine();
-    // 09:00, 09:20, 09:40 — the first and the third do not overlap (30
-    // minutes each), but both overlap the second.
-    for (n, m) in [(0i64, 0i64), (1, 20), (2, 40)] {
-        let t = task(&mut e, &format!("t{n}"), 1_000 + n as u64);
-        e.set(
-            t,
-            prop::DUE,
-            Value::Date(DateSpec::Instant { ms: at(DAY, 9, m), tz: 0 }),
-            1_010 + n as u64,
-        )
-        .unwrap();
-    }
-    let d = day(&e, DAY, &Lens::Everything).unwrap();
-    assert_eq!(d.blocks.len(), 3);
-    assert!(d.blocks.iter().all(|b| b.columns == 3), "one cluster of three");
-    assert_eq!(
-        d.blocks.iter().map(|b| b.column).collect::<Vec<_>>(),
-        vec![0, 1, 2],
-        "each gets its own column"
-    );
+    event_at(&mut e, "Just before", DAY - 1, 23, 59);
+    event_at(&mut e, "Late", DAY, 22, 0);
+    event_at(&mut e, "Midnight", DAY, 0, 0);
+    event_at(&mut e, "Last minute", DAY + 1, 23, 59);
+    event_at(&mut e, "Just after", DAY + 2, 0, 0);
 
-    // A block well clear of them is its own cluster at full width.
-    let far = task(&mut e, "afternoon", 2_000);
-    e.set(far, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, 15, 0), tz: 0 }), 2_001)
-        .unwrap();
-    let d = day(&e, DAY, &Lens::Everything).unwrap();
-    let last = d.blocks.last().unwrap();
-    assert_eq!((last.column, last.columns), (0, 1));
+    let days = calendar(&e, DAY, DAY + 1, &Lens::Everything).unwrap();
+    assert_eq!(titles(&days[0].timed), vec!["Midnight", "Late"]);
+    assert_eq!(titles(&days[1].timed), vec!["Last minute"]);
+    assert_eq!(days.len(), 2);
 }
 
 #[test]
-fn the_timeline_wears_the_lens_like_every_other_surface() {
+fn the_calendar_wears_the_lens_like_every_other_surface() {
     let mut e = engine();
-    let seen = task(&mut e, "Mine", 1_000);
-    let hidden = task(&mut e, "Theirs", 1_001);
-    for t in [seen, hidden] {
-        e.set(t, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, 10, 0), tz: 0 }), 1_010)
-            .unwrap();
-    }
+    let seen = event_at(&mut e, "Mine", DAY, 10, 0);
+    event_at(&mut e, "Theirs", DAY, 10, 0);
     let lens: Lens = [seen].into_iter().collect();
-    let d = day(&e, DAY, &lens).unwrap();
-    assert_eq!(titles(&d.blocks.iter().map(|b| b.row.clone()).collect::<Vec<_>>()), vec!["Mine"]);
-    assert_eq!(d.blocks[0].columns, 1, "and the hidden one does not crowd it");
-}
-
-#[test]
-fn backstage_furniture_is_on_no_front_of_house_surface() {
-    // FOUND BY A FAILING TEST, not by reading. A minted area IS an entity
-    // with no area, so it turned up in Unfiled next to the notes.
-    //
-    // `core/` never exposed this: it curated the snapshot's `everything`
-    // list inside the builder, so no shell ever had to know the rule. The
-    // engine stores backstage things like anything else, so the rule has
-    // to be stated — and it is stated once, in `visible`.
-    let mut e = engine();
-    let note = e.create(kind::NOTE, Some("A real note"), 1_000).unwrap();
-    let my_area = e.declare(kind::AREA, "Woodworking", 1_001).unwrap();
-    let my_status = e.declare(kind::STATUS, "Blocked", 1_002).unwrap();
-    let workspace = e.declare(kind::WORKSPACE, "Deep work", 1_003).unwrap();
-    let field = e.declare_field("mileage", "number", false, 1_004).unwrap();
-
-    for slice in [Slice::All, Slice::Notes, Slice::Unfiled] {
-        let rows = everything(&e, slice, &Lens::Everything, DAY).unwrap();
-        let ids: Vec<EntityId> = rows.iter().map(|r| r.id).collect();
-        assert!(ids.contains(&note), "{slice:?} shows the note");
-        for (what, id) in
-            [("area", my_area), ("status", my_status), ("workspace", workspace), ("field", field)]
-        {
-            assert!(!ids.contains(&id), "{slice:?} must not show the {what}");
-        }
-    }
-
-    // And it is not a display trick: they really are marked, and the mark
-    // is what `visible` reads.
-    assert!(row(&e, my_area).unwrap().working);
-    assert!(!row(&e, note).unwrap().working);
+    let days = calendar(&e, DAY, DAY, &lens).unwrap();
+    assert_eq!(titles(&days[0].timed), vec!["Mine"]);
 }
 
 #[test]
@@ -376,12 +360,11 @@ fn a_dated_backstage_thing_stays_off_the_day_and_out_of_late() {
     e.set(real, prop::DUE, Value::Date(DateSpec::Instant { ms: at(DAY, 11, 0), tz: 0 }), 1_003)
         .unwrap();
 
-    let d = day(&e, DAY, &Lens::Everything).unwrap();
-    assert_eq!(d.blocks.len(), 1);
-    assert_eq!(d.blocks[0].row.id, real);
+    let days = calendar(&e, DAY, DAY, &Lens::Everything).unwrap();
+    let ids: Vec<EntityId> = days[0].timed.iter().map(|r| r.id).collect();
+    assert_eq!(ids, vec![real]);
 
-    let t = liv_surface::today::today(&e, DAY, DAY + 1, at(DAY + 1, 9, 0), &Lens::Everything)
-        .unwrap();
+    let t = liv_surface::today::today(&e, at(DAY + 1, 9, 0), 0, &Lens::Everything).unwrap();
     assert_eq!(titles(&t.late), vec!["A real task"], "and it is not late either");
 }
 

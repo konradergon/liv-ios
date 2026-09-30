@@ -36,7 +36,7 @@
 #   ./drive.sh panel             the library panel, and the properties card
 #   ./drive.sh library           just the library half of `panel` — needs no notes in the box
 #   ./drive.sh bar               five keys in three pieces, disabled drawn as disabled
-#   ./drive.sh workspace         the workspace card opens from the panel's foot, upward
+#   ./drive.sh workspace         the panel lists the workspaces; New workspace raises the form
 #   ./drive.sh history           a note's ••• opens its version history as a card
 #   ./drive.sh spool             a catch the share sheet left is in Unsorted at the next launch
 #   ./drive.sh cycles            AttributeGraph cycles since boot
@@ -2450,7 +2450,7 @@ query_text() {
 # carries `an_event_made_at_an_hour_is_timed_and_on_its_day`
 # (ffi/tests/basics.rs), which runs the calendar's own verbs —
 # liv_kind_named, liv_make, liv_set due — and reads the event back as
-# liv_view_everything's due_ms and a liv_view_day block. So whatever is
+# the timed row liv_view_day puts on its day. So whatever is
 # wrong is on screen, and only a device can say it.
 #
 # This is that check. It taps bare grid, then counts BLOCKS — not a
@@ -2636,88 +2636,50 @@ cmd_quiet() {
   cmd_check
 }
 
-# THE WORKSPACE CARD, AND WHAT IT HANGS OVER.
+# THE WORKSPACES ARE IN THE PANEL (option A, clearer spec, 2026-09-29).
 #
-# Added 2026-09-08, after the card spent a week with the bottom bar
-# painted across it (owner: "when opening workspaces from the panel, the
-# bar is above that card"). Nothing here could see it: the card had no
-# `LivOverlay` marker, so no check could assert it was even up, and the
-# door that opens it had no accessibility label — its label was DERIVED
-# from the active workspace's name, so it changed with the box.
+# The panel lists every workspace, then All workspaces and New workspace.
+# The card that used to rise from a "Switch workspace" button at the
+# panel's foot is only the FORM now, raised by New workspace (and by Edit
+# workspace on a held row). So this asserts two things: the panel itself
+# holds a "New workspace" row — inside the panel's width, not on a card
+# over it — and tapping it raises the form (`LivOverlay.workspace`),
+# titled for what it does.
 #
-# WHAT THIS CANNOT ASSERT, and it is the very thing that was broken:
-# WHICH OF THE TWO IS ON TOP. Z-order is paint, and the accessibility
-# tree has none of it. Worse, the bar is `accessibilityHidden` while a
-# panel is out — in the broken build AND the fixed one, for different
-# reasons — so "is the bar in the tree" answers a different question and
-# would have read green throughout. Catching the paint needs a pixel
-# sampled off a screenshot, and `simctl io … screenshot` is the one call
-# that wedged this harness (see `sim` above); it is not worth that door
-# for one assertion. So this guards the FLOW and the GEOMETRY, and the
-# layering stays an eyes-on check.
+# WHAT THIS CANNOT ASSERT is paint: whether the form or the bar is on top
+# (it was the bar, for a week, in 2026-09). Z-order is not in the
+# accessibility tree; that stays an eyes-on check.
 cmd_workspace() {
   cmd_boot >/dev/null || { die "could not boot before the workspace check."; return 1 }
   open_side library || return 1
 
-  cmd_tap "Switch workspace" || {
-    die "no 'Switch workspace' door at the head of the library panel.
-      It is the only way to the workspace card."
-    return 1
-  }
-  perl -e 'select(undef,undef,undef,1.4)'
-
-  [[ -n "$(overlays | grep -x workspace)" ]] || {
-    die "tapped the workspace door and no card came up (overlays: $(overlays | tr '\n' ' '))."
-    return 1
-  }
-
-  # IT RISES FROM THE EDGE ITS BUTTON IS ON. The door is at the FOOT of
-  # the panel, so the card comes from the bottom — it fell from the top
-  # for nine days after the button moved and the direction stayed behind
-  # (owner, 2026-08-31: "some menus are popping up top down when the
-  # button is not at the top").
-  #
-  # BY ITS LAST ROW, not its title (2026-09-26). The title's y was held
-  # to "below 400", which a box with six workspaces fails on a card that
-  # is rising correctly. A card from the bottom ends near the bottom
-  # whatever it holds, so the gap under its last row — "New workspace" —
-  # is the count-independent reading; the title must still be there.
-  local top gap
-  top=$(scan 'def walk(n):
-    if (n.get("AXLabel") or "") == "Workspaces":
+  local row
+  row=$(scan 'def walk(n):
+    if (n.get("AXLabel") or "") == "New workspace":
         f = n.get("frame") or {}
-        print(int(f.get("y", 0)))
+        print(int(f.get("x", 0) + f.get("width", 0)))
     for c in n.get("children") or []: walk(c)' | head -1)
-  [[ -n "$top" ]] || {
-    die "the card is up but draws no 'Workspaces' title, so nothing on it
-      says what it is."
+  [[ -n "$row" ]] || {
+    die "the library panel lists no 'New workspace' row. The workspaces live
+      in the panel now (option A), with New workspace under them."
     return 1
   }
-  gap=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); root = d if isinstance(d, dict) else d[0]
-H = (root.get("frame") or {}).get("height", 0)
-def walk(n):
-    if (n.get("AXLabel") or "").startswith("New workspace"):
-        f = n.get("frame") or {}
-        print(int(H - f.get("y", 0) - f.get("height", 0))); raise SystemExit
-    for c in n.get("children") or []: walk(c)
-walk(root)')
-  [[ -n "$gap" ]] || {
-    die "the card is up but offers no 'New workspace' row."
-    return 1
-  }
-  (( gap < 160 )) || {
-    die "the workspace card's last row ends ${gap}pt above the screen's
-      bottom — it is hanging from the TOP. It hangs from the panel's foot
-      and must rise from the bottom."
+  (( row <= 340 )) || {
+    die "a 'New workspace' row is on screen but ends at x=${row} — past the
+      panel's edge, so it is not the panel's own row."
     return 1
   }
 
-  say "ok    workspace: the card rises from the panel's foot (title at y=${top},"
-  say "      last row ${gap}pt off the bottom), with its own New workspace row."
-  say "      WHICH IS ON TOP — it or the bar — is paint, and no check here can"
-  say "      see it: look with your eyes."
+  cmd_tap "New workspace" || { die "could not tap the panel's New workspace row."; return 1 }
+  perl -e 'select(undef,undef,undef,1.4)'
+  [[ -n "$(overlays | grep -x workspace)" ]] || {
+    die "tapped New workspace and no form came up (overlays: $(overlays | tr '\n' ' '))."
+    return 1
+  }
+
+  say "ok    workspace: the panel lists the workspaces with a New workspace row"
+  say "      (ending at x=${row}), and it raises the workspace form."
+  say "      WHICH IS ON TOP — the form or the bar — is paint: look with your eyes."
 }
 
 # THE HISTORY CARD. Every version of a note, from its ••• menu, as a card.

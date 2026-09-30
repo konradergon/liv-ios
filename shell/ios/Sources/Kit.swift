@@ -69,7 +69,7 @@ struct SectionLabel<Accessory: View>: View {
                 .font(
                     style == .screen
                         ? .system(size: LivType.strong, weight: .semibold)
-                        : .system(size: LivType.detail, weight: .semibold))
+                        : .system(size: LivType.label, weight: .medium))
                 .foregroundStyle(style == .screen ? LivTheme.text : LivTheme.text2)
                 .accessibilityAddTraits(.isHeader)
             if let count {
@@ -304,6 +304,54 @@ struct LivSheetTitle: View {
     }
 }
 
+// MARK: - the one search field
+
+/// THE ONE SEARCH FIELD: a magnifier, the words, a clear button, in a
+/// filled capsule as tall as a touch. Search's bar and the trash both draw
+/// it (standing rule 4); it was Search's own until the trash wanted one
+/// (2026-09-29).
+struct LivSearchField: View {
+    @Binding var text: String
+    var focused: FocusState<Bool>.Binding
+    var onSubmit: () -> Void = {}
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text3)
+            TextField("Search", text: $text)
+                .font(.system(size: LivType.body))
+                .foregroundStyle(LivTheme.text)
+                .focused(focused)
+                .submitLabel(.search)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit(onSubmit)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: LivType.body))
+                        .foregroundStyle(LivTheme.text2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear")
+            }
+        }
+        .padding(.horizontal, 14)
+        // AS TALL AS A TOUCH. It was 34 against a 44pt touch floor —
+        // under Apple's minimum, and visibly shorter than every other
+        // control the app puts at the foot.
+        .frame(height: LivRow.touch)
+        // NO BORDER. Rev 83 took the hairline off the filter chips on the
+        // owner's word; a field is the same shape making the same
+        // promise, and a fill either reads as a well or it does not.
+        .background(Capsule().fill(LivTheme.panel2))
+    }
+}
+
 // MARK: - ValueChip / AddChip
 
 /// The one chip recipe: a NEUTRAL capsule — one quiet fill, text2 ink,
@@ -384,8 +432,14 @@ struct LivSegment<Value: Hashable, Trailing: View>: View {
         HStack(spacing: 0) {
             ForEach(options, id: \.value) { option in
                 let on = option.value == selection
+                // THE LIST UNDER IT SWAPS IN ONE FRAME (owner, 2026-09-29:
+                // "apply same solution" — two states, as a fold). This set
+                // the selection inside `withAnimation`, which animated
+                // everything the choice changed: Tasks crossfaded its old
+                // rows out while "No matches" faded in over them. Only the
+                // plate moves now (`LivSegmentFace`).
                 Button {
-                    withAnimation(LivMotion.pick) { selection = option.value }
+                    selection = option.value
                 } label: {
                     LivSegmentFace(option.label, on: on)
                 }
@@ -421,7 +475,7 @@ struct LivSegmentFace: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: LivType.detail, weight: on ? .semibold : .medium))
+            .font(.system(size: LivType.label, weight: on ? .semibold : .medium))
             .foregroundStyle(on ? LivTheme.text : LivTheme.text2)
             .lineLimit(1)
             .frame(maxWidth: .infinity)
@@ -430,6 +484,8 @@ struct LivSegmentFace: View {
                 RoundedRectangle(cornerRadius: LivSegmented.radius, style: .continuous)
                     .fill(on ? LivTheme.thumb : .clear))
             .contentShape(Rectangle())
+            // The plate's own motion, and only its own — see `LivSegment`.
+            .animation(LivMotion.pick, value: on)
     }
 }
 
@@ -684,12 +740,46 @@ struct LivBusy: View {
 /// Inbox passes `false` on purpose, so an unrouted capture cannot be
 /// thrown away by a thumb that kept going. A helper that wrapped the
 /// whole `.swipeActions` container would have flattened that.
-@ViewBuilder
+@MainActor @ViewBuilder
 func livTrashAction(_ action: @escaping () -> Void) -> some View {
     Button(role: .destructive, action: action) {
-        Label("Trash", systemImage: "trash")
+        livSwipeLabel("Trash", .trash)
     }
     .tint(LivTheme.red)
+}
+
+/// A SWIPE BUTTON'S FACE: the app's own glyph in the bubble, its word under
+/// it (iOS lays it out so on a `LivCards.swipeRow` row).
+///
+/// OUR GLYPHS, NOT SF SYMBOLS (owner, 2026-09-29: "the icons in bubbles in
+/// rows should be consistent. the trash icon is different from trash in the
+/// panel"). A swipe action draws only an `Image`, so the glyph is rendered
+/// to one once per kind and kept — white, as a template the bubble tints.
+@MainActor
+func livSwipeLabel(_ title: String, _ glyph: LivGlyph) -> some View {
+    Label {
+        Text(title)
+    } icon: {
+        LivSwipeGlyph.image(glyph)
+    }
+}
+
+@MainActor
+enum LivSwipeGlyph {
+    private static var made: [String: UIImage] = [:]
+
+    static func image(_ glyph: LivGlyph) -> Image {
+        let key = String(describing: glyph)
+        if let hit = made[key] { return Image(uiImage: hit) }
+        let renderer = ImageRenderer(
+            content: LivIcon(glyph: glyph, color: .white, size: LivCards.glyph))
+        renderer.scale = 3
+        guard let image = renderer.uiImage?.withRenderingMode(.alwaysTemplate) else {
+            return Image(uiImage: UIImage())
+        }
+        made[key] = image
+        return Image(uiImage: image)
+    }
 }
 
 /// The switch above, as a `ToggleStyle`, so the two call sites keep
@@ -762,39 +852,34 @@ struct ConfirmPill: View {
 /// hollow, muted — never competes with real values.
 struct AddChip: View {
     let label: String
-    var big: Bool = false
     /// The mark it wears. `plus` because adding is what it nearly always
     /// does.
     var symbol: String = "plus"
     let action: () -> Void
 
-    init(
-        _ label: String, big: Bool = false, symbol: String = "plus",
-        action: @escaping () -> Void
-    ) {
+    init(_ label: String, symbol: String = "plus", action: @escaping () -> Void) {
         self.label = label
-        self.big = big
         self.symbol = symbol
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: big ? 5 : 4) {
+            HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.system(size: LivChip.glyph - 3, weight: .semibold))
+                    .font(.system(size: LivChip.glyph - 1, weight: .semibold))
                 Text(label)
-                    .font(.system(size: LivType.caption))
+                    .font(.system(size: LivType.label))
                     .lineLimit(1)
             }
-            .foregroundStyle(LivTheme.text3)
-            .padding(.horizontal, big ? 10 : 8)
-            .frame(height: big ? LivChip.tall : LivChip.height)
+            .foregroundStyle(LivTheme.text2)
+            .padding(.horizontal, LivChip.addPad)
+            .frame(height: LivChip.add)
             // HOLLOW is this chip's whole meaning — it is the ADD
             // affordance, and standing empty beside filled values is how
             // it says so. So it keeps its outline and takes no fill:
             // still one device, the other one.
-            .overlay(Capsule().strokeBorder(LivTheme.border2, lineWidth: 0.5))
+            .overlay(Capsule().strokeBorder(LivTheme.border2, lineWidth: LivChip.addOutline))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -1094,68 +1179,6 @@ func livRowIsUntitled(_ row: EntityRow) -> Bool {
 func livCanTick(_ row: EntityRow) -> Bool {
     row.kinds?.contains("task") == true || row.status != nil
 }
-
-/// AN UNROUTED CAPTURE: something caught, with words in it, that nobody
-/// has decided about yet. The Inbox's list and the library panel's count
-/// of it.
-///
-/// **They were two spellings and they disagreed out loud** (owner,
-/// 2026-09-15: the panel said Inbox 8, the Inbox said "Nothing to
-/// route"). The panel counted `LivKind.of == .capture`; the Inbox asked
-/// for an empty `kinds` and a non-zero `contentPrint`, and
-/// `contentPrint` answers nil on the engine — so one of them counted
-/// eight and the other counted none, four points apart on the same
-/// screen. A count beside a list is a promise about that list (standing
-/// rule 4).
-///
-/// `LivKind.of` is the app's ONE classifier, so a scrap that has since
-/// been given a status or a file is no longer one — which is right: it
-/// has been decided about.
-/// **UNDECIDED MEANS UNFILED, NOT UNTYPED** (owner, 2026-09-19, choosing
-/// among three options: "option 1").
-///
-/// It asked for `LivKind.of(row) == .capture` — a thing with no kind at
-/// all — and nothing the app makes is one. `+` births a typed note
-/// everywhere, and so do the create menu, the Tasks add row, the
-/// Calendar and the camera; only the share sheet, a `liv://capture` link
-/// and Search's create row still make an untyped capture. So the Inbox
-/// counted zero on any phone whose owner used the `+`, which is what
-/// "not playing any role" meant.
-///
-/// The address is the decision, and that is the 2026-09-09 routing
-/// ruling read back to itself: "one tap sets the area and the kind
-/// together, so the scrap is a filed note in one gesture" — out of the
-/// Inbox and out of Unfiled at the same moment. A kind says WHAT a thing
-/// is; only an area says where it lives, and a note with no area is the
-/// pile that actually builds up (what-liv-is-for.md's second success
-/// test). Nothing has listed that pile since the Unfiled lens went on
-/// 2026-09-16.
-///
-/// **A NAME COUNTS AS MUCH AS A BODY** (owner, 2026-09-22: the pile
-/// that builds up unfiled "is also for tasks and events"). This asked
-/// for `hasBody`, which is the NOTE body only — so a task called "Call
-/// the dentist" was never unsorted, however long it sat without an
-/// area. An empty thing is still not a decision anyone owes: nothing
-/// typed and no given name (`untitled`) stays out.
-///
-/// The kinds are the ones a person files. A person, a project or a list
-/// is furniture the areas are FOR, not a thing waiting to be put in one.
-///
-/// **AN AREA WITH NO NAME IS NO AREA.** The six built-in areas were
-/// deleted on 2026-09-21, and a thing filed under one of them still
-/// points at it — so it counted as filed while every screen showed it
-/// with no area at all (owner, 2026-09-22: notes made in All never
-/// reached Unsorted). Filing it again replaces the dead reference.
-func livIsUnfiled(_ row: EntityRow) -> Bool {
-    guard row.trashed != true, row.archived != true else { return false }
-    guard row.area == nil || (row.areaWord ?? "").isEmpty else { return false }
-    guard livSortedKinds.contains(row.kindWord ?? "") else { return false }
-    return row.hasBody == true || row.untitled != true
-}
-
-/// What Unsorted lists, by kind word. "" is a thing with no kind yet —
-/// a share-sheet or `liv://` capture.
-let livSortedKinds: Set<String> = ["", "note", "task", "event", "link", "photo", "file"]
 
 /// THE ACKNOWLEDGMENT CHIP — what just happened, and Undo when it can be
 /// taken back. One view for the desk and Unsorted, which had one each.

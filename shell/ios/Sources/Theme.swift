@@ -156,11 +156,11 @@ enum LivType {
     static let micro: CGFloat = 12
     /// A footnote (text3), chips, the day strip's weekday letters.
     static let caption: CGFloat = 14
-    /// A CARD ROW'S SECOND LINE (text2), a sheet label at semibold, a
-    /// segment's word. The boards' 15 — one under the 16 fact beside it.
-    static let detail: CGFloat = 15
-    /// The right-hand fact and a screen's subtitle (text2), a section
-    /// header's note.
+    /// The right-hand fact, a card row's second line and a screen's
+    /// subtitle (text2); a section header's note, a sheet label, a
+    /// segment's word. There is no 15: the clearer spec (2026-09-29) keeps
+    /// the scale to 34, 26, 20, 18, 16 and 14, and the boards' 15 for a
+    /// second line became 16.
     static let label: CGFloat = 16
     /// The app's ORDINARY text: a row's title, a value, a button.
     static let body: CGFloat = 18
@@ -318,14 +318,19 @@ enum LivPanel {
 
     /// One rhythm for the whole panel: nav rows and list rows alike.
     /// Grew with the type scale on 2026-08-31, like `LivRow.height`.
-    static let row: CGFloat = 57
+    static let row: CGFloat = 52
 
     /// The lit row's fill sits 12pt from each panel edge — 16pt OUTSIDE
     /// the text inset, so the fill is the row plus its padding rather
     /// than a box drawn around the words.
     static let litInset: CGFloat = 12
     static let litRadius: CGFloat = 12
-    static let litHeight: CGFloat = 49
+    static let litHeight: CGFloat = 46
+    /// Between the two groups of views (clearer spec, 2026-09-29).
+    static let groupGap: CGFloat = 12
+    /// The "Workspaces" label: 22 above it, 6 under.
+    static let labelTop: CGFloat = 22
+    static let labelBottom: CGFloat = 6
 
     /// The desk's corner radius while it is pushed aside. This is the
     /// DEVICE's own display radius, which is the whole trick: the desk
@@ -395,6 +400,11 @@ enum LivScreen {
 /// 82) helped and did not answer him, because a full-width sheet reads
 /// as furniture arriving whatever it does on the way in.
 enum LivMenuCard {
+    /// A card's title (`LivCardTitle`): 4 from the top, 10 over the rows.
+    static let titleTop: CGFloat = 4
+    static let titleBottom: CGFloat = 10
+    /// The tick on a chosen menu row.
+    static let check: CGFloat = 18
     /// 300, against the reference's 267. Liv's menu rows are chunkier —
     /// a 24pt glyph and `title`(22) text where the reference draws about
     /// 17 — so the same proportion would crowd them.
@@ -432,6 +442,13 @@ enum LivChip {
     /// than in a run of them. Same text as `height`; padding is the
     /// whole difference.
     static let tall: CGFloat = 30
+    /// THE HOLLOW CHIP (`AddChip`): 32 tall, its word at 16 in text2
+    /// inside a 1pt `border2` outline — the outline is the whole shape, so
+    /// it has to show (clearer spec, 2026-09-29; it was 24, 14 in text3,
+    /// 0.5pt).
+    static let add: CGFloat = 32
+    static let addOutline: CGFloat = 1
+    static let addPad: CGFloat = 12
     /// The COMPACT PILL (`ConfirmPill(compact:)`) at the end of a row: a
     /// `body` line box is ~22, so 34 leaves 6 either side.
     static let value: CGFloat = 34
@@ -518,6 +535,10 @@ enum LivRow {
     /// panel with a quiet label above it, rather than running hairlines
     /// edge to edge (owner's clips, 2026-08-20).
     static let cardInset: CGFloat = 16
+    /// A row that spans the SCREEN in a card list, whose cells stand
+    /// `cardInset` in from each edge (`livCardList`): a title, the week
+    /// strip, a control strip that places itself.
+    static let fullWidth = EdgeInsets(top: 0, leading: -cardInset, bottom: 0, trailing: -cardInset)
 
     /// The same band measured from the very top of the SCREEN. Surfaces
     /// run under the status bar now (owner, 2026-08-17: "the screen
@@ -570,6 +591,11 @@ enum LivCards {
     /// A row with a title only, and one with a second line: two beats.
     static let row: CGFloat = 52
     static let twoLine: CGFloat = 64
+    /// A ROW YOU CAN SWIPE, whatever it holds (owner, 2026-09-29: "all
+    /// swipeable rows 64"). iOS draws a swipe action's word UNDER its icon,
+    /// as Apple Notes does, only on a row at least 60 tall — measured the
+    /// same day: 56 put the word inside the bubble, 60 put it below.
+    static let swipeRow: CGFloat = 64
     /// Padding inside the card: across, and above and below the words.
     static let padX: CGFloat = 16
     static let padY: CGFloat = 9
@@ -664,33 +690,16 @@ enum LivSchedule {
     static let rule: CGFloat = LivCards.padX + timeColumn + LivCards.markGap
 }
 
-/// THE CHOOSER (the clearer boards' Workspaces card): 64pt rows with 10
-/// above and below, a 34 mark (a workspace's letter comes out at 27 —
-/// `LivPen.letter`), the chosen row lit at radius 16 and ticked with an
-/// 18pt accent check; the title 4 from the top and 10 over the rows; the
-/// "New workspace" tile radius 10.
-enum LivChooserCard {
-    static let row: CGFloat = 64
-    static let rowPad: CGFloat = 10
-    static let rowRadius: CGFloat = 16
-    static let lead: CGFloat = 34
-    static let tileRadius: CGFloat = 10
-    static let check: CGFloat = 18
-    static let titleTop: CGFloat = 4
-    static let titleBottom: CGFloat = 10
-    /// A second line under a chooser row's name: 1 below it.
-    static let lineGap: CGFloat = 1
-}
 
-/// THE LIBRARY PANEL'S FOOT (the clearer board): the workspace's letter in
-/// a 36 slot (28 — `LivPen.letter`), 12 to its name; 20 in from the
-/// panel's edge.
+/// THE LIBRARY PANEL'S FOOT: the Trash and Settings circles, standing where
+/// the bar's keys stand on the desk beside it — as tall, as far in from the
+/// edge and as far above the home indicator (owner, 2026-09-29: they were
+/// "right on the edge and could move up/in some. they could be bigger").
 enum LivPanelFoot {
-    static let mark: CGFloat = 36
     static let gap: CGFloat = 12
-    static let inset: CGFloat = 20
-    /// The Settings circle.
-    static let circle: CGFloat = 46
+    static let inset: CGFloat = LivBar.sideInset
+    static let circle: CGFloat = LivBar.height
+    static let glyph: CGFloat = 24
 }
 
 /// THE PROPERTIES CARD (the clearer board): the sheet's header sits 4 over
@@ -707,10 +716,12 @@ enum LivDetail {
 /// THE SEGMENTED CONTROL (`LivSegment`): a panel2 track, 3 in, holding
 /// 32pt segments; the chosen one sits on `LivTheme.thumb`.
 enum LivSegmented {
-    static let height: CGFloat = 32
+    /// A segment, and the capsule thumb on the chosen one (clearer spec,
+    /// 2026-09-29: 34 in a track of radius 20, 3 in).
+    static let height: CGFloat = 34
     static let pad: CGFloat = 3
-    static let trackRadius: CGFloat = 19
-    static let radius: CGFloat = 16
+    static let trackRadius: CGFloat = 20
+    static let radius: CGFloat = 17
     /// Under the track, before the air to the next card (2 + `LivCards.gap`
     /// = the board's 18).
     static let under: CGFloat = 2
@@ -906,6 +917,12 @@ enum LivMotion {
     /// weight; a spring wants a little longer to show its shape.
     static let navSeconds: Double = 0.30
 
+    /// HOW A SWIPED ROW ROUNDS AND SQUARES OFF: slowly (owner,
+    /// 2026-09-29). Let go, a row reports its rest place at once and then
+    /// slides home — measured the same day, within a point of rest in
+    /// 0.42s — so squaring off over this long lands as the row does.
+    static let lift = Animation.easeInOut(duration: 0.45)
+
     /// HOW FAR A PULLED-AWAY SURFACE TRAVELS PER POINT OF FINGER.
     ///
     /// 1 is the honest default and it is what the document's pull-down
@@ -1006,10 +1023,13 @@ private enum Palette {
     static let selection = hex(0x2A2A2A, light: 0xEBEBEB)
     static let hairline = hex(0x2E2E2E, light: 0xE4E4E4)
     static let hairline2 = hex(0x3A3A3A, light: 0xD3D3D3)
-    /// THE CHOSEN SEGMENT'S PLATE, on a `fill` track — the one colour the
-    /// clearer boards add (Tasks board #454545; light is white, the way
-    /// the platform lifts a thumb off a grey track).
-    static let thumb = hex(0x454545, light: 0xFFFFFF)
+    /// The line between two rows (`LivHairline`): dim, but it has to be
+    /// SEEN on a `surface` card, which `hairline` on it was not.
+    static let rule = hex(0x383838, light: 0xDADADA)
+    /// THE CHOSEN SEGMENT'S PLATE, on a `fill` track: `hairline2`'s grey
+    /// in dark (clearer spec, 2026-09-29; the Tasks board had #454545),
+    /// white in light, the way the platform lifts a thumb off a grey track.
+    static let thumb = hex(0x3A3A3A, light: 0xFFFFFF)
 
     // Ink. Three tiers and no more.
     static let text = hex(0xF5F5F5, light: 0x161616)   // 15.96:1 / 18.10:1
@@ -1184,6 +1204,8 @@ enum LivTheme {
     /// borders.
     static let border = Color(Palette.hairline)
     static let border2 = Color(Palette.hairline2)
+    /// The one hairline's colour — see `LivHairline`.
+    static let rule = Color(Palette.rule)
 
     // The semantic set — the ONLY value colours (O2: VALUE_HEX retired).
     // Each is the muted shade of that word: none exceeds 62% saturation,
@@ -1323,16 +1345,17 @@ enum LivEdgeCard {
 enum LivPen {
     static let line: CGFloat = 1.75
     static let fineLine: CGFloat = 1.6
-    static let fineBelow: CGFloat = 19
+    static let fineBelow: CGFloat = 18
     static func stroke(_ size: CGFloat) -> CGFloat { size < fineBelow ? fineLine : line }
-    /// A glyph's second voice: Unsorted's falling stroke, the back square
-    /// of All workspaces. Same ink, at this opacity.
-    static let faint: Double = 0.55
-    /// A workspace's letter as a share of its slot, rounded: 36 → 28,
-    /// 34 → 27, 30 → 23 (the boards' pairs), 22 → 17.
-    static let letter: CGFloat = 0.78
-    /// The open-tab count as a share of its key: 10.5 at 24.
-    static let count: CGFloat = 0.4375
+    /// A workspace's letter as a share of its slot: 21 at 24 (clearer
+    /// spec, 2026-09-29).
+    static let letter: CGFloat = 0.875
+    /// The open-tab count as a share of its key: 11 at 24, bold, in the
+    /// numbered box.
+    static let count: CGFloat = 0.46
+    /// The width the count may take, as a share of the key: the box's
+    /// inside, so "128" shrinks rather than touching the stroke.
+    static let countBox: CGFloat = 0.62
     /// How far a count may shrink to stay on its sheet — 100 and up.
     static let countFloor: CGFloat = 0.55
     /// A DRAWN mark inside a chip (the board's 15, at `fineLine`).

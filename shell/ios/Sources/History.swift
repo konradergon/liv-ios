@@ -111,7 +111,7 @@ struct HistoryCard: View {
         .frame(minHeight: LivRow.tall)
         .overlay(alignment: .bottom) {
             if divided {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                LivHairline()
                     .padding(.leading, LivRow.cardInset + 4)
             }
         }

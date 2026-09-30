@@ -168,7 +168,7 @@ fn a_known_name_in_the_text_is_a_proposed_relation() {
 
 /// **Whole words.** "anna" is in "call anna friday" and not in "susanna".
 ///
-/// This one is held by the gazetteer's first-word PREFILTER — "susanna"
+/// This one is held by the gazetteer's word-index PREFILTER — "susanna"
 /// tokenises to one word and never reaches the boundary check at all.
 /// Worth keeping as itself, and not to be mistaken for a test of
 /// `contains_word`, which is the one below.
@@ -241,6 +241,99 @@ fn a_name_split_across_a_paragraph_is_not_a_mention() {
     )
     .unwrap();
     assert!(!proposers(&e).contains(&"mentions".to_owned()));
+}
+
+/// **The word index is a prefilter, never a judge.**
+///
+/// The mentions the sweep finds must be exactly the ones a walk over EVERY
+/// name would find; the index only decides which names are worth asking
+/// about. So this asks the slow way, name by name, over a box built to
+/// trip an index: names that share their first word with each other and
+/// with the prose, a name two things wear, a thing whose body says its
+/// own name, a name with a hyphen in it, and names that are only nearly
+/// there.
+///
+/// `sweep_one` builds no index — one text has nothing to share it with —
+/// so it is held to the same walk, thing by thing.
+#[test]
+fn the_word_index_finds_exactly_what_a_walk_over_every_name_finds() {
+    use liv_surface::words::contains_word;
+
+    let mut e = engine();
+    let named = [
+        ("Meeting with Sam", None),
+        ("Meeting with Anna", None),
+        ("Meeting notes", Some("meeting notes for the meeting with anna")),
+        ("Call Sam", None),
+        ("Call the plumber", None),
+        ("Standup notes", Some("standup notes again; call sam")),
+        ("Standup notes", Some("the standup ran long")),
+        ("Anna-Marie Lund", None),
+        ("Buy milk", None),
+        ("the roof", None),
+    ];
+    let mut t = T0;
+    for (name, text) in named {
+        t += 1;
+        let id = e.create(kind::NOTE, Some(name), t).unwrap();
+        if let Some(text) = text {
+            e.set_content(id, vec![Span::text(text)], 0, t).unwrap();
+        }
+    }
+    for text in [
+        "meeting with sam went fine; call the plumber after the standup",
+        "Standup notes: Anna-Marie Lund will buy milk",
+        "call sam about the roof",
+        "anna marie lund, a meeting withsam, the roofer",
+    ] {
+        t += 1;
+        let id = e.create(kind::NOTE, None, t).unwrap();
+        e.set_content(id, vec![Span::text(text)], 0, t).unwrap();
+    }
+
+    let mut ids = e.all_entities().unwrap();
+    ids.sort();
+    let names: Vec<(EntityId, String)> = ids
+        .iter()
+        .filter_map(|&id| Some((id, e.name(id).unwrap()?.to_lowercase())))
+        .collect();
+    let mut walked = Vec::new();
+    for &id in &ids {
+        let Some(Value::Rich(spans)) = e.one(id, prop::BODY).unwrap() else { continue };
+        let text = rich::plain(&spans).to_lowercase();
+        for (target, name) in &names {
+            if *target != id && contains_word(&text, name) {
+                walked.push((id, *target));
+            }
+        }
+    }
+
+    let swept: Vec<(EntityId, EntityId)> = sweep(&e)
+        .unwrap()
+        .into_iter()
+        .filter(|p| p.proposer == "mentions")
+        .map(|p| match &p.ops[..] {
+            [Op::AddToSet { entity, value: Value::Ref(target), .. }] => (*entity, *target),
+            other => panic!("a mention is one AddToSet of a ref: {other:?}"),
+        })
+        .collect();
+    assert!(walked.len() >= 10, "the box must actually mention things: {}", walked.len());
+    assert_eq!(swept, walked);
+
+    for &id in &ids {
+        let one: Vec<(EntityId, EntityId)> = sweep_one(&e, id)
+            .unwrap()
+            .into_iter()
+            .filter(|p| p.proposer == "mentions")
+            .map(|p| match &p.ops[..] {
+                [Op::AddToSet { entity, value: Value::Ref(target), .. }] => (*entity, *target),
+                other => panic!("a mention is one AddToSet of a ref: {other:?}"),
+            })
+            .collect();
+        let theirs: Vec<(EntityId, EntityId)> =
+            walked.iter().copied().filter(|(about, _)| *about == id).collect();
+        assert_eq!(one, theirs, "sweep_one disagrees with the walk about {}", id.hex());
+    }
 }
 
 // ---- area --------------------------------------------------------------

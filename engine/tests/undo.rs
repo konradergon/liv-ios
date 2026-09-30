@@ -269,3 +269,36 @@ fn an_undone_box_replays_identically() {
     assert_eq!(e.digest().unwrap(), before, "the replay gate holds over undo");
 }
 
+
+/// **Putting back several is one action** (owner, 2026-09-29: "who scrolls
+/// through a huge list and adds back one item at a time?"). One group, so
+/// one undo throws all of them out again — the trash screen's "Put back
+/// all" must not cost a person twenty undos to take back.
+#[test]
+fn putting_back_several_is_one_action() {
+    let mut e = engine();
+    let ids: Vec<EntityId> = (0..3u64)
+        .map(|i| e.create(kind::NOTE, Some(&format!("n{i}")), T0 + i).unwrap())
+        .collect();
+    let kept = e.create(kind::NOTE, Some("never thrown"), T0 + 3).unwrap();
+    for (i, id) in ids.iter().enumerate() {
+        e.trash(*id, T0 + 10 + i as u64).unwrap();
+    }
+    let before = e.groups().unwrap().len();
+
+    // One that was never in the trash is passed over, not rewritten.
+    let mut asked = ids.clone();
+    asked.push(kept);
+    assert_eq!(e.restore_many(&asked, T0 + 20).unwrap(), 3);
+    assert!(ids.iter().all(|id| !e.is_trashed(*id).unwrap()));
+    assert_eq!(e.groups().unwrap().len(), before + 1, "one group");
+
+    e.undo(T0 + 21).unwrap();
+    assert!(ids.iter().all(|id| e.is_trashed(*id).unwrap()), "one undo takes all three");
+    assert!(!e.is_trashed(kept).unwrap());
+
+    // Nothing in the trash among them: nothing written, and nothing to undo.
+    let n = e.groups().unwrap().len();
+    assert_eq!(e.restore_many(&[kept], T0 + 22).unwrap(), 0);
+    assert_eq!(e.groups().unwrap().len(), n);
+}

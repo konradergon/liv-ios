@@ -5,7 +5,10 @@
 //! required-word rule, and the prefix tier for filings.
 
 use liv_engine::*;
-use liv_surface::search::{facet, facet_properties, parse, parse_mode, search, Field, Mode};
+use liv_surface::search::{
+    facet, facet_properties, parse, parse_mode, search, search_screen, Field, Mode,
+};
+use liv_surface::Lens;
 
 fn dev(n: u8) -> DeviceId {
     DeviceId([n; 8])
@@ -414,4 +417,57 @@ fn reference_resolution_is_deterministic_on_a_name_collision() {
     for _ in 0..8 {
         assert_eq!(hits(&e, "kind:task"), vec![chore], "kind:task means the kind");
     }
+}
+
+// ---- the Search screen ---------------------------------------------------
+//
+// What `Search.swift` did with the ranked ids until 2026-09-30: cut them to
+// the workspace, count them, look each one up, and decide whether to offer
+// "Create". The screen now gets the rows.
+
+#[test]
+fn the_screen_wears_the_lens_before_it_counts_or_cuts() {
+    // Cutting to the first 200 and THEN applying the workspace could show
+    // twelve rows out of a thousand matches that were all in it.
+    let mut e = engine();
+    let mut mine = Vec::new();
+    for n in 0..5u64 {
+        let id = e.create(kind::NOTE, Some(&format!("roof {n}")), T0 + n).unwrap();
+        if n % 2 == 0 {
+            mine.push(id);
+        }
+    }
+    let lens: Lens = mine.iter().copied().collect();
+    let screen = search_screen(&e, "roof", &lens, 2).unwrap();
+    assert_eq!(screen.total, 3, "counted inside the workspace");
+    assert_eq!(screen.hits.len(), 2, "then cut to the limit");
+    assert!(screen.hits.iter().all(|r| mine.contains(&r.id)));
+
+    let everywhere = search_screen(&e, "roof", &Lens::Everything, 0).unwrap();
+    assert_eq!(everywhere.total, 5);
+    assert_eq!(everywhere.hits.len(), 5, "a limit of 0 is no limit");
+}
+
+#[test]
+fn create_is_offered_unless_a_hit_is_named_exactly_the_words() {
+    // Find-or-create: a query no row is titled exactly like (whatever the
+    // case) ends in a Create row. Qualifiers are not words.
+    let mut e = engine();
+    e.create(kind::NOTE, Some("Buy milk"), T0).unwrap();
+    e.create(kind::NOTE, Some("Buy milk and eggs"), T0 + 1).unwrap();
+
+    assert!(search_screen(&e, "buy milk", &Lens::Everything, 0).unwrap().exact);
+    assert!(search_screen(&e, "BUY MILK kind:note", &Lens::Everything, 0).unwrap().exact);
+    assert!(!search_screen(&e, "buy", &Lens::Everything, 0).unwrap().exact);
+    assert!(!search_screen(&e, "kind:note", &Lens::Everything, 0).unwrap().exact, "no words, nothing to make");
+}
+
+#[test]
+fn the_screen_gets_rows_in_rank_order() {
+    let mut e = engine();
+    e.create(kind::NOTE, Some("Roofing notes"), T0).unwrap();
+    e.create(kind::NOTE, Some("Roof"), T0 + 1).unwrap();
+    let screen = search_screen(&e, "roof", &Lens::Everything, 0).unwrap();
+    let titles: Vec<&str> = screen.hits.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(titles, vec!["Roof", "Roofing notes"], "a whole name beats a prefix");
 }

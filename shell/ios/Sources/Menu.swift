@@ -22,8 +22,6 @@ import SwiftUI
 /// the same split the toolbar makes.
 struct LivMenuItem: Identifiable {
     let label: String
-    /// A second line under the label ("Tap + for this one").
-    var detail: String? = nil
     var glyph: LivGlyph?
     var symbol: String?
     /// THE ONE YOU ARE ON. `LivMenuRow` has drawn a checkmark for this
@@ -91,15 +89,13 @@ struct LivMenu: Identifiable {
 /// The one-row half of the ruling is untouched, and it is why this moves
 /// the create menu too: a list of things to choose from still must not
 /// look different depending on which card it is in.
-/// The two shapes a menu row takes: `.menu`, the Create card's (52, a 22
-/// glyph slot, the detail at 14 text3), and `.chooser`, the Workspaces
-/// card's (64, a 34 mark, the chosen row lit at radius 16).
-enum LivMenuRowStyle { case menu, chooser }
+/// A menu row: 52 tall, a 22 glyph slot, the detail at 14 text3. It had a
+/// second shape, `.chooser`, for the Workspaces card's 64pt rows; that went
+/// with the card on 2026-09-29, when the panel took the workspaces.
 
 struct LivMenuRow<Lead: View>: View {
     let label: String
     var detail: String? = nil
-    var style: LivMenuRowStyle = .menu
     var selected = false
     var chevron = false
     var destructive = false
@@ -108,13 +104,12 @@ struct LivMenuRow<Lead: View>: View {
     let action: () -> Void
 
     init(
-        label: String, detail: String? = nil, style: LivMenuRowStyle = .menu,
+        label: String, detail: String? = nil,
         selected: Bool = false, chevron: Bool = false, destructive: Bool = false,
         divided: Bool = false, @ViewBuilder lead: () -> Lead, action: @escaping () -> Void
     ) {
         self.label = label
         self.detail = detail
-        self.style = style
         self.selected = selected
         self.chevron = chevron
         self.destructive = destructive
@@ -124,20 +119,19 @@ struct LivMenuRow<Lead: View>: View {
     }
 
     var body: some View {
-        let chooser = style == .chooser
         Button(action: action) {
             HStack(spacing: LivMenuCard.leadGap) {
                 lead
-                    .frame(width: chooser ? LivChooserCard.lead : LivMenuCard.lead)
-                VStack(alignment: .leading, spacing: LivChooserCard.lineGap) {
+                    .frame(width: LivMenuCard.lead)
+                VStack(alignment: .leading, spacing: LivCards.lineGap) {
                     Text(label)
                         .font(.system(size: LivType.body, weight: selected ? .semibold : .regular))
                         .foregroundStyle(destructive ? LivTheme.red : LivTheme.text)
                         .lineLimit(1)
                     if let detail {
                         Text(detail)
-                            .font(.system(size: chooser ? LivType.detail : LivType.caption))
-                            .foregroundStyle(chooser ? LivTheme.text2 : LivTheme.text3)
+                            .font(.system(size: LivType.caption))
+                            .foregroundStyle(LivTheme.text3)
                             .lineLimit(1)
                     }
                 }
@@ -146,29 +140,23 @@ struct LivMenuRow<Lead: View>: View {
                 // reverses 2026-09-15's "no tick — the fill is the one that
                 // works": the board puts both on the chosen workspace.
                 if selected {
-                    LivIcon(glyph: .check, color: LivTheme.accent, size: LivChooserCard.check)
+                    LivIcon(glyph: .check, color: LivTheme.accent, size: LivMenuCard.check)
                 }
                 if chevron { LivChevron() }
             }
             .padding(.horizontal, LivCards.padX)
-            .padding(.vertical, chooser ? LivChooserCard.rowPad : LivMenuCard.rowPad)
-            .frame(minHeight: chooser ? LivChooserCard.row : LivMenuCard.row)
-            .background {
-                if chooser && selected {
-                    RoundedRectangle(cornerRadius: LivChooserCard.rowRadius, style: .continuous)
-                        .fill(LivTheme.selection)
-                }
-            }
+            .padding(.vertical, LivMenuCard.rowPad)
+            .frame(minHeight: LivMenuCard.row)
             .contentShape(Rectangle())
         }
         // The card is raised (panel2), so the ordinary press — which IS
         // panel2 — would not show.
         .buttonStyle(
-            LivPress(radius: chooser ? LivChooserCard.rowRadius : 0, fill: LivTheme.pressedRaised))
+            LivPress(radius: 0, fill: LivTheme.pressedRaised))
         .livDoor()
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .overlay(alignment: .top) {
-            if divided && !chooser { LivCardRule(inset: LivMenuCard.rule) }
+            if divided { LivCardRule(inset: LivMenuCard.rule) }
         }
     }
 }
@@ -214,7 +202,7 @@ struct LivMenuLegend: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: LivType.detail, weight: .semibold))
+            .font(.system(size: LivType.label, weight: .medium))
             .foregroundStyle(LivTheme.text2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, LivCards.padX)
@@ -224,7 +212,7 @@ struct LivMenuLegend: View {
     }
 }
 
-/// A CHOOSER CARD'S TITLE ("Workspaces."): 22 bold with the accent stop.
+/// A CARD'S TITLE ("New workspace."): 22 bold with the accent stop.
 struct LivCardTitle: View {
     let text: String
 
@@ -232,8 +220,8 @@ struct LivCardTitle: View {
         LivScreenTitle(text, size: LivType.title)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, LivCards.padX)
-            .padding(.top, LivChooserCard.titleTop)
-            .padding(.bottom, LivChooserCard.titleBottom)
+            .padding(.top, LivMenuCard.titleTop)
+            .padding(.bottom, LivMenuCard.titleBottom)
     }
 }
 
@@ -275,7 +263,7 @@ struct LivMenuSubject: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            LivHairline()
         }
     }
 }
@@ -814,7 +802,7 @@ struct LivMenuHost: ViewModifier {
 
     private func row(_ item: LivMenuItem, divided: Bool) -> some View {
         LivMenuRow(
-            label: item.label, detail: item.detail, glyph: item.glyph, symbol: item.symbol,
+            label: item.label, glyph: item.glyph, symbol: item.symbol,
             selected: item.selected,
             chevron: item.chevron, destructive: item.destructive, divided: divided
         ) {

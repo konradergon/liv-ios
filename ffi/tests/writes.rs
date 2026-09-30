@@ -363,6 +363,62 @@ fn declining_is_not_forgetting() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// **One thing's suggestions are the sweep's rows for it — the same JSON,
+/// value and all.**
+///
+/// The whole-box sweep runs only while Unsorted is open (owner,
+/// 2026-09-30), so a note's own card asks for its one thing instead. If
+/// the two ever disagreed, the card could offer something Unsorted does
+/// not, or something `liv_accept` would then refuse.
+#[test]
+fn one_things_suggestions_are_the_sweeps_rows_for_it() {
+    let d = dir("sweep_one");
+    let path = d.join("liv.db");
+    let ids = {
+        let mut e = Engine::open_local(&path).unwrap();
+        let home = e.declare(kind::AREA, "Home", T0).unwrap();
+        let anna = e.create(kind::PERSON, Some("Anna"), T0).unwrap();
+        e.set(anna, liv_engine::prop::AREA, liv_engine::Value::Ref(home), T0).unwrap();
+        let mut ids = vec![anna.hex()];
+        for (i, text) in ["call anna tomorrow", "anna says it is urgent", "nothing to see"]
+            .into_iter()
+            .enumerate()
+        {
+            let scrap = e.create(kind::NOTE, None, T0 + 1 + i as u64).unwrap();
+            e.set_content(scrap, vec![liv_engine::Span::text(text)], 0, T0 + 1 + i as u64)
+                .unwrap();
+            ids.push(scrap.hex());
+        }
+        ids
+    };
+    unsafe { liv_view_close_all() };
+    let path = c(path.to_str().unwrap());
+
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_sweep(path.as_ptr(), &mut out) }, LIV_OK);
+    let whole = took(out);
+    assert!(whole.as_array().unwrap().len() >= 5, "the box must suggest things: {whole}");
+
+    for id in &ids {
+        let about = c(id);
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { liv_sweep_one(path.as_ptr(), about.as_ptr(), &mut out) }, LIV_OK);
+        let one = took(out);
+        let theirs: Vec<&J> =
+            whole.as_array().unwrap().iter().filter(|r| r["entity"] == id.as_str()).collect();
+        let mine: Vec<&J> = one.as_array().unwrap().iter().collect();
+        assert_eq!(mine, theirs, "the two disagree about {id}");
+    }
+
+    // A thing that is not an id is refused, and hands back nothing to free.
+    let bad = c("not an id");
+    let mut out = std::ptr::null_mut();
+    assert_eq!(unsafe { liv_sweep_one(path.as_ptr(), bad.as_ptr(), &mut out) }, LIV_ERR_ARG);
+    assert!(out.is_null());
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 // ---- vocabulary and files ----------------------------------------------
 
 #[test]
@@ -530,6 +586,50 @@ fn one_date_row(path: &CString) -> (CString, u64) {
         .expect("the clerk should still have a date to offer")
         .clone();
     (c(row["entity"].as_str().unwrap()), row["print"].as_u64().unwrap())
+}
+
+/// **A note's suggestions cost the note, not the box.**
+///
+/// The card on a note's properties asks after every write while it is
+/// open, so this is on the refresh path (standing rule 2). It reads one
+/// thing against every name in the box, which is linear in the NAMES and
+/// nothing else — the same residue accepting carries, and the same
+/// ceiling.
+#[test]
+fn one_things_suggestions_cost_the_thing_and_not_the_box() {
+    use std::time::Instant;
+
+    let (ds, small) = box_of("sweep_one_small", 50, 1);
+    let (dl, large) = box_of("sweep_one_large", 500, 1);
+    let (s_about, _) = one_date_row(&small);
+    let (l_about, _) = one_date_row(&large);
+
+    let ask = |p: &CString, about: &CString| {
+        let t = Instant::now();
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { liv_sweep_one(p.as_ptr(), about.as_ptr(), &mut out) }, LIV_OK);
+        took(out);
+        t.elapsed().as_secs_f64()
+    };
+    ask(&small, &s_about);
+    ask(&large, &l_about);
+    let best = (0..6)
+        .map(|_| ask(&large, &l_about) / ask(&small, &s_about).max(1e-9))
+        .fold(f64::INFINITY, f64::min);
+    assert!(best < 4.0, "one thing's suggestions noticed the box: {best:.1}x");
+
+    let whole = {
+        let t = Instant::now();
+        let mut out = std::ptr::null_mut();
+        assert_eq!(unsafe { liv_sweep(large.as_ptr(), &mut out) }, LIV_OK);
+        took(out);
+        t.elapsed().as_secs_f64()
+    };
+    let one = ask(&large, &l_about);
+    assert!(whole / one > 5.0, "asking about one thing cost a whole sweep: {:.1}x", whole / one);
+
+    let _ = std::fs::remove_dir_all(&ds);
+    let _ = std::fs::remove_dir_all(&dl);
 }
 
 /// **Accepting a suggestion costs the thing it is about, not the box.**

@@ -76,7 +76,7 @@ pub fn sweep(e: &Engine) -> Result<Vec<Proposal>, LogError> {
     if !assist_enabled(e)? {
         return Ok(Vec::new());
     }
-    let gaz = gazetteer(e)?;
+    let gaz = Gazetteer::indexed(e)?;
 
     let mut out = Vec::new();
     let mut ids = e.all_entities()?;
@@ -101,7 +101,7 @@ pub fn sweep_one(e: &Engine, id: EntityId) -> Result<Vec<Proposal>, LogError> {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    about(e, id, &gazetteer(e)?, &mut out)?;
+    about(e, id, &Gazetteer::unindexed(e)?, &mut out)?;
     keepable(e, out)
 }
 
@@ -369,11 +369,23 @@ struct Named {
     id: EntityId,
     /// As written, for the sentence the user reads.
     name: String,
-    /// Lowercased ONCE per sweep rather than once per entity per name.
-    lowered: String,
 }
 
-/// Every name in the box, plus a word index into it.
+/// One name as the clerk looks for it — lowercased — and every thing that
+/// is called that.
+///
+/// **A spelling is looked for once, however many things wear it.** A year
+/// of notes called "Standup notes" is one thing to find in a body, not
+/// two hundred and fifty: every one of them is in the text or none is.
+struct Spelling {
+    /// Lowercased ONCE per sweep rather than once per entity per name.
+    lowered: String,
+    /// Places in `names`, ascending.
+    worn_by: Vec<usize>,
+}
+
+/// Every name in the box, plus — when it will be asked about many texts —
+/// a word index into it.
 ///
 /// **The index is what stops the mentions proposer being quadratic.**
 /// Without it every thing with a body walks every name in the box;
@@ -381,14 +393,77 @@ struct Named {
 /// for 1,000 — four times the work for twice the box.
 struct Gazetteer {
     names: Vec<Named>,
-    /// First whole word of each lowered name → its places in `names`. A
-    /// name can only be found in a text containing its first word AS a
-    /// word, because `contains_word` demands a boundary on both sides —
-    /// so this prefilter can never hide a match.
-    by_first_word: HashMap<String, Vec<usize>>,
-    /// Names with no alphanumeric run at all. Vanishingly rare, and
-    /// checked against everything so the prefilter stays a prefilter.
-    wordless: Vec<usize>,
+    spellings: Vec<Spelling>,
+    /// The RAREST word of each spelling → its places in `spellings`.
+    ///
+    /// A name can only be found in a text that holds EVERY one of its
+    /// words as a word: `contains_word` demands a boundary on both sides,
+    /// and the separators inside the name travel with it. So filing it
+    /// under any one of them can never hide a match — and the rarest one
+    /// narrows most.
+    ///
+    /// This was the FIRST word until 2026-09-30, and the first word of a
+    /// name is often the commonest word in it: "Meeting …", "Call …",
+    /// "Buy …". Five thousand things named "thing {i}", with "thing" in
+    /// every body, checked every body against every name — 5,052 ms a
+    /// sweep in release, on every refresh. Rarest means it turns up least
+    /// often across all the spellings; a tie goes to the earlier word.
+    by_rarest_word: HashMap<String, Vec<usize>>,
+    /// Spellings asked of EVERY text: the few with no alphanumeric run to
+    /// be filed under — so the prefilter stays a prefilter — or, in a
+    /// gazetteer built for one text, all of them.
+    unfiled: Vec<usize>,
+}
+
+impl Gazetteer {
+    /// For a sweep: many texts, so the index pays for itself.
+    fn indexed(e: &Engine) -> Result<Gazetteer, LogError> {
+        let names = named(e)?;
+        // The order of `spellings` is the map's and means nothing: the
+        // inbox's order is put back by `mentions_in`.
+        let mut worn: HashMap<String, Vec<usize>> = HashMap::new();
+        for (at, named) in names.iter().enumerate() {
+            worn.entry(named.name.to_lowercase()).or_default().push(at);
+        }
+        let spellings: Vec<Spelling> =
+            worn.into_iter().map(|(lowered, worn_by)| Spelling { lowered, worn_by }).collect();
+
+        let mut often: HashMap<&str, usize> = HashMap::new();
+        for spelling in &spellings {
+            for word in words(&spelling.lowered) {
+                *often.entry(word).or_default() += 1;
+            }
+        }
+        let mut by_rarest_word: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut unfiled = Vec::new();
+        for (place, spelling) in spellings.iter().enumerate() {
+            // `min_by_key` keeps the FIRST of equals: the earlier word wins.
+            match words(&spelling.lowered).min_by_key(|word| often[word]) {
+                Some(rarest) => by_rarest_word.entry(rarest.to_owned()).or_default().push(place),
+                None => unfiled.push(place),
+            }
+        }
+        Ok(Gazetteer { names, spellings, by_rarest_word, unfiled })
+    }
+
+    /// For one thing: one text, so every name is simply asked of it.
+    ///
+    /// **The index is work shared across texts**, and one text has
+    /// nothing to share it with. Accepting a suggestion reads one thing,
+    /// and building the index for it made accepting notice the box — 4.4x
+    /// the cost for ten times the names, against 2.2x before the index
+    /// learned to count words (2026-09-30). The answer is the same either
+    /// way, because the index only ever narrows what is asked.
+    fn unindexed(e: &Engine) -> Result<Gazetteer, LogError> {
+        let names = named(e)?;
+        let spellings: Vec<Spelling> = names
+            .iter()
+            .enumerate()
+            .map(|(at, named)| Spelling { lowered: named.name.to_lowercase(), worn_by: vec![at] })
+            .collect();
+        let unfiled = (0..spellings.len()).collect();
+        Ok(Gazetteer { names, spellings, by_rarest_word: HashMap::new(), unfiled })
+    }
 }
 
 /// **Two queries, not two per entity.** This used to walk `all_entities`
@@ -399,7 +474,7 @@ struct Gazetteer {
 /// `one_each` keeps `one`'s rule about contention, so a contended name is
 /// still not a name the clerk will match on. The order is the same: the
 /// scan comes back in entity order, which for a v7 id is creation order.
-fn gazetteer(e: &Engine) -> Result<Gazetteer, LogError> {
+fn named(e: &Engine) -> Result<Vec<Named>, LogError> {
     let trashed: HashSet<EntityId> =
         e.with_value(prop::TRASHED, &Value::Bool(true))?.into_iter().collect();
     let mut names = Vec::new();
@@ -410,22 +485,11 @@ fn gazetteer(e: &Engine) -> Result<Gazetteer, LogError> {
         // Three characters. Below that a "name" matches half the box —
         // and the shortest thing anyone actually calls something is three.
         match value {
-            Value::Text(name) if name.chars().count() >= 3 => {
-                names.push(Named { id, lowered: name.to_lowercase(), name })
-            }
+            Value::Text(name) if name.chars().count() >= 3 => names.push(Named { id, name }),
             _ => {}
         }
     }
-
-    let mut by_first_word: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut wordless = Vec::new();
-    for (at, named) in names.iter().enumerate() {
-        match words(&named.lowered).next() {
-            Some(first) => by_first_word.entry(first.to_owned()).or_default().push(at),
-            None => wordless.push(at),
-        }
-    }
-    Ok(Gazetteer { names, by_first_word, wordless })
+    Ok(names)
 }
 
 /// Every known name this text contains, in GAZETTEER order, the thing's
@@ -436,20 +500,25 @@ fn gazetteer(e: &Engine) -> Result<Gazetteer, LogError> {
 /// inbox reads the same however the prefilter narrowed it.
 fn mentions_in(text: &str, own: EntityId, gaz: &Gazetteer) -> Vec<usize> {
     let lower = text.to_lowercase();
-    let mut candidates: BTreeSet<usize> = gaz.wordless.iter().copied().collect();
+    // Each spelling is filed under exactly one word, and each word of the
+    // text is asked once — so no spelling is a candidate twice.
+    let mut candidates: Vec<usize> = gaz.unfiled.clone();
     let mut seen: HashSet<&str> = HashSet::new();
     for word in words(&lower) {
         if !seen.insert(word) {
             continue;
         }
-        if let Some(at) = gaz.by_first_word.get(word) {
-            candidates.extend(at.iter().copied());
+        if let Some(places) = gaz.by_rarest_word.get(word) {
+            candidates.extend(places.iter().copied());
         }
     }
-    candidates
+    let found: BTreeSet<usize> = candidates
         .into_iter()
-        .filter(|&at| gaz.names[at].id != own && contains_word(&lower, &gaz.names[at].lowered))
-        .collect()
+        .filter(|&place| contains_word(&lower, &gaz.spellings[place].lowered))
+        .flat_map(|place| gaz.spellings[place].worn_by.iter().copied())
+        .filter(|&at| gaz.names[at].id != own)
+        .collect();
+    found.into_iter().collect()
 }
 
 // ---- dates in words ----------------------------------------------------

@@ -344,6 +344,53 @@ pub fn search(e: &Engine, s: &Search, limit: usize) -> Result<Vec<Hit>, LogError
     Ok(hits.into_iter().map(|(_, h)| h).collect())
 }
 
+/// The Search screen: what one query shows inside the workspace.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Screen {
+    /// The hits the lens admits, in rank order, cut to the limit.
+    pub hits: Vec<crate::Row>,
+    /// How many the lens admits before the cut — "Showing 200 of 1,800".
+    pub total: usize,
+    /// The chip rows under the field, each with at least one value.
+    pub facets: Vec<Facet>,
+    /// A hit is titled exactly like the typed words (any case), so the
+    /// screen does not offer to create one. False when there are no words:
+    /// a query of only picked chips has nothing to make a thing from.
+    pub exact: bool,
+}
+
+/// Answer the Search screen. The lens is the workspace's, applied BEFORE
+/// counting and cutting, so the count and the rows are about the same
+/// list. `limit` 0 is no limit.
+pub fn search_screen(
+    e: &Engine,
+    raw: &str,
+    lens: &crate::Lens,
+    limit: usize,
+) -> Result<Screen, LogError> {
+    let s = parse(e, raw)?;
+    let admitted: Vec<Hit> =
+        search(e, &s, usize::MAX)?.into_iter().filter(|h| lens.admits(h.id)).collect();
+    let total = admitted.len();
+    let cap = if limit == 0 { usize::MAX } else { limit };
+    let mut hits = Vec::new();
+    for h in admitted.iter().take(cap) {
+        hits.push(crate::row(e, h.id)?);
+    }
+
+    let words = s.terms.join(" ");
+    let exact = !words.is_empty() && hits.iter().any(|r| r.title.to_lowercase() == words);
+
+    let mut facets = Vec::new();
+    for property in facet_properties(e, &s)? {
+        let f = facet(e, &s, property)?;
+        if !f.values.is_empty() {
+            facets.push(f);
+        }
+    }
+    Ok(Screen { hits, total, facets, exact })
+}
+
 /// The four tiers of text one thing offers a search.
 ///
 /// **Number, date and bool stay out**, and that is the half of the old

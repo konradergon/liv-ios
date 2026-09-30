@@ -43,7 +43,7 @@ MAKING THINGS
 
 CHANGING THINGS
   set ID PROP VALUE...   add ID PROP VALUE...   remove ID PROP VALUE...
-  unset ID PROP          trash ID               restore ID
+  unset ID PROP          trash ID               restore ID...  (several: one undo)
   content-set ID TEXT... replace a body with plain text
   rename-value PROP OLD NEW
   undo | redo
@@ -52,12 +52,14 @@ CHANGING THINGS
 
 READING
   list [--all]           everything, as a table (--all adds the trash)
+  library                every row, Notes, Unsorted and the panel's counts
   today | tasks | trash | day YYYY-MM-DD
   cells ID | links ID | content ID | versions ID
   options PROP | values PROP | properties | kinds | workspaces
   search WORDS... | lens QUERY... | terms QUERY...
-  inbox                  what the clerk suggests (liv_sweep)
-  snapshot               one refresh: the eight reads the app makes after a write
+  inbox [ID]             what the clerk suggests, about everything or one
+                         thing (liv_sweep / liv_sweep_one)
+  snapshot               one refresh: the ten reads the app makes after a write
   history                the log, one line per transaction
   probe | file-alerts    is the box readable; which files are missing
 
@@ -155,6 +157,14 @@ impl Liv {
                 let id = self.id(id)?;
                 status(unsafe { liv_restore(self.p(), id.as_ptr(), now) })
             }
+            ("restore", ids) if !ids.is_empty() => {
+                let ids: Vec<String> = ids
+                    .iter()
+                    .map(|raw| Ok(self.id(raw)?.into_string().unwrap_or_default()))
+                    .collect::<Result<_, String>>()?;
+                let ids = c(&serde_json::to_string(&ids).map_err(|e| e.to_string())?);
+                show(call(|out| unsafe { liv_restore_many(self.p(), ids.as_ptr(), now, out) })?)
+            }
             ("content-set", [id, text @ ..]) => self.content_set(id, &text.join(" ")),
             ("rename-value", [prop, old, new]) => {
                 let (prop, old, new) = (self.prop(prop)?.id, c(old), c(new));
@@ -176,19 +186,16 @@ impl Liv {
 
             // ---- reading -----------------------------------------------
             ("list", flags) => self.list(flags.contains(&"--all")),
-            ("today", []) => {
-                let day = today();
-                show(call(|out| unsafe {
-                    liv_view_today(self.p(), day, day, now as i64, std::ptr::null(), out)
-                })?)
-            }
+            ("today", []) => show(call(|out| unsafe {
+                liv_view_today(self.p(), now as i64, local_offset_min(), std::ptr::null(), out)
+            })?),
             ("tasks", []) => show(call(|out| unsafe {
-                liv_view_tasks(self.p(), 0, std::ptr::null(), today(), std::ptr::null(), out)
+                liv_view_tasks(self.p(), std::ptr::null(), today(), std::ptr::null(), out)
             })?),
             ("trash", []) => show(call(|out| unsafe { liv_view_trash(self.p(), out) })?),
             ("day", [date]) => {
                 let day = day_of(date)?;
-                show(call(|out| unsafe { liv_view_day(self.p(), day, std::ptr::null(), out) })?)
+                show(call(|out| unsafe { liv_view_day(self.p(), day, day, std::ptr::null(), out) })?)
             }
             ("cells" | "links" | "content" | "versions", [id]) => {
                 let id = self.id(id)?;
@@ -210,13 +217,20 @@ impl Liv {
             ("workspaces", []) => show(call(|out| unsafe { liv_workspaces(self.p(), out) })?),
             ("search", words) => {
                 let q = c(&words.join(" "));
-                show(call(|out| unsafe { liv_search(self.p(), q.as_ptr(), 50, out) })?)
+                show(call(|out| unsafe {
+                    liv_view_search(self.p(), q.as_ptr(), 50, std::ptr::null(), out)
+                })?)
             }
+            ("library", []) => show(self.library()?),
             ("lens", words) => {
                 let q = c(&words.join(" "));
                 show(call(|out| unsafe { liv_lens(self.p(), q.as_ptr(), out) })?)
             }
             ("inbox", []) => show(call(|out| unsafe { liv_sweep(self.p(), out) })?),
+            ("inbox", [id]) => {
+                let id = self.id(id)?;
+                show(call(|out| unsafe { liv_sweep_one(self.p(), id.as_ptr(), out) })?)
+            }
             ("snapshot", []) => show(self.snapshot()?),
             ("history", []) => self.history(),
             ("probe", []) => show(call(|out| unsafe { liv_probe_box(self.p(), out) })?),
@@ -281,10 +295,7 @@ impl Liv {
     /// Everything the Notes list could show, as a table: id, kind, title,
     /// due, status, area. `--all` adds what is in the trash.
     fn list(&self, all: bool) -> Result<(), String> {
-        let rows = call(|out| unsafe {
-            liv_view_everything(self.p(), 0, today(), std::ptr::null(), out)
-        })?;
-        let mut rows: Vec<J> = rows.as_array().cloned().unwrap_or_default();
+        let mut rows: Vec<J> = self.library()?["all"].as_array().cloned().unwrap_or_default();
         if all {
             let bin = call(|out| unsafe { liv_view_trash(self.p(), out) })?;
             rows.extend(bin.as_array().cloned().unwrap_or_default());
@@ -310,16 +321,34 @@ impl Liv {
         Ok(())
     }
 
-    /// One refresh: the eight reads `BoxModel.loadEverything` makes after
-    /// every write, as one JSON object.
+    /// The library, as the app reads it after every write: every row, the
+    /// Notes and Unsorted lists, and the panel's counts.
+    fn library(&self) -> Result<J, String> {
+        call(|o| unsafe {
+            liv_view_library(self.p(), now_ms() as i64, local_offset_min(), std::ptr::null(), o)
+        })
+    }
+
+    /// One refresh: the reads `BoxModel.loadEverything` makes after every
+    /// write once each screen has been opened — the suggestions only while
+    /// Unsorted is open — as one JSON object. The calendar's window is this
+    /// month and the one either side.
     fn snapshot(&self) -> Result<J, String> {
         let p = self.p();
         Ok(json!({
-            "everything": call(|o| unsafe { liv_view_everything(p, 0, today(), std::ptr::null(), o) })?,
+            "library": self.library()?,
             "trash": call(|o| unsafe { liv_view_trash(p, o) })?,
             "suggestions": call(|o| unsafe { liv_sweep(p, o) })?,
             "workspaces": call(|o| unsafe { liv_workspaces(p, o) })?,
-            "note_tasks": call(|o| unsafe { liv_note_tasks(p, o) })?,
+            "tasks": call(|o| unsafe {
+                liv_view_tasks(p, std::ptr::null(), today(), std::ptr::null(), o)
+            })?,
+            "today": call(|o| unsafe {
+                liv_view_today(p, now_ms() as i64, local_offset_min(), std::ptr::null(), o)
+            })?,
+            "calendar": call(|o| unsafe {
+                liv_view_day(p, today() - 40, today() + 60, std::ptr::null(), o)
+            })?,
             "assist": call(|o| unsafe { liv_assist(p, o) })?,
             "properties": call(|o| unsafe { liv_properties(p, o) })?,
             "kinds": call(|o| unsafe { liv_kinds(p, o) })?,
@@ -394,7 +423,7 @@ impl Liv {
         }
         let mut ids: Vec<String> = Vec::new();
         for list in [
-            call(|out| unsafe { liv_view_everything(self.p(), 0, today(), std::ptr::null(), out) })?,
+            self.library()?["all"].clone(),
             call(|out| unsafe { liv_view_trash(self.p(), out) })?,
         ] {
             for r in list.as_array().into_iter().flatten() {
@@ -482,7 +511,14 @@ fn c(s: &str) -> CString {
 
 // ---- time ---------------------------------------------------------------
 
+/// The wall clock — or `LIV_NOW_MS`, so a box can be seeded as it would
+/// look after a week of use (the trash's Today / Yesterday / Earlier needs
+/// things thrown away on other days). Writes must still go forward in
+/// time: the engine's clock never runs backwards, so seed oldest first.
 fn now_ms() -> u64 {
+    if let Some(ms) = std::env::var("LIV_NOW_MS").ok().and_then(|v| v.parse().ok()) {
+        return ms;
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -490,6 +526,11 @@ fn now_ms() -> u64 {
 }
 
 /// Today, as the app counts it: the LOCAL date, in days since the epoch.
+/// This machine's distance from UTC, in minutes — what the phone passes.
+fn local_offset_min() -> i32 {
+    chrono::Local::now().offset().local_minus_utc() / 60
+}
+
 fn today() -> i32 {
     use chrono::Datelike;
     let d = chrono::Local::now().date_naive();

@@ -400,6 +400,29 @@ impl Engine {
         Ok(self.commit(ops, action::RESTORE, Author::User, now_ms)?)
     }
 
+    /// Put several back as ONE action, so one undo throws them all out
+    /// again. The trash screen's "Put back all" is this; twenty restores
+    /// would be twenty undos to take it back (standing rule 8).
+    ///
+    /// Anything not in the trash is passed over rather than rewritten.
+    /// Answers how many came back; none means nothing was written.
+    pub fn restore_many(&mut self, entities: &[EntityId], now_ms: u64) -> Result<usize, WriteError> {
+        let mut ops = Vec::new();
+        for &entity in entities {
+            if !self.is_trashed(entity)? {
+                continue;
+            }
+            let replaces: Vec<Dot> =
+                self.cell(entity, prop::TRASHED)?.into_iter().map(|(d, _)| d).collect();
+            ops.push(Op::SetCell { entity, prop: prop::TRASHED, value: Value::Bool(false), replaces });
+        }
+        let count = ops.len();
+        if count > 0 {
+            self.commit(ops, action::RESTORE, Author::User, now_ms)?;
+        }
+        Ok(count)
+    }
+
     // ---- reading ------------------------------------------------------
 
     /// The one live value of a register, or `None` when it is unset —

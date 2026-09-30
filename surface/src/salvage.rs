@@ -24,7 +24,7 @@ use liv_engine::{prop, rich, Engine, EntityId, LogError, Value};
 
 use crate::{row, visible, Lens, Row};
 
-/// What is in the trash, newest first.
+/// What is in the trash, the most recently thrown away first.
 ///
 /// **The one surface that wants the rows `visible` throws away.** It
 /// deliberately ignores the lens: the trash is the trash, and a workspace
@@ -41,13 +41,16 @@ pub fn trash(e: &Engine) -> Result<Vec<Row>, LogError> {
             rows.push(r);
         }
     }
-    // Newest first: the thing you just deleted is the thing you are most
-    // likely to want back.
-    rows.sort_by(|a, b| b.id.cmp(&a.id));
+    // Newest THROWN AWAY first: the thing you just deleted is the thing
+    // you are most likely to want back. `touched_ms` is the trashing — it
+    // is the last write a trashed thing gets — where the id is when it
+    // was MADE, which is what this sorted by until 2026-09-29.
+    rows.sort_by(|a, b| (b.touched_ms, b.id).cmp(&(a.touched_ms, a.id)));
     Ok(rows)
 }
 
 /// One open checkbox line written inside a note.
+#[derive(Debug, Clone, PartialEq)]
 pub struct NoteTask {
     /// The note that holds the line.
     pub note: EntityId,
