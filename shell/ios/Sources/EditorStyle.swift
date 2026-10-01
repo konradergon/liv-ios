@@ -184,17 +184,21 @@ enum MarkScan {
                 i = close + 1
                 continue
             }
-            // [[ref]] — digits, optional |name, ]] (the codec's grammar,
-            // including its UInt64 bound: an overflowing digit run is
-            // literal text to the codec, so it must not LOOK like a link)
+            // [[ref]] — an id, optional |name, ]] (the codec's grammar).
+            // The id's spelling is `LivIDText.isIdChar`, shared with the
+            // codec and the tap target, because this is the run the codec
+            // is then handed: if the two disagree about what an id looks
+            // like, every link renders as literal text — which is exactly
+            // what happened when the ids became hex and this still read
+            // decimal.
             if c == 0x5B, i + 1 < u.count, u[i + 1] == 0x5B {
                 var j = i + 2
                 var digitStr = ""
-                while j < u.count, u[j] >= 0x30, u[j] <= 0x39 {
+                while j < u.count, LivIDText.isIdChar(u[j]) {
                     digitStr.append(Character(UnicodeScalar(u[j])!))
                     j += 1
                 }
-                if !digitStr.isEmpty, UInt64(digitStr) != nil {
+                if LivIDText.tokenId(digitStr) != nil {
                     if j + 1 < u.count, u[j] == 0x5D, u[j + 1] == 0x5D {
                         out.append(
                             .refToken(NSRange(location: i, length: j + 2 - i), name: nil))
@@ -358,8 +362,42 @@ enum EditOps {
         let block = n.substring(with: whole)
         let lines = block.components(separatedBy: "\n")
 
+        // WHERE THE NUMBERING STARTS. `.ordered` used to write
+        // `idx + 1` — the line's index inside the block being rewritten
+        // — so the key always restarted at 1, even on the line directly
+        // under a `2.`. The Return key had it right all along
+        // (`continuation` above continues the count), which made this
+        // one grammar with two answers (standing rule 4). Fixed
+        // 2026-09-07.
+        //
+        // ONLY THE LINE IMMEDIATELY ABOVE seeds it. Walking back over
+        // the whole run and taking the last match found would seed from
+        // the run's TOPMOST line — its smallest number — and write "6."
+        // under "5.\n6.".
+        //
+        // The indent is compared as the ORIGINAL whitespace string, not
+        // as a UTF-16 length: a tab and two spaces are the same depth,
+        // and comparing lengths would fail to seed under a tab-indented
+        // line.
+        var base = 0
+        if whole.location > 0 {
+            let prev = n.substring(with: lineRange(text, at: whole.location - 1))
+            let prevShape = MarkScan.shape(prev)
+            if case .ordered(let above) = prevShape.block,
+                ns(prev).substring(to: prevShape.indent)
+                    == ns(lines.first ?? "").substring(
+                        to: MarkScan.shape(lines.first ?? "").indent)
+            {
+                base = above
+            }
+        }
+        // A RUNNING COUNT, not `base + idx`. `idx` counts every line in
+        // the block — headings, blanks, and lines being toggled OFF —
+        // so a mixed selection would skip numbers.
+        var count = base
+
         var replaced: [String] = []
-        for (idx, l) in lines.enumerated() {
+        for l in lines {
             let shape = MarkScan.shape(l)
             // The ORIGINAL whitespace, not a rebuild — a tab must stay a tab.
             let pad = ns(l).substring(to: shape.indent)
@@ -376,7 +414,12 @@ enum EditOps {
             case .bullet:
                 if case .bullet = shape.block { replaced.append(pad + stripped) } else { replaced.append(pad + "- " + stripped) }
             case .ordered:
-                if case .ordered = shape.block { replaced.append(pad + stripped) } else { replaced.append(pad + "\(idx + 1). " + stripped) }
+                if case .ordered = shape.block {
+                    replaced.append(pad + stripped)
+                } else {
+                    count += 1
+                    replaced.append(pad + "\(count). " + stripped)
+                }
             case .task:
                 if case .task = shape.block { replaced.append(pad + stripped) } else { replaced.append(pad + "- [ ] " + stripped) }
             case .quote:
@@ -486,15 +529,42 @@ enum EditOps {
         let n = ns(text)
         let m = ns(marker).length
         if selection.length > 0, n.substring(with: selection).contains("\n") {
-            let wrapped = n.substring(with: selection)
-                .components(separatedBy: "\n")
-                .map { $0.isEmpty ? $0 : marker + $0 + marker }
-                .joined(separator: "\n")
-            let out = n.replacingCharacters(in: selection, with: wrapped)
+            let parts = n.substring(with: selection).components(separatedBy: "\n")
+            // UNWRAP IF EVERY LINE IS ALREADY WRAPPED. This branch only
+            // ever wrapped until 2026-09-07, so a second tap of Bold on
+            // a two-line selection gave `****a****` — the verb could add
+            // markers and never take them away. The single-line path
+            // below cannot be reused for this: it tests the document
+            // ranges either side of the selection, not a line's own
+            // prefix and suffix.
+            //
+            // Empty lines are skipped, exactly as the wrap below skips
+            // them — otherwise a selection with a blank line in it could
+            // never unwrap.
+            let paired = parts.filter { !$0.isEmpty }
+            let allWrapped =
+                !paired.isEmpty
+                && paired.allSatisfy { line in
+                    let l = ns(line)
+                    // THE LENGTH GUARD. Without it a line that IS the
+                    // marker ("*" with marker "*") satisfies both
+                    // hasPrefix and hasSuffix on the same character, and
+                    // the strip removes what is not there.
+                    return l.length >= 2 * m && line.hasPrefix(marker) && line.hasSuffix(marker)
+                }
+            let produced =
+                allWrapped
+                ? parts.map { line -> String in
+                    guard !line.isEmpty else { return line }
+                    let l = ns(line)
+                    return l.substring(with: NSRange(location: m, length: l.length - 2 * m))
+                }.joined(separator: "\n")
+                : parts.map { $0.isEmpty ? $0 : marker + $0 + marker }.joined(separator: "\n")
+            let out = n.replacingCharacters(in: selection, with: produced)
             return EditResult(
                 text: out,
                 selection: NSRange(
-                    location: selection.location, length: (wrapped as NSString).length))
+                    location: selection.location, length: (produced as NSString).length))
         }
         if selection.length == 0 {
             let out = n.replacingCharacters(in: selection, with: marker + marker)
@@ -593,7 +663,7 @@ extension EditOps {
     /// bracket into the note per save. Fixed in the codec 2026-08-11 and
     /// missed here, because there were two builders (standing rule 4).
     static func completeLink(
-        _ text: String, token: NSRange, id: UInt64, name: String
+        _ text: String, token: NSRange, id: LivEntityID, name: String
     ) -> EditResult {
         let inserted = SpanText.token(id, name: name)
         let out = ns(text).replacingCharacters(in: token, with: inserted)
@@ -636,8 +706,18 @@ func livOutline(_ text: String) -> [OutlineItem] {
 /// routinely carries markdown markers. Everywhere a title STRING is shown
 /// (rows, cards, the ledger, notifications) the markers come off; the
 /// buffer itself is never touched. Pure, line-local.
+/// THE FIRST LINE, without reading the rest.
+///
+/// `components(separatedBy:)` allocated one String per line of the whole
+/// note to keep the first one — on every keystroke of any unnamed note,
+/// and once per row in Notes and in Share besides.
+func livFirstLine(_ raw: String) -> String {
+    guard let stop = raw.firstIndex(of: "\n") else { return raw }
+    return String(raw[raw.startIndex..<stop])
+}
+
 func livDisplayTitle(_ raw: String) -> String {
-    let line = raw.components(separatedBy: "\n").first ?? raw
+    let line = livFirstLine(raw)
     let shape = MarkScan.shape(line)
     if case .rule = shape.block { return "" }
     let n = line as NSString
@@ -703,13 +783,13 @@ func livEditorSelfCheck() -> [String] {
             box: NSRange(location: 4, length: 3)))
 
     // inline runs
-    let runs = MarkScan.inline("a **b** and `c` [[42|Home]]", from: 0)
+    let runs = MarkScan.inline("a **b** and `c` [[0000000000000000000000000000002a|Home]]", from: 0)
     check("bold found", runs.contains(.bold(NSRange(location: 4, length: 1))), "\(runs)")
     check("code found", runs.contains(.code(NSRange(location: 13, length: 1))), "\(runs)")
     check(
         "ref found",
         runs.contains(
-            .refToken(NSRange(location: 16, length: 11), name: NSRange(location: 21, length: 4))),
+            .refToken(NSRange(location: 16, length: 41), name: NSRange(location: 51, length: 4))),
         "\(runs)")
     check("unclosed bold is text", MarkScan.inline("**open", from: 0).isEmpty)
     check(
@@ -750,6 +830,22 @@ func livEditorSelfCheck() -> [String] {
     check("task toggles off", b5.text == "a\nb", b5.text)
     let b6 = EditOps.setBlock("- x", selection: NSRange(location: 0, length: 0), verb: .quote)
     check("bullet swaps to quote", b6.text == "> x")
+
+    // WHERE THE NUMBERING STARTS (2026-09-07). The key wrote the line's
+    // index inside the block being rewritten, so it always restarted at
+    // 1 — the Return key above ("ordered continues counting") has
+    // always been right, and the two disagreed.
+    let o1 = EditOps.setBlock(
+        "2. a\nb", selection: NSRange(location: 5, length: 0), verb: .ordered)
+    check("the key continues the list above it", o1.text == "2. a\n3. b", o1.text)
+    // The negative, which pins the seed at 0: nothing above, so 1.
+    let o2 = EditOps.setBlock("x", selection: NSRange(location: 0, length: 0), verb: .ordered)
+    check("and starts at 1 when nothing precedes", o2.text == "1. x", o2.text)
+    // A blank line ends the run, so the seed cannot leak across
+    // paragraphs.
+    let o3 = EditOps.setBlock(
+        "2. a\n\nb", selection: NSRange(location: 6, length: 0), verb: .ordered)
+    check("a blank line ends the run", o3.text == "2. a\n\n1. b", o3.text)
 
     // A CARET stays a caret. The block verbs used to hand back the whole
     // rewritten line SELECTED, so the marker they had just added was
@@ -873,6 +969,17 @@ func livEditorSelfCheck() -> [String] {
     let multi = EditOps.toggleInline(
         "a\nb", selection: NSRange(location: 0, length: 3), marker: "**")
     check("multi-line wraps per line", multi.text == "**a**\n**b**", multi.text)
+    // AND UNWRAPS AGAIN (2026-09-07). This branch only ever added
+    // markers, so a second tap of Bold gave `****a****` — the verb
+    // could not undo itself across a line break.
+    let multiOff = EditOps.toggleInline(
+        multi.text, selection: multi.selection, marker: "**")
+    check("multi-line unwraps per line", multiOff.text == "a\nb", multiOff.text)
+    // A MIXED selection still WRAPS — one line already bold does not
+    // make the whole selection bold.
+    let mixed = EditOps.toggleInline(
+        "**a**\nb", selection: NSRange(location: 0, length: 7), marker: "**")
+    check("a mixed selection wraps", mixed.text == "****a****\n**b**", mixed.text)
     check(
         "overflow digits are not a link",
         !MarkScan.inline("[[99999999999999999999999]]", from: 0).contains { run in
@@ -882,7 +989,7 @@ func livEditorSelfCheck() -> [String] {
     check("title drops task marker", livDisplayTitle("- [ ] Call the bank") == "Call the bank")
     check(
         "title drops inline markers",
-        livDisplayTitle("**Pack** the `van` for [[4155|Kitchen rebuild]]")
+        livDisplayTitle("**Pack** the `van` for [[0000000000000000000000000000103b|Kitchen rebuild]]")
             == "Pack the van for Kitchen rebuild")
     check("plain title unchanged", livDisplayTitle("Call the dentist") == "Call the dentist")
     check("rule line titles empty", livDisplayTitle("---") == "")
@@ -893,7 +1000,7 @@ func livEditorSelfCheck() -> [String] {
         MarkScan.openLink("see [[kit", caret: 9)
             == OpenLink(range: NSRange(location: 4, length: 5), query: "kit"))
     check("open link with empty query", MarkScan.openLink("a [[", caret: 4)?.query == "")
-    check("closed link is not open", MarkScan.openLink("see [[42]] now", caret: 14) == nil)
+    check("closed link is not open", MarkScan.openLink("see [[0000000000000000000000000000002a]] now", caret: 44) == nil)
     check("single bracket is not a link", MarkScan.openLink("a [x", caret: 4) == nil)
     check(
         "link does not cross lines",
@@ -904,20 +1011,20 @@ func livEditorSelfCheck() -> [String] {
     // codec 2026-08-11 lived on here until the two were joined).
     check(
         "link to a bracketed name is spaced",
-        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]")
-            .text == "see [[7|Q3 [final] ]]",
-        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: 7, name: "Q3 [final]").text)
+        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: livSampleId(7), name: "Q3 [final]")
+            .text == "see [[00000000000000000000000000000007|Q3 [final] ]]",
+        EditOps.completeLink("see [[q", token: NSRange(location: 4, length: 3), id: livSampleId(7), name: "Q3 [final]").text)
     check(
         "link to a nameless thing carries no pipe",
-        EditOps.completeLink("[[", token: NSRange(location: 0, length: 2), id: 9, name: "  ")
-            .text == "[[9]]")
+        EditOps.completeLink("[[", token: NSRange(location: 0, length: 2), id: livSampleId(9), name: "  ")
+            .text == "[[00000000000000000000000000000009]]")
     let done = EditOps.completeLink(
-        "see [[kit", token: NSRange(location: 4, length: 5), id: 4155, name: "Kitchen rebuild")
-    check("link completes", done.text == "see [[4155|Kitchen rebuild]]", done.text)
+        "see [[kit", token: NSRange(location: 4, length: 5), id: livSampleId(4155), name: "Kitchen rebuild")
+    check("link completes", done.text == "see [[0000000000000000000000000000103b|Kitchen rebuild]]", done.text)
     check("caret lands after the token", done.selection.location == (done.text as NSString).length)
     let noName = EditOps.completeLink(
-        "x [[q", token: NSRange(location: 2, length: 3), id: 7, name: "  ")
-    check("nameless token when the name is blank", noName.text == "x [[7]]", noName.text)
+        "x [[q", token: NSRange(location: 2, length: 3), id: livSampleId(7), name: "  ")
+    check("nameless token when the name is blank", noName.text == "x [[00000000000000000000000000000007]]", noName.text)
     let outline = livOutline("# One\nbody\n### Three\n- not a heading\n## Two")
     check("outline finds three headings", outline.count == 3, "\(outline.count)")
     check("outline keeps levels", outline.map(\.level) == [1, 3, 2], "\(outline.map(\.level))")
@@ -926,12 +1033,12 @@ func livEditorSelfCheck() -> [String] {
     // the codec demotes ids the box does not hold (ruling 5)
     check(
         "unknown id saves as text",
-        SpanText.textToSpans("see [[999]]", isKnown: { _ in false })
-            == [.text("see [[999]]", marks: 0)])
+        SpanText.textToSpans("see [[000000000000000000000000000003e7]]", isKnown: { _ in false })
+            == [.text("see [[000000000000000000000000000003e7]]", marks: 0)])
     check(
         "known id still saves as a ref",
-        SpanText.textToSpans("see [[999]]", isKnown: { $0 == 999 })
-            == [.text("see ", marks: 0), .ref(999)])
+        SpanText.textToSpans("see [[000000000000000000000000000003e7]]", isKnown: { $0 == livSampleId(999) })
+            == [.text("see ", marks: 0), .ref(livSampleId(999))])
 
     // WHICH LINE THE CARET IS ON. The reveal decides whether a line
     // shows its markers or its rendering, and it was blind to the one

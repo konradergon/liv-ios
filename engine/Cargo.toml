@@ -18,3 +18,11 @@ name = "liv_engine"
 # simulator, and FTS5 answers correctly when run inside one.
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
+# TWO, now — and the second is the one exception the rule above already
+# anticipated. A file's identity is a SHA-256 of its bytes: a changed hash
+# IS the integration (`files.rs`), so it has to be right, and this tree
+# already recorded that call once. `services/Cargo.toml`, beside its own
+# copy: "A changed hash is the whole integration, so the digest must be
+# vetted, not hand-rolled." The rule above is about the FORMAT not being a
+# macro's output; a digest is not a format.
+sha2 = "0.10"

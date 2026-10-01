@@ -1,35 +1,33 @@
 // liv iOS — Today (design/ios.md §6; rebuilt phase 5, owner-approved
-// mockup 2026-08-05). Today answers "WHAT NOW?": what is late, what is
-// happening, what is left. One column — the 7-day strip, the LATE strip
-// (always visible when it has rows), the day as a single now-aware
-// timeline, one "N done" line, the quick-add ghost, and one honest
-// captured line that jumps to the Inbox. Reads ride the snapshot window
-// [today-1, today+7]; every act goes through the one BoxModel.
-// A row tap opens the entity as a Desk tab — no navigation stack here.
+// mockup 2026-08-05; the clearer boards 2026-09-24). Today answers "WHAT
+// NOW?": what is late, what is happening, what is left. One column — the
+// name over the date, the 7-day strip, the Late card (folds), the day as
+// one now-aware Schedule card, a "N done today" fold, What next, and one
+// honest captured line that goes to Unsorted. The screen is
+// `liv_view_today`'s answer (`BoxModel.today`), and every rule behind it
+// lives in `surface/src/today.rs`; the strip picks a day out of it. A row
+// tap opens the entity as a Desk tab — no navigation stack here.
 
 import SwiftUI
 
-// MARK: - agenda assembly
-
-/// One agenda line: a dated entity, or an occurrence projecting its series
-/// row. Occurrences are projections — no swipes, no status ring.
-private struct TodayAgendaItem: Identifiable {
-    let key: String
+/// One row of the schedule card, and whether its time has passed.
+private struct TodaySlot: Identifiable {
     let row: EntityRow
-    let stamp: Int64
-    let occurrence: Bool
-    var id: String { key }
-    /// The stored flag decides. Guessing from a 0000 stamp made a real
-    /// midnight event read as all-day (review, 2026-08-06); the stamp is
-    /// only consulted when the core did not say.
-    var allDay: Bool { row.dueDateOnly ?? (stamp % 10_000 == 0) }
+    let passed: Bool
+
+    var id: LivEntityID { row.id }
 }
+
+/// WHERE THE NOW-LINE TOUCHES A ROW: it lies on the boundary between the
+/// last passed row and the next, taking no height of its own (the clearer
+/// board), so each of the two draws its own half.
+private enum TodayNowEdge { case none, bottom, top }
 
 /// The row whose exact date and time is being picked (sheet item) — the
 /// arbitrary-time door is everywhere a date can be set (owner, phase 5).
 private struct TodayDuePick: Identifiable {
-    let entity: UInt64
-    var id: UInt64 { entity }
+    let entity: LivEntityID
+    var id: LivEntityID { entity }
 }
 
 // MARK: - the screen
@@ -40,9 +38,11 @@ struct TodayView: View {
     @EnvironmentObject var workspaces: WorkspaceModel
     @Environment(\.scenePhase) private var scenePhase
 
-    /// The task status vocabulary, board order; `completes` drives the
-    /// ring, the LATE predicate and the done-collapse.
+    /// The task status vocabulary, board order: which option a ring tap
+    /// writes.
     @State private var taskOptions: [StatusOption] = []
+    /// The row a swipe has lifted out of its card (`livSwipeLift`).
+    @State private var lifted: AnyHashable?
     @State private var duePick: TodayDuePick?
 
     /// WHERE YOU ARE in this view: the day, and the two piles you have
@@ -78,98 +78,92 @@ struct TodayView: View {
 
     var body: some View {
         let today = Civil.todayDay()
-        let now = Civil.nowStamp()
-        let doneNames = Set(
-            taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let all = agenda(for: selectedDay)
-        let allDay = all.filter(\.allDay)
-        let timedOpen = all.filter { !$0.allDay && !isDone($0.row, doneNames) }
-        let done = all.filter { !$0.allDay && isDone($0.row, doneNames) }
-        let late = lateRows(today: today, doneNames: doneNames)
-        let captured = capturedTodayCount(today: today)
-        // The timeline knows the time (today only): what passed dims,
-        // the next thing up is lit.
+        let answer = box.today
+        let day = answer?.day(selectedDay)
+        let allDay = day?.allDay ?? []
+        // The timeline knows the time (today only): what passed dims, and
+        // the now-line stands between it and what is still to come.
+        let passed = day?.passed ?? []
+        let ahead = day?.ahead ?? []
+        let done = day?.done ?? []
+        let late = answer?.late ?? []
         let onToday = selectedDay == today
-        let passed = onToday ? timedOpen.filter { $0.stamp < now } : []
-        let ahead = onToday ? timedOpen.filter { $0.stamp >= now } : timedOpen
-        let nextKey = onToday ? ahead.first?.key : nil
+        // THE SCHEDULE IS ONE CARD (the clearer board): all-day rows first,
+        // then the day by clock. The all-day pill band went into it.
+        let schedule: [TodaySlot] =
+            allDay.map { TodaySlot(row: $0, passed: false) }
+            + passed.map { TodaySlot(row: $0, passed: true) }
+            + ahead.map { TodaySlot(row: $0, passed: false) }
+        // The line only divides: something must stand above it and
+        // something must still be to come. It falls above the first row
+        // still ahead.
+        let nowAt: Int? =
+            onToday && !ahead.isEmpty && !(allDay.isEmpty && passed.isEmpty)
+            ? allDay.count + passed.count : nil
 
         List {
             Group {
-                header(today: today, left: timedOpen.count + late.count)
-                TodayDateStrip(selected: dayBinding, today: today)
-                    .padding(.vertical, 6)
+                header(today: today, day: day)
+                    .listRowInsets(LivRow.fullWidth)
+                TodayDateStrip(
+                    selected: dayBinding, today: today,
+                    busy: Set((answer?.days ?? []).filter { !$0.isEmpty }.compactMap(\.day)))
+                    .listRowInsets(LivRow.fullWidth)
 
                 if !late.isEmpty {
                     let open = lateOpen ?? (late.count <= Self.lateOpenByDefault)
                     lateHeader(late.count, open: open)
                     if open {
-                        ForEach(late) { row in
-                            lateLine(row, today: today, doneNames: doneNames)
+                        ForEach(livCardSlots(late)) { s in
+                            lateLine(s.item, today: today, position: s.position)
                         }
                     }
                 }
 
-                if !allDay.isEmpty {
-                    SectionLabel("All-day")
-                    allDayBand(allDay, doneNames: doneNames)
-                }
-
-                // No day heading here (owner, 2026-08-18): the line at
-                // the top of the screen and the lit chip in the strip
-                // both already say which day this is, and the count was
-                // furniture — the list under it is the count.
-                if timedOpen.isEmpty && done.isEmpty && allDay.isEmpty {
+                if schedule.isEmpty && done.isEmpty {
                     EmptyHint("Nothing scheduled")
-                }
-                ForEach(passed) { item in
-                    timedLine(item, dimmed: true, next: false, doneNames: doneNames)
-                }
-                if onToday, !timedOpen.isEmpty || !done.isEmpty {
-                    nowLine(now)
-                }
-                ForEach(ahead) { item in
-                    timedLine(
-                        item, dimmed: false, next: item.key == nextKey,
-                        doneNames: doneNames)
-                }
-                // WHAT NEXT (BP-8's widget of that name, on the one
-                // surface a phone has room for it): open tasks with NO
-                // date. The timeline above answers "when"; this answers
-                // "what", which is the object-based ordering the owner
-                // asked for — and without it an undated commitment is
-                // invisible until you go looking for it in Tasks.
-                if onToday, !nextUp.isEmpty {
-                    SectionLabel("What next")
-                    ForEach(nextUp) { row in
-                        nextLine(row)
+                } else if !schedule.isEmpty {
+                    // A HEADING FOR THE DAY (the clearer board, 2026-09-24),
+                    // reversing 2026-08-18's "no day heading here": with
+                    // Late above it in its own card, the day needs a name
+                    // to be told from the pile.
+                    SectionLabel("Schedule", first: late.isEmpty)
+                    ForEach(livCardSlots(schedule)) { s in
+                        scheduleSlot(
+                            s.item, position: s.position,
+                            now: s.index + 1 == nowAt ? .bottom : (s.index == nowAt ? .top : .none))
                     }
                 }
                 if !done.isEmpty {
-                    doneCollapse(done.count)
-                    if doneExpanded {
-                        ForEach(done) { item in
-                            timedLine(
-                                item, dimmed: true, next: false,
-                                doneNames: doneNames)
-                        }
+                    doneFold(done)
+                }
+                // WHAT NEXT (BP-8's widget of that name, on the one
+                // surface a phone has room for it): open tasks with NO
+                // date. The schedule answers "when"; this answers "what" —
+                // without it an undated commitment is invisible until you
+                // go looking for it in Tasks.
+                if onToday, let next = answer?.whatNext, !next.isEmpty {
+                    SectionLabel("What next")
+                    ForEach(livCardSlots(next)) { s in
+                        nextLine(s.item, position: s.position)
                     }
                 }
-                if captured > 0 {
+                if let captured = answer?.captured, captured > 0 {
                     capturedFooter(captured)
                 }
             }
             .listRowInsets(
-                EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
+                EdgeInsets()
             )
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
+            LivCardListEnd()
         }
-        .listStyle(.plain)
+        .livCardList()
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 10)
         // Room under the last row for the add button to sit over.
-        .contentMargins(.bottom, LivBar.room + 24, for: .scrollContent)
+        .contentMargins(.bottom, LivBar.listRoom, for: .scrollContent)
         .livHidesChrome()
         .background(LivTheme.canvas)
         .sheet(item: $duePick) { pick in
@@ -185,6 +179,7 @@ struct TodayView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
+        .onChange(of: workspaces.lensIds) { _, _ in loadWindow() }
         // The bar's create key inherits the day you are looking at.
         .onAppear { desk.contextDay = selectedDay }
         .onChange(of: selectedDay) { _, day in desk.contextDay = day }
@@ -193,453 +188,332 @@ struct TodayView: View {
 
     // MARK: header + section furniture
 
-    /// The DATE, not the view's name (owner, 2026-08-18: the name is on
-    /// the bar; what this line is for is which day you are looking at).
-    /// The "N left" count went with it — the list under it is the count.
-    private func header(today: Int64, left: Int) -> some View {
-        HStack(spacing: 8) {
-            Text(Civil.dayLabel(today))
-                .font(.system(size: LivType.title, weight: .semibold))
-                .foregroundStyle(LivTheme.text)
-            if box.busyRetrying { ProgressView().scaleEffect(0.7) }
-            Spacer(minLength: 0)
+    /// TODAY BY NAME — "Thursday." — over its date and the day counted by
+    /// area (the clearer board). The title is always TODAY; the strip
+    /// below chooses which day the list shows.
+    private func header(today: Int64, day: LivTodayDay?) -> some View {
+        LivTitleBlock(Civil.weekdayName(today)) {
+            areaLine(today: today, day)
+        } accessory: {
+            if box.busyRetrying { LivBusy() }
         }
-        .padding(.top, 10)
-        .padding(.bottom, 2)
+    }
+
+    /// THE LINE ONLY LIV CAN PRINT: the date, then the day counted by AREA
+    /// OF LIFE — "24 September · Home 1 · Work 3 · 2 unfiled" (2026-09-06,
+    /// direction A; the date joined it on the clearer board). No other app
+    /// ships with areas, so no other app can say this under its first
+    /// screen's name; the unfiled count is the honest tail of it.
+    ///
+    /// ONE RUN, as the board draws it, and it CHANGES IN ONE FRAME. The
+    /// numbers used to roll (`numericText`), so opening Today drew the date
+    /// and then blurred " · Home 5" in beside it a beat later (owner,
+    /// 2026-09-29: "a weird thing very briefly appearing/disappearing on the
+    /// low right" of the title).
+    private func areaLine(today: Int64, _ day: LivTodayDay?) -> some View {
+        var parts = [Civil.dateLong(today)]
+        parts += (day?.areas ?? []).map { "\($0.name ?? "") \($0.count ?? 0)" }
+        if let unfiled = day?.unfiled, unfiled > 0 { parts.append("\(unfiled) unfiled") }
+        return Text(parts.joined(separator: " · "))
     }
 
     /// LATE means only what can still be DONE: incomplete tasks whose day
     /// has passed (owner ruling, phase 5). A past event is not late — it
     /// happened.
     ///
-    /// The header FOLDS the pile. It stays red and keeps its count, so
-    /// nothing is hidden — the number is the honest headline, and the
-    /// rows behind it are one tap away. This is the same collapse the
-    /// done-today row already uses on this screen (standing rule 4).
+    /// The header FOLDS the pile: the red count at the right says how many
+    /// whether it is open or not, and the chevron says which it is. The
+    /// whole header is the door.
     private func lateHeader(_ count: Int, open: Bool) -> some View {
         Button {
             park(lateOpen: .some(!open))
         } label: {
-            HStack(spacing: 7) {
-                Circle().fill(LivTheme.red).frame(width: 7, height: 7)
-                Text("LATE")
-                    .font(.system(size: LivType.label, weight: .bold))
-                    .kerning(0.6)
-                    .foregroundStyle(LivTheme.red)
-                Text("\(count) task\(count == 1 ? "" : "s")")
-                    .font(.system(size: LivType.caption).monospacedDigit())
-                    .foregroundStyle(LivTheme.muted)
-                Spacer()
-                Image(systemName: open ? "chevron.up" : "chevron.down")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                    .foregroundStyle(LivTheme.text3)
-            }
-            .frame(minHeight: 38)
-            .contentShape(Rectangle())
+            SectionLabel("Late", late: count, fold: open, first: true)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.top, 14).padding(.bottom, 2)
         .accessibilityLabel("\(count) late task\(count == 1 ? "" : "s")")
         .accessibilityHint(open ? "Hides the list" : "Shows the list")
     }
 
-    private func nowLine(_ now: Int64) -> some View {
-        HStack(spacing: 6) {
-            Text(Civil.timeString(now))
-                .font(.system(size: LivType.micro, weight: .bold).monospacedDigit())
-                .foregroundStyle(LivTheme.onAccent)
-                .padding(.horizontal, 4).padding(.vertical, 1)
-                .background(RoundedRectangle(cornerRadius: 4).fill(LivTheme.red))
-            Rectangle().fill(LivTheme.red).frame(height: 1.5)
-        }
-        .frame(height: 18)
-        .accessibilityHidden(true)
-    }
-
-    private func doneCollapse(_ count: Int) -> some View {
+    /// WHAT IS DONE TODAY, folded — a card row like Tasks' Done: the done
+    /// box, the words, the count and a chevron. Opened, the done rows
+    /// follow in the same card.
+    @ViewBuilder private func doneFold(_ done: [EntityRow]) -> some View {
+        let open = doneExpanded
+        Color.clear.frame(height: LivCards.gap)
         Button {
-            park(doneExpanded: !doneExpanded)
+            livToggleFold { park(doneExpanded: !open) }
         } label: {
-            HStack(spacing: 7) {
-                Image(systemName: doneExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: LivType.micro, weight: .semibold))
-                Text("\(count) done today")
-                    .font(.system(size: LivType.body).monospacedDigit())
-                Spacer()
-            }
-            .foregroundStyle(LivTheme.muted)
-            .frame(minHeight: 38)
-            .contentShape(Rectangle())
+            LivCardRow(
+                "\(done.count) done today", divided: open,
+                lead: {
+                    LivCheckbox(done: true)
+                        .frame(width: LivCards.mark)
+                        .accessibilityHidden(true)
+                },
+                trailing: { LivChevron(open ? .down : .right) })
         }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+        .accessibilityValue(open ? "Open" : "Closed")
+        .livFoldRow(open: open)
+        if open {
+            // `above: 1` — the header is this card's first row.
+            ForEach(livCardSlots(done, above: 1)) { s in
+                scheduleSlot(
+                    TodaySlot(row: s.item, passed: true), position: s.position, now: .none)
+            }
         }
     }
 
     /// One honest line, not a tile that disagrees with its own section:
     /// today's captures, and the door to the place that routes them.
+    /// THE COUNT IS PROSE, THE VERB IS A PILL — the pill is the only
+    /// button, never the whole line.
     private func capturedFooter(_ count: Int) -> some View {
-        Button {
-            desk.go(.inbox)
-        } label: {
-            HStack(spacing: 6) {
-                Text("\(count) captured today")
-                    .font(.system(size: LivType.body).monospacedDigit())
-                    .foregroundStyle(LivTheme.text3)
-                Text("· Route them")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(LivTheme.accent)
-                Spacer()
-            }
-            .frame(minHeight: 40)
-            .contentShape(Rectangle())
+        HStack(spacing: LivAir.snug) {
+            Text("\(count) captured today")
+                .font(.system(size: LivType.caption).monospacedDigit())
+                .foregroundStyle(LivTheme.text3)
+            ConfirmPill("Route them", compact: true) { desk.go(.inbox) }
+            Spacer()
         }
-        .buttonStyle(.plain)
-        .padding(.top, 8)
+        .frame(minHeight: LivRow.band)
+        .padding(.top, LivCards.gap)
+        .padding(.horizontal, LivTitle.side - LivRow.cardInset)
     }
 
     // MARK: rows — a tap opens the entity as a Desk tab
 
-    /// A late task: ring, title, the day it was due (red), and one-tap
-    /// Today. Swipe: Tomorrow / Pick (the arbitrary date-and-time door).
+    /// A late task: the box, the name over "Due Tuesday · Work", and the
+    /// accent "Today" that moves it to today. Swipe: all three reschedule
+    /// verbs, as before.
+    ///
+    /// "TODAY" IS BACK ON THE ROW (the clearer board, 2026-09-24), which
+    /// reverses 2026-08-31's move of it onto the swipe alone. It is a real
+    /// button, and its accessibility label is "Move to today": a control
+    /// labelled bare "Today" beside the library's own Today row is what
+    /// broke `drive.sh tour` on 2026-08-31.
     private func lateLine(
-        _ row: EntityRow, today: Int64, doneNames: Set<String>
+        _ row: EntityRow, today: Int64, position: LivCardPosition
     ) -> some View {
-        HStack(spacing: 8) {
-            StatusRing(done: false) { toggleStatus(row.id) }
-            Text(displayTitle(row))
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text)
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            Text(Civil.dayLabel(Civil.day(of: row.due ?? 0)))
-                .font(.system(size: LivType.label).monospacedDigit())
-                .foregroundStyle(LivTheme.red)
-            // A VERB, in plain accent text (surface pass, owner
-            // 2026-08-18). It wore a filled capsule with a border, and
-            // eleven of them down a column of late tasks was the
-            // loudest thing on the screen — louder than the lateness it
-            // was offering to fix.
-            Button {
-                reschedule(row, toDay: today)
-            } label: {
-                Text("Today")
-                    .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.accent)
-                    .padding(.leading, 6)
-                    .frame(height: 36)
-                    .contentShape(Rectangle())
+        let due = "Due " + Civil.dayWord(Civil.day(of: row.due ?? 0), today: today)
+        let detail = ([due] + contextWords(row)).joined(separator: " · ")
+        return LivCardRow(
+            displayTitle(row), detail: detail, divided: position.divided,
+            lead: {
+                StatusRing(done: false, name: displayTitle(row)) { toggleStatus(row) }
+            },
+            trailing: {
+                Button {
+                    reschedule(row, toDay: today)
+                } label: {
+                    Text("Today")
+                        .font(.system(size: LivType.label, weight: .medium))
+                        .foregroundStyle(LivTheme.accent)
+                        .frame(minHeight: LivRow.touch)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Move to today")
             }
-            .buttonStyle(.borderless)
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
+        )
         .onTapGesture { desk.open(row.id) }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
+        .livSwipeLift(row.id, $lifted)
+        .livCardRow(position: position, lifted: livIsLifted(row.id, lifted))
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             rescheduleSwipe(row)
         }
     }
 
-    /// A timed line: time, the Calendar's colour for its kind (purple
-    /// task, blue event, grey note), title, context chips — never the
-    /// row's own type.
-    private func timedLine(
-        _ item: TodayAgendaItem, dimmed: Bool, next: Bool,
-        doneNames: Set<String>
+    /// ONE ROW OF THE SCHEDULE CARD, Apple Calendar's shape: the time
+    /// column (start, and the end under it when there is one), then a bar
+    /// in the kind's colour for anything that cannot be ticked or the box
+    /// for a task, then the words. Passed rows read in text2. The now-line
+    /// lies on the boundary between the last passed row and the next.
+    @ViewBuilder private func scheduleSlot(
+        _ slot: TodaySlot, position: LivCardPosition, now: TodayNowEdge
     ) -> some View {
-        let row = item.row
-        let task = livCanTick(row)
-        let done = isDone(row, doneNames)
-        let chips = contextChips(row)
-        return HStack(spacing: 8) {
-            Text(Civil.timeString(item.stamp))
-                .font(.system(size: LivType.label).monospacedDigit())
-                .foregroundStyle(dimmed ? LivTheme.muted : LivTheme.text3)
-                // Wide enough for "09:00" at the platform's body size —
-                // it was cut for 15pt type and wrapped to two lines the
-                // moment the scale grew (2026-08-18).
-                .frame(width: 52, alignment: .leading)
-            // ONE mark, in a fixed column so every title starts at the
-            // same place. The coloured vertical bar is gone (owner,
-            // 2026-08-08) — it said "task or event" a third time. This
-            // slot never doubles up either: a tickable row shows its
-            // ring and nothing else, and the kind glyph appears only
-            // where the row had no mark at all (an event, a note, a
-            // file), drawn bare so it sits at the ring's weight.
-            Group {
-                if item.occurrence {
-                    Image(systemName: "repeat")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                } else if task {
-                    StatusRing(done: done, compact: true) { toggleStatus(row.id) }
-                } else {
-                    LivIcon(
-                        glyph: LivKind.glyph(of: row),
-                        color: LivKind.color(of: row), size: 17)
-                }
-            }
-            .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayTitle(row))
-                    .font(.system(size: LivType.body))
-                    .foregroundStyle(
-                        dimmed || done ? LivTheme.muted : LivTheme.text)
-                    .lineLimit(1)
-                if !chips.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(chips, id: \.self) { ValueChip($0) }
+        let passed = slot.passed
+        let row = slot.row
+        let tick = livCanTick(row)
+        let done = row.done == true
+        LivCardRow(
+            displayTitle(row),
+            detail: scheduleDetail(row),
+            muted: passed || done,
+            // The row directly above the now-line has no hairline: the
+            // line is the division there.
+            divided: position.divided && now != .bottom,
+            rule: LivSchedule.rule,
+            lead: {
+                HStack(spacing: LivCards.markGap) {
+                    timeColumn(row, passed: passed)
+                    if tick {
+                        StatusRing(
+                            done: done, dim: passed, name: displayTitle(row)
+                        ) { toggleStatus(row) }
+                    } else {
+                        // A BAR IN THE KIND'S COLOUR — the one place kind
+                        // colour survives on this screen (icons are ink).
+                        RoundedRectangle(cornerRadius: LivSchedule.barRadius)
+                            .fill(LivKind.color(of: row))
+                            .frame(width: LivSchedule.bar)
+                            .frame(maxHeight: .infinity)
+                            .padding(.vertical, LivSchedule.barInset)
                     }
                 }
+            },
+            trailing: { EmptyView() }
+        )
+        // HALF THE NOW-LINE EACH, clipped to the row: centred on the
+        // boundary, the row above shows its top half and the row below
+        // its bottom half, whichever of the two the list paints last.
+        .overlay(alignment: now == .top ? .top : .bottom) {
+            if now != .none {
+                nowLine.offset(y: (now == .top ? -1 : 1) * LivSchedule.nowDot / 2)
             }
-            Spacer(minLength: 6)
         }
-        .frame(minHeight: 44)
-        .background(next ? LivTheme.tint(LivTheme.accent, 0.12) : Color.clear)
-        .contentShape(Rectangle())
+        .clipped()
         .onTapGesture { desk.open(row.id) }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
+        .livSwipeLift(slot.id, $lifted)
+        .livCardRow(position: position, lifted: livIsLifted(slot.id, lifted))
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            if !item.occurrence { rescheduleSwipe(row) }
+            rescheduleSwipe(row)
         }
     }
 
-    /// The all-day band: pills; a timeless TASK keeps its ring (checking
-    /// it off must never require hunting).
-    private func allDayBand(
-        _ items: [TodayAgendaItem], doneNames: Set<String>
-    ) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(items) { item in
-                    HStack(spacing: 5) {
-                        if item.occurrence {
-                            Image(systemName: "repeat")
-                                .font(.system(size: LivType.micro, weight: .semibold))
-                                .foregroundStyle(LivTheme.text3)
-                        } else if !livCanTick(item.row) {
-                            LivIcon(
-                                glyph: LivKind.glyph(of: item.row),
-                                color: LivKind.color(of: item.row), size: 14)
-                        } else if livCanTick(item.row) {
-                            StatusRing(
-                                done: isDone(item.row, doneNames), compact: true
-                            ) {
-                                toggleStatus(item.row.id)
-                            }
-                        }
-                        Button {
-                            desk.open(item.row.id)
-                        } label: {
-                            Text(displayTitle(item.row))
-                                .font(.system(size: LivType.body))
-                                .foregroundStyle(
-                                    isDone(item.row, doneNames)
-                                        ? LivTheme.text3 : LivTheme.text)
-                                .lineLimit(1)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(Capsule().fill(LivTheme.panel2))
-                    .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-                }
+    /// The start, or "All day". 50 wide, so the column is one edge.
+    private func timeColumn(_ row: EntityRow, passed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: LivCards.lineGap) {
+            if row.allDay == true {
+                Text("All day")
+                    .font(.system(size: LivType.label, weight: .medium))
+                    .foregroundStyle(LivTheme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(LivTitle.shrink)
+            } else {
+                Text(Civil.timeString(row.due ?? 0))
+                    .font(.system(size: LivType.label, weight: .medium).monospacedDigit())
+                    .foregroundStyle(passed ? LivTheme.text2 : LivTheme.text)
             }
         }
+        .frame(width: LivSchedule.timeColumn, alignment: .leading)
     }
 
-    /// Tomorrow keeps the span AND the time of day; Pick opens the real
-    /// date-and-time editor. (The old swipe wrote end:0 + dateOnly:true —
-    /// "Tomorrow" on a two-hour meeting destroyed both, phase-5 recon.)
+    /// WHERE NOW IS: a red dot on the time column's edge, then a red line
+    /// to the card's end (the clearer board). No time printed — the
+    /// schedule's own times say where it falls. RED, which reverses the
+    /// accent it wore while red meant only a warning: on the clearer
+    /// boards red means late AND now.
+    private var nowLine: some View {
+        HStack(spacing: 0) {
+            Circle()
+                .fill(LivTheme.red)
+                .frame(width: LivSchedule.nowDot, height: LivSchedule.nowDot)
+            Rectangle()
+                .fill(LivTheme.red)
+                .frame(height: LivSchedule.nowLine)
+        }
+        // The dot's centre sits on the time column's trailing edge.
+        .padding(.leading, LivCards.padX + LivSchedule.timeColumn - LivSchedule.nowDot / 2)
+        .padding(.trailing, LivCards.padX)
+        .frame(height: LivSchedule.nowDot)
+        .accessibilityHidden(true)
+    }
+
+    /// Today, Tomorrow (keeping the span AND the time of day) and Pick,
+    /// the real date-and-time editor. (The old swipe wrote end:0 +
+    /// dateOnly:true — "Tomorrow" on a two-hour meeting destroyed both,
+    /// phase-5 recon.)
     @ViewBuilder private func rescheduleSwipe(_ row: EntityRow) -> some View {
+        Button {
+            reschedule(row, toDay: Civil.todayDay())
+        } label: {
+            livSwipeLabel("Move to today", .today)
+        }
+        .tint(LivTheme.accent)
         Button {
             reschedule(row, toDay: Civil.addDays(Civil.todayDay(), 1))
         } label: {
-            Label("Tomorrow", systemImage: "arrow.turn.up.right")
+            livSwipeLabel("Move to tomorrow", .tomorrow)
         }
-        .tint(LivTheme.green)
+        // ONE TINT: all three are "move this to a different day".
+        .tint(LivTheme.accent)
         Button {
             duePick = TodayDuePick(entity: row.id)
         } label: {
-            Label("Pick", systemImage: "calendar")
+            livSwipeLabel("Pick a day", .calendar)
         }
         .tint(LivTheme.accent)
     }
 
-    // MARK: snapshot slices
+    // MARK: rows and their words
 
-    /// The lens (M4) + the archived filter Today always lacked (recon,
-    /// phase 5 — Tasks and Everything both had it).
-    private var datedRows: [EntityRow] {
-        return (box.snap?.dated ?? []).compactMap { box.entity($0) }
-            .filter {
-                $0.trashed != true && $0.archived != true && workspaces.admits($0)
-            }
-    }
-
-    /// Open, UNDATED tasks — what you have taken on that no clock is
-    /// carrying. Capped: this is a nudge under the day, not a second
-    /// Tasks screen, and the state key is one tap from the whole list.
-    private var nextUp: [EntityRow] {
-        // No `lensOn` guard any more: `admits` returns true when there is
-        // no lens, so the two readings collapse into one. `isInert` was the
-        // Swift parser's idea that a query it could not read filters
-        // nothing — the core has no such notion, and a typo now shows
-        // nothing rather than everything (owner, 2026-08-27).
-        return (box.snap?.everything ?? [])
-            .compactMap { box.entity($0) }
-            .filter { row in
-                row.trashed != true && row.archived != true
-                    && livCanTick(row)
-                    && (row.due ?? 0) == 0
-                    && !isDoneStatus(row)
-                    && workspaces.admits(row)
-            }
-            .sorted { ($0.recency ?? 0, $0.id) > ($1.recency ?? 0, $1.id) }
-            .prefix(5)
-            .map { $0 }
-    }
-
-    /// The row's ONE anchor, in the blueprint's order: project → people
-    /// → subject → area. Nothing renders when it has none.
-    private func anchorChip(_ row: EntityRow) -> String? {
-        for property in ["project", "people", "tags", "area"] {
-            let hit = (row.cells ?? []).first {
-                $0.property == property && !($0.value ?? "").isEmpty
-            }
-            if let value = hit?.value, !value.isEmpty { return value }
-        }
-        return nil
-    }
-
-    /// A status that closes the thing. The vocabulary is the box's, so
-    /// this asks the option list rather than guessing at words.
-    private func isDoneStatus(_ row: EntityRow) -> Bool {
-        guard let status = row.status, !status.isEmpty else { return false }
-        return taskOptions.first { $0.name == status }?.completes == true
-    }
-
-    /// One what-next row: the ring, the name, and the anchor it belongs
-    /// to. No date — that is the whole point of the band.
-    private func nextLine(_ row: EntityRow) -> some View {
-        HStack(spacing: 8) {
-            StatusRing(done: false) { toggleStatus(row.id) }
-            Text(displayTitle(row))
-                .font(.system(size: LivType.body))
-                .foregroundStyle(LivTheme.text)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            // The ANCHOR, never the status: every row in this band is
-            // open, so a column of "todo" chips says nothing (BP-6's
-            // rule — the section carries the status, the chip carries
-            // what the thing is attached to).
-            if let anchor = anchorChip(row) {
-                ValueChip(anchor)
-            }
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
+    /// One what-next row: the box, the name, and the anchor it belongs to
+    /// as the second line. No date — that is the whole point of the band.
+    private func nextLine(_ row: EntityRow, position: LivCardPosition) -> some View {
+        // The ANCHOR, never the status: every row here is open, so a
+        // column of "todo" would say nothing (BP-6's rule).
+        LivCardRow(
+            displayTitle(row), detail: livAnchor(of: withCells(row))?.value,
+            divided: position.divided,
+            lead: {
+                StatusRing(done: false, name: displayTitle(row)) { toggleStatus(row) }
+            },
+            trailing: { EmptyView() }
+        )
         .onTapGesture { desk.open(row.id) }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-        }
-        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .livSwipeLift(row.id, $lifted)
+        .livCardRow(position: position, lifted: livIsLifted(row.id, lifted))
+        // "MOVE TO TODAY", NOT "TODAY". Swipe actions are in the
+        // accessibility tree whether or not they are revealed, and a bare
+        // "Today" beside the library's own Today row broke `drive.sh tour`
+        // on 2026-08-31. A verb should say what it does.
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            Button("Today") { reschedule(row, toDay: Civil.todayDay()) }
-                .tint(LivTheme.accent)
-        }
-    }
-
-    private func dueRows(on day: Int64) -> [EntityRow] {
-        datedRows.filter { row in
-            guard let due = row.due else { return false }
-            return Civil.day(of: due) == day
-        }
-    }
-
-    /// One time-ordered timeline — events and tasks interleave by clock,
-    /// the way the day actually runs (the old view kept them in separate
-    /// blocks). Occurrences merge in, deduped against a series dated on
-    /// the day itself.
-    private func agenda(for day: Int64) -> [TodayAgendaItem] {
-        var items = dueRows(on: day).map { row in
-            TodayAgendaItem(
-                key: "e\(row.id)", row: row, stamp: row.due ?? 0,
-                occurrence: false)
-        }
-        let dayIds = Set(items.map(\.row.id))
-        // The lens applies to occurrence SERIES rows too — a filtered
-        // surface filters whole.
-        for occ in box.snap?.occurrences ?? [] {
-            guard let series = occ.series, let civil = occ.civil,
-                Civil.day(of: civil) == day, !dayIds.contains(series),
-                let row = box.entity(series), row.trashed != true,
-                row.archived != true, workspaces.admits(row)
-            else { continue }
-            items.append(
-                TodayAgendaItem(
-                    key: "o\(series)-\(civil)", row: row, stamp: civil,
-                    occurrence: true))
-        }
-        return items.sorted {
-            $0.stamp != $1.stamp ? $0.stamp < $1.stamp : $0.row.id < $1.row.id
-        }
-    }
-
-    /// LATE = incomplete TASKS whose day has passed (owner ruling). Not
-    /// events, not notes — a thing is late only if it can still be done.
-    private func lateRows(today: Int64, doneNames: Set<String>) -> [EntityRow] {
-        datedRows.filter { row in
-            guard row.kinds?.contains("task") == true, let due = row.due
-            else { return false }
-            return Civil.day(of: due) < today && !isDone(row, doneNames)
-        }
-        .sorted { ($0.due ?? 0) > ($1.due ?? 0) }
-    }
-
-    private func capturedTodayCount(today: Int64) -> Int {
-        return (box.snap?.unstructured ?? []).compactMap { box.entity($0) }
-            .filter { row in
-                guard row.trashed != true, let created = row.created else {
-                    return false
-                }
-                return Civil.day(of: created) == today && workspaces.admits(row)
+            Button {
+                reschedule(row, toDay: Civil.todayDay())
+            } label: {
+                livSwipeLabel("Move to today", .today)
             }
-            .count
+            .tint(LivTheme.accent)
+        }
     }
 
     // MARK: predicates + acts
 
-
-    private func isDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
-        row.status.map { doneNames.contains($0) } ?? false
-    }
-
     private func displayTitle(_ row: EntityRow) -> String { livRowTitle(row) }
 
-    /// Context, never the row's own type: the type cell is a reference
-    /// too, and it is the FIRST cell written — so the naive "first ref"
-    /// chip read "task" on every task (recon, phase 5).
-    private func contextChips(_ row: EntityRow) -> [String] {
-        var out: [String] = []
-        for cell in row.cells ?? [] {
-            guard cell.property != "type", cell.refTarget != nil,
-                let value = cell.value, !value.isEmpty
-            else { continue }
-            if !out.contains(value) { out.append(value) }
-            if out.count == 2 { break }
+    /// The same row with its cells, which the answer does not carry: the
+    /// second line reads them. Asking the model is what fetches them.
+    private func withCells(_ row: EntityRow) -> EntityRow {
+        box.entity(row.id) ?? row
+    }
+
+    /// WHAT A ROW IS ATTACHED TO — its area, project, people, subject —
+    /// as plain words for its second line ("Work · Mira"), two at most.
+    /// Named properties, not "any reference": type, status and priority
+    /// are references too, and "Task · medium" says what the row already
+    /// shows or nothing a person asked for.
+    private func contextWords(_ row: EntityRow) -> [String] {
+        // The area FIRST, from the wire: it is there before the cells are,
+        // so a row does not grow from 52 to 64 when they arrive.
+        var out: [String] = [row.areaWord].compactMap { $0 }.filter { !$0.isEmpty }
+        for property in ["area", "project", "people", "tags"] {
+            for cell in withCells(row).cells ?? [] where cell.property == property {
+                guard let value = cell.value, !value.isEmpty, !out.contains(value) else { continue }
+                out.append(value)
+                if out.count == 2 { return out }
+            }
         }
         return out
+    }
+
+    /// A schedule row's second line: where it is (an event's location),
+    /// then what it is attached to.
+    private func scheduleDetail(_ row: EntityRow) -> String? {
+        let location = (withCells(row).cells ?? []).first { $0.property == "location" }?.value
+        let words = [location].compactMap { $0 }.filter { !$0.isEmpty } + contextWords(row)
+        return words.isEmpty ? nil : words.joined(separator: " · ")
     }
 
     private func dueProperty(_ row: EntityRow?) -> String {
@@ -667,78 +541,78 @@ struct TodayView: View {
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
-    private func toggleStatus(_ id: UInt64) {
-        guard let row = box.entity(id) else { return }
-        let doneNames = Set(
-            taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let target = isDone(row, doneNames)
+    private func toggleStatus(_ row: EntityRow) {
+        let target = row.done == true
             ? taskOptions.first { $0.completes != true }
             : taskOptions.first { $0.completes == true }
         guard let name = target?.name, !name.isEmpty else { return }
-        box.set(id, "status", name)
+        box.set(row.id, "status", name)
     }
 
-    /// The spec'd window: yesterday 00:00 through today+7 23:59. Also
-    /// snaps a stale selection forward across midnight (the strip starts
-    /// at today; a selection behind it would be invisible).
+    /// Ask for the screen, with the clock as it reads now. Also snaps a
+    /// stale selection forward across midnight (the strip starts at today;
+    /// a selection behind it would be invisible).
     private func loadWindow() {
         let today = Civil.todayDay()
         // Only a PARKED day can go stale. With no tab there is nothing to
         // snap forward, and parking here would mint a tab on every launch
         // for someone who never asked for one.
         if desk.position(.today) != nil, selectedDay < today { park(day: today) }
-        box.refreshWindow(
-            from: Civil.stamp(day: Civil.addDays(today, -1), hhmm: 0),
-            to: Civil.stamp(day: Civil.addDays(today, 7), hhmm: 2359))
+        box.watchToday(TodayAsk(lens: workspaces.lensIds))
     }
 }
 
 // MARK: - the 7-day strip
 
-/// Today ringed accent, the selected day filled; both = filled wins.
+/// Seven days, each marked by `LivDayMark`: the selected day wears an
+/// ink disc with its number knocked out, today wears the accent — and
+/// when today IS the selected day, an accent disc says both at once
+/// (owner, 2026-09-07: a disc, not "a tiny dot hidden by a bar"). Under
+/// each day that holds something, a small dot — except under the day you
+/// are on, whose disc already marks it (the clearer board).
 private struct TodayDateStrip: View {
     @Binding var selected: Int64
     let today: Int64
+    /// The days that hold something, as days since the epoch.
+    let busy: Set<Int32>
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ForEach(0..<7, id: \.self) { i in
                 let day = Civil.addDays(today, i)
                 let isSelected = day == selected
-                let isToday = day == today
+                let hasItems = busy.contains(Civil.epochDay(day))
+                // The day's list swaps in one frame; only the disc moves
+                // (as `LivSegment`, 2026-09-29). Picked inside
+                // `withAnimation`, the two days' rows crossfaded over each
+                // other, "Nothing scheduled" printed across the old header.
                 Button {
                     selected = day
                 } label: {
-                    VStack(spacing: 2) {
+                    VStack(spacing: LivDay.gap) {
                         Text(Civil.weekdayLetter(day))
-                            .font(.system(size: LivType.micro, weight: .semibold))
-                            .foregroundStyle(
-                                isSelected ? LivTheme.onAccent : LivTheme.text3)
-                        Text("\(Civil.dayNumber(day))")
-                            .font(
-                                .system(size: LivType.body, weight: .semibold)
-                                    .monospacedDigit()
-                            )
-                            .foregroundStyle(
-                                isSelected ? LivTheme.onAccent : LivTheme.text)
+                            .font(.system(size: LivType.caption, weight: .medium))
+                            .foregroundStyle(LivTheme.text2)
+                        LivDayMark(
+                            number: Civil.dayNumber(day),
+                            selected: isSelected,
+                            today: day == today,
+                            diameter: LivDay.disc)
+                        Circle()
+                            .fill(hasItems && !isSelected ? LivTheme.text3 : .clear)
+                            .frame(width: LivDay.dot, height: LivDay.dot)
                     }
+                    .animation(LivMotion.pick, value: isSelected)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: LivTheme.radius)
-                            .fill(isSelected ? LivTheme.accent : Color.clear)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: LivTheme.radius)
-                            .strokeBorder(
-                                isToday && !isSelected
-                                    ? LivTheme.accent : Color.clear,
-                                lineWidth: 1)
-                    )
+                    .frame(height: LivDay.strip)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // The dot, spoken — the way the month's cells say it.
+                .accessibilityValue(hasItems ? "has items" : "")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
+        .padding(.horizontal, LivDay.inset)
     }
 }

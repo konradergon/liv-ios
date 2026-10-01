@@ -1,188 +1,85 @@
 # Liv — project guide
 
-> **Naming:** the product and the code are both **Liv** — crates (`liv-core`,
-> `liv-ffi`, …), the `liv_*` FFI symbol prefix, `ffi/liv.h`, and the
-> box file (`…/Application Support/liv/liv.log`). The old codename **`lotus`**
-> was renamed away (2026-07-22); it survives in exactly two frozen places, on
-> purpose: (1) codename-era boxes carry the on-disk header key `lotus_log` and
-> legacy box paths — the core reads both and preserves the key on in-place
-> upgrades (see `core/src/persist.rs` + `core/tests/versioning.rs`); (2) the
-> historical spec/design docs (`design/p*.md`, `interface.md`, `feature-map.md`,
-> …) still say `lotus_*` — read them as `liv_*`. Do not reintroduce `lotus`
-> into code. (The specs were ported from an OLDER Tauri app, also called Liv, that
-> lived at `~/src/friend-fixes`. That checkout no longer exists on this
-> machine, and it is NOT the desktop your team is building — see
-> `design/spec-alignment.md`.)
+Read `HANDOUT.md` first: what is true now, what the owner has decided,
+and what is next. Then `design/how-its-built.md` (the code on one page)
+and `design/what-liv-is-for.md` (the product).
 
-A native productivity app on a clean, append-only Rust core. It is a from-scratch
-rewrite of an older Tauri/web app ("Liv", kept for reference in a **separate**
-repo — not this one). The core is portable; each platform gets a **native**
-shell over the same Rust FFI.
+## What this is
 
-## Architecture — one core, many shells
+A note, task and calendar app for iPhone, on a Rust core.
 
 ```
-core/       Rust — the append-only log, entities = property→value cells, commands
-services/   Rust — projections, search, import/export, clerk, recurrence (pure fns)
-views/      Rust — value display + rendering helpers (cross-platform)
-ffi/        Rust — the ONE C ABI (59 `liv_*` fns); staticlib + cdylib + rlib
-cli/        Rust — a headless CLI over the same core; the VERIFICATION tool
-shell/ios/     Swift/SwiftUI — THE app (see design/ios.md, design/what-liv-is-for.md)
+engine/     the store: a ledger of every change, and the current state, in liv.db (SQLite)
+surface/    what each screen shows — every product rule, with a test
+ffi/        the one C door (ffi/liv.h): functions in, JSON out
+cli/        `liv`: the same functions from a terminal, to seed and check a box
+shell/ios/  the app (SwiftUI); ShareExtension/ is UIKit only, no Rust
 ```
 
-Everything above `ffi/` is **platform-agnostic Rust** (it compiles for iOS and
-for `x86_64-pc-windows-msvc` today). A shell is a thin UI that (1) calls FFI
-verbs to mutate, (2) reads the snapshot JSON to render.
+The iPhone app is the only shell. A desktop app is wanted but not
+chosen — don't start one unasked. The old Tauri desktop app lives outside
+this repo and is dropped; don't change it. The deleted Mac and WinUI shells
+stay deleted unless the owner says otherwise.
 
-**Platforms, as of 2026-08-19.** `shell/ios/` is THE app — the product, built
-and shipped from this tree. The desktop is the **Tauri app** in the
-`lovable-notes-hub` working copy, which links the same crates directly (no C
-ABI needed); the iOS tree is expected to move there eventually.
+The old codename was `lotus`; archived docs say `lotus_*` for `liv_*`.
+Don't bring it back into code.
 
-**It is not a separate repository.** Both working copies point at the same
-remote, `Dahlaren/lovable-notes-hub` — two branch lines with no common ancestor
-in one repo. Resolving that topology (merge, subtree, vendor or publish) is an
-open question; a `path = "../../liv/core"` across two checkouts of one remote is
-unclonable and un-CI-able. The `docs/liv-core-pivot.md` that used to be cited
-here exists only on an unpushed local branch.
+## Rules
 
-**Two crates are named `liv-core`**: this one (the append-only log) and the
-desktop's (a SQLite engine, 1,784 lines). They are not interchangeable, and only
-one should survive — see `design/one-core.md` for the comparison, the
-recommendation, the measured costs, and the six questions it needs answered.
+Few, and each one keeps the code from rotting — the app this replaced
+broke every one of them.
 
-The hand-built Mac shell and the planned WinUI port are **gone** (deleted
-2026-08-19, owner's word). Tauri covers macOS, Windows and Linux, so neither
-had a reason to exist. Git history still holds them — `git log --diff-filter=D
---name-only` finds the removal commit — but nothing in the working tree points
-at them any more, and nothing should.
+1. **Rules live in Rust; Swift draws.** What a screen lists, in what
+   order, what counts as late or unsorted: `surface/`, with a test. A shell
+   gets answers, never the box. Nothing iPhone-specific goes into `engine/`
+   or `surface/` — a desktop must be able to link them.
+2. **One of each.** One rule, one parser, one helper, in one place. A
+   second copy of a rule is a bug waiting to disagree.
+3. **Every `liv_*` call is in `shell/ios/Sources/Box.swift`.**
+4. **The door.** Adding a function to `ffi/` is fine — with a test, and
+   told to the owner. Changing or removing one needs the owner's word. In
+   Swift, every field decoded from the door is optional: one missing key
+   must not drop the whole answer.
+5. **Tests first** for `engine/`, `surface/` and `ffi/`. Anything on the
+   refresh or write path also gets a cost test: doubling the box roughly
+   doubles the work. Assert the shape, never milliseconds.
+6. **Sizes and colours only in `Theme.swift`.**
+7. **Delete what a change makes dead**, in the same change.
+8. **See it work.** Check on the simulator before saying something works,
+   and cross-check writes with the CLI (`liv --box … cells ID`, `history`).
+   A check nobody has seen fail proves nothing — break it once. For a new
+   screen or a big visual change, show a mockup first.
+9. **Hands off**: don't commit unless asked; never touch simulator
+   `00E539E0-…` (the owner's data — use `8E699FF6-…`); ask before touching
+   anything outside this repo.
 
-## The boundary — READ THIS BEFORE EDITING
-
-| Zone | Rule |
-|---|---|
-| `shell/ios/**` | The app. Edit freely. |
-| `core/**`, `services/**`, `views/**` | **Settled.** Change only with the owner's word, failing-test-first. Logic two shells would both need belongs HERE, not in a shell. |
-| `ffi/**`, `ffi/liv.h` | The C ABI contract. Additions must be **purely additive** (never change an existing signature or meaning), mirror `with_box` + `Committed`, ship with a test, and be flagged to the owner. |
-| `design/**`, `*.md` specs | **READ** for the behavioural spec. Amend deliberately; don't rewrite history. |
-| `cli/**` | The verification tool. Keep every verb the shell has a way to reach. |
-| everything outside this repo | Ask first. |
-
-## The specs are the source of truth
-
-Port *behavior and layout*, don't invent them. In priority order:
-1. `interface.md` — the constitution/laws (what the app is and refuses to be).
-2. `feature-map.md` — every feature and its Liv reconciliation.
-3. `liv-ui-map.md` — the original UI, surface by surface.
-4. `design/p*.md` — the per-phase design docs (what shipped and why). These
-   still cite `shell/macos/...` line numbers for the deleted Mac shell: read
-   them for BEHAVIOUR, and ignore the coordinates.
-
-`design/what-liv-is-for.md` outranks all of these for **product** questions:
-architecturally clean and product-wrong is still wrong.
-
-## The FFI contract (how a shell talks to the core)
-
-- **Mutations**: call a `liv_*_at(box_path, …)` verb. Each opens the box, runs
-  one transaction, checks in. Returns an id / count / status. Never hold the box
-  lock across long IO.
-- **Reads**: `liv_snapshot` (or `liv_snapshot_window_at` for the calendar)
-  returns a JSON `Snapshot` — decode it into your native models. Every wire field
-  the shell adds must be **optional** in the decoder, or one missing key drops
-  the whole snapshot (a real, recurring bug — see the macOS `applySnapshot`).
-- Strings cross as UTF-8 C strings; free returned strings with `liv_string_free`.
-- The full verb list + shapes live in `ffi/src/lib.rs` and `ffi/liv.h`.
-
-## Build & test
+## Build and check
 
 ```
-cargo test                        # the whole Rust workspace (run before every PR)
-cargo build --release -p liv-ffi  # produces the ffi lib (staticlib + cdylib)
-./target/release/liv --log <box> list --all   # inspect a box from the CLI
+cargo test                  # all Rust
+shell/ios/build.sh          # the app (dev, incremental); `run` boots a simulator; `release`, `device`
+shell/ios/suites.sh         # the app's own self-checks
+shell/ios/drive.sh tour     # drives the running app and asserts what is on screen
+./target/debug/liv --box <dir>/liv.db list --all
 ```
 
-**The iOS shell has three of its own, and `cargo test` runs none of them.**
+- A test box: `liv --box <dir>/liv.db new task Pay rent --due 2026-09-30
+  --area Home`, then launch with `SIMCTL_CHILD_LIV_BOX_PATH=<dir>/liv.db`.
+- `suites.sh` asks the app's model, so it can pass while the screen is
+  wrong; `drive.sh` checks the screen. It reads it through `axe`
+  (`brew install cameroncooke/axe/axe`) — without it, nothing `drive.sh`
+  prints is about the app. Both install the fresh build first.
+- Never copy or delete a box's files (`liv.db`, `-wal`, `-shm`) while
+  something has it open.
 
-```
-shell/ios/build.sh          # one swiftc invocation; add `run` to boot a simulator
-shell/ios/suites.sh         # the ten launch-flag self-checks (the shell's unit tests)
-shell/ios/drive.sh          # drives the running app and asserts what is ON SCREEN
-```
+## Docs
 
-`suites.sh` replaces the recipe that used to be written here, which did not
-work: the app does not exit after a self-check, so a bare `simctl launch
---console-pty` never returns, and bounding it with SIGALRM fails because
-`xcrun` forks `simctl`. The script has the working form and the reason.
-
-Both scripts INSTALL `build/Liv.app` themselves and refuse to run against
-a bundle older than the sources. Until 2026-08-27 they did not, and
-launched whatever was already on the simulator — a deliberately broken
-assertion still printed ten PASSes. When you change a check, break one
-assertion on purpose and watch it fail before you trust the green.
-
-**`suites.sh` is necessary and not sufficient.** It asks the MODEL, and on
-2026-08-23 a day was lost to a rework where the model was right and the screen
-never repainted — every suite passed while the app was visibly broken.
-`drive.sh tour` is the answer: it walks all six views and asserts, from the
-accessibility tree, which surface is actually rendered (`Surface.swift`). Run
-it before claiming a UI change works. Its other checks are `panel` (BOTH
-side panels — one body run twice, mirrored), `bar`, `grid`, `lens` (a
-saved filter actually narrows the app), `facets` and `vault`.
-
-Every check asserts GEOMETRY or rendered text, never whether a view is
-mounted: a closed panel stays in the view tree and simply moves off
-screen, so "is its marker there" answers a different question than the
-one being asked.
-
-Do not commit unless the owner asks.
-
-## Standing rules that keep this from rotting
-
-Measured 2026-08-08 against the app this replaces (134,695 lines, 3 data
-stores, 275 direct storage calls from 70 files, 78 string-keyed events,
-one test file). The rewrite avoided all of that. These rules are what
-keeps it avoided — each one exists because its absence is visible in the
-old codebase.
-
-1. **Every `liv_*` call lives in `shell/ios/Sources/Box.swift`.** A
-   second file calling the C ABI is a defect. (Measured 2026-08-28: 53
-   calls over 41 distinct verbs, one file. Nine other Swift files mention
-   a verb NAME in a comment; none call one.)
-2. **Anything on the snapshot path OR THE WRITE PATH ships with a COST
-   test**, not just a correctness one — see `services/tests/scale.rs` and
-   `ffi/src/tests.rs` (`one_write_stays_flat_as_the_box_grows`). The
-   write path was added on 2026-08-19 because every existing cost test
-   covered a READ, which is exactly why a whole-box clerk sweep on every
-   write went unseen for weeks (`design/write-cost.md`). The file projection
-   was quadratic for weeks and 315 correctness tests could not see it.
-   Assert the SHAPE (doubling the box roughly doubles the work), never a
-   millisecond budget.
-3. **A rule that matters lives in a type, not in prose.** Colours are
-   tokenised in `Theme.swift` and have never drifted; type sizes are
-   prose and have drifted 38 times.
-4. **One grammar, one parser.** Two parsers for the same user-facing
-   syntax is a defect. Same for a display helper, a row type, a glyph
-   table.
-5. **A user never types a query language.** Filters and workspaces are
-   built from pickers over furniture that already exists; the text
-   grammar is the storage format and an advanced escape hatch.
-6. **When a decision makes code unnecessary, delete it in the same
-   change.** No dead code (owner, 2026-08-07).
-7. **No feature flag without a deletion date in the same change.**
-8. **One user action gets one snapshot.** Refreshes coalesce
-   (`Box.swift`); where the ABI forces a shell to hand-assemble several
-   verbs, add one compound verb — purely additive, and permitted.
-9. **A file past ~600 lines is a signal to look for the seam**, not a
-   number to hit.
-
-## House rules
-
-- **Failing-test-first** for any `core`/`services`/`ffi` change; **mockup-first**
-  for visible UI. Where a spec collides with the constitution, take the most
-  faithful reconciliation and record the delta in the design doc.
-- AI features are quarantined (proposals only); don't build them into a shell.
-- Keep it dense — this app is deliberately compact. The density reference used
-  to be the Mac shell; it is now `shell/ios/Sources/Theme.swift`, which is the
-  only place a size or a colour may be defined.
-- Verify on the simulator before claiming something works; cross-check writes
-  against the box with the CLI. A builder's own report is not evidence.
+- `HANDOUT.md` — now: the state, the owner's decisions, what is next.
+- `design/what-liv-is-for.md` — the product. It wins product arguments.
+- `design/how-its-built.md` — the code.
+- `design/changelog.md` — what changed and why, newest first.
+- `design/op-format.md` — the on-disk format, held by the codec tests.
+- `design/testflight.md` — getting the app onto phones.
+- `design/archive/` — history: the old specs, phase docs, studies,
+  mockups, and this file's previous version with all its detailed rules.
+  Read it to learn why something was done, not what to do.

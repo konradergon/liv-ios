@@ -74,6 +74,42 @@ fn everything() -> Group {
                 value: Value::Ref(ent(8)),
                 replaces: vec![],
             },
+            // EVERY span kind and EVERY block kind, in one value — this
+            // is the grammar `core/src/value.rs` declares, and a note
+            // written on the engine has to read as the same document.
+            Op::SetCell {
+                entity: ent(1),
+                prop: ent(10),
+                value: Value::Rich(vec![
+                    Span::Break(Block::Heading(3)),
+                    Span::text("plain"),
+                    Span::Text(TextSpan {
+                        text: "bold and struck".into(),
+                        marks: Marks(Marks::BOLD | Marks::STRIKE),
+                    }),
+                    Span::Break(Block::Body),
+                    Span::Break(Block::Quote),
+                    Span::Break(Block::Rule),
+                    Span::Break(Block::Bullet { depth: 0 }),
+                    Span::Break(Block::Ordered { depth: 255 }),
+                    Span::Break(Block::Task { depth: 2, done: true }),
+                    Span::Break(Block::Task { depth: 2, done: false }),
+                    Span::Break(Block::Code { lang: Some("rust".into()) }),
+                    Span::Break(Block::Code { lang: None }),
+                    Span::Break(Block::Callout { kind: "warning".into() }),
+                    Span::Ref(ent(8)),
+                    Span::text(""),
+                ]),
+                replaces: vec![],
+            },
+            Op::SetCell {
+                entity: ent(1),
+                prop: ent(11),
+                // An empty document is a document. It must not decode as
+                // "no content", which is the absence of the cell.
+                value: Value::Rich(vec![]),
+                replaces: vec![],
+            },
             Op::AddToSet { entity: ent(1), prop: ent(9), value: Value::Blob([0xab; 32]) },
             Op::RemoveFromSet {
                 entity: ent(1),
@@ -293,4 +329,176 @@ fn frame(body: &[u8]) -> Vec<u8> {
     out.extend_from_slice(body);
     out.extend_from_slice(&crc32(body).to_le_bytes());
     out
+}
+
+// ---- rich text --------------------------------------------------------
+//
+// Content is the one value kind with structure inside it, so it is the
+// one that can decode two ways if the encoding is careless.
+//
+// **The first three of these were written wrong and passed anyway**, and
+// the way they were wrong is worth keeping: they encoded a good group,
+// flipped a byte, and asserted the decode failed. It did — on the
+// CHECKSUM, every time, before the field check they were aiming at ever
+// ran. Removing all three checks from the decoder changed nothing.
+//
+// So the frame says something about these checks: **accidental
+// corruption never reaches them.** They exist for a group that arrives
+// from a sync peer with a valid checksum over bad bytes, which is the
+// only way an invalid nested value can be presented. Two of the three
+// can be built through the Rust type and simply encoded; the third needs
+// the frame re-sealed, which is what `forge` does and what a peer would.
+
+#[test]
+fn a_reserved_mark_bit_is_refused() {
+    // `op-format.md` §2: reserved bits must be zero, and are checked.
+    // Not pedantry — a byte that decoded to the same mark set while
+    // differing from the one this crate writes would give one value two
+    // byte sequences, and a digest exchange would call two identical
+    // boxes different.
+    for bit in 4..8u8 {
+        let g = one_rich(vec![Span::Text(TextSpan {
+            text: "x".into(),
+            marks: Marks(1 << bit),
+        })]);
+        assert!(decode(&encode(&g)).is_err(), "reserved mark bit {bit} must be refused");
+    }
+    // And the four that exist survive, together.
+    let all = Marks::BOLD | Marks::ITALIC | Marks::CODE | Marks::STRIKE;
+    let g = one_rich(vec![Span::Text(TextSpan { text: "x".into(), marks: Marks(all) })]);
+    assert_eq!(decode(&encode(&g)).unwrap().0, g, "every real mark at once");
+}
+
+#[test]
+fn a_seventh_heading_level_is_refused() {
+    // There is no seventh level to render. Accepting one would put a
+    // value in the log that no two readers agree about.
+    for level in [0u8, 7, 255] {
+        let g = one_rich(vec![Span::Break(Block::Heading(level))]);
+        assert!(decode(&encode(&g)).is_err(), "heading level {level} must be refused");
+    }
+    for level in 1..=6u8 {
+        let g = one_rich(vec![Span::Break(Block::Heading(level))]);
+        assert_eq!(decode(&encode(&g)).unwrap().0, g, "heading {level}");
+    }
+}
+
+#[test]
+fn a_done_flag_is_zero_or_one_and_nothing_else() {
+    // `done` is a `bool`, so this one cannot be built through the type —
+    // only a peer can present it. Two byte sequences for `done: true` is
+    // the same digest problem as a reserved mark bit.
+    let g = one_rich(vec![Span::Break(Block::Task { depth: 7, done: true })]);
+    let bytes = encode(&g);
+    // The task block is `0x06 · depth · done`, and depth 7 appears
+    // nowhere else in this frame.
+    let depth_at = bytes.iter().position(|b| *b == 7).expect("the depth byte");
+    assert_eq!(bytes[depth_at - 1], 0x06, "that is the task block's tag");
+    assert_eq!(bytes[depth_at + 1], 1, "and its done flag");
+
+    for bad in [2u8, 255] {
+        let mut hostile = bytes.clone();
+        hostile[depth_at + 1] = bad;
+        assert!(decode(&forge(hostile)).is_err(), "a done flag of {bad} must be refused");
+    }
+    // The control: the same forging with a LEGAL flag decodes, so the
+    // refusals above are the check and not the reseal.
+    let mut fine = bytes.clone();
+    fine[depth_at + 1] = 0;
+    let (back, _) = decode(&forge(fine)).expect("a resealed frame with a legal flag decodes");
+    assert_eq!(
+        back.ops[0],
+        Op::SetCell {
+            entity: ent(1),
+            prop: ent(2),
+            value: Value::Rich(vec![Span::Break(Block::Task { depth: 7, done: false })]),
+            replaces: vec![],
+        }
+    );
+}
+
+#[test]
+fn hostile_rich_bytes_never_panic() {
+    // Rule 3 of this file, applied to the one value kind with a nested
+    // grammar. RESEALED, so each corruption actually reaches the nested
+    // decoder instead of stopping at the checksum — which is what the
+    // first version of this test did, making it a test of crc32.
+    let g = one_rich(vec![
+        Span::Break(Block::Code { lang: Some("rust".into()) }),
+        Span::text("body"),
+        Span::Break(Block::Callout { kind: "warning".into() }),
+        Span::Ref(ent(4)),
+        Span::Break(Block::Task { depth: 1, done: false }),
+    ]);
+    let bytes = encode(&g);
+    // From 1: byte 0 is the frame's length varint, and corrupting THAT
+    // is a framing question `a_torn_tail_drops_the_whole_group` already
+    // asks. Here the frame has to stay well formed for the bytes inside
+    // it to be reached at all.
+    for i in 1..bytes.len() - 4 {
+        for bit in 0..8 {
+            let mut hostile = bytes.clone();
+            hostile[i] ^= 1 << bit;
+            let _ = decode(&forge(hostile));
+        }
+    }
+}
+
+#[test]
+fn an_empty_document_is_not_the_absence_of_one() {
+    // A note whose body the user cleared still HAS a body cell. "No
+    // content" is the cell not being there, and the two must not encode
+    // the same way.
+    let g = one_rich(vec![]);
+    assert_eq!(decode(&encode(&g)).unwrap().0, g);
+    assert_ne!(encode(&g), encode(&one_rich(vec![Span::text("")])), "empty doc vs empty run");
+}
+
+/// One group holding one rich value — the smallest frame that carries a
+/// document, so a byte being aimed at is easy to name.
+fn one_rich(spans: Vec<Span>) -> Group {
+    Group {
+        device: dev(1),
+        first_seq: 0,
+        hlc: Hlc { wall_ms: 1_787_391_635_000, ctr: 0 },
+        author: Author::User,
+        action: 2,
+        reverses: None,
+        ops: vec![Op::SetCell {
+            entity: ent(1),
+            prop: ent(2),
+            value: Value::Rich(spans),
+            replaces: vec![],
+        }],
+    }
+}
+
+/// Re-seal a tampered frame the way a hostile peer would: `varint len ·
+/// body · crc32(body)`, so the checksum stops being what refuses it.
+///
+/// This duplicates the frame's CHECKSUM and nothing else — not the
+/// record layout, which is the thing a test must never restate. Without
+/// it, no test in this file can reach a nested value check at all.
+fn forge(mut bytes: Vec<u8>) -> Vec<u8> {
+    let n = bytes.len();
+    let body_end = n - 4;
+    // The length varint is one byte for every frame here (< 128 bytes of
+    // body); asserted rather than assumed.
+    assert!(bytes[0] < 0x80, "this helper assumes a one-byte length varint");
+    let body_start = 1;
+    let sum = crc32(&bytes[body_start..body_end]);
+    bytes[body_end..].copy_from_slice(&sum.to_le_bytes());
+    bytes
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }

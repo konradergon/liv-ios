@@ -20,13 +20,15 @@ import SwiftUI
 /// strings, and a renamed surface is a silently skipped check.
 enum LivSurface {
     static let prefix = "liv.surface."
+    /// What a marker's prefix becomes while its surface is covered.
+    static let coveredPrefix = "liv.covered."
 
-    /// The desk's three bodies. The five feature views use their
+    /// The desk's two bodies. The five feature views use their
     /// `Feature.rawValue`, so there is one vocabulary, not two.
     ///
-    /// Notes' root: the list of every note (restored 2026-08-28, when
-    /// the grid-as-root was measured to be hiding 126 of them).
-    static let notes = "notes"
+    /// There is no `notes` surface. The list of notes IS the view whose
+    /// raw value is `everything` — drawn as Notes since 2026-09-16, and
+    /// keeping the raw value because it is in every stored position.
     static let document = "document"
 }
 
@@ -40,7 +42,26 @@ extension View {
     /// checks lie. "No LATE pile" meant both "you left Today" and "Today
     /// has nothing today", and the harness could not tell them apart.
     func livSurface(_ name: String) -> some View {
-        overlay(alignment: .topLeading) {
+        modifier(LivSurfaceMarker(name: name))
+    }
+}
+
+/// The marker itself. **While something covers its surface (`livCovered`)
+/// it says so in its own identifier** — `liv.covered.<name>` — so the
+/// harness, which reads `liv.surface.` markers, counts only what is on
+/// top.
+///
+/// Hiding it was not enough, and could not be (2026-10-01): `axe` lists
+/// elements marked `accessibilityHidden` — a marker forced hidden was
+/// still read — so a view kept mounted under an open note answered as a
+/// second surface, and `drive.sh panel` and `routes` failed on a healthy
+/// app since 2026-09-16. The hidden flag stays, for VoiceOver.
+private struct LivSurfaceMarker: ViewModifier {
+    let name: String
+    @Environment(\.livCovered) private var covered
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .topLeading) {
             Color.clear
                 .frame(width: 1, height: 1)
                 // The identifier is what `drive.sh` reads. A LABEL was
@@ -48,15 +69,31 @@ extension View {
                 // VoiceOver would read "liv dot surface dot today" aloud
                 // to a person. Identifiers are for machines only.
                 //
-                // `accessibilityHidden(false)` is load-bearing: a
+                // An explicit `accessibilityHidden` is load-bearing: a
                 // `Color.clear` with no label is not an accessibility
-                // element on its own, so without this the marker is not
-                // in the tree at all and every check would pass by
-                // finding nothing.
-                .accessibilityIdentifier(LivSurface.prefix + name)
-                .accessibilityHidden(false)
+                // element on its own, so `false` is what puts the marker
+                // in the tree at all — without it every check would pass
+                // by finding nothing.
+                .accessibilityIdentifier((covered ? LivSurface.coveredPrefix : LivSurface.prefix) + name)
+                .accessibilityHidden(covered)
                 .allowsHitTesting(false)
         }
+    }
+}
+
+/// WHETHER THIS VIEW IS COVERED — by an open document or by the library
+/// panel (`DeskHost` sets it). `.accessibilityHidden` on the covered view
+/// does not reach the rows of a `List` (they are UIKit cells) or the
+/// surface marker, so those two read this and hide themselves: VoiceOver
+/// must not find what a person cannot see.
+private struct LivCovered: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var livCovered: Bool {
+        get { self[LivCovered.self] }
+        set { self[LivCovered.self] = newValue }
     }
 }
 
@@ -84,6 +121,19 @@ enum LivOverlay {
     /// the trailing edge (2026-08-28).
     static let properties = "properties"
     static let settings = "settings"
+    /// The trash. It had no marker while it wore a `NavigationStack`,
+    /// which is also the only structure a driver could have keyed on —
+    /// so removing the nav bar (2026-09-07) is what made this necessary,
+    /// and what makes the surface visible to `drive.sh` for the first
+    /// time.
+    static let trash = "trash"
+    /// The workspace / filter card, which hangs from the foot of the
+    /// library panel. It had no marker at all until 2026-09-08, so
+    /// nothing could assert it was even up — which is how the bar came
+    /// to be painting over it for a week without a check noticing.
+    static let workspace = "workspace"
+    /// The open document's version history (2026-09-09).
+    static let history = "history"
 }
 
 extension View {

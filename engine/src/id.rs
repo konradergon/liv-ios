@@ -185,6 +185,23 @@ impl IdGen {
         EntityId(out)
     }
 
+    /// Pick up where the box's clock got to (`log::newest_stamp`).
+    ///
+    /// A NEW SESSION IS NOT A NEW CLOCK. The generator is deterministic by
+    /// design, so a session that started at zero replayed the previous
+    /// session's ids the moment the wall clock read the same millisecond
+    /// again — a stepped-back phone clock, or any two tests stamping one
+    /// fixed time. Resuming from the newest stamp makes every id and stamp
+    /// after a reopen sort after everything the box already holds, which
+    /// a repeat cannot do.
+    pub fn resume(&mut self, newest: Hlc) {
+        let tick = newest.ctr.min(0x0fff) as u16;
+        if (newest.wall_ms, tick) > (self.last_ms, self.tick) {
+            self.last_ms = newest.wall_ms;
+            self.tick = tick;
+        }
+    }
+
     /// The clock reading to stamp a group with, given the wall time.
     pub fn stamp(&mut self, now_ms: u64) -> Hlc {
         let (ms, tick) = self.advance(now_ms);

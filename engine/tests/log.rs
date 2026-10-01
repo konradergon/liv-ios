@@ -206,3 +206,48 @@ fn a_box_reopens_with_what_it_held() {
     assert_eq!(log.groups().unwrap().len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A box remembers its device across opens, and a replay does not lose
+/// it.**
+///
+/// A dot is `(device, seq)` with seq counted per device, so re-minting the
+/// id on every open would restart that counter against history the box
+/// already holds — every new op colliding with an old dot. `core-decisions`
+/// calls the dot the one irreversible decision, and this is what stops it
+/// being quietly undone by a second launch.
+#[test]
+fn a_box_keeps_the_device_it_was_born_with() {
+    let dir = std::env::temp_dir().join("liv_engine_device");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("liv.db");
+
+    let first = {
+        let mut e = Engine::open_local(&path).unwrap();
+        e.create(kind::NOTE, Some("Roof"), 1_000).unwrap();
+        e.device()
+    };
+    assert_ne!(first.0, [0u8; 8], "a device id is never all zeroes");
+
+    // A second open is the SAME writer, and its next seq continues rather
+    // than restarting.
+    let mut again = Engine::open_local(&path).unwrap();
+    assert_eq!(again.device(), first, "the box said who it was");
+    assert!(again.next_seq(first).unwrap() >= 3, "and the counter carried on");
+
+    again.create(kind::NOTE, Some("Gutters"), 2_000).unwrap();
+    assert_eq!(again.entity_count().unwrap(), 2);
+
+    // The device is not derived from the log, so a replay must not
+    // disturb it — `drop_all` takes the view and leaves `meta`.
+    again.replay().unwrap();
+    assert_eq!(again.device(), first);
+    assert_eq!(again.entity_count().unwrap(), 2);
+
+    // A different box is a different writer.
+    let other = dir.join("other.db");
+    let e = Engine::open_local(&other).unwrap();
+    assert_ne!(e.device(), first);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

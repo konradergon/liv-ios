@@ -63,18 +63,24 @@ enum TabShape {
 /// (owner, 2026-08-08). Every edit inside saves as you make it, so the
 /// card holds nothing that could be lost.
 struct RecordCard: View {
-    let id: UInt64
+    let id: LivEntityID
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
     /// The embedded editor's [[ picker offers a Create row, which stamps
     /// the active workspace. Without this the card would trap the first
     /// time anyone created an entity from a link.
     @EnvironmentObject var workspaces: WorkspaceModel
+    /// The same focus request a new note claims: "New task" must land you
+    /// typing the name, not looking at an empty field. TAKEN ONCE, INTO
+    /// STATE, when the card appears — `consumeFocus` answers true exactly
+    /// once, so reading it in `body` made the flag true for the first
+    /// render and false for every render after, and the name field only
+    /// ever saw the false one.
+    @State private var focusName = false
 
     var body: some View {
-        // The same focus request a new note claims: "New task" must land
-        // you typing the name, not looking at an empty field.
-        RecordBody(id: id, autoFocus: desk.consumeFocus(id), inCard: true)
+        RecordBody(id: id, autoFocus: focusName)
+            .onAppear { if desk.consumeFocus(id) { focusName = true } }
             // A card is a NEW view per record. Following a [[link]] from
             // one record to another only reassigns desk.recordCard, so
             // without this SwiftUI reuses the view and the embedded
@@ -95,7 +101,7 @@ struct RecordCard: View {
 
 /// The pill a minimised card leaves behind. One at a time.
 struct MinimisedRecordPill: View {
-    let id: UInt64
+    let id: LivEntityID
     @EnvironmentObject var desk: DeskModel
     @EnvironmentObject var box: BoxModel
 
@@ -105,10 +111,9 @@ struct MinimisedRecordPill: View {
                 desk.restoreRecord()
             } label: {
                 HStack(spacing: 8) {
-                    IconChip(
+                    LivIcon(
                         glyph: LivKind.glyph(of: box.entity(id)),
-                        color: LivKind.color(of: box.entity(id)), size: 22,
-                        on: LivTheme.panel2)
+                        color: LivTheme.text2, size: 20)
                     Text(box.entity(id).map(livRowTitle) ?? "Untitled")
                         .font(.system(size: LivType.body, weight: .medium))
                         .foregroundStyle(LivTheme.text)
@@ -134,7 +139,6 @@ struct MinimisedRecordPill: View {
         .frame(height: 38)
         .background(Capsule().fill(LivTheme.panel2))
         .overlay(Capsule().strokeBorder(LivTheme.border, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
@@ -173,63 +177,39 @@ extension View {
 }
 
 struct RecordBody: View {
-    let id: UInt64
+    let id: LivEntityID
     /// A record created a moment ago: open with the caret in the name.
     var autoFocus: Bool = false
-    /// Inside a card there are no floating doors overhead, so the name
-    /// does not need to duck under them.
-    var inCard: Bool = false
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
 
-    @State private var name = ""
     @State private var seeded = false
     @State private var notesShown = false
-    @State private var claimed = false
-    /// The name already handed to the box and not yet visible in the
-    /// snapshot. Return commits, then the blur commits again a beat
-    /// later — without this the box logged the same rename twice
-    /// (found live, 2026-08-06).
-    @State private var pendingName: String?
-    @FocusState private var nameFocused: Bool
 
     var body: some View {
         Group {
             if let row = box.entity(id) {
                 body(row)
             } else {
-                EmptyHint("This was deleted.")
+                EmptyHint("Deleted")
                     .frame(maxHeight: .infinity)
             }
         }
-        .onAppear {
-            seed()
-            claimFocus()
-        }
-        // The parent sets autoFocus in ITS onAppear, which runs AFTER
-        // this one — the same ordering the note editor works around.
-        .onChange(of: autoFocus) { _, now in
-            if now { claimFocus() }
-        }
-        .onChange(of: storedName) { old, fresh in
-            if pendingName == fresh { pendingName = nil }
-            // The same reseed guard the note title uses: an external
-            // rename must land, a live edit must not be stomped.
-            if name != fresh, name == "" || name == old { name = fresh }
-        }
+        .onAppear(perform: seed)
     }
 
     private func body(_ row: EntityRow) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                nameField(row)
-                // The facts, as the body. Same rows as the (i) panel —
-                // one implementation, so a due date edited here and a due
-                // date edited there are the same code.
-                EntityInspector(id: id, scrolls: false)
+                // The name and the facts, as the body — the Properties
+                // sheet's own header and rows, one implementation, so a
+                // record's card and a note's properties look and act the
+                // same (owner, 2026-09-28). A record just made opens with
+                // the caret in its name.
+                EntityInspector(id: id, scrolls: false, autoFocus: autoFocus)
                 notesSection
-                if inCard { trashRow }
+                trashRow
             }
             .padding(.bottom, 40)
         }
@@ -243,6 +223,14 @@ struct RecordBody: View {
     /// and only in the card (the properties PANEL keeps its ••• two
     /// inches away and still only describes — owner, 2026-08-02).
     ///
+    /// "Only in the card" is now true BY CONSTRUCTION rather than by a
+    /// flag: a record is a card and never a tab (§13, owner 2026-08-08),
+    /// so `RecordBody` has exactly one construction site and it is
+    /// `RecordCard`. The `inCard` parameter that used to guard this row
+    /// was never false, and went on 2026-09-12. Should a record ever get
+    /// a second home, that ruling is what has to be reversed first —
+    /// and whoever reverses it re-reads this row.
+    ///
     /// Soft and reversible like every trash in this app.
     private var trashRow: some View {
         Button(role: .destructive) {
@@ -250,87 +238,30 @@ struct RecordBody: View {
             desk.recordCard = nil
             desk.minimisedRecord = nil
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "trash")
-                    .font(.system(size: LivType.body))
-                Text("Move to Trash")
-                    .font(.system(size: LivType.strong))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(LivTheme.red)
-            .frame(height: LivRow.height)
-            .padding(.horizontal, 16)
-            .contentShape(Rectangle())
+            // THE CARD ROW (the clearer boards), alone on its own card
+            // under the properties, in destructive red.
+            LivCardRow(
+                divided: false,
+                lead: {
+                    LivIcon(glyph: .trash, color: LivTheme.red, size: LivCards.glyph)
+                        .frame(width: LivCards.mark)
+                },
+                title: { Text("Move to Trash").foregroundStyle(LivTheme.red) },
+                trailing: { EmptyView() })
         }
         .buttonStyle(.plain)
-        .padding(.top, 18)
-        .overlay(alignment: .top) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                .padding(.top, 18)
-        }
+        .background(LivTheme.panel2)
+        .clipShape(RoundedRectangle(cornerRadius: LivTheme.radiusLg, style: .continuous))
+        .padding(.horizontal, LivRow.cardInset)
+        .padding(.top, LivCards.gap)
     }
 
-    // MARK: the name — one line, because a name is one line
-
-    private func nameField(_ row: EntityRow) -> some View {
-        TextField(placeholder(row), text: $name, axis: .vertical)
-            .font(.system(size: LivType.hero, weight: .semibold))
-            .foregroundStyle(LivTheme.text)
-            .lineLimit(1...3)
-            .focused($nameFocused)
-            .submitLabel(.done)
-            .onSubmit(commitName)
-            .onChange(of: nameFocused) { _, now in
-                if !now { commitName() }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, inCard ? 18 : 56)
-            .padding(.bottom, 14)
-    }
-
-    /// A record with no name cell still has a title everywhere else in
-    /// the app — the core derives one from its first line. Showing
-    /// "Untitled" here would contradict the list you just tapped, so the
-    /// derived name is the PROMPT: it reads right, and typing over it is
-    /// what writes the name. Nothing is written by merely opening it.
-    private func placeholder(_ row: EntityRow) -> String {
-        let derived = livRowTitle(row)
-        if derived != "Untitled" { return derived }
-        return (row.kinds ?? []).contains("event") ? "New event" : "Untitled"
-    }
-
-    private var storedName: String {
-        (box.entity(id)?.cells ?? []).first { $0.property == "name" }?.value ?? ""
-    }
-
-    /// @FocusState set during a view update is dropped; one runloop hop
-    /// later it takes.
-    private func claimFocus() {
-        guard autoFocus, !claimed else { return }
-        claimed = true
-        DispatchQueue.main.async { nameFocused = true }
-    }
-
+    /// A record that already carries notes opens with them showing; an
+    /// empty one does not offer a text box nobody asked for.
     private func seed() {
         guard !seeded else { return }
-        name = storedName
         seeded = true
-        // A record that already carries notes opens with them showing;
-        // an empty one does not offer a text box nobody asked for.
-        notesShown = (box.entity(id)?.contentPrint ?? 0) != 0
-    }
-
-    private func commitName() {
-        guard let row = box.entity(id), row.trashed != true else { return }
-        let stored = storedName
-        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else {
-            name = stored  // an emptied field reverts, never erases the name
-            return
-        }
-        guard typed != stored, typed != pendingName else { return }
-        pendingName = typed
-        box.set(id, "name", typed)
+        notesShown = box.entity(id)?.hasBody == true
     }
 
     // MARK: notes — the note editor, embedded
@@ -345,7 +276,9 @@ struct RecordBody: View {
     /// same editor — nothing becomes unreachable.
     @ViewBuilder private var notesSection: some View {
         if notesShown {
-            SectionLabel("Notes")
+            // The SHEET tier (the clearer boards): the record card is a
+            // sheet, and its labels are the Properties sheet's.
+            SectionLabel("Notes", style: .sheet)
                 .padding(.horizontal, 16)
             // The REAL editor, minus its title line — the card names the
             // record above it. Checkboxes, [[links]], markdown styling

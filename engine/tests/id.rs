@@ -109,3 +109,43 @@ fn the_clock_stamp_never_goes_backwards() {
     let b = g.stamp(1_000_000_000_000);
     assert!(b >= a, "a hybrid clock reading went backwards when the wall clock did");
 }
+
+/// **A BOX REMEMBERS WHERE ITS CLOCK GOT TO** (2026-09-29).
+///
+/// The generator is deterministic by design — seeded from the device,
+/// monotonic within a session — but it started every session at zero: the
+/// same random stream, the clock at nothing. So a box closed and opened
+/// again minted the ids of its previous session over again the moment the
+/// wall clock read the same millisecond. Found through the FFI tests, which
+/// all stamp one fixed time and close each other's boxes when they run in
+/// parallel: two areas made in one box came out as ONE thing with two
+/// contended names, and a picker offered neither.
+///
+/// A phone meets the same thing when its clock steps back between two
+/// launches. Resuming from the newest stamp the box already holds makes
+/// every id minted after a reopen sort after every id written before it,
+/// which is the one thing a repeat cannot do.
+#[test]
+fn a_reopened_box_never_mints_an_id_it_has_already_used() {
+    let dir = std::env::temp_dir().join("liv_engine_id_reopen");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("liv.db");
+    let t = 1_789_257_600_000;
+
+    let first = {
+        let mut e = Engine::open_local(&path).unwrap();
+        e.declare(kind::AREA, "Woodworking", t).unwrap()
+    };
+    // The same millisecond again, as a stepped-back clock would read it.
+    let second = {
+        let mut e = Engine::open_local(&path).unwrap();
+        e.declare(kind::AREA, "Allotment", t).unwrap()
+    };
+    assert_ne!(first, second, "a reopened box minted an id it had already used");
+    assert!(second > first, "an id minted after a reopen sorted before one minted before it");
+
+    let e = Engine::open_local(&path).unwrap();
+    assert_eq!(e.of_kind(kind::AREA).unwrap().len(), 2, "two areas made, two areas held");
+    let _ = std::fs::remove_dir_all(&dir);
+}

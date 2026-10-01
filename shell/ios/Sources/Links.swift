@@ -20,7 +20,7 @@ import SwiftUI
 /// same create row, because a second picker is a second thing to keep
 /// true (standing rule 4).
 struct LinksSection: View {
-    let id: UInt64
+    let id: LivEntityID
 
     @EnvironmentObject var box: BoxModel
     @EnvironmentObject var desk: DeskModel
@@ -35,32 +35,39 @@ struct LinksSection: View {
     private static let shown = 8
 
     var body: some View {
+        let outRows = visible(links.outRows, all: showAllOut)
+        let inRows = visible(links.inRows, all: showAllIn)
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("Links")
-            ForEach(Array(visible(links.outRows, all: showAllOut).enumerated()), id: \.element.id) {
-                i, link in
-                LinkRowView(
-                    link: link, row: box.entity(link.id ?? 0),
-                    onOpen: { open(link) }, onRemove: removal(for: link))
-            }
-            moreButton(links.outRows, expanded: $showAllOut)
-            linkButton
-            if !links.inRows.isEmpty {
-                SectionLabel("Linked from")
-                ForEach(Array(visible(links.inRows, all: showAllIn).enumerated()), id: \.element.id) {
-                    i, link in
-                        LinkRowView(
-                        link: link, row: box.entity(link.id ?? 0),
-                        onOpen: { open(link) }, onRemove: nil)
+            // A GROUP OF ITS OWN (the clearer board): a small sheet label
+            // and a card — the links are content of a different shape
+            // from the property rows above, so they get a word. The label
+            // is the CARD's, so it takes the card's inset (36).
+            LivCard(label: "Links", labelStyle: .sheet, fill: LivTheme.panel2) {
+                ForEach(outRows) { link in
+                    LinkRowView(
+                        link: link, row: box.entity(link.id ?? .absent),
+                        onOpen: { open(link) }, onRemove: removal(for: link))
                 }
-                moreButton(links.inRows, expanded: $showAllIn)
+                moreRow(links.outRows, expanded: $showAllOut)
+                addRow
+            }
+            if !links.inRows.isEmpty {
+                LivCard(label: "Linked from", labelStyle: .sheet, fill: LivTheme.panel2) {
+                    ForEach(Array(inRows.enumerated()), id: \.element.id) { i, link in
+                        LinkRowView(
+                            link: link, row: box.entity(link.id ?? .absent),
+                            onOpen: { open(link) }, onRemove: nil, backlink: true,
+                            divided: i < inRows.count - 1 || moreShows(links.inRows, showAllIn))
+                    }
+                    moreRow(links.inRows, expanded: $showAllIn, last: true)
+                }
             }
         }
         .onAppear(perform: load)
         // One user action gets one snapshot (standing rule 8); a link
         // written here rides that same refresh back into this list.
         .onChange(of: box.snap?.entities?.count ?? 0) { _, _ in load() }
-        .onChange(of: box.entity(id)?.contentPrint ?? 0) { _, _ in load() }
+        .onChange(of: box.entity(id)?.recency ?? 0) { _, _ in load() }
         // A link written from anywhere else — another tab's body, the
         // clerk, an import — moves one of these two numbers.
         .onChange(of: box.entity(id)?.cells?.count ?? 0) { _, _ in load() }
@@ -75,20 +82,22 @@ struct LinksSection: View {
 
     @EnvironmentObject private var workspaces: WorkspaceModel
 
-    /// The one door that makes a link here. Always present: a create key
-    /// that comes and goes is a key you cannot learn (owner, 2026-08-17).
-    private var linkButton: some View {
-        Button { picking = true } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus")
-                    .font(.system(size: LivType.caption, weight: .semibold))
-                Text("Link…")
-                    .font(.system(size: LivType.body, weight: .medium))
-                Spacer()
-            }
-            .foregroundStyle(LivTheme.accent)
-            .frame(height: 44)
-            .contentShape(Rectangle())
+    /// THE DOOR THAT MAKES ONE — always the card's last row, always there:
+    /// a create key that comes and goes is a key you cannot learn (owner,
+    /// 2026-08-17). A full-width row whose words are the accent — a door,
+    /// which is one of the three shapes a tappable thing may wear.
+    private var addRow: some View {
+        Button {
+            picking = true
+        } label: {
+            // The accent is set ON the words: the row paints its own title
+            // ink, and an outer style never reaches past it.
+            LivCardRow(
+                divided: false,
+                lead: { LivCardMark(glyph: .plus) },
+                title: { Text("Add link").foregroundStyle(LivTheme.accent) },
+                trailing: { EmptyView() }
+            )
         }
         .buttonStyle(.plain)
     }
@@ -97,17 +106,24 @@ struct LinksSection: View {
         all ? rows : Array(rows.prefix(Self.shown))
     }
 
-    @ViewBuilder private func moreButton(
-        _ rows: [LinkRow], expanded: Binding<Bool>
+    private func moreShows(_ rows: [LinkRow], _ expanded: Bool) -> Bool {
+        rows.count > Self.shown && !expanded
+    }
+
+    /// "Show all 12" — a row of the card, words in the accent, no chevron.
+    @ViewBuilder private func moreRow(
+        _ rows: [LinkRow], expanded: Binding<Bool>, last: Bool = false
     ) -> some View {
-        if rows.count > Self.shown && !expanded.wrappedValue {
-            Button { expanded.wrappedValue = true } label: {
-                Text("Show all \(rows.count)")
-                    .font(.system(size: LivType.body, weight: .medium))
-                    .foregroundStyle(LivTheme.accent)
-                    .frame(height: 44)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+        if moreShows(rows, expanded.wrappedValue) {
+            Button {
+                expanded.wrappedValue = true
+            } label: {
+                LivCardRow(
+                    divided: !last, rule: LivCards.ruleBare,
+                    lead: { EmptyView() },
+                    title: { Text("Show all \(rows.count)").foregroundStyle(LivTheme.accent) },
+                    trailing: { EmptyView() }
+                )
             }
             .buttonStyle(.plain)
         }
@@ -117,13 +133,20 @@ struct LinksSection: View {
     private func removal(for link: LinkRow) -> (() -> Void)? {
         guard link.fromBody != true, let target = link.id else { return nil }
         return {
-            box.removeCell(id, "related", "#\(target)") { _ in load() }
+            // `#<id>` is the ABI's own grammar for "a reference to this"
+            // (services parses it with `trim_start_matches('#')`), not a
+            // string anyone reads. It is a write, not a label.
+            // `engineId`, not `written`: this value crosses to C and the
+        // engine reads it with `thing_named`, which is `from_hex` past
+        // the `#`. The shell's storage form was decimal, so both ends of
+        // a link in the properties card were refused (slice 5b).
+        box.removeCell(id, "related", "#\(engineId(target))") { _ in load() }
         }
     }
 
-    private func link(to target: UInt64) {
-        guard target != 0, target != id else { return }
-        box.addCell(id, "related", "#\(target)") { _ in load() }
+    private func link(to target: LivEntityID) {
+        guard !target.isAbsent, target != id else { return }
+        box.addCell(id, "related", "#\(engineId(target))") { _ in load() }
     }
 
     private func open(_ link: LinkRow) {
@@ -138,8 +161,15 @@ struct LinksSection: View {
 
 // MARK: - one row
 
-/// A link row is the thing it points at: its kind chip, its name, and —
-/// only when this list is where the link lives — the way to remove it.
+/// A link row is the thing it points at: its glyph, its name, where the
+/// link lives ("Linked here" — a link made in this card — or "In the
+/// text"), and a chevron: it opens.
+///
+/// UNLINKING MOVED OFF THE ROW. The board's row ends in a chevron, so the
+/// ✕ that stood there is now the row's context menu and an accessibility
+/// action, "Unlink <name>" — the same verb, a press-and-hold away. A body
+/// link has neither: the brackets ARE the link, so the words are where it
+/// is removed.
 private struct LinkRowView: View {
     let link: LinkRow
     /// The snapshot's own row for the target, when the shell holds it —
@@ -147,41 +177,40 @@ private struct LinkRowView: View {
     let row: EntityRow?
     let onOpen: () -> Void
     let onRemove: (() -> Void)?
+    var backlink = false
+    var divided = true
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: onOpen) {
-                LivListRow(
-                    glyph: glyph, tint: color, title: name, untitled: untitled,
-                    divided: false)
+        Button(action: onOpen) {
+            LivCardRow(
+                glyph: glyph, title: name,
+                detail: backlink ? nil : (link.fromBody == true ? "In the text" : "Linked here"),
+                muted: untitled, divided: divided
+            ) {
+                LivChevron()
             }
-            .buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
             if let onRemove {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                        .frame(width: 40, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Unlink \(name)")
-            } else if link.fromBody == true {
-                // The whole reason this row has no ✕: the link lives in
-                // the words, so the words are where it is removed.
-                Image(systemName: "text.quote")
-                    .font(.system(size: LivType.caption))
-                    .foregroundStyle(LivTheme.text3)
-                    .frame(width: 40, height: 44)
-                    .accessibilityLabel("Typed in the note")
+                Button("Unlink \(name)", role: .destructive, action: onRemove)
+            }
+        }
+        .accessibilityActions {
+            if let onRemove {
+                Button("Unlink \(name)", action: onRemove)
             }
         }
     }
 
     private var untitled: Bool {
         if let row { return livRowIsUntitled(row) }
-        let n = wireName
-        return n.isEmpty || n == "#\(link.id ?? 0)"
+        // The `"#<id>"` comparison that used to live here is gone with the
+        // placeholder it looked for: the core sends a made name now, never
+        // an id (2026-09-13). A wire link the snapshot has no row for is
+        // one we cannot ask about, so an empty name is all there is to go
+        // on.
+        return wireName.isEmpty
     }
 
     private var wireName: String {
@@ -195,10 +224,6 @@ private struct LinkRowView: View {
 
     private var glyph: LivGlyph {
         row.map { LivKind.glyph(of: $0) } ?? LivKind.named(link.kinds?.first ?? "").glyph()
-    }
-
-    private var color: Color {
-        row.map { LivKind.color(of: $0) } ?? LivKind.named(link.kinds?.first ?? "").color
     }
 }
 

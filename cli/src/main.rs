@@ -1,676 +1,567 @@
-//! liv — a stand-in shell for milestone 3.
+//! `liv` — a headless CLI over the app's own box: the VERIFICATION tool.
 //!
-//! A real shell (window, hotkey, popup) arrives with milestone 4, where the
-//! platform decision bites. Until then this binary is the thinnest possible
-//! orchestrator: parse arguments, open the session, run services, print what
-//! the renderer emitted. It owns no data and defines no commands.
+//! **The app's verbs, and nothing else.** Every command goes through the C
+//! ABI in `liv-ffi` — the same `liv_*` functions `Box.swift` calls — and
+//! prints the JSON the app decodes. So "cross-check a write against the
+//! box" asks the box exactly what the app asks it, through the same code;
+//! a second implementation here would be a second opinion, and a check
+//! that can disagree with the thing it checks is not a check.
+//!
+//! It reads and writes the engine's `liv.db`, the file the app opens. It
+//! used to read only the core-era `.log`, which the app stopped opening at
+//! slice 5b; this is stage 5 of `design/rust-owns-the-mechanisms.md`
+//! (2026-09-29), where it moved first because everything after it is
+//! verified with it.
+//!
+//! `history` is the one read that is not an app verb: the app has no
+//! screen for the raw log, and "one transaction per user action" is a
+//! claim about the log, so it opens the engine read-only for that alone.
 
-mod satellite;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 
-use chrono::{Datelike, Local, Timelike};
+use serde_json::{json, Value as J};
 
-use liv_core::{props, Author, DateTime, Id, Session, Value};
-use liv_services::{Constraint, Op, Query, Sort};
-use liv_views::{render, Config, Density, Rendered};
+use liv_ffi::basics::*;
+use liv_ffi::finding::*;
+use liv_ffi::surfaces::*;
+use liv_ffi::writes::*;
+
+const USAGE: &str = "\
+usage: liv --box <liv.db> <command> [args]      (or LIV_BOX=<liv.db>)
+
+MAKING THINGS
+  new KIND [NAME...] [--PROP VALUE]...   make a note/task/event/…, then set each
+                                         property; an area/project/person/status
+                                         named for the first time is minted, as
+                                         the app's picker does. Prints the id.
+  capture TEXT...                        catch words as an unsorted scrap
+  option PROP NAME...                    mint a value of a property (an area…)
+  field NAME HOLDS [--many]              declare a field (text, number, bool,
+                                         datetime, reference, richtext, file)
+  file PATH                              add a file
+
+CHANGING THINGS
+  set ID PROP VALUE...   add ID PROP VALUE...   remove ID PROP VALUE...
+  unset ID PROP          trash ID               restore ID...  (several: one undo)
+  content-set ID TEXT... replace a body with plain text
+  rename-value PROP OLD NEW
+  undo | redo
+  accept ID PRINT        decline ID PRINT       (a suggestion from `inbox`)
+  assist on|off
+
+READING
+  list [--all]           everything, as a table (--all adds the trash)
+  library                every row, Notes, Unsorted and the panel's counts
+  reminders              what rings, soonest first (the app keeps 64)
+  today | tasks | trash | day YYYY-MM-DD
+  cells ID | links ID | content ID | versions ID
+  options PROP | values PROP | properties | kinds | workspaces
+  search WORDS... | lens QUERY... | terms QUERY...
+  inbox [ID]             what the clerk suggests, about everything or one
+                         thing (liv_sweep / liv_sweep_one)
+  snapshot               one refresh: the reads the app makes after a write
+  history                the log, one line per transaction
+  probe | file-alerts    is the box readable; which files are missing
+
+An ID is the 32-hex id the app uses, or any part of one (6+ characters) that
+only one thing's id contains — the middle is what differs between things made
+in the same second.";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Err(message) = dispatch(&args) {
+    if let Err(message) = run(&args) {
         eprintln!("liv: {message}");
         std::process::exit(1);
     }
 }
 
-/// The CLI and the menu-bar shell share one box by default.
-/// The store's location is one of the budgeted settings; --log overrides.
-fn default_log_path() -> String {
-    match std::env::var("HOME") {
-        Ok(home) => {
-            let path = format!("{home}/Library/Application Support/liv/liv.log");
-            // Boxes born before the product rename stay where they are: fall
-            // back to the codename-era location while the new one doesn't exist.
-            let legacy = format!("{home}/Library/Application Support/lotus/lotus.log");
-            if !std::path::Path::new(&path).exists() && std::path::Path::new(&legacy).exists() {
-                return legacy;
-            }
-            path
-        }
-        Err(_) => "liv.log".to_string(),
+fn run(args: &[String]) -> Result<(), String> {
+    let mut rest: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut path = std::env::var("LIV_BOX").ok();
+    if let Some(i) = rest.iter().position(|a| *a == "--box") {
+        path = Some(rest.get(i + 1).ok_or("--box needs a path")?.to_string());
+        rest.drain(i..=i + 1);
     }
-}
-
-fn dispatch(args: &[String]) -> Result<(), String> {
-    let mut log_path = default_log_path();
-    let mut rest: Vec<&str> = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "--log" {
-            i += 1;
-            log_path = args.get(i).ok_or("--log needs a path")?.clone();
-        } else {
-            rest.push(&args[i]);
-        }
-        i += 1;
-    }
-
-    if let Some(dir) = std::path::Path::new(&log_path).parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-
-    // Satellite export (design/ios.md §2.2) reads through the ffi seam, which
-    // opens — and locks — the box itself, so it must run before this process
-    // takes the session lock below.
-    if let Some((&"satellite-export", export_args)) = rest.split_first() {
-        let root = export_args
-            .first()
-            .ok_or("usage: liv satellite-export SATELLITE-ROOT")?;
-        return satellite::export(&log_path, root);
-    }
-
-    let mut session = Session::open(&log_path).map_err(|e| e.to_string())?;
-    liv_services::seed_if_fresh(&mut session).map_err(|e| e.to_string())?;
-
-    // The clerk sweeps at every open; duplicates of anything pending or
-    // declined never reach the queue.
-    // One durable write. The CLI has no store cache, so EVERY invocation
-    // is a cold open and paid the whole per-proposal fsync loop.
-    session
-        .propose_all(liv_services::clerk::sweep(session.store(), civil_today()))
-        .map_err(|e| e.to_string())?;
-
-    match rest.split_first() {
-        None | Some((&"today", _)) => {
-            today(&session);
-            Ok(())
-        }
-        Some((&"add", text)) if !text.is_empty() => add(&mut session, &text.join(" ")),
-        Some((&"list", flags)) => list(&session, flags),
-        Some((&"inbox", _)) => {
-            inbox(&session);
-            Ok(())
-        }
-        Some((&"accept", target)) => accept(&mut session, target),
-        Some((&"reject", target)) => reject(&mut session, target),
-        Some((&"name", rest)) => name(&mut session, rest),
-        Some((&"set", rest)) => set(&mut session, rest),
-        Some((&"route", rest)) => route(&mut session, rest),
-        Some((&"history", _)) => {
-            history(&session);
-            Ok(())
-        }
-        // P20j.5 — the vault door from the CLI: the same services seams
-        // the shell drives, honoring the projector lock.
-        Some((&"vault", sub)) => vault(&mut session, &log_path, sub),
-        Some((&"habit", rest)) if !rest.is_empty() => habit_add(&mut session, rest),
-        Some((&"checkin", rest)) if !rest.is_empty() => checkin(&mut session, rest),
-        Some((&"habits", _)) => {
-            habits(&session);
-            Ok(())
-        }
-        Some((&"time", rest)) => time(&mut session, rest),
-        Some((&"rename-value", rest)) => rename_value(&mut session, rest),
-        // The satellite drain (design/ios.md §2.2): the phone's outbox
-        // becomes box entities, one transaction per batch.
-        Some((&"drain", rest)) => satellite::drain(&mut session, rest),
-        _ => Err("usage: liv [--log FILE] [today] | add TEXT... | \
-                  list [--where P=V|P!=V|P?] [--sort P] [--desc] [--columns A,B,C] [--all] | \
-                  inbox | accept ID [K] | reject ID [K] | name ID TEXT... | \
-                  set ID PROP VALUE... | history | \
-                  habit NAME... [--points N] [--cadence TEXT] | \
-                  checkin HABIT-ID [DAY] | habits | \
-                  time [TARGET-ID START END] | rename-value PROP OLD NEW... | \
-                  drain SATELLITE-ROOT | satellite-export SATELLITE-ROOT"
-            .into()),
-    }
-}
-
-/// Name an entity: one cell, front of house. Names feed the gazetteer,
-/// so the mentions proposer has something to notice.
-fn name(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, words) = rest.split_first().ok_or("usage: liv name ID TEXT...")?;
-    let id: Id = id_arg
-        .trim_start_matches('#')
-        .parse()
-        .map_err(|_| format!("not an entity id: {id_arg}"))?;
-    if session.store().get(id).is_none() {
-        return Err(format!("no entity #{id}"));
-    }
-    if words.is_empty() {
-        return Err("usage: liv name ID TEXT...".into());
-    }
-    let text = words.join(" ");
-    session
-        .commit(
-            vec![liv_core::Command::AddCell {
-                entity: id,
-                cell: liv_core::Cell {
-                    property: props::NAME,
-                    value: Value::text(&text),
-                },
-            }],
-            format!("name {text}"),
-            Author::User,
-        )
-        .map_err(|e| e.to_string())?;
-    println!("#{id} is now \"{text}\"");
-    Ok(())
-}
-
-fn civil_today() -> DateTime {
-    let now = Local::now();
-    DateTime::date(now.year(), now.month(), now.day())
-}
-
-/// Today: the orientation surface, v0 — a dedicated list built from the
-/// one lens that exists. Board-or-list stays open until daily use decides.
-/// The sections come from services, so every shell shows the same morning.
-fn today(session: &Session) {
-    let store = session.store();
-    let list_config = Config {
-        density: Density::List,
-        columns: vec![],
+    let Some((&verb, a)) = rest.split_first() else {
+        println!("{USAGE}");
+        return Ok(());
     };
-
-    let sections = liv_services::today_sections(store, civil_today());
-    if !sections.due.is_empty() {
-        println!("due through today:");
-        print_table(&render(store, &sections.due, &list_config));
-        println!();
+    if matches!(verb, "help" | "--help" | "-h") {
+        println!("{USAGE}");
+        return Ok(());
     }
-    if !sections.unstructured.is_empty() {
-        println!("captured, unstructured:");
-        print_table(&render(store, &sections.unstructured, &list_config));
-        println!();
+    if verb == "terms" {
+        return show(call(|out| unsafe { liv_terms(c(&a.join(" ")).as_ptr(), out) })?);
     }
-
-    match store.pending().len() {
-        0 => {}
-        1 => println!("1 proposal waiting — liv inbox"),
-        n => println!("{n} proposals waiting — liv inbox"),
-    }
+    let path = path.ok_or("no box: pass --box <liv.db> or set LIV_BOX")?;
+    let liv = Liv { path: c(&path), file: path };
+    liv.dispatch(verb, a)
 }
 
-/// Set one property to one value — the shared parser and replace-the-cell
-/// semantics live in services; the window's inspector uses the same door.
-/// `liv route ID TYPE` — stamp a scrap's type by NAME (set_property
-/// can't: TYPE is a reference and wants "#id", but type entities are
-/// backstage plumbing). The FFI shell has liv_set_type_at; the CLI
-/// gets its own door so a captured scrap can be routed to a projectable
-/// kind (note/task/person/…).
-fn route(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, type_words) = rest.split_first().ok_or("usage: liv route ID TYPE")?;
-    let id: Id = id_arg
-        .trim_start_matches('#')
-        .parse()
-        .map_err(|_| format!("not an entity id: {id_arg}"))?;
-    let type_name = type_words.join(" ");
-    if type_name.is_empty() {
-        return Err("usage: liv route ID TYPE".into());
-    }
-    liv_services::content::set_type(session, id, &type_name).map_err(|e| format!("{e:?}"))?;
-    println!("#{id} → {type_name}");
-    Ok(())
+struct Liv {
+    path: CString,
+    file: String,
 }
 
-fn set(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, rest) = rest.split_first().ok_or("usage: liv set ID PROP VALUE...")?;
-    let (prop_name, words) = rest.split_first().ok_or("usage: liv set ID PROP VALUE...")?;
-    let id: Id = id_arg
-        .trim_start_matches('#')
-        .parse()
-        .map_err(|_| format!("not an entity id: {id_arg}"))?;
-    if words.is_empty() {
-        return Err("usage: liv set ID PROP VALUE...".into());
+impl Liv {
+    fn p(&self) -> *const c_char {
+        self.path.as_ptr()
     }
-    let raw = words.join(" ");
-    liv_services::content::set_property(session, id, prop_name, &raw)?;
-    println!("#{id} {prop_name} = {raw}");
-    Ok(())
-}
 
-/// The inbox: the shell's one surface that is not a view. Proposals are
-/// addressed by their subject's entity id — stable across invocations —
-/// never by queue position, which shifts as the queue is triaged.
-fn inbox(session: &Session) {
-    let pending = session.store().pending();
-    if pending.is_empty() {
-        println!("(nothing waiting)");
-        return;
-    }
-    for (i, proposal) in pending.iter().enumerate() {
-        let author = match &proposal.author {
-            Author::Proposer(name) => name.clone(),
-            Author::User => "user".into(),
-            Author::System => "system".into(),
-        };
-        let subject = subject_of(proposal);
-        let nth = pending[..i]
-            .iter()
-            .filter(|p| subject_of(p) == subject)
-            .count();
-        let key = match subject {
-            Some(id) if nth > 0 => format!("#{id} {}", nth + 1),
-            Some(id) => format!("#{id}"),
-            None => String::new(),
-        };
-        println!("{key:<10} {}  ({author})", proposal.reason);
-    }
-    println!("\nliv accept ID | liv reject ID   (add K when an id lists twice)");
-}
-
-fn subject_of(proposal: &liv_core::Proposal) -> Option<Id> {
-    proposal.commands.first().map(|c| match c {
-        liv_core::Command::Create { entity }
-        | liv_core::Command::Trash { entity }
-        | liv_core::Command::Restore { entity }
-        | liv_core::Command::AddCell { entity, .. }
-        | liv_core::Command::RemoveCell { entity, .. }
-        | liv_core::Command::Redirect { entity, .. } => *entity,
-    })
-}
-
-/// Resolve "ID [K]" against the queue as it exists right now.
-fn resolve_target(session: &Session, args: &[&str]) -> Result<usize, String> {
-    let id_arg = args
-        .first()
-        .ok_or("which one? liv inbox shows the ids")?;
-    let id: Id = id_arg
-        .trim_start_matches('#')
-        .parse()
-        .map_err(|_| format!("not an entity id: {id_arg}"))?;
-    let matching: Vec<usize> = session
-        .store()
-        .pending()
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| subject_of(p) == Some(id))
-        .map(|(i, _)| i)
-        .collect();
-    match (matching.len(), args.get(1)) {
-        (0, _) => Err(format!("no proposal for #{id} — liv inbox")),
-        (1, _) => Ok(matching[0]),
-        (n, Some(k)) => {
-            let k: usize = k.parse().map_err(|_| format!("not a number: {k}"))?;
-            if k >= 1 && k <= n {
-                Ok(matching[k - 1])
-            } else {
-                Err(format!("#{id} has {n} proposals — K is 1..={n}"))
+    fn dispatch(&self, verb: &str, a: &[&str]) -> Result<(), String> {
+        let now = now_ms();
+        match (verb, a) {
+            // ---- making ------------------------------------------------
+            ("new", [kind, rest @ ..]) => self.new_thing(kind, rest),
+            ("capture", words) if !words.is_empty() => {
+                let text = c(&words.join(" "));
+                show(call(|out| unsafe { liv_capture(self.p(), text.as_ptr(), now, out) })?)
             }
+            ("option", [prop, name @ ..]) if !name.is_empty() => {
+                let (prop, name) = (self.prop(prop)?.id, c(&name.join(" ")));
+                show(call(|out| unsafe {
+                    liv_add_option(self.p(), prop.as_ptr(), name.as_ptr(), now, out)
+                })?)
+            }
+            ("field", [name, holds, flags @ ..]) => {
+                let (name, holds) = (c(name), c(holds));
+                let many = flags.contains(&"--many");
+                show(call(|out| unsafe {
+                    liv_declare_field(self.p(), name.as_ptr(), holds.as_ptr(), many, now, out)
+                })?)
+            }
+            ("file", [file]) => {
+                let file = c(file);
+                show(call(|out| unsafe { liv_add_file(self.p(), file.as_ptr(), now, out) })?)
+            }
+
+            // ---- changing ----------------------------------------------
+            ("set" | "add" | "remove", [id, prop, value @ ..]) if !value.is_empty() => {
+                let (id, prop, value) = (self.id(id)?, self.prop(prop)?.id, c(&value.join(" ")));
+                let f = match verb {
+                    "set" => liv_set,
+                    "add" => liv_add,
+                    _ => liv_remove,
+                };
+                status(unsafe { f(self.p(), id.as_ptr(), prop.as_ptr(), value.as_ptr(), now) })
+            }
+            ("unset", [id, prop]) => {
+                let (id, prop) = (self.id(id)?, self.prop(prop)?.id);
+                status(unsafe { liv_unset(self.p(), id.as_ptr(), prop.as_ptr(), now) })
+            }
+            ("trash", [id]) => {
+                let id = self.id(id)?;
+                status(unsafe { liv_trash(self.p(), id.as_ptr(), now) })
+            }
+            ("restore", [id]) => {
+                let id = self.id(id)?;
+                status(unsafe { liv_restore(self.p(), id.as_ptr(), now) })
+            }
+            ("restore", ids) if !ids.is_empty() => {
+                let ids: Vec<String> = ids
+                    .iter()
+                    .map(|raw| Ok(self.id(raw)?.into_string().unwrap_or_default()))
+                    .collect::<Result<_, String>>()?;
+                let ids = c(&serde_json::to_string(&ids).map_err(|e| e.to_string())?);
+                show(call(|out| unsafe { liv_restore_many(self.p(), ids.as_ptr(), now, out) })?)
+            }
+            ("content-set", [id, text @ ..]) => self.content_set(id, &text.join(" ")),
+            ("rename-value", [prop, old, new]) => {
+                let (prop, old, new) = (self.prop(prop)?.id, c(old), c(new));
+                show(call(|out| unsafe {
+                    liv_rename_value(self.p(), prop.as_ptr(), old.as_ptr(), new.as_ptr(), now, out)
+                })?)
+            }
+            ("undo", []) => status(unsafe { liv_undo(self.p(), now) }),
+            ("redo", []) => status(unsafe { liv_redo(self.p(), now) }),
+            ("accept" | "decline", [id, print]) => {
+                let id = self.id(id)?;
+                let print: u64 = print.parse().map_err(|_| format!("not a print: {print}"))?;
+                let f = if verb == "accept" { liv_accept } else { liv_decline };
+                status(unsafe { f(self.p(), id.as_ptr(), print, now) })
+            }
+            ("assist", [on @ ("on" | "off")]) => {
+                status(unsafe { liv_set_assist(self.p(), *on == "on", now) })
+            }
+
+            // ---- reading -----------------------------------------------
+            ("list", flags) => self.list(flags.contains(&"--all")),
+            ("today", []) => show(call(|out| unsafe {
+                liv_view_today(self.p(), now as i64, local_offset_min(), std::ptr::null(), out)
+            })?),
+            ("tasks", []) => show(call(|out| unsafe {
+                liv_view_tasks(self.p(), std::ptr::null(), today(), std::ptr::null(), out)
+            })?),
+            ("trash", []) => show(call(|out| unsafe { liv_view_trash(self.p(), out) })?),
+            ("day", [date]) => {
+                let day = day_of(date)?;
+                show(call(|out| unsafe { liv_view_day(self.p(), day, day, std::ptr::null(), out) })?)
+            }
+            ("cells" | "links" | "content" | "versions", [id]) => {
+                let id = self.id(id)?;
+                let f = match verb {
+                    "cells" => liv_cells,
+                    "links" => liv_links,
+                    "content" => liv_read_body,
+                    _ => liv_body_history,
+                };
+                show(call(|out| unsafe { f(self.p(), id.as_ptr(), out) })?)
+            }
+            ("options" | "values", [prop]) => {
+                let prop = self.prop(prop)?.id;
+                let f = if verb == "options" { liv_options } else { liv_values_in_use };
+                show(call(|out| unsafe { f(self.p(), prop.as_ptr(), out) })?)
+            }
+            ("properties", []) => show(call(|out| unsafe { liv_properties(self.p(), out) })?),
+            ("kinds", []) => show(call(|out| unsafe { liv_kinds(self.p(), out) })?),
+            ("workspaces", []) => show(call(|out| unsafe { liv_workspaces(self.p(), out) })?),
+            ("search", words) => {
+                let q = c(&words.join(" "));
+                show(call(|out| unsafe {
+                    liv_view_search(self.p(), q.as_ptr(), 50, std::ptr::null(), out)
+                })?)
+            }
+            ("library", []) => show(self.library()?),
+            ("reminders", []) => show(call(|out| unsafe {
+                liv_view_reminders(self.p(), now as i64, local_offset_min(), 64, out)
+            })?),
+            ("lens", words) => {
+                let q = c(&words.join(" "));
+                show(call(|out| unsafe { liv_lens(self.p(), q.as_ptr(), out) })?)
+            }
+            ("inbox", []) => show(call(|out| unsafe { liv_sweep(self.p(), out) })?),
+            ("inbox", [id]) => {
+                let id = self.id(id)?;
+                show(call(|out| unsafe { liv_sweep_one(self.p(), id.as_ptr(), out) })?)
+            }
+            ("snapshot", []) => show(self.snapshot()?),
+            ("history", []) => self.history(),
+            ("probe", []) => show(call(|out| unsafe { liv_probe_box(self.p(), out) })?),
+            ("file-alerts", []) => show(call(|out| unsafe { liv_file_alerts(self.p(), out) })?),
+            _ => Err(format!("unknown command or wrong arguments: {verb} {}\n\n{USAGE}", a.join(" "))),
         }
-        (n, None) => Err(format!(
-            "#{id} has {n} proposals — liv inbox, then accept/reject {id} K"
-        )),
     }
-}
 
-fn accept(session: &mut Session, args: &[&str]) -> Result<(), String> {
-    let index = resolve_target(session, args)?;
-    let label = session.store().pending()[index].label.clone();
-    session.accept(index).map_err(|e| e.to_string())?;
-    println!("accepted: {label}");
-    Ok(())
-}
-
-fn reject(session: &mut Session, args: &[&str]) -> Result<(), String> {
-    let index = resolve_target(session, args)?;
-    let reason = session.store().pending()[index].reason.clone();
-    session.reject(index).map_err(|e| e.to_string())?;
-    println!("declined: {reason}  — the clerk won't ask again");
-    Ok(())
-}
-
-/// Capture, CLI-grade: same scrap, same door as the menu-bar shell.
-fn add(session: &mut Session, text: &str) -> Result<(), String> {
-    let now = Local::now();
-    let created = DateTime::at(
-        now.year(),
-        now.month(),
-        now.day(),
-        now.hour(),
-        now.minute(),
-    );
-    let scrap = liv_services::capture(session, text, created).map_err(|e| e.to_string())?;
-    println!("#{scrap}");
-
-    // The clerk runs behind the write; whatever it noticed shows at once.
-    let already = session.store().pending().len();
-    session
-        .propose_all(liv_services::clerk::sweep(session.store(), civil_today()))
-        .map_err(|e| e.to_string())?;
-    for proposal in session.store().pending().iter().skip(already) {
-        let subject = subject_of(proposal)
-            .map(|id| format!("{id}"))
-            .unwrap_or_default();
-        println!("clerk: {}  (liv accept {subject})", proposal.reason);
-    }
-    Ok(())
-}
-
-fn list(session: &Session, flags: &[&str]) -> Result<(), String> {
-    let store = session.store();
-    let mut query = Query::default();
-    let mut columns: Vec<Id> = Vec::new();
-    let mut descending = false;
-
-    let mut i = 0;
-    while i < flags.len() {
-        match flags[i] {
-            "--where" => {
-                i += 1;
-                let raw = flags.get(i).ok_or("--where needs P=V, P!=V or P?")?;
-                query.constraints.push(parse_constraint(store, raw)?);
-            }
-            "--sort" => {
-                i += 1;
-                let name = flags.get(i).ok_or("--sort needs a property")?;
-                query.sort = Some(Sort {
-                    property: property_by_name(store, name)?,
-                    descending: false,
+    /// `new KIND [NAME...] [--PROP VALUE]...` — the seeder. The kind by its
+    /// word, one `liv_make`, then each property the way the app's picker
+    /// writes it: a value of a property that holds one kind of thing is
+    /// minted first (`liv_add_option` hands back the one that exists), then
+    /// set — or added, where the property takes many.
+    fn new_thing(&self, kind: &str, rest: &[&str]) -> Result<(), String> {
+        let now = now_ms();
+        let flag = rest.iter().position(|a| a.starts_with("--")).unwrap_or(rest.len());
+        let (name, pairs) = rest.split_at(flag);
+        if pairs.len() % 2 != 0 {
+            return Err("every --PROP needs a VALUE".into());
+        }
+        let kind = id_field(call(|out| unsafe { liv_kind_named(self.p(), c(kind).as_ptr(), out) })?)?;
+        let name = c(&name.join(" "));
+        let made =
+            id_field(call(|out| unsafe { liv_make(self.p(), kind.as_ptr(), name.as_ptr(), now, out) })?)?;
+        for pair in pairs.chunks(2) {
+            let prop = self.prop(pair[0].trim_start_matches("--"))?;
+            let value = c(pair[1]);
+            if prop.holds == "reference" {
+                // Refused is the answer for a property that holds ANY
+                // thing, which has no list to add to; the set below then
+                // resolves the name or says it cannot.
+                let _ = call(|out| unsafe {
+                    liv_add_option(self.p(), prop.id.as_ptr(), value.as_ptr(), now, out)
                 });
             }
-            "--desc" => descending = true,
-            "--columns" => {
-                i += 1;
-                let names = flags.get(i).ok_or("--columns needs A,B,C")?;
-                for name in names.split(',') {
-                    columns.push(property_by_name(store, name.trim())?);
+            let f = if prop.many { liv_add } else { liv_set };
+            written(unsafe { f(self.p(), made.as_ptr(), prop.id.as_ptr(), value.as_ptr(), now) })
+                .map_err(|e| format!("{} = {}: {e}", pair[0], pair[1]))?;
+        }
+        println!("{}", made.to_str().unwrap_or_default());
+        Ok(())
+    }
+
+    /// A body is spans; plain text is one text span. No `- [ ]` parsing
+    /// here — the editor is the one parser of that grammar (rule 4).
+    fn content_set(&self, id: &str, text: &str) -> Result<(), String> {
+        let id = self.id(id)?;
+        let base = call(|out| unsafe { liv_read_body(self.p(), id.as_ptr(), out) })?["print"]
+            .as_u64()
+            .unwrap_or(0);
+        let spans = if text.is_empty() {
+            json!([])
+        } else {
+            json!([{ "Text": { "text": text, "marks": 0 } }])
+        };
+        let spans = c(&spans.to_string());
+        show(call(|out| unsafe {
+            liv_write_body(self.p(), id.as_ptr(), spans.as_ptr(), base, now_ms(), out)
+        })?)
+    }
+
+    /// Everything the Notes list could show, as a table: id, kind, title,
+    /// due, status, area. `--all` adds what is in the trash.
+    fn list(&self, all: bool) -> Result<(), String> {
+        let mut rows: Vec<J> = self.library()?["all"].as_array().cloned().unwrap_or_default();
+        if all {
+            let bin = call(|out| unsafe { liv_view_trash(self.p(), out) })?;
+            rows.extend(bin.as_array().cloned().unwrap_or_default());
+        }
+        let text = |r: &J, k: &str| r[k].as_str().unwrap_or("").to_owned();
+        println!("{:<32}  {:<8} {:<32} {:<16} {:<8} {}", "id", "kind", "title", "due", "status", "area");
+        for r in &rows {
+            let due = r["due_ms"].as_i64().map(|ms| civil(ms, r["all_day"] == true)).unwrap_or_default();
+            let mut title = text(r, "title");
+            if r["trashed"] == true {
+                title = format!("(trash) {title}");
+            }
+            println!(
+                "{:<32}  {:<8} {:<32} {:<16} {:<8} {}",
+                text(r, "id"),
+                text(r, "kind_word"),
+                title.chars().take(32).collect::<String>(),
+                due,
+                text(r, "status_word"),
+                text(r, "area_word"),
+            );
+        }
+        Ok(())
+    }
+
+    /// The library, as the app reads it after every write: every row, the
+    /// Notes and Unsorted lists, and the panel's counts.
+    fn library(&self) -> Result<J, String> {
+        call(|o| unsafe {
+            liv_view_library(self.p(), now_ms() as i64, local_offset_min(), std::ptr::null(), o)
+        })
+    }
+
+    /// One refresh: the reads `BoxModel.loadEverything` makes after every
+    /// write once each screen has been opened — the suggestions only while
+    /// Unsorted is open — as one JSON object. The calendar's window is this
+    /// month and the one either side.
+    fn snapshot(&self) -> Result<J, String> {
+        let p = self.p();
+        Ok(json!({
+            "library": self.library()?,
+            "reminders": call(|o| unsafe {
+                liv_view_reminders(p, now_ms() as i64, local_offset_min(), 64, o)
+            })?,
+            "trash": call(|o| unsafe { liv_view_trash(p, o) })?,
+            "suggestions": call(|o| unsafe { liv_sweep(p, o) })?,
+            "workspaces": call(|o| unsafe { liv_workspaces(p, o) })?,
+            "tasks": call(|o| unsafe {
+                liv_view_tasks(p, std::ptr::null(), today(), std::ptr::null(), o)
+            })?,
+            "today": call(|o| unsafe {
+                liv_view_today(p, now_ms() as i64, local_offset_min(), std::ptr::null(), o)
+            })?,
+            "calendar": call(|o| unsafe {
+                liv_view_day(p, today() - 40, today() + 60, std::ptr::null(), o)
+            })?,
+            "assist": call(|o| unsafe { liv_assist(p, o) })?,
+            "properties": call(|o| unsafe { liv_properties(p, o) })?,
+            "kinds": call(|o| unsafe { liv_kinds(p, o) })?,
+        }))
+    }
+
+    /// The log, oldest first, one line per transaction — the check that
+    /// one user action wrote one group.
+    fn history(&self) -> Result<(), String> {
+        let e = liv_engine::Engine::open_local(std::path::Path::new(&self.file))
+            .map_err(|e| format!("the box would not open: {e:?}"))?;
+        let groups = e.groups().map_err(|e| format!("the log would not read: {e:?}"))?;
+        for g in groups {
+            let what = match g.action {
+                liv_engine::action::CREATE => "create",
+                liv_engine::action::SET => "set",
+                liv_engine::action::ADD => "add",
+                liv_engine::action::REMOVE => "remove",
+                liv_engine::action::TRASH => "trash",
+                liv_engine::action::RESTORE => "restore",
+                liv_engine::action::RENAME => "rename",
+                liv_engine::action::DECLARE => "declare",
+                liv_engine::action::UNDO => "undo",
+                _ => "other",
+            };
+            println!(
+                "{:>6}  {}  {:<8} {:?}  {} op{}",
+                g.first_seq,
+                civil(g.hlc.wall_ms as i64, false),
+                what,
+                g.author,
+                g.ops.len(),
+                if g.ops.len() == 1 { "" } else { "s" },
+            );
+        }
+        Ok(())
+    }
+
+    /// A property by its token (`area`, `tags`) or the word a person sees
+    /// (`Subject`), compiled-in or declared.
+    fn prop(&self, name: &str) -> Result<Prop, String> {
+        let rows = call(|out| unsafe { liv_properties(self.p(), out) })?;
+        let found = rows.as_array().into_iter().flatten().find(|r| {
+            [&r["word"], &r["name"]].iter().any(|v| v.as_str().is_some_and(|s| s.eq_ignore_ascii_case(name)))
+        });
+        if let Some(r) = found {
+            return Ok(Prop {
+                id: c(r["id"].as_str().unwrap_or_default()),
+                holds: r["holds"].as_str().unwrap_or("text").to_owned(),
+                many: r["many"] == true,
+            });
+        }
+        // Backstage properties (`name`, `private`, …) are not in the list
+        // the inspector shows, and `liv_property_named` knows them.
+        let named = call(|out| unsafe { liv_property_named(self.p(), c(name).as_ptr(), out) })
+            .map_err(|_| format!("no property called {name}"))?;
+        Ok(Prop { id: id_field(named)?, holds: "text".into(), many: false })
+    }
+
+    /// An id as typed: all 32 hex characters, or a part of one that only
+    /// one thing's id contains, among everything and the trash. A part,
+    /// not a prefix: things made in one second share their first twelve
+    /// characters, and the device-seeded tail repeats between runs — the
+    /// middle is what tells them apart.
+    fn id(&self, raw: &str) -> Result<CString, String> {
+        let raw = raw.to_ascii_lowercase();
+        if raw.len() == 32 && raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Ok(c(&raw));
+        }
+        if raw.len() < 6 {
+            return Err(format!("{raw}: give the whole id, or at least six characters of it"));
+        }
+        let mut ids: Vec<String> = Vec::new();
+        for list in [
+            self.library()?["all"].clone(),
+            call(|out| unsafe { liv_view_trash(self.p(), out) })?,
+        ] {
+            for r in list.as_array().into_iter().flatten() {
+                if let Some(id) = r["id"].as_str().filter(|id| id.contains(&raw)) {
+                    ids.push(id.to_owned());
                 }
             }
-            "--all" => {
-                query.include_working = true;
-                query.include_trashed = true;
-            }
-            other => return Err(format!("unknown flag {other}")),
         }
-        i += 1;
+        match ids.as_slice() {
+            [one] => Ok(c(one)),
+            [] => Err(format!("no thing's id contains {raw}")),
+            _ => Err(format!("{} things' ids contain {raw}; give more of it", ids.len())),
+        }
     }
-    if let Some(sort) = &mut query.sort {
-        sort.descending = descending;
-    }
+}
 
-    let results = liv_services::run(store, &query);
-    let config = if columns.is_empty() {
-        Config {
-            density: Density::List,
-            columns: vec![],
-        }
+struct Prop {
+    id: CString,
+    holds: String,
+    many: bool,
+}
+
+// ---- the ABI's calling convention ---------------------------------------
+
+/// Call a verb that answers through an out-pointer, and free the answer.
+fn call(f: impl FnOnce(*mut *mut c_char) -> i32) -> Result<J, String> {
+    let mut out: *mut c_char = std::ptr::null_mut();
+    let code = f(&mut out);
+    if code != LIV_OK {
+        return Err(fault(code));
+    }
+    if out.is_null() {
+        return Ok(J::Null);
+    }
+    let text = unsafe { CStr::from_ptr(out) }.to_string_lossy().into_owned();
+    unsafe { liv_ffi::liv_string_free(out) };
+    serde_json::from_str(&text).map_err(|e| format!("the answer was not JSON: {e}"))
+}
+
+/// A write's answer, said out loud: `ok`, or why not.
+fn status(code: i32) -> Result<(), String> {
+    written(code)?;
+    println!("ok");
+    Ok(())
+}
+
+fn written(code: i32) -> Result<(), String> {
+    if code == LIV_OK {
+        Ok(())
     } else {
-        Config {
-            density: Density::Table,
-            columns,
-        }
+        Err(fault(code))
+    }
+}
+
+/// The ABI's codes, in words. A write refused while the app holds the box
+/// comes back as `open` — the engine sets no busy timeout, so a CLI write
+/// racing the app is refused rather than waited on.
+fn fault(code: i32) -> String {
+    let word = match code {
+        LIV_ERR_PATH => "no such path",
+        LIV_ERR_OPEN => "the box would not open (in use, or not a box)",
+        LIV_ERR_ARG => "an argument was not understood",
+        LIV_ERR_READ => "the box would not read",
+        LIV_ERR_ENCODE => "the answer would not encode",
+        LIV_ERR_STALE => "stale: the body changed underneath",
+        LIV_ERR_REFUSED => "refused: that value does not belong there",
+        LIV_ERR_NOTHING => "nothing to do",
+        _ => "failed",
     };
-    print_table(&render(store, &results, &config));
+    format!("{word} (code {code})")
+}
+
+fn id_field(v: J) -> Result<CString, String> {
+    v["id"].as_str().map(c).ok_or_else(|| format!("no id in the answer: {v}"))
+}
+
+fn show(v: J) -> Result<(), String> {
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     Ok(())
 }
 
-/// P=V, P!=V, or P? — the v0 operators, spelled flat.
-fn parse_constraint(store: &liv_core::Store, raw: &str) -> Result<Constraint, String> {
-    if let Some(name) = raw.strip_suffix('?') {
-        return Ok(Constraint {
-            property: property_by_name(store, name)?,
-            op: Op::Exists,
-        });
-    }
-    if let Some((name, value)) = raw.split_once("!=") {
-        return Ok(Constraint {
-            property: property_by_name(store, name)?,
-            op: Op::NotEquals(Value::text(value)),
-        });
-    }
-    if let Some((name, value)) = raw.split_once('=') {
-        return Ok(Constraint {
-            property: property_by_name(store, name)?,
-            op: Op::Equals(Value::text(value)),
-        });
-    }
-    Err(format!("cannot parse constraint {raw}"))
+fn c(s: &str) -> CString {
+    CString::new(s.replace('\0', "")).expect("no NUL left")
 }
 
-fn property_by_name(store: &liv_core::Store, name: &str) -> Result<Id, String> {
-    liv_services::property_id(store, name).ok_or(format!("no property named {name}"))
+// ---- time ---------------------------------------------------------------
+
+/// The wall clock — or `LIV_NOW_MS`, so a box can be seeded as it would
+/// look after a week of use (the trash's Today / Yesterday / Earlier needs
+/// things thrown away on other days). Writes must still go forward in
+/// time: the engine's clock never runs backwards, so seed oldest first.
+fn now_ms() -> u64 {
+    if let Some(ms) = std::env::var("LIV_NOW_MS").ok().and_then(|v| v.parse().ok()) {
+        return ms;
+    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
-fn print_table(rendered: &Rendered) {
-    if rendered.rows.is_empty() {
-        println!("(nothing)");
-        return;
-    }
-    // Column widths from content; the id column leads.
-    let mut widths: Vec<usize> = rendered
-        .header
-        .iter()
-        .map(|h| h.chars().count())
-        .collect();
-    for row in &rendered.rows {
-        for (i, cell) in row.cells.iter().enumerate() {
-            widths[i] = widths[i].max(cell.chars().count());
-        }
-    }
-    let id_width = rendered
-        .rows
-        .iter()
-        .map(|r| format!("#{}", r.id).len())
-        .max()
-        .unwrap_or(2);
+/// Today, as the app counts it: the LOCAL date, in days since the epoch.
+/// This machine's distance from UTC, in minutes — what the phone passes.
+fn local_offset_min() -> i32 {
+    chrono::Local::now().offset().local_minus_utc() / 60
+}
 
-    let header: Vec<String> = rendered
-        .header
-        .iter()
-        .enumerate()
-        .map(|(i, h)| format!("{h:<width$}", width = widths[i]))
-        .collect();
-    println!("{:<id_width$}  {}", "", header.join("  "));
-    for row in &rendered.rows {
-        let cells: Vec<String> = row
-            .cells
-            .iter()
-            .enumerate()
-            .map(|(i, c)| format!("{c:<width$}", width = widths[i]))
-            .collect();
-        println!("{:<id_width$}  {}", format!("#{}", row.id), cells.join("  "));
+fn today() -> i32 {
+    use chrono::Datelike;
+    let d = chrono::Local::now().date_naive();
+    liv_engine::days_from_civil(d.year(), d.month(), d.day())
+}
+
+fn day_of(raw: &str) -> Result<i32, String> {
+    let parts: Vec<&str> = raw.split('-').collect();
+    match parts.as_slice() {
+        [y, m, d] => Ok(liv_engine::days_from_civil(
+            y.parse().map_err(|_| format!("not a date: {raw}"))?,
+            m.parse().map_err(|_| format!("not a date: {raw}"))?,
+            d.parse().map_err(|_| format!("not a date: {raw}"))?,
+        )),
+        _ => Err(format!("not a date (YYYY-MM-DD): {raw}")),
     }
 }
 
-/// The log, human-readable: when, who, what. Provenance on display.
-fn history(session: &Session) {
-    for tx in session.store().history() {
-        let author = match &tx.author {
-            Author::User => "user".to_string(),
-            Author::Proposer(name) => format!("proposer:{name}"),
-            Author::System => "system".to_string(),
-        };
-        let reverses = tx
-            .reverses
-            .map(|seq| format!(" (reverses {seq})"))
-            .unwrap_or_default();
-        println!(
-            "{:>4}  {:<16} {} [{} command{}]{}",
-            tx.seq,
-            author,
-            tx.label,
-            tx.commands.len(),
-            if tx.commands.len() == 1 { "" } else { "s" },
-            reverses
-        );
+/// A stamp for a person: "2026-09-13 14:30", or the day alone.
+fn civil(ms: i64, day_only: bool) -> String {
+    let (y, m, d) = liv_engine::civil_from_days(ms.div_euclid(86_400_000) as i32);
+    if day_only {
+        return format!("{y:04}-{m:02}-{d:02}");
     }
-}
-
-/// P18b: birth a habit (front of house). `liv habit Climb --points 2`.
-fn habit_add(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let mut points: Option<f64> = None;
-    let mut cadence: Option<String> = None;
-    let mut words: Vec<&str> = Vec::new();
-    let mut iter = rest.iter();
-    while let Some(arg) = iter.next() {
-        match *arg {
-            "--points" => {
-                points = iter.next().and_then(|v| v.parse().ok());
-            }
-            "--cadence" => {
-                cadence = iter.next().map(|v| v.to_string());
-            }
-            word => words.push(word),
-        }
-    }
-    if words.is_empty() {
-        return Err("usage: liv habit NAME... [--points N] [--cadence TEXT]".into());
-    }
-    let id = liv_services::content::create_habit(
-        session,
-        &words.join(" "),
-        points,
-        cadence.as_deref(),
-        civil_today(),
-    )
-    .map_err(|e| e.to_string())?;
-    println!("habit #{id}");
-    Ok(())
-}
-
-/// P18b: check a habit in (today, or a given civil day) — idempotent.
-fn checkin(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (id_arg, day_arg) = rest.split_first().ok_or("usage: liv checkin HABIT-ID [DAY]")?;
-    let habit: Id =
-        id_arg.trim_start_matches('#').parse().map_err(|_| "HABIT-ID must be a number")?;
-    let day: i64 = match day_arg.first() {
-        Some(d) => d.parse().map_err(|_| "DAY must be YYYYMMDD")?,
-        None => civil_today().civil / 10_000,
-    };
-    let row = liv_services::content::check_in(session, habit, day, civil_today())
-        .map_err(|e| e.to_string())?;
-    println!("checked in #{row} ({day})");
-    Ok(())
-}
-
-/// P18b: the habit card, in text — the same projection every shell reads.
-fn habits(session: &Session) {
-    let today = civil_today().civil / 10_000;
-    let stats = liv_services::habits::habit_stats(session.store(), today);
-    if stats.habits.is_empty() {
-        println!("no habits yet — liv habit NAME [--points N]");
-        return;
-    }
-    for line in &stats.habits {
-        let mark = if line.today_check_in.is_some() { "x" } else { " " };
-        let cadence = line.cadence.as_deref().unwrap_or("");
-        println!("[{mark}] #{:<5} {:<28} +{} {}", line.id, line.name, line.points, cadence);
-    }
-    println!(
-        "streak {}d · longest {}d · {} pts this week · {:.1} avg/active day",
-        stats.streak, stats.longest, stats.week_points, stats.avg_active
-    );
-    let glyphs = [" ", "░", "▒", "▓"];
-    let chain: String = stats
-        .heat
-        .iter()
-        .map(|c| glyphs[(*c as usize).min(3)])
-        .collect();
-    println!("chain [{chain}]");
-}
-
-/// P18d: log a closed interval (`liv time ID 202607140900 202607141030`),
-/// or with no args print the week's totals — the same projection the shell
-/// reads.
-fn time(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    if rest.is_empty() {
-        let today = civil_today().civil / 10_000;
-        let summary = liv_services::timeviews::time_totals(session.store(), today);
-        if summary.totals.is_empty() {
-            println!("no time logged this week");
-            return Ok(());
-        }
-        for total in &summary.totals {
-            println!("#{:<5} {:<28} {}h {:02}m", total.target, total.name, total.minutes / 60, total.minutes % 60);
-        }
-        return Ok(());
-    }
-    let (id_arg, stamps) = rest.split_first().unwrap();
-    let target: Id =
-        id_arg.trim_start_matches('#').parse().map_err(|_| "TARGET-ID must be a number")?;
-    let (start, end) = match stamps {
-        [s, e] => (
-            s.parse::<i64>().map_err(|_| "START must be YYYYMMDDHHMM")?,
-            e.parse::<i64>().map_err(|_| "END must be YYYYMMDDHHMM")?,
-        ),
-        _ => return Err("usage: liv time TARGET-ID START END".into()),
-    };
-    let to_dt = |civil: i64| {
-        DateTime::at(
-            (civil / 100_000_000) as i32,
-            ((civil / 1_000_000) % 100) as u32,
-            ((civil / 10_000) % 100) as u32,
-            ((civil / 100) % 100) as u32,
-            (civil % 100) as u32,
-        )
-    };
-    let id = liv_services::content::log_time(session, target, to_dt(start), to_dt(end))
-        .map_err(|e| e.to_string())?;
-    println!("logged #{id}");
-    Ok(())
-}
-
-/// P19b: `liv rename-value subject uni university` — one transaction,
-/// the true carrier count, one undo.
-fn rename_value(session: &mut Session, rest: &[&str]) -> Result<(), String> {
-    let (prop, rest) = rest.split_first().ok_or("usage: liv rename-value PROP OLD NEW...")?;
-    let (old, new_words) = rest.split_first().ok_or("usage: liv rename-value PROP OLD NEW...")?;
-    if new_words.is_empty() {
-        return Err("usage: liv rename-value PROP OLD NEW...".into());
-    }
-    let new = new_words.join(" ");
-    let count = liv_services::content::rename_value(session, prop, old, &new)
-        .map_err(|e| format!("{e:?}"))?;
-    println!("renamed {old} -> {new} on {count} carriers (one undo restores)");
-    Ok(())
-}
-
-
-/// `liv vault status|sync|rebuild` (P20j.5): the projection from the
-/// CLI. Legacy boxes (no `.liv/box/` ancestor) report and refuse — the
-/// projection never turns itself on.
-fn vault(session: &mut Session, log_path: &str, sub: &[&str]) -> Result<(), String> {
-    use liv_services::projection as proj;
-    let Some(root) = proj::vault_root_of(std::path::Path::new(log_path)) else {
-        println!("legacy box — no vault (the box is not at <root>/.liv/box/)");
-        return Ok(());
-    };
-    match sub.first() {
-        None | Some(&"status") => {
-            let io = proj::RealVaultIo::new(&root);
-            let manifest = proj::load_manifest(&io);
-            println!("vault: {}", root.display());
-            println!("files: {}", manifest.rows.len());
-            let findings = proj::scan(&io, session.store(), &manifest);
-            if findings.is_empty() {
-                println!("in sync — nothing diverges");
-            } else {
-                println!("{} finding(s) — run `liv vault sync`", findings.len());
-            }
-            Ok(())
-        }
-        Some(&"sync") => {
-            let io = proj::RealVaultIo::new(&root);
-            let mut manifest = proj::load_manifest(&io);
-            let findings = proj::scan(&io, session.store(), &manifest);
-            let outcome = proj::ingest(session, &io, &manifest, &findings)
-                .map_err(|e| format!("{e:?}"))?;
-            proj::adopt_into(&mut manifest, &outcome.adopted);
-            let (ops, next) = proj::plan_projection(session.store(), &manifest);
-            proj::apply_locked(&root, &ops, &next).map_err(|e| e.to_string())?;
-            println!(
-                "synced — {} edited · {} created · {} surfaced (cards wait in the app)",
-                outcome.edited, outcome.created, outcome.surfaced
-            );
-            Ok(())
-        }
-        Some(&"rebuild") => {
-            let (ops, next) =
-                proj::plan_projection(session.store(), &proj::Manifest::default());
-            proj::apply_locked(&root, &ops, &next).map_err(|e| e.to_string())?;
-            println!("rebuilt — {} file(s) materialized from the log", next.rows.len());
-            Ok(())
-        }
-        Some(other) => Err(format!("unknown vault subcommand: {other}")),
-    }
+    let min = ms.rem_euclid(86_400_000) / 60_000;
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", min / 60, min % 60)
 }

@@ -1,9 +1,9 @@
-// liv iOS — local notifications (design/ios.md §3 + §9 M5). Shell
-// territory: the pending queue is a PROJECTION of the snapshot —
-// recomputed whole on every decode, never patched, so it can never drift
-// from the box (the core stays timerless; staleness is accepted, "absence
-// creates no debt"). Identifier "liv-<entityId>" + remove-all-then-re-add
-// makes every rebuild idempotent — simple first.
+// liv iOS — local notifications. WHAT rings is Rust's answer
+// (`liv_view_reminders`, `surface/src/reminders.rs`); this file is the
+// phone's half: permission, turning a wall-clock due into an alarm, and
+// iOS's cap on pending alarms. The pending queue is rebuilt whole from each
+// answer, never patched, so it cannot drift from the box. Identifier
+// "liv-<entityId>" + remove-all-then-re-add makes every rebuild idempotent.
 
 import Combine
 import Foundation
@@ -29,7 +29,7 @@ final class Notify: NSObject, ObservableObject {
     /// Where a tapped notification lands: the entity opens as a desk tab.
     /// Wired by the chrome once it exists; a cold-launch tap that beats
     /// the wiring parks its id here and flushes on assignment.
-    var onOpen: ((UInt64) -> Void)? {
+    var onOpen: ((LivEntityID) -> Void)? {
         didSet {
             if let id = pendingOpen, let onOpen {
                 pendingOpen = nil
@@ -37,7 +37,10 @@ final class Notify: NSObject, ObservableObject {
             }
         }
     }
-    private var pendingOpen: UInt64?
+    private var pendingOpen: LivEntityID?
+
+    /// iOS keeps at most this many pending notifications; the soonest win.
+    static let budget = 64
 
     /// What the pending queue holds — Settings' honesty line.
     @Published private(set) var scheduledCount = 0
@@ -61,66 +64,35 @@ final class Notify: NSObject, ObservableObject {
         }
     }
 
-    // MARK: rebuild — snapshot in, pending queue out
+    // MARK: rebuild — Rust's answer in, pending queue out
 
-    /// Recompute the whole schedule from one decoded snapshot. Called on
-    /// every decode (App.swift's onReceive) and on every Settings change.
-    /// The task vocabulary rides first: a `completes` status silences a
-    /// task's reminder — a done task must not ring.
-    func rebuild(snapshot: Snapshot?, box: BoxModel) {
+    /// Recompute the whole schedule from Rust's answer. Called whenever the
+    /// answer changes (App.swift) and on every Settings change.
+    func rebuild(_ reminders: LivReminders?) {
         guard enabled else {
             clear()
             return
         }
-        guard let snapshot else { return }
-        box.statusOptions(kind: "task") { [weak self] options in
-            let completes = Set(
-                options.filter { $0.completes == true }.compactMap { $0.name })
-            self?.schedule(snapshot, completes: completes)
+        guard let reminders else { return }
+        var kept: [Slot] = []
+        for row in reminders.soonest ?? [] {
+            guard let due = row.due, let fire = Self.date(of: due) else { continue }
+            kept.append(
+                Slot(entity: row.id, title: row.title ?? "", body: Self.body(due: due), fire: fire))
         }
+        let dropped = max(0, (reminders.total ?? 0) - kept.count)
+        schedule(kept, dropped: dropped)
     }
 
     private struct Slot {
-        let entity: UInt64
+        let entity: LivEntityID
         let title: String
         let body: String
         let fire: Date
     }
 
-    /// Main-thread (statusOptions completes there). Dues + events only;
-    /// occurrences stay off the queue in v1 — "liv-<seriesId>" would
-    /// collide with the series entity's own slot.
-    private func schedule(_ snap: Snapshot, completes: Set<String>) {
-        let now = Date()
-        var slots: [Slot] = []
-        for row in snap.entities ?? [] {
-            guard row.trashed != true, row.archived != true else { continue }
-            guard let due = row.due, due > 0 else { continue }
-            let kinds = row.kinds ?? []
-            // The shell's own task predicate (Today/Tasks): typed task OR a
-            // status-carrying row. What shows a ring and a due must also
-            // ring — a scrap given status+due is a task everywhere else.
-            let isEvent = kinds.contains("event")
-            let isTask = !isEvent && (kinds.contains("task") || row.status != nil)
-            guard isTask || isEvent else { continue }
-            if isTask, let status = row.status, completes.contains(status) { continue }
-            // It rings when the thing is due. A due with NO clock time
-            // does not ring at all: "a date reminder shouldn't be a
-            // thing" (owner, 2026-08-06). Without this the quick-add
-            // rows, which still write a bare date, rang at midnight —
-            // worse than the hidden 09:00 they replaced (review).
-            let dateOnly = row.dueDateOnly ?? (due % 10_000 == 0)
-            guard !dateOnly else { continue }
-            guard let fire = Self.date(of: due) else { continue }
-            guard fire > now else { continue }  // future only — never re-ring the past
-            slots.append(
-                Slot(
-                    entity: row.id, title: Self.title(row),
-                    body: Self.body(due: due), fire: fire))
-        }
-        slots.sort { $0.fire < $1.fire }
-        let kept = Array(slots.prefix(64))  // iOS's own budget: the soonest win
-        let dropped = slots.count - kept.count
+    /// Ask once, lazily, then commit — main thread.
+    private func schedule(_ kept: [Slot], dropped: Int) {
         guard !kept.isEmpty else {
             clear()
             return
@@ -165,11 +137,18 @@ final class Notify: NSObject, ObservableObject {
             content.title = slot.title
             content.body = slot.body
             content.sound = .default
-            content.userInfo = ["entity": String(slot.entity)]
+            // BOTH halves through `LivIDText`. The `userInfo` one did not
+            // compile after slice 4's flip; the identifier's interpolation
+            // did, silently, as hex — and the tap handler reads it back
+            // with `LivIDText.read`, which would have returned nil for
+            // every one of them. This is the exact failure `LivID.swift`
+            // warns about, and the only reason it was found is that its
+            // twin two lines up happened not to build.
+            content.userInfo = ["entity": LivIDText.written(slot.entity)]
             // No badge: the app's one badge is the proposal-inbox count, by law.
             center.add(
                 UNNotificationRequest(
-                    identifier: "liv-\(slot.entity)", content: content,
+                    identifier: "liv-\(LivIDText.written(slot.entity))", content: content,
                     trigger: UNTimeIntervalNotificationTrigger(
                         timeInterval: interval, repeats: false)))
             added += 1
@@ -190,17 +169,12 @@ final class Notify: NSObject, ObservableObject {
 
     // MARK: content helpers
 
-    /// Title = the entity's name, else its first content line (the display
-    /// name the rest of the shell shows — a scrap carries no name cell).
-    private static func title(_ row: EntityRow) -> String { livRowTitle(row) }
-
     /// Only timed dues reach here, so this always names a clock time —
     /// spelled out rather than routed through the date-aware helper,
     /// which returns nothing for a stamp ending 0000 and left a reminder
     /// for a midnight event reading just "due" (review, 2026-08-06).
     private static func body(due: Int64) -> String {
-        let hhmm = due % 10_000
-        return String(format: "due %02d:%02d", hhmm / 100, hhmm % 100)
+        "due " + Civil.clock(due % 10_000)
     }
 
     /// Packed civil YYYYMMDDHHMM → a wall-clock Date in the current zone.
@@ -240,7 +214,7 @@ extension Notify: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         if let raw = response.notification.request.content.userInfo["entity"] as? String,
-            let id = UInt64(raw)
+            let id = LivIDText.read(raw)
         {
             if let onOpen {
                 onOpen(id)

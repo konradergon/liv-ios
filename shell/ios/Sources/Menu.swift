@@ -24,6 +24,11 @@ struct LivMenuItem: Identifiable {
     let label: String
     var glyph: LivGlyph?
     var symbol: String?
+    /// THE ONE YOU ARE ON. `LivMenuRow` has drawn a checkmark for this
+    /// since it was written; no menu had a state to mark until the
+    /// search facet menu (2026-09-07), which is three verbs of which
+    /// exactly one is true.
+    var selected = false
     /// A row that opens something further, marked the way a list marks it.
     var chevron = false
     var destructive = false
@@ -49,6 +54,12 @@ struct LivMenu: Identifiable {
     var subject: String?
     var subjectDetail: String?
     let items: [LivMenuItem]
+    /// AT ITS DOOR, not on an edge (owner, 2026-09-22: the card a row
+    /// opens "should appear where row is"). The card hangs just under
+    /// the door that raised it, or just over it when there is no room
+    /// below; `from` still says which way a drag dismisses it. With no
+    /// door recorded it falls back to `from`'s edge.
+    var atDoor = false
 }
 
 // MARK: - one row, for every card
@@ -61,99 +72,175 @@ struct LivMenu: Identifiable {
 /// the workspace switcher's own at body size with an 18pt one, plus
 /// chips under the label and a hairline under every line. One list of
 /// things to choose from, drawn two ways, is exactly what standing rule
-/// 4 is about — so there is one row now, and the plainer, larger one
-/// won.
-struct LivMenuRow: View {
+/// 4 is about — so there is one row now.
+///
+/// **THE SIZE HALF OF THAT RULING IS REVERSED** (owner, 2026-09-15: "the
+/// workspaces card has larger text and looks rough"). It went to `title`
+/// (22) and it is `body` (18) now.
+///
+/// The 2026-08-17 comparison was between these two cards and nothing
+/// else, and against each other the larger one did look simpler. What it
+/// could not see is the surface this card actually hangs over: the
+/// library panel, whose rows are `body`. The workspace card is opened
+/// FROM that panel and covers its foot, so the two are on screen in the
+/// same moment four points apart — which is near enough to look like a
+/// mistake and far enough not to look deliberate.
+///
+/// The one-row half of the ruling is untouched, and it is why this moves
+/// the create menu too: a list of things to choose from still must not
+/// look different depending on which card it is in.
+/// A menu row: 52 tall, a 22 glyph slot, the detail at 14 text3. It had a
+/// second shape, `.chooser`, for the Workspaces card's 64pt rows; that went
+/// with the card on 2026-09-29, when the panel took the workspaces.
+
+struct LivMenuRow<Lead: View>: View {
     let label: String
-    var glyph: LivGlyph?
-    var symbol: String?
-    /// A workspace may wear an emoji instead of a glyph.
-    var emoji: String?
-    /// The one you are on: a checkmark, the way a list marks a choice.
+    var detail: String? = nil
     var selected = false
     var chevron = false
     var destructive = false
-    /// A door rather than a choice — "New workspace…" — in the accent.
-    var accent = false
-    /// A hairline above, inset past the icon: rows after the first.
     var divided = false
+    @ViewBuilder var lead: Lead
     let action: () -> Void
+
+    init(
+        label: String, detail: String? = nil,
+        selected: Bool = false, chevron: Bool = false, destructive: Bool = false,
+        divided: Bool = false, @ViewBuilder lead: () -> Lead, action: @escaping () -> Void
+    ) {
+        self.label = label
+        self.detail = detail
+        self.selected = selected
+        self.chevron = chevron
+        self.destructive = destructive
+        self.divided = divided
+        self.lead = lead()
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Group {
-                    if let emoji, !emoji.isEmpty {
-                        Text(emoji).font(.system(size: LivType.title))
-                    } else if let glyph {
-                        LivIcon(glyph: glyph, color: tint(icon: true), size: 24)
-                    } else if let symbol {
-                        Image(systemName: symbol)
-                            .font(.system(size: LivType.title))
-                            .foregroundStyle(tint(icon: true))
+            HStack(spacing: LivMenuCard.leadGap) {
+                lead
+                    .frame(width: LivMenuCard.lead)
+                VStack(alignment: .leading, spacing: LivCards.lineGap) {
+                    Text(label)
+                        .font(.system(size: LivType.body, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(destructive ? LivTheme.red : LivTheme.text)
+                        .lineLimit(1)
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: LivType.caption))
+                            .foregroundStyle(LivTheme.text3)
+                            .lineLimit(1)
                     }
                 }
-                .frame(width: 26)
-                Text(label)
-                    .font(.system(size: LivType.title, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(tint(icon: false))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: LivCards.trailingGap)
+                // THE CHOSEN ONE IS TICKED (the clearer boards), which
+                // reverses 2026-09-15's "no tick — the fill is the one that
+                // works": the board puts both on the chosen workspace.
                 if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: LivType.body, weight: .semibold))
-                        .foregroundStyle(LivTheme.accent)
+                    LivIcon(glyph: .check, color: LivTheme.accent, size: LivMenuCard.check)
                 }
-                if chevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: LivType.caption, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                }
+                if chevron { LivChevron() }
             }
-            .padding(.horizontal, 16)
-            .frame(height: LivRow.height)
-            // THE ONE YOU ARE ON, as a fill (owner's clips, 2026-08-20).
-            // ChatGPT's drawer marks the current destination with a soft
-            // rounded fill and no tick at all; ours had a tick and a
-            // semibold word, which you have to read to find. A fill is
-            // found without reading.
-            .background(
-                RoundedRectangle(cornerRadius: LivTheme.radiusSm, style: .continuous)
-                    .fill(selected ? LivTheme.panel2 : .clear)
-                    .padding(.horizontal, 8))
+            .padding(.horizontal, LivCards.padX)
+            .padding(.vertical, LivMenuCard.rowPad)
+            .frame(minHeight: LivMenuCard.row)
             .contentShape(Rectangle())
         }
-        .livRowPress()
+        // The card is raised (panel2), so the ordinary press — which IS
+        // panel2 — would not show.
+        .buttonStyle(
+            LivPress(radius: 0, fill: LivTheme.pressedRaised))
+        .livDoor()
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
         .overlay(alignment: .top) {
-            if divided {
-                Rectangle().fill(LivTheme.border).frame(height: 0.5)
-                    .padding(.leading, LivRow.hairline + 18)
-            }
+            if divided { LivCardRule(inset: LivMenuCard.rule) }
         }
-    }
-
-    private func tint(icon: Bool) -> Color {
-        if destructive { return LivTheme.red }
-        if accent { return LivTheme.accent }
-        return icon ? LivTheme.text2 : LivTheme.text
     }
 }
 
-/// The title both cards wear: the one word for what the card is.
-struct LivMenuTitle: View {
+extension LivMenuRow where Lead == LivMenuMark {
+    /// A row led by a drawn glyph or an SF symbol.
+    init(
+        label: String, detail: String? = nil, glyph: LivGlyph? = nil, symbol: String? = nil,
+        selected: Bool = false, chevron: Bool = false,
+        destructive: Bool = false, divided: Bool = false, action: @escaping () -> Void
+    ) {
+        self.init(
+            label: label, detail: detail, selected: selected, chevron: chevron,
+            destructive: destructive, divided: divided,
+            lead: {
+                LivMenuMark(glyph: glyph, symbol: symbol, destructive: destructive)
+            }, action: action)
+    }
+}
+
+/// A menu row's lead: a drawn glyph in ink, or an SF symbol.
+struct LivMenuMark: View {
+    var glyph: LivGlyph?
+    var symbol: String?
+    var destructive = false
+
+    var body: some View {
+        let ink = destructive ? LivTheme.red : LivTheme.text2
+        if let glyph {
+            LivIcon(glyph: glyph, color: ink, size: LivMenuCard.lead)
+        } else if let symbol {
+            Image(systemName: symbol)
+                .font(.system(size: LivType.body))
+                .foregroundStyle(ink)
+        }
+    }
+}
+
+/// A MENU'S LEGEND ("New", "Insert"): the small sheet-label face, not a
+/// title — the rows under it are the menu's content.
+struct LivMenuLegend: View {
     let text: String
 
     var body: some View {
         Text(text)
-            .font(.system(size: LivType.title, weight: .semibold))
-            .foregroundStyle(LivTheme.text)
+            .font(.system(size: LivType.label, weight: .medium))
+            .foregroundStyle(LivTheme.text2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.horizontal, LivCards.padX)
+            .padding(.top, LivMenuCard.legendTop)
+            .padding(.bottom, LivMenuCard.legendBottom)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// A CARD'S TITLE ("New workspace."): 22 bold with the accent stop.
+struct LivCardTitle: View {
+    let text: String
+
+    var body: some View {
+        LivScreenTitle(text, size: LivType.title)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, LivCards.padX)
+            .padding(.top, LivMenuCard.titleTop)
+            .padding(.bottom, LivMenuCard.titleBottom)
     }
 }
 
 /// The menu's subject: the thing every verb below it will act on.
+/// THE GRABBER, ONCE. `LivMenuHost` and `LivTopSheetHost` each carried
+/// their own copy of the same capsule — two types, one shape, and the
+/// kind of duplication that drifts (standing rule 4). It is drawn on
+/// every card in the app, and since 2026-08-31 it means what it looks
+/// like: the card follows the finger and a pull toward its own edge
+/// dismisses it.
+struct LivGrabber: View {
+    var body: some View {
+        Capsule()
+            .fill(LivTheme.panel2)
+            .frame(width: 36, height: 5)
+            .padding(.vertical, 8)
+    }
+}
+
 struct LivMenuSubject: View {
     let name: String
     var detail: String?
@@ -176,8 +263,101 @@ struct LivMenuSubject: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
+            LivHairline()
         }
+    }
+}
+
+// MARK: - where the card came from
+
+/// THE LAST DOOR PRESSED, in screen coordinates.
+///
+/// Owner, 2026-09-12: *"the chrome looks independent from the buttons
+/// that invoke them … some animations make it visually look like
+/// something 'comes out' or 'expands' from the buttons, which is what
+/// should happen instead of a card sliding on top."*
+///
+/// That is a better diagnosis than the one it replaces. The app already
+/// had a rule — a card comes from the edge its button is on — and the
+/// rule was right but approximate: it picks one of two edges for a
+/// button that is at a POINT. Grow the card from the point and the edge
+/// stops being a setting anyone can get wrong. The two violations the
+/// audit found on 2026-09-12, the trash confirm raised from inside a
+/// top-hanging card and Search's facet menu raised from chips near the
+/// top, both simply cease to exist.
+///
+/// How a door marks itself is `livDoor()`, below.
+enum LivDoors {
+    /// Written by `livDoor()` when a door is tapped, read once when the
+    /// card it raises is built. Not published: nothing re-renders on a
+    /// tap, and a card reads it exactly once.
+    static var lastPressed: CGRect?
+
+    /// Where a door sits INSIDE a card that is about to appear, as a
+    /// `UnitPoint` for `scaleEffect(_:anchor:)`. Values outside 0...1 are
+    /// legal and are the normal case: a card at the bottom of the screen
+    /// grows from a button above its own top edge.
+    static func anchor(in card: CGRect) -> UnitPoint? {
+        guard let door = lastPressed, card.width > 0, card.height > 0 else {
+            return nil
+        }
+        return UnitPoint(
+            x: (door.midX - card.minX) / card.width,
+            y: (door.midY - card.minY) / card.height)
+    }
+}
+
+/// A DOOR: a control that raises a card, marking where it is so the card
+/// can grow out of it.
+///
+/// WHY A MODIFIER AND NOT A `ButtonStyle`. A style was the first shape of
+/// this: it reads `configuration.isPressed`, SwiftUI's own press
+/// tracking, and adds no recogniser at all. But a button has ONE style,
+/// and this app's doors already spend theirs — `LivMenuRow` wears
+/// `LivPress`, which is where a menu row's touch feedback comes from,
+/// and `LivTheme.pressed` exists because eight row sites once had none
+/// and the owner noticed. A door would have had to choose between its
+/// press feedback and its origin. One modifier that composes with
+/// whatever style a button already wears beats two mechanisms.
+///
+/// WHY A TAP AND NOT A DRAG. The other tempting one-liner records every
+/// touch from a zero-distance `DragGesture` on the root: no per-door
+/// change at all, and automatically right for a menu raised from another
+/// menu. A zero-distance drag recogniser above a scroll view is also the
+/// version that can quietly break scrolling, and there is no simulator
+/// here to find out. A `TapGesture` cannot: a scroll is a pan, and a
+/// simultaneous tap does not claim it.
+///
+/// A door that forgets to wear this is not a defect, only a card that
+/// still slides — `LivMenuHost` falls back to the offset it always used
+/// when no origin is known.
+extension View {
+    func livDoor() -> some View { modifier(LivDoor()) }
+}
+
+struct LivDoor: ViewModifier {
+    @State private var box: CGRect = .zero
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { box = geo.frame(in: .global) }
+                        .onChange(of: geo.frame(in: .global)) { _, f in box = f }
+                }
+            )
+            // BOTH WAYS A DOOR OPENS. Several menus in this app are
+            // raised by a HOLD rather than a tap — the bar's `+`, a
+            // Search chip — so a tap-only recorder would leave exactly
+            // those cards sliding. 0.3 is under the 0.45 those holds
+            // use, so the origin is recorded before the menu is asked
+            // for. Neither gesture claims a scroll: a scroll is a pan,
+            // which is not a tap and which cancels a long press.
+            .simultaneousGesture(TapGesture().onEnded { LivDoors.lastPressed = box })
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.3)
+                    .onEnded { _ in LivDoors.lastPressed = box })
     }
 }
 
@@ -187,21 +367,35 @@ struct LivMenuSubject: View {
 /// motion, scrim and card the one menu wears, for the one surface that
 /// is too big to be a list of rows: the workspace switcher.
 ///
-/// It comes from the top because its BUTTON is at the top (owner,
-/// 2026-08-15: "clicking on workspace has a card come in at the bottom,
-/// but since the button is on top it would be more convenient have it
-/// appearing at top also"). A `.sheet` cannot do that — on iPhone a
-/// sheet only ever comes up from the bottom — so it is drawn here, in
-/// the hierarchy, exactly as the menu is.
+/// IT COMES FROM THE EDGE ITS BUTTON IS ON, and that is the whole rule
+/// (owner, 2026-08-15: "clicking on workspace has a card come in at the
+/// bottom, but since the button is on top it would be more convenient
+/// have it appearing at top also"). A `.sheet` cannot do the top half —
+/// on iPhone a sheet only ever comes up from the bottom — so this is
+/// drawn in the hierarchy, exactly as the menu is.
+///
+/// THE EDGE IS A PARAMETER SINCE 2026-08-31, because the rule outlived
+/// the arrangement it was written for. The workspace button WAS at the
+/// top when the owner asked for this; it moved to the foot of the
+/// library panel a week later (team, 2026-08-22) and the direction
+/// stayed behind, so the workspace and filter cards fell from the top of
+/// the screen while the buttons that opened them sat at the bottom — the
+/// workspace button drawing a `chevron.down` the whole time (owner,
+/// 2026-08-31: "some menus are popping up top down when the button is
+/// not at the top"). Hard-coding a direction records an answer; taking
+/// it as a parameter records the rule, and the rule survives the
+/// furniture moving again.
 extension View {
-    func livTopSheet<Sheet: View>(
-        isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Sheet
+    func livSheet<Sheet: View>(
+        from edge: VerticalEdge = .bottom, isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Sheet
     ) -> some View {
-        modifier(LivTopSheetHost(isPresented: isPresented, sheet: content))
+        modifier(LivEdgeSheetHost(from: edge, isPresented: isPresented, sheet: content))
     }
 }
 
-struct LivTopSheetHost<Sheet: View>: ViewModifier {
+struct LivEdgeSheetHost<Sheet: View>: ViewModifier {
+    let from: VerticalEdge
     @Binding var isPresented: Bool
     @ViewBuilder let sheet: () -> Sheet
 
@@ -212,13 +406,18 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
     @State private var content: CGFloat = 200
     @State private var shown = false
     @State private var drawn = false
+    /// The door this card is growing out of — see `LivDoors`. Named
+    /// `origin` and not `from` because this host already has a `from`,
+    /// which is the EDGE. Two different questions: which edge the card
+    /// hangs off, and which point it grew from.
+    @State private var origin: UnitPoint?
 
     func body(content: Content) -> some View {
         content.overlay {
             if drawn {
-                ZStack(alignment: .top) {
+                ZStack(alignment: from == .top ? .top : .bottom) {
                     Rectangle()
-                        .fill(Color.black.opacity(shown ? 0.4 : 0))
+                        .fill(Color.black.opacity(shown ? LivEdgeCard.scrim : 0))
                         .ignoresSafeArea()
                         .contentShape(Rectangle())
                         .onTapGesture { isPresented = false }
@@ -230,7 +429,16 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
                                     .onChange(of: geo.size.height) { _, h in height = h }
                             }
                         )
-                        .offset(y: shown ? 0 : -height)
+                        // OUT OF ITS DOOR, or off its edge — the same
+                        // rule as the menu host, applied to the app's only
+                        // other cover it owns.
+                        .scaleEffect(
+                            shown || origin == nil ? 1 : 0.86,
+                            anchor: origin ?? .center)
+                        .opacity(origin == nil || shown ? 1 : 0)
+                        .offset(
+                            y: origin != nil || shown
+                                ? 0 : (from == .top ? -height : height))
                 }
                 .ignoresSafeArea()
                 .accessibilityAction(.escape) { isPresented = false }
@@ -240,10 +448,22 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
         .onAppear(perform: sync)
     }
 
+    /// Where the card will be, in screen coordinates. Same reasoning as
+    /// the menu host's: resolved BEFORE the card is told to appear, not
+    /// inside its own `GeometryReader`, whose `onAppear` and the async
+    /// below run in an order SwiftUI does not promise.
+    private func cardBox() -> CGRect {
+        let inset = LivEdgeCard.inset
+        return CGRect(
+            x: inset, y: from == .top ? inset : LivScreen.height - height - inset,
+            width: LivScreen.width - 2 * inset, height: height)
+    }
+
     /// Mount first, THEN slide — the menu's own rule.
     private func sync() {
         if isPresented {
             drawn = true
+            origin = LivDoors.anchor(in: cardBox())
             shown = false
             DispatchQueue.main.async {
                 withAnimation(LivMotion.nav) { shown = true }
@@ -256,12 +476,13 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
         }
     }
 
-    /// The same card the menu wears, hanging from the top: square against
-    /// the edge it is attached to, rounded on the side facing the content,
-    /// the grabber on the bottom, and the safe area kept as space inside.
+    /// THE BOARD'S CARD (Workspaces): floating 8 off its edge and both
+    /// sides, rounded all round, the grabber on the side away from the
+    /// edge, and the safe area kept as space inside.
     private var card: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0).frame(height: 4)
+        let up = from == .bottom
+        return VStack(spacing: 0) {
+            if up { LivGrabber() } else { Spacer(minLength: 0).frame(height: 4) }
             // Hugs its content, and scrolls only once the content is
             // taller than the cap — a four-row switcher hanging down 86%
             // of the screen is a wall, not a card.
@@ -275,22 +496,32 @@ struct LivTopSheetHost<Sheet: View>: ViewModifier {
                         }
                     )
             }
-            .frame(height: min(content, UIScreen.main.bounds.height * 0.72))
+            .frame(height: min(content, LivScreen.height * 0.72))
             .onPreferenceChange(LivSheetHeight.self) { content = $0 }
-            Capsule()
-                .fill(LivTheme.panel2)
-                .frame(width: 36, height: 5)
-                .padding(.vertical, 8)
+            if !up { LivGrabber() }
         }
-        .padding(.top, LivSafeArea.top)
+        .padding(.horizontal, LivEdgeCard.pad)
+        // The safe area is SPACE INSIDE the card, on whichever edge it is
+        // attached to — a top card whose first row sits under the clock
+        // reads as broken, and so does a bottom one running into the home
+        // indicator. The card already stands `inset` off that edge.
+        .padding(.top, up ? LivEdgeCard.far : nearPad(LivSafeArea.top))
+        .padding(.bottom, up ? nearPad(LivSafeArea.bottom) : LivEdgeCard.far)
         .background(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0, bottomLeadingRadius: LivTheme.radiusLg,
-                bottomTrailingRadius: LivTheme.radiusLg, topTrailingRadius: 0,
-                style: .continuous
-            )
-            .fill(LivTheme.surface)
+            RoundedRectangle(cornerRadius: LivTheme.radiusWorkspaces, style: .continuous)
+                .fill(LivTheme.surface)
+                .shadow(
+                    color: .black.opacity(LivEdgeCard.shadow),
+                    radius: LivEdgeCard.shadowRadius, y: LivEdgeCard.shadowY)
         )
+        .padding(.horizontal, LivEdgeCard.inset)
+        .padding(up ? .bottom : .top, LivEdgeCard.inset)
+    }
+
+    /// The padding on the card's EDGE side: the safe area it must clear,
+    /// less the `inset` it already stands off, plus the board's 10.
+    private func nearPad(_ safe: CGFloat) -> CGFloat {
+        max(LivEdgeCard.far, safe - LivEdgeCard.inset + LivEdgeCard.near)
     }
 }
 
@@ -308,9 +539,15 @@ private struct LivSheetHeight: PreferenceKey {
 enum LivSafeArea {
     static var top: CGFloat { insets?.top ?? 0 }
     static var bottom: CGFloat { insets?.bottom ?? 0 }
-    private static var insets: UIEdgeInsets? {
-        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        return scene?.keyWindow?.safeAreaInsets
+    /// THE WINDOW'S HEIGHT — how far down "off the bottom of the screen"
+    /// is, for a page that parks there before it rises (Desk.swift). The
+    /// one place the key window is read, so the one place its height
+    /// is. 1000 when there is no window yet: off any phone's screen,
+    /// and never 0, because a page parked at 0 does not rise, it pops.
+    static var height: CGFloat { window?.bounds.height ?? 1000 }
+    private static var insets: UIEdgeInsets? { window?.safeAreaInsets }
+    private static var window: UIWindow? {
+        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow
     }
 }
 
@@ -339,11 +576,27 @@ struct LivMenuHost: ViewModifier {
     /// what is drawn).
     @State private var shown = false
     @State private var drawn: LivMenu?
+    /// How far the finger has pulled the card toward its own edge.
+    @State private var drag: CGFloat = 0
+    /// WHERE THIS CARD IS GROWING FROM — the door's centre, expressed
+    /// inside the card's own box. Nil means no door was recorded, and the
+    /// card slides from its edge the way it always did. Named `origin`
+    /// rather than `from`, which on a `LivMenu` means the EDGE.
+    @State private var origin: UnitPoint?
+    /// THE DOOR THIS CARD OPENED FROM, captured once, when it opens. The
+    /// card is placed from it for its whole life — never from
+    /// `LivDoors.lastPressed`, which the card's own rows overwrite: every
+    /// menu row is a door (so "Not a note…" opens at its row), so tapping
+    /// "New area…" moved the closing card under that row, where it
+    /// flashed half-drawn before it shrank away (owner, 2026-09-27).
+    @State private var door: CGRect?
 
     func body(content: Content) -> some View {
         content.overlay {
             if active, let drawn {
-                ZStack(alignment: drawn.from == .top ? .top : .bottom) {
+                let up = drawn.from == .bottom
+                let doorY = doorTop(drawn)
+                ZStack(alignment: doorY != nil || drawn.from == .top ? .topLeading : .bottomLeading) {
                     // The scrim: everything behind it is out of reach
                     // until this closes, and tapping it closes.
                     Rectangle()
@@ -352,6 +605,18 @@ struct LivMenuHost: ViewModifier {
                         .contentShape(Rectangle())
                         .onTapGesture { close() }
                     panel(drawn)
+                        // A FLOATING CARD AT ITS DOOR, not a sheet on an
+                        // edge. The `ZStack` alignment pins the edge and
+                        // the leading padding sets x, so the card's
+                        // MEASURED HEIGHT never enters the placement —
+                        // which is what lets it be placed before it has
+                        // been measured, and what stops a first-open
+                        // jump.
+                        .frame(width: LivMenuCard.width)
+                        // MEASURED BEFORE THE PADDING, so `height` is the
+                        // card's own height rather than the card plus its
+                        // margin and the safe area. The growth anchor is
+                        // computed from it.
                         .background(
                             GeometryReader { geo in
                                 Color.clear
@@ -359,11 +624,71 @@ struct LivMenuHost: ViewModifier {
                                     .onChange(of: geo.size.height) { _, h in height = h }
                             }
                         )
-                        // OFF SCREEN by exactly its own height, then home.
+                        .padding(.leading, cardX())
+                        .padding(
+                            doorY != nil || drawn.from == .top ? .top : .bottom,
+                            doorY
+                                ?? (LivMenuCard.margin
+                                    + (drawn.from == .top
+                                        ? LivSafeArea.top : LivSafeArea.bottom)))
+                        // DRAG IT BACK TOWARD ITS DOOR TO DISMISS.
+                        //
+                        // This arrived on 2026-08-30 to make the grabber
+                        // tell the truth: every card in the app drew the
+                        // capsule that means "drag me away" and none of
+                        // them could be dragged. The grabber has now gone
+                        // the other way — a floating card has no edge to
+                        // wear one against — so the gesture stays without
+                        // its mark. It costs nothing and still does the
+                        // obvious thing; the scrim is how anyone finds
+                        // their way out without knowing about it.
+                        //
+                        // The threshold is distance OR speed: a short
+                        // flick closes, a long slow drag closes, and a
+                        // small accidental movement puts it back.
+                        .offset(y: drag)
+                        .gesture(
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { g in
+                                    let d = up ? g.translation.height
+                                        : -g.translation.height
+                                    drag = up ? max(0, d) : -max(0, d)
+                                }
+                                .onEnded { g in
+                                    let d = up ? g.translation.height
+                                        : -g.translation.height
+                                    let v = up ? g.predictedEndTranslation.height
+                                        : -g.predictedEndTranslation.height
+                                    if d > 90 || v > 220 {
+                                        withAnimation(LivMotion.nav) { drag = 0 }
+                                        close()
+                                    } else {
+                                        withAnimation(LivMotion.pick) { drag = 0 }
+                                    }
+                                }
+                        )
+                        // OUT OF THE DOOR, or off the edge (owner,
+                        // 2026-09-12). With a door recorded the card
+                        // grows from it and fades in; with none it slides
+                        // off screen by exactly its own height, which is
+                        // what every card did before.
+                        //
+                        // 0.86 rather than 0: a card that starts at
+                        // nothing reads as a pop, and the ask was better
+                        // rather than fancier. It is small enough to be a
+                        // growth and large enough that the words inside
+                        // never scale through illegibility.
+                        //
                         // The panel is always mounted while `drawn` is
-                        // set, so this is a real slide in BOTH directions
+                        // set, so this is real motion in BOTH directions
                         // — a `.transition` on an `if` gave neither.
-                        .offset(y: shown ? 0 : (drawn.from == .top ? -height : height))
+                        .scaleEffect(
+                            shown || origin == nil ? 1 : 0.86,
+                            anchor: origin ?? .center)
+                        .opacity(origin == nil || shown ? 1 : 0)
+                        .offset(
+                            y: origin != nil || shown
+                                ? 0 : (drawn.from == .top ? -height : height))
                 }
                 .ignoresSafeArea()
                 .accessibilityAction(.escape) { close() }
@@ -373,11 +698,58 @@ struct LivMenuHost: ViewModifier {
         .onAppear(perform: sync)
     }
 
+    /// WHERE THE CARD'S LEFT EDGE GOES: centred under its door, then
+    /// clamped so it never leaves the screen. A door at the far right —
+    /// the ••• key — would otherwise hang the card half off.
+    private func cardX() -> CGFloat {
+        let w = LivMenuCard.width
+        let m = LivMenuCard.margin
+        let centre = door?.midX ?? LivScreen.width / 2
+        return min(max(m, centre - w / 2), LivScreen.width - w - m)
+    }
+
+    /// Where the card will be, in screen coordinates — for the GROWTH
+    /// ANCHOR only, which is the one place its height is needed. Being a
+    /// few points out on a menu's first open shifts where the growth
+    /// appears to start and nothing else; `height` is exact from the
+    /// second open of that menu onward.
+    private func cardBox(_ menu: LivMenu) -> CGRect {
+        let m = LivMenuCard.margin
+        let y = doorTop(menu)
+            ?? (menu.from == .top
+                ? LivSafeArea.top + m
+                : LivScreen.height - LivSafeArea.bottom - m - height)
+        return CGRect(x: cardX(), y: y, width: LivMenuCard.width, height: height)
+    }
+
+    /// The card's top edge for a menu that hangs at its door: under the
+    /// door when it fits, over it when it does not, and never off
+    /// screen. Nil for an edge card, or when no door was recorded.
+    private func doorTop(_ menu: LivMenu) -> CGFloat? {
+        guard menu.atDoor, let door else { return nil }
+        let m = LivMenuCard.margin
+        let gap: CGFloat = 4
+        let floor = LivScreen.height - LivSafeArea.bottom - m
+        let ceiling = LivSafeArea.top + m
+        if door.maxY + gap + height <= floor { return door.maxY + gap }
+        return max(ceiling, min(door.minY - gap - height, floor - height))
+    }
+
     /// Mount first, THEN slide: a view inserted and offset in the same
     /// frame has nowhere to travel from.
     private func sync() {
         if let menu {
+            // THE ANCHOR IS RESOLVED BEFORE THE CARD IS TOLD TO APPEAR,
+            // and deliberately not inside the card's own `GeometryReader`.
+            // That reader's `onAppear` and the async below both run after
+            // this, in an order SwiftUI does not promise — and if the
+            // anchor lands second the card is already at scale 1 and the
+            // growth never happens. So it is computed here from the
+            // screen and the last measured height, which is exact for
+            // every card after the first and close for the first.
             drawn = menu
+            door = LivDoors.lastPressed
+            origin = LivDoors.anchor(in: cardBox(menu))
             shown = false
             // The motion is asked for EXPLICITLY, here, rather than left
             // to an `.animation(value:)` on the modified content — that
@@ -404,12 +776,9 @@ struct LivMenuHost: ViewModifier {
     /// comes from. The safe area is padding, not something to bleed past:
     /// a top sheet whose first row sits under the clock reads as broken.
     private func panel(_ menu: LivMenu) -> some View {
-        let up = menu.from == .bottom
-        return VStack(spacing: 0) {
-            if !up { Spacer(minLength: 0).frame(height: 4) }
-            if up { grabber }
+        VStack(spacing: 0) {
             if let title = menu.title {
-                LivMenuTitle(text: title)
+                LivMenuLegend(text: title)
             }
             if let subject = menu.subject {
                 LivMenuSubject(name: subject, detail: menu.subjectDetail)
@@ -417,35 +786,24 @@ struct LivMenuHost: ViewModifier {
             ForEach(Array(menu.items.enumerated()), id: \.element.id) { i, item in
                 row(item, divided: i > 0)
             }
-            if up { Spacer(minLength: 0).frame(height: 4) }
-            if !up { grabber }
         }
         .frame(maxWidth: .infinity)
-        // The safe area on the attached edge, kept as SPACE inside the
-        // card rather than ignored.
-        .padding(up ? .bottom : .top, up ? LivSafeArea.bottom : LivSafeArea.top)
-        .background(
-            UnevenRoundedRectangle(
-                topLeadingRadius: up ? LivTheme.radiusLg : 0,
-                bottomLeadingRadius: up ? 0 : LivTheme.radiusLg,
-                bottomTrailingRadius: up ? 0 : LivTheme.radiusLg,
-                topTrailingRadius: up ? LivTheme.radiusLg : 0,
-                style: .continuous
-            )
-            .fill(LivTheme.surface)
-        )
+        // A RAISED CARD (the clearer boards' Create menu): panel2, radius
+        // 24 on every corner, CLIPPED so a pressed first or last row keeps
+        // them.
+        .background(LivTheme.panel2)
+        .clipShape(RoundedRectangle(cornerRadius: LivMenuCard.radius, style: .continuous))
+        .shadow(
+            color: .black.opacity(LivMenuCard.shadowInk),
+            radius: LivMenuCard.shadowRadius, y: LivMenuCard.shadowY)
     }
 
-    private var grabber: some View {
-        Capsule()
-            .fill(LivTheme.panel2)
-            .frame(width: 36, height: 5)
-            .padding(.vertical, 8)
-    }
+
 
     private func row(_ item: LivMenuItem, divided: Bool) -> some View {
         LivMenuRow(
             label: item.label, glyph: item.glyph, symbol: item.symbol,
+            selected: item.selected,
             chevron: item.chevron, destructive: item.destructive, divided: divided
         ) {
             close()

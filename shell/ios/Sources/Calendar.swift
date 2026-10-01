@@ -1,87 +1,59 @@
-// liv iOS — Calendar (design/ios.md §6): a compact month grid (Mon-first,
-// six fixed weeks, ≤3 neutral ink dots per day — never a color rainbow)
-// over a FIXED day panel: all-day pills first, then rows chronologically.
-// `dated` is the full set (bucketed by civil day client-side); only
-// `occurrences` ride the snapshot window, so the grid re-windows over the
-// VISIBLE six-week span on every month change. Occurrence rows project
-// their SERIES entity — repeat glyph, read-only, tap opens the series.
-// A row tap opens a Desk tab (desk.open dismisses this window by the
-// chrome's own rule). Tapping an empty hour — or long-pressing a day for
-// an all-day one — opens an inline DRAFT with a name field: the box
-// learns nothing until you submit, and the workspace stamps what lands
-// (every creation door stamps, M4).
+// liv iOS — Calendar (design/ios.md §6): a full-height day timeline, with
+// the month grid behind the title as a JUMP card (Mon-first, six fixed
+// weeks, ≤3 neutral ink dots per day — never a colour rainbow, and the
+// chosen day marked by `LivDayMark`, the same disc the Today strip
+// draws). Which things fall on which day is Rust's answer
+// (`liv_view_day`, `BoxModel.calendar`), asked for the shown month and
+// the month either side; where each block sits on the hour grid is
+// worked out here, because it moves with the finger. A row tap opens a
+// Desk tab (desk.open dismisses this window by the chrome's own rule).
+//
+// TAPPING AN EMPTY HOUR WRITES THE EVENT, there and then, and raises its
+// card with the caret in the name (owner, 2026-08-13: "naming of items
+// should be done in properties"). The workspace stamps what lands (every
+// creation door stamps, M4). This said the opposite — "opens an inline
+// DRAFT with a name field: the box learns nothing until you submit" —
+// until 2026-09-07; that was the 2026-08-06 behaviour, reversed a week
+// later, and three comments in this file outlived it.
 
 import SwiftUI
 import UIKit
 
 // MARK: - day items
 
-/// One calendar line: a dated entity, or an occurrence projecting its
-/// series row. All-day is the core's own date-only flag; a stamp of 0000
-/// is only consulted when the core did not say, so an event deliberately
-/// set to midnight stays an event at midnight (review, 2026-08-06).
+/// One thing on a day, and when (a packed civil stamp). All-day is the
+/// core's own date-only flag, so an event deliberately set to midnight
+/// stays an event at midnight (review, 2026-08-06).
 private struct CalendarDayItem: Identifiable {
-    let key: String
     let row: EntityRow
-    let stamp: Int64
-    let occurrence: Bool
-    var id: String { key }
-    var allDay: Bool { row.dueDateOnly ?? (stamp % 10_000 == 0) }
+    var id: LivEntityID { row.id }
+    var stamp: Int64 { row.due ?? 0 }
+    var allDay: Bool { row.allDay == true }
 }
 
 // MARK: - the month grid's data, decided before it is drawn
-
-/// One cell of the month grid, already decided: the number, whether it
-/// belongs to the month, and the colours of its dots. Everything the
-/// cell draws and nothing else, so a cell rebuilds when its DAY changes
-/// and not because a finger moved.
-private struct CalCell: Equatable {
-    let day: Int64
-    let number: Int
-    let inMonth: Bool
-    let isToday: Bool
-    let count: Int
-    /// Up to three, in kind colour (owner, 2026-08-13).
-    let dots: [Color]
-}
-
-/// One month's six weeks, ready to draw.
-private struct CalMonth: Equatable {
-    let month: Int64
-    let cells: [CalCell]
-}
-
-/// Build one month from the day buckets. Runs when the MONTH or the
-/// SNAPSHOT moves — never per frame of a drag, which is the whole point
-/// of the type (measured 2026-08-15: a 1.2s drag rebuilt 12,348 cells).
-private func calMonth(
-    _ month: Int64, today: Int64, byDay: [Int64: [CalendarDayItem]]
-) -> CalMonth {
-    let start = CalGrid.gridStart(month)
-    var cells: [CalCell] = []
-    cells.reserveCapacity(42)
-    for i in 0..<42 {
-        let day = Civil.addDays(start, i)
-        let items = byDay[day] ?? []
-        cells.append(
-            CalCell(
-                day: day,
-                number: Civil.dayNumber(day),
-                inMonth: CalGrid.firstOfMonth(day) == month,
-                isToday: day == today,
-                count: items.count,
-                dots: items.prefix(3).map { LivKind.color(of: $0.row) }))
-    }
-    return CalMonth(month: month, cells: cells)
-}
 
 // MARK: - the screen
 
 /// A block held by the drag, mid-flight.
 private struct LiftedBlock: Equatable {
-    let id: UInt64
+    let id: LivEntityID
     /// Minutes-of-day where its start currently sits.
     let minutes: Int
+    /// THE FINGER IS STILL DOWN. False means the block has LANDED and is
+    /// holding its new place until the box catches up.
+    ///
+    /// Without the second state the block jumped on release (owner,
+    /// 2026-09-06: "Calendar event jumps when placed in grid"). The drop
+    /// cleared the lift immediately, so the block re-drew at the time it
+    /// still had in the snapshot — its OLD one — and stayed there for a
+    /// box write plus a snapshot decode before hopping to where the
+    /// finger had left it. You saw it snap back, then jump forward.
+    ///
+    /// Only `airborne` wears the lift's clothes: the shadow, the
+    /// brighter fill and the moving time. A landed block looks settled
+    /// while it waits.
+    var airborne: Bool = true
 }
 
 
@@ -128,15 +100,13 @@ struct CalendarView: View {
     /// Where the bin sits, in WINDOW space, so the drag (which reports
     /// the finger in the same space) can tell when it is over it.
     @State private var trashZone: CGRect = .zero
-    /// A new event being NAMED in the grid. Nothing is written until the
-    /// name is submitted: tapping an hour used to create an untitled
-    /// event and throw you into the note editor to name it (owner,
-    /// 2026-08-06 — "setting names of calendar items should be done in
-    /// calendar", and an event is not a document).
     /// A page asked for by ‹ ›, Today or a month-away jump. The pager
     /// consumes it, slides, and hands the month back on landing — the
     /// drag itself lives down there, not here.
     @State private var pageRequest = 0
+    /// Is the month card up? The grid lives behind the title now, so
+    /// this is the only thing that puts it on screen.
+    @State private var pickingDay = false
     /// One month's width, learned from the layout, so the chevrons can
     /// slide by exactly one page too.
     @State private var pageWidth: CGFloat = 0
@@ -145,28 +115,89 @@ struct CalendarView: View {
         let today = Civil.todayDay()
         let byDay = itemsByDay()
         let items = byDay[selectedDay] ?? []
-        let doneNames = Set(
-            taskOptions.filter { $0.completes == true }.compactMap(\.name))
 
+        // THE TIMELINE IS THE SCREEN (owner, 2026-08-31: "maybe
+        // replacing the current layout with the notion layout would be
+        // better… also getting rid of the day picker or doing it another
+        // way").
+        //
+        // The month grid sat here permanently and took about 40% of the
+        // phone, leaving the timeline roughly six hours. Notion Calendar
+        // — read frame by frame from
+        // `~/Desktop/Throwaway/new/notion-calendar.mov` — has no month
+        // grid on its main screen at all: the title carries a chevron,
+        // and everything under it is the timeline. That is the right
+        // trade on a phone, because the grid is how you JUMP and the
+        // timeline is what you READ, and reading happens far more often.
+        //
+        // It also removes a class of bug instead of patching it. The
+        // grid paged horizontally by drag and fought the panel's window
+        // recognizer for every sideways swipe — swiping right opened the
+        // library instead of turning the month, and both gestures ran on
+        // every touch move (owner, same day: "the calendar and
+        // especially day picker lags a lot"). A surface that is not on
+        // screen cannot fight anything.
         VStack(spacing: 0) {
             header(today: today)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-            weekdayRow
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-            monthPager(today: today, byDay: byDay)
-                .padding(.top, 4)
-                .padding(.bottom, 8)
-            Rectangle().fill(LivTheme.border).frame(height: 0.5)
-            dayPanel(items: items, today: today, doneNames: doneNames)
+                // THE HEAVIEST LINE IN THE APP IS GONE. A 0.5pt rule
+                // running bezel to bezel, about a point under a 32pt
+                // bold title's descenders — the app's only header
+                // divider, and the only place a line cuts the screen
+                // into slabs rather than grouping rows. Air does the
+                // same job without drawing anything.
+                .padding(.bottom, 14)
+            dayPanel(items: items, today: today)
         }
         .background(LivTheme.canvas)
+        // THE PICKER, WHEN YOU ASK FOR IT. The same grid, the same
+        // cells, the same long-press — it just is not standing on the
+        // screen the whole time.
+        .livCard(while: pickingDay)
+        .sheet(isPresented: $pickingDay) {
+            VStack(spacing: 0) {
+                MonthWeekdayRow()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 22)
+                monthPager(today: today, byDay: byDay)
+                    .padding(.top, 6)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(LivTheme.canvas)
+            // The card is exactly as tall as what is in it: the grabber,
+            // the weekday row, its padding and six week rows. Measured
+            // rather than guessed — 150 left about 80pt of empty card
+            // under the last week.
+            .presentationDetents([.height(CalGrid.gridHeight + 72)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(LivTheme.canvas)
+            // THE DESK IS BEHIND A CARD WHILE THIS IS UP, so the
+            // window's panel recognizer must keep off. Without it a
+            // sideways drag on the Monday or Sunday column — the grid is
+            // padded 16pt, the edge escape claims the outer 24 —
+            // latched a panel BEHIND the sheet, and every touch move
+            // then republished `panelDrag` and re-ran this whole body:
+            // the day buckets, 126 picker cells and the hour grid, per
+            // frame, while the desk went `.disabled` under it. That is
+            // the owner's "date picker is laggy like before" (todo.org),
+            // and "like before" is exact — it is the same mechanism as
+            // the 2026-08-15 mini-calendar lag, reached through a door
+            // `deskInFront` did not know about. The modifier that holds
+            // the recognizer off is on the PRESENTING view below —
+            // `.livCard(while: pickingDay)` — because a sheet's content
+            // is its own environment root and cannot be relied on to
+            // find the desk.
+        }
         .onAppear {
             loadWindow()
             box.statusOptions(kind: "task") { taskOptions = $0 }
         }
+        // The landed block lets go the moment the calendar agrees with it.
+        .onReceive(box.$calendar) { _ in settle() }
         .onChange(of: monthFirst) { _, _ in loadWindow() }
+        .onChange(of: workspaces.lensIds) { _, _ in loadWindow() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { loadWindow() }
         }
@@ -180,10 +211,35 @@ struct CalendarView: View {
 
     private func header(today: Int64) -> some View {
         HStack(spacing: 8) {
-            Text(CalGrid.title(monthFirst))
-                .font(.system(size: LivType.strong, weight: .semibold))
-                .foregroundStyle(LivTheme.text)
-            if box.busyRetrying { ProgressView().scaleEffect(0.7) }
+            // THE DAY YOU ARE ON, AND THE DOOR TO THE PICKER.
+            //
+            // It said the MONTH, because the grid underneath said the
+            // day. With the grid behind a door, nothing else on the
+            // screen would name the day being shown — so the title
+            // carries it, and the chevron says the title is a way in.
+            // Notion's own title works exactly this way.
+            //
+            // The screen face (34, and its accent stop) like every other
+            // screen's name, on ONE line. The HStack split what was left
+            // between this and the Spacer, so "Thu 24 Sep." broke in two;
+            // with the priority it is measured first, and where the row
+            // cannot hold it at 34 (it runs a few points over on a 420
+            // phone) it shrinks rather than pushing "Today" to "To…".
+            Button { pickingDay = true } label: {
+                HStack(spacing: 5) {
+                    LivScreenTitle(Civil.dayLabel(selectedDay))
+                        .lineLimit(1)
+                        .minimumScaleFactor(LivTitle.shrink)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: LivType.caption, weight: .semibold))
+                        .foregroundStyle(LivTheme.text3)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityLabel("\(Civil.dayLabel(selectedDay)). Pick a day")
+            if box.busyRetrying { LivBusy() }
             Spacer()
             // A VERB, dressed as one. As plain accent text beside the
             // date it read as a label saying which day was selected
@@ -211,27 +267,37 @@ struct CalendarView: View {
                 // wear, and the app's one way of saying "this is the
                 // live one". OFF keeps the soft tint.
                 Text("Today")
-                    .font(.system(size: LivType.body, weight: .semibold))
-                    .foregroundStyle(onToday ? LivTheme.canvas : LivTheme.accent)
-                    .padding(.horizontal, 11)
-                    .frame(height: 26)
-                    .background(
-                        Capsule().fill(
-                            onToday ? LivTheme.accent : LivTheme.accentSoft)
-                    )
-                    .overlay(
-                        Capsule().strokeBorder(
-                            onToday ? Color.clear : LivTheme.accent.opacity(0.5),
-                            lineWidth: 0.5)
-                    )
+                    // A WORD, like every other verb in the chrome. It was
+                    // a filled accent capsule with an accent border and
+                    // a second filled state on top — four devices for a
+                    // link that says "go back to today", sitting beside
+                    // two bare chevrons that do the same kind of job.
+                    // Dimmed when you are already there, which is the
+                    // only state worth drawing differently.
+                    // A chrome verb-word is `body` everywhere else in
+                    // the app — Search's "Cancel", the card's "Done".
+                    .font(.system(size: LivType.body, weight: .medium))
+                    .foregroundStyle(onToday ? LivTheme.text3 : LivTheme.accent)
+                    // A verb never truncates; the title beside it yields.
+                    .fixedSize()
+                    .padding(.horizontal, 8)
                     .frame(height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Today")
             .accessibilityAddTraits(onToday ? [.isSelected] : [])
-            chevron("chevron.left", label: "Previous month") { page(-1) }
-            chevron("chevron.right", label: "Next month") { page(1) }
+            // A DAY, NOT A MONTH. These paged the month, which was
+            // right while a month grid was the thing on screen. What is
+            // on screen now is one day, and the motion you want a
+            // hundred times more often is "tomorrow" — without this,
+            // reaching tomorrow would mean opening the picker.
+            chevron("chevron.left", label: "Previous day") {
+                go(to: Civil.addDays(selectedDay, -1), today: Civil.todayDay())
+            }
+            chevron("chevron.right", label: "Next day") {
+                go(to: Civil.addDays(selectedDay, 1), today: Civil.todayDay())
+            }
         }
     }
 
@@ -280,19 +346,6 @@ struct CalendarView: View {
         if animated { withAnimation(LivMotion.nav, land) } else { land() }
     }
 
-    // MARK: the grid — 6 fixed weeks, Mon-first, ~40pt cells
-
-    private var weekdayRow: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<7, id: \.self) { i in
-                Text(CalGrid.weekdayLetters[i])
-                    .font(.system(size: LivType.label, weight: .semibold))
-                    .foregroundStyle(LivTheme.text2)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
     // MARK: the pager — three months side by side, the middle one shown
     //
     // The grid FOLLOWS the finger (owner, 2026-08-10: "not the
@@ -313,12 +366,20 @@ struct CalendarView: View {
     private func monthPager(
         today: Int64, byDay: [Int64: [CalendarDayItem]]
     ) -> some View {
-        MonthPagerView(
+        // COUNTS, not the items themselves — `calMonth` (Month.swift)
+        // needs only how many, and taking counts is what lets the grid
+        // stand outside this file. One pass over ~60 keys, once per
+        // pager build, not per cell.
+        let counts = byDay.mapValues(\.count)
+        return MonthPagerView(
             months: (-1...1).map {
-                calMonth(CalGrid.addMonths(monthFirst, $0), today: today, byDay: byDay)
+                calMonth(CalGrid.addMonths(monthFirst, $0), today: today, counts: counts)
             },
             selected: selectedDay,
-            onSelect: { park(day: $0) },
+            // PICKING CLOSES IT. The card exists to answer one
+            // question — which day — so it leaves as soon as it is
+            // answered rather than waiting to be dismissed.
+            onSelect: { park(day: $0); pickingDay = false },
             onHold: { createEvent(on: $0) },
             onPage: { step($0, animated: false) },
             request: $pageRequest,
@@ -362,7 +423,11 @@ struct CalendarView: View {
         let stamp = Civil.stamp(
             day: day, hhmm: allDay ? 0 : Int64(CalClock.hhmm(minutes)))
         box.createEvent(dueCivil: stamp, dateOnly: allDay) { id in
-            guard id != 0 else {
+            // Whatever happened, the draft box has done its job: either
+            // the real block is about to replace it, or nothing was made
+            // and it must not linger.
+            placing = nil
+            guard !id.isAbsent else {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
                 return
             }
@@ -385,9 +450,7 @@ struct CalendarView: View {
     /// The day, Apple Calendar's shape (phase 4): an all-day band, then an
     /// hour grid where a timed item is a positioned block. Tap an empty
     /// hour to create there; drag a block to move its time.
-    private func dayPanel(
-        items: [CalendarDayItem], today: Int64, doneNames: Set<String>
-    ) -> some View {
+    private func dayPanel(items: [CalendarDayItem], today: Int64) -> some View {
         let timed = items.filter { !$0.allDay }
         return VStack(spacing: 0) {
             // NOTHING between the month grid and the timeline — no date
@@ -400,7 +463,7 @@ struct CalendarView: View {
             // the month grid, and it is still in Today, in Tasks and in
             // search. The band that carried them is deleted, ring and
             // all.
-            hourGrid(timed: timed, today: today, doneNames: doneNames)
+            hourGrid(timed: timed, today: today)
         }
         // The bin rides OVER the foot of the timeline while something is
         // in the air, and takes no space when nothing is.
@@ -420,10 +483,16 @@ struct CalendarView: View {
         let start: Int
         let length: Int
         let rect: CGRect
-        var id: String { item.key }
-        /// An occurrence projects a series — moving one instance is a
-        /// recurrence edit, not a drag.
-        var movable: Bool { !item.occurrence }
+        var id: LivEntityID { item.id }
+    }
+
+    /// WHERE A BLOCK IS RIGHT NOW, which is not always what the box says:
+    /// the one under your finger is wherever you have dragged it to.
+    private func liveStart(_ item: CalendarDayItem) -> Int {
+        if let held = lifted, held.id == item.row.id {
+            return held.minutes
+        }
+        return CalClock.minutes(of: item.stamp)
     }
 
     private func frames(_ timed: [CalendarDayItem], width: CGFloat) -> [HourFrame] {
@@ -434,7 +503,21 @@ struct CalendarView: View {
                 length: CalClock.duration(start: item.stamp, end: item.row.dueEnd)
             )
         }
-        let slots = CalLayout.slots(spans)
+        // THE LANES FOLLOW THE FINGER (owner, 2026-09-06: "Calendar event
+        // jumps when placed in grid").
+        //
+        // The columns were shared out from the SNAPSHOT's times, so a
+        // block being dragged kept the lane its OLD time earned. Drag an
+        // event out of a clash and it stayed in its half-width column the
+        // whole way; the moment you let go the snapshot arrived, the
+        // clash was gone, and the block jumped sideways to full width.
+        // The jump was horizontal, which is why it survived every fix
+        // aimed at the vertical drop.
+        //
+        // Sharing the lanes out by where the blocks ARE means the width
+        // is right while you drag and nothing changes when you let go.
+        let slots = CalLayout.slots(
+            timed.indices.map { (start: liveStart(timed[$0]), length: spans[$0].length) })
         let left = CalClock.lane
         let right: CGFloat = 18
         let lane = max(40, width - left - right)
@@ -453,9 +536,7 @@ struct CalendarView: View {
         }
     }
 
-    @ViewBuilder private func hourGrid(
-        timed: [CalendarDayItem], today: Int64, doneNames: Set<String>
-    ) -> some View {
+    @ViewBuilder private func hourGrid(timed: [CalendarDayItem], today: Int64) -> some View {
         let nowMinutes = CalClock.minutes(of: Civil.nowStamp())
         GeometryReader { geo in
             let frames = frames(timed, width: geo.size.width)
@@ -464,7 +545,7 @@ struct CalendarView: View {
                     ZStack(alignment: .topLeading) {
                         hourLines
                         ForEach(frames) { frame in
-                            block(frame, doneNames: doneNames)
+                            block(frame)
                         }
                         // The box being placed, drawn exactly like the
                         // block it is about to become — no text: it has
@@ -480,7 +561,7 @@ struct CalendarView: View {
                         // long-press on the enclosing UIScrollView — the
                         // only place a gesture can out-argue the scroll.
                         HourGridDrag(
-                            targets: frames.filter(\.movable).map {
+                            targets: frames.map {
                                 HourGridDrag.Target(id: $0.item.row.id, rect: $0.rect)
                             },
                             onLift: { id in
@@ -496,14 +577,17 @@ struct CalendarView: View {
                                         start: frame.item.stamp, duration: frame.length, by: dy))
                             },
                             onDrop: { id, dy, where_ in
-                                lifted = nil
                                 let onTrash = overTrash(where_)
                                 trashArmed = false
                                 guard let frame = frames.first(where: { $0.item.row.id == id })
-                                else { return }
+                                else {
+                                    lifted = nil
+                                    return
+                                }
                                 // Dropped on the bin: the item goes, soft
                                 // and undoable like every trash here.
                                 if onTrash {
+                                    lifted = nil
                                     UINotificationFeedbackGenerator()
                                         .notificationOccurred(.success)
                                     box.trash(id)
@@ -512,7 +596,16 @@ struct CalendarView: View {
                                 }
                                 let landed = CalClock.dragged(
                                     start: frame.item.stamp, duration: frame.length, by: dy)
-                                guard landed != frame.start else { return }
+                                guard landed != frame.start else {
+                                    lifted = nil
+                                    return
+                                }
+                                // THE BLOCK STAYS WHERE THE FINGER LEFT
+                                // IT. Cleared by `settle` when the
+                                // calendar agrees, or by `commitMove` if
+                                // the write is refused.
+                                lifted = LiftedBlock(
+                                    id: id, minutes: landed, airborne: false)
                                 commitMove(frame.item, minutes: landed, length: frame.length)
                             },
                             onCancel: {
@@ -523,7 +616,11 @@ struct CalendarView: View {
                             onPlace: { minutes in placing = minutes },
                             onPlaceMove: { minutes in placing = minutes },
                             onPlaceDrop: { minutes in
-                                placing = nil
+                                // The draft box STAYS until the real one
+                                // exists — clearing it here left a hole
+                                // in the grid for a write plus a
+                                // snapshot, the same gap that made a
+                                // dropped block jump. `create` clears it.
                                 create(on: selectedDay, minutes: minutes, allDay: false)
                             }
                         )
@@ -540,12 +637,25 @@ struct CalendarView: View {
                     .onTapGesture(coordinateSpace: .local) { point in
                         tapGrid(at: point, frames: frames)
                     }
-                    // Room for the first hour to sit above its own rule.
-                    // Applied OUTSIDE the tap gesture on purpose: the
-                    // gesture reads the grid's own coordinates, and this
-                    // must not shift what a tap means.
-                    .padding(.top, CalClock.labelRise)
+                    // (The room for the first hour's label moved to the
+                    // scroll view's own top margin — see below. Inside
+                    // the content it only ever rescued hour 0, because
+                    // `scrollTo(anchor: .top)` parks whichever hour you
+                    // asked for AT the viewport edge and the label hangs
+                    // above its band by `labelRise`.)
                 }
+                // ROOM FOR THE LABEL THAT IS SCROLLED TO.
+                //
+                // Each hour band is tagged with its rule at the band's
+                // top and draws its label `.offset(y: -labelRise)`.
+                // Offset does not extend layout bounds, so
+                // `scrollTo(hourAnchor(8), anchor: .top)` puts the RULE
+                // at the viewport's edge and the label hangs outside the
+                // clip — "08:00" arrived sliced through the middle while
+                // every hour below it was whole. On the scroll view this
+                // holds for whichever hour you land on; inside the
+                // content it only ever helped hour 0.
+                .contentMargins(.top, CalClock.labelRise + 8, for: .scrollContent)
                 // No scroll bar: it sat exactly on top of in-block controls
                 // (found live, 2026-08-05), and the hour labels already say
                 // where you are — Apple's day view shows none either.
@@ -602,7 +712,7 @@ struct CalendarView: View {
         HStack(spacing: 8) {
             Image(systemName: trashArmed ? "trash.fill" : "trash")
                 .font(.system(size: LivType.title, weight: .medium))
-            Text("Drop to trash")
+            Text("Trash")
                 .font(.system(size: LivType.body, weight: .medium))
         }
         .foregroundStyle(trashArmed ? LivTheme.onAccent : LivTheme.red)
@@ -646,7 +756,7 @@ struct CalendarView: View {
         create(on: selectedDay, minutes: minutes, allDay: false)
     }
 
-    private func startMinutes(_ id: UInt64, _ frames: [HourFrame]) -> Int {
+    private func startMinutes(_ id: LivEntityID, _ frames: [HourFrame]) -> Int {
         frames.first { $0.item.row.id == id }?.start ?? 0
     }
 
@@ -670,16 +780,43 @@ struct CalendarView: View {
             end: hasEnd ? Civil.stamp(day: day, hhmm: CalClock.hhmm(minutes + length)) : 0,
             dateOnly: false
         ) { ok in
-            if !ok { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+            if !ok {
+                // The box refused it, so the picture must stop claiming
+                // otherwise: drop the hold and let the block spring back
+                // to the time it still has.
+                lifted = nil
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
             loadWindow()
         }
     }
 
+    /// LET GO OF A LANDED BLOCK once the box agrees with it.
+    ///
+    /// The hold exists only to cover the gap between the finger lifting
+    /// and the snapshot arriving. It ends when the entity's own stamp is
+    /// where the finger left it — or when the entity is no longer on
+    /// this day at all, which is the same answer for a different reason.
+    private func settle() {
+        guard let held = lifted, !held.airborne else { return }
+        let row = (box.calendar ?? []).lazy
+            .flatMap { $0.timed ?? [] }
+            .first { $0.id == held.id }
+        guard let row, let due = row.due else {
+            lifted = nil
+            return
+        }
+        if CalClock.minutes(of: due) == held.minutes { lifted = nil }
+    }
+
     private func hourAnchor(_ hour: Int) -> String { "hour-\(hour)" }
 
-    /// The empty canvas: one tappable band per hour. A tap opens a NAMED
-    /// draft at that hour, right where you tapped; the write happens on
-    /// submit. Nothing untitled ever reaches the box.
+    /// The empty canvas: one tappable band per hour. A tap WRITES the
+    /// event at that hour and raises its card with the caret in the
+    /// name — see `create(on:minutes:allDay:)` for the ruling and the
+    /// reason. This said the opposite ("a NAMED draft… nothing untitled
+    /// ever reaches the box") until 2026-09-07: that was the 2026-08-06
+    /// behaviour, reversed a week later, and the comment outlived it.
     private var hourLines: some View {
         VStack(spacing: 0) {
             ForEach(0..<24, id: \.self) { hour in
@@ -689,11 +826,11 @@ struct CalendarView: View {
                 ZStack(alignment: .topLeading) {
                     // The rule starts AFTER the time column. Drawn from
                     // x=0 it crossed out the hour it was labelling.
-                    Rectangle().fill(LivTheme.border).frame(height: 0.5)
+                    LivHairline()
                         .padding(.leading, CalClock.gutter)
                     Text(String(format: "%02d:00", hour))
                         .font(.system(size: LivType.caption).monospacedDigit())
-                        .foregroundStyle(LivTheme.muted)
+                        .foregroundStyle(LivTheme.text2)
                         .frame(width: CalClock.gutter - 8, alignment: .trailing)
                         .offset(y: -CalClock.labelRise)
                 }
@@ -730,10 +867,14 @@ struct CalendarView: View {
     /// While it is in the air it draws at the LIVE minute, brighter, with
     /// its moving time — the finger is showing you the answer before it
     /// commits.
-    private func block(_ frame: HourFrame, doneNames: Set<String>) -> some View {
+    private func block(_ frame: HourFrame) -> some View {
         let item = frame.item
-        let moving = lifted?.id == item.row.id
-        let live = moving ? (lifted?.minutes ?? frame.start) : frame.start
+        let held = lifted?.id == item.row.id ? lifted : nil
+        // WHERE IT DRAWS: the hold wins over the snapshot, in the air and
+        // for the moment after it lands.
+        let live = held?.minutes ?? frame.start
+        // WHAT IT WEARS: only while the finger is on it.
+        let moving = held?.airborne == true
         let task = livCanTick(item.row)
         // The block wears what the thing IS. It used to be purple for a
         // task and blue for everything else, so an event — the calendar's
@@ -742,20 +883,34 @@ struct CalendarView: View {
         let unit = CalClock.hourHeight / 60
         let span = CalClock.range(frame.start, frame.length)
         let name = livRowTitle(item.row)
-        let voice: String =
-            item.occurrence ? "\(name), \(span), repeating" : "\(name), \(span)"
 
         return blockFace(
             item, name: name, span: span, length: frame.length, live: live,
-            moving: moving, voice: voice, task: task, doneNames: doneNames
+            moving: moving, voice: "\(name), \(span)", task: task
         )
         .frame(width: frame.rect.width, height: frame.rect.height, alignment: .topLeading)
+        // A TINTED BODY AND A COLOURED EDGE — the reference's shape.
+        //
+        // It was a tinted fill AND a stroke all the way round, the
+        // stroke made by an opacity on the kind's colour: two devices
+        // saying one thing, and a colour mixed by hand where `tint()`
+        // exists precisely so hues are not divided by eye. Notion
+        // Calendar draws a block as a washed body with a bar down its
+        // leading edge, which is where the kind's colour earns its
+        // keep — a 3pt bar reads at a glance where a half-strength
+        // hairline does not.
         .background(blockFill(ink, moving ? 0.36 : 0.2))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(ink.opacity(moving ? 1 : 0.55), lineWidth: moving ? 1.5 : 0.5)
-        )
-        .shadow(color: .black.opacity(moving ? 0.5 : 0), radius: moving ? 10 : 0, y: 4)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(ink)
+                .frame(width: 3)
+                .clipShape(
+                    RoundedRectangle(cornerRadius: 8).offset(x: 0))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .shadow(
+            color: moving ? LivTheme.lift.color : .clear,
+            radius: moving ? LivTheme.lift.radius : 0, y: LivTheme.lift.y)
         .offset(x: frame.rect.minX, y: CGFloat(live) * unit)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         // No label on the container: labelling it flattens the subtree and
@@ -778,17 +933,13 @@ struct CalendarView: View {
 
     @ViewBuilder private func blockFace(
         _ item: CalendarDayItem, name: String, span: String, length: Int,
-        live: Int, moving: Bool, voice: String, task: Bool, doneNames: Set<String>
+        live: Int, moving: Bool, voice: String, task: Bool
     ) -> some View {
-        let done = isDone(item.row, doneNames)
+        let done = item.row.done == true
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
-                if item.occurrence {
-                    Image(systemName: "repeat")
-                        .font(.system(size: LivType.micro, weight: .semibold))
-                        .foregroundStyle(LivTheme.text3)
-                } else if task {
-                    StatusRing(done: done, compact: true) { toggleStatus(item.row.id) }
+                if task {
+                    StatusRing(done: done, compact: true) { toggleStatus(item.row) }
                 }
                 Text(name)
                     .font(.system(size: LivType.body, weight: .medium))
@@ -796,7 +947,10 @@ struct CalendarView: View {
                     .lineLimit(1)
                     .accessibilityLabel(voice)
             }
-            if length >= 45 || moving {
+            // 60, NOT 45. A 45-minute block has room for a name and a
+            // span only if neither is allowed to breathe; the second
+            // line was being squeezed rather than the type being wrong.
+            if length >= 60 || moving {
                 Text(moving ? CalClock.range(live, length) + " · moving" : span)
                     .font(.system(size: LivType.caption).monospacedDigit())
                     .foregroundStyle(LivTheme.text3)
@@ -808,78 +962,43 @@ struct CalendarView: View {
         .padding(.vertical, 5)
     }
 
-    // MARK: snapshot slices
+    // MARK: the days
 
-    /// One pass over `dated` + `occurrences`, lens-filtered (M4), bucketed
-    /// by civil day, each bucket time-sorted. An occurrence whose series is
-    /// itself dated on the day dedupes away (Today's rule). The lens applies
-    /// to occurrence SERIES rows too — a filtered surface filters whole.
+    /// Rust's days, keyed by packed civil day for the grid and the
+    /// timeline. All-day first, then timed, each in time order as sent.
     private func itemsByDay() -> [Int64: [CalendarDayItem]] {
         var out: [Int64: [CalendarDayItem]] = [:]
-        var datedIds: [Int64: Set<UInt64>] = [:]
-        for id in box.snap?.dated ?? [] {
-            guard let row = box.entity(id), row.trashed != true,
-                let due = row.due, workspaces.admits(row)
-            else { continue }
-            let day = Civil.day(of: due)
-            out[day, default: []].append(
-                CalendarDayItem(
-                    key: "e\(id)", row: row, stamp: due, occurrence: false))
-            datedIds[day, default: []].insert(id)
-        }
-        for occ in box.snap?.occurrences ?? [] {
-            guard let series = occ.series, let civil = occ.civil,
-                let row = box.entity(series), row.trashed != true,
-                workspaces.admits(row)
-            else { continue }
-            let day = Civil.day(of: civil)
-            guard datedIds[day]?.contains(series) != true else { continue }
-            out[day, default: []].append(
-                CalendarDayItem(
-                    key: "o\(series)-\(civil)", row: row, stamp: civil,
-                    occurrence: true))
-        }
-        for (day, items) in out {
-            out[day] = items.sorted {
-                $0.stamp != $1.stamp ? $0.stamp < $1.stamp : $0.row.id < $1.row.id
-            }
+        for day in box.calendar ?? [] {
+            guard let epoch = day.day else { continue }
+            let rows = (day.allDay ?? []) + (day.timed ?? [])
+            out[Civil.day(ofEpoch: epoch)] = rows.map { CalendarDayItem(row: $0) }
         }
         return out
     }
 
-    // MARK: predicates + acts (Today's, file-private there — local copies)
-
-
-
-    private func isDone(_ row: EntityRow, _ doneNames: Set<String>) -> Bool {
-        row.status.map { doneNames.contains($0) } ?? false
-    }
+    // MARK: acts
 
     /// Ring tap: open -> first completing option, done -> first open one.
     /// No vocabulary, no write.
-    private func toggleStatus(_ id: UInt64) {
-        guard let row = box.entity(id) else { return }
-        let doneNames = Set(
-            taskOptions.filter { $0.completes == true }.compactMap(\.name))
-        let target = isDone(row, doneNames)
+    private func toggleStatus(_ row: EntityRow) {
+        let target = row.done == true
             ? taskOptions.first { $0.completes != true }
             : taskOptions.first { $0.completes == true }
         guard let name = target?.name, !name.isEmpty else { return }
-        box.set(id, "status", name)
+        box.set(row.id, "status", name)
     }
 
-    /// Window the snapshot over the VISIBLE six-week span (the shown month
-    /// plus its spill days — their dots must be as honest as the month's).
-    /// The window steers recurrence expansion; `dated` is full regardless.
-    /// The visible six weeks PLUS the month either side, because the
-    /// pager draws both neighbours: without them a month slid in blank
-    /// and grew its dots a beat later.
+    /// Ask for the shown month's six weeks PLUS the month either side,
+    /// because the pager draws both neighbours: without them a month slid
+    /// in blank and grew its dots a beat later. The answer on screen stays
+    /// until the next one lands, so a page never draws empty.
     private func loadWindow() {
         let start = CalGrid.gridStart(CalGrid.addMonths(monthFirst, -1))
         let end = Civil.addDays(CalGrid.gridStart(CalGrid.addMonths(monthFirst, 1)), 41)
-        box.refreshWindow(
-            from: Civil.stamp(day: start, hhmm: 0),
-            to: Civil.stamp(day: end, hhmm: 2359))
+        box.watchCalendar(
+            CalendarAsk(
+                from: Civil.epochDay(start), to: Civil.epochDay(end),
+                lens: workspaces.lensIds))
     }
 }
 
@@ -890,6 +1009,7 @@ struct CalendarView: View {
 /// changes — so a frame of dragging re-runs this body and nothing
 /// above it (owner, 2026-08-15: "minicalendar lags when dragged").
 private struct MonthPagerView: View {
+    @EnvironmentObject var desk: DeskModel
     let months: [CalMonth]
     let selected: Int64
     let onSelect: (Int64) -> Void
@@ -924,6 +1044,21 @@ private struct MonthPagerView: View {
             }
             .offset(x: -span + drag)
             .contentShape(Rectangle())
+            // TELL THE WINDOW RECOGNIZER TO KEEP OFF. This strip owns
+            // sideways drags — it is the month pager — and the panel's
+            // recognizer lives on the window, so it cannot see that from
+            // where it sits. Measured in WINDOW space, which is where
+            // the recognizer reports its touches (the same reason the
+            // trash zone measures itself that way).
+            .background(
+                GeometryReader { g in
+                    Color.clear
+                        .onAppear { desk.pagerZone = g.frame(in: .global) }
+                        .onChange(of: g.frame(in: .global)) { _, f in
+                            desk.pagerZone = f
+                        }
+                }
+            )
             .gesture(gesture(span: span))
             .onAppear { width = span }
             .onChange(of: span) { _, w in width = w }
@@ -987,86 +1122,6 @@ private struct MonthPagerView: View {
     }
 }
 
-/// Six weeks of one month, drawn from cells decided in advance.
-/// Equatable on purpose: its inputs are values, so SwiftUI can skip the
-/// whole grid while only the strip's offset is moving.
-private struct MonthGridView: View, Equatable {
-    let month: CalMonth
-    let selected: Int64
-    let onSelect: (Int64) -> Void
-    let onHold: (Int64) -> Void
-
-    /// The closures are the same code every time; only the data decides.
-    static func == (a: MonthGridView, b: MonthGridView) -> Bool {
-        a.month == b.month && a.selected == b.selected
-    }
-
-    var body: some View {
-        VStack(spacing: CalGrid.rowGap) {
-            ForEach(0..<6, id: \.self) { week in
-                HStack(spacing: CalGrid.rowGap) {
-                    ForEach(0..<7, id: \.self) { col in
-                        cell(month.cells[week * 7 + col])
-                    }
-                }
-            }
-        }
-    }
-
-    /// Today ringed accent, the selected day filled; both = filled wins
-    /// (the 7-day strip's rule). Long-press = the event door.
-    ///
-    /// The dots take the KIND colour of what is in the day (owner,
-    /// 2026-08-13: "apply the kind colors everywhere"). They were neutral
-    /// ink on the rule that "the calendar says WHEN, never what kind" —
-    /// which the blueprints reverse: three grey dots said only "busy",
-    /// and the same three in teal, purple and orange say what the day
-    /// holds without opening it. On the SELECTED day they go back to one
-    /// ink: the cell is filled accent, and colour on colour is unreadable.
-    private func cell(_ c: CalCell) -> some View {
-        let isSelected = c.day == selected
-        return VStack(spacing: 3) {
-            Text("\(c.number)")
-                .font(
-                    .system(size: LivType.body, weight: c.isToday ? .semibold : .regular)
-                        .monospacedDigit()
-                )
-                .foregroundStyle(
-                    isSelected
-                        ? LivTheme.onAccent
-                        : c.inMonth ? LivTheme.text : LivTheme.muted)
-            HStack(spacing: 2.5) {
-                ForEach(0..<3, id: \.self) { i in
-                    Circle()
-                        .fill(
-                            i < c.dots.count
-                                ? (isSelected ? LivTheme.onAccent : c.dots[i])
-                                : Color.clear
-                        )
-                        .frame(width: 4, height: 4)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: CalGrid.cellHeight)
-        .background(
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .fill(isSelected ? LivTheme.accent : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: LivTheme.radiusSm)
-                .strokeBorder(
-                    c.isToday && !isSelected ? LivTheme.accent : Color.clear,
-                    lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect(c.day) }
-        .onLongPressGesture(minimumDuration: 0.45) { onHold(c.day) }
-        .accessibilityLabel(Civil.dayLabel(c.day))
-        .accessibilityValue(c.count == 0 ? "" : "\(c.count) items")
-    }
-}
-
 // MARK: - month math (packed civil days; Civil's private helpers re-derived)
 
 /// Components-in, components-out within one Gregorian calendar — a stamp
@@ -1080,7 +1135,14 @@ enum CalGrid {
     /// One day cell, and the six-week grid it lives in. The pager needs
     /// the grid's height as a NUMBER (a GeometryReader has none of its
     /// own), so it lives here rather than as a literal in two places.
-    static let cellHeight: CGFloat = 40
+    ///
+    /// 46 SINCE 2026-09-07, up from 40, to seat `LivDay.gridDisc` (28)
+    /// with the three busy dots still under it. Six of these plus the
+    /// row gaps is `gridHeight`, which is ALSO the picker sheet's detent
+    /// — so this number decides how tall that card stands. It stops at
+    /// 46 for that reason: at the week strip's 62 the card would be
+    /// 382pt, and the jump card would have become the screen (§37).
+    static let cellHeight: CGFloat = 46
     static let rowGap: CGFloat = 2
     static var gridHeight: CGFloat { cellHeight * 6 + rowGap * 5 }
     /// What counts as throwing the month, in points per second.
@@ -1202,7 +1264,11 @@ enum CalClock {
     /// rule, the now-line and the blocks all measure from this one
     /// number. Before it existed there were four (0, 16, 44 and 60) and
     /// the hour rule ran straight through "09:00" (owner, 2026-08-10).
-    static let gutter: CGFloat = 46
+    /// 46 until 2026-08-31, when the type scale went up a notch and
+    /// "18:00" no longer fitted the 38pt it was given (`gutter - 8`) —
+    /// every hour label on the day view wrapped onto two lines. A column
+    /// sized for text has to be sized WITH the text.
+    static let gutter: CGFloat = 56
     /// The gap between the times and the first block, so a block's
     /// rounded corner never touches the rule's start.
     static let gutterGap: CGFloat = 14
@@ -1212,7 +1278,11 @@ enum CalClock {
     /// mark. It is also how much room the grid must leave at the top:
     /// without it the first hour of the day was sliced in half by the
     /// edge of the scroll (owner, 2026-08-10).
-    static let labelRise: CGFloat = 6
+    /// 6 until 2026-08-31. The label is centred on its own rule and
+    /// lifted by this much; at the new type scale half a line is about
+    /// 9pt, so at 6 the first hour was still clipped by the top of the
+    /// scroll view — visible as "08:00" with its top sliced off.
+    static let labelRise: CGFloat = 9
     /// Times land on quarter hours — 11:47 is never what anyone meant.
     static let step = 15
 
@@ -1426,6 +1496,138 @@ func livCalendarSelfCheck() -> [String] {
 
     check("range label", CalClock.range(570, 60) == "09:30 – 10:30", CalClock.range(570, 60))
 
+    // THE TEXT THE ENGINE PARSES. `liv_set` takes a date as
+    // `yyyy-mm-dd [hh:mm]` and REFUSES anything else — a month of 00 is
+    // "no such day" and nothing is written. So a due that did not save
+    // looked exactly like a due that saved and did not render, and cost
+    // a round trip to the owner (2026-09-14: "is assigned due 00:00
+    // always, and changing due does nothing").
+    //
+    // It was `String(format:)` with `Int64` arguments: `%d` takes four
+    // bytes where the Int64 put eight, so the year came out right and
+    // everything after it came out zero. These pin the WHOLE string,
+    // which is the only part of it the engine reads.
+    check(
+        "a timed due is a date and a clock",
+        BoxModel.dateText(202_608_042_215, dateOnly: false) == "2026-08-04 22:15",
+        BoxModel.dateText(202_608_042_215, dateOnly: false))
+    check(
+        "an all-day due is a date alone",
+        BoxModel.dateText(202_608_040_000, dateOnly: true) == "2026-08-04",
+        BoxModel.dateText(202_608_040_000, dateOnly: true))
+    check(
+        "midnight is a real time, not an absent one",
+        BoxModel.dateText(202_601_010_000, dateOnly: false) == "2026-01-01 00:00",
+        BoxModel.dateText(202_601_010_000, dateOnly: false))
+    check(
+        "single-digit months and days keep their zero",
+        BoxModel.dateText(202_601_020_903, dateOnly: false) == "2026-01-02 09:03",
+        BoxModel.dateText(202_601_020_903, dateOnly: false))
+    // THE WIRE'S MILLISECONDS, READ BACK AS A TIME. `Row.due_ms` is
+    // epoch ms and every reader here does `Civil.day(of:)` — a divide by
+    // 10,000. Handed ms that answers a number that is not a date, which
+    // is why tapping a quarter past nine in the grid wrote 09:15 and the
+    // block came back somewhere else entirely (owner, 2026-09-15). These
+    // pin the round trip in BOTH directions, because either half alone
+    // can be right while the pair disagrees.
+    //
+    // UTC on purpose: a due crosses as text with no zone, which the
+    // engine reads as tz 0, so this is the only reading that returns
+    // what was written. These numbers are therefore fixed, not
+    // machine-dependent — a suite that passed only in one time zone
+    // would be worse than none.
+    check(
+        "the epoch is the first of January",
+        Civil.civil(ofFloatingMs: 0) == 197_001_010_000,
+        "\(Civil.civil(ofFloatingMs: 0))")
+    check(
+        "a due reads back the clock it was written with",
+        Civil.civil(ofFloatingMs: 1_754_345_700_000) == 202_508_042_215,
+        "\(Civil.civil(ofFloatingMs: 1_754_345_700_000))")
+    check(
+        "an all-day due is midnight, not the day before",
+        Civil.civil(ofFloatingMs: 20_304 * 86_400_000) == 202_508_040_000,
+        "\(Civil.civil(ofFloatingMs: 20_304 * 86_400_000))")
+    // And the day number the shell hands the engine is the CIVIL day —
+    // the same counting `DateSpec::Day` uses, and what `todayDay` sends.
+    check("epoch day zero", Civil.epochDay(197_001_010_000 / 10_000) == 0)
+    check(
+        "a civil day counts from the epoch",
+        Civil.epochDay(2_025_08_04) == 20_304, "\(Civil.epochDay(2_025_08_04))")
+    // The clock face on its own — same defect, three more call sites.
+    check("clock pads both halves", Civil.clock(903) == "09:03", Civil.clock(903))
+    check("clock at midnight", Civil.clock(0) == "00:00", Civil.clock(0))
+    check("clock at the end of the day", Civil.clock(2359) == "23:59", Civil.clock(2359))
+    // And the date-aware one still answers "" for a stamp with no time,
+    // which is the rule the clock face exists to step around.
+    check("a date-only stamp has no time string", Civil.timeString(202_608_040_000) == "")
+    check(
+        "a timed stamp does", Civil.timeString(202_608_040_905) == "09:05",
+        Civil.timeString(202_608_040_905))
+
+    // THE WORDS A ROW SAYS ABOUT A DAY (the clearer boards), pinned on
+    // the boards' own Thursday 24 September 2026. A weekday name means
+    // this Monday-to-Sunday week; the locale is pinned English, so these
+    // are literal words, not the phone's.
+    let thursday: Int64 = 2_026_09_24
+    func word(_ day: Int64, _ want: String, on today: Int64 = thursday) {
+        let got = Civil.dayWord(day, today: today)
+        check("dayWord \(day) on \(today) is \(want)", got == want, got)
+    }
+    word(2_026_09_24, "Today")
+    word(2_026_09_23, "Yesterday")
+    word(2_026_09_22, "Tuesday")
+    word(2_026_09_21, "Monday")
+    word(2_026_09_25, "Friday")
+    word(2_026_09_27, "Sunday")
+    word(2_026_09_28, "28 Sep")
+    word(2_026_09_20, "20 Sep")
+    word(2_026_09_18, "18 Sep")
+    word(2_025_09_18, "18 Sep 2025")
+    // A Monday's yesterday is last week's Sunday, and still "Yesterday";
+    // the Saturday before it is a date.
+    word(2_026_09_20, "Yesterday", on: 2_026_09_21)
+    word(2_026_09_19, "19 Sep", on: 2_026_09_21)
+    check(
+        "a fact today with a time is the clock",
+        Civil.fact(202_609_240_941, today: thursday) == "09:41",
+        Civil.fact(202_609_240_941, today: thursday))
+    check(
+        "a fact today with no time is Today",
+        Civil.fact(202_609_240_000, today: thursday) == "Today",
+        Civil.fact(202_609_240_000, today: thursday))
+    check(
+        "a fact on another day is its word, not its clock",
+        Civil.fact(202_609_220_941, today: thursday) == "Tuesday",
+        Civil.fact(202_609_220_941, today: thursday))
+    check(
+        "the title's weekday", Civil.weekdayName(thursday) == "Thursday",
+        Civil.weekdayName(thursday))
+    check(
+        "the subtitle's date", Civil.dateLong(thursday, today: thursday) == "24 September",
+        Civil.dateLong(thursday, today: thursday))
+    check(
+        "a long date in another year carries it",
+        Civil.dateLong(2_025_09_18, today: thursday) == "18 September 2025",
+        Civil.dateLong(2_025_09_18, today: thursday))
+    check(
+        "dayLong this week is the weekday",
+        Civil.dayLong(2_026_09_21, today: thursday) == "Monday",
+        Civil.dayLong(2_026_09_21, today: thursday))
+    check(
+        "dayLong before this week is weekday and date",
+        Civil.dayLong(2_026_09_14, today: thursday) == "Monday 14 September",
+        Civil.dayLong(2_026_09_14, today: thursday))
+    check(
+        "the footnote this week",
+        Civil.dayLong(stamp: 202_609_212_104, today: thursday) == "Monday at 21:04",
+        Civil.dayLong(stamp: 202_609_212_104, today: thursday))
+    check(
+        "the footnote before it",
+        Civil.dayLong(stamp: 202_609_142_104, today: thursday)
+            == "Monday 14 September at 21:04",
+        Civil.dayLong(stamp: 202_609_142_104, today: thursday))
+
     // The month grid's DATA, which is what keeps a sideways drag cheap:
     // the cells are decided before they are drawn, so the grid can be
     // Equatable and SwiftUI can skip all 126 of them while only an
@@ -1435,19 +1637,19 @@ func livCalendarSelfCheck() -> [String] {
     // Packed civil DAYS here (YYYYMMDD), not stamps — Civil.todayDay's
     // vocabulary, which the grid speaks.
     let august = CalGrid.firstOfMonth(2_026_08_15)
-    let empty = calMonth(august, today: 2_026_08_15, byDay: [:])
+    let empty = calMonth(august, today: 2_026_08_15, counts: [:])
     check("a month is six weeks", empty.cells.count == 42, "\(empty.cells.count)")
     check(
         "August has 31 days in the month",
         empty.cells.filter(\.inMonth).count == 31,
         "\(empty.cells.filter(\.inMonth).count)")
-    check("an empty month has no dots", empty.cells.allSatisfy { $0.dots.isEmpty })
+    check("an empty month has no dots", empty.cells.allSatisfy { $0.dots == 0 })
     check(
         "the same month twice is equal — this is the skip",
-        calMonth(august, today: 2_026_08_15, byDay: [:]) == empty)
+        calMonth(august, today: 2_026_08_15, counts: [:]) == empty)
     check(
         "a different month is not equal",
-        calMonth(CalGrid.addMonths(august, 1), today: 2_026_08_15, byDay: [:]) != empty)
+        calMonth(CalGrid.addMonths(august, 1), today: 2_026_08_15, counts: [:]) != empty)
 
     return failures
 }
@@ -1478,17 +1680,17 @@ func livCalendarSelfCheck() -> [String] {
 struct HourGridDrag: UIViewRepresentable {
     /// One movable block, in the scroll view's CONTENT coordinates.
     struct Target {
-        let id: UInt64
+        let id: LivEntityID
         let rect: CGRect
     }
 
     let targets: [Target]
-    let onLift: (UInt64) -> Void
+    let onLift: (LivEntityID) -> Void
     /// `where` is in WINDOW space, for anything positioned against the
     /// screen rather than against the grid's own scrolled content — the
     /// trash zone is.
-    let onMove: (UInt64, CGFloat, CGPoint) -> Void
-    let onDrop: (UInt64, CGFloat, CGPoint) -> Void
+    let onMove: (LivEntityID, CGFloat, CGPoint) -> Void
+    let onDrop: (LivEntityID, CGFloat, CGPoint) -> Void
     let onCancel: () -> Void
     /// The same press, landing on EMPTY grid: a box is placed at that
     /// minute, dragged while the finger is down, and written on release
@@ -1520,9 +1722,9 @@ struct HourGridDrag: UIViewRepresentable {
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var targets: [Target] = []
-        var onLift: (UInt64) -> Void = { _ in }
-        var onMove: (UInt64, CGFloat, CGPoint) -> Void = { _, _, _ in }
-        var onDrop: (UInt64, CGFloat, CGPoint) -> Void = { _, _, _ in }
+        var onLift: (LivEntityID) -> Void = { _ in }
+        var onMove: (LivEntityID, CGFloat, CGPoint) -> Void = { _, _, _ in }
+        var onDrop: (LivEntityID, CGFloat, CGPoint) -> Void = { _, _, _ in }
         var onCancel: () -> Void = {}
         var onPlace: (Int) -> Void = { _ in }
         var onPlaceMove: (Int) -> Void = { _ in }
@@ -1533,7 +1735,7 @@ struct HourGridDrag: UIViewRepresentable {
         weak var content: UIView?
         weak var scroll: UIScrollView?
 
-        private var lifted: UInt64?
+        private var lifted: LivEntityID?
         private var origin: CGPoint = .zero
         /// The minutes of the box being PLACED, while the finger is down
         /// on empty grid.
@@ -1560,6 +1762,13 @@ struct HourGridDrag: UIViewRepresentable {
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
             guard let p = point(g), let scroll else { return false }
             guard scroll.bounds.contains(g.location(in: scroll)) else { return false }
+            // NOT THROUGH THE BAR. `scroll.bounds` is the visible window
+            // into the content, and the bar FLOATS OVER that window — so
+            // a press on `+` is inside the grid by this test and on a
+            // button by every other. Holding it opened the create menu
+            // and placed an event underneath, and letting go made one
+            // (owner, 2026-09-15).
+            guard !LivBarFrame.holds(g.location(in: nil)) else { return false }
             return targets.contains { $0.rect.contains(p) } || true
         }
 
