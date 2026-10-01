@@ -51,6 +51,10 @@ struct DeskHost: View {
     /// before it is unmounted.
     @State private var drawnDoc: LivEntityID?
     @State private var risen = false
+    /// The page is up AND AT REST: risen, the rise finished, nobody pulling
+    /// it. Only then is the view underneath truly covered — during the rise,
+    /// a pull or the fall it has to be there to be seen.
+    @State private var settled = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -94,6 +98,19 @@ struct DeskHost: View {
                     FeatureBody(feature: desk.state)
                         .transition(LivMotion.surface)
                         .accessibilityHidden(desk.openDoc != nil)
+                        // AND NOT DRAWN WHILE THE PAGE COVERS IT AT REST.
+                        // The hidden flag above does not reach the rows
+                        // of a `List` (UIKit cells) or the surface marker
+                        // (which forces itself visible), so a whole list
+                        // stayed in the tree under an open note and the
+                        // harness read two surfaces. And the editor's
+                        // toolbar is the keyboard's accessory, in a window
+                        // of its own, with no page behind it: the list
+                        // showed through it (2026-10-01). Invisible is
+                        // what both need. Still mounted — it keeps its
+                        // scroll — and back the moment a pull starts.
+                        .opacity(drawnDoc != nil && settled ? 0 : 1)
+                        .environment(\.livCovered, anyPanel || desk.openDoc != nil)
 
                     // THE DOCUMENT LAYER, over whichever view you are in.
                     // `openDoc` is non-nil only while one is laid down
@@ -292,6 +309,7 @@ struct DeskHost: View {
             // A desk on the move is not a row being swiped (`livSwipesLive`).
             .environment(\.livSwipesLive, !desk.libraryDrawn && desk.panelDrag == nil)
             .accessibilityHidden(anyPanel)
+            .environment(\.livCovered, anyPanel)
 
             // The doors (design/ios.md §6 rev 6): top-left opens the
             // LIBRARY, top-right the ••• holds the secondary verbs.
@@ -391,6 +409,7 @@ struct DeskHost: View {
             // rise, it is simply there.
             drawnDoc = desk.openDoc
             risen = desk.openDoc != nil
+            settled = risen
         }
         // THE RISE AND THE FALL, as the library does them: mount, then
         // slide on the next tick; slide, then unmount after the motion.
@@ -404,11 +423,19 @@ struct DeskHost: View {
             if let now {
                 let wasUp = drawnDoc != nil && risen
                 drawnDoc = now
-                guard !wasUp else { return }
+                guard !wasUp else {
+                    settled = true
+                    return
+                }
                 DispatchQueue.main.async {
-                    withAnimation(LivMotion.nav) { risen = true }
+                    withAnimation(LivMotion.nav) {
+                        risen = true
+                    } completion: {
+                        settled = desk.openDoc != nil && docPull == 0
+                    }
                 }
             } else {
+                settled = false
                 withAnimation(LivMotion.nav) { risen = false }
                 DispatchQueue.main.asyncAfter(deadline: .now() + LivMotion.navSeconds) {
                     if desk.openDoc == nil { drawnDoc = nil }
@@ -585,6 +612,7 @@ struct DeskHost: View {
                 // pull to commit is exactly what it was — only what you
                 // SEE while pulling changed.
                 docPull = max(0, d) * LivMotion.pullGain
+                if docPull > 0 { settled = false }
             }
             .onEnded { g in
                 guard docPull > 0 else { return }
@@ -594,7 +622,11 @@ struct DeskHost: View {
                     withAnimation(LivMotion.nav) { docPull = 0 }
                     desk.layDown()
                 } else {
-                    withAnimation(LivMotion.pick) { docPull = 0 }
+                    withAnimation(LivMotion.pick) {
+                        docPull = 0
+                    } completion: {
+                        settled = desk.openDoc != nil && docPull == 0
+                    }
                 }
             }
     }

@@ -380,6 +380,16 @@ extension EnvironmentValues {
     }
 }
 
+/// A covered list leaves the accessibility tree (`livCovered`): the hidden
+/// flag on the view above it does not reach a `List`'s rows.
+private struct LivCardListCovered: ViewModifier {
+    @Environment(\.livCovered) private var covered
+
+    func body(content: Content) -> some View {
+        content.accessibilityHidden(covered)
+    }
+}
+
 private struct LivCardListFrame: ViewModifier {
     @State private var x: CGFloat = 0
 
@@ -415,6 +425,7 @@ extension View {
             .contentMargins(.horizontal, LivRow.cardInset, for: .scrollContent)
             .contentMargins(.top, 0, for: .scrollContent)
             .modifier(LivCardListFrame())
+            .modifier(LivCardListCovered())
     }
 
     /// Say while THIS row is swiped: `lifted` holds its id while the row

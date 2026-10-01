@@ -1,5 +1,39 @@
 # Liv iOS — changelog (batch summaries; newest first)
 
+## 2026-10-01 — `drive.sh panel` and `routes` pass; a note no longer shows the list through it
+
+Both had failed since 16 Sep, on a healthy app — the checks were right that
+something was off, and wrong about what. Since 16 Sep the view stays
+mounted under an open note (so it shows while the note rises and is pulled
+down), and it is marked `accessibilityHidden`. That flag never took:
+`axe` lists elements marked hidden (a marker forced hidden was still read),
+and a `List`'s rows are UIKit cells it does not reach. So every open note
+answered as two surfaces — `document everything`, `document tasks` — and
+both checks, which wait for `document`, gave up.
+
+It was also visible. The editor's toolbar is the keyboard's accessory, in
+a window of its own, and no page lies behind it: the Notes list showed
+through it, a row title printed across undo, redo and bold.
+
+**Now** the view under a note is not drawn once the note has risen and is
+at rest (`settled` in `DeskHost`), and is back the moment a pull or a
+close begins, so the rise and the fall still show it. And a covered
+view's surface marker says so in its identifier, `liv.covered.<name>`, so
+`drive.sh` counts only what is on top; the hidden flags stay for
+VoiceOver, now also on the `List` itself and the marker (`livCovered`, set
+for an open note and for the library panel). Whether VoiceOver skips the
+covered rows is not verified — `axe` cannot say.
+
+`drive.sh panel` and `routes` pass; `suites.sh` 13/13; `tour`, `facets`,
+`settings`, `workspace`, `library`, `bar`, `grid`, `history`, `desk`,
+`quiet` and `spool` pass. **Newly recorded, and failing before this change
+too** (checked against the committed build): `create` (now past the two
+surfaces, it looks for a "New task" label), `under` (now looks for
+"Back" in a document), `event` (a tap on the hour grid opens nothing),
+`areas` (no area line on this box's Today), `chrome` (a flick does not
+move the library door), `rows` (no tasks on the default box); `cycles`
+prints nothing.
+
 ## 2026-10-01 — the docs, cut to what is true now
 
 Owner: step 2 of the clean-up, and *"the three tappable shapes rule is past

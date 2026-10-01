@@ -344,6 +344,11 @@ cpu() {
 # EVERY surface marker currently in the tree, one per line. More than one
 # is the stuck-view bug: two surfaces mounted at once.
 surfaces() {
+  # ONLY WHAT IS ON TOP. A view stays mounted under an open note, and its
+  # marker reads `liv.covered.<name>` while covered (`Surface.swift`) —
+  # `axe` lists elements marked hidden, so hiding it could not tell this
+  # apart (2026-10-01). `liv.surface.` is the uncovered one.
+  #
   # PYTHON, NOT `grep -o`. `grep` inside this script is whatever wins the
   # PATH, and on this machine that is plan9port's, which has no -o: every
   # read came back a usage message, so the harness reported "the screen
