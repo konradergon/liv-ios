@@ -29,16 +29,16 @@ The core-era log (`core/`, `services/`, `views/`) was deleted on 2026-09-29.
 
 ## Read these before judging anything
 
-- `CLAUDE.md` — the boundary table and house rules.
-- `productivity_app.md` — the constitution (architecture principles; wins
-  over everything).
-- `interface.md` — interface law; largely a stack of amendments.
-- `feature-map.md` — features and their reconciliations.
+- `CLAUDE.md` — the boundaries and the rules that keep the code healthy.
+- `HANDOUT.md` — what is true now, and what the owner has decided.
+- `design/how-its-built.md` — the code on one page.
 - `design/what-liv-is-for.md` — the product page. A change that is
   architecturally clean but violates this is still wrong.
-- `design/ios.md` — the phone's architecture, sync design, and roadmap.
-- `design/p*.md` — per-phase design docs; `design/p20j-*` for the vault
-  projection, `design/p11*` for the data spine.
+- `design/op-format.md` — the on-disk format, which the codec tests hold.
+
+`design/archive/` is history, not guidance (the old constitution,
+interface law, feature map, phase docs and studies). Read it only to
+answer "why was it done this way?".
 
 ## The invariants you are guarding
 

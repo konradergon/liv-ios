@@ -1,4 +1,45 @@
-# Liv iOS — changelog (batch summaries; details in design/ios.md revs)
+# Liv iOS — changelog (batch summaries; newest first)
+
+## 2026-10-01 — the docs, cut to what is true now
+
+Owner: step 2 of the clean-up, and *"the three tappable shapes rule is past
+me fizzling with details too much and should be part of the archive. feel
+that lots of rules are just me losing the bigger picture and not letting
+you work."*
+
+**`design/` is five files**: `what-liv-is-for.md` (the product),
+`how-its-built.md` (the code), this changelog, and two references —
+`op-format.md` (the on-disk format, held by the codec tests; its "draft,
+nothing decided" status was two weeks stale) and `testflight.md` (phones;
+it now carries the one-time signing setup `build.sh` points to). The
+other 46 files, the mockups and the five root-level specs
+(`interface.md`, `feature-map.md`, `liv-ui-map.md`, `productivity_app.md`,
+`change.md`) are in `design/archive/`, about 29,000 lines. Code comments
+still cite them by name; the archive's README says so.
+
+**`CLAUDE.md` went from 273 lines to about 90.** Nine rules, each about
+keeping the code healthy: rules live in Rust, one of each, every `liv_*`
+call in `Box.swift`, the door's terms, tests first with cost tests,
+sizes and colours in `Theme.swift`, delete what is dead, see it work,
+hands off. Out: the three tappable shapes, the platform history, the spec
+priority list, the feature-flag and 600-line rules, and the long notes
+under each. The old file is `design/archive/CLAUDE-until-2026-10-01.md`.
+The property token/word note was a fact about the code, not a rule, and
+moved to `how-its-built.md`.
+
+**`HANDOUT.md`** keeps the state, the card-list notes and the owner's
+decisions, with the look reduced to its principles (the numbers live in
+`Theme.swift`). The open item about Today's blue "Today" word went with
+its rule. The architecture reviewer's brief now reads the living docs.
+
+**`what-liv-is-for.md` is v3** (owner: "page should change"). It said Liv
+ships six areas and keeps your files in an ordinary folder; neither has
+been true since 21 and 29 Sep. Now: fields, kinds and statuses ship, the
+areas are yours to name, everything lives in one file on the phone with
+every version kept, and "it follows you" is marked not yet. "Will not lock
+your writing in" stays as the promise, with a note that export is not
+rebuilt. The superseded 29 Aug amendment and the July to-do list for the
+phone are gone (git has them).
 
 ## 2026-09-30 — a refresh reads only the screen you are looking at
 

@@ -1,13 +1,10 @@
 # The op format
 
-> **Status:** draft, 2026-08-22. Phase 0 of `core-plan.md` says *"write down the
-> op encoding and its version field before any op is written"*, because `core.md`
-> promises a decoder forever and that is not promisable for a format nobody has
-> specified.
->
-> **Nothing here is decided.** Sizes marked *computed* come from the layout below,
-> not from a running encoder. The block ops in §6 are provisional and wait on the
-> blocks phase.
+> **Status (1 Oct 2026): this is the format on disk.** Written as a draft on
+> 2026-08-22, before any op was written; the engine has run on it since
+> 19 Sep, and `engine/tests/codec.rs` holds the code to it. §1 describes the
+> JSON log it replaced, which is gone. `core.md` and `core-plan.md`, cited
+> below, are in `design/archive/`.
 
 ---
 

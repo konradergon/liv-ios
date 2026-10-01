@@ -13,6 +13,18 @@ closed.
 
 The people who install it never need an account of their own.
 
+## Signing on this Mac, once
+
+`./build.sh device` finds the certificate and the provisioning profile by
+itself. They come from a one-time bootstrap: a throwaway Xcode project
+with bundle id `app.liv.ios`, "Automatically manage signing" on, and one
+Run on the phone. That mints the Apple Development certificate (in the
+keychain) and the profile (in `~/Library/Developer/Xcode/UserData/
+Provisioning Profiles/`); the throwaway project can then be deleted. The
+share extension (`app.liv.ios.share`) needs a profile of its own the same
+way. Done on 2 August 2026; needed again only on a new Mac, or once the
+membership is renewed if the portal asks.
+
 ## Until the membership is renewed
 
 Two ways to get the app to someone, neither of them TestFlight.

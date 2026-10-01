@@ -29,6 +29,11 @@ the same core unchanged.
 - A thing has **cells**, one per property: `name`, `body`, `due`,
   `status`, `area`, `project`, `people`, `tags` (shown as "Subject"), and
   so on. Its kind is a cell too.
+- **A property has a token and a shown name**, and they differ: `tags` is
+  what is stored and what the query grammar reads; "Subject" is what a
+  person sees. `liv_properties` sends both (`word`, `name`); code keys off
+  the token and draws the name. Keying off the shown name is how the area
+  picker broke once.
 - A cell holds one of seven kinds of value: text, number, yes/no, date, a
   pointer to another thing, a file's fingerprint, or a note body.
 - **Pointers are how things relate.** A task's area is a pointer to the

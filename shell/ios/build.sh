@@ -115,7 +115,7 @@ if [ "$1" = "device" ]; then
         | grep -m1 'Apple Development' | sed -E 's/.*"(.*)"/\1/')"
     [ -n "$IDENTITY" ] || {
         echo "no 'Apple Development' signing identity in the keychain." >&2
-        echo "Run the one-time Xcode signing setup first (see design/ios.md)." >&2
+        echo "Run the one-time Xcode signing setup first (see design/testflight.md)." >&2
         exit 1
     }
 
@@ -129,7 +129,7 @@ if [ "$1" = "device" ]; then
     done
     [ -n "$PROFILE" ] || {
         echo "no provisioning profile scoped to $BUNDLE_ID." >&2
-        echo "Run the one-time Xcode signing setup first (see design/ios.md)." >&2
+        echo "Run the one-time Xcode signing setup first (see design/testflight.md)." >&2
         exit 1
     }
 
