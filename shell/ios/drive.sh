@@ -179,6 +179,16 @@ sim() {
 
 container() { sim get_app_container "$UDID" "$APP" data 2>/dev/null }
 
+# THE BOX, WRITTEN THROUGH THE APP'S OWN VERBS (the CLI). A check that
+# needs something on screen makes it first, rather than passing or failing
+# on whatever the box happens to hold (2026-10-01).
+LIV_CLI=${LIV_CLI:-../../target/debug/liv}
+box_db() { echo "$(sim get_app_container "$UDID" "$APP" group.liv.app 2>/dev/null)/liv/liv.db" }
+seed() {
+  [[ -x "$LIV_CLI" ]] || { die "no CLI at $LIV_CLI — run: cargo build -p liv-cli"; return 1 }
+  "$LIV_CLI" --box "$(box_db)" "$@" || { die "the CLI refused: liv $*"; return 1 }
+}
+
 # THE ACCESSIBILITY TREE, or a REASON. Every reader below pipes through
 # this, so a shut-down simulator or a dead app produces one clear line
 # instead of six Python tracebacks — a harness that panics in public is
@@ -1249,54 +1259,6 @@ wait_panel() {
   return 1
 }
 
-# The first tab card in the grid, by its accessibility label.
-first_card() {
-  local l
-  l=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c '
-import json, sys
-cards = []
-def walk(n):
-    lab = n.get("AXLabel") or ""
-    f = n.get("frame") or {}
-    # A card is a tall button in the body, not a bar key and not a row —
-    # and not the New-note card, which is a door out, not a tab.
-    #
-    # AND IT HAS TO BE ON SCREEN. The grid scrolls, and it now starts at
-    # the BOTTOM (rev 40), so with enough tabs open the earliest cards sit
-    # at a NEGATIVE y — off the top of the viewport. This walk sorted by y
-    # and picked the topmost, so `axe tap` aimed at an activation point
-    # nobody could reach and the check failed on a build that was fine.
-    # Found 2026-09-06 with thirteen tabs open; the first card was at
-    # y=-296.
-    y = f.get("y", 0)
-    if (n.get("type") == "Button" and lab and f.get("height", 0) > 100
-            and lab != "New note" and y >= 0 and y + f.get("height", 0) <= 912):
-        cards.append(((y, f["x"]), lab))
-    for c in n.get("children") or []: walk(c)
-try:
-    d = json.load(sys.stdin)
-    walk(d if isinstance(d, dict) else d[0])
-except Exception:
-    pass
-# A label that appears TWICE cannot be tapped by label — axe refuses an
-# ambiguous match, and rightly. Only a UNIQUE label is an answer here.
-#
-# The old fallback returned cards[0] when none was unique, which handed
-# the caller a label `axe tap` would refuse and reported it as "no element
-# on screen after 3s" — a harness failure that reads exactly like a broken
-# app. Two nameless notes made in the same MINUTE share a card label
-# ("Note, created · 2026-09-07 15:01, note"), so the collision is ordinary
-# rather than rare; the caller falls back to the frame centre, the same
-# exception `open_first_note` already takes.
-from collections import Counter
-seen = Counter(lab for _, lab in cards)
-cards.sort()
-uniq = [lab for _, lab in cards if seen[lab] == 1]
-print(uniq[0] if uniq else "")' 2>/dev/null)
-  [[ -n "$l" ]] || return 1
-  print -r -- "$l"
-}
-
 # Is a labelled back ("Back to Notes") on screen? The bare `<` in the bar
 # is labelled just "Back", so this cannot catch it by mistake.
 labelled_back() {
@@ -1330,9 +1292,9 @@ except Exception: print(0)'
 # fixed prefix, so it is matched by shape wherever a check reads it.
 bar_keys() {
   axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
-import json,sys
+import json,sys,re
 d=json.load(sys.stdin); out=[]
-def tab_key(l): return l.endswith(' open') and l.split(' ')[0].isdigit()
+def tab_key(l): return re.fullmatch(r'[0-9]+ documents? open', l) is not None
 def w(n):
     l=n.get('AXLabel') or ''
     f=n.get('frame') or {}
@@ -1369,13 +1331,30 @@ cmd_chrome() {
   # call `livHidesChrome`, and Calendar is the one that silently did not
   # work — a check that only ever ran on Today would have stayed green
   # through the whole of 2026-09-07.
+  #
+  # ENOUGH TO SCROLL, made first. The doors retire on a scroll, and a list
+  # that fits on one screen has none — Today and Tasks on a short box
+  # failed for being short (2026-10-01). A dozen tasks due today lengthen
+  # Today, Tasks and Unsorted; they go to the trash again at the end.
+  local -a filler
+  local i made ok=0
+  for i in {1..12}; do
+    made=$(seed new task "Chrome filler $i" --due "$(date +%Y-%m-%d)") || return 1
+    filler+=("$made")
+  done
   if (( $# == 0 )); then
     local v
     for v in today calendar inbox tasks everything; do
-      cmd_chrome "$v" || return 1
+      chrome_one "$v" || { ok=1; break; }
     done
-    return 0
+  else
+    chrome_one "$1" || ok=1
   fi
+  for made in "${filler[@]}"; do seed trash "$made" >/dev/null; done
+  return $ok
+}
+
+chrome_one() {
   local view="$1"
   cmd_boot "$view" >/dev/null || { die "could not boot into $view."; return 1 }
   # LET THE SURFACE SETTLE. Calendar scrolls itself to the current hour on
@@ -1454,6 +1433,11 @@ door_y() {
 # that a StaticText carrying "unfiled" or "<an area> <a count>" sits between
 # the date and the day strip.
 cmd_areas() {
+  # A LATE TASK UNDER AN AREA, made first: the line counts what is late,
+  # open or all-day on the day, and on an empty day it is the date alone —
+  # which is right, and which this check used to fail on.
+  local area="Drive area" made
+  made=$(seed new task "Areas check $(date +%H%M%S)" --due "$(date -v-1d +%Y-%m-%d)" --area "$area") || return 1
   cmd_boot today >/dev/null || { die "could not boot into Today."; return 1 }
   local line
   line=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
@@ -1479,11 +1463,14 @@ d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
 # SCREEN ORDER, left to right: areas by name, then the unfiled count,
 # and the report should read the way the line does.
 hits.sort(); print(' · '.join(l for _, _, l in hits))")
-  [[ -n "$line" ]] || {
-    die "Today shows no area line under its date. With a late pile on
-      screen it must count the day by area, or say how much is unfiled."
+  [[ "$line" == *"$area "[0-9]* ]] || {
+    die "Today's line under its date reads '${line}', with a late task
+      filed under '${area}'. It must count the day by area."
+    seed trash "$made" >/dev/null
     return 1
   }
+  # Out of the way again, so the late pile does not grow run by run.
+  seed trash "$made" >/dev/null
   say "ok    areas: Today counts the day by area — $line"
   cmd_check
 }
@@ -1649,8 +1636,12 @@ def walk(n, screen):
     h, w = f.get('height', 0), f.get('width', 0)
     # 48 is over the segmented control's row (40) and under the shortest
     # card row (52); 100 keeps a whole card or a section group out.
-    if abs(w - screen) < 1.5 and 48 <= h <= 100:
-        (headed if heading else seen).add((round(f.get('y', 0), 1), round(h, 1)))
+    # A row is as wide as its CARD, which is inset from the screen since
+    # the card lists (2026-09-29); full-bleed found none (2026-10-01).
+    # Any wide element is a candidate here; the card's width is chosen
+    # below as the commonest.
+    if w >= 0.8 * screen and 48 <= h <= 100:
+        (headed if heading else seen).add((round(f.get('y', 0), 1), round(h, 1), round(w, 1)))
     return heading
 try:
     d = json.load(sys.stdin)
@@ -1658,7 +1649,10 @@ try:
     walk(root, (root.get('frame') or {}).get('width', 0))
 except Exception:
     pass
-hs = Counter(h for _, h in seen - headed)
+rows = seen - headed
+widths = Counter(w for _, _, w in rows)
+card = widths.most_common(1)[0][0] if widths else 0
+hs = Counter(h for _, h, w in rows if w == card)
 print(json.dumps(sorted(hs.items(), key=lambda kv: -kv[1])))"
 }
 
@@ -1749,18 +1743,22 @@ cmd_grid() {
     }
   fi
 
-  # THE HOLE THIS CHECK EXISTS FOR. The list must reach past the open
-  # tabs — if the two numbers ever match again, the root has gone back to
-  # drawing `liveTabs` and 126 notes have quietly become unreachable.
-  local open rows
-  open=$(tab_count) || { die "the bar reports no tab count to compare against."; return 1 }
-  rows=$(note_rows)
-  (( rows > open )) || {
-    die "the Notes lens lists ${rows} rows while ${open} tabs are open.
-      It is showing you what you left open, not what you have. That is
-      the 8-of-134 hole (2026-08-28) coming back."
+  # THE HOLE THIS CHECK EXISTS FOR: the list must show what you have, not
+  # what you left open — or 126 notes quietly become unreachable (the
+  # 8-of-134 hole, 2026-08-28). So a note is made that is NOT open, and
+  # the list must show it. This compared rows on screen with the open
+  # count instead, and failed once more notes were open than fit on one
+  # screen (2026-10-01).
+  local unopened="Grid check $(date +%H%M%S)" made
+  made=$(seed new note "$unopened") || return 1
+  cmd_boot notes >/dev/null || { die "could not boot back into the notes list."; return 1 }
+  tree | grep -q "$unopened" || {
+    die "made '${unopened}' without opening it, and the Notes list does not
+      show it. It is showing you what you left open, not what you have."
+    seed trash "$made" >/dev/null
     return 1
   }
+  seed trash "$made" >/dev/null
 
   # AND THE NUMBERED BOX IS ALIVE HERE. It was dead for as long as the
   # grid was the root — you cannot open the grid on top of itself. With a
@@ -1789,37 +1787,15 @@ print(int(ks[4]["enabled"]) if len(ks) > 4 else "?")')
   # AND INSIDE A DOCUMENT, where the labelled back used to live. Opening
   # one from the grid is the only way to assert it is really gone — on
   # any other surface there was never one to find.
-  local card
-  card=$(first_card) || card=""
-  if [[ -n "$card" ]]; then
-    cmd_tap "$card" || return 1
-  else
-    # EVERY CARD SHARES ITS LABEL WITH ANOTHER — two nameless notes made
-    # in the same minute. Tap the first card's frame centre instead: the
-    # same exception `open_first_note` documents, and not a guess, since
-    # the frame is what the tree just reported.
-    local xy
-    xy=$(axe describe-ui --udid "$UDID" 2>/dev/null | python3 -c "
-import json, sys
-best = None
-def walk(n):
-    global best
-    f = n.get('frame') or {}
-    if (n.get('type') == 'Button' and (n.get('AXLabel') or '')
-            and f.get('height', 0) > 100 and f.get('y', 0) >= 0
-            and f.get('y', 0) + f.get('height', 0) <= 912
-            and (n.get('AXLabel') or '') != 'New note'):
-        key = (f.get('y', 0), f.get('x', 0))
-        if best is None or key < best[0]:
-            best = (key, int(f['x'] + f['width'] / 2), int(f['y'] + f['height'] / 2))
-    for c in n.get('children') or []: walk(c)
-d = json.load(sys.stdin); walk(d if isinstance(d, dict) else d[0])
-print(f'{best[1]} {best[2]}' if best else '')")
-    [[ -n "$xy" ]] || { die "no tab card on the grid to open."; return 1 }
-    axe tap --udid "$UDID" -x ${xy%% *} -y ${xy##* } >/dev/null 2>&1
-    perl -e 'select(undef,undef,undef,1.2)'
-    card="the first card"
-  fi
+  # BY THE CARD'S FRAME, read from the tree. A label with a "·" in it —
+  # every nameless note's since 2026-09-13 ("Note · 1 Oct 02:09") — is one
+  # `axe tap --label` cannot match, so tapping by label failed on a grid
+  # that was fine (2026-10-01).
+  local card="the first card on screen" x y
+  read x y <<< "$(first_card_point)"
+  [[ -n "${x:-}" ]] || { die "no tab card on the grid to open."; return 1 }
+  axe tap --udid "$UDID" -x "$x" -y "$y" >/dev/null 2>&1
+  perl -e 'select(undef,undef,undef,1.2)'
   [[ "$(cmd_surface)" == "document" ]] || {
     die "tapped the card '$card' and the screen shows '$(cmd_surface)', not a document."
     return 1
@@ -1830,7 +1806,7 @@ print(f'{best[1]} {best[2]}' if best else '')")
       the back key, and the numbered box for the way up to the grid."
     return 1
   }
-  say "ok    grid: the Notes lens lists ${rows} notes against ${open} open, the box opens the switcher, no labelled back in a document"
+  say "ok    grid: the Notes list shows a note that is not open, the box opens the switcher, no labelled back in a document"
   cmd_check
 }
 
@@ -1843,9 +1819,13 @@ print(m.group(1) if m else '')" | grep -E '^[0-9]+$'
 }
 
 bar_tab_label() {
+  # "N documents open" EXACTLY. It matched anything ending in " open"
+  # after a number, and Tasks' own line under its title — "2 open" —
+  # is that too, so `desk` read Tasks' open count as the desk's size
+  # (2026-10-01).
   scan 'def walk(n):
     l = n.get("AXLabel") or ""
-    if l.endswith(" open") and l.split(" ")[0].isdigit(): print(l)
+    if re.fullmatch(r"[0-9]+ documents? open", l): print(l)
     for c in n.get("children") or []: walk(c)' | head -1
 }
 
@@ -1932,22 +1912,6 @@ SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
 print(ROWS[0][1] if ROWS else "")' | grep .
 }
 
-# Rows in Notes' list: full-width buttons of row height, minus the chrome
-# that happens to share those bounds.
-note_rows() {
-  scan 'def walk(n):
-    l = n.get("AXLabel") or ""
-    f = n.get("frame") or {}
-    if (n.get("type") == "Button" and l and f.get("width", 0) > 200
-            and 40 < f.get("height", 0) < 90
-            and not l.startswith(SKIP)):
-        SEEN.append(l)
-    for c in n.get("children") or []: walk(c)' \
-    'SEEN = []
-SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
-    'print(len(SEEN))'
-}
-
 # ONE TAP MAKES THE THING THIS PLACE HOLDS.
 #
 # `+` used to open a five-item menu everywhere, so making a note — the
@@ -2007,11 +1971,11 @@ cmd_create() {
   # THE ADD ROW IS THE TASK DOOR NOW, so it has to make a task that
   # LANDS. A write returning an id proves nothing here: the row has to
   # appear in the list you typed it into, which is what the status the
-  # add row picks is for. Counted before and after.
+  # add row picks is for. Read by its name, below.
   cmd_boot tasks >/dev/null || { die "could not boot back into Tasks."; return 1 }
-  local before after stamp
-  before=$(task_rows)
-  stamp="drive $(date +%H%M%S)"
+  local stamp
+  # Capitalised: the field capitalises a first word, as a person would want.
+  stamp="Drive $(date +%H%M%S)"
   cmd_tap "New task" || {
     die "no add row on Tasks. It is the only one-tap door to a task now
       that + makes a note (2026-09-10), so its absence is the whole
@@ -2024,25 +1988,21 @@ cmd_create() {
   # check ever dies with "multiple elements matched", that assumption is
   # what broke, not the feature.
   #
-  # THE KEYBOARD FIRST, the same wait the capture route makes: the bar
-  # retires under one, so no keys means the caret really is in the row
-  # and the type below will land there rather than on the surface.
-  local i keys=5
-  for i in {1..10}; do
-    keys=$(bar_keys | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
-    [[ "$keys" == "0" ]] && break
-    perl -e 'select(undef,undef,undef,0.4)'
-  done
-  (( keys == 0 )) || {
-    die "tapped the Tasks add row and the bar is still up (${keys} keys),
-      so no keyboard came with it — the row is drawn but not a field."
-    return 1
-  }
+  # TYPE, AND READ IT BACK OUT OF THE FIELD. This waited for the bar to
+  # leave, as a sign a keyboard had come — but with the simulator's
+  # hardware keyboard connected no software keyboard ever comes, the bar
+  # stays, and a working field failed (2026-10-01). What the row must do
+  # is take words, so that is what is asserted.
   axe type "$stamp" --udid "$UDID" >/dev/null 2>&1 || {
     die "could not type into the Tasks add row."
     return 1
   }
   perl -e 'select(undef,undef,undef,0.6)'
+  [[ "$(field_value 'New task')" == "$stamp" ]] || {
+    die "tapped the Tasks add row and typed '${stamp}', and the field holds
+      '$(field_value 'New task')' — the row is drawn but does not take words."
+    return 1
+  }
   cmd_tap "Add" || {
     die "typed into the add row and no Add verb appeared beside it."
     return 1
@@ -2053,40 +2013,33 @@ cmd_create() {
   # keyboard are not in the tree at all, and counting them here would
   # fail about the fold rather than about the write.
   cmd_boot tasks >/dev/null || { die "could not boot back into Tasks to read the list."; return 1 }
-  after=$(task_rows)
-  (( after > before )) || {
-    die "typed '${stamp}' into the add row and Tasks lists ${after} rows
-      (was ${before}). Either it was not written, or it does not match
-      the filter you typed it into — the add row is meant to carry
-      whatever that filter demands. A very long list can also push the
-      new row under the fold; check with 'liv --box <box>/liv.db list --all'."
-    return 1
-  }
+  # BY ITS NAME. This counted rows before and after, as Buttons — and a
+  # task row is not one (the row takes a tap anywhere; the ring in it is
+  # the button), so a task that landed was never counted (2026-10-01).
+  # The name on the Tasks screen is the claim; the field is empty again.
   tree | grep -q "$stamp" || {
-    die "the row count grew but '${stamp}' is not on screen, so either the
-      name did not reach the task or the new row is below the fold. Turn
-      on a status chip to shorten the list and run this again."
+    die "typed '${stamp}' into the add row and it is not on the Tasks
+      screen. Either it was not written, or it does not match the filter
+      you typed it into — the add row carries whatever that filter
+      demands — or a long list pushed it under the fold; check with
+      'liv --box <box>/liv.db list --all'."
     return 1
   }
-  say "ok    create: one tap makes a note everywhere, and the Tasks add row makes a task that lands in the list (${before} -> ${after})"
+  say "ok    create: one tap makes a note everywhere, and the Tasks add row makes a task that lands in the list"
   cmd_check
 }
 
-# How many task rows Tasks is drawing — the same wide-row shape
-# `note_rows` counts. The add row is not one: it is a field in an HStack,
-# not a Button, so it never enters this count whatever it holds.
-task_rows() {
+# What the text field labelled $1 holds, read from the tree.
+field_value() {
+  local -x FIELD_LABEL="$1"
   scan 'def walk(n):
-    l = n.get("AXLabel") or ""
-    f = n.get("frame") or {}
-    if (n.get("type") == "Button" and l and f.get("width", 0) > 200
-            and 40 < f.get("height", 0) < 90
-            and not l.startswith(SKIP)):
-        SEEN.append(l)
+    if n.get("type") == "TextField" and (n.get("AXLabel") or "") == LABEL:
+        OUT.append(n.get("AXValue") or "")
     for c in n.get("children") or []: walk(c)' \
-    'SEEN = []
-SKIP = ("Library", "Note actions", "Back", "Forward", "Search", "New")' \
-    'print(len(SEEN))'
+    'import os
+OUT = []
+LABEL = os.environ["FIELD_LABEL"]' \
+    'print(OUT[0] if OUT else "")'
 }
 
 # True when the five-item create menu is NOT on screen.
@@ -2161,6 +2114,9 @@ cmd_desk() {
 # The first card in the switcher's grid, by frame — see `first_note_point`
 # for why a frame the tree just reported is not a guessed coordinate.
 first_card_point() {
+  # ON SCREEN. The switcher opens scrolled to the newest, so with a few
+  # rows of cards the first ones in the tree sit above the top edge
+  # (y < 0), and tapping the first in the tree tapped air (2026-10-01).
   scan 'def walk(n):
     l = n.get("AXLabel") or ""
     f = n.get("frame") or {}
@@ -2169,7 +2125,9 @@ first_card_point() {
         CARDS.append((f.get("y", 0), f.get("x", 0), f))
     for c in n.get("children") or []: walk(c)' \
     'CARDS = []' \
-    'CARDS.sort(key=lambda r: (r[0], r[1]))
+    'H = (d if isinstance(d, dict) else d[0]).get("frame", {}).get("height", 0)
+CARDS = [c for c in CARDS if c[2]["y"] >= 0 and c[2]["y"] + c[2]["height"] <= H]
+CARDS.sort(key=lambda r: (r[0], r[1]))
 if CARDS:
     f = CARDS[0][2]
     print(int(f["x"] + f["width"] / 2), int(f["y"] + f["height"] / 2))'
@@ -2194,9 +2152,19 @@ if CARDS:
 #
 # Break it on purpose before trusting the green: make `land` set `state`
 # and leave `shown` alone, and step 1 goes red.
+# PUT THE KEYBOARD AWAY, as a person does before reaching for the bar.
+# Opening a note puts the caret in it (owner, 2026-08-20), and while you
+# type the bar steps aside, so Back is not on screen until the editor's
+# toolbar key has been pressed. Nothing to do when no editor has focus.
+keyboard_away() {
+  axe tap --udid "$UDID" --label "Hide keyboard" >/dev/null 2>&1 || return 0
+  perl -e 'select(undef,undef,undef,1.0)'
+}
+
 cmd_under() {
   cmd_boot notes >/dev/null || { die "could not boot into the notes list."; return 1 }
   open_first_note || return 1
+  keyboard_away
   cmd_tap "Back" || return 1
   [[ "$(cmd_surface)" == "everything" ]] || {
     die "opened a note off the notes list, pressed Back, and the screen shows
@@ -2220,6 +2188,7 @@ cmd_under() {
     die "picked a card from the switcher in Today and got '$(cmd_surface)'."
     return 1
   }
+  keyboard_away
   cmd_tap "Back" || return 1
   [[ "$(cmd_surface)" == "today" ]] || {
     die "opened a note from Today, pressed Back, and the screen shows
@@ -2477,8 +2446,13 @@ cmd_event() {
 
   mid_x=$(button_cx "Library") || { die "could not centre on the library door."; return 1 }
   mid_x=$(( mid_x + 120 ))   # past the hour-label lane, into the blocks
-  axe tap --udid "$UDID" -x "$mid_x" -y 620 >/dev/null 2>&1 || {
-    die "could not tap the hour grid at x=${mid_x}, y=620."; return 1 }
+  # AN EMPTY HOUR, read off the tree. This tapped y=620 every run, and the
+  # block the first run made sits there, so every later run opened THAT
+  # event and made none (2026-10-01).
+  local free_y
+  free_y=$(free_grid_y) || { die "no free hour on the visible grid to tap."; return 1 }
+  axe tap --udid "$UDID" -x "$mid_x" -y "$free_y" >/dev/null 2>&1 || {
+    die "could not tap the hour grid at x=${mid_x}, y=${free_y}."; return 1 }
   perl -e 'select(undef,undef,undef,2.0)'
 
   # THE CARD RISES FIRST. The write opens the record's properties with
@@ -2487,7 +2461,9 @@ cmd_event() {
   # does not draw, and worth telling apart before counting anything.
   local named
   named=$(scan 'def walk(n):
-    if n.get("AXType") in ("TextField", "TextView"): print(n.get("AXLabel") or n.get("AXValue") or "")
+    # `type`, not `AXType`: axe spells it so, and this asked for AXType
+    # and found nothing on every run, whatever the screen held (2026-10-01).
+    if n.get("type") in ("TextField", "TextView"): print(n.get("AXLabel") or n.get("AXValue") or "")
     for c in n.get("children") or []: walk(c)' '')
   if [[ -z "$named" ]]; then
     die "tapping the hour grid opened nothing. The write path raises the
@@ -2522,6 +2498,33 @@ cmd_event() {
 
 # Blocks on the day timeline, counted by their spoken label — a block
 # says "<name>, <HH:MM – HH:MM>", which no other row in the app does.
+# A y on the visible hour grid with no block within 40pt of it: below the
+# day's title ("… Pick a day") and above the bar's Search key, both read
+# from the tree — the hour labels run the whole day, most off screen.
+free_grid_y() {
+  scan 'def walk(n):
+    l = n.get("AXLabel") or ""
+    f = n.get("frame") or {}
+    if l.endswith("Pick a day"): EDGES.append(("top", f.get("y", 0) + f.get("height", 0)))
+    if l == "Search" and n.get("type") == "Button": EDGES.append(("bottom", f.get("y", 0)))
+    if re.search(r"\d\d:\d\d\s*.\s*\d\d:\d\d", l):
+        BLOCKS.append((f.get("y", 0), f.get("y", 0) + f.get("height", 0)))
+    for c in n.get("children") or []: walk(c)' \
+    'EDGES = []; BLOCKS = []' \
+    'E = dict(EDGES)
+if "top" in E and "bottom" in E:
+    top, bottom = E["top"] + 40, E["bottom"] - 40
+    y = top
+    while y <= bottom:
+        if all(y + 40 < a or y - 40 > b for a, b in BLOCKS):
+            print(int(y)); break
+        y += 14
+    else:
+        raise SystemExit(1)
+else:
+    raise SystemExit(1)'
+}
+
 block_count() {
   scan 'def walk(n):
     l = n.get("AXLabel") or ""

@@ -20,11 +20,9 @@ product page is `design/what-liv-is-for.md`.
 - **Every screen reads Rust's answers**; Swift draws. A refresh reads the
   library and the screen on show, nothing else. The clerk's sweep is
   linear again. The door (`ffi/liv.h`) has 48 functions.
-- **Checks**: `cargo test` 375. `suites.sh` 13/13. `drive.sh` passes
-  `tour`, `panel`, `routes`, `facets`, `settings`, `workspace`, `library`,
-  `bar`, `grid`, `history`, `desk`, `quiet`, `spool`. Failing, and failing
-  before 1 Oct too: `create`, `under`, `event`, `areas`, `chrome`, `rows`
-  (`cycles` prints nothing) — see the changelog's top entry.
+- **Checks**: `cargo test` 375. `suites.sh` 13/13. Every `drive.sh` check
+  passes (1 Oct); `cycles` is a report, not a check. Checks that need
+  something on screen make it through the CLI (`seed`) and trash it after.
 - **Gone with `core/` on 29 Sep, not rebuilt**: repeating events,
   import/export, the folder "vault", habits, time tracking, pins, daily
   notes, widgets, file-content search, the phone→desktop handoff. All in
@@ -144,11 +142,6 @@ gradients, area tiles, bottom fades.
 - **There is no way out of the app for your writing** — export went with
   `core/` on 29 Sep; only the CLI reads the box. The product page says so
   and keeps "will not lock your writing in" as the promise.
-- Six `drive.sh` checks fail (§2): `create` and `under` look for labels
-  that may have changed, `event` finds no block after a tap on the hour
-  grid, `areas` and `rows` may want a box with areas and tasks, `chrome`
-  finds the library door unmoved by a flick. Each is either a stale check
-  or a real bug; not yet looked at one by one.
 - Reminders: `Notify.swift` still decides what rings — the last product
   rule in Swift.
 - Light mode renders faintly; nobody has drawn it.
@@ -165,8 +158,7 @@ done. **2** `design/` cut to the living docs — done (1 Oct). **3** shorten
 the history comments in each file as it is touched — ongoing, never as a
 sweep.
 
-Then, in the order suggested: the six failing `drive.sh` checks (stale
-check or real bug, one by one); move reminders into Rust; then **sync**, the next stage of the engine plan.
+Then, in the order suggested: move reminders into Rust; then **sync**, the next stage of the engine plan.
 The engine already has ops, dots, version vectors and a hold buffer, all
 tested and unused. Ask the owner before starting sync.
 

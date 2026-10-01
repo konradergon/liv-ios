@@ -245,6 +245,10 @@ struct TasksView: View {
                     prompt: Text("New task").foregroundStyle(LivTheme.text3)
                 )
                 .tint(LivTheme.accent)
+                // ITS NAME, for VoiceOver and for `drive.sh create`: with a
+                // `prompt:` the title is not the field's label, so the field
+                // had none and "New task" was only its placeholder value.
+                .accessibilityLabel("New task")
                 .focused($addFocused)
                 .submitLabel(.return)
                 .onSubmit { commitAdd() }

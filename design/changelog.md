@@ -1,5 +1,51 @@
 # Liv iOS — changelog (batch summaries; newest first)
 
+## 2026-10-01 — every `drive.sh` check passes
+
+The six left failing were five stale checks and one real bug, each found by
+running it and looking.
+
+- **`create`** — real: the Tasks add row had no accessibility label ("New
+  task" was only its placeholder), so VoiceOver had no name for it and the
+  check could not find it; it has one now (`Tasks.swift`). Stale: the check
+  took "the bar left" as proof a keyboard came, which is false with the
+  simulator's hardware keyboard on — it now types and reads the words back
+  out of the field; and it counted task rows as Buttons, which they are not
+  (the row takes the tap; the ring is the button) — it now looks for the
+  typed name on the Tasks screen.
+- **`under`** — opening a note puts the caret in it (2026-08-20), and while
+  you type the bar steps aside, so Back is not there until the keyboard is
+  put away; the check now does what a person does first. Its switcher pick
+  tapped the first card in the tree, which sits above the screen once the
+  switcher scrolls to the newest; it picks the first card on screen.
+- **`desk`** (broke when `create` got further) — it found the bar's tab key
+  by any label "N … open", and Tasks' own "2 open" matched; now only
+  "N documents open".
+- **`event`** — asked axe for `AXType`, which axe calls `type`, so it found
+  no field on any run; and it tapped one fixed spot, where its own first run
+  had left a block, so every later run opened that event. It taps a free
+  hour now, read off the tree.
+- **`areas`** — wanted a late pile on Today and never made one; on an empty
+  day the line is the date alone, which is right. It now files a late task
+  under an area through the CLI first, and trashes it after.
+- **`chrome`** — a list that fits on one screen does not scroll, so its
+  doors cannot retire; Today and Tasks were short. It makes a dozen tasks
+  due today first, and trashes them after.
+- **`rows`** — counted rows as screen-wide; card rows have been
+  card-wide since 2026-09-29. It takes the card's width as the commonest
+  wide one.
+- **`grid`** (broke once `create` left more notes open than fit on a
+  screen) — it compared the rows on screen with the open count. It now
+  makes a note it does not open and asserts the list shows it, which is
+  the hole it guards (the list showing only what is open). And it opened a
+  tab card by its label, which `axe tap --label` cannot match when the
+  label has a "·" in it — every nameless note's since 2026-09-13 — so it
+  taps the first card on screen by its frame.
+
+`drive.sh` can now seed what a check needs (`seed`, through the CLI and the
+app's own verbs). `cycles` was never failing: it reports, and printed
+"(none since boot)".
+
 ## 2026-10-01 — `drive.sh panel` and `routes` pass; a note no longer shows the list through it
 
 Both had failed since 16 Sep, on a healthy app — the checks were right that
